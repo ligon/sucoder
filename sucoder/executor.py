@@ -126,6 +126,9 @@ class CommandExecutor:
 
         run_kwargs: Dict[str, Any] = {
             "cwd": cwd,
+            # When running as agent via sudo, env is intentionally set to None here
+            # because _wrap_agent_command prepends 'env K=V' to the sudo command,
+            # which is the correct way to pass env vars through sudo.
             "env": None if as_agent and self.use_sudo_for_agent else env,
             "text": True,
         }
@@ -169,9 +172,10 @@ class CommandExecutor:
         command_str = _format_display(args)
         umask_value = f"{umask:04o}" if umask is not None else f"{self.default_umask:04o}"
 
+        quoted_user = shlex.quote(self.agent_user)
         check = (
-            f'if [ "$(whoami)" != "{self.agent_user}" ]; then '
-            f'echo "Error: running as $(whoami), expected {self.agent_user}" >&2; '
+            f'if [ "$(whoami)" != {quoted_user} ]; then '
+            f'echo "Error: running as $(whoami), expected {quoted_user}" >&2; '
             f"exit 1; "
             f"fi"
         )

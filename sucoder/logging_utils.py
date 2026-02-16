@@ -30,8 +30,12 @@ def setup_logger(name: str, log_dir: Optional[Path], verbose: bool) -> logging.L
         try:
             os.chmod(log_dir, 0o700)
         except PermissionError:
-            # Best-effort; continue even if we cannot tighten permissions.
-            logger.warning("Unable to set permissions on log directory %s", log_dir)
+            logger.warning(
+                "Unable to restrict permissions on log directory %s — "
+                "logs may contain sensitive output (commands, paths, environment details). "
+                "Ensure only the owning user can read this directory.",
+                log_dir,
+            )
 
         safe_name = re.sub(r"[^\w.-]", "_", name)
         log_path = log_dir / f"{safe_name}.log"

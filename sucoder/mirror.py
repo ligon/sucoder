@@ -421,10 +421,6 @@ class MirrorManager:
         This function never returns - the current process is replaced by the agent.
         Use this for interactive CLIs that require proper terminal passthrough.
         """
-        os.chdir(cwd)
-        if env:
-            os.environ.update(env)
-
         agent_user = self.executor.agent_user
         current_user = pwd.getpwuid(os.getuid()).pw_name
 
@@ -435,21 +431,38 @@ class MirrorManager:
         final_command = list(command)
         command_str = shlex.join(final_command)
 
-        # Construct verification script
+        # Construct verification script — quote agent_user to prevent shell injection
+        quoted_user = shlex.quote(agent_user)
         check = (
-            f'if [ "$(whoami)" != "{agent_user}" ]; then '
-            f'echo "Error: running as $(whoami), expected {agent_user}" >&2; '
+            f'if [ "$(whoami)" != {quoted_user} ]; then '
+            f'echo "Error: running as $(whoami), expected {quoted_user}" >&2; '
             f"exit 1; "
             f"fi"
         )
 
+        # Change into the working directory inside the script rather than
+        # mutating os.chdir() which would alter global state.
+        cd_prefix = f"cd {shlex.quote(str(cwd))} &&"
+
         # We always wrap in bash to ensure the check runs
         # Use 'exec' to replace the bash process with the final command
-        script = f"{check}; exec {command_str}"
+        script = f"{check}; {cd_prefix} exec {command_str}"
         final_command = ["bash", "-lc", script]
 
         if use_sudo:
-            final_command = ["sudo", "-u", agent_user] + final_command
+            # Pass env vars via 'env K=V' prefix so they survive sudo
+            # (sudo strips the caller's environment by default).
+            if env:
+                env_args = ["env"] + [f"{k}={v}" for k, v in env.items()]
+                final_command = ["sudo", "-u", shlex.quote(agent_user)] + env_args + final_command
+            else:
+                final_command = ["sudo", "-u", shlex.quote(agent_user)] + final_command
+        else:
+            # Non-sudo path: mutations are acceptable since execvp replaces
+            # the process immediately after.
+            os.chdir(cwd)
+            if env:
+                os.environ.update(env)
 
         self.logger.debug("Exec'ing agent (replaces current process): %s", final_command)
         os.execvp(final_command[0], final_command)
