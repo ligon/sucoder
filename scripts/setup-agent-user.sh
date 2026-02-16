@@ -108,6 +108,17 @@ else
     ok "Created user '$AGENT_USER' with locked password"
 fi
 
+# ── 2b. Set restrictive umask for agent ──────────────────────────────────
+AGENT_HOME=$(eval echo "~$AGENT_USER")
+BASHRC="$AGENT_HOME/.bashrc"
+info "Ensuring restrictive umask (0077) in $BASHRC..."
+if [[ -f "$BASHRC" ]] && grep -q 'umask 0077' "$BASHRC" 2>/dev/null; then
+    ok "umask 0077 already set in $BASHRC"
+else
+    run bash -c "echo 'umask 0077' >> $BASHRC"
+    ok "Added 'umask 0077' to $BASHRC (agent files default to owner-only)"
+fi
+
 # ── 3. Add human user to agent group ─────────────────────────────────────
 info "Adding '$HUMAN_USER' to group '$AGENT_GROUP'..."
 if id -nG "$HUMAN_USER" 2>/dev/null | grep -qw "$AGENT_GROUP"; then
@@ -118,7 +129,6 @@ else
 fi
 
 # ── 4. Set agent home directory permissions ───────────────────────────────
-AGENT_HOME=$(eval echo "~$AGENT_USER")
 info "Setting permissions on $AGENT_HOME..."
 run chmod 755 "$AGENT_HOME"
 ok "$AGENT_HOME is world-readable (agent needs access from sudo)"
