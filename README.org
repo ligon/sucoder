@@ -84,7 +84,7 @@ The canonical repository remains unwritable by the agent throughout.
 | =start-task=         | Create a task branch (step 4)                |
 | =agents-run=         | Launch the agent (steps 5–6)                 |
 
-** Custom configuration (optional)
+* Configuration
 Skip this section if zero-config mode works for you.
 
 1. Copy the sample configuration and adjust paths, users, and mirror names.
