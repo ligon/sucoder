@@ -305,16 +305,3 @@ Run the automated tests with pytest.
 pytest
 #+end_src
 
-* Packaging
-This project uses Poetry for packaging and dependency management.
-
-#+begin_src shell
-# Install dependencies (editable mode for development)
-poetry install
-
-# Run the CLI
-poetry run sucoder --help
-
-# Build source and wheel distributions
-poetry build
-#+end_src
