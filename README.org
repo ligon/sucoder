@@ -12,10 +12,10 @@ Unix user and group permissions have been battle-tested for over fifty years.  W
 git clone https://github.com/ligon/sucoder && cd sucoder
 make quick-start
 cd ~/Projects/my-project  # any git repo
-sucoder collaborate
+sucoder collaborate -a claude
 #+end_src
 
-No config file needed.  =sucoder= detects the git repo, mirrors it under =/var/tmp/coder-mirrors/=, and launches the agent.  Add =--task fix-login= to start on a dedicated branch.
+No config file needed.  =sucoder= detects the git repo, mirrors it under =/var/tmp/coder-mirrors/=, and launches the agent.  Use =-a= to pick the agent (=claude=, =codex=, =gemini=); omit it and sucoder will auto-detect from PATH or prompt.  Add =--task fix-login= to start on a dedicated branch.
 
 For multi-repo setups, skills, and system prompts, see [[*Configuration][Configuration]] below.  =make env-setup= does the full host provisioning (=make help= for all targets).
 
@@ -134,11 +134,8 @@ sucoder start-task project rewrite-parser --base main
 
 # Inspect current branch and outstanding changes.
 sucoder status project
-#+end_src* Quick Start
+#+end_src
 
-#+begin_src shell
-git clone https://github.com/ligon/sucoder && cd sucoder
-make quick-start
 * Configuration
 Configuration is stored in YAML (default path is ~/.sucoder/config.yaml for the human operator).  Grant the agent group read access to this file while keeping it group-writable disabled.
 
