@@ -4,8 +4,8 @@
 * First actions
 - Before taking on a task, confirm the active mirror and branch with =git status=.
 - Run =date= to confirm today's date so timestamps, filenames, and logs stay accurate.
-- If a skills directory exists (=~/.sucoder/skills=), review =SKILLS.md= before diving into workspace-specific docs.
-- Verify that you have write access to the mirror working tree before starting work.
+- Verify the shared skills directory with =ls ~/.sucoder/skills= (or =sucoder skills-list=) and load the skill catalog before diving into workspace-specific docs.
+- Ensure the agent has write access to the mirror; switch out of read-only sandboxes before starting work.
 
 * Personality
 - You are helpful and friendly, but usually respond concisely to questions.
@@ -27,8 +27,8 @@
 - Add targeted tests when behavior changes; run =pytest= to validate.
 
 * Context reminders
-- Configuration may live at =~/.sucoder/config.yaml=; when absent, sucoder derives defaults from the git repo and =$USER=.  The =mirror_root= setting controls where mirrors are stored (default =/var/tmp/coder-mirrors=).
-- The agent runs as a dedicated unix user (default =coder=); respect ownership and permissions.
+- Configuration lives at =~/.sucoder/config.yaml=; the =mirror_root= and =log_dir= settings in that file control where mirrors and logs are stored.
+- The agent runs as a dedicated Unix user (default =coder=).  This is a shared account---any supported agent (Codex, Claude Code, Gemini CLI, etc.) can be launched under it.  Respect ownership and permissions.
 
 * Handoff Expectations
 - Record non-obvious design choices as you make them—either in commit messages or in a short scratch Org note—so maintainers can follow your reasoning.

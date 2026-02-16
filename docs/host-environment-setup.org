@@ -5,7 +5,7 @@
 Quick checklist for rebuilding the surrounding environment (accounts, config, skills, prompts, permissions) that sit outside any git clone.
 
 * Accounts and permissions
-- Create or identify the human login and the agent login (defaults: human = =ligon=, agent = =coder=, group = =coder=).
+- Create or identify the human login and the agent login (defaults: human = =ligon=, agent = =coder=, group = =coder=).  The =coder= account is a shared Unix user—any supported agent binary (Codex, Claude Code, Gemini CLI, etc.) runs under it.
 - Make sure the agent group can read (not write) the human config directory and skills checkout.
 - Prefer agent mirrors under a writable temp location (default =/var/tmp/coder-mirrors=) owned by the human with group access for =coder=.
 
@@ -56,8 +56,8 @@ Quick checklist for rebuilding the surrounding environment (accounts, config, sk
   #+begin_src shell
   ls ~/.sucoder/skills
   sucoder skills-list
-  codex read ~/.sucoder/skills/SKILLS.md
   #+end_src
+  To preload the catalog into a session, use the agent's file-read command (e.g., =codex read ~/.sucoder/skills/SKILLS.md= for Codex).
 
 * System prompt
 - Start from =default_system_prompt.org= or your own content:
@@ -70,7 +70,7 @@ Quick checklist for rebuilding the surrounding environment (accounts, config, sk
 * Tooling prerequisites
 - Python + Poetry (for =sucoder= CLI): =poetry install= inside the project to get dependencies and run =poetry run sucoder --help=.
 - Node via nvm if you want to pin a Codex runtime; configure =agent_launcher.nvm= in the mirror config when used.
-- Codex CLI installed and callable for the human; =sucoder= injects =--yolo= automatically when launching agents.
+- Agent CLI (Codex, Claude Code, Gemini CLI, etc.) installed and callable for the human; =sucoder= injects the appropriate write-access flag automatically when launching agents (e.g., =--yolo= for Codex; see the flag template table in =README.org=).
 
 * Mirror preparation flow (per project)
 - Prepare canonical repo permissions and optional =coder= remote:
