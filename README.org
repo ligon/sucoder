@@ -35,9 +35,56 @@ Org-mode is a plain-text format that every LLM reads fluently—but it also has 
 
 You do not need Emacs to read or edit these files.  Any text editor works; GitHub renders =.org= natively.  But if you /do/ use Emacs, the integration is a bonus, not a requirement.
 
-* Mechanics
+* What =sucoder collaborate= does
 
-** Prepare Configuration (optional)
+Running =sucoder collaborate -a claude= (or with =--task=) triggers a multi-step workflow.  Steps marked *auto* happen without intervention; steps marked *human* need you at the keyboard.
+
+** 1. Resolve configuration /auto/
+If =~/.sucoder/config.yaml= exists, load it.  Otherwise, derive everything from the environment: =$USER= becomes the human identity, the git repo root becomes the canonical repo, and =/var/tmp/coder-mirrors/= is the mirror root.  The agent CLI is resolved from =-a= flag > =$SUCODER_AGENT= > =~/.sucoder/agent= > PATH auto-detect > interactive prompt.
+
+** 2. Prepare the canonical repository /auto/
+Set group-read permissions on your repo so the =coder= user can traverse it.  Adds a =coder= git remote pointing at the mirror (for easy fetching later) and writes a helper script =scripts/fetch-agent-branches.sh=.  Your repo stays read-only to the agent—only the group bits and the remote config change.
+
+** 3. Clone (or verify) the mirror /auto/
+If the mirror does not exist under =/var/tmp/coder-mirrors/<repo>/=, clone it from the canonical repo as the =coder= user.  Push access back to canonical is disabled (=no_push=).  If the mirror already exists, verify the remote and enforce permissions.
+
+** 4. Sync or create a task branch /auto/
+- Without =--task=: fetch the latest commits from canonical into the mirror.
+- With =--task fix-login=: create a branch =coder/fix-login-<timestamp>= in the mirror, based on the default base branch (or =--base=).
+
+** 5. Compose the agent launch command /auto/
+Detect the agent type (Claude, Codex, Gemini) from the command name and inject the appropriate flags: write-access (=--dangerously-skip-permissions=, =--sandbox danger-full-access=, =--yolo=), writable directories, skills paths, and system prompt.  If a system prompt file exists, it is passed via the agent's native flag or appended as trailing text.
+
+** 6. Launch the agent /human/
+The agent process starts inside the mirror working tree.  From here, *you are talking to the agent*.  It has full write access to the mirror but cannot write to your canonical repo.  The agent commits its work to the task branch.
+
+When the agent session ends (you quit it, or it finishes), control returns to your shell.
+
+** 7. Review and integrate /human/
+Fetch the agent's branch into your canonical repo and review it:
+#+begin_src shell
+git fetch /var/tmp/coder-mirrors/my-project coder/fix-login-20250215180000
+git checkout -b review/fix-login FETCH_HEAD
+# ... review, test, iterate ...
+git checkout main && git merge --ff-only review/fix-login
+#+end_src
+Or pull directly:
+#+begin_src shell
+git pull --ff-only /var/tmp/coder-mirrors/my-project coder/fix-login-20250215180000
+#+end_src
+The canonical repository remains unwritable by the agent throughout.
+
+** Running the steps individually
+=collaborate= bundles steps 2–6.  You can also run them separately:
+| Command              | Step                                         |
+|----------------------+----------------------------------------------|
+| =prepare-canonical=  | Set permissions and add agent remote (step 2)|
+| =agents-clone=       | Clone the mirror (step 3)                    |
+| =sync=               | Fetch latest into the mirror (step 4)        |
+| =start-task=         | Create a task branch (step 4)                |
+| =agents-run=         | Launch the agent (steps 5–6)                 |
+
+** Custom configuration (optional)
 Skip this section if zero-config mode works for you.
 
 1. Copy the sample configuration and adjust paths, users, and mirror names.
@@ -64,71 +111,6 @@ Skip this section if zero-config mode works for you.
    sudo chgrp -R coder ~/Projects/sucoder-skills
    sudo chmod -R g+r,g-w ~/Projects/sucoder-skills
    #+end_src
-
-** Provision the Mirror
-1. Prepare the canonical repository for collaboration.
-   #+begin_src shell
-   sucoder prepare-canonical project
-   #+end_src
-   This command sets the group to `coder`, grants group read permissions, and removes group write bits.  Elevate with `--sudo` when root privileges are required.
-   By default it also adds a `coder` remote pointing at the agent mirror and writes
-   =scripts/fetch-agent-branches.sh= to simplify fetching agent branches (`--no-agent-remote` disables this).
-2. Clone the mirror as the human operator; the tool will invoke git as the agent.
-   #+begin_src shell
-   sucoder agents-clone project --verbose
-   #+end_src
-   Mirror arguments support shell completion, so pressing Tab after `sucoder <command> ` suggests configured mirror names.
-
-** Sync Before Handing Off
-1. Refresh the mirror with the latest human commits.
-   #+begin_src shell
-   sucoder sync project
-   #+end_src
-2. Create a task branch for the agent based on the desired human branch.
-   #+begin_src shell
-   sucoder start-task project add-metrics --base main
-   #+end_src
-   The command prints the full branch name (for example `coder/add-metrics-20251107164028`).
-
-** Agent Workflow
-- The agent works directly inside the mirror directory (for example `/var/tmp/coder-mirrors/project`) on the branch created above.
-- The agent commits work to `coder/<task>-<timestamp>` without pushing to the canonical repository.
-- To run the full workflow in one step (prepare canonical, ensure mirror, launch agent), use:
-  #+begin_src shell
-  sucoder collaborate project --task add-metrics
-  #+end_src
-#  Adjust flags such as `--no-agent-remote`, `--sudo`, or extra arguments just as you would with the individual commands.
-
-- To experiment with a different agent binary temporarily, supply `--agent-command` (and optional `--agent-env`):
-  #+begin_src shell
-  sucoder agents-run project --agent-command "foo --flag" --agent-env TOKEN=abc123
-  #+end_src
-
-- The CLI detects the agent type (Codex, Claude, Gemini) and automatically injects the appropriate write-access flags (for example =--sandbox danger-full-access= for Codex, =--dangerously-skip-permissions= for Claude, =--yolo= for Gemini) so the agent can write to the mirror.  The helper will also warn if it detects a read-only sandbox and still attempts a launch.
-
-- Org authoring playground (documentation example): =docs/examples/org-authoring-demo.org=.
-  Demonstrates the in-repo Org skills—structure, markup, tables, capture, citations,
-  exporting, agenda integration—so humans and agents have a quick reference.
-
-** Human: Review and Integrate Agent Work
-1. Fetch the agent branch back into the canonical repository.
-   #+begin_src shell
-   git -C <canonical-repo> fetch <mirror-path> coder/add-metrics-20251107164028
-   #+end_src
-2. Check out and review the branch inside the canonical repository.
-   #+begin_src shell
-   git -C <canonical-repo> checkout -b review/add-metrics FETCH_HEAD
-   #+end_src
-3. Fast-forward the reviewed branch to keep history linear (default):
-   #+begin_src shell
-   git -C <canonical-repo> checkout main
-   git -C <canonical-repo> merge --ff-only review/add-metrics
-   #+end_src
-   If the branch is not fast-forwardable because main advanced, choose either a single merge commit or rebase the review branch onto main, then retry `merge --ff-only`. If you prefer to pull directly from the agent mirror, you can do so without setting global pull defaults:
-   #+begin_src shell
-   git -C <canonical-repo> pull --ff-only <mirror-path> coder/add-metrics-20251107164028
-   #+end_src
-   The canonical repository remains unwritable by the agent throughout this flow.
 
 * Key Features
 - agents-clone :: Clone a canonical repository into an agent-owned mirror with strict permissions.
