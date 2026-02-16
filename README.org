@@ -28,6 +28,13 @@ For multi-repo setups, skills, and system prompts, see [[*Configuration][Configu
 - bash
 - At least one supported agent CLI on PATH: =claude=, =codex=, or =gemini=
 
+* Why Org-mode?
+This README is =.org=, the default system prompt is =.org=, and the skills repo leans heavily on Org-mode.  Why not Markdown?
+
+Org-mode is a plain-text format that every LLM reads fluently—but it also has structured features (TODO states, properties, tags, executable source blocks) that Markdown lacks.  For a project about human-agent collaboration, those features pull their weight: a system prompt can carry metadata an agent can act on, a skill file can embed runnable examples, and a handoff note can be a living checklist rather than a static document.
+
+You do not need Emacs to read or edit these files.  Any text editor works; GitHub renders =.org= natively.  But if you /do/ use Emacs, the integration is a bonus, not a requirement.
+
 ** Prepare Configuration (optional)
 Skip this section if zero-config mode works for you.
 
