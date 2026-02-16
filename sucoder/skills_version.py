@@ -9,7 +9,10 @@ from packaging import version
 
 
 # Required skills repository version
-# Tool is compatible with skills versions in the same major version
+# Tool is compatible with skills versions in the same major version.
+# Note: the tool version (e.g. 0.1.0 in pyproject.toml) and the skills
+# version (1.0.0) are intentionally independent — they follow separate
+# release cadences and the tool only constrains the skills major version.
 REQUIRED_SKILLS_VERSION = "1.0.0"
 
 

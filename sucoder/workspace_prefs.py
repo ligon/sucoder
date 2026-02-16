@@ -15,7 +15,13 @@ def _utc_now_iso() -> str:
 
 @dataclass
 class WorkspacePrefs:
-    """Lightweight helper for storing mirror-scoped preferences."""
+    """Lightweight helper for storing mirror-scoped preferences.
+
+    # TODO: The prefs file (.coder-session/agent_prefs.json) lives inside the
+    # agent-writable mirror directory, so the agent can modify its own prefs.
+    # Consider moving to a human-owned location if prefs gain security-sensitive
+    # settings (would need design discussion on read/write separation).
+    """
 
     root: Path
     data: Dict[str, Any] = field(default_factory=dict)

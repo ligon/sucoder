@@ -758,7 +758,12 @@ class MirrorManager:
         return Path("~/.sucoder/skills").expanduser()
 
     def _wrap_with_nvm(self, command: Sequence[str], launcher: AgentLauncher) -> List[str]:
-        """Wrap the agent command so it runs under a specific nvm-managed Node version."""
+        """Wrap the agent command so it runs under a specific nvm-managed Node version.
+
+        # TODO: The default NVM_DIR assumes ~/.nvm for the agent user.  Custom NVM
+        # installs (e.g., via Homebrew or a non-standard path) may need the
+        # agent_launcher.nvm.dir config option to be set explicitly.
+        """
         nvm_settings = launcher.nvm
         if nvm_settings is None:
             return list(command)
@@ -969,7 +974,12 @@ class MirrorManager:
             )
 
     def _ensure_canonical_safe_directory(self, ctx: MirrorContext) -> List[str]:
-        """Allow the agent to treat the canonical repo as safe for git operations."""
+        """Allow the agent to treat the canonical repo as safe for git operations.
+
+        # TODO: safe.directory entries are only added, never cleaned up.  Over time
+        # the global git config may accumulate stale paths for mirrors that no longer
+        # exist.  Consider adding a periodic prune step.
+        """
         candidates = list(self._canonical_safe_directories(ctx))
 
         result = self.executor.run_agent(
