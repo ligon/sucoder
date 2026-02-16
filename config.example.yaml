@@ -1,17 +1,17 @@
-human_user: ligon
+human_user: <your-username>
 agent_user: coder
 agent_group: coder
 mirror_root: /var/tmp/coder-mirrors
-log_dir: /home/ligon/.sucoder/logs
-system_prompt: /home/ligon/.sucoder/system_prompt.org
+log_dir: /home/<your-username>/.sucoder/logs
+system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 mirrors:
   sample:
-    canonical_repo: /home/ligon/src/project.git
+    canonical_repo: /home/<your-username>/src/project.git
     mirror_name: project
     default_base_branch: main
     task_branch_prefix: task
     branch_prefixes:
-      human: ligon
+      human: <your-username>
       agent: coder
     agent_launcher:
       # Map generic intents into agent-specific flags; defaults suit codex.

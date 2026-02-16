@@ -1,17 +1,17 @@
-human_user: ligon
+human_user: <your-username>
 agent_user: coder
 agent_group: coder
 mirror_root: /var/tmp/coder-mirrors
-log_dir: /home/ligon/.sucoder/logs
+log_dir: /home/<your-username>/.sucoder/logs
 system_prompt: default_system_prompt.org
 mirrors:
-  assistant:
-    canonical_repo: ~/sucoder
-    mirror_name: Assistant
+  sample:
+    canonical_repo: /home/<your-username>/Projects/MyProject
+    mirror_name: MyProject
     default_base_branch: main
     task_branch_prefix: task
     branch_prefixes:
-      human: ligon
+      human: <your-username>
       agent: coder
     skills:
       - ~/.sucoder/skills
