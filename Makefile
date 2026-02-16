@@ -37,7 +37,7 @@ help:
 quick-start: create-agent-user
 	pip install .
 
-env-setup: create-agent-user poetry-ensure config system-prompt skills-clone skills-link perms
+env-setup: quick-start poetry-ensure config system-prompt skills-clone skills-link perms
 
 show-agent-user-commands:
 	@echo "Run as root/admin to create the agent user and group:"
