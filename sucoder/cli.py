@@ -152,6 +152,11 @@ def _resolve_mirror_name(ctx: typer.Context, mirror: Optional[str]) -> str:
     )
 
 
+def _agent_shorthand(name: str) -> List[str]:
+    """Turn a short agent name into a command list."""
+    return [name]
+
+
 def _parse_agent_command(command: Optional[str]) -> Optional[List[str]]:
     if command is None:
         return None
@@ -394,10 +399,16 @@ def agents_run(
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print commands without executing."),
+    agent: Optional[str] = typer.Option(
+        None,
+        "--agent",
+        "-a",
+        help="Agent to use (e.g. claude, codex, gemini).",
+    ),
     agent_command: Optional[str] = typer.Option(
         None,
         "--agent-command",
-        help="Override the configured agent command (example: --agent-command 'foo --flag').",
+        help="Override the full agent command (example: --agent-command 'foo --flag').",
     ),
     agent_env: Optional[List[str]] = typer.Option(
         None,
@@ -421,7 +432,7 @@ def agents_run(
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     manager = _build_manager(config, logger, dry_run=dry_run)
-    command_override = _parse_agent_command(agent_command)
+    command_override = _parse_agent_command(agent_command) or (_agent_shorthand(agent) if agent else None)
     env_override = _parse_agent_env(agent_env)
     try:
         manager.launch_agent(
@@ -472,10 +483,16 @@ def collaborate(
         "--agent-remote/--no-agent-remote",
         help="Configure a remote pointing at the agent mirror during canonical prep (default: enabled).",
     ),
+    agent: Optional[str] = typer.Option(
+        None,
+        "--agent",
+        "-a",
+        help="Agent to use (e.g. claude, codex, gemini).",
+    ),
     agent_command: Optional[str] = typer.Option(
         None,
         "--agent-command",
-        help="Override the configured agent command (example: --agent-command 'foo --flag').",
+        help="Override the full agent command (example: --agent-command 'foo --flag').",
     ),
     agent_env: Optional[List[str]] = typer.Option(
         None,
@@ -499,7 +516,7 @@ def collaborate(
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     manager = _build_manager(config, logger, dry_run=dry_run)
-    command_override = _parse_agent_command(agent_command)
+    command_override = _parse_agent_command(agent_command) or (_agent_shorthand(agent) if agent else None)
     env_override = _parse_agent_env(agent_env)
     try:
         manager.bootstrap(

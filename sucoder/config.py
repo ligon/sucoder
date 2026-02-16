@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -189,6 +190,81 @@ def _detect_git_toplevel() -> Path:
     return Path(result.stdout.strip())
 
 
+KNOWN_AGENTS = ["claude", "codex", "gemini"]
+AGENT_PREFERENCE_FILE = Path("~/.sucoder/agent")
+
+
+def detect_agent_command() -> List[str]:
+    """Resolve which agent CLI to use via a four-level cascade.
+
+    1. ``$SUCODER_AGENT`` environment variable
+    2. ``~/.sucoder/agent`` preference file (single word)
+    3. Auto-detect from PATH (scan for known agents)
+    4. Interactive prompt when multiple agents are found
+
+    Raises :class:`ConfigError` if no agent can be resolved.
+    """
+    # 1. Environment variable
+    env_agent = os.environ.get("SUCODER_AGENT", "").strip()
+    if env_agent:
+        if shutil.which(env_agent):
+            return [env_agent]
+        raise ConfigError(
+            f"$SUCODER_AGENT is set to {env_agent!r} but it was not found on PATH."
+        )
+
+    # 2. Preference file
+    pref_path = AGENT_PREFERENCE_FILE.expanduser()
+    if pref_path.is_file():
+        saved = pref_path.read_text(encoding="utf-8").strip()
+        if saved:
+            if shutil.which(saved):
+                return [saved]
+            raise ConfigError(
+                f"Agent {saved!r} (from {pref_path}) was not found on PATH."
+            )
+
+    # 3. Auto-detect from PATH
+    found = [name for name in KNOWN_AGENTS if shutil.which(name)]
+
+    if len(found) == 1:
+        return [found[0]]
+
+    if len(found) == 0:
+        raise ConfigError(
+            "No supported agent CLI found on PATH. "
+            f"Install one of: {', '.join(KNOWN_AGENTS)}, "
+            "or set $SUCODER_AGENT."
+        )
+
+    # 4. Multiple found — interactive prompt
+    return _prompt_agent_choice(found)
+
+
+def _prompt_agent_choice(agents: List[str]) -> List[str]:
+    """Present a numbered menu and save the user's choice."""
+    print("Multiple agent CLIs found on PATH:")
+    for i, name in enumerate(agents, 1):
+        print(f"  {i}. {name}")
+
+    while True:
+        try:
+            raw = input(f"Select agent [1-{len(agents)}]: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            raise ConfigError("No agent selected.") from None
+        if raw.isdigit() and 1 <= int(raw) <= len(agents):
+            choice = agents[int(raw) - 1]
+            break
+        print(f"Please enter a number between 1 and {len(agents)}.")
+
+    # Save for next time
+    pref_path = AGENT_PREFERENCE_FILE.expanduser()
+    pref_path.parent.mkdir(parents=True, exist_ok=True)
+    pref_path.write_text(choice + "\n", encoding="utf-8")
+
+    return [choice]
+
+
 def build_default_config() -> Config:
     """Build a zero-config Config from the environment and git state.
 
@@ -205,16 +281,20 @@ def build_default_config() -> Config:
             "at ~/.sucoder/config.yaml."
         )
 
+    agent_command = detect_agent_command()
+
     git_toplevel = _detect_git_toplevel()
     mirror_name = git_toplevel.name
     mirror_root = Path("/var/tmp/coder-mirrors")
 
     prefixes = BranchPrefixes(human=user, agent="coder")
+    launcher = AgentLauncher(command=agent_command)
     mirror = MirrorSettings(
         name=mirror_name,
         canonical_repo=git_toplevel,
         mirror_name=mirror_name,
         branch_prefixes=prefixes,
+        agent_launcher=launcher,
     )
 
     return Config(

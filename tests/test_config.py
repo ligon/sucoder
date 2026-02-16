@@ -5,7 +5,14 @@ from unittest import mock
 
 import pytest
 
-from sucoder.config import BranchPrefixes, ConfigError, build_default_config, load_config
+from sucoder.config import (
+    KNOWN_AGENTS,
+    BranchPrefixes,
+    ConfigError,
+    build_default_config,
+    detect_agent_command,
+    load_config,
+)
 
 
 def write_config(tmp_path: Path, content: str) -> Path:
@@ -438,7 +445,8 @@ def test_build_default_config_in_git_repo(tmp_path: Path, monkeypatch: pytest.Mo
     fake_result = subprocess.CompletedProcess(
         args=[], returncode=0, stdout=str(tmp_path) + "\n", stderr=""
     )
-    with mock.patch("sucoder.config.subprocess.run", return_value=fake_result):
+    with mock.patch("sucoder.config.subprocess.run", return_value=fake_result), \
+         mock.patch("sucoder.config.detect_agent_command", return_value=["claude"]):
         cfg = build_default_config()
 
     assert cfg.human_user == "testuser"
@@ -452,14 +460,16 @@ def test_build_default_config_in_git_repo(tmp_path: Path, monkeypatch: pytest.Mo
     assert mirror.canonical_repo == tmp_path
     assert mirror.branch_prefixes.human == "testuser"
     assert mirror.branch_prefixes.agent == "coder"
+    assert mirror.agent_launcher.command == ["claude"]
 
 
 def test_build_default_config_not_in_git_repo(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("USER", "testuser")
-    with mock.patch(
-        "sucoder.config.subprocess.run",
-        side_effect=subprocess.CalledProcessError(128, "git"),
-    ):
+    with mock.patch("sucoder.config.detect_agent_command", return_value=["claude"]), \
+         mock.patch(
+             "sucoder.config.subprocess.run",
+             side_effect=subprocess.CalledProcessError(128, "git"),
+         ):
         with pytest.raises(ConfigError, match="Not inside a git repository"):
             build_default_config()
 
@@ -468,3 +478,60 @@ def test_build_default_config_user_unset(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.delenv("USER", raising=False)
     with pytest.raises(ConfigError, match="\\$USER is not set"):
         build_default_config()
+
+
+# ---------------------------------------------------------------------------
+# detect_agent_command
+# ---------------------------------------------------------------------------
+
+
+def test_detect_agent_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SUCODER_AGENT", "claude")
+    monkeypatch.delenv("HOME", raising=False)  # avoid preference file
+    with mock.patch("sucoder.config.shutil.which", side_effect=lambda x: f"/usr/bin/{x}" if x == "claude" else None):
+        assert detect_agent_command() == ["claude"]
+
+
+def test_detect_agent_env_var_not_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SUCODER_AGENT", "nonexistent")
+    with mock.patch("sucoder.config.shutil.which", return_value=None):
+        with pytest.raises(ConfigError, match="not found on PATH"):
+            detect_agent_command()
+
+
+def test_detect_agent_preference_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SUCODER_AGENT", raising=False)
+    pref_file = tmp_path / "agent"
+    pref_file.write_text("codex\n", encoding="utf-8")
+    monkeypatch.setattr("sucoder.config.AGENT_PREFERENCE_FILE", pref_file)
+    with mock.patch("sucoder.config.shutil.which", side_effect=lambda x: f"/usr/bin/{x}" if x == "codex" else None):
+        assert detect_agent_command() == ["codex"]
+
+
+def test_detect_agent_autodetect_single(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("SUCODER_AGENT", raising=False)
+    # No preference file
+    monkeypatch.setattr("sucoder.config.AGENT_PREFERENCE_FILE", tmp_path / "nonexistent")
+    with mock.patch("sucoder.config.shutil.which", side_effect=lambda x: f"/usr/bin/{x}" if x == "gemini" else None):
+        assert detect_agent_command() == ["gemini"]
+
+
+def test_detect_agent_none_on_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("SUCODER_AGENT", raising=False)
+    monkeypatch.setattr("sucoder.config.AGENT_PREFERENCE_FILE", tmp_path / "nonexistent")
+    with mock.patch("sucoder.config.shutil.which", return_value=None):
+        with pytest.raises(ConfigError, match="No supported agent CLI found"):
+            detect_agent_command()
+
+
+def test_detect_agent_multiple_prompts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("SUCODER_AGENT", raising=False)
+    pref_file = tmp_path / "agent"
+    monkeypatch.setattr("sucoder.config.AGENT_PREFERENCE_FILE", pref_file)
+    # Both claude and codex on PATH
+    with mock.patch("sucoder.config.shutil.which", side_effect=lambda x: f"/usr/bin/{x}" if x in ("claude", "codex") else None), \
+         mock.patch("builtins.input", return_value="1"):
+        result = detect_agent_command()
+    assert result == ["claude"]
+    # Verify it saved the preference
+    assert pref_file.read_text(encoding="utf-8").strip() == "claude"
