@@ -230,3 +230,106 @@ def test_resolve_mirror_name_explicit(tmp_path, monkeypatch):
 
     result = runner.invoke(cli.app, ["status", "myrepo"])
     assert "specify one of" not in (result.stdout + (result.output or ""))
+
+
+# ---------------------------------------------------------------------------
+# _resolve_mirror_name – git-based auto-detection (multi-mirror configs)
+# ---------------------------------------------------------------------------
+
+
+def _multi_mirror_config(tmp_path: Path) -> Config:
+    """Build a Config with two mirrors so the single-mirror shortcut is skipped."""
+    user = os.environ.get("USER", "testuser")
+    repo_a = tmp_path / "RepoA"
+    repo_a.mkdir(exist_ok=True)
+    repo_b = tmp_path / "RepoB"
+    repo_b.mkdir(exist_ok=True)
+
+    def _mirror(name: str, repo: Path) -> MirrorSettings:
+        return MirrorSettings(
+            name=name,
+            canonical_repo=repo,
+            mirror_name=name,
+            branch_prefixes=BranchPrefixes(human=user, agent="coder"),
+        )
+
+    return Config(
+        human_user=user,
+        agent_user="coder",
+        agent_group="coder",
+        mirror_root=Path("/var/tmp/coder-mirrors"),
+        mirrors={
+            "repo-a": _mirror("repo-a", repo_a),
+            "repo-b": _mirror("repo-b", repo_b),
+        },
+    )
+
+
+def test_resolve_mirror_name_matches_configured_canonical(tmp_path, monkeypatch):
+    """When cwd's git root matches a configured mirror's canonical_repo, use it."""
+    runner = CliRunner()
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    cfg = _multi_mirror_config(tmp_path)
+    monkeypatch.setattr(cli, "build_default_config", lambda: cfg)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+
+    # Simulate git returning the canonical_repo path of repo-b.
+    target_repo = cfg.mirrors["repo-b"].canonical_repo
+    monkeypatch.setattr(
+        cli, "_detect_git_toplevel", lambda: target_repo,
+    )
+
+    # Use status command; it will fail at MirrorManager level but should
+    # get past _resolve_mirror_name without "specify one of".
+    result = runner.invoke(cli.app, ["status"])
+    assert "specify one of" not in (result.stdout + (result.output or ""))
+
+
+def test_resolve_mirror_name_creates_ephemeral_for_unconfigured_repo(tmp_path, monkeypatch):
+    """When cwd is a git repo not in config, an ephemeral mirror is created."""
+    runner = CliRunner()
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    cfg = _multi_mirror_config(tmp_path)
+    monkeypatch.setattr(cli, "build_default_config", lambda: cfg)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+
+    # Simulate git returning a repo that is NOT in the config.
+    unconfigured_repo = tmp_path / "VESDemand"
+    unconfigured_repo.mkdir()
+    monkeypatch.setattr(
+        cli, "_detect_git_toplevel", lambda: unconfigured_repo,
+    )
+
+    result = runner.invoke(cli.app, ["status"])
+    # Should not hit the "Multiple mirrors" error.
+    assert "specify one of" not in (result.stdout + (result.output or ""))
+    # The ephemeral mirror should have been injected.
+    assert "VESDemand" in cfg.mirrors
+
+
+def test_resolve_mirror_name_not_in_git_repo(tmp_path, monkeypatch):
+    """When not in a git repo and multiple mirrors exist, show the error."""
+    from sucoder.config import ConfigError as CfgError
+
+    runner = CliRunner()
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    cfg = _multi_mirror_config(tmp_path)
+    monkeypatch.setattr(cli, "build_default_config", lambda: cfg)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+
+    def _raise_not_git():
+        raise CfgError("Not inside a git repository.")
+
+    monkeypatch.setattr(cli, "_detect_git_toplevel", _raise_not_git)
+
+    result = runner.invoke(cli.app, ["status"])
+    assert "specify one of" in (result.stdout + (result.output or "")).lower()

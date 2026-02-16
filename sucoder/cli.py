@@ -19,7 +19,16 @@ except (ImportError, AttributeError):  # pragma: no cover - defensive
 import typer
 
 from . import __version__
-from .config import Config, ConfigError, build_default_config, load_config
+from .config import (
+    AgentLauncher,
+    BranchPrefixes,
+    Config,
+    ConfigError,
+    MirrorSettings,
+    _detect_git_toplevel,
+    build_default_config,
+    load_config,
+)
 from .executor import CommandExecutor
 from .logging_utils import setup_logger
 from .mirror import MirrorError, MirrorManager
@@ -139,13 +148,61 @@ def _build_manager(config: Config, logger, dry_run: bool) -> MirrorManager:
 
 
 def _resolve_mirror_name(ctx: typer.Context, mirror: Optional[str]) -> str:
-    """Return the mirror name, defaulting to the sole mirror when omitted."""
+    """Return the mirror name, defaulting to the sole mirror when omitted.
+
+    Resolution order when *mirror* is ``None``:
+
+    1. If the config contains exactly one mirror, use it.
+    2. Detect the git root of the current working directory and match it
+       against the ``canonical_repo`` of every configured mirror.
+    3. If no configured mirror matches, create an ephemeral
+       :class:`MirrorSettings` from the git root (analogous to
+       :func:`build_default_config`) and inject it into the in-memory
+       config so downstream code can use it normally.
+    4. If we're not inside a git repo at all, fall through to the
+       original "Multiple mirrors configured" error.
+    """
     if mirror is not None:
         return mirror
     config = _get_config(ctx)
     names = list(config.mirrors.keys())
     if len(names) == 1:
         return names[0]
+
+    # Step 1 & 2: try git-based detection
+    try:
+        git_toplevel = _detect_git_toplevel()
+    except ConfigError:
+        # Not inside a git repo – fall through to the error.
+        raise typer.BadParameter(
+            f"Multiple mirrors configured; specify one of: {', '.join(sorted(names))}",
+            param_hint="MIRROR",
+        )
+
+    # Step 1: match cwd's repo root against configured mirrors.
+    resolved_toplevel = git_toplevel.resolve()
+    for name, settings in config.mirrors.items():
+        if settings.canonical_repo.resolve() == resolved_toplevel:
+            return name
+
+    # Step 2: create an ephemeral mirror for an unconfigured repo.
+    mirror_name = git_toplevel.name
+    if mirror_name not in config.mirrors:
+        prefixes = BranchPrefixes(human=config.human_user, agent=config.agent_user)
+        launcher = config.agent_launcher or AgentLauncher()
+        ephemeral = MirrorSettings(
+            name=mirror_name,
+            canonical_repo=git_toplevel,
+            mirror_name=mirror_name,
+            branch_prefixes=prefixes,
+            agent_launcher=launcher,
+            skills=list(config.skills),
+        )
+        # config.mirrors is typed as Mapping but is a plain dict at runtime.
+        config.mirrors[mirror_name] = ephemeral  # type: ignore[index]
+        return mirror_name
+
+    # Name collision with an existing mirror – require explicit selection.
     raise typer.BadParameter(
         f"Multiple mirrors configured; specify one of: {', '.join(sorted(names))}",
         param_hint="MIRROR",
