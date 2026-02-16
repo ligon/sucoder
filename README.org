@@ -8,6 +8,8 @@ The goal of this project is to enable a safe collaboration workflow between a hu
 - sync :: Fetch updates from the canonical repository into the mirror without granting write access.
 - start-task :: Create a new agent task branch based on a human branch while preserving branch naming conventions.
 - status :: Summarize the state of a mirror, including permissions and git remotes.
+- collaborate :: Prepare canonical, ensure mirror, and launch agent in one step.
+- version :: Print the installed sucoder version.
 - --dry-run :: Available on modifying commands to review logged operations without executing.
 
 * Usage
@@ -80,11 +82,11 @@ The top-level =Makefile= automates common host setup tasks; run =make= (defaults
    ls ~/.sucoder/skills
    sucoder skills-list
    sucoder mirrors-list
-   codex read ~/.sucoder/skills/SKILLS.md
+   cat ~/.sucoder/skills/SKILLS.md
    #+end_src
    The listings should succeed without permission errors. The CLI helper highlights any unreadable
-   paths, =sucoder mirrors-list= prints the configured mirrors (with their canonical and mirror directories),
-   and the =codex read= command preloads the catalog into the session buffer.
+   paths, and =sucoder mirrors-list= prints the configured mirrors (with their canonical and mirror directories).
+   Reading the =SKILLS.md= catalog verifies the skills are accessible and shows what is available.
 
 ** Provision the Mirror
 1. Prepare the canonical repository for collaboration.
@@ -125,32 +127,29 @@ The top-level =Makefile= automates common host setup tasks; run =make= (defaults
   sucoder agents-run project --agent-command "foo --flag" --agent-env TOKEN=abc123
   #+end_src
 
-- The CLI automatically appends `--yolo` when launching Codex so the sandbox allows writes to the mirror.  When invoking Codex manually, include `--yolo` (or an equivalent workspace-write mode) to avoid read-only failures.  The helper will also warn if it detects a read-only sandbox and still attempts a launch.
+- The CLI detects the agent type (Codex, Claude, Gemini) and automatically injects the appropriate write-access flags (for example =--sandbox danger-full-access= for Codex, =--dangerously-skip-permissions= for Claude, =--yolo= for Gemini) so the agent can write to the mirror.  The helper will also warn if it detects a read-only sandbox and still attempts a launch.
 
-- Org authoring playground (documentation example)
-  #+begin_src shell
-  codex read docs/examples/org-authoring-demo.org
-  #+end_src
+- Org authoring playground (documentation example): =docs/examples/org-authoring-demo.org=.
   Demonstrates the in-repo Org skills—structure, markup, tables, capture, citations,
   exporting, agenda integration—so humans and agents have a quick reference.
 
 ** Human: Review and Integrate Agent Work
 1. Fetch the agent branch back into the canonical repository.
    #+begin_src shell
-   git -C /home/ligon/src/project.git fetch /var/tmp/coder-mirrors/project coder/add-metrics-20251107164028
+   git -C <canonical-repo> fetch <mirror-path> coder/add-metrics-20251107164028
    #+end_src
 2. Check out and review the branch inside the canonical repository.
    #+begin_src shell
-   git -C /home/ligon/src/project.git checkout -b review/add-metrics FETCH_HEAD
+   git -C <canonical-repo> checkout -b review/add-metrics FETCH_HEAD
    #+end_src
 3. Fast-forward the reviewed branch to keep history linear (default):
    #+begin_src shell
-   git -C /home/ligon/src/project.git checkout ligon/main
-   git -C /home/ligon/src/project.git merge --ff-only review/add-metrics
+   git -C <canonical-repo> checkout main
+   git -C <canonical-repo> merge --ff-only review/add-metrics
    #+end_src
    If the branch is not fast-forwardable because main advanced, choose either a single merge commit or rebase the review branch onto main, then retry `merge --ff-only`. If you prefer to pull directly from the agent mirror, you can do so without setting global pull defaults:
    #+begin_src shell
-   git -C /home/ligon/src/project.git pull --ff-only /var/tmp/coder-mirrors/project coder/add-metrics-20251107164028
+   git -C <canonical-repo> pull --ff-only <mirror-path> coder/add-metrics-20251107164028
    #+end_src
    The canonical repository remains unwritable by the agent throughout this flow.
 
@@ -162,13 +161,13 @@ human_user: ligon
 agent_user: coder
 agent_group: coder
 mirror_root: /var/tmp/coder-mirrors
-log_dir: /home/ligon/.sucoder/logs
+log_dir: ~/.sucoder/logs
 skills:
-  - /home/ligon/.sucoder/skills  # optional global default for all mirrors (overridable per-mirror)
-system_prompt: /home/ligon/.sucoder/system_prompt.org
+  - ~/.sucoder/skills  # optional global default for all mirrors (overridable per-mirror)
+system_prompt: ~/.sucoder/system_prompt.org
 mirrors:
   project:
-    canonical_repo: /home/ligon/src/project.git
+    canonical_repo: ~/src/project.git
     mirror_name: project
     default_base_branch: main
     task_branch_prefix: task
@@ -177,8 +176,8 @@ mirrors:
       agent: coder
     # Optional: override or extend global skills for this mirror
     skills:
-      - /home/ligon/.sucoder/skills/org-style
-      - /home/ligon/.sucoder/skills/document-skill
+      - ~/.sucoder/skills/org-style
+      - ~/.sucoder/skills/document-skill
     agent_launcher:
       # Optional: map generic intents to agent-specific flags
       needs_yolo: true
@@ -208,14 +207,14 @@ per-mirror > global > profile > UNKNOWN.
 | workdir        | Set agent working directory | (none)                                                | (none)                       | (none)                             | Only applied if you set a template. |
 | default_flag   | Pass through default flags  | {flag}                                                | {flag}                       | {flag}                             | Each default flag is rendered through this template. |
 | skills         | Expose skills paths         | (none)                                                | (none)                       | (none)                             | Use "--skills {path}" or similar if your CLI supports it. |
-| system_prompt  | Inject system prompt        | (none)                                                | --system-prompt              | (none)                             | If unset, sucoder appends the prompt as trailing text when inline prompts are supported. |
+| system_prompt  | Inject system prompt        | (none)                                                | --system-prompt              | --prompt-interactive               | If unset, sucoder appends the prompt as trailing text when inline prompts are supported. |
 
 If you change any defaults, update =AGENT_PROFILES= in =sucoder/config.py= alongside the
 README so the documentation stays in sync.
 
-** Pin Codex Node Version with nvm
-Codex currently bundles Node.js 18, but =sucoder= can wrap the launch so that Codex
-runs under a newer nvm-managed runtime (for example Node 22).
+** Pin Node Version with nvm
+Some agents (notably Codex) bundle Node.js; =sucoder= can wrap the launch so that the
+agent runs under a specific nvm-managed runtime (for example Node 22).
 
 1. Install/activate the desired version for the agent user:
    #+begin_src shell
@@ -224,11 +223,11 @@ runs under a newer nvm-managed runtime (for example Node 22).
    #+end_src
    Replace the version string with the release you need (direct versions, =lts/*= aliases, etc.).
 
-2. Update the mirror configuration so launches always source nvm before running Codex:
+2. Update the mirror configuration so launches always source nvm before running the agent:
    #+begin_src yaml
    mirrors:
      project:
-       canonical_repo: /home/ligon/src/project.git
+       canonical_repo: ~/src/project.git
        agent_launcher:
          command:
            - codex
@@ -240,8 +239,8 @@ runs under a newer nvm-managed runtime (for example Node 22).
 When the =nvm= block is present, the launcher injects:
 - =export NVM_DIR=…; source "$NVM_DIR/nvm.sh"=
 - =nvm use <version>= (fails fast if the version is missing)
-- =exec codex …= so the rest of the CLI arguments (including the injected =--yolo= and
-  context prelude) are preserved.
+- =exec <agent> …= so the rest of the CLI arguments (including the injected write-access
+  flags and context prelude) are preserved.
 
 If =dir= is omitted the helper assumes the agent’s home directory contains =~.nvm=.
 Any existing =agent_launcher.command= and =agent_launcher.env= settings continue to work.
@@ -260,18 +259,17 @@ Workspace skills follow Anthropic’s Agent Skills Spec:
   The script reads =../Skills/trusted_skill_sources.yaml= to determine which sources to include (local catalogs plus curated repos; defaults include =openai/skills= and =anthropics/skills=). If a target is not writable (for example =/home/ligon/.sucoder/skills=), use =--output= to pick a writable path.
 - The generated catalog shows entries per source and flags conflicts when the same skill name appears in multiple sources.
 - Any LLM can read the catalog and follow linked =SKILL.md= files. Curated entries are documentation-first; helper scripts are optional.
-- To install a curated skill manually, download =skills/.curated/<name>= from https://github.com/openai/skills and place it under your skills directory (e.g., =~/.codex/skills= or whatever your agent uses).
+- To install a curated skill manually, download =skills/.curated/<name>= from https://github.com/openai/skills and place it under your skills directory (e.g., =~/.sucoder/skills=).
 - The frontmatter `name` must match the directory name exactly.
 - Long-form references, scripts, and assets live under =references/=, =scripts/=, and =assets/= to
   keep the entrypoint concise.
-- The shared catalog (`skills/SKILLS.md`) lists every bundled skill so agents discover them
-  automatically.
-- A reusable system prompt template (`default_system_prompt.org`) mirrors these expectations, including a reminder to confirm today’s date at session start.
-- The upstream workflow is available in `skills/skill-creator/`; use it alongside `document-skill` when you need initialization or packaging scripts.
+- The shared catalog (=~/.sucoder/skills/SKILLS.md=) in the skills repository lists every bundled skill so agents discover them automatically.
+- A reusable system prompt template (`default_system_prompt.org`) mirrors these expectations, including a reminder to confirm today's date at session start.
+- The upstream workflow is available in the =sucoder-skills= repository under =skill-creator/=; use it alongside =document-skill= when you need initialization or packaging scripts.
 - A starter configuration (`default_config.yaml`) points at the bundled skills directory and default prompt; copy or merge it into =~/.sucoder/config.yaml= as needed.
 
 Resource directories are summarized automatically when present:
-- =references/= — documentation to load on demand (each file includes a suggested `codex read` command).
+- =references/= — documentation to load on demand.
 - =scripts/= — helper executables (never run automatically; humans can execute after review).
 - =assets/= — supporting files such as templates or images that may be referenced in outputs.
 
@@ -325,7 +323,6 @@ pytest
 
 * Next Steps
 - Harden permission checks to verify that the canonical repository is mounted read-only for the agent user.
-- Add workflows for human operators to fetch agent branches back into their canonical repository.
 
 * Packaging
 This project uses Poetry for packaging and dependency management.
