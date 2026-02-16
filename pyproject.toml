@@ -1,0 +1,32 @@
+[tool.poetry]
+name = "sucoder"
+version = "0.1.0"
+description = "Tools for securely collaborating with an LLM agent via git mirrors."
+authors = ["Ligon and Sue the Coder"]
+license = "Apache-2.0"
+readme = "README.org"
+packages = [{ include = "sucoder" }]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+pyyaml = "^6.0"
+typer = { version = "^0.12", extras = ["all"] }
+click = ">=8.1,<8.2"
+packaging = "^24.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.2"
+mypy = "^1.18"
+types-pyyaml = "^6.0"
+
+[tool.poetry.scripts]
+sucoder = "sucoder.cli:app"
+
+[tool.mypy]
+python_version = "3.11"
+show_error_codes = true
+pretty = true
+
+[build-system]
+requires = ["poetry-core>=1.7.0"]
+build-backend = "poetry.core.masonry.api"

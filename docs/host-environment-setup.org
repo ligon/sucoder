@@ -1,0 +1,102 @@
+#+title: Host Environment Setup Checklist
+#+description: Steps to recreate the human/agent collaboration environment on a new machine.
+
+* Purpose
+Quick checklist for rebuilding the surrounding environment (accounts, config, skills, prompts, permissions) that sit outside any git clone.
+
+* Accounts and permissions
+- Create or identify the human login and the agent login (defaults: human = =ligon=, agent = =coder=, group = =coder=).
+- Make sure the agent group can read (not write) the human config directory and skills checkout.
+- Prefer agent mirrors under a writable temp location (default =/var/tmp/coder-mirrors=) owned by the human with group access for =coder=.
+
+** Creating the agent account (root required)
+- Create the group (idempotent) and user if they do not exist:
+  #+begin_src shell
+  sudo groupadd -f coder
+  id -u coder || sudo useradd -m -s /bin/bash -g coder -G coder coder
+  sudo passwd -l coder  # lock password; use sudo/su for elevation when needed
+  #+end_src
+- Ensure the home directory exists at =/home/coder= and has sane perms:
+  #+begin_src shell
+  sudo chmod 755 /home/coder
+  #+end_src
+- Makefile helper: =make create-agent-user= runs the above with =sudo= (or =SUDO= override).
+- The default =make= target now runs user creation before seeding config/skills, so run it as a user with sudo access.
+
+* Core directories
+- =~/.sucoder=: config + symlinks. Require group-read, no group-write.
+- =~/.sucoder/skills=: symlink to skills checkout (see below).
+- =~/.sucoder/system_prompt.org=: global system prompt loaded before sessions.
+- Optional logs: =/home/ligon/.sucoder/logs= (or another path referenced in config).
+
+* Configuration
+- Copy =config.example.yaml= (or =default_config.yaml=) to =~/.sucoder/config.yaml= and adjust:
+  - =human_user=, =agent_user=, =agent_group=
+  - =mirror_root= path for agent mirrors
+  - =skills= default path(s)
+  - =system_prompt= path (global prompt)
+  - per-mirror entries: canonical repo path, mirror name, base branch, branch prefixes, agent launcher flags (for Codex/nvm)
+- Fix permissions after editing:
+  #+begin_src shell
+  sudo chgrp coder ~/.sucoder ~/.sucoder/config.yaml
+  sudo chmod 750 ~/.sucoder
+  sudo chmod 640 ~/.sucoder/config.yaml
+  #+end_src
+
+* Skills repository
+- Clone the skills repo somewhere the human owns, e.g.:
+  #+begin_src shell
+  git clone https://github.com/ligon/sucoder-skills ~/Projects/sucoder-skills
+  ln -s ~/Projects/sucoder-skills ~/.sucoder/skills
+  sudo chgrp -R coder ~/Projects/sucoder-skills
+  sudo chmod -R g+r ~/Projects/sucoder-skills
+  sudo chmod -R g-w ~/Projects/sucoder-skills
+  #+end_src
+- Warm up discovery to catch permission issues early:
+  #+begin_src shell
+  ls ~/.sucoder/skills
+  sucoder skills-list
+  codex read ~/.sucoder/skills/SKILLS.md
+  #+end_src
+
+* System prompt
+- Start from =default_system_prompt.org= or your own content:
+  #+begin_src shell
+  cp default_system_prompt.org ~/.sucoder/system_prompt.org
+  # edit to add local norms, commands to run on session start, escalation rules, etc.
+  #+end_src
+- Ensure group-read access for the agent.
+
+* Tooling prerequisites
+- Python + Poetry (for =sucoder= CLI): =poetry install= inside the project to get dependencies and run =poetry run sucoder --help=.
+- Node via nvm if you want to pin a Codex runtime; configure =agent_launcher.nvm= in the mirror config when used.
+- Codex CLI installed and callable for the human; =sucoder= injects =--yolo= automatically when launching agents.
+
+* Mirror preparation flow (per project)
+- Prepare canonical repo permissions and optional =coder= remote:
+  #+begin_src shell
+  sucoder prepare-canonical <mirror-name> [--sudo]
+  #+end_src
+- Clone or refresh the agent mirror:
+  #+begin_src shell
+  sucoder agents-clone <mirror-name> --verbose
+  sucoder sync <mirror-name>
+  #+end_src
+- Create a task branch for the agent:
+  #+begin_src shell
+  sucoder start-task <mirror-name> <task> --base <human-branch>
+  #+end_src
+
+* Verification checks
+- =sucoder mirrors-list= shows configured mirrors and paths.
+- =sucoder status <mirror-name>= confirms remotes, branch prefixes, and permissions.
+- =pytest= from the repo root verifies the CLI locally.
+
+* Optional niceties
+- Add shell completion for =sucoder= if your shell supports it.
+- Keep a scratch note (Org/Markdown) of local norms and upload it to the system prompt when it changes.
+- Use the top-level =Makefile= to automate setup on a new host:
+  - =make env-setup= (create agent user, ensure Poetry, seed config + prompt, clone + link skills, set permissions)
+  - =make warmup= (run discovery checks)
+  - =make poetry-ensure= (install Poetry for the agent user if missing; reminds to add ~/.local/bin to PATH) — also runs as part of env-setup
+  - =make poetry-install= / =make test= for project dependencies and validation.

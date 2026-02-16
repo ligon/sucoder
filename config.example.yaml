@@ -1,0 +1,22 @@
+human_user: ligon
+agent_user: coder
+agent_group: coder
+mirror_root: /var/tmp/coder-mirrors
+log_dir: /home/ligon/.sucoder/logs
+system_prompt: /home/ligon/.sucoder/system_prompt.org
+mirrors:
+  sample:
+    canonical_repo: /home/ligon/src/project.git
+    mirror_name: project
+    default_base_branch: main
+    task_branch_prefix: task
+    branch_prefixes:
+      human: ligon
+      agent: coder
+    agent_launcher:
+      # Map generic intents into agent-specific flags; defaults suit codex.
+      needs_yolo: true
+      writable_dirs:
+        - "~"
+      flags:
+        skills: "--skills {path}"

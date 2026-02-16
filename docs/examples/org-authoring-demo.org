@@ -1,0 +1,140 @@
+#+TITLE: Org Authoring Playground
+#+AUTHOR: Assistant Demonstrator
+#+DATE: <2025-11-09 Sun>
+#+OPTIONS: toc:nil num:nil H:3 author:t date:t
+#+PROPERTY: header-args:python :results output :exports both :eval never-export
+#+PROPERTY: header-args:emacs-lisp :results value :exports both :eval never-export
+#+bibliography: ~/bibtex/main.bib
+#+bibliography: ~/bibtex/selected_working_papers.bib
+#+cite_export: csl chicago-fullnote-bibliography.csl
+
+* Overview
+Welcome to the Org authoring playground. This file demonstrates the workspace
+skills we’ve been codifying: document structure, lists, markup, TODO workflows,
+hyperlinks, tables, capture-style entries, source blocks, citations, exporting, and
+more. Use it as a reference or clone its patterns when drafting new documentation.
+
+* Structure & Drawers
+:PROPERTIES:
+:Owner: Assistant
+:END:
+:LOGBOOK:
+- State "TODO"       from              <2025-11-09 Sun>
+:END:
+
+The property drawer tracks metadata; =LOGBOOK= stores state changes. Folding a subtree
+places all drawers upfront so the body stays tidy. Below we demonstrate headlines,
+refiling, and linking.
+
+** TODO Refresh capture templates :@workspace:
+SCHEDULED: <2025-11-12 Wed>  DEADLINE: <2025-11-15 Sat>
+:PROPERTIES:
+:EFFORT:   1:00
+:END:
+- [ ] Review =~/.Misc/doom.org= for capture templates.
+- [ ] Align diary IDs across systems.
+- [ ] Note attachment policy updates.
+
+** DONE Review Org markup guidelines
+CLOSED: [2025-11-09 Sun]  SCHEDULED: <2025-11-09 Sun>
+- The rich markup skill covers emphasis, math, and symbols.
+- The markup checklist warns against dollar-sign math.
+
+* Lists & Markup
+- Bullet list demo: =emphasis=, /italics/, =code=, and ~verbatim~ bits.
+- Description list :: Use =- Label :: Details= to avoid faux headings.
+- [X] Checkbox--Completed item anchored under a non-TODO heading.
+- [ ] Checkbox--Not completed item anchored under a non-TODO heading.
+
+#+begin_quote
+“Everything should be made as simple as possible, but not simpler.” — often
+paraphrasing Einstein.
+#+end_quote
+
+Inline math uses =\(...\)= like \(\mu=\mathbb{E}[X]\); display math uses =\[...\]=:
+
+\[
+  \Sigma = \begin{bmatrix} \sigma^2_{x} & \sigma_{xy} \\
+                             \sigma_{xy} & \sigma^2_{y} \end{bmatrix}.
+\]
+
+* Hyperlinks & Targets
+Set descriptive anchor targets so references survive refiling.
+
+** Targets
+<<sec:links>> Example anchor for internal links.
+
+** Jump Table
+- Internal link :: See [[sec:links][Anchors section]].
+- External link :: [[https://orgmode.org/manual/][Org manual]].
+- Related skill :: [[file:../../skills/orgmode/hyperlinks/SKILL.md][Hyperlink Skill Guide]].
+
+* Tables
+#+NAME: team-effort-table
+#+ATTR_ORG: :align cccc
+| Task                      | Owner     | Effort | Notes                         |
+|---------------------------+-----------+--------+-------------------------------|
+| Document capture workflow | Assistant | 1:00   | <120 columns; width cookies?> |
+| Agenda defaults review    | Maintainer| 0:30   | Column view uses effort       |
+| Citation audit            | Librarian | 0:45   |                             |
+
+| Col | Width | Example |
+|-----+-------+---------|
+| <10>| <10>  | Width cookies control display |
+
+* Capture & Attachments
+Captured entries often start in a dedicated inbox. Example journal entry:
+
+** <2025-11-09 Sun> 09:30 Quick Capture Demo
+FILE: ~/Assistant/in.org
+:ATTACH:
+assets/demo-figure.png
+:END:
+- Captured via org-capture template.
+- Attachment stored under project assets; note path for maintainers.
+
+* Source Blocks & Results
+#+NAME: tiny-python-demo
+#+begin_src python
+for i in range(3):
+    print(f"Iteration {i}")
+#+end_src
+
+#+RESULTS: tiny-python-demo
+: Iteration 0
+: Iteration 1
+: Iteration 2
+
+Source blocks use lowercase directives, explicit =:results=, and avoid auto-eval during export.
+
+* Citations & Bibliography
+Risk-sharing literature traces back to Townsend [cite:@townsend94] and Arrow-Debreu
+[cite/t:@arrow-debreu54]. For risk-sharing tests see [cite:@ray98d].
+
+#+print_bibliography:
+
+* Export & Publishing
+Include local export instructions in handoffs.
+
+#+begin_example
+Run: skills/orgmode/exporting/scripts/export-pdf.sh docs/examples/org-authoring-demo.org
+#+end_example
+
+Publishing reminders:
+- Define =org-publish-project-alist= when multi-file exports emerge.
+- Run =emacs --batch -l ~/.emacs.d/init.el --eval '(org-publish-all t)'= as needed.
+
+* Agenda & Effort
+Effort estimates appear in agenda column view; scheduled tasks zip into the weekly agenda.
+
+* Summary
+This playground attempts to touch each skill:
+- Structure, drawers, TODO states, effort, scheduled/deadline entries.
+- Lists, quotes, math, rich markup, links, targets.
+- Tables with width control.
+- Capture entry and attachment drawer.
+- Source block with captured results.
+- Citations with bibliographies.
+- Export command reminder and publishing hints.
+
+Happy authoring!

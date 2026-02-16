@@ -1,0 +1,20 @@
+human_user: ligon
+agent_user: coder
+agent_group: coder
+mirror_root: /var/tmp/coder-mirrors
+log_dir: /home/ligon/.sucoder/logs
+system_prompt: default_system_prompt.org
+mirrors:
+  assistant:
+    canonical_repo: ~/sucoder
+    mirror_name: Assistant
+    default_base_branch: main
+    task_branch_prefix: task
+    branch_prefixes:
+      human: ligon
+      agent: coder
+    skills:
+      - ~/.sucoder/skills
+    agent_launcher:
+      flags:
+        skills: "--skills {path}"
