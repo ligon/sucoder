@@ -276,9 +276,9 @@ per-mirror > global > profile > UNKNOWN.
 If you change any defaults, update =AGENT_PROFILES= in =sucoder/config.py= alongside the
 README so the documentation stays in sync.
 
-** Pin Node Version with nvm
-Some agents (notably Codex) bundle Node.js; =sucoder= can wrap the launch so that the
-agent runs under a specific nvm-managed runtime (for example Node 22).
+** Pin agent Node version with nvm
+Some agents (e.g., Codex) bundle their own Node.js runtime.  =sucoder= can wrap the
+launch so that the agent runs under a newer nvm-managed runtime instead (for example Node 22).
 
 1. Install/activate the desired version for the agent user:
    #+begin_src shell
@@ -303,8 +303,8 @@ agent runs under a specific nvm-managed runtime (for example Node 22).
 When the =nvm= block is present, the launcher injects:
 - =export NVM_DIR=…; source "$NVM_DIR/nvm.sh"=
 - =nvm use <version>= (fails fast if the version is missing)
-- =exec <agent> …= so the rest of the CLI arguments (including the injected write-access
-  flags and context prelude) are preserved.
+- =exec <agent> …= so the rest of the CLI arguments (including any injected flags and
+  context prelude) are preserved.
 
 If =dir= is omitted the helper assumes the agent’s home directory contains =~.nvm=.
 Any existing =agent_launcher.command= and =agent_launcher.env= settings continue to work.
@@ -333,7 +333,7 @@ Workspace skills follow Anthropic’s Agent Skills Spec:
 - A starter configuration (`default_config.yaml`) points at the bundled skills directory and default prompt; copy or merge it into =~/.sucoder/config.yaml= as needed.
 
 Resource directories are summarized automatically when present:
-- =references/= — documentation to load on demand.
+- =references/= — documentation to load on demand (each file includes a suggested load command).
 - =scripts/= — helper executables (never run automatically; humans can execute after review).
 - =assets/= — supporting files such as templates or images that may be referenced in outputs.
 

@@ -35,7 +35,7 @@ Quick checklist for rebuilding the surrounding environment (accounts, config, sk
   - =mirror_root= path for agent mirrors
   - =skills= default path(s)
   - =system_prompt= path (global prompt)
-  - per-mirror entries: canonical repo path, mirror name, base branch, branch prefixes, agent launcher flags (for Codex/nvm)
+  - per-mirror entries: canonical repo path, mirror name, base branch, branch prefixes, agent launcher flags (including nvm settings if needed)
 - Fix permissions after editing:
   #+begin_src shell
   sudo chgrp coder ~/.sucoder ~/.sucoder/config.yaml
@@ -69,7 +69,7 @@ Quick checklist for rebuilding the surrounding environment (accounts, config, sk
 
 * Tooling prerequisites
 - Python + Poetry (for =sucoder= CLI): =poetry install= inside the project to get dependencies and run =poetry run sucoder --help=.
-- Node via nvm if you want to pin a Codex runtime; configure =agent_launcher.nvm= in the mirror config when used.
+- Node via nvm if you want to pin the agent's Node runtime; configure =agent_launcher.nvm= in the mirror config when used.
 - Agent CLI (Codex, Claude Code, Gemini CLI, etc.) installed and callable for the human; =sucoder= injects the appropriate write-access flag automatically when launching agents (e.g., =--yolo= for Codex; see the flag template table in =README.org=).
 
 * Mirror preparation flow (per project)
