@@ -323,6 +323,9 @@ class MirrorManager:
             raise MirrorError(
                 f"Agent launcher command for mirror {ctx.settings.name} is empty."
             )
+        # Store detected agent type so helpers (e.g., _file_read_hint) can
+        # produce agent-appropriate output without threading args everywhere.
+        self._detected_agent_type = _detect_agent_type(base_command)
         command = list(base_command)
         if extra_args:
             command.extend(extra_args)
@@ -1310,6 +1313,17 @@ class MirrorManager:
             return name, description
         return path.stem, ""
 
+    def _file_read_hint(self, path: Path) -> str:
+        """Return an agent-appropriate file-read command hint for the given path."""
+        agent_type = getattr(self, "_detected_agent_type", AgentType.UNKNOWN)
+        if agent_type == AgentType.CODEX:
+            return f"codex read {path}"
+        if agent_type == AgentType.CLAUDE:
+            return f"Read tool: {path}"
+        if agent_type == AgentType.GEMINI:
+            return f"read {path}"
+        return f"load {path}"
+
     def _format_skill_reference(self, reference: Path) -> str:
         normalized = (
             self._normalize_skill_file_path(reference)
@@ -1322,7 +1336,7 @@ class MirrorManager:
         if description:
             line += f" — {description}"
         if normalized.exists():
-            line += f" (load with `codex read {normalized}`)"
+            line += f" (load with `{self._file_read_hint(normalized)}`)"
         return line
 
     def _render_resource_summary(self, skill_file: Path) -> str:
@@ -1355,11 +1369,11 @@ class MirrorManager:
             return ""
 
         lines = [
-            "References (load specific files with `codex read <path>` when needed):",
+            "References (load specific files when needed):",
         ]
         for path in files[:20]:
             rel = path.relative_to(skill_dir)
-            lines.append(f"- {rel} — load with `codex read {path}`")
+            lines.append(f"- {rel} — load with `{self._file_read_hint(path)}`")
         if len(files) > 20:
             lines.append(f"- ... ({len(files) - 20} more)")
         return "\n".join(lines)

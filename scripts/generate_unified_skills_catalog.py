@@ -335,7 +335,7 @@ def main() -> None:
         action="append",
         dest="installed_dirs",
         type=Path,
-        default=[Path("~/.codex/skills").expanduser()],
+        default=[Path("~/.sucoder/skills").expanduser()],
         help="Directory to check for installed curated skills (can be repeated).",
     )
     parser.add_argument(
