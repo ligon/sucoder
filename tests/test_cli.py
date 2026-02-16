@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 import pytest
 
@@ -11,6 +13,7 @@ pytest.importorskip("typer")
 from typer.testing import CliRunner
 
 from sucoder import cli
+from sucoder.config import BranchPrefixes, Config, MirrorSettings
 
 try:
     from click.shell_completion import CompletionItem as ClickCompletionItem
@@ -126,3 +129,104 @@ def test_mirror_completion_uses_click_completion_items(tmp_path, monkeypatch):
         assert first.value == "sample"
     else:
         assert first == "sample"
+
+
+# ---------------------------------------------------------------------------
+# Zero-config callback flow
+# ---------------------------------------------------------------------------
+
+
+def _fake_default_config(tmp_path: Path) -> Config:
+    """Build a minimal Config like build_default_config would produce."""
+    user = os.environ.get("USER", "testuser")
+    mirror = MirrorSettings(
+        name="myrepo",
+        canonical_repo=tmp_path,
+        mirror_name="myrepo",
+        branch_prefixes=BranchPrefixes(human=user, agent="coder"),
+    )
+    return Config(
+        human_user=user,
+        agent_user="coder",
+        agent_group="coder",
+        mirror_root=Path("/var/tmp/coder-mirrors"),
+        mirrors={"myrepo": mirror},
+    )
+
+
+def test_zero_config_mirrors_list(tmp_path, monkeypatch):
+    """mirrors-list works without a config file when build_default_config succeeds."""
+    runner = CliRunner()
+    # Ensure default config path does not exist.
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    cfg = _fake_default_config(tmp_path)
+    monkeypatch.setattr(cli, "build_default_config", lambda: cfg)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+
+    result = runner.invoke(cli.app, ["mirrors-list"])
+    assert result.exit_code == 0
+    assert "myrepo" in result.stdout
+
+
+def test_zero_config_startup_warning(tmp_path, monkeypatch):
+    """In zero-config mode, startup check failures become warnings instead of errors."""
+    runner = CliRunner()
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    cfg = _fake_default_config(tmp_path)
+    monkeypatch.setattr(cli, "build_default_config", lambda: cfg)
+
+    from sucoder.startup_checks import StartupError
+    monkeypatch.setattr(
+        cli, "run_startup_checks",
+        lambda *a, **kw: (_ for _ in ()).throw(StartupError("agent user not found")),
+    )
+
+    result = runner.invoke(cli.app, ["mirrors-list"])
+    # Should NOT exit with code 2 — warning only.
+    assert result.exit_code == 0
+    assert "Warning" in result.output or "agent user not found" in result.output
+
+
+# ---------------------------------------------------------------------------
+# _resolve_mirror_name
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_mirror_name_single(tmp_path, monkeypatch):
+    """When config has exactly one mirror, omitting the name succeeds."""
+    runner = CliRunner()
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    cfg = _fake_default_config(tmp_path)
+    monkeypatch.setattr(cli, "build_default_config", lambda: cfg)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+
+    # mirrors-list doesn't take a mirror arg, so test via status which
+    # does require a mirror.  It will fail at the MirrorManager level, but
+    # the important thing is it gets past _resolve_mirror_name.
+    result = runner.invoke(cli.app, ["status"])
+    # Should not fail due to "specify one of" (mirror resolution worked).
+    assert "specify one of" not in (result.stdout + (result.output or ""))
+
+
+def test_resolve_mirror_name_explicit(tmp_path, monkeypatch):
+    """Explicit mirror name is passed through."""
+    runner = CliRunner()
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    cfg = _fake_default_config(tmp_path)
+    monkeypatch.setattr(cli, "build_default_config", lambda: cfg)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+
+    result = runner.invoke(cli.app, ["status", "myrepo"])
+    assert "specify one of" not in (result.stdout + (result.output or ""))

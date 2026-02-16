@@ -15,10 +15,11 @@ SKILLS_REPO ?= https://github.com/ligon/sucoder-skills.git
 SKILLS_CLONE ?= $(HOME)/Projects/sucoder-skills
 SUDO ?= sudo
 
-.PHONY: help env-setup show-agent-user-commands create-agent-user config system-prompt skills-clone skills-update skills-link perms warmup poetry-ensure poetry-install test
+.PHONY: help quick-start env-setup show-agent-user-commands create-agent-user config system-prompt skills-clone skills-update skills-link perms warmup poetry-ensure poetry-install test
 
 help:
 	@echo "Targets:"
+	@echo "  quick-start     Create agent user + pip-install sucoder (zero-config, no config.yaml needed)"
 	@echo "  env-setup       (default) Create config dir, seed config/prompt, clone skills, link them, set perms"
 	@echo "  show-agent-user-commands  Print suggested commands to create coder user/group (requires root)"
 	@echo "  create-agent-user         Create coder user/group (runs sudo/groupadd/useradd)"
@@ -32,6 +33,9 @@ help:
 	@echo "  poetry-ensure   Ensure Poetry is installed for $(AGENT_USER) (installs via curl if missing)"
 	@echo "  poetry-install  Install project deps with Poetry"
 	@echo "  test            Run pytest"
+
+quick-start: create-agent-user
+	pip install .
 
 env-setup: create-agent-user poetry-ensure config system-prompt skills-clone skills-link perms
 

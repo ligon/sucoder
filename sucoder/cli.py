@@ -19,7 +19,7 @@ except (ImportError, AttributeError):  # pragma: no cover - defensive
 import typer
 
 from . import __version__
-from .config import Config, ConfigError, load_config
+from .config import Config, ConfigError, build_default_config, load_config
 from .executor import CommandExecutor
 from .logging_utils import setup_logger
 from .mirror import MirrorError, MirrorManager
@@ -74,6 +74,11 @@ def _get_config_for_completion(ctx: typer.Context) -> Optional[Config]:
 
     try:
         return load_config(config_path)
+    except ConfigError:
+        pass
+
+    try:
+        return build_default_config()
     except ConfigError:
         return None
 
@@ -133,6 +138,20 @@ def _build_manager(config: Config, logger, dry_run: bool) -> MirrorManager:
     return MirrorManager(config, executor, logger, prompt_handler=_prompt_yes_no)
 
 
+def _resolve_mirror_name(ctx: typer.Context, mirror: Optional[str]) -> str:
+    """Return the mirror name, defaulting to the sole mirror when omitted."""
+    if mirror is not None:
+        return mirror
+    config = _get_config(ctx)
+    names = list(config.mirrors.keys())
+    if len(names) == 1:
+        return names[0]
+    raise typer.BadParameter(
+        f"Multiple mirrors configured; specify one of: {', '.join(sorted(names))}",
+        param_hint="MIRROR",
+    )
+
+
 def _parse_agent_command(command: Optional[str]) -> Optional[List[str]]:
     if command is None:
         return None
@@ -172,12 +191,35 @@ def main(
     ),
 ) -> None:
     """Load configuration once and store it on the Typer context."""
-    config_path = _load_config_path(config)
-    try:
-        loaded_config = load_config(config_path)
-    except ConfigError as exc:
-        typer.echo(f"Configuration error: {exc}", err=True)
-        raise typer.Exit(code=2) from exc
+    config_explicitly_set = config is not None
+    default_path = _default_config_path()
+    is_default_config = False
+    config_path: Optional[Path] = None
+
+    if config_explicitly_set:
+        # User passed --config explicitly; always load from file.
+        config_path = Path(config).expanduser()  # type: ignore[arg-type]
+        try:
+            loaded_config = load_config(config_path)
+        except ConfigError as exc:
+            typer.echo(f"Configuration error: {exc}", err=True)
+            raise typer.Exit(code=2) from exc
+    elif default_path.exists():
+        # Default config file exists; load it.
+        config_path = default_path
+        try:
+            loaded_config = load_config(config_path)
+        except ConfigError as exc:
+            typer.echo(f"Configuration error: {exc}", err=True)
+            raise typer.Exit(code=2) from exc
+    else:
+        # Zero-config mode: derive configuration from the environment.
+        try:
+            loaded_config = build_default_config()
+        except ConfigError as exc:
+            typer.echo(f"Configuration error: {exc}", err=True)
+            raise typer.Exit(code=2) from exc
+        is_default_config = True
 
     try:
         run_startup_checks(
@@ -186,13 +228,17 @@ def main(
             use_sudo=use_sudo_for_agent,
         )
     except StartupError as exc:
-        typer.echo(f"Startup validation failed: {exc}", err=True)
-        raise typer.Exit(code=2) from exc
+        if is_default_config:
+            typer.echo(f"Warning: {exc}", err=True)
+        else:
+            typer.echo(f"Startup validation failed: {exc}", err=True)
+            raise typer.Exit(code=2) from exc
 
     ctx.obj = {
         "config": loaded_config,
         "config_path": config_path,
         "use_sudo_for_agent": use_sudo_for_agent,
+        "is_default_config": is_default_config,
     }
 
 
@@ -205,11 +251,12 @@ def version() -> None:
 @app.command("agents-clone")
 def agents_clone(
     ctx: typer.Context,
-    mirror: str = typer.Argument(..., help="Mirror name defined in configuration.", shell_complete=_mirror_completion),
+    mirror: Optional[str] = typer.Argument(None, help="Mirror name defined in configuration.", shell_complete=_mirror_completion),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print commands without executing."),
 ) -> None:
     """Clone the canonical repository into an agent-controlled mirror."""
+    mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     manager = _build_manager(config, logger, dry_run=dry_run)
@@ -223,7 +270,7 @@ def agents_clone(
 @app.command("prepare-canonical")
 def prepare_canonical(
     ctx: typer.Context,
-    mirror: str = typer.Argument(..., help="Mirror name defined in configuration.", shell_complete=_mirror_completion),
+    mirror: Optional[str] = typer.Argument(None, help="Mirror name defined in configuration.", shell_complete=_mirror_completion),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print commands without executing."),
     use_sudo: bool = typer.Option(
@@ -238,6 +285,7 @@ def prepare_canonical(
     ),
 ) -> None:
     """Fix ownership and permissions on the canonical repository."""
+    mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     manager = _build_manager(config, logger, dry_run=dry_run)
@@ -255,11 +303,12 @@ def prepare_canonical(
 @app.command("sync")
 def sync(
     ctx: typer.Context,
-    mirror: str = typer.Argument(..., help="Mirror name defined in configuration.", shell_complete=_mirror_completion),
+    mirror: Optional[str] = typer.Argument(None, help="Mirror name defined in configuration.", shell_complete=_mirror_completion),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print commands without executing."),
 ) -> None:
     """Fetch updates from the canonical repository."""
+    mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     manager = _build_manager(config, logger, dry_run=dry_run)
@@ -273,7 +322,7 @@ def sync(
 @app.command("start-task")
 def start_task(
     ctx: typer.Context,
-    mirror: str = typer.Argument(..., help="Mirror name defined in configuration.", shell_complete=_mirror_completion),
+    mirror: Optional[str] = typer.Argument(None, help="Mirror name defined in configuration.", shell_complete=_mirror_completion),
     task: str = typer.Argument(..., help="Task identifier used to name the branch."),
     base: Optional[str] = typer.Option(
         None,
@@ -285,6 +334,7 @@ def start_task(
     dry_run: bool = typer.Option(False, "--dry-run", help="Print commands without executing."),
 ) -> None:
     """Create and check out a task branch for the agent."""
+    mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     manager = _build_manager(config, logger, dry_run=dry_run)
@@ -304,10 +354,11 @@ def start_task(
 @app.command("status")
 def status(
     ctx: typer.Context,
-    mirror: str = typer.Argument(..., help="Mirror name defined in configuration.", shell_complete=_mirror_completion),
+    mirror: Optional[str] = typer.Argument(None, help="Mirror name defined in configuration.", shell_complete=_mirror_completion),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
 ) -> None:
     """Display git status for the mirror."""
+    mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     manager = _build_manager(config, logger, dry_run=False)
@@ -323,7 +374,7 @@ def status(
 @app.command("agents-run")
 def agents_run(
     ctx: typer.Context,
-    mirror: str = typer.Argument(..., help="Mirror name defined in configuration.", shell_complete=_mirror_completion),
+    mirror: Optional[str] = typer.Argument(None, help="Mirror name defined in configuration.", shell_complete=_mirror_completion),
     task: Optional[str] = typer.Option(
         None,
         "--task",
@@ -366,6 +417,7 @@ def agents_run(
     ),
 ) -> None:
     """Launch the configured agent inside the mirror working tree."""
+    mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     manager = _build_manager(config, logger, dry_run=dry_run)
@@ -390,7 +442,7 @@ def agents_run(
 @app.command("collaborate")
 def collaborate(
     ctx: typer.Context,
-    mirror: str = typer.Argument(..., help="Mirror name defined in configuration.", shell_complete=_mirror_completion),
+    mirror: Optional[str] = typer.Argument(None, help="Mirror name defined in configuration.", shell_complete=_mirror_completion),
     task: Optional[str] = typer.Option(
         None,
         "--task",
@@ -443,6 +495,7 @@ def collaborate(
     ),
 ) -> None:
     """Prepare canonical, ensure the mirror exists, and launch the agent in one step."""
+    mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     manager = _build_manager(config, logger, dry_run=dry_run)

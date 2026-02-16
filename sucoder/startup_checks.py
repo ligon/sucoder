@@ -17,7 +17,7 @@ class StartupError(RuntimeError):
 
 def run_startup_checks(
     config: Config,
-    config_path: Path,
+    config_path: Optional[Path],
     *,
     logger: Optional[logging.Logger] = None,
     use_sudo: bool = True,
@@ -28,7 +28,8 @@ def run_startup_checks(
         logger.addHandler(logging.NullHandler())
 
     _ensure_agent_account(config, logger)
-    _ensure_config_access(config, config_path, logger, use_sudo=use_sudo)
+    if config_path is not None:
+        _ensure_config_access(config, config_path, logger, use_sudo=use_sudo)
 
 
 def _ensure_agent_account(config: Config, logger: logging.Logger) -> None:

@@ -1,8 +1,11 @@
+import os
+import subprocess
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
-from sucoder.config import BranchPrefixes, ConfigError, load_config
+from sucoder.config import BranchPrefixes, ConfigError, build_default_config, load_config
 
 
 def write_config(tmp_path: Path, content: str) -> Path:
@@ -398,3 +401,70 @@ mirrors:
 
     assert "launch_mode" in str(excinfo.value)
     assert "'subprocess' or 'exec'" in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+# BranchPrefixes default derives from $USER
+# ---------------------------------------------------------------------------
+
+
+def test_branch_prefixes_default_uses_user_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("USER", "alice")
+    bp = BranchPrefixes()
+    assert bp.human == "alice"
+    assert bp.agent == "coder"
+
+
+def test_branch_prefixes_explicit_overrides_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("USER", "alice")
+    bp = BranchPrefixes(human="bob")
+    assert bp.human == "bob"
+
+
+def test_branch_prefixes_empty_user_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("USER", raising=False)
+    bp = BranchPrefixes()
+    assert bp.human == ""
+
+
+# ---------------------------------------------------------------------------
+# build_default_config
+# ---------------------------------------------------------------------------
+
+
+def test_build_default_config_in_git_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("USER", "testuser")
+    # Simulate git returning tmp_path as the repo root.
+    fake_result = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout=str(tmp_path) + "\n", stderr=""
+    )
+    with mock.patch("sucoder.config.subprocess.run", return_value=fake_result):
+        cfg = build_default_config()
+
+    assert cfg.human_user == "testuser"
+    assert cfg.agent_user == "coder"
+    assert cfg.agent_group == "coder"
+    assert cfg.mirror_root == Path("/var/tmp/coder-mirrors")
+
+    mirror_name = tmp_path.name
+    assert mirror_name in cfg.mirrors
+    mirror = cfg.mirrors[mirror_name]
+    assert mirror.canonical_repo == tmp_path
+    assert mirror.branch_prefixes.human == "testuser"
+    assert mirror.branch_prefixes.agent == "coder"
+
+
+def test_build_default_config_not_in_git_repo(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("USER", "testuser")
+    with mock.patch(
+        "sucoder.config.subprocess.run",
+        side_effect=subprocess.CalledProcessError(128, "git"),
+    ):
+        with pytest.raises(ConfigError, match="Not inside a git repository"):
+            build_default_config()
+
+
+def test_build_default_config_user_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("USER", raising=False)
+    with pytest.raises(ConfigError, match="\\$USER is not set"):
+        build_default_config()

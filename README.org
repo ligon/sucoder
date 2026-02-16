@@ -1,49 +1,37 @@
 #+title: sucoder
 
 * Project Overview
-Unix user and group permissions have been battle-tested for over fifty years.  When you bring on a new collaborator you give them their own account, set group read on the shared repo, and let the filesystem enforce the boundaries.  Why should an AI coding agent be any different?
+Unix user and group permissions have been battle-tested for over fifty years.  When you bring on a new collaborator you give them their own account, set group read on shared files, and let the filesystem enforce the boundaries.  Why should an AI coding agent be any different?
 
 =sucoder= treats an LLM agent (Codex, Claude, Gemini) as a collaborator with its own unix account.  The human's canonical repository is group-readable but not group-writable; the agent works in a sandboxed mirror clone where it has full write access.  No custom container runtimes, no bespoke sandboxing daemons---just =chown=, =chmod=, and =git=.
 
-* Key Features
-- agents-clone :: Clone a canonical repository into an agent-owned mirror with strict permissions.
-- sync :: Fetch updates from the canonical repository into the mirror without granting write access.
-- start-task :: Create a new agent task branch based on a human branch while preserving branch naming conventions.
-- status :: Summarize the state of a mirror, including permissions and git remotes.
-- collaborate :: Prepare canonical, ensure mirror, and launch agent in one step.
-- version :: Print the installed sucoder version.
-- --dry-run :: Available on modifying commands to review logged operations without executing.
+* Quick Start
 
-* Usage
+
 #+begin_src shell
-# Clone the canonical repository into the configured mirror.
-sucoder agents-clone project
-
-# Refresh the mirror with the latest human commits.
-sucoder sync project
-
-# Create a task branch for the agent starting from ligon/main.
-sucoder start-task project rewrite-parser --base main
-
-# Inspect current branch and outstanding changes.
-sucoder status project
+git clone https://github.com/ligon/sucoder && cd sucoder
+make quick-start
+cd ~/Projects/my-project  # any git repo
+sucoder collaborate
 #+end_src
 
-* Quick Start / How To
-For a holistic rebuild of the surrounding environment (accounts, perms, skills, prompts), see =docs/host-environment-setup.org=.
-The top-level =Makefile= automates common host setup tasks; run =make= (defaults to =env-setup=) or =make help= for targets.
+No config file needed.  =sucoder= detects the git repo, mirrors it under =/var/tmp/coder-mirrors/=, and launches the agent.  Add =--task fix-login= to start on a dedicated branch.
 
-** Prepare Configuration
+For multi-repo setups, skills, and system prompts, see [[*Configuration][Configuration]] below.  =make env-setup= does the full host provisioning (=make help= for all targets).
+
+** Prepare Configuration (optional)
+Skip this section if zero-config mode works for you.
+
 1. Copy the sample configuration and adjust paths, users, and mirror names.
    #+begin_src shell
    install -d -m 750 ~/.sucoder
    cp config.example.yaml ~/.sucoder/config.yaml
    #+end_src
-2. Update `~/.sucoder/config.yaml` so that:
-   - `human_user` matches your login (for example `ligon`).
-   - `agent_user` and `agent_group` match the agent account (default `coder`).
-   - `mirror_root` points to the directory where agent mirrors will live.
-   - `mirrors.<name>.canonical_repo` points at the human-owned repository.
+2. Update =~/.sucoder/config.yaml= so that:
+   - =human_user= matches your login.
+   - =agent_user= and =agent_group= match the agent account (default =coder=).
+   - =mirror_root= points to the directory where agent mirrors will live.
+   - =mirrors.<name>.canonical_repo= points at the human-owned repository.
 3. Ensure the agent can read (but not write) the configuration directory and file.
    #+begin_src shell
    sudo chgrp coder ~/.sucoder
@@ -51,44 +39,13 @@ The top-level =Makefile= automates common host setup tasks; run =make= (defaults
    sudo chgrp coder ~/.sucoder/config.yaml
    sudo chmod 640 ~/.sucoder/config.yaml
    #+end_src
-4. (Optional) Create a global system prompt file that will be preloaded for every agent session.
+4. (Optional) Install the skills repository for agent capabilities.
    #+begin_src shell
-   cat > ~/.sucoder/system_prompt.org <<'EOF'
-   #+TITLE: Workspace System Prompt
-   #+DESCRIPTION: Shared context that every agent should load.
-
-   - Summarize high-level expectations for the workspace here.
-   - Add links or commands you want the agent to run before starting tasks.
-   EOF
-   #+end_src
-5. Install the skills repository (required for agent capabilities).
-   #+begin_src shell
-   # Clone the skills repository
    git clone https://github.com/ligon/sucoder-skills ~/Projects/sucoder-skills
-
-   # Create symlink from config directory
    ln -s ~/Projects/sucoder-skills ~/.sucoder/skills
-
-   # Ensure agent can read skills
    sudo chgrp -R coder ~/Projects/sucoder-skills
-   sudo chmod -R g+r ~/Projects/sucoder-skills
-   sudo chmod -R g-w ~/Projects/sucoder-skills
+   sudo chmod -R g+r,g-w ~/Projects/sucoder-skills
    #+end_src
-
-   *Note*: The skills repository is separate from the tool repository for security isolation.
-   Skills influence agent behavior and are kept in a dedicated repository to prevent agents
-   from modifying skills and tool code in the same commit. The tool enforces semantic
-   versioning compatibility between the tool and skills repository.
-6. Warm up the shared skills catalog so launches confirm access before work starts.
-   #+begin_src shell
-   ls ~/.sucoder/skills
-   sucoder skills-list
-   sucoder mirrors-list
-   cat ~/.sucoder/skills/SKILLS.md
-   #+end_src
-   The listings should succeed without permission errors. The CLI helper highlights any unreadable
-   paths, and =sucoder mirrors-list= prints the configured mirrors (with their canonical and mirror directories).
-   Reading the =SKILLS.md= catalog verifies the skills are accessible and shows what is available.
 
 ** Provision the Mirror
 1. Prepare the canonical repository for collaboration.
@@ -155,6 +112,33 @@ The top-level =Makefile= automates common host setup tasks; run =make= (defaults
    #+end_src
    The canonical repository remains unwritable by the agent throughout this flow.
 
+* Key Features
+- agents-clone :: Clone a canonical repository into an agent-owned mirror with strict permissions.
+- sync :: Fetch updates from the canonical repository into the mirror without granting write access.
+- start-task :: Create a new agent task branch based on a human branch while preserving branch naming conventions.
+- status :: Summarize the state of a mirror, including permissions and git remotes.
+- collaborate :: Prepare canonical, ensure mirror, and launch agent in one step.
+- version :: Print the installed sucoder version.
+- --dry-run :: Available on modifying commands to review logged operations without executing.
+
+* Usage
+#+begin_src shell
+# Clone the canonical repository into the configured mirror.
+sucoder agents-clone project
+
+# Refresh the mirror with the latest human commits.
+sucoder sync project
+
+# Create a task branch for the agent starting from ligon/main.
+sucoder start-task project rewrite-parser --base main
+
+# Inspect current branch and outstanding changes.
+sucoder status project
+#+end_src* Quick Start
+
+#+begin_src shell
+git clone https://github.com/ligon/sucoder && cd sucoder
+make quick-start
 * Configuration
 Configuration is stored in YAML (default path is ~/.sucoder/config.yaml for the human operator).  Grant the agent group read access to this file while keeping it group-writable disabled.
 

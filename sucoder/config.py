@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
@@ -21,8 +23,12 @@ class AgentType(Enum):
 
 @dataclass
 class BranchPrefixes:
-    human: str = "ligon"
+    human: str = ""
     agent: str = "coder"
+
+    def __post_init__(self) -> None:
+        if not self.human:
+            self.human = os.environ.get("USER", "")
 
 
 @dataclass
@@ -166,6 +172,60 @@ def load_config(path: Path) -> Config:
     return _build_config(data, path=path)
 
 
+def _detect_git_toplevel() -> Path:
+    """Return the git repository root for the current working directory."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        raise ConfigError(
+            "Not inside a git repository. Either cd into a git repo or "
+            "create a config file at ~/.sucoder/config.yaml."
+        ) from exc
+    return Path(result.stdout.strip())
+
+
+def build_default_config() -> Config:
+    """Build a zero-config Config from the environment and git state.
+
+    Derives all required fields from ``$USER`` and the git repository
+    root of the current working directory.
+
+    Raises :class:`ConfigError` if ``$USER`` is unset or the current
+    directory is not inside a git repository.
+    """
+    user = os.environ.get("USER")
+    if not user:
+        raise ConfigError(
+            "$USER is not set. Export USER or create a config file "
+            "at ~/.sucoder/config.yaml."
+        )
+
+    git_toplevel = _detect_git_toplevel()
+    mirror_name = git_toplevel.name
+    mirror_root = Path("/var/tmp/coder-mirrors")
+
+    prefixes = BranchPrefixes(human=user, agent="coder")
+    mirror = MirrorSettings(
+        name=mirror_name,
+        canonical_repo=git_toplevel,
+        mirror_name=mirror_name,
+        branch_prefixes=prefixes,
+    )
+
+    return Config(
+        human_user=user,
+        agent_user="coder",
+        agent_group="coder",
+        mirror_root=mirror_root,
+        mirrors={mirror_name: mirror},
+    )
+
+
 def _build_config(data: Dict[str, Any], *, path: Path) -> Config:
     human_user = data.get("human_user")
     if not human_user:
@@ -233,9 +293,10 @@ def _parse_mirrors(raw: Any, *, global_skills: List[Path], path: Path) -> Dict[s
         if not isinstance(prefix_data, dict):
             raise ConfigError(f"`branch_prefixes` for mirror `{name}` must be a mapping.")
 
+        defaults = BranchPrefixes()
         prefixes = BranchPrefixes(
-            human=prefix_data.get("human", BranchPrefixes.human),
-            agent=prefix_data.get("agent", BranchPrefixes.agent),
+            human=prefix_data.get("human", defaults.human),
+            agent=prefix_data.get("agent", defaults.agent),
         )
 
         launcher = _parse_agent_launcher(value.get("agent_launcher"))
