@@ -246,7 +246,7 @@ class MirrorManager:
         )
 
         sanitized_task = _sanitize_task_name(task_name)
-        stamp = timestamp or _dt.datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        stamp = timestamp or _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%d%H%M%S")
         agent_branch = f"{ctx.agent_prefix}/{sanitized_task}-{stamp}"
         self.logger.info("Creating task branch %s", agent_branch)
 

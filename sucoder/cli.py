@@ -47,7 +47,7 @@ def _get_config(ctx: typer.Context) -> Config:
 
 
 def _get_use_sudo_for_agent(ctx: Optional[click.Context], config: Optional[Config] = None) -> bool:
-    obj = ctx.obj if ctx else {}
+    obj = (ctx.obj if ctx and ctx.obj else {}) or {}
     use_sudo = obj.get("use_sudo_for_agent")
     if use_sudo is None:
         use_sudo = True

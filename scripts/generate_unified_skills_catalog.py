@@ -145,15 +145,6 @@ def _discover_local_catalog(explicit: Optional[Path]) -> Path:
             # Fall back to default candidate list when config parsing fails.
             pass
 
-    home_root = Path("/home")
-    if home_root.exists():
-        try:
-            for entry in home_root.iterdir():
-                candidate = entry / ".sucoder" / "skills" / "SKILLS.md"
-                candidates.append(candidate)
-        except Exception:
-            pass
-
     # Local development mirror path fallback (e.g., ../Skills/)
     candidates.append(Path("../Skills/SKILLS.md").resolve())
 

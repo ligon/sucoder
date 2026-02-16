@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from .executor import CommandExecutor
+
+logger = logging.getLogger(__name__)
 
 
 def ensure_directory(path: Path) -> None:
@@ -43,7 +46,7 @@ def apply_agent_repo_permissions(
             skipped_example,
         )
 
-    executor.run_agent(
+    result = executor.run_agent(
         [
             "find",
             repo,
@@ -58,7 +61,14 @@ def apply_agent_repo_permissions(
         ],
         check=False,  # Don't fail on permission denied errors
     )
-    executor.run_agent(
+    if result.returncode != 0:
+        logger.warning(
+            "Permission adjustment (chgrp) failed (exit %d): %s",
+            result.returncode,
+            result.stderr.strip() if result.stderr else "(no stderr)",
+        )
+
+    result = executor.run_agent(
         [
             "find",
             repo,
@@ -72,7 +82,14 @@ def apply_agent_repo_permissions(
         ],
         check=False,  # Don't fail on permission denied errors
     )
-    executor.run_agent(
+    if result.returncode != 0:
+        logger.warning(
+            "Permission adjustment (chmod g+rwX) failed (exit %d): %s",
+            result.returncode,
+            result.stderr.strip() if result.stderr else "(no stderr)",
+        )
+
+    result = executor.run_agent(
         [
             "find",
             repo,
@@ -88,6 +105,12 @@ def apply_agent_repo_permissions(
         ],
         check=False,  # Don't fail on permission denied errors
     )
+    if result.returncode != 0:
+        logger.warning(
+            "Permission adjustment (chmod g+s) failed (exit %d): %s",
+            result.returncode,
+            result.stderr.strip() if result.stderr else "(no stderr)",
+        )
 
 
 def ensure_directory_mode(
