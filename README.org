@@ -305,9 +305,6 @@ Run the automated tests with pytest.
 pytest
 #+end_src
 
-* Next Steps
-- Harden permission checks to verify that the canonical repository is mounted read-only for the agent user.
-
 * Packaging
 This project uses Poetry for packaging and dependency management.
 

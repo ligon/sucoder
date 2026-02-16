@@ -50,6 +50,12 @@ def build_manager(
     canonical.mkdir()
     create_canonical_repo(canonical)
 
+    # In tests agent_user == current user (the dir owner), so `test -w` would
+    # always succeed.  Strip owner-write on the canonical directory so the
+    # _validate_canonical write-check passes, matching production behaviour
+    # where the agent is a different (non-owner) user.
+    canonical.chmod(canonical.stat().st_mode & ~0o200)
+
     os.environ["GIT_CONFIG_GLOBAL"] = str(tmp_path / "gitconfig")
 
     mirror_root = tmp_path / "mirrors"
@@ -130,10 +136,14 @@ def test_clone_allows_direnv_for_envrc(tmp_path: Path, monkeypatch: pytest.Monke
     manager = build_manager(tmp_path)
     ctx = manager.context_for("sample")
 
-    envrc = ctx.canonical_path / ".envrc"
+    canonical = ctx.canonical_path
+    # Temporarily restore write so we can commit a new file.
+    canonical.chmod(canonical.stat().st_mode | 0o200)
+    envrc = canonical / ".envrc"
     envrc.write_text("layout poetry\n", encoding="utf-8")
-    run_git(["add", ".envrc"], ctx.canonical_path)
-    run_git(["commit", "-m", "add envrc"], ctx.canonical_path)
+    run_git(["add", ".envrc"], canonical)
+    run_git(["commit", "-m", "add envrc"], canonical)
+    canonical.chmod(canonical.stat().st_mode & ~0o200)
 
     original_run_agent = manager.executor.run_agent
     direnv_calls = []
@@ -192,6 +202,8 @@ def test_prepare_canonical_adjusts_permissions(tmp_path: Path) -> None:
     ctx = manager.context_for("sample")
 
     canonical = ctx.canonical_path
+    # Restore owner-write so prepare_canonical can create scripts/ etc.
+    canonical.chmod(canonical.stat().st_mode | 0o200)
     git_dir = canonical / ".git"
     # Make directories and files group-writable first.
     git_dir.chmod(0o770)
@@ -231,6 +243,35 @@ def test_prepare_canonical_adjusts_permissions(tmp_path: Path) -> None:
     helper_script = canonical / "scripts" / "fetch-agent-branches.sh"
     assert helper_script.exists()
     assert os.access(helper_script, os.X_OK)
+
+
+def test_validate_canonical_rejects_writable(tmp_path: Path) -> None:
+    """_validate_canonical raises MirrorError when the agent can write to canonical."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+
+    # Restore owner-write so `test -w` succeeds (in tests agent == owner).
+    ctx.canonical_path.chmod(ctx.canonical_path.stat().st_mode | 0o200)
+
+    with pytest.raises(MirrorError, match="writable by agent user"):
+        manager._validate_canonical(ctx)
+
+
+def test_validate_canonical_passes_when_not_writable(tmp_path: Path) -> None:
+    """_validate_canonical succeeds when canonical is not writable by agent."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+
+    # In tests agent_user == current user (owner), so strip all write bits
+    # to make `test -w` fail.
+    canonical = ctx.canonical_path
+    canonical.chmod(canonical.stat().st_mode & ~0o222)
+    try:
+        # Should not raise.
+        manager._validate_canonical(ctx)
+    finally:
+        # Restore write so tmp_path cleanup succeeds.
+        canonical.chmod(canonical.stat().st_mode | 0o700)
 
 
 def test_clone_succeeds_when_global_safe_directory_update_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1188,6 +1229,8 @@ def test_write_agent_fetch_helper_quotes_defaults(tmp_path: Path) -> None:
     manager = build_manager(tmp_path)
     ctx = manager.context_for("sample")
 
+    # Restore owner-write so the helper script directory can be created.
+    ctx.canonical_path.chmod(ctx.canonical_path.stat().st_mode | 0o200)
     ctx.settings.branch_prefixes.agent = 'agent"; $(echo hacked); #'
     manager._write_agent_fetch_helper(ctx)
 
@@ -1215,7 +1258,9 @@ class TrackingExecutor(CommandExecutor):
 
     def run_agent(self, args, **kwargs):
         self.log.append("agent:" + " ".join(args))
-        return CommandResult(args, args, "", "", 0)
+        # Simulate `test -w` failing (canonical should not be writable).
+        rc = 1 if list(args)[:2] == ["test", "-w"] else 0
+        return CommandResult(args, args, "", "", rc)
 
 
 def test_ensure_clone_sets_parent_permissions(tmp_path: Path) -> None:

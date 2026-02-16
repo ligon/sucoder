@@ -855,6 +855,18 @@ class MirrorManager:
         if not os.access(canonical, os.R_OK):
             raise MirrorError(f"Canonical repository not readable at {canonical}")
 
+        # Verify the agent cannot write to the canonical repo.
+        write_result = self.executor.run_agent(
+            ["test", "-w", str(canonical)],
+            check=False,
+        )
+        if write_result.returncode == 0:
+            raise MirrorError(
+                f"Canonical repository at {canonical} is writable by agent user "
+                f"{self.config.agent_user!r}. "
+                f"Run `sucoder prepare-canonical` to fix permissions."
+            )
+
     def _verify_remote(self, ctx: MirrorContext) -> None:
         if self.executor.dry_run:
             self.logger.info("Dry-run mode: skipping remote verification.")
