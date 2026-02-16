@@ -35,6 +35,8 @@ Org-mode is a plain-text format that every LLM reads fluently—but it also has 
 
 You do not need Emacs to read or edit these files.  Any text editor works; GitHub renders =.org= natively.  But if you /do/ use Emacs, the integration is a bonus, not a requirement.
 
+* Mechanics
+
 ** Prepare Configuration (optional)
 Skip this section if zero-config mode works for you.
 
