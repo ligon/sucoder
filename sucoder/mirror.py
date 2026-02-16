@@ -89,8 +89,13 @@ class MirrorManager:
         return MirrorContext(config=self.config, settings=settings)
 
     # ------------------------------------------------------------------ Commands
-    def ensure_clone(self, ctx: MirrorContext) -> None:
-        """Ensure the mirror exists, cloning if necessary."""
+    def ensure_clone(self, ctx: MirrorContext, *, skip_lfs: bool = True) -> None:
+        """Ensure the mirror exists, cloning if necessary.
+
+        When *skip_lfs* is ``True`` (the default), ``GIT_LFS_SKIP_SMUDGE=1``
+        is set during the clone so that LFS-tracked files are checked out as
+        pointer files instead of triggering downloads that may fail.
+        """
         self._validate_canonical(ctx)
         safe_paths = self._ensure_canonical_safe_directory(ctx)
         mirror_path = ctx.mirror_path
@@ -120,11 +125,16 @@ class MirrorManager:
             str(mirror_path),
         ]
 
+        clone_env: Optional[Dict[str, str]] = None
+        if skip_lfs:
+            clone_env = {"GIT_LFS_SKIP_SMUDGE": "1"}
+
         try:
             self.executor.run_agent(
                 clone_args,
                 check=True,
                 cwd=str(self.config.mirror_root),
+                env=clone_env,
             )
         except CommandError as exc:
             stderr = exc.result.stderr.lower()
@@ -567,6 +577,7 @@ class MirrorManager:
         command_override: Optional[Sequence[str]] = None,
         env_override: Optional[Mapping[str, str]] = None,
         supports_inline_prompt: Optional[bool] = None,
+        skip_lfs: bool = True,
     ) -> int:
         """One-shot helper to prepare canonical, ensure clone, and launch the agent."""
         self.prepare_canonical(
@@ -574,7 +585,7 @@ class MirrorManager:
             use_sudo=use_sudo,
             setup_agent_remote=setup_agent_remote,
         )
-        self.ensure_clone(ctx)
+        self.ensure_clone(ctx, skip_lfs=skip_lfs)
         return self.launch_agent(
             ctx,
             sync=sync,

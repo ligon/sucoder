@@ -174,6 +174,48 @@ def test_clone_allows_direnv_for_envrc(tmp_path: Path, monkeypatch: pytest.Monke
     assert (ctx.mirror_path / ".envrc").exists()
 
 
+def test_ensure_clone_skips_lfs_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """ensure_clone sets GIT_LFS_SKIP_SMUDGE=1 when skip_lfs is True (default)."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+
+    original_run_agent = manager.executor.run_agent
+    clone_envs = []
+
+    def spy_run_agent(args, **kwargs):
+        args_list = list(args)
+        if "clone" in args_list:
+            clone_envs.append(kwargs.get("env"))
+        return original_run_agent(args, **kwargs)
+
+    monkeypatch.setattr(manager.executor, "run_agent", spy_run_agent)
+    manager.ensure_clone(ctx)  # skip_lfs=True by default
+
+    assert clone_envs, "Expected a clone call"
+    assert clone_envs[0] == {"GIT_LFS_SKIP_SMUDGE": "1"}
+
+
+def test_ensure_clone_allows_lfs_when_requested(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """ensure_clone does NOT set GIT_LFS_SKIP_SMUDGE when skip_lfs=False."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+
+    original_run_agent = manager.executor.run_agent
+    clone_envs = []
+
+    def spy_run_agent(args, **kwargs):
+        args_list = list(args)
+        if "clone" in args_list:
+            clone_envs.append(kwargs.get("env"))
+        return original_run_agent(args, **kwargs)
+
+    monkeypatch.setattr(manager.executor, "run_agent", spy_run_agent)
+    manager.ensure_clone(ctx, skip_lfs=False)
+
+    assert clone_envs, "Expected a clone call"
+    assert clone_envs[0] is None
+
+
 def test_context_for_unknown_mirror(tmp_path: Path) -> None:
     manager = build_manager(tmp_path)
     with pytest.raises(MirrorError):
@@ -1068,7 +1110,7 @@ def test_bootstrap_invokes_steps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         assert c is ctx
         order.append(f"prepare:{use_sudo}:{setup_agent_remote}")
 
-    def fake_ensure(c):
+    def fake_ensure(c, *, skip_lfs=True):
         assert c is ctx
         order.append("clone")
 

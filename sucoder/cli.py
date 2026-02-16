@@ -316,6 +316,11 @@ def agents_clone(
     mirror: Optional[str] = typer.Argument(None, help="Mirror name defined in configuration.", shell_complete=_mirror_completion),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print commands without executing."),
+    lfs: bool = typer.Option(
+        False,
+        "--lfs/--no-lfs",
+        help="Download Git LFS objects during clone (default: skip LFS to avoid failures).",
+    ),
 ) -> None:
     """Clone the canonical repository into an agent-controlled mirror."""
     mirror = _resolve_mirror_name(ctx, mirror)
@@ -323,7 +328,7 @@ def agents_clone(
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     manager = _build_manager(config, logger, dry_run=dry_run)
     try:
-        manager.ensure_clone(manager.context_for(mirror))
+        manager.ensure_clone(manager.context_for(mirror), skip_lfs=not lfs)
     except MirrorError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
@@ -478,6 +483,11 @@ def agents_run(
         "--inline-prompt/--no-inline-prompt",
         help="Force whether context prelude text is appended to the agent command.",
     ),
+    lfs: bool = typer.Option(
+        False,
+        "--lfs/--no-lfs",
+        help="Download Git LFS objects during clone (default: skip LFS to avoid failures).",
+    ),
     extra_args: Optional[List[str]] = typer.Argument(
         None,
         help="Additional arguments appended to the agent launch command.",
@@ -562,6 +572,11 @@ def collaborate(
         "--inline-prompt/--no-inline-prompt",
         help="Force whether context prelude text is appended to the agent command.",
     ),
+    lfs: bool = typer.Option(
+        False,
+        "--lfs/--no-lfs",
+        help="Download Git LFS objects during clone (default: skip LFS to avoid failures).",
+    ),
     extra_args: Optional[List[str]] = typer.Argument(
         None,
         help="Additional arguments appended to the agent launch command.",
@@ -587,6 +602,7 @@ def collaborate(
             command_override=command_override,
             env_override=env_override,
             supports_inline_prompt=inline_prompt,
+            skip_lfs=not lfs,
         )
     except MirrorError as exc:
         typer.echo(str(exc), err=True)
