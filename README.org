@@ -84,8 +84,34 @@ The canonical repository remains unwritable by the agent throughout.
 | =start-task=         | Create a task branch (step 4)                |
 | =agents-run=         | Launch the agent (steps 5–6)                 |
 
+* Key Features
+- agents-clone :: Clone a canonical repository into an agent-owned mirror with strict permissions.
+- sync :: Fetch updates from the canonical repository into the mirror without granting write access.
+- start-task :: Create a new agent task branch based on a human branch while preserving branch naming conventions.
+- status :: Summarize the state of a mirror, including permissions and git remotes.
+- collaborate :: Prepare canonical, ensure mirror, and launch agent in one step.
+- version :: Print the installed sucoder version.
+- --dry-run :: Available on modifying commands to review logged operations without executing.
+
+* Usage
+#+begin_src shell
+# Clone the canonical repository into the configured mirror.
+sucoder agents-clone project
+
+# Refresh the mirror with the latest human commits.
+sucoder sync project
+
+# Create a task branch for the agent starting from ligon/main.
+sucoder start-task project rewrite-parser --base main
+
+# Inspect current branch and outstanding changes.
+sucoder status project
+#+end_src
+
 * Configuration
 Skip this section if zero-config mode works for you.
+
+Configuration is stored in YAML (default =~/.sucoder/config.yaml=).  To set it up:
 
 1. Copy the sample configuration and adjust paths, users, and mirror names.
    #+begin_src shell
@@ -112,32 +138,7 @@ Skip this section if zero-config mode works for you.
    sudo chmod -R g+r,g-w ~/Projects/sucoder-skills
    #+end_src
 
-* Key Features
-- agents-clone :: Clone a canonical repository into an agent-owned mirror with strict permissions.
-- sync :: Fetch updates from the canonical repository into the mirror without granting write access.
-- start-task :: Create a new agent task branch based on a human branch while preserving branch naming conventions.
-- status :: Summarize the state of a mirror, including permissions and git remotes.
-- collaborate :: Prepare canonical, ensure mirror, and launch agent in one step.
-- version :: Print the installed sucoder version.
-- --dry-run :: Available on modifying commands to review logged operations without executing.
-
-* Usage
-#+begin_src shell
-# Clone the canonical repository into the configured mirror.
-sucoder agents-clone project
-
-# Refresh the mirror with the latest human commits.
-sucoder sync project
-
-# Create a task branch for the agent starting from ligon/main.
-sucoder start-task project rewrite-parser --base main
-
-# Inspect current branch and outstanding changes.
-sucoder status project
-#+end_src
-
-* Configuration
-Configuration is stored in YAML (default path is ~/.sucoder/config.yaml for the human operator).  Grant the agent group read access to this file while keeping it group-writable disabled.
+Grant the agent group read access to the config file while keeping group-write disabled.
 
 #+begin_src yaml
 human_user: ligon
