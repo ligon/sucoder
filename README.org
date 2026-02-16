@@ -1,7 +1,9 @@
 #+title: sucoder
 
 * Project Overview
-The goal of this project is to enable a safe collaboration workflow between a human maintainer and an LLM agent.  The human owns the canonical repository, while the agent works inside a sandboxed mirror clone.  Access controls ensure the agent has read-only access to the canonical repository and read-write access to the mirror.
+Unix user and group permissions have been battle-tested for over fifty years.  When you bring on a new collaborator you give them their own account, set group read on the shared repo, and let the filesystem enforce the boundaries.  Why should an AI coding agent be any different?
+
+=sucoder= treats an LLM agent (Codex, Claude, Gemini) as a collaborator with its own unix account.  The human's canonical repository is group-readable but not group-writable; the agent works in a sandboxed mirror clone where it has full write access.  No custom container runtimes, no bespoke sandboxing daemons---just =chown=, =chmod=, and =git=.
 
 * Key Features
 - agents-clone :: Clone a canonical repository into an agent-owned mirror with strict permissions.
