@@ -9,6 +9,11 @@ Quick checklist for rebuilding the surrounding environment (accounts, config, sk
 - Make sure the agent group can read (not write) the human config directory and skills checkout.
 - Prefer agent mirrors under a writable temp location (default =/var/tmp/coder-mirrors=) owned by the human with group access for =coder=.
 
+** Sudo access
+=sucoder= requires the human user to have sudo access to run commands as the agent
+user (=coder=).  If you are running directly as the agent user (e.g., inside a
+container), pass =--no-agent-sudo= to all =sucoder= commands to skip sudo.
+
 ** Creating the agent account (root required)
 - Create the group (idempotent) and user if they do not exist:
   #+begin_src shell

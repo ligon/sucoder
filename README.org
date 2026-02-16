@@ -152,12 +152,33 @@ Configuration is stored in YAML (default =~/.sucoder/config.yaml=).  To set it u
    paths and =sucoder mirrors-list= prints the configured mirrors (with their canonical and mirror directories).
    To preload the catalog into a session, use the agent's file-read command (e.g., =codex read ~/.sucoder/skills/SKILLS.md= for Codex).
 
+** Shell Completion
+Enable tab completion for =sucoder= commands and mirror names by running:
+#+begin_src shell
+sucoder --install-completion
+#+end_src
+
+** Sudo Requirement
+By default, =sucoder= uses =sudo= to run commands as the agent user (=coder=).
+The human user must have sudo access to impersonate the agent user.  If you are
+running as the agent user directly (for example inside a container), pass
+=--no-agent-sudo= to skip sudo:
+#+begin_src shell
+sucoder --no-agent-sudo agents-clone project
+#+end_src
+
+** Command Overview
+- =collaborate= is the all-in-one command: it runs =prepare-canonical= + =agents-clone= (ensure mirror) + =agents-run= (launch agent) in a single step.
+- =agents-run= only launches the agent, assuming the mirror already exists.  Use this when the mirror is already prepared and you just want to start a session.
+
 ** Provision the Mirror
 1. Prepare the canonical repository for collaboration.
    #+begin_src shell
    sucoder prepare-canonical project
    #+end_src
-   This command sets the group to =coder=, grants group read permissions, and removes group write bits.  Elevate with =--sudo= when root privileges are required.
+   *Note*: this command modifies the canonical repository — it sets the group to =coder=,
+   grants group read permissions, removes group write bits, and optionally adds an agent
+   remote and fetch helper script.  Elevate with =--sudo= when root privileges are required.
    By default it also adds a =coder= remote pointing at the agent mirror and writes
    =scripts/fetch-agent-branches.sh= to simplify fetching agent branches (=--no-agent-remote= disables this).
 2. Clone the mirror as the human operator; the tool will invoke git as the agent.
