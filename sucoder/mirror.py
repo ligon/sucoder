@@ -119,6 +119,7 @@ class MirrorManager:
             *config_args,
             "clone",
             "--no-hardlinks",
+            "--no-recurse-submodules",
             "--origin",
             ctx.remote_name,
             str(ctx.canonical_path),
@@ -215,7 +216,8 @@ class MirrorManager:
         self.logger.info("Fetching updates from %s", ctx.remote_name)
 
         self.executor.run_agent(
-            ["git", "fetch", "--prune", ctx.remote_name],
+            ["git", "fetch", "--prune", "--no-recurse-submodules",
+             ctx.remote_name],
             check=True,
             cwd=str(mirror_path),
         )
@@ -1544,7 +1546,7 @@ set -euo pipefail
 remote=${{1:-{remote_default}}}
 prefix=${{2:-{prefix_default}}}
 
-git fetch "${{remote}}"
+git fetch --no-recurse-submodules "${{remote}}"
 git for-each-ref "refs/remotes/${{remote}}/${{prefix}}/" --format='%(refname:strip=2)'
 """
         current = script_path.read_text(encoding="utf-8") if script_path.exists() else ""
