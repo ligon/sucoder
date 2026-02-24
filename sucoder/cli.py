@@ -480,8 +480,9 @@ def agents_run(
     ),
     inline_prompt: Optional[bool] = typer.Option(
         None,
-        "--inline-prompt/--no-inline-prompt",
-        help="Force whether context prelude text is appended to the agent command.",
+        "--inline-prompt",
+        is_flag=False,
+        help="Force whether context prelude text is appended to the agent command (true/false).",
     ),
     lfs: bool = typer.Option(
         False,
@@ -569,8 +570,9 @@ def collaborate(
     ),
     inline_prompt: Optional[bool] = typer.Option(
         None,
-        "--inline-prompt/--no-inline-prompt",
-        help="Force whether context prelude text is appended to the agent command.",
+        "--inline-prompt",
+        is_flag=False,
+        help="Force whether context prelude text is appended to the agent command (true/false).",
     ),
     lfs: bool = typer.Option(
         False,
