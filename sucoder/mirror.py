@@ -25,7 +25,12 @@ from .config import (
     MirrorSettings,
 )
 from .executor import CommandError, CommandExecutor
-from .permissions import apply_agent_repo_permissions, ensure_directory, ensure_directory_mode
+from .permissions import (
+    apply_agent_repo_permissions,
+    check_parent_traversable,
+    ensure_directory,
+    ensure_directory_mode,
+)
 from .skills_version import validate_skills_version
 from .workspace_prefs import WorkspacePrefs
 
@@ -198,6 +203,25 @@ class MirrorManager:
         for cmd in commands:
             run_args = ["sudo"] + cmd if use_sudo and not self.executor.dry_run else cmd
             self.executor.run_human(run_args, check=True)
+
+        # Verify that every parent directory is traversable by the agent.
+        blocking = check_parent_traversable(
+            canonical,
+            agent_user=self.config.agent_user,
+            agent_group=self.config.agent_group,
+        )
+        if blocking:
+            paths_str = "\n  ".join(str(p) for p in blocking)
+            cmds_str = " ".join(str(p) for p in blocking)
+            raise MirrorError(
+                f"The agent user cannot traverse to {canonical} because these "
+                f"parent directories lack world-execute (o+x):\n"
+                f"  {paths_str}\n"
+                f"Fix with one of:\n"
+                f"  chmod o+x {cmds_str}\n"
+                f"  # or, more targeted:\n"
+                f"  setfacl -m g:{self.config.agent_group}:x {cmds_str}"
+            )
 
         self.logger.info(
             "Canonical repository at %s prepared for agent group %s (git dir %s)",

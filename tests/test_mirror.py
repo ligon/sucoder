@@ -18,6 +18,7 @@ from sucoder.mirror import (
     _merge_flag_templates,
     _sanitize_task_name,
 )
+from sucoder.permissions import check_parent_traversable
 from sucoder.workspace_prefs import WorkspacePrefs
 
 
@@ -285,6 +286,112 @@ def test_prepare_canonical_adjusts_permissions(tmp_path: Path) -> None:
     helper_script = canonical / "scripts" / "fetch-agent-branches.sh"
     assert helper_script.exists()
     assert os.access(helper_script, os.X_OK)
+
+
+def _build_nested_manager(tmp_path: Path, parent_mode: int) -> tuple:
+    """Build a MirrorManager whose canonical repo sits under a restrictive parent."""
+    deep = tmp_path / "deep"
+    deep.mkdir()
+    canonical = deep / "canonical"
+    canonical.mkdir()
+    create_canonical_repo(canonical)
+
+    # Strip owner-write to satisfy _validate_canonical (same as build_manager)
+    canonical.chmod(canonical.stat().st_mode & ~0o200)
+
+    # Make the parent directory restrictive *after* repo creation
+    deep.chmod(parent_mode)
+
+    os.environ["GIT_CONFIG_GLOBAL"] = str(tmp_path / "gitconfig")
+    mirror_root = tmp_path / "mirrors"
+    mirror_root.mkdir()
+
+    user = pwd.getpwuid(os.getuid()).pw_name
+    group = grp.getgrgid(os.getgid()).gr_name
+    settings = MirrorSettings(
+        name="nested",
+        canonical_repo=canonical,
+        mirror_name="nested",
+        branch_prefixes=BranchPrefixes(human="ligon", agent="coder"),
+        default_base_branch="main",
+        task_branch_prefix="task",
+    )
+    config = Config(
+        human_user=user,
+        agent_user=user,
+        agent_group=group,
+        mirror_root=mirror_root,
+        log_dir=None,
+        mirrors={"nested": settings},
+    )
+    log = logging.getLogger("sucoder.test_nested")
+    log.setLevel(logging.DEBUG)
+    if not log.handlers:
+        log.addHandler(logging.NullHandler())
+    executor = CommandExecutor(
+        human_user=config.human_user,
+        agent_user=config.agent_user,
+        agent_group=config.agent_group,
+        logger=log,
+        dry_run=False,
+        use_sudo_for_agent=False,
+    )
+    manager = MirrorManager(config, executor, log)
+    ctx = manager.context_for("nested")
+    return manager, ctx, deep
+
+
+def test_check_parent_traversable_detects_blocking(tmp_path: Path) -> None:
+    """check_parent_traversable flags dirs the agent cannot traverse."""
+    deep = tmp_path / "deep" / "repo"
+    deep.mkdir(parents=True)
+    (tmp_path / "deep").chmod(0o700)  # owner-only, no o+x
+
+    # Use a non-matching user/group so owner/group bits don't help.
+    blocking = check_parent_traversable(deep, agent_user="nobody", agent_group="nogroup")
+    blocked_names = [p.name for p in blocking]
+    assert "deep" in blocked_names
+
+    # Cleanup so pytest can remove tmp_path.
+    (tmp_path / "deep").chmod(0o755)
+
+
+def test_check_parent_traversable_owner_access(tmp_path: Path) -> None:
+    """check_parent_traversable allows dirs where agent is the owner with u+x."""
+    deep = tmp_path / "deep" / "repo"
+    deep.mkdir(parents=True)
+    (tmp_path / "deep").chmod(0o700)  # owner-only
+
+    user = pwd.getpwuid(os.getuid()).pw_name
+    blocking = check_parent_traversable(deep, agent_user=user, agent_group="nogroup")
+    blocked_names = [p.name for p in blocking]
+    assert "deep" not in blocked_names
+
+    (tmp_path / "deep").chmod(0o755)
+
+
+def test_check_parent_traversable_group_access(tmp_path: Path) -> None:
+    """check_parent_traversable allows dirs where agent group has g+x."""
+    deep = tmp_path / "deep" / "repo"
+    deep.mkdir(parents=True)
+    (tmp_path / "deep").chmod(0o710)  # owner + group-execute
+
+    group = grp.getgrgid(os.getgid()).gr_name
+    blocking = check_parent_traversable(deep, agent_user="nobody", agent_group=group)
+    blocked_names = [p.name for p in blocking]
+    assert "deep" not in blocked_names
+
+    (tmp_path / "deep").chmod(0o755)
+
+
+def test_prepare_canonical_passes_with_accessible_parents(tmp_path: Path) -> None:
+    """prepare_canonical succeeds when parent dirs have o+x."""
+    manager, ctx, deep = _build_nested_manager(tmp_path, parent_mode=0o711)
+    canonical = ctx.canonical_path
+    canonical.chmod(canonical.stat().st_mode | 0o200)
+
+    # Should not raise
+    manager.prepare_canonical(ctx, use_sudo=False)
 
 
 def test_validate_canonical_rejects_writable(tmp_path: Path) -> None:

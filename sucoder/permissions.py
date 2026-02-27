@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import grp
 import logging
+import os
+import pwd
 from pathlib import Path
+from typing import List, Optional
 
 from .executor import CommandExecutor
 
@@ -111,6 +115,65 @@ def apply_agent_repo_permissions(
             result.returncode,
             result.stderr.strip() if result.stderr else "(no stderr)",
         )
+
+
+def check_parent_traversable(
+    path: Path,
+    agent_user: Optional[str] = None,
+    agent_group: Optional[str] = None,
+) -> List[Path]:
+    """Return parent directories of *path* that the agent cannot traverse.
+
+    Walks upward from *path*.parent and checks each directory for execute
+    permission accessible to the agent.  A directory is considered
+    traversable if:
+
+    * the agent owns it and ``u+x`` is set, **or**
+    * the directory's group matches *agent_group* and ``g+x`` is set, **or**
+    * ``o+x`` (world-execute) is set.
+
+    Stops at the first ancestor with ``o+x``, since everything above it is
+    assumed accessible (``/``, ``/home``, etc. are normally world-executable).
+    """
+    # Resolve numeric IDs for the agent so we can compare against stat results.
+    agent_uid: Optional[int] = None
+    agent_gid: Optional[int] = None
+    if agent_user:
+        try:
+            agent_uid = pwd.getpwnam(agent_user).pw_uid
+        except KeyError:
+            pass
+    if agent_group:
+        try:
+            agent_gid = grp.getgrnam(agent_group).gr_gid
+        except KeyError:
+            pass
+
+    blocking: List[Path] = []
+    for parent in path.parents:
+        try:
+            st = parent.stat()
+        except PermissionError:
+            blocking.append(parent)
+            continue
+
+        mode = st.st_mode
+
+        # World-executable — this dir and everything above is fine.
+        if mode & 0o001:
+            break
+
+        # Check whether the agent can traverse via owner or group bits.
+        can_traverse = False
+        if agent_uid is not None and st.st_uid == agent_uid and mode & 0o100:
+            can_traverse = True
+        elif agent_gid is not None and st.st_gid == agent_gid and mode & 0o010:
+            can_traverse = True
+
+        if not can_traverse:
+            blocking.append(parent)
+
+    return blocking
 
 
 def ensure_directory_mode(
