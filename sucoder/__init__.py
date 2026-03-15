@@ -1,5 +1,10 @@
 """sucoder – Unix-sandboxed agent collaboration toolkit."""
 
-__all__ = ["__version__"]
+from importlib.metadata import PackageNotFoundError, version
 
-__version__ = "0.2.0"
+try:
+    __version__ = version("sucoder")
+except PackageNotFoundError:
+    __version__ = "0.0.0"
+
+__all__ = ["__version__"]
