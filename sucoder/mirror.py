@@ -385,37 +385,40 @@ class MirrorManager:
         remote_path = ctx.remote_mirror_path
         assert remote_path is not None
 
+        # Resolve to absolute path so we don't fight tilde quoting.
+        abs_remote_path = self._resolve_remote_path(ctx)
+
         # Check if remote mirror is a valid git repo.
         check = self.executor.run_agent(
-            ["bash", "-c",
-             f"cd {shlex.quote(remote_path)} 2>/dev/null && "
-             f"git rev-parse --git-dir >/dev/null 2>&1"],
+            ["git", "rev-parse", "--git-dir"],
             check=False,
+            cwd=abs_remote_path,
         )
         if check.returncode == 0:
             self.logger.info("Remote mirror already exists at %s", remote_path)
         else:
             # Clean up broken directory from a previously failed init.
             self.executor.run_agent(
-                ["bash", "-c",
-                 f"rm -rf {shlex.quote(remote_path)}"],
+                ["rm", "-rf", abs_remote_path],
                 check=False,
             )
             self.logger.info("Initialising remote mirror at %s", remote_path)
             self.executor.run_agent(
-                ["bash", "-c", f"mkdir -p {shlex.quote(remote_path)} && "
-                 f"cd {shlex.quote(remote_path)} && "
-                 f"git init -b main"],
+                ["mkdir", "-p", abs_remote_path],
                 check=True,
+            )
+            self.executor.run_agent(
+                ["git", "init", "-b", "main"],
+                check=True,
+                cwd=abs_remote_path,
             )
 
         # Always ensure the config is correct (may have been missed
         # by a failed earlier init).
         self.executor.run_agent(
-            ["bash", "-c",
-             f"cd {shlex.quote(remote_path)} && "
-             f"git config receive.denyCurrentBranch updateInstead"],
+            ["git", "config", "receive.denyCurrentBranch", "updateInstead"],
             check=True,
+            cwd=abs_remote_path,
         )
 
         # Push canonical content to the remote via tunnel.
@@ -1332,11 +1335,11 @@ class MirrorManager:
         """
         remote_path = ctx.remote_mirror_path
         assert remote_path is not None
+        abs_path = self._resolve_remote_path(ctx)
         check = self.executor.run_agent(
-            ["bash", "-c",
-             f"cd {shlex.quote(remote_path)} 2>/dev/null && "
-             f"git rev-parse --git-dir >/dev/null 2>&1"],
+            ["git", "rev-parse", "--git-dir"],
             check=False,
+            cwd=abs_path,
         )
         if check.returncode != 0:
             raise MirrorError(

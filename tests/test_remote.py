@@ -547,12 +547,10 @@ def test_ensure_remote_clone_mirror_exists_skips_init(
 
     manager.ensure_remote_clone(ctx)
 
-    # Should have called git rev-parse (validity check) and config fixup, but NOT git init
-    bash_calls = [c for c in agent_calls if c[0] == "bash"]
-    assert any("rev-parse" in " ".join(bc) for bc in bash_calls)
-    for bc in bash_calls:
-        cmd_str = " ".join(bc)
-        assert "git init" not in cmd_str
+    # Should have rev-parse check and config fixup, but NOT git init
+    all_cmds = [" ".join(str(a) for a in c) for c in agent_calls]
+    assert any("rev-parse" in cmd for cmd in all_cmds)
+    assert not any("git init" in cmd for cmd in all_cmds)
     # Sync should still be called
     assert sync_called
 
@@ -570,12 +568,14 @@ def test_ensure_remote_clone_mirror_not_exists_inits_and_syncs(
     call_counter = [0]
 
     def fake_run_agent(args, **kwargs):
-        agent_calls.append(list(args))
+        agent_calls.append({"args": list(args), "kwargs": kwargs})
         call_counter[0] += 1
-        # First call is rev-parse check → fail (not a valid repo)
-        if call_counter[0] == 1:
+        # First call is rev-parse → fail; also $HOME query needs to work
+        args_str = " ".join(str(a) for a in args)
+        if "rev-parse" in args_str and call_counter[0] <= 2:
             return CommandResult(list(args), list(args), "", "", 1)
-        # Subsequent calls (rm, init, config) → succeed
+        if "echo" in args_str:
+            return CommandResult(list(args), list(args), "/home/testuser\n", "", 0)
         return CommandResult(list(args), list(args), "", "", 0)
 
     monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
@@ -585,10 +585,10 @@ def test_ensure_remote_clone_mirror_not_exists_inits_and_syncs(
 
     manager.ensure_remote_clone(ctx)
 
-    # Should have rev-parse check, cleanup, init, and config calls
-    bash_calls = [c for c in agent_calls if c[0] == "bash"]
-    assert any("rev-parse" in " ".join(bc) for bc in bash_calls)
-    assert any("git init" in " ".join(bc) for bc in bash_calls)
+    # Should have rev-parse, rm, mkdir, git init, and git config calls
+    all_cmds = [" ".join(str(a) for a in c["args"]) for c in agent_calls]
+    assert any("rev-parse" in cmd for cmd in all_cmds)
+    assert any("init" in cmd for cmd in all_cmds)
     assert sync_called
 
 
