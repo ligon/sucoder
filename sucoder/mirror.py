@@ -40,6 +40,53 @@ class MirrorError(RuntimeError):
 
 
 @dataclass
+class WorktreeInfo:
+    """Status information for a single git worktree."""
+
+    path: Path
+    branch: Optional[str]       # None if detached HEAD
+    head_commit: str             # Short SHA
+    is_main: bool                # True for the main worktree (the mirror root)
+    commits_ahead: int           # Commits ahead of base branch
+    last_commit_summary: str     # One-line log of HEAD
+    last_commit_date: str        # Relative date of HEAD
+    is_dirty: bool               # Has uncommitted changes
+    modified_count: int          # Number of modified/staged files
+    untracked_count: int         # Number of untracked files
+    diff_stat: Optional[str]     # --stat summary (only when requested)
+
+
+def _parse_worktree_porcelain(output: str) -> List[Dict[str, str]]:
+    """Parse ``git worktree list --porcelain`` output into a list of dicts.
+
+    Each dict has keys: ``worktree``, ``HEAD``, and optionally ``branch``
+    (absent when the worktree has a detached HEAD).
+    """
+    worktrees: List[Dict[str, str]] = []
+    current: Dict[str, str] = {}
+    for line in output.splitlines():
+        line = line.strip()
+        if not line:
+            if current:
+                worktrees.append(current)
+                current = {}
+            continue
+        if line.startswith("worktree "):
+            current["worktree"] = line[len("worktree "):]
+        elif line.startswith("HEAD "):
+            current["HEAD"] = line[len("HEAD "):]
+        elif line.startswith("branch "):
+            current["branch"] = line[len("branch "):]
+        elif line == "detached":
+            current["detached"] = "true"
+        elif line == "bare":
+            current["bare"] = "true"
+    if current:
+        worktrees.append(current)
+    return worktrees
+
+
+@dataclass
 class MirrorContext:
     """Descriptor for a specific mirror derived from configuration."""
 
@@ -331,6 +378,202 @@ class MirrorManager:
         lines.append(status_output or "(clean)")
 
         return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # Worktree inspection (read-only, runs as human user)
+    # ------------------------------------------------------------------
+
+    def list_worktrees(
+        self,
+        ctx: MirrorContext,
+        *,
+        include_diff: bool = False,
+        base_branch: Optional[str] = None,
+    ) -> List[WorktreeInfo]:
+        """Discover git worktrees in the mirror and gather status for each.
+
+        All commands run as the human user (read-only, no sudo needed).
+        """
+        mirror_path = self._ensure_mirror_exists(ctx)
+        base = base_branch or ctx.settings.default_base_branch
+
+        result = self.executor.run_human(
+            ["git", "worktree", "list", "--porcelain"],
+            check=True,
+            cwd=str(mirror_path),
+        )
+        parsed = _parse_worktree_porcelain(result.stdout)
+        if not parsed:
+            return []
+
+        main_worktree_path = str(mirror_path.resolve())
+        infos: List[WorktreeInfo] = []
+        for entry in parsed:
+            wt_path = Path(entry.get("worktree", ""))
+            if not wt_path.is_dir():
+                continue
+
+            raw_branch = entry.get("branch")
+            branch = raw_branch.removeprefix("refs/heads/") if raw_branch else None
+            head_sha = entry.get("HEAD", "")[:7]
+            is_main = str(wt_path.resolve()) == main_worktree_path
+
+            # Gather per-worktree details; tolerate failures gracefully.
+            commits_ahead = self._wt_commits_ahead(wt_path, base, ctx.remote_name)
+            summary, date = self._wt_last_commit(wt_path)
+            modified, untracked, dirty = self._wt_dirty_status(wt_path)
+            diff_stat = self._wt_diff_stat(wt_path, base, ctx.remote_name) if include_diff else None
+
+            infos.append(WorktreeInfo(
+                path=wt_path,
+                branch=branch,
+                head_commit=head_sha,
+                is_main=is_main,
+                commits_ahead=commits_ahead,
+                last_commit_summary=summary,
+                last_commit_date=date,
+                is_dirty=dirty,
+                modified_count=modified,
+                untracked_count=untracked,
+                diff_stat=diff_stat,
+            ))
+
+        return infos
+
+    def worktrees_summary(
+        self,
+        ctx: MirrorContext,
+        *,
+        include_diff: bool = False,
+        base_branch: Optional[str] = None,
+        include_main: bool = False,
+    ) -> str:
+        """Return a human-readable summary of worktrees in the mirror."""
+        infos = self.list_worktrees(ctx, include_diff=include_diff, base_branch=base_branch)
+        base = base_branch or ctx.settings.default_base_branch
+        mirror_path = ctx.mirror_path
+
+        non_main = [i for i in infos if not i.is_main]
+        main_info = next((i for i in infos if i.is_main), None)
+
+        lines: List[str] = []
+        lines.append(f"Worktrees for mirror '{ctx.settings.name}' ({mirror_path}):")
+        lines.append("")
+
+        if include_main and main_info:
+            lines.extend(self._format_worktree_block(main_info, base, mirror_path))
+            lines.append("")
+
+        if not non_main:
+            lines.append("  No active worktrees.")
+            return "\n".join(lines)
+
+        for info in non_main:
+            lines.extend(self._format_worktree_block(info, base, mirror_path))
+            lines.append("")
+
+        return "\n".join(lines).rstrip()
+
+    def _format_worktree_block(
+        self,
+        info: WorktreeInfo,
+        base: str,
+        mirror_path: Path,
+    ) -> List[str]:
+        """Format a single worktree as indented lines."""
+        lines: List[str] = []
+        # Show path relative to mirror root when possible.
+        try:
+            rel = info.path.resolve().relative_to(mirror_path.resolve())
+            display_path = str(rel) if str(rel) != "." else "(main worktree)"
+        except ValueError:
+            display_path = str(info.path)
+
+        label = "(main worktree)" if info.is_main else display_path
+        lines.append(f"  {label}")
+        branch_display = info.branch or "(detached HEAD)"
+        lines.append(f"    Branch: {branch_display} @ {info.head_commit}")
+
+        if not info.is_main and info.commits_ahead >= 0:
+            lines.append(f"    Ahead:  {info.commits_ahead} commit{'s' if info.commits_ahead != 1 else ''} (vs {base})")
+
+        if info.last_commit_summary:
+            lines.append(f"    Last:   {info.head_commit} {info.last_commit_summary} ({info.last_commit_date})")
+
+        status_parts: List[str] = []
+        if info.modified_count:
+            status_parts.append(f"{info.modified_count} modified")
+        if info.untracked_count:
+            status_parts.append(f"{info.untracked_count} untracked")
+        if status_parts:
+            lines.append(f"    Status: dirty ({', '.join(status_parts)})")
+        else:
+            lines.append(f"    Status: clean")
+
+        if info.diff_stat:
+            for stat_line in info.diff_stat.strip().splitlines():
+                lines.append(f"    {stat_line}")
+
+        return lines
+
+    # -- Worktree helper queries (all run_human, check=False) ----------
+
+    def _wt_commits_ahead(self, wt_path: Path, base: str, remote: str) -> int:
+        """Count commits in the worktree HEAD that are not in the base branch."""
+        result = self.executor.run_human(
+            ["git", "rev-list", "--count", f"{remote}/{base}..HEAD"],
+            check=False,
+            cwd=str(wt_path),
+        )
+        if result.returncode != 0:
+            return -1
+        try:
+            return int(result.stdout.strip())
+        except ValueError:
+            return -1
+
+    def _wt_last_commit(self, wt_path: Path) -> Tuple[str, str]:
+        """Return (subject, relative-date) for HEAD."""
+        result = self.executor.run_human(
+            ["git", "log", "-1", "--format=%s\t%cr", "HEAD"],
+            check=False,
+            cwd=str(wt_path),
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return ("", "")
+        parts = result.stdout.strip().split("\t", 1)
+        if len(parts) == 2:
+            return (parts[0], parts[1])
+        return (parts[0], "")
+
+    def _wt_dirty_status(self, wt_path: Path) -> Tuple[int, int, bool]:
+        """Return (modified_count, untracked_count, is_dirty)."""
+        result = self.executor.run_human(
+            ["git", "status", "--porcelain"],
+            check=False,
+            cwd=str(wt_path),
+        )
+        if result.returncode != 0:
+            return (0, 0, False)
+        modified = 0
+        untracked = 0
+        for line in result.stdout.splitlines():
+            if line.startswith("??"):
+                untracked += 1
+            elif line.strip():
+                modified += 1
+        return (modified, untracked, modified + untracked > 0)
+
+    def _wt_diff_stat(self, wt_path: Path, base: str, remote: str) -> Optional[str]:
+        """Return diff --stat between base and HEAD."""
+        result = self.executor.run_human(
+            ["git", "diff", f"{remote}/{base}...HEAD", "--stat"],
+            check=False,
+            cwd=str(wt_path),
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return None
+        return result.stdout.strip()
 
     def launch_agent(
         self,

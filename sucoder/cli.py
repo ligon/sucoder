@@ -438,6 +438,59 @@ def status(
     typer.echo(output)
 
 
+@app.command("worktrees")
+def worktrees(
+    ctx: typer.Context,
+    mirror: Optional[str] = typer.Argument(None, help="Mirror name defined in configuration.", shell_complete=_mirror_completion),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
+    diff: bool = typer.Option(False, "--diff", help="Include diff --stat for each worktree."),
+    base: Optional[str] = typer.Option(
+        None,
+        "--base",
+        "-b",
+        help="Base branch for ahead count (defaults to mirror setting).",
+    ),
+    show_main: bool = typer.Option(False, "--main", help="Include the main worktree in the listing."),
+    watch: Optional[int] = typer.Option(
+        None,
+        "--watch",
+        "-w",
+        help="Refresh every N seconds.",
+    ),
+) -> None:
+    """List active worktrees in the mirror with status details."""
+    mirror = _resolve_mirror_name(ctx, mirror)
+    config = _get_config(ctx)
+    logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
+    manager = _build_manager(config, logger, dry_run=False)
+    mirror_ctx = manager.context_for(mirror)
+
+    def _display() -> None:
+        try:
+            output = manager.worktrees_summary(
+                mirror_ctx,
+                include_diff=diff,
+                base_branch=base,
+                include_main=show_main,
+            )
+        except MirrorError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
+        typer.echo(output)
+
+    if watch is not None:
+        import time
+        try:
+            while True:
+                typer.clear()
+                _display()
+                time.sleep(watch)
+        except KeyboardInterrupt:
+            pass
+    else:
+        _display()
+
+
 @app.command("agents-run")
 def agents_run(
     ctx: typer.Context,

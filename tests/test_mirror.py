@@ -14,8 +14,10 @@ from sucoder.executor import CommandError, CommandExecutor, CommandResult
 from sucoder.mirror import (
     MirrorError,
     MirrorManager,
+    WorktreeInfo,
     _detect_agent_type,
     _merge_flag_templates,
+    _parse_worktree_porcelain,
     _sanitize_task_name,
 )
 from sucoder.permissions import check_parent_traversable
@@ -1605,3 +1607,165 @@ def test_launch_agent_subprocess_mode_does_not_call_execvp(tmp_path: Path, monke
     # execvp should NOT be called
     assert len(exec_calls) == 0
     assert result == 0
+# ------------------------------------------------------------------
+# Worktree inspection tests
+# ------------------------------------------------------------------
+
+
+PORCELAIN_SAMPLE = """\
+worktree /tmp/mirrors/project
+HEAD abc1234567890abcdef1234567890abcdef123456
+branch refs/heads/main
+
+worktree /tmp/mirrors/project/.claude/worktrees/fix-auth
+HEAD def4567890abcdef1234567890abcdef12345678
+branch refs/heads/worktree-fix-auth
+
+worktree /tmp/mirrors/project/.claude/worktrees/detached
+HEAD 9999999999abcdef1234567890abcdef12345678
+detached
+
+"""
+
+
+def test_parse_worktree_porcelain_basic() -> None:
+    entries = _parse_worktree_porcelain(PORCELAIN_SAMPLE)
+    assert len(entries) == 3
+
+    assert entries[0]["worktree"] == "/tmp/mirrors/project"
+    assert entries[0]["branch"] == "refs/heads/main"
+    assert entries[0]["HEAD"].startswith("abc1234")
+
+    assert entries[1]["worktree"] == "/tmp/mirrors/project/.claude/worktrees/fix-auth"
+    assert entries[1]["branch"] == "refs/heads/worktree-fix-auth"
+
+    assert entries[2]["worktree"] == "/tmp/mirrors/project/.claude/worktrees/detached"
+    assert "detached" in entries[2]
+    assert "branch" not in entries[2]
+
+
+def test_parse_worktree_porcelain_empty() -> None:
+    assert _parse_worktree_porcelain("") == []
+    assert _parse_worktree_porcelain("\n\n") == []
+
+
+def test_list_worktrees_no_extra_worktrees(tmp_path: Path) -> None:
+    """When no worktrees have been added, list_worktrees returns only the main one."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    infos = manager.list_worktrees(ctx)
+    assert len(infos) == 1
+    assert infos[0].is_main is True
+    assert infos[0].branch == "main"
+
+
+def test_list_worktrees_with_worktree(tmp_path: Path) -> None:
+    """Adding a git worktree makes it visible in list_worktrees."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    mirror_path = ctx.mirror_path
+
+    # Create a worktree manually (simulating what claude --worktree does).
+    wt_dir = mirror_path / ".claude" / "worktrees" / "fix-auth"
+    wt_dir.parent.mkdir(parents=True, exist_ok=True)
+    run_git(
+        ["worktree", "add", str(wt_dir), "-b", "worktree-fix-auth"],
+        cwd=mirror_path,
+    )
+
+    # Make a commit in the worktree so it's ahead of main.
+    run_git(["config", "user.email", "test@example.com"], cwd=wt_dir)
+    run_git(["config", "user.name", "Test User"], cwd=wt_dir)
+    (wt_dir / "new_file.txt").write_text("hello\n", encoding="utf-8")
+    run_git(["add", "new_file.txt"], cwd=wt_dir)
+    run_git(["commit", "-m", "worktree commit"], cwd=wt_dir)
+
+    infos = manager.list_worktrees(ctx)
+    assert len(infos) == 2
+
+    main_info = next(i for i in infos if i.is_main)
+    wt_info = next(i for i in infos if not i.is_main)
+
+    assert main_info.branch == "main"
+    assert wt_info.branch == "worktree-fix-auth"
+    assert wt_info.commits_ahead >= 1
+    assert wt_info.last_commit_summary == "worktree commit"
+    assert wt_info.is_dirty is False
+
+
+def test_list_worktrees_dirty_detection(tmp_path: Path) -> None:
+    """Uncommitted changes are reported as dirty."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+    mirror_path = ctx.mirror_path
+
+    wt_dir = mirror_path / ".claude" / "worktrees" / "dirty-wt"
+    wt_dir.parent.mkdir(parents=True, exist_ok=True)
+    run_git(["worktree", "add", str(wt_dir), "-b", "dirty-branch"], cwd=mirror_path)
+
+    # Create tracked modification and untracked file.
+    (wt_dir / "README.md").write_text("modified\n", encoding="utf-8")
+    (wt_dir / "untracked.txt").write_text("new\n", encoding="utf-8")
+
+    infos = manager.list_worktrees(ctx)
+    wt_info = next(i for i in infos if not i.is_main)
+
+    assert wt_info.is_dirty is True
+    assert wt_info.modified_count >= 1
+    assert wt_info.untracked_count == 1
+
+
+def test_worktrees_summary_no_worktrees(tmp_path: Path) -> None:
+    """Summary includes 'No active worktrees' when only main exists."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    output = manager.worktrees_summary(ctx)
+    assert "No active worktrees" in output
+    assert "sample" in output
+
+
+def test_worktrees_summary_with_worktree(tmp_path: Path) -> None:
+    """Summary shows worktree details."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+    mirror_path = ctx.mirror_path
+
+    wt_dir = mirror_path / ".claude" / "worktrees" / "add-tests"
+    wt_dir.parent.mkdir(parents=True, exist_ok=True)
+    run_git(["worktree", "add", str(wt_dir), "-b", "worktree-add-tests"], cwd=mirror_path)
+
+    output = manager.worktrees_summary(ctx)
+    assert "worktree-add-tests" in output
+    assert "Branch:" in output
+    assert "Status:" in output
+
+
+def test_worktrees_summary_with_diff(tmp_path: Path) -> None:
+    """--diff populates the diff_stat field."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+    mirror_path = ctx.mirror_path
+
+    wt_dir = mirror_path / ".claude" / "worktrees" / "diff-wt"
+    wt_dir.parent.mkdir(parents=True, exist_ok=True)
+    run_git(["worktree", "add", str(wt_dir), "-b", "diff-branch"], cwd=mirror_path)
+
+    run_git(["config", "user.email", "test@example.com"], cwd=wt_dir)
+    run_git(["config", "user.name", "Test User"], cwd=wt_dir)
+    (wt_dir / "new_file.txt").write_text("content\n", encoding="utf-8")
+    run_git(["add", "new_file.txt"], cwd=wt_dir)
+    run_git(["commit", "-m", "add file"], cwd=wt_dir)
+
+    infos = manager.list_worktrees(ctx, include_diff=True)
+    wt_info = next(i for i in infos if not i.is_main)
+    assert wt_info.diff_stat is not None
+    assert "new_file.txt" in wt_info.diff_stat
