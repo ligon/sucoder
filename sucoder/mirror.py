@@ -385,20 +385,20 @@ class MirrorManager:
         remote_path = ctx.remote_mirror_path
         assert remote_path is not None
 
-        # Check if remote mirror already exists.
+        # Check if remote mirror is a valid git repo.
         check = self.executor.run_agent(
-            ["test", "-d", f"{remote_path}/.git"],
+            ["bash", "-c",
+             f"cd {shlex.quote(remote_path)} 2>/dev/null && "
+             f"git rev-parse --git-dir >/dev/null 2>&1"],
             check=False,
         )
         if check.returncode == 0:
             self.logger.info("Remote mirror already exists at %s", remote_path)
         else:
-            # Clean up any empty directory from a previously failed init.
+            # Clean up broken directory from a previously failed init.
             self.executor.run_agent(
                 ["bash", "-c",
-                 f"if [ -d {shlex.quote(remote_path)} ] && "
-                 f"[ ! -d {shlex.quote(remote_path)}/.git ]; then "
-                 f"rm -rf {shlex.quote(remote_path)}; fi"],
+                 f"rm -rf {shlex.quote(remote_path)}"],
                 check=False,
             )
             self.logger.info("Initialising remote mirror at %s", remote_path)
@@ -1333,7 +1333,9 @@ class MirrorManager:
         remote_path = ctx.remote_mirror_path
         assert remote_path is not None
         check = self.executor.run_agent(
-            ["test", "-d", f"{remote_path}/.git"],
+            ["bash", "-c",
+             f"cd {shlex.quote(remote_path)} 2>/dev/null && "
+             f"git rev-parse --git-dir >/dev/null 2>&1"],
             check=False,
         )
         if check.returncode != 0:

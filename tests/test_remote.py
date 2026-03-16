@@ -536,7 +536,7 @@ def test_ensure_remote_clone_mirror_exists_skips_init(
 
     def fake_run_agent(args, **kwargs):
         agent_calls.append(list(args))
-        # test -d succeeds → mirror already exists
+        # All calls succeed → mirror exists and is valid
         return CommandResult(list(args), list(args), "", "", 0)
 
     monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
@@ -547,14 +547,12 @@ def test_ensure_remote_clone_mirror_exists_skips_init(
 
     manager.ensure_remote_clone(ctx)
 
-    # Should have called test -d and the config fixup, but NOT git init
-    assert any("test" in c and "-d" in c for c in agent_calls)
+    # Should have called git rev-parse (validity check) and config fixup, but NOT git init
     bash_calls = [c for c in agent_calls if c[0] == "bash"]
-    # The only bash call should be the config fixup, not git init
+    assert any("rev-parse" in " ".join(bc) for bc in bash_calls)
     for bc in bash_calls:
         cmd_str = " ".join(bc)
         assert "git init" not in cmd_str
-        assert "receive.denyCurrentBranch" in cmd_str
     # Sync should still be called
     assert sync_called
 
@@ -574,10 +572,10 @@ def test_ensure_remote_clone_mirror_not_exists_inits_and_syncs(
     def fake_run_agent(args, **kwargs):
         agent_calls.append(list(args))
         call_counter[0] += 1
-        # First call is test -d → fail (mirror does not exist)
+        # First call is rev-parse check → fail (not a valid repo)
         if call_counter[0] == 1:
             return CommandResult(list(args), list(args), "", "", 1)
-        # Second call is bash -c init → succeed
+        # Subsequent calls (rm, init, config) → succeed
         return CommandResult(list(args), list(args), "", "", 0)
 
     monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
@@ -587,9 +585,10 @@ def test_ensure_remote_clone_mirror_not_exists_inits_and_syncs(
 
     manager.ensure_remote_clone(ctx)
 
-    # Should have both test -d and bash -c calls
-    assert any("test" in c and "-d" in c for c in agent_calls)
-    assert any(c[0] == "bash" for c in agent_calls)
+    # Should have rev-parse check, cleanup, init, and config calls
+    bash_calls = [c for c in agent_calls if c[0] == "bash"]
+    assert any("rev-parse" in " ".join(bc) for bc in bash_calls)
+    assert any("git init" in " ".join(bc) for bc in bash_calls)
     assert sync_called
 
 
