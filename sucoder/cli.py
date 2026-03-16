@@ -212,9 +212,11 @@ def _build_manager_for_mirror(
         click_ctx = None
     target = _get_active_target(click_ctx)
     if target is not None and settings is not None:
-        # Apply target's remote config to a copy of the settings.
+        # Apply target's remote config to a copy of the settings and
+        # store it back so that context_for() also sees it.
         from dataclasses import replace
         settings = replace(settings, remote=target)
+        config.mirrors[mirror_name] = settings  # type: ignore[index]
 
     return _build_manager(config, logger, dry_run, mirror_settings=settings)
 
