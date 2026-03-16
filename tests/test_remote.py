@@ -489,9 +489,9 @@ def test_sync_remote_calls_push_with_tunnel_url(
     push_cmd = calls[0]
     assert push_cmd[0] == "git"
     assert push_cmd[1] == "push"
-    # URL should contain tunnel port and remote mirror path
+    # SCP-style URL: localhost:~/mirrors/rproj (port via GIT_SSH_COMMAND)
     url = push_cmd[2]
-    assert url.startswith("ssh://localhost:2222")
+    assert url.startswith("localhost:")
     assert "rproj" in url
     assert "--all" in push_cmd
     assert "--force" in push_cmd

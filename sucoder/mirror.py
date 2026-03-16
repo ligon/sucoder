@@ -321,15 +321,33 @@ class MirrorManager:
 
         tunnel = self._ensure_tunnel(remote)
         remote_path = ctx.remote_mirror_path
-        # Ensure a / separates the port from the path.
-        sep = "" if remote_path.startswith("/") else "/"
-        push_url = f"ssh://localhost:{tunnel.local_port}{sep}{remote_path}"
+
+        # Use SCP-style URL (host:path) so tilde expands on the remote.
+        # Set GIT_SSH_COMMAND to route through the tunnel port and
+        # reuse the ControlMaster socket.
+        push_url = f"localhost:{remote_path}"
+        ssh_cmd_parts = [
+            "ssh",
+            "-p", str(tunnel.local_port),
+            "-o", "StrictHostKeyChecking=no",
+        ]
+        # Reuse ControlMaster if available.
+        control_path = getattr(self.executor, "control_socket_path", None)
+        if control_path:
+            ssh_cmd_parts.extend([
+                "-o", "ControlMaster=auto",
+                "-o", f"ControlPath={control_path}",
+            ])
+        git_ssh_cmd = " ".join(shlex.quote(p) for p in ssh_cmd_parts)
 
         self.logger.info("Pushing to remote mirror %s via tunnel", remote_path)
+        push_env = dict(os.environ)
+        push_env["GIT_SSH_COMMAND"] = git_ssh_cmd
         self.executor.run_human(
             ["git", "push", push_url, "--all", "--force"],
             check=True,
             cwd=str(ctx.canonical_path),
+            env=push_env,
         )
 
     def ensure_remote_clone(self, ctx: MirrorContext) -> None:
