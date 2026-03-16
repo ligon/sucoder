@@ -380,3 +380,308 @@ def test_mirror_settings_not_remote_until_target_applied() -> None:
     settings_with_target = replace(settings, remote=target)
     assert settings_with_target.is_remote is True
     assert settings.is_remote is False  # original unchanged
+
+
+# ------------------------------------------------------------------
+# Remote mirror operations
+# ------------------------------------------------------------------
+
+
+class FakeTunnel:
+    local_port = 2222
+
+    def is_alive(self):
+        return True
+
+
+def _build_remote_manager(tmp_path: Path, *, executor=None):
+    """Build a MirrorManager whose mirror settings carry a RemoteConfig."""
+    import grp
+    import logging
+    import os as _os
+    import pwd
+
+    from sucoder.config import BranchPrefixes, Config, MirrorSettings, RemoteConfig
+    from sucoder.executor import CommandExecutor
+    from sucoder.mirror import MirrorManager
+
+    canonical = tmp_path / "canonical"
+    canonical.mkdir(exist_ok=True)
+    # Create a minimal git repo so canonical_path validation can pass.
+    import subprocess
+
+    subprocess.run(["git", "init", "-b", "main"], cwd=canonical, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=canonical, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=canonical, check=True, capture_output=True)
+    (canonical / "README.md").write_text("hi\n")
+    subprocess.run(["git", "add", "README.md"], cwd=canonical, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=canonical, check=True, capture_output=True)
+    canonical.chmod(canonical.stat().st_mode & ~0o200)
+
+    _os.environ["GIT_CONFIG_GLOBAL"] = str(tmp_path / "gitconfig")
+
+    mirror_root = tmp_path / "mirrors"
+    mirror_root.mkdir(exist_ok=True)
+
+    user = pwd.getpwuid(_os.getuid()).pw_name
+    group = grp.getgrgid(_os.getgid()).gr_name
+
+    remote = RemoteConfig(gateway="gw.example.com", transfer_host="dtn.example.com")
+    settings = MirrorSettings(
+        name="rproj",
+        canonical_repo=canonical,
+        mirror_name="rproj",
+        branch_prefixes=BranchPrefixes(human="ligon", agent="coder"),
+        default_base_branch="main",
+        remote=remote,
+    )
+
+    config = Config(
+        human_user=user,
+        agent_user=user,
+        agent_group=group,
+        mirror_root=mirror_root,
+        log_dir=None,
+        mirrors={"rproj": settings},
+    )
+
+    logger = logging.getLogger("sucoder.test.remote")
+    logger.setLevel(logging.DEBUG)
+    if not logger.handlers:
+        logger.addHandler(logging.NullHandler())
+
+    if executor is None:
+        executor = CommandExecutor(
+            human_user=config.human_user,
+            agent_user=config.agent_user,
+            agent_group=config.agent_group,
+            logger=logger,
+            dry_run=False,
+            use_sudo_for_agent=False,
+        )
+
+    return MirrorManager(config, executor, logger)
+
+
+def test_sync_remote_calls_push_with_tunnel_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_sync_remote should push to ssh://localhost:<tunnel_port><remote_path>."""
+    from sucoder.executor import CommandResult
+
+    manager = _build_remote_manager(tmp_path)
+    ctx = manager.context_for("rproj")
+
+    # Mock _ensure_tunnel to return our fake tunnel.
+    monkeypatch.setattr(manager, "_ensure_tunnel", lambda remote: FakeTunnel())
+
+    calls: list = []
+
+    def fake_run_human(args, **kwargs):
+        calls.append(list(args))
+        return CommandResult(list(args), list(args), "", "", 0)
+
+    monkeypatch.setattr(manager.executor, "run_human", fake_run_human)
+
+    manager._sync_remote(ctx)
+
+    assert len(calls) == 1
+    push_cmd = calls[0]
+    assert push_cmd[0] == "git"
+    assert push_cmd[1] == "push"
+    # URL should contain tunnel port and remote mirror path
+    url = push_cmd[2]
+    assert url.startswith("ssh://localhost:2222")
+    assert "rproj" in url
+    assert "--all" in push_cmd
+    assert "--force" in push_cmd
+
+
+def test_ensure_remote_clone_mirror_exists_skips_init(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the remote mirror already exists, ensure_remote_clone skips git init."""
+    from sucoder.executor import CommandResult
+
+    manager = _build_remote_manager(tmp_path)
+    ctx = manager.context_for("rproj")
+
+    agent_calls: list = []
+
+    def fake_run_agent(args, **kwargs):
+        agent_calls.append(list(args))
+        # test -d succeeds → mirror already exists
+        return CommandResult(list(args), list(args), "", "", 0)
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+
+    # Mock _sync_remote since we don't want actual sync
+    sync_called = []
+    monkeypatch.setattr(manager, "_sync_remote", lambda ctx: sync_called.append(True))
+
+    manager.ensure_remote_clone(ctx)
+
+    # Should have called test -d but NOT bash -c (git init)
+    assert any("test" in c and "-d" in c for c in agent_calls)
+    assert not any(c[0] == "bash" for c in agent_calls)
+    # Sync should still be called
+    assert sync_called
+
+
+def test_ensure_remote_clone_mirror_not_exists_inits_and_syncs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the remote mirror does NOT exist, ensure_remote_clone inits then syncs."""
+    from sucoder.executor import CommandResult
+
+    manager = _build_remote_manager(tmp_path)
+    ctx = manager.context_for("rproj")
+
+    agent_calls: list = []
+    call_counter = [0]
+
+    def fake_run_agent(args, **kwargs):
+        agent_calls.append(list(args))
+        call_counter[0] += 1
+        # First call is test -d → fail (mirror does not exist)
+        if call_counter[0] == 1:
+            return CommandResult(list(args), list(args), "", "", 1)
+        # Second call is bash -c init → succeed
+        return CommandResult(list(args), list(args), "", "", 0)
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+
+    sync_called = []
+    monkeypatch.setattr(manager, "_sync_remote", lambda ctx: sync_called.append(True))
+
+    manager.ensure_remote_clone(ctx)
+
+    # Should have both test -d and bash -c calls
+    assert any("test" in c and "-d" in c for c in agent_calls)
+    assert any(c[0] == "bash" for c in agent_calls)
+    assert sync_called
+
+
+def test_ensure_remote_mirror_exists_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_ensure_mirror_exists returns ctx.mirror_path when remote check succeeds."""
+    from sucoder.executor import CommandResult
+
+    manager = _build_remote_manager(tmp_path)
+    ctx = manager.context_for("rproj")
+
+    def fake_run_agent(args, **kwargs):
+        return CommandResult(list(args), list(args), "", "", 0)
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+
+    result = manager._ensure_mirror_exists(ctx)
+    assert result == ctx.mirror_path
+
+
+def test_ensure_remote_mirror_exists_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_ensure_mirror_exists raises MirrorError when remote check fails."""
+    from sucoder.executor import CommandResult
+    from sucoder.mirror import MirrorError
+
+    manager = _build_remote_manager(tmp_path)
+    ctx = manager.context_for("rproj")
+
+    def fake_run_agent(args, **kwargs):
+        return CommandResult(list(args), list(args), "", "", 1)
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+
+    with pytest.raises(MirrorError):
+        manager._ensure_mirror_exists(ctx)
+
+
+def test_run_query_dispatch_local(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """_run_query calls run_human for non-remote contexts."""
+    import grp
+    import logging
+    import os as _os
+    import pwd
+
+    from sucoder.config import BranchPrefixes, Config, MirrorSettings
+    from sucoder.executor import CommandExecutor, CommandResult
+    from sucoder.mirror import MirrorManager
+
+    _os.environ["GIT_CONFIG_GLOBAL"] = str(tmp_path / "gitconfig")
+    mirror_root = tmp_path / "mirrors"
+    mirror_root.mkdir(exist_ok=True)
+
+    user = pwd.getpwuid(_os.getuid()).pw_name
+    group = grp.getgrgid(_os.getgid()).gr_name
+
+    # Local settings (no remote)
+    settings = MirrorSettings(
+        name="local",
+        canonical_repo=tmp_path,
+        mirror_name="local",
+        branch_prefixes=BranchPrefixes(human="ligon", agent="coder"),
+    )
+    config = Config(
+        human_user=user,
+        agent_user=user,
+        agent_group=group,
+        mirror_root=mirror_root,
+        log_dir=None,
+        mirrors={"local": settings},
+    )
+    logger = logging.getLogger("sucoder.test.dispatch")
+    executor = CommandExecutor(
+        human_user=user, agent_user=user, agent_group=group,
+        logger=logger, dry_run=False, use_sudo_for_agent=False,
+    )
+    manager = MirrorManager(config, executor, logger)
+    ctx = manager.context_for("local")
+
+    assert not ctx.is_remote
+
+    called = {"human": False, "agent": False}
+
+    def track_human(args, **kwargs):
+        called["human"] = True
+        return CommandResult(list(args), list(args), "", "", 0)
+
+    def track_agent(args, **kwargs):
+        called["agent"] = True
+        return CommandResult(list(args), list(args), "", "", 0)
+
+    monkeypatch.setattr(executor, "run_human", track_human)
+    monkeypatch.setattr(executor, "run_agent", track_agent)
+
+    manager._run_query(ctx, ["echo", "hi"])
+    assert called["human"] is True
+    assert called["agent"] is False
+
+
+def test_run_query_dispatch_remote(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """_run_query calls run_agent for remote contexts."""
+    from sucoder.executor import CommandResult
+
+    manager = _build_remote_manager(tmp_path)
+    ctx = manager.context_for("rproj")
+
+    assert ctx.is_remote
+
+    called = {"human": False, "agent": False}
+
+    def track_human(args, **kwargs):
+        called["human"] = True
+        return CommandResult(list(args), list(args), "", "", 0)
+
+    def track_agent(args, **kwargs):
+        called["agent"] = True
+        return CommandResult(list(args), list(args), "", "", 0)
+
+    monkeypatch.setattr(manager.executor, "run_human", track_human)
+    monkeypatch.setattr(manager.executor, "run_agent", track_agent)
+
+    manager._run_query(ctx, ["echo", "hi"])
+    assert called["agent"] is True
+    assert called["human"] is False

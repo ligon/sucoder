@@ -1784,3 +1784,48 @@ def test_worktrees_summary_with_diff(tmp_path: Path) -> None:
     wt_info = next(i for i in infos if not i.is_main)
     assert wt_info.diff_stat is not None
     assert "new_file.txt" in wt_info.diff_stat
+
+
+def test_list_worktrees_detached_head(tmp_path: Path) -> None:
+    """A detached-HEAD worktree should have branch=None."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+    mirror_path = ctx.mirror_path
+
+    wt_dir = mirror_path / ".claude" / "worktrees" / "detached-wt"
+    wt_dir.parent.mkdir(parents=True, exist_ok=True)
+    run_git(["worktree", "add", "--detach", str(wt_dir)], cwd=mirror_path)
+
+    infos = manager.list_worktrees(ctx)
+    wt_info = next(i for i in infos if not i.is_main)
+    assert wt_info.branch is None
+
+
+def test_list_worktrees_nonexistent_base_branch(tmp_path: Path) -> None:
+    """_wt_commits_ahead returns -1 when the base branch ref does not exist."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+    mirror_path = ctx.mirror_path
+
+    wt_dir = mirror_path / ".claude" / "worktrees" / "ahead-wt"
+    wt_dir.parent.mkdir(parents=True, exist_ok=True)
+    run_git(["worktree", "add", str(wt_dir), "-b", "wt-ahead"], cwd=mirror_path)
+
+    infos = manager.list_worktrees(ctx, base_branch="nonexistent")
+    wt_info = next(i for i in infos if not i.is_main)
+    assert wt_info.commits_ahead == -1
+
+
+def test_worktrees_summary_include_main(tmp_path: Path) -> None:
+    """With include_main=True the main worktree appears in the summary."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    output = manager.worktrees_summary(ctx, include_main=True)
+    # The main worktree block should contain the main branch name
+    assert "main" in output
+    # The "(main worktree)" label should appear
+    assert "(main worktree)" in output
