@@ -72,9 +72,16 @@ class SshControl:
         return _control_socket_path(self.gateway)
 
     def is_active(self) -> bool:
-        """Return True if a ControlMaster socket exists and is live."""
+        """Return True if the ControlMaster connection actually works.
+
+        ``ssh -O check`` only verifies the local mux daemon is alive.
+        A zombie socket (mux running, TCP dead) passes that check but
+        fails when a real session is requested.  We follow up with a
+        lightweight ``true`` command to confirm end-to-end connectivity.
+        """
         if not self.socket_path.exists():
             return False
+        # Quick structural check --- is the mux daemon running?
         result = subprocess.run(
             [
                 "ssh",
@@ -86,6 +93,26 @@ class SshControl:
             text=True,
             check=False,
         )
+        if result.returncode != 0:
+            return False
+        # End-to-end check --- can we actually open a session?
+        try:
+            result = subprocess.run(
+                [
+                    "ssh",
+                    "-o", "ControlMaster=auto",
+                    "-o", f"ControlPath={self.socket_path}",
+                    "-o", "ConnectTimeout=5",
+                    self.gateway,
+                    "true",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+        except subprocess.TimeoutExpired:
+            return False
         return result.returncode == 0
 
     def establish(self, logger: logging.Logger) -> None:

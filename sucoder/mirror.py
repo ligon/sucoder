@@ -349,14 +349,24 @@ class MirrorManager:
         gateway = remote.gateway
 
         # Build GIT_SSH_COMMAND to route through the ControlMaster.
+        # Include a ProxyCommand fallback through the gateway so that a
+        # stale login-node socket doesn't leave git with no route.
         ssh_cmd_parts = ["ssh"]
         control_path = getattr(self.executor, "control_socket_path", None)
         if control_path:
-            # Login node ControlMaster handles routing through gateway.
+            from .tunnel import _control_socket_path as _gw_sock
             ssh_cmd_parts.extend([
                 "-o", "ControlMaster=auto",
                 "-o", f"ControlPath={control_path}",
             ])
+            if gateway:
+                gw_socket = _gw_sock(gateway)
+                ssh_cmd_parts.extend([
+                    "-o",
+                    f"ProxyCommand=ssh -o ControlMaster=auto "
+                    f"-o ControlPath={gw_socket} "
+                    f"-W %h:%p {gateway}",
+                ])
 
         git_ssh_cmd = " ".join(shlex.quote(p) for p in ssh_cmd_parts)
         push_host = login_node or gateway

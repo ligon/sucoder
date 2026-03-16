@@ -266,13 +266,25 @@ class RemoteExecutor(CommandExecutor):
         if allocate_tty:
             ssh_cmd.append("-t")
         # Reuse ControlMaster connection if available (avoids re-auth).
-        # When a ControlMaster socket exists for the login node, it
-        # already routes through the gateway — no -J needed.
+        # Always include a ProxyCommand fallback through the gateway so
+        # that if the login-node ControlMaster socket is stale (TCP
+        # died but mux daemon lingers), SSH can still reach the login
+        # node via the gateway instead of attempting a direct connection
+        # to an unresolvable internal hostname.
         if self.control_socket_path:
             ssh_cmd.extend([
                 "-o", "ControlMaster=auto",
                 "-o", f"ControlPath={self.control_socket_path}",
             ])
+            if self.gateway:
+                from .tunnel import _control_socket_path as _gw_sock
+                gw_socket = _gw_sock(self.gateway)
+                ssh_cmd.extend([
+                    "-o",
+                    f"ProxyCommand=ssh -o ControlMaster=auto "
+                    f"-o ControlPath={gw_socket} "
+                    f"-W %h:%p {self.gateway}",
+                ])
             ssh_cmd.append(self.login_node)
         else:
             ssh_cmd.extend(["-J", self.gateway, self.login_node])
