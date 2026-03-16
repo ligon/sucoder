@@ -435,18 +435,28 @@ class MirrorManager:
 
         # Reconstruct from session state.
         session = RemoteSession.load(getattr(self, "_remote_session_name", ""))
-        tunnel = SshTunnel.from_session(
-            gateway=remote.gateway,
-            target_host=remote.transfer_host,
-            tunnel_port=session.tunnel_port,
-            tunnel_pid=session.tunnel_pid,
-            control=control_arg,
-        )
-        if tunnel.is_alive():
-            self._ssh_tunnel = tunnel
-            return tunnel
+        if session.tunnel_port is not None:
+            tunnel = SshTunnel.from_session(
+                gateway=remote.gateway,
+                target_host=remote.transfer_host,
+                tunnel_port=session.tunnel_port,
+                tunnel_pid=session.tunnel_pid,
+                control=control_arg,
+            )
+            if tunnel.is_alive():
+                self._ssh_tunnel = tunnel
+                return tunnel
+            # PID is dead but port might still be held — check if we
+            # can connect through it before opening a fresh one.
+            if self._port_is_listening(session.tunnel_port):
+                self.logger.info(
+                    "Reusing existing tunnel on port %d (PID unknown)",
+                    session.tunnel_port,
+                )
+                self._ssh_tunnel = tunnel
+                return tunnel
 
-        # Open a fresh tunnel.
+        # Open a fresh tunnel (picks a new ephemeral port).
         tunnel = SshTunnel(
             gateway=remote.gateway,
             target_host=remote.transfer_host,
@@ -458,6 +468,16 @@ class MirrorManager:
         session.save()
         self._ssh_tunnel = tunnel
         return tunnel
+
+    @staticmethod
+    def _port_is_listening(port: int) -> bool:
+        """Check if something is listening on localhost:<port>."""
+        import socket
+        try:
+            with socket.create_connection(("localhost", port), timeout=2):
+                return True
+        except (OSError, ConnectionRefusedError):
+            return False
 
     def start_task(
         self,
