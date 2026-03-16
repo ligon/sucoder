@@ -463,38 +463,64 @@ def _build_remote_manager(tmp_path: Path, *, executor=None):
     return MirrorManager(config, executor, logger)
 
 
-def test_sync_remote_calls_push_with_tunnel_url(
+def test_sync_remote_calls_push_via_login_node(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """_sync_remote should push to ssh://localhost:<tunnel_port><remote_path>."""
-    from sucoder.executor import CommandResult
+    """_sync_remote should push via the login node ControlMaster (no tunnel)."""
+    from sucoder.executor import CommandResult, RemoteExecutor
 
     manager = _build_remote_manager(tmp_path)
     ctx = manager.context_for("rproj")
 
-    # Mock _ensure_tunnel to return our fake tunnel.
-    monkeypatch.setattr(manager, "_ensure_tunnel", lambda remote: FakeTunnel())
+    # Replace executor with a RemoteExecutor so login_node is available.
+    import logging
+    logger = logging.getLogger("test.remote")
+    remote_exec = RemoteExecutor(
+        human_user="ligon",
+        agent_user="ligon",
+        agent_group="ligon",
+        logger=logger,
+        dry_run=False,
+        use_sudo_for_agent=False,
+        gateway="gw.example.com",
+        login_node="ln001",
+        remote_mirror_root="~/mirrors",
+        local_mirror_root=str(tmp_path / "mirrors"),
+        control_socket_path="/tmp/test.sock",
+    )
 
     calls: list = []
 
     def fake_run_human(args, **kwargs):
-        calls.append(list(args))
+        calls.append({"args": list(args), "kwargs": kwargs})
         return CommandResult(list(args), list(args), "", "", 0)
 
-    monkeypatch.setattr(manager.executor, "run_human", fake_run_human)
+    def fake_run_agent(args, **kwargs):
+        # For _resolve_remote_path
+        if "echo" in " ".join(str(a) for a in args):
+            return CommandResult(list(args), list(args), "/home/ligon\n", "", 0)
+        return CommandResult(list(args), list(args), "", "", 0)
+
+    monkeypatch.setattr(remote_exec, "run_human", fake_run_human)
+    monkeypatch.setattr(remote_exec, "run_agent", fake_run_agent)
+    manager.executor = remote_exec
 
     manager._sync_remote(ctx)
 
     assert len(calls) == 1
-    push_cmd = calls[0]
+    push_cmd = calls[0]["args"]
     assert push_cmd[0] == "git"
     assert push_cmd[1] == "push"
-    # SCP-style URL: localhost:~/mirrors/rproj (port via GIT_SSH_COMMAND)
+    # SCP-style URL using login node, not localhost tunnel
     url = push_cmd[2]
-    assert url.startswith("localhost:")
+    assert "ln001:" in url
     assert "rproj" in url
     assert "--all" in push_cmd
     assert "--force" in push_cmd
+    # GIT_SSH_COMMAND should reference the ControlMaster socket
+    env = calls[0]["kwargs"].get("env", {})
+    assert "GIT_SSH_COMMAND" in env
+    assert "ControlPath" in env["GIT_SSH_COMMAND"]
 
 
 def test_ensure_remote_clone_mirror_exists_skips_init(

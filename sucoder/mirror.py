@@ -334,31 +334,35 @@ class MirrorManager:
         return raw.replace("~", cached, 1)
 
     def _sync_remote(self, ctx: MirrorContext) -> None:
-        """Push local canonical commits to the remote mirror."""
+        """Push local canonical commits to the remote mirror.
+
+        Uses the login node ControlMaster for git transport — no
+        tunnel needed when the login node has internet access.
+        """
         remote = ctx.settings.remote
         assert remote is not None
 
-        tunnel = self._ensure_tunnel(remote)
         remote_path = self._resolve_remote_path(ctx)
 
-        # Set GIT_SSH_COMMAND to route through the tunnel port and
-        # reuse the ControlMaster socket.
-        push_url = f"localhost:{remote_path}"
-        ssh_cmd_parts = [
-            "ssh",
-            "-p", str(tunnel.local_port),
-            "-o", "StrictHostKeyChecking=no",
-        ]
-        # Reuse ControlMaster if available.
+        # Resolve the login node from the executor or session.
+        login_node = getattr(self.executor, "login_node", None)
+        gateway = remote.gateway
+
+        # Build GIT_SSH_COMMAND to route through the ControlMaster.
+        ssh_cmd_parts = ["ssh"]
         control_path = getattr(self.executor, "control_socket_path", None)
         if control_path:
+            # Login node ControlMaster handles routing through gateway.
             ssh_cmd_parts.extend([
                 "-o", "ControlMaster=auto",
                 "-o", f"ControlPath={control_path}",
             ])
-        git_ssh_cmd = " ".join(shlex.quote(p) for p in ssh_cmd_parts)
 
-        self.logger.info("Pushing to remote mirror %s via tunnel", remote_path)
+        git_ssh_cmd = " ".join(shlex.quote(p) for p in ssh_cmd_parts)
+        push_host = login_node or gateway
+        push_url = f"{push_host}:{remote_path}"
+
+        self.logger.info("Pushing to remote mirror %s on %s", remote_path, push_host)
         push_env = dict(os.environ)
         push_env["GIT_SSH_COMMAND"] = git_ssh_cmd
         self.executor.run_human(
@@ -417,67 +421,8 @@ class MirrorManager:
         # Push canonical content to the remote via tunnel.
         self._sync_remote(ctx)
 
-    # -- Tunnel helper -------------------------------------------------
-
-    def _ensure_tunnel(self, remote: RemoteConfig) -> "SshTunnel":
-        """Open (or reuse) an SSH tunnel to the data transfer node."""
-        from .session import RemoteSession
-        from .tunnel import SshControl, SshTunnel
-
-        # Try to load from the cached attribute first.
-        cached: Optional[SshTunnel] = getattr(self, "_ssh_tunnel", None)
-        if cached is not None and cached.is_alive():
-            return cached
-
-        # Reuse ControlMaster so tunnel doesn't re-prompt for auth.
-        control = SshControl(gateway=remote.gateway)
-        control_arg = control if control.is_active() else None
-
-        # Reconstruct from session state.
-        session = RemoteSession.load(getattr(self, "_remote_session_name", ""))
-        if session.tunnel_port is not None:
-            tunnel = SshTunnel.from_session(
-                gateway=remote.gateway,
-                target_host=remote.transfer_host,
-                tunnel_port=session.tunnel_port,
-                tunnel_pid=session.tunnel_pid,
-                control=control_arg,
-            )
-            if tunnel.is_alive():
-                self._ssh_tunnel = tunnel
-                return tunnel
-            # PID is dead but port might still be held — check if we
-            # can connect through it before opening a fresh one.
-            if self._port_is_listening(session.tunnel_port):
-                self.logger.info(
-                    "Reusing existing tunnel on port %d (PID unknown)",
-                    session.tunnel_port,
-                )
-                self._ssh_tunnel = tunnel
-                return tunnel
-
-        # Open a fresh tunnel (picks a new ephemeral port).
-        tunnel = SshTunnel(
-            gateway=remote.gateway,
-            target_host=remote.transfer_host,
-            control=control_arg,
-        )
-        tunnel.open(self.logger)
-        session.tunnel_port = tunnel.local_port
-        session.tunnel_pid = tunnel._pid
-        session.save()
-        self._ssh_tunnel = tunnel
-        return tunnel
-
-    @staticmethod
-    def _port_is_listening(port: int) -> bool:
-        """Check if something is listening on localhost:<port>."""
-        import socket
-        try:
-            with socket.create_connection(("localhost", port), timeout=2):
-                return True
-        except (OSError, ConnectionRefusedError):
-            return False
+    # (Tunnel helper removed — git transport now goes through the login
+    # node ControlMaster directly, no port-forward tunnel needed.)
 
     def start_task(
         self,
