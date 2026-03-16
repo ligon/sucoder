@@ -321,7 +321,9 @@ class MirrorManager:
 
         tunnel = self._ensure_tunnel(remote)
         remote_path = ctx.remote_mirror_path
-        push_url = f"ssh://localhost:{tunnel.local_port}{remote_path}"
+        # Ensure a / separates the port from the path.
+        sep = "" if remote_path.startswith("/") else "/"
+        push_url = f"ssh://localhost:{tunnel.local_port}{sep}{remote_path}"
 
         self.logger.info("Pushing to remote mirror %s via tunnel", remote_path)
         self.executor.run_human(
