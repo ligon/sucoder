@@ -83,6 +83,8 @@ The canonical repository remains unwritable by the agent throughout.
 | =sync=               | Fetch latest into the mirror (step 4)        |
 | =start-task=         | Create a task branch (step 4)                |
 | =agents-run=         | Launch the agent (steps 5–6)                 |
+| =worktrees=          | List active worktrees with status             |
+| =attach=             | Reconnect to a remote tmux session            |
 
 * Key Features
 - agents-clone :: Clone a canonical repository into an agent-owned mirror with strict permissions.
@@ -90,6 +92,9 @@ The canonical repository remains unwritable by the agent throughout.
 - start-task :: Create a new agent task branch based on a human branch while preserving branch naming conventions.
 - status :: Summarize the state of a mirror, including permissions and git remotes.
 - collaborate :: Prepare canonical, ensure mirror, and launch agent in one step.
+- worktrees :: List active git worktrees in a mirror with per-worktree status (branch, commits ahead, dirty state).  Supports =--watch= for live monitoring and =--diff= for file-level changes.
+- attach :: Reconnect to a remote agent session via tmux after an SSH disconnect.
+- --target/-T :: Select a named remote execution target (e.g., =--target savio=) to run the agent on a remote host.
 - version :: Print the installed sucoder version.
 - --dry-run :: Available on modifying commands to review logged operations without executing.
 
@@ -223,14 +228,42 @@ Inside the mirror the agent can use git worktrees to work on multiple
 tasks in parallel.  Claude supports this natively via =claude --worktree NAME=;
 other agents can achieve the same result with =git worktree add=.
 
-Each worktree gets its own checkout while sharing the same object store
-(no duplicate clone).  The human can monitor all worktrees from upstream:
+Each worktree gets its own checkout while sharing the same git object store
+(no duplicate clone).  This is useful for:
+
+- Parallel feature development :: Fix a bug in one worktree while
+  building a feature in another.
+- Comparative computation :: Run the same estimation with different
+  parameters in separate worktrees, then consolidate results.
+- Review isolation :: Keep exploratory changes out of the main
+  branch until they are ready.
+
+The human can monitor all worktrees from upstream:
 
 #+begin_src shell
 sucoder worktrees project                   # snapshot
 sucoder worktrees project --watch 10        # live, refresh every 10s
 sucoder worktrees project --diff            # include file-level changes
+sucoder worktrees project --main            # include the main worktree
 #+end_src
+
+Example output:
+
+#+begin_example
+Worktrees for mirror 'MyModel' (/var/tmp/coder-mirrors/MyModel):
+
+  .claude/worktrees/instruments-A
+    Branch: worktree-instruments-A @ a1b2c3d
+    Ahead:  2 commits (vs main)
+    Last:   a1b2c3d GMM estimation with instrument set A (1 minute ago)
+    Status: clean
+
+  .claude/worktrees/instruments-B
+    Branch: worktree-instruments-B @ e4f5g6h
+    Ahead:  2 commits (vs main)
+    Last:   e4f5g6h GMM estimation with instrument set B (30 seconds ago)
+    Status: dirty (1 modified)
+#+end_example
 
 The =worktrees= command uses =git worktree list --porcelain= for discovery,
 so it works regardless of which agent created the worktrees or where they
@@ -240,9 +273,33 @@ When the agent consolidates worktree branches back to the mirror's main
 branch, prefer =git merge --no-ff= to preserve the individual branch histories.
 This keeps the worktree commits individually cherry-pickable from upstream.
 
+*** Shared virtual environment for worktrees
+
+Poetry caches virtual environments by project path, so each worktree
+would normally create its own =.venv=.  To share a single environment
+across all worktrees, pin =VIRTUAL_ENV= in =.envrc=:
+
+#+begin_example
+_git_common="$(git rev-parse --git-common-dir 2>/dev/null)"
+if [ "${_git_common}" = ".git" ]; then
+  _main_tree="$(pwd)"
+else
+  _main_tree="$(dirname "${_git_common}")"
+fi
+VIRTUAL_ENV="${_main_tree}/.venv"
+export VIRTUAL_ENV
+layout poetry
+#+end_example
+
 ** Remote Execution
-Mirrors can also live on a remote host (e.g., an HPC cluster).  Define
-a named target in the config:
+Mirrors can also live on a remote host (e.g., an HPC cluster) where the
+local machine cannot run heavyweight computation.  The privilege
+separation shifts from "different Unix users on the same box" to "same
+user on different machines"---the network boundary enforces isolation.
+
+*** Configuration
+
+Define a named target in =~/.sucoder/config.yaml=:
 
 #+begin_src yaml
 targets:
@@ -253,38 +310,78 @@ targets:
     control_persist: 12h
 #+end_src
 
-Then use =--target= (=-T=) to select it:
+No =mirrors:= entry is needed---zero-config repo detection works with
+targets.  The target can be used with any repo.
+
+*** Usage
+
+Use =--target= (=-T=) as a global option before the subcommand:
 
 #+begin_src shell
-sucoder collaborate -a claude -T savio     # launch on cluster
-sucoder worktrees -T savio --watch 30      # monitor from local
-sucoder attach -T savio                    # reconnect via tmux
+sucoder -T savio collaborate               # launch agent on cluster
+sucoder -T savio worktrees --watch 30      # monitor from local
+sucoder -T savio attach                    # reconnect via tmux
 #+end_src
 
-=sucoder= manages SSH ControlMaster connections (one authentication prompt,
-all subsequent commands multiplex through the socket) and a port-forward
-tunnel through the data transfer node for git push/pull.  The agent CLI
-runs on the remote host; the canonical repo stays local.
+*** What happens under the hood
+
+1. *Authenticate once* --- =sucoder= establishes an SSH ControlMaster
+   connection to the gateway.  For clusters with OTP/two-factor auth,
+   this is the only password prompt; all subsequent SSH commands
+   multiplex through the socket.
+2. *Pin a login node* --- SSH to the gateway, run =hostname=, store
+   the result (e.g., =ln002.brc=) in =~/.sucoder/sessions/<mirror>.yaml=.
+   Subsequent connections jump to the same node via =-J=.
+3. *Open a tunnel* --- A local port forward to the data transfer node
+   for fast git transport.
+4. *Push canonical state* --- =git push= through the tunnel to the
+   remote mirror.
+5. *Launch the agent* --- SSH to the pinned login node, =cd= into the
+   remote mirror, start the agent inside a =tmux= session.
+6. *Add a git remote* --- A remote named after the target (e.g.,
+   =savio=) is added to the canonical repo so the human can
+   =git fetch savio= to pull back agent work.
+
+*** Reconnecting
+
+If the SSH connection drops, the tmux session on the login node
+survives.  Reconnect with:
+
+#+begin_src shell
+sucoder -T savio attach
+#+end_src
+
+If the ControlMaster socket expires (default 12 hours), =sucoder=
+detects the stale socket and re-prompts for authentication.
 
 ** Human: Review and Integrate Agent Work
-1. Fetch the agent branch back into the canonical repository.
-   #+begin_src shell
-   git -C /home/ligon/src/project.git fetch /var/tmp/coder-mirrors/project coder/add-metrics-20251107164028
-   #+end_src
-2. Check out and review the branch inside the canonical repository.
-   #+begin_src shell
-   git -C /home/ligon/src/project.git checkout -b review/add-metrics FETCH_HEAD
-   #+end_src
-3. Fast-forward the reviewed branch to keep history linear (default):
-   #+begin_src shell
-   git -C /home/ligon/src/project.git checkout ligon/main
-   git -C /home/ligon/src/project.git merge --ff-only review/add-metrics
-   #+end_src
-   If the branch is not fast-forwardable because main advanced, choose either a single merge commit or rebase the review branch onto main, then retry =merge --ff-only=. If you prefer to pull directly from the agent mirror, you can do so without setting global pull defaults:
-   #+begin_src shell
-   git -C /home/ligon/src/project.git pull --ff-only /var/tmp/coder-mirrors/project coder/add-metrics-20251107164028
-   #+end_src
-   The canonical repository remains unwritable by the agent throughout this flow.
+
+*** Local mirrors
+Fetch the agent branch back into the canonical repository:
+#+begin_src shell
+git fetch coder                              # uses the coder remote added by prepare-canonical
+git log --oneline coder/coder/add-metrics-20251107164028 -5
+git checkout -b review/add-metrics FETCH_HEAD
+# ... review, test, iterate ...
+git checkout main && git merge --ff-only review/add-metrics
+#+end_src
+
+Or pull directly:
+#+begin_src shell
+git pull --ff-only /var/tmp/coder-mirrors/project coder/add-metrics-20251107164028
+#+end_src
+
+*** Remote mirrors
+When using =--target=, =sucoder= automatically adds a git remote
+named after the target.  Fetch agent work back over SSH:
+#+begin_src shell
+git fetch savio                              # fetches from brc.berkeley.edu:~/mirrors/project
+git log --oneline savio/master -5
+git merge --ff-only savio/master
+#+end_src
+
+The canonical repository remains unwritable by the agent throughout
+both local and remote flows.
 
 * Configuration
 Configuration is stored in YAML (default path is =~/.sucoder/config.yaml= for the human operator).  Grant the agent group read access to this file while keeping it group-writable disabled.
@@ -298,6 +395,17 @@ log_dir: ~/.sucoder/logs
 skills:
   - ~/.sucoder/skills  # optional global default for all mirrors (overridable per-mirror)
 system_prompt: ~/.sucoder/system_prompt.org
+
+# Named remote execution targets (optional).
+# Use sucoder -T <name> to select one.
+targets:
+  savio:
+    gateway: brc.berkeley.edu
+    transfer_host: dtn.brc.berkeley.edu
+    mirror_root: ~/mirrors
+    control_persist: 12h
+
+# Mirrors are optional when using zero-config repo detection.
 mirrors:
   project:
     canonical_repo: ~/src/project.git
