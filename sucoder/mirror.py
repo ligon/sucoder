@@ -923,6 +923,8 @@ class MirrorManager:
 
     def _maybe_run_poetry_auto_install(self, ctx: MirrorContext, mirror_path: Path) -> None:
         """Offer or run `poetry install` for Poetry-based projects."""
+        if ctx.is_remote:
+            return  # Poetry install is handled on the remote side, not from local.
         project_file = mirror_path / "pyproject.toml"
         if not project_file.exists():
             return

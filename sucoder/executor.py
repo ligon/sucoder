@@ -219,7 +219,11 @@ class RemoteExecutor(CommandExecutor):
     ) -> CommandResult:
         """Run a command on the remote login node via SSH."""
         remote_cwd = self._translate_path(cwd) if cwd else None
-        ssh_args = self._build_ssh_command(args, cwd=remote_cwd, env=env)
+        # Allocate a TTY when output isn't captured (interactive agents).
+        needs_tty = not capture_output
+        ssh_args = self._build_ssh_command(
+            args, cwd=remote_cwd, env=env, allocate_tty=needs_tty,
+        )
         return self._run(
             ssh_args,
             check=check,
