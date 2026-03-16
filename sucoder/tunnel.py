@@ -47,11 +47,15 @@ def _control_socket_path(gateway: str) -> Path:
 
 @dataclass
 class SshControl:
-    """Manages a persistent SSH ControlMaster connection to a gateway.
+    """Manages a persistent SSH ControlMaster connection.
 
     Authenticate once (interactively --- pin + OTP etc.) and all
-    subsequent ``ssh`` commands to the same gateway reuse the
-    connection through a Unix domain socket.
+    subsequent ``ssh`` commands to the same host reuse the connection
+    through a Unix domain socket.
+
+    Supports an optional *jump_host* for two-hop connections (e.g.,
+    gateway -> login node).  When a jump host is provided, the
+    ControlMaster for the jump host is used to reach the target.
 
     If the socket expires (``control_persist`` elapsed, network drop,
     etc.), :meth:`ensure` will detect the dead socket and
@@ -60,6 +64,8 @@ class SshControl:
 
     gateway: str
     control_persist: str = "12h"
+    jump_host: Optional[str] = None
+    jump_control: Optional["SshControl"] = field(default=None, repr=False)
 
     @property
     def socket_path(self) -> Path:
@@ -87,11 +93,16 @@ class SshControl:
 
         If a live socket already exists this is a no-op.  If a stale
         socket file remains from a previous session it is removed
-        first.
+        first.  When ``jump_host`` is set, the jump host's
+        ControlMaster is used for the first hop.
         """
         if self.is_active():
             logger.debug("ControlMaster to %s already active", self.gateway)
             return
+
+        # Ensure the jump host ControlMaster is alive first.
+        if self.jump_control is not None:
+            self.jump_control.ensure(logger)
 
         # Clean up stale socket if present.
         if self.socket_path.exists():
@@ -112,9 +123,33 @@ class SshControl:
             "-o", f"ControlPersist={self.control_persist}",
             "-o", "ServerAliveInterval=30",
             "-o", "ServerAliveCountMax=3",
-            "-fN",                            # background, no command
-            self.gateway,
         ]
+        # Route through jump host's ControlMaster if available.
+        if self.jump_host:
+            if self.jump_control and self.jump_control.is_active():
+                cmd.extend([
+                    "-J", self.jump_host,
+                    "-o", f"ProxyJump={self.jump_host}",
+                ])
+                # Make the ProxyJump itself use the gateway ControlMaster.
+                # SSH respects ControlPath for ProxyJump targets.
+                cmd[:0] = []  # placeholder; options added below
+                # Reconstruct: we need ProxyJump to use the gateway socket.
+                cmd = [
+                    "ssh",
+                    "-o", "ControlMaster=yes",
+                    "-o", f"ControlPath={self.socket_path}",
+                    "-o", f"ControlPersist={self.control_persist}",
+                    "-o", "ServerAliveInterval=30",
+                    "-o", "ServerAliveCountMax=3",
+                    "-o", f"ProxyCommand=ssh -o ControlMaster=auto "
+                          f"-o ControlPath={self.jump_control.socket_path} "
+                          f"-W %h:%p {self.jump_host}",
+                ]
+            else:
+                cmd.extend(["-J", self.jump_host])
+
+        cmd.extend(["-fN", self.gateway])
         logger.debug("ControlMaster command: %s", cmd)
 
         try:

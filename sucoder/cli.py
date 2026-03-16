@@ -126,25 +126,24 @@ def _build_executor(
         remote = mirror_settings.remote
         session = RemoteSession.load(mirror_settings.name)
 
-        # Establish ControlMaster (authenticates once; may prompt for
-        # pin + OTP on clusters with two-factor auth).  If the socket
-        # has expired, ensure() re-prompts automatically.
-        control = SshControl(
+        # 1. Establish ControlMaster to the gateway (authenticates
+        #    once; may prompt for pin + OTP).
+        gw_control = SshControl(
             gateway=remote.gateway,
             control_persist=remote.control_persist,
         )
         try:
-            control.ensure(logger)
+            gw_control.ensure(logger)
         except TunnelError as exc:
             typer.echo(str(exc), err=True)
             raise typer.Exit(code=1) from exc
 
-        # Pin a login node through the authenticated connection.
+        # 2. Pin a login node through the authenticated connection.
         if not session.login_node:
             import subprocess as _sp
             try:
                 result = _sp.run(
-                    ["ssh", *control.ssh_options(), remote.gateway, "hostname"],
+                    ["ssh", *gw_control.ssh_options(), remote.gateway, "hostname"],
                     capture_output=True, text=True, check=True,
                 )
                 session.login_node = result.stdout.strip()
@@ -158,6 +157,22 @@ def _build_executor(
                 )
                 raise typer.Exit(code=1) from exc
 
+        # 3. Establish ControlMaster to the login node (goes through
+        #    the gateway ControlMaster — no re-auth needed).
+        ln_control = SshControl(
+            gateway=session.login_node,
+            control_persist=remote.control_persist,
+            jump_host=remote.gateway,
+            jump_control=gw_control,
+        )
+        try:
+            ln_control.ensure(logger)
+        except TunnelError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
+
+        # The executor uses the login node ControlMaster directly —
+        # no -J needed since the socket routes through the gateway.
         return RemoteExecutor(
             human_user=config.human_user,
             agent_user=config.human_user,  # Same user on remote
@@ -170,7 +185,7 @@ def _build_executor(
             remote_mirror_root=str(remote.mirror_root),
             local_mirror_root=str(config.mirror_root),
             ssh_options=remote.ssh_options,
-            control_socket_path=str(control.socket_path),
+            control_socket_path=str(ln_control.socket_path),
         )
 
     return CommandExecutor(

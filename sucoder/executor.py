@@ -266,12 +266,16 @@ class RemoteExecutor(CommandExecutor):
         if allocate_tty:
             ssh_cmd.append("-t")
         # Reuse ControlMaster connection if available (avoids re-auth).
+        # When a ControlMaster socket exists for the login node, it
+        # already routes through the gateway — no -J needed.
         if self.control_socket_path:
             ssh_cmd.extend([
                 "-o", "ControlMaster=auto",
                 "-o", f"ControlPath={self.control_socket_path}",
             ])
-        ssh_cmd.extend(["-J", self.gateway, self.login_node])
+            ssh_cmd.append(self.login_node)
+        else:
+            ssh_cmd.extend(["-J", self.gateway, self.login_node])
         for key, val in self.ssh_options.items():
             ssh_cmd.extend(["-o", f"{key}={val}"])
 
