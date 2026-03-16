@@ -417,8 +417,9 @@ class MirrorManager:
                 ["mkdir", "-p", abs_remote_path],
                 check=True,
             )
+            base = ctx.settings.default_base_branch or "main"
             self.executor.run_agent(
-                ["git", "init", "-b", "main"],
+                ["git", "init", "-b", base],
                 check=True,
                 cwd=abs_remote_path,
             )
@@ -433,6 +434,21 @@ class MirrorManager:
 
         # Push canonical content to the remote via tunnel.
         self._sync_remote(ctx)
+
+        # Ensure HEAD points to the correct branch so that
+        # updateInstead keeps the working tree in sync.
+        base = ctx.settings.default_base_branch or "main"
+        self.executor.run_agent(
+            ["git", "symbolic-ref", "HEAD", f"refs/heads/{base}"],
+            check=True,
+            cwd=abs_remote_path,
+        )
+        # Reset the working tree to match the branch tip.
+        self.executor.run_agent(
+            ["git", "reset", "--hard", base],
+            check=True,
+            cwd=abs_remote_path,
+        )
 
     # (Tunnel helper removed — git transport now goes through the login
     # node ControlMaster directly, no port-forward tunnel needed.)
