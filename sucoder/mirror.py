@@ -23,8 +23,9 @@ from .config import (
     AgentType,
     Config,
     MirrorSettings,
+    RemoteConfig,
 )
-from .executor import CommandError, CommandExecutor
+from .executor import CommandError, CommandExecutor, RemoteExecutor
 from .permissions import (
     apply_agent_repo_permissions,
     check_parent_traversable,
@@ -116,6 +117,18 @@ class MirrorContext:
     @property
     def skills(self) -> List[Path]:
         return list(self.settings.skills)
+
+    @property
+    def is_remote(self) -> bool:
+        return self.settings.is_remote
+
+    @property
+    def remote_mirror_path(self) -> Optional[str]:
+        """Path to the mirror on the remote host (as a string, not local Path)."""
+        remote = self.settings.remote
+        if remote is None:
+            return None
+        return str(remote.mirror_root / self.settings.mirror_dirname)
 
 
 class MirrorManager:
@@ -282,7 +295,15 @@ class MirrorManager:
             self._write_agent_fetch_helper(ctx)
 
     def sync(self, ctx: MirrorContext) -> None:
-        """Fetch updates from the canonical repository."""
+        """Fetch updates from the canonical repository.
+
+        For remote mirrors, pushes from the local canonical to the
+        remote mirror via SSH tunnel to the data transfer node.
+        """
+        if ctx.is_remote:
+            self._sync_remote(ctx)
+            return
+
         mirror_path = self._ensure_mirror_exists(ctx)
         self.logger.info("Fetching updates from %s", ctx.remote_name)
 
@@ -292,6 +313,97 @@ class MirrorManager:
             check=True,
             cwd=str(mirror_path),
         )
+
+    def _sync_remote(self, ctx: MirrorContext) -> None:
+        """Push local canonical commits to the remote mirror."""
+        remote = ctx.settings.remote
+        assert remote is not None
+
+        tunnel = self._ensure_tunnel(remote)
+        remote_path = ctx.remote_mirror_path
+        push_url = f"ssh://localhost:{tunnel.local_port}{remote_path}"
+
+        self.logger.info("Pushing to remote mirror %s via tunnel", remote_path)
+        self.executor.run_human(
+            ["git", "push", push_url, "--all", "--force"],
+            check=True,
+            cwd=str(ctx.canonical_path),
+        )
+
+    def ensure_remote_clone(self, ctx: MirrorContext) -> None:
+        """Ensure the mirror exists on the remote host.
+
+        Initialises a bare-ish clone on the remote if it does not
+        already exist, then pushes all branches from canonical.
+        """
+        remote = ctx.settings.remote
+        if remote is None:
+            raise MirrorError("ensure_remote_clone called on a non-remote mirror.")
+
+        remote_path = ctx.remote_mirror_path
+        assert remote_path is not None
+
+        # Check if remote mirror already exists.
+        check = self.executor.run_agent(
+            ["test", "-d", f"{remote_path}/.git"],
+            check=False,
+        )
+        if check.returncode == 0:
+            self.logger.info("Remote mirror already exists at %s", remote_path)
+        else:
+            self.logger.info("Initialising remote mirror at %s", remote_path)
+            self.executor.run_agent(
+                ["bash", "-c", f"mkdir -p {shlex.quote(remote_path)} && "
+                 f"cd {shlex.quote(remote_path)} && "
+                 f"git init -b main && "
+                 f"git config receive.denyCurrentBranch updateInstead"],
+                check=True,
+            )
+
+        # Push canonical content to the remote via tunnel.
+        self._sync_remote(ctx)
+
+    # -- Tunnel helper -------------------------------------------------
+
+    def _ensure_tunnel(self, remote: RemoteConfig) -> "SshTunnel":
+        """Open (or reuse) an SSH tunnel to the data transfer node."""
+        from .session import RemoteSession
+        from .tunnel import SshControl, SshTunnel
+
+        # Try to load from the cached attribute first.
+        cached: Optional[SshTunnel] = getattr(self, "_ssh_tunnel", None)
+        if cached is not None and cached.is_alive():
+            return cached
+
+        # Reuse ControlMaster so tunnel doesn't re-prompt for auth.
+        control = SshControl(gateway=remote.gateway)
+        control_arg = control if control.is_active() else None
+
+        # Reconstruct from session state.
+        session = RemoteSession.load(getattr(self, "_remote_session_name", ""))
+        tunnel = SshTunnel.from_session(
+            gateway=remote.gateway,
+            target_host=remote.transfer_host,
+            tunnel_port=session.tunnel_port,
+            tunnel_pid=session.tunnel_pid,
+            control=control_arg,
+        )
+        if tunnel.is_alive():
+            self._ssh_tunnel = tunnel
+            return tunnel
+
+        # Open a fresh tunnel.
+        tunnel = SshTunnel(
+            gateway=remote.gateway,
+            target_host=remote.transfer_host,
+            control=control_arg,
+        )
+        tunnel.open(self.logger)
+        session.tunnel_port = tunnel.local_port
+        session.tunnel_pid = tunnel._pid
+        session.save()
+        self._ssh_tunnel = tunnel
+        return tunnel
 
     def start_task(
         self,
@@ -383,6 +495,12 @@ class MirrorManager:
     # Worktree inspection (read-only, runs as human user)
     # ------------------------------------------------------------------
 
+    def _run_query(self, ctx: MirrorContext, args, **kwargs):
+        """Run a read-only query: locally for local mirrors, via SSH for remote."""
+        if ctx.is_remote:
+            return self.executor.run_agent(args, **kwargs)
+        return self.executor.run_human(args, **kwargs)
+
     def list_worktrees(
         self,
         ctx: MirrorContext,
@@ -392,12 +510,14 @@ class MirrorManager:
     ) -> List[WorktreeInfo]:
         """Discover git worktrees in the mirror and gather status for each.
 
-        All commands run as the human user (read-only, no sudo needed).
+        For local mirrors, commands run as the human user (read-only).
+        For remote mirrors, commands run via SSH through the executor.
         """
         mirror_path = self._ensure_mirror_exists(ctx)
         base = base_branch or ctx.settings.default_base_branch
 
-        result = self.executor.run_human(
+        result = self._run_query(
+            ctx,
             ["git", "worktree", "list", "--porcelain"],
             check=True,
             cwd=str(mirror_path),
@@ -406,23 +526,31 @@ class MirrorManager:
         if not parsed:
             return []
 
-        main_worktree_path = str(mirror_path.resolve())
+        # For remote mirrors, determine the main worktree from the first entry.
+        main_worktree_path = (
+            parsed[0].get("worktree", "") if ctx.is_remote
+            else str(mirror_path.resolve())
+        )
         infos: List[WorktreeInfo] = []
         for entry in parsed:
-            wt_path = Path(entry.get("worktree", ""))
-            if not wt_path.is_dir():
+            wt_path_str = entry.get("worktree", "")
+            wt_path = Path(wt_path_str)
+            if not ctx.is_remote and not wt_path.is_dir():
                 continue
 
             raw_branch = entry.get("branch")
             branch = raw_branch.removeprefix("refs/heads/") if raw_branch else None
             head_sha = entry.get("HEAD", "")[:7]
-            is_main = str(wt_path.resolve()) == main_worktree_path
+            is_main = (
+                wt_path_str == main_worktree_path if ctx.is_remote
+                else str(wt_path.resolve()) == main_worktree_path
+            )
 
             # Gather per-worktree details; tolerate failures gracefully.
-            commits_ahead = self._wt_commits_ahead(wt_path, base, ctx.remote_name)
-            summary, date = self._wt_last_commit(wt_path)
-            modified, untracked, dirty = self._wt_dirty_status(wt_path)
-            diff_stat = self._wt_diff_stat(wt_path, base, ctx.remote_name) if include_diff else None
+            commits_ahead = self._wt_commits_ahead(ctx, wt_path, base, ctx.remote_name)
+            summary, date = self._wt_last_commit(ctx, wt_path)
+            modified, untracked, dirty = self._wt_dirty_status(ctx, wt_path)
+            diff_stat = self._wt_diff_stat(ctx, wt_path, base, ctx.remote_name) if include_diff else None
 
             infos.append(WorktreeInfo(
                 path=wt_path,
@@ -516,11 +644,14 @@ class MirrorManager:
 
         return lines
 
-    # -- Worktree helper queries (all run_human, check=False) ----------
+    # -- Worktree helper queries -----------------------------------------
+    # For local mirrors these run as the human user (read-only).
+    # For remote mirrors they go via SSH through _run_query.
 
-    def _wt_commits_ahead(self, wt_path: Path, base: str, remote: str) -> int:
+    def _wt_commits_ahead(self, ctx: MirrorContext, wt_path: Path, base: str, remote: str) -> int:
         """Count commits in the worktree HEAD that are not in the base branch."""
-        result = self.executor.run_human(
+        result = self._run_query(
+            ctx,
             ["git", "rev-list", "--count", f"{remote}/{base}..HEAD"],
             check=False,
             cwd=str(wt_path),
@@ -532,9 +663,10 @@ class MirrorManager:
         except ValueError:
             return -1
 
-    def _wt_last_commit(self, wt_path: Path) -> Tuple[str, str]:
+    def _wt_last_commit(self, ctx: MirrorContext, wt_path: Path) -> Tuple[str, str]:
         """Return (subject, relative-date) for HEAD."""
-        result = self.executor.run_human(
+        result = self._run_query(
+            ctx,
             ["git", "log", "-1", "--format=%s\t%cr", "HEAD"],
             check=False,
             cwd=str(wt_path),
@@ -546,9 +678,10 @@ class MirrorManager:
             return (parts[0], parts[1])
         return (parts[0], "")
 
-    def _wt_dirty_status(self, wt_path: Path) -> Tuple[int, int, bool]:
+    def _wt_dirty_status(self, ctx: MirrorContext, wt_path: Path) -> Tuple[int, int, bool]:
         """Return (modified_count, untracked_count, is_dirty)."""
-        result = self.executor.run_human(
+        result = self._run_query(
+            ctx,
             ["git", "status", "--porcelain"],
             check=False,
             cwd=str(wt_path),
@@ -564,9 +697,10 @@ class MirrorManager:
                 modified += 1
         return (modified, untracked, modified + untracked > 0)
 
-    def _wt_diff_stat(self, wt_path: Path, base: str, remote: str) -> Optional[str]:
+    def _wt_diff_stat(self, ctx: MirrorContext, wt_path: Path, base: str, remote: str) -> Optional[str]:
         """Return diff --stat between base and HEAD."""
-        result = self.executor.run_human(
+        result = self._run_query(
+            ctx,
             ["git", "diff", f"{remote}/{base}...HEAD", "--stat"],
             check=False,
             cwd=str(wt_path),
@@ -1144,10 +1278,31 @@ class MirrorManager:
         return home
 
     def _ensure_mirror_exists(self, ctx: MirrorContext) -> Path:
+        if ctx.is_remote:
+            return self._ensure_remote_mirror_exists(ctx)
         mirror_path = ctx.mirror_path
         if not self._is_git_repo(mirror_path):
             raise MirrorError(f"Mirror at {mirror_path} does not exist. Run agents-clone first.")
         return mirror_path
+
+    def _ensure_remote_mirror_exists(self, ctx: MirrorContext) -> Path:
+        """Verify the remote mirror exists, returning the local mirror_path placeholder.
+
+        For remote mirrors the actual mirror lives on the remote host.
+        We check via SSH and return ``ctx.mirror_path`` as a local
+        reference (the executor translates paths automatically).
+        """
+        remote_path = ctx.remote_mirror_path
+        assert remote_path is not None
+        check = self.executor.run_agent(
+            ["test", "-d", f"{remote_path}/.git"],
+            check=False,
+        )
+        if check.returncode != 0:
+            raise MirrorError(
+                f"Remote mirror at {remote_path} does not exist. Run agents-clone first."
+            )
+        return ctx.mirror_path
 
     def _validate_canonical(self, ctx: MirrorContext) -> None:
         canonical = ctx.canonical_path

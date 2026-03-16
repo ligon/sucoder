@@ -70,21 +70,6 @@ mirrors:
             """
 human_user: ligon
 mirror_root: ./mirrors
-""",
-            "`mirrors` must be defined",
-        ),
-        (
-            """
-human_user: ligon
-mirror_root: ./mirrors
-mirrors: {}
-""",
-            "At least one mirror must be configured.",
-        ),
-        (
-            """
-human_user: ligon
-mirror_root: ./mirrors
 mirrors:
   sample: {}
 """,

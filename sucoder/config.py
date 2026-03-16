@@ -33,6 +33,22 @@ class BranchPrefixes:
 
 
 @dataclass
+class RemoteConfig:
+    """SSH connection details for running agent sessions on a remote host.
+
+    Also used as the definition of a named *target* in the config
+    file (``targets:`` section).  When a target carries a
+    ``mirror_root`` it overrides the global one.
+    """
+
+    gateway: str                                    # Jump host, e.g. "brc.berkeley.edu"
+    transfer_host: str                              # DTN for git transport
+    mirror_root: Path = field(default_factory=lambda: Path("~/mirrors"))
+    ssh_options: Dict[str, str] = field(default_factory=dict)
+    control_persist: str = "12h"                    # ControlMaster socket lifetime
+
+
+@dataclass
 class NvmConfig:
     """Configuration for wrapping agent launches with nvm."""
 
@@ -125,10 +141,15 @@ class MirrorSettings:
     task_branch_prefix: str = "task"
     agent_launcher: AgentLauncher = field(default_factory=AgentLauncher)
     skills: List[Path] = field(default_factory=list)
+    remote: Optional[RemoteConfig] = None
 
     @property
     def mirror_dirname(self) -> str:
         return self.mirror_name
+
+    @property
+    def is_remote(self) -> bool:
+        return self.remote is not None
 
 
 @dataclass
@@ -142,6 +163,18 @@ class Config:
     log_dir: Optional[Path] = None
     agent_launcher: Optional[AgentLauncher] = None  # Global defaults for all mirrors
     mirrors: Mapping[str, MirrorSettings] = field(default_factory=dict)
+    targets: Dict[str, RemoteConfig] = field(default_factory=dict)
+
+    def resolve_target(self, target_name: Optional[str]) -> Optional[RemoteConfig]:
+        """Look up a named target, returning ``None`` for local execution."""
+        if target_name is None:
+            return None
+        if target_name not in self.targets:
+            raise ConfigError(
+                f"Unknown target `{target_name}`. "
+                f"Available targets: {', '.join(sorted(self.targets)) or '(none)'}."
+            )
+        return self.targets[target_name]
 
     @property
     def mirrors_dir(self) -> Path:
@@ -328,6 +361,7 @@ def _build_config(data: Dict[str, Any], *, path: Path) -> Config:
     if data.get("agent_launcher") is not None:
         global_agent_launcher = _parse_agent_launcher(data.get("agent_launcher"))
 
+    targets = _parse_targets(data.get("targets"))
     mirrors = _parse_mirrors(data.get("mirrors"), global_skills=global_skills, path=path)
 
     mirror_root = _expand_path(mirror_root_raw)
@@ -344,12 +378,13 @@ def _build_config(data: Dict[str, Any], *, path: Path) -> Config:
         log_dir=log_dir,
         agent_launcher=global_agent_launcher,
         mirrors=mirrors,
+        targets=targets,
     )
 
 
 def _parse_mirrors(raw: Any, *, global_skills: List[Path], path: Path) -> Dict[str, MirrorSettings]:
     if raw is None:
-        raise ConfigError(f"`mirrors` must be defined in {path}")
+        return {}  # No mirrors configured; zero-config detection will add them.
     if isinstance(raw, list):
         raise ConfigError("`mirrors` must be a mapping of names to settings.")
     if not isinstance(raw, dict):
@@ -380,6 +415,7 @@ def _parse_mirrors(raw: Any, *, global_skills: List[Path], path: Path) -> Dict[s
         )
 
         launcher = _parse_agent_launcher(value.get("agent_launcher"))
+        remote = _parse_remote_config(value.get("remote"))
 
         skills_raw_present = "skills" in value
         skills = _parse_skills(value.get("skills")) if skills_raw_present else list(global_skills)
@@ -399,10 +435,8 @@ def _parse_mirrors(raw: Any, *, global_skills: List[Path], path: Path) -> Dict[s
             task_branch_prefix=value.get("task_branch_prefix", "task"),
             agent_launcher=launcher,
             skills=skills,
+            remote=remote,
         )
-
-    if not mirrors:
-        raise ConfigError("At least one mirror must be configured.")
 
     return mirrors
 
@@ -525,6 +559,56 @@ def _parse_flag_templates(raw: Any) -> AgentFlagTemplates:
         default_flag=_template("default_flag"),
         skills=_template("skills"),
         system_prompt=_template("system_prompt"),
+    )
+
+
+def _parse_targets(raw: Any) -> Dict[str, RemoteConfig]:
+    """Parse the top-level ``targets:`` mapping."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ConfigError("`targets` must be a mapping of names to remote configurations.")
+    targets: Dict[str, RemoteConfig] = {}
+    for name, value in raw.items():
+        parsed = _parse_remote_config(value)
+        if parsed is None:
+            raise ConfigError(f"Target `{name}` must be a mapping with at least `gateway` and `transfer_host`.")
+        targets[name] = parsed
+    return targets
+
+
+def _parse_remote_config(raw: Any) -> Optional[RemoteConfig]:
+    """Parse optional ``remote:`` block from a mirror config entry."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ConfigError("`remote` must be a mapping when provided.")
+
+    gateway = raw.get("gateway")
+    if not gateway or not isinstance(gateway, str):
+        raise ConfigError("`remote.gateway` must be a non-empty string.")
+
+    transfer_host = raw.get("transfer_host")
+    if not transfer_host or not isinstance(transfer_host, str):
+        raise ConfigError("`remote.transfer_host` must be a non-empty string.")
+
+    mirror_root_raw = raw.get("mirror_root", "~/mirrors")
+    mirror_root = Path(mirror_root_raw)  # Keep unexpanded; expanded on remote
+
+    ssh_options = raw.get("ssh_options", {})
+    if not isinstance(ssh_options, dict):
+        raise ConfigError("`remote.ssh_options` must be a mapping when provided.")
+
+    control_persist = raw.get("control_persist", "12h")
+    if not isinstance(control_persist, str):
+        raise ConfigError("`remote.control_persist` must be a string (e.g. '12h', '1d').")
+
+    return RemoteConfig(
+        gateway=gateway,
+        transfer_host=transfer_host,
+        mirror_root=mirror_root,
+        ssh_options={str(k): str(v) for k, v in ssh_options.items()},
+        control_persist=control_persist,
     )
 
 

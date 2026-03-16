@@ -116,7 +116,63 @@ def _build_executor(
     dry_run: bool,
     *,
     use_sudo_for_agent: bool = True,
+    mirror_settings: Optional[MirrorSettings] = None,
 ) -> CommandExecutor:
+    if mirror_settings and mirror_settings.remote:
+        from .executor import RemoteExecutor
+        from .session import RemoteSession
+        from .tunnel import SshControl, TunnelError
+
+        remote = mirror_settings.remote
+        session = RemoteSession.load(mirror_settings.name)
+
+        # Establish ControlMaster (authenticates once; may prompt for
+        # pin + OTP on clusters with two-factor auth).  If the socket
+        # has expired, ensure() re-prompts automatically.
+        control = SshControl(
+            gateway=remote.gateway,
+            control_persist=remote.control_persist,
+        )
+        try:
+            control.ensure(logger)
+        except TunnelError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
+
+        # Pin a login node through the authenticated connection.
+        if not session.login_node:
+            import subprocess as _sp
+            try:
+                result = _sp.run(
+                    ["ssh", *control.ssh_options(), remote.gateway, "hostname"],
+                    capture_output=True, text=True, check=True,
+                )
+                session.login_node = result.stdout.strip()
+                session.save()
+                logger.info("Pinned login node: %s", session.login_node)
+            except _sp.CalledProcessError as exc:
+                typer.echo(
+                    f"Failed to reach remote gateway {remote.gateway}: "
+                    f"{exc.stderr.strip()}",
+                    err=True,
+                )
+                raise typer.Exit(code=1) from exc
+
+        return RemoteExecutor(
+            human_user=config.human_user,
+            agent_user=config.human_user,  # Same user on remote
+            agent_group=config.human_user,
+            logger=logger,
+            dry_run=dry_run,
+            use_sudo_for_agent=False,
+            gateway=remote.gateway,
+            login_node=session.login_node,
+            remote_mirror_root=str(remote.mirror_root),
+            local_mirror_root=str(config.mirror_root),
+            ssh_options=remote.ssh_options,
+            control_socket_path=str(control.socket_path),
+        )
+
     return CommandExecutor(
         human_user=config.human_user,
         agent_user=config.agent_user,
@@ -131,7 +187,41 @@ def _prompt_yes_no(message: str) -> bool:
     return typer.confirm(message, default=True)
 
 
-def _build_manager(config: Config, logger, dry_run: bool) -> MirrorManager:
+def _get_active_target(ctx: Optional[click.Context]) -> Optional["RemoteConfig"]:
+    """Return the resolved --target from the Typer context, if any."""
+    obj = (ctx.obj if ctx and ctx.obj else {}) or {}
+    return obj.get("target")
+
+
+def _build_manager_for_mirror(
+    config: Config, logger, dry_run: bool, mirror_name: str,
+) -> MirrorManager:
+    """Build a MirrorManager with the correct executor for the given mirror.
+
+    When ``--target`` was passed on the CLI, its :class:`RemoteConfig`
+    is applied to the mirror settings (overriding any per-mirror
+    ``remote`` block).  For local execution the standard
+    :class:`CommandExecutor` is used.
+    """
+    settings = config.mirrors.get(mirror_name)
+
+    # Overlay the CLI target onto the mirror settings if provided.
+    try:
+        click_ctx = click.get_current_context()
+    except RuntimeError:
+        click_ctx = None
+    target = _get_active_target(click_ctx)
+    if target is not None and settings is not None:
+        # Apply target's remote config to a copy of the settings.
+        from dataclasses import replace
+        settings = replace(settings, remote=target)
+
+    return _build_manager(config, logger, dry_run, mirror_settings=settings)
+
+
+def _build_manager(
+    config: Config, logger, dry_run: bool, *, mirror_settings: Optional[MirrorSettings] = None,
+) -> MirrorManager:
     ctx = None
     try:
         ctx = click.get_current_context()
@@ -143,6 +233,7 @@ def _build_manager(config: Config, logger, dry_run: bool) -> MirrorManager:
         logger,
         dry_run=dry_run,
         use_sudo_for_agent=_get_use_sudo_for_agent(ctx, config),
+        mirror_settings=mirror_settings,
     )
     return MirrorManager(config, executor, logger, prompt_handler=_prompt_yes_no)
 
@@ -251,6 +342,12 @@ def main(
         "--agent-sudo/--no-agent-sudo",
         help="Use sudo to impersonate the agent user when running agent commands (default: enabled).",
     ),
+    target: Optional[str] = typer.Option(
+        None,
+        "--target",
+        "-T",
+        help="Named execution target (e.g. 'savio'). Omit for local execution.",
+    ),
 ) -> None:
     """Load configuration once and store it on the Typer context."""
     config_explicitly_set = config is not None
@@ -296,11 +393,22 @@ def main(
             typer.echo(f"Startup validation failed: {exc}", err=True)
             raise typer.Exit(code=2) from exc
 
+    # Resolve --target to a RemoteConfig (or None for local).
+    resolved_target: Optional["RemoteConfig"] = None
+    if target is not None:
+        try:
+            resolved_target = loaded_config.resolve_target(target)
+        except ConfigError as exc:
+            typer.echo(f"Target error: {exc}", err=True)
+            raise typer.Exit(code=2) from exc
+
     ctx.obj = {
         "config": loaded_config,
         "config_path": config_path,
         "use_sudo_for_agent": use_sudo_for_agent,
         "is_default_config": is_default_config,
+        "target": resolved_target,
+        "target_name": target,
     }
 
 
@@ -326,9 +434,13 @@ def agents_clone(
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
-    manager = _build_manager(config, logger, dry_run=dry_run)
+    manager = _build_manager_for_mirror(config, logger, dry_run, mirror)
+    mirror_ctx = manager.context_for(mirror)
     try:
-        manager.ensure_clone(manager.context_for(mirror), skip_lfs=not lfs)
+        if mirror_ctx.is_remote:
+            manager.ensure_remote_clone(mirror_ctx)
+        else:
+            manager.ensure_clone(mirror_ctx, skip_lfs=not lfs)
     except MirrorError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
@@ -378,7 +490,7 @@ def sync(
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
-    manager = _build_manager(config, logger, dry_run=dry_run)
+    manager = _build_manager_for_mirror(config, logger, dry_run, mirror)
     try:
         manager.sync(manager.context_for(mirror))
     except MirrorError as exc:
@@ -428,7 +540,7 @@ def status(
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
-    manager = _build_manager(config, logger, dry_run=False)
+    manager = _build_manager_for_mirror(config, logger, False, mirror)
     try:
         output = manager.status(manager.context_for(mirror))
     except MirrorError as exc:
@@ -462,7 +574,7 @@ def worktrees(
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
-    manager = _build_manager(config, logger, dry_run=False)
+    manager = _build_manager_for_mirror(config, logger, False, mirror)
     mirror_ctx = manager.context_for(mirror)
 
     def _display() -> None:
@@ -552,7 +664,7 @@ def agents_run(
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
-    manager = _build_manager(config, logger, dry_run=dry_run)
+    manager = _build_manager_for_mirror(config, logger, dry_run, mirror)
     command_override = _parse_agent_command(agent_command) or (_agent_shorthand(agent) if agent else None)
     env_override = _parse_agent_env(agent_env)
     try:
@@ -642,7 +754,7 @@ def collaborate(
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
-    manager = _build_manager(config, logger, dry_run=dry_run)
+    manager = _build_manager_for_mirror(config, logger, dry_run, mirror)
     command_override = _parse_agent_command(agent_command) or (_agent_shorthand(agent) if agent else None)
     env_override = _parse_agent_env(agent_env)
     try:
@@ -662,6 +774,59 @@ def collaborate(
     except MirrorError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
+
+
+@app.command("attach")
+def attach(
+    ctx: typer.Context,
+    mirror: Optional[str] = typer.Argument(None, help="Mirror name defined in configuration.", shell_complete=_mirror_completion),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
+) -> None:
+    """Reconnect to an existing remote agent session via tmux."""
+    mirror = _resolve_mirror_name(ctx, mirror)
+    config = _get_config(ctx)
+    settings = config.mirrors.get(mirror)
+    if not settings or not settings.remote:
+        typer.echo("Mirror is not configured for remote execution.", err=True)
+        raise typer.Exit(code=1)
+
+    from .session import RemoteSession
+    from .tunnel import SshControl
+
+    session = RemoteSession.load(mirror)
+    if not session.login_node:
+        typer.echo(
+            "No active session found. Run 'sucoder collaborate' or "
+            "'sucoder agents-run' first to establish a session.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    remote = settings.remote
+    # Reuse ControlMaster if active; re-establish if expired.
+    control = SshControl(
+        gateway=remote.gateway,
+        control_persist=remote.control_persist,
+    )
+    logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
+    try:
+        control.ensure(logger)
+    except Exception:
+        pass  # Best-effort; ssh will prompt directly if needed
+    control_opts = control.ssh_options() if control.is_active() else []
+
+    tmux_name = f"sucoder-{mirror}"
+    attach_cmd = (
+        f"tmux attach-session -t {shlex.quote(tmux_name)} "
+        f"|| tmux new-session -s {shlex.quote(tmux_name)}"
+    )
+    os.execvp("ssh", [
+        "ssh", "-t",
+        *control_opts,
+        "-J", remote.gateway,
+        session.login_node,
+        attach_cmd,
+    ])
 
 
 @app.command("mirrors-list")

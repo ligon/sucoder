@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import shlex
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 
@@ -187,3 +187,110 @@ class CommandExecutor:
             command = env_args + command
 
         return ["sudo", "-u", self.agent_user] + command
+
+
+@dataclass
+class RemoteExecutor(CommandExecutor):
+    """Execute agent commands on a remote host over SSH.
+
+    ``run_agent`` wraps commands in ``ssh -J <gateway> <login_node>``.
+    ``run_human`` is inherited unchanged and runs locally.
+
+    No sudo is needed on the remote side — the SSH connection
+    authenticates as the same user.
+    """
+
+    gateway: str = ""
+    login_node: str = ""
+    remote_mirror_root: str = "~/mirrors"
+    local_mirror_root: str = ""
+    ssh_options: Dict[str, str] = field(default_factory=dict)
+    control_socket_path: Optional[str] = None  # Path to ControlMaster socket
+
+    def run_agent(
+        self,
+        args: Sequence[str],
+        *,
+        check: bool = True,
+        cwd: Optional[str] = None,
+        env: Optional[Mapping[str, str]] = None,
+        umask: Optional[int] = None,
+        capture_output: bool = True,
+    ) -> CommandResult:
+        """Run a command on the remote login node via SSH."""
+        remote_cwd = self._translate_path(cwd) if cwd else None
+        ssh_args = self._build_ssh_command(args, cwd=remote_cwd, env=env)
+        return self._run(
+            ssh_args,
+            check=check,
+            cwd=None,           # SSH itself runs locally
+            env=None,           # env is embedded in the remote command
+            as_agent=False,     # no sudo wrapping
+            capture_output=capture_output,
+        )
+
+    def run_agent_interactive(
+        self,
+        args: Sequence[str],
+        *,
+        cwd: Optional[str] = None,
+        env: Optional[Mapping[str, str]] = None,
+    ) -> CommandResult:
+        """Launch an interactive command on the remote node with TTY."""
+        remote_cwd = self._translate_path(cwd) if cwd else None
+        ssh_args = self._build_ssh_command(
+            args, cwd=remote_cwd, env=env, allocate_tty=True,
+        )
+        return self._run(
+            ssh_args,
+            check=False,
+            cwd=None,
+            env=None,
+            as_agent=False,
+            capture_output=False,
+        )
+
+    def _build_ssh_command(
+        self,
+        args: Sequence[str],
+        *,
+        cwd: Optional[str] = None,
+        env: Optional[Mapping[str, str]] = None,
+        allocate_tty: bool = False,
+    ) -> List[str]:
+        ssh_cmd: List[str] = ["ssh"]
+        if allocate_tty:
+            ssh_cmd.append("-t")
+        # Reuse ControlMaster connection if available (avoids re-auth).
+        if self.control_socket_path:
+            ssh_cmd.extend([
+                "-o", "ControlMaster=auto",
+                "-o", f"ControlPath={self.control_socket_path}",
+            ])
+        ssh_cmd.extend(["-J", self.gateway, self.login_node])
+        for key, val in self.ssh_options.items():
+            ssh_cmd.extend(["-o", f"{key}={val}"])
+
+        # Build the remote shell command as a single string.
+        parts: List[str] = []
+        if env:
+            for k, v in env.items():
+                parts.append(f"export {shlex.quote(k)}={shlex.quote(v)};")
+        if cwd:
+            parts.append(f"cd {shlex.quote(cwd)} &&")
+        parts.append(_format_display(args))
+
+        ssh_cmd.append(" ".join(parts))
+        return ssh_cmd
+
+    def _translate_path(self, local_path: str) -> str:
+        """Rewrite a local mirror path to its remote equivalent.
+
+        If the path starts with the local mirror root, the prefix is
+        replaced with the remote mirror root.  Otherwise the path is
+        returned as-is.
+        """
+        if self.local_mirror_root and local_path.startswith(self.local_mirror_root):
+            suffix = local_path[len(self.local_mirror_root):]
+            return self.remote_mirror_root.rstrip("/") + suffix
+        return local_path
