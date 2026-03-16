@@ -4,6 +4,17 @@ agent_group: coder
 mirror_root: /var/tmp/coder-mirrors
 log_dir: /home/<your-username>/.sucoder/logs
 system_prompt: /home/<your-username>/.sucoder/system_prompt.org
+
+# Named execution targets for remote hosts (optional).
+# Use --target/-T on the CLI to select one.
+# targets:
+#   savio:
+#     gateway: brc.berkeley.edu
+#     transfer_host: dtn.brc.berkeley.edu
+#     mirror_root: ~/mirrors
+#     control_persist: 12h
+
+# Mirrors are optional when using zero-config repo detection.
 mirrors:
   sample:
     canonical_repo: /home/<your-username>/src/project.git
@@ -14,7 +25,7 @@ mirrors:
       human: <your-username>
       agent: coder
     agent_launcher:
-      # Map generic intents into agent-specific flags; defaults suit codex.
+      # Default agent is claude; override with command: [codex] or command: [gemini].
       needs_yolo: true
       writable_dirs:
         - "~"

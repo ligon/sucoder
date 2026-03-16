@@ -15,7 +15,7 @@ cd ~/Projects/my-project  # any git repo
 sucoder collaborate -a claude
 #+end_src
 
-No config file needed.  =sucoder= detects the git repo, mirrors it under =/var/tmp/coder-mirrors/=, and launches the agent.  Use =-a= to pick the agent (=claude=, =codex=, =gemini=); omit it and sucoder will auto-detect from PATH or prompt.  Add =--task fix-login= to start on a dedicated branch.
+No config file needed.  =sucoder= detects the git repo, mirrors it under =/var/tmp/coder-mirrors/=, and launches Claude (the default agent).  Use =-a= to pick a different agent (=codex=, =gemini=); omit it and sucoder defaults to =claude= or auto-detects from PATH.  Add =--task fix-login= to start on a dedicated branch.
 
 For multi-repo setups, skills, and system prompts, see [[*Configuration][Configuration]] below.  =make env-setup= does the full host provisioning (=make help= for all targets).
 
@@ -218,6 +218,54 @@ sucoder --no-agent-sudo agents-clone project
   Demonstrates the in-repo Org skills—structure, markup, tables, capture, citations,
   exporting, agenda integration—so humans and agents have a quick reference.
 
+** Parallel Work with Worktrees
+Inside the mirror the agent can use git worktrees to work on multiple
+tasks in parallel.  Claude supports this natively via =claude --worktree NAME=;
+other agents can achieve the same result with =git worktree add=.
+
+Each worktree gets its own checkout while sharing the same object store
+(no duplicate clone).  The human can monitor all worktrees from upstream:
+
+#+begin_src shell
+sucoder worktrees project                   # snapshot
+sucoder worktrees project --watch 10        # live, refresh every 10s
+sucoder worktrees project --diff            # include file-level changes
+#+end_src
+
+The =worktrees= command uses =git worktree list --porcelain= for discovery,
+so it works regardless of which agent created the worktrees or where they
+are located.
+
+When the agent consolidates worktree branches back to the mirror's main
+branch, prefer =git merge --no-ff= to preserve the individual branch histories.
+This keeps the worktree commits individually cherry-pickable from upstream.
+
+** Remote Execution
+Mirrors can also live on a remote host (e.g., an HPC cluster).  Define
+a named target in the config:
+
+#+begin_src yaml
+targets:
+  savio:
+    gateway: brc.berkeley.edu
+    transfer_host: dtn.brc.berkeley.edu
+    mirror_root: ~/mirrors
+    control_persist: 12h
+#+end_src
+
+Then use =--target= (=-T=) to select it:
+
+#+begin_src shell
+sucoder collaborate -a claude -T savio     # launch on cluster
+sucoder worktrees -T savio --watch 30      # monitor from local
+sucoder attach -T savio                    # reconnect via tmux
+#+end_src
+
+=sucoder= manages SSH ControlMaster connections (one authentication prompt,
+all subsequent commands multiplex through the socket) and a port-forward
+tunnel through the data transfer node for git push/pull.  The agent CLI
+runs on the remote host; the canonical repo stays local.
+
 ** Human: Review and Integrate Agent Work
 1. Fetch the agent branch back into the canonical repository.
    #+begin_src shell
@@ -296,6 +344,34 @@ per-mirror > global > profile > UNKNOWN.
 
 If you change any defaults, update =AGENT_PROFILES= in =sucoder/config.py= alongside the
 README so the documentation stays in sync.
+
+** Agent capability comparison
+
+The core =sucoder= workflow (mirror, sync, permissions, branch management) is
+fully agent-agnostic.  The table below summarises where agents differ in
+features that =sucoder= can exploit.
+
+| Capability                   | Claude                          | Codex                        | Gemini                        |
+|------------------------------+---------------------------------+------------------------------+-------------------------------|
+| Native =--worktree= flag    | Yes (=claude --worktree NAME=)  | No                           | No                            |
+| Subagent worktree isolation  | Yes (=isolation: worktree=)     | No                           | No                            |
+| Session resume               | Yes (=claude --resume=)         | No                           | No                            |
+| System prompt flag           | =--system-prompt FILE=          | Trailing text                | =--prompt-interactive=        |
+| Write-access flag            | =--dangerously-skip-permissions=| =--sandbox danger-full-access= | =--yolo=                   |
+| TTY requirement              | Works with subprocess           | Works with subprocess        | Requires =exec= (TTY)        |
+| Default agent                | *Yes* (=sucoder= default)       | Supported                    | Supported                     |
+
+Agents without native =--worktree= support can still use git worktrees
+manually.  The agent just needs to run =git worktree add= inside the mirror;
+=sucoder worktrees= will discover and display them regardless of which agent
+created them.
+
+Similarly, the remote execution support (=--target=, SSH tunnels,
+ControlMaster) is entirely agent-agnostic---any agent CLI can be launched
+over SSH.
+
+When adding a new agent, implement its profile in =AGENT_PROFILES= in
+=sucoder/config.py= and add a row to these tables.
 
 ** Pin agent Node version with nvm
 Some agents (e.g., Codex) bundle their own Node.js runtime.  =sucoder= can wrap the

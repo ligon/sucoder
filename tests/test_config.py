@@ -43,7 +43,7 @@ mirrors:
     assert cfg.agent_user == "coder"
     sample = cfg.mirrors["sample"]
     assert sample.branch_prefixes == BranchPrefixes(human="ligon", agent="coder")
-    assert sample.agent_launcher.command == ["codex"]
+    assert sample.agent_launcher.command == ["claude"]
     assert sample.agent_launcher.env == {}
     assert sample.agent_launcher.nvm is None
     assert sample.agent_launcher.accepts_inline_prompt is None

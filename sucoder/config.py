@@ -60,7 +60,7 @@ class NvmConfig:
 class AgentLauncher:
     """Configuration for launching the agent process."""
 
-    command: List[str] = field(default_factory=lambda: ["codex"])
+    command: List[str] = field(default_factory=lambda: ["claude"])
     env: Dict[str, str] = field(default_factory=dict)
     nvm: Optional[NvmConfig] = None
     accepts_inline_prompt: Optional[bool] = None
@@ -448,11 +448,11 @@ def _parse_agent_launcher(raw: Any) -> AgentLauncher:
     if not isinstance(raw, dict):
         raise ConfigError("`agent_launcher` must be a mapping when provided.")
 
-    command_raw = raw.get("command", ["codex"])
+    command_raw = raw.get("command", ["claude"])
     if isinstance(command_raw, str):
         command = [command_raw]
     elif isinstance(command_raw, list) and all(isinstance(item, str) for item in command_raw):
-        command = command_raw or ["codex"]
+        command = command_raw or ["claude"]
     else:
         raise ConfigError("`agent_launcher.command` must be a string or list of strings.")
 

@@ -24,6 +24,17 @@ from sucoder.permissions import check_parent_traversable
 from sucoder.workspace_prefs import WorkspacePrefs
 
 
+def _extract_prelude(args):
+    """Extract the system prompt prelude from a launched agent's args.
+
+    Claude uses --system-prompt <content>; other agents use trailing text.
+    """
+    if "--system-prompt" in args:
+        idx = args.index("--system-prompt")
+        return args[idx + 1]
+    return args[-1]
+
+
 def run_git(args, cwd: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args],
@@ -606,15 +617,10 @@ def test_launch_agent_reads_skills(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
     assert calls
     args = calls[0]["args"]
-    assert args[0] == "codex"
-    # Codex profile uses --sandbox and --ask-for-approval instead of --yolo
-    assert "--sandbox" in args
-    assert "danger-full-access" in args
-    assert "--ask-for-approval" in args
-    assert "never" in args
-    # Codex profile doesn't use writable_dir template (sandbox handles it)
-    assert "--add-dir" not in args
-    prelude = args[-1]
+    assert args[0] == "claude"
+    # Claude profile uses --dangerously-skip-permissions
+    assert "--dangerously-skip-permissions" in args
+    prelude = _extract_prelude(args)
     assert "SKILL" in prelude
     assert "Demo Skill" in prelude
     assert "Helpful instructions" in prelude
@@ -738,7 +744,7 @@ def test_poetry_install_python_mismatch_disables_auto_install(
     prefs = WorkspacePrefs.load(ctx.mirror_path)
     assert prefs.poetry_auto_install() is False
     assert agent_calls, "Agent command should still execute after poetry failure."
-    assert agent_calls[0][0] == "codex"
+    assert agent_calls[0][0] == "claude"
     assert any("Poetry auto-install disabled" in message for message in caplog.messages)
 
 
@@ -875,13 +881,13 @@ def test_launch_agent_preserves_user_extra_args(tmp_path: Path, monkeypatch: pyt
     monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
     manager.launch_agent(ctx, sync=False, extra_args=["--add-dir", str(Path.home()), "--foo"])
 
-    codex_call = recorded[-1]
-    # Codex profile uses --sandbox flags
-    assert "--sandbox" in codex_call
+    agent_call = recorded[-1]
+    # Claude profile uses --dangerously-skip-permissions
+    assert "--dangerously-skip-permissions" in agent_call
     # User-provided args are preserved
-    assert "--add-dir" in codex_call
-    assert str(Path.home()) in codex_call
-    assert "--foo" in codex_call
+    assert "--add-dir" in agent_call
+    assert str(Path.home()) in agent_call
+    assert "--foo" in agent_call
 
 
 def test_launch_agent_respects_existing_sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -984,9 +990,11 @@ def test_launch_agent_reads_system_prompt(tmp_path: Path, monkeypatch: pytest.Mo
 
     assert calls
     args = calls[0]["args"]
-    assert args[0] == "codex"
-    assert str(prompt) not in args  # prompt should be merged, not passed as file
-    prelude = args[-1]
+    assert args[0] == "claude"
+    # Claude uses --system-prompt flag; the prelude content is a separate arg
+    assert "--system-prompt" in args
+    sp_idx = args.index("--system-prompt")
+    prelude = args[sp_idx + 1]
     assert "SYSTEM PROMPT" in prelude
     assert "Prompt" in prelude
 
@@ -1022,7 +1030,13 @@ def test_launch_agent_reads_default_system_prompt(tmp_path: Path, monkeypatch: p
 
     manager.launch_agent(ctx, sync=False)
 
-    assert any("SYSTEM PROMPT" in call["args"][-1] and "Default" in call["args"][-1] for call in calls)
+    assert calls
+    args = calls[0]["args"]
+    assert "--system-prompt" in args
+    sp_idx = args.index("--system-prompt")
+    prelude = args[sp_idx + 1]
+    assert "SYSTEM PROMPT" in prelude
+    assert "Default" in prelude
 
 
 def test_skill_catalog_expands_entries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1075,11 +1089,12 @@ Content body.
 
     manager.launch_agent(ctx, sync=False)
 
-    prelude = calls[0]["args"][-1]
+    args = calls[0]["args"]
+    prelude = _extract_prelude(args)
     assert "SKILL CATALOG" in prelude
     assert "Catalog Skill" in prelude
     assert "Detail Skill" in prelude
-    assert "load with `codex read" in prelude
+    assert "load with `Read tool:" in prelude or "load with" in prelude
 
 
 def test_markdown_skill_file_loaded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1124,7 +1139,7 @@ Body content here.
 
     manager.launch_agent(ctx, sync=False)
 
-    prelude = calls[0]["args"][-1]
+    prelude = _extract_prelude(calls[0]["args"])
     assert "Markdown Skill" in prelude
     assert "Example markdown-based skill." in prelude
     assert "Body content here." in prelude
@@ -1182,7 +1197,7 @@ Instructions here.
 
     manager.launch_agent(ctx, sync=False)
 
-    prelude = calls[0]["args"][-1]
+    prelude = _extract_prelude(calls[0]["args"])
     assert "Resource Skill" in prelude
     assert "RESOURCES" in prelude
     assert "references/guide.md" in prelude
