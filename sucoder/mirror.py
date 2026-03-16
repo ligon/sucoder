@@ -983,12 +983,16 @@ class MirrorManager:
         skip_lfs: bool = True,
     ) -> int:
         """One-shot helper to prepare canonical, ensure clone, and launch the agent."""
-        self.prepare_canonical(
-            ctx,
-            use_sudo=use_sudo,
-            setup_agent_remote=setup_agent_remote,
-        )
-        self.ensure_clone(ctx, skip_lfs=skip_lfs)
+        if not ctx.is_remote:
+            self.prepare_canonical(
+                ctx,
+                use_sudo=use_sudo,
+                setup_agent_remote=setup_agent_remote,
+            )
+        if ctx.is_remote:
+            self.ensure_remote_clone(ctx)
+        else:
+            self.ensure_clone(ctx, skip_lfs=skip_lfs)
         return self.launch_agent(
             ctx,
             sync=sync,

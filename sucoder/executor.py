@@ -277,7 +277,15 @@ class RemoteExecutor(CommandExecutor):
             for k, v in env.items():
                 parts.append(f"export {shlex.quote(k)}={shlex.quote(v)};")
         if cwd:
-            parts.append(f"cd {shlex.quote(cwd)} &&")
+            # Replace leading ~ with $HOME so bash expands it on the remote.
+            # shlex.quote would wrap ~ in single quotes, preventing expansion.
+            if cwd.startswith("~/"):
+                cwd_expr = '"$HOME"/' + shlex.quote(cwd[2:])
+            elif cwd == "~":
+                cwd_expr = '"$HOME"'
+            else:
+                cwd_expr = shlex.quote(cwd)
+            parts.append(f"cd {cwd_expr} &&")
         parts.append(_format_display(args))
 
         ssh_cmd.append(" ".join(parts))
