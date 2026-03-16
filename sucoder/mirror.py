@@ -314,15 +314,33 @@ class MirrorManager:
             cwd=str(mirror_path),
         )
 
+    def _resolve_remote_path(self, ctx: MirrorContext) -> str:
+        """Return the absolute remote mirror path, resolving ~ via SSH."""
+        raw = ctx.remote_mirror_path
+        if raw is None:
+            raise MirrorError("No remote mirror path configured.")
+        if not raw.startswith("~"):
+            return raw
+
+        cached = getattr(self, "_resolved_remote_home", None)
+        if cached is None:
+            result = self.executor.run_agent(
+                ["bash", "-c", "echo $HOME"],
+                check=True,
+            )
+            cached = result.stdout.strip()
+            self._resolved_remote_home = cached
+
+        return raw.replace("~", cached, 1)
+
     def _sync_remote(self, ctx: MirrorContext) -> None:
         """Push local canonical commits to the remote mirror."""
         remote = ctx.settings.remote
         assert remote is not None
 
         tunnel = self._ensure_tunnel(remote)
-        remote_path = ctx.remote_mirror_path
+        remote_path = self._resolve_remote_path(ctx)
 
-        # Use SCP-style URL (host:path) so tilde expands on the remote.
         # Set GIT_SSH_COMMAND to route through the tunnel port and
         # reuse the ControlMaster socket.
         push_url = f"localhost:{remote_path}"
