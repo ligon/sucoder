@@ -521,9 +521,14 @@ def test_ensure_remote_clone_mirror_exists_skips_init(
 
     manager.ensure_remote_clone(ctx)
 
-    # Should have called test -d but NOT bash -c (git init)
+    # Should have called test -d and the config fixup, but NOT git init
     assert any("test" in c and "-d" in c for c in agent_calls)
-    assert not any(c[0] == "bash" for c in agent_calls)
+    bash_calls = [c for c in agent_calls if c[0] == "bash"]
+    # The only bash call should be the config fixup, not git init
+    for bc in bash_calls:
+        cmd_str = " ".join(bc)
+        assert "git init" not in cmd_str
+        assert "receive.denyCurrentBranch" in cmd_str
     # Sync should still be called
     assert sync_called
 

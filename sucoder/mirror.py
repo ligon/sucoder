@@ -389,14 +389,30 @@ class MirrorManager:
         if check.returncode == 0:
             self.logger.info("Remote mirror already exists at %s", remote_path)
         else:
+            # Clean up any empty directory from a previously failed init.
+            self.executor.run_agent(
+                ["bash", "-c",
+                 f"if [ -d {shlex.quote(remote_path)} ] && "
+                 f"[ ! -d {shlex.quote(remote_path)}/.git ]; then "
+                 f"rm -rf {shlex.quote(remote_path)}; fi"],
+                check=False,
+            )
             self.logger.info("Initialising remote mirror at %s", remote_path)
             self.executor.run_agent(
                 ["bash", "-c", f"mkdir -p {shlex.quote(remote_path)} && "
                  f"cd {shlex.quote(remote_path)} && "
-                 f"git init -b main && "
-                 f"git config receive.denyCurrentBranch updateInstead"],
+                 f"git init -b main"],
                 check=True,
             )
+
+        # Always ensure the config is correct (may have been missed
+        # by a failed earlier init).
+        self.executor.run_agent(
+            ["bash", "-c",
+             f"cd {shlex.quote(remote_path)} && "
+             f"git config receive.denyCurrentBranch updateInstead"],
+            check=True,
+        )
 
         # Push canonical content to the remote via tunnel.
         self._sync_remote(ctx)
@@ -1042,6 +1058,7 @@ class MirrorManager:
             )
         if ctx.is_remote:
             self.ensure_remote_clone(ctx)
+            self._configure_target_remote(ctx)
         else:
             self.ensure_clone(ctx, skip_lfs=skip_lfs)
         return self.launch_agent(
@@ -2001,6 +2018,57 @@ class MirrorManager:
                 ["git", "config", "--global", "--add", "safe.directory", path_str],
                 check=True,
             )
+
+    def _configure_target_remote(self, ctx: MirrorContext) -> None:
+        """Ensure the canonical repo has a remote pointing at the remote target mirror.
+
+        For a target named ``savio`` and mirror ``K-Aggregators``, this
+        adds a remote ``savio`` with URL ``gateway:~/mirrors/K-Aggregators``
+        so the human can ``git fetch savio`` to pull back agent work.
+        """
+        remote = ctx.settings.remote
+        if remote is None:
+            return
+        canonical = ctx.canonical_path
+        git_dir = canonical / ".git"
+        if not git_dir.exists():
+            return
+
+        # Derive target name from the session state or fall back to gateway hostname.
+        obj = {}
+        try:
+            import click as _click
+            obj = (_click.get_current_context().obj or {})
+        except RuntimeError:
+            pass
+        target_name = obj.get("target_name") or remote.gateway.split(".")[0]
+
+        remote_url = f"{remote.gateway}:{ctx.remote_mirror_path}"
+
+        result = self.executor.run_human(
+            ["git", "remote", "get-url", target_name],
+            check=False,
+            cwd=str(canonical),
+        )
+        if result.returncode != 0:
+            self.logger.info("Adding remote %s -> %s", target_name, remote_url)
+            self.executor.run_human(
+                ["git", "remote", "add", target_name, remote_url],
+                check=True,
+                cwd=str(canonical),
+            )
+        else:
+            existing_url = result.stdout.strip()
+            if existing_url != remote_url:
+                self.logger.info(
+                    "Updating remote %s URL from %s to %s",
+                    target_name, existing_url, remote_url,
+                )
+                self.executor.run_human(
+                    ["git", "remote", "set-url", target_name, remote_url],
+                    check=True,
+                    cwd=str(canonical),
+                )
 
     def _write_agent_fetch_helper(self, ctx: MirrorContext) -> None:
         """Create or refresh a helper script to fetch and list agent branches."""
