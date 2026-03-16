@@ -803,6 +803,18 @@ def attach(
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     settings = config.mirrors.get(mirror)
+
+    # Apply --target overlay so `-T savio attach` works the same as
+    # `-T savio collaborate`.
+    try:
+        click_ctx = click.get_current_context()
+    except RuntimeError:
+        click_ctx = None
+    target = _get_active_target(click_ctx)
+    if target is not None and settings is not None:
+        from dataclasses import replace
+        settings = replace(settings, remote=target)
+
     if not settings or not settings.remote:
         typer.echo("Mirror is not configured for remote execution.", err=True)
         raise typer.Exit(code=1)
