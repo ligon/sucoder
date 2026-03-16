@@ -633,13 +633,14 @@ class MirrorManager:
         """Return a human-readable summary of worktrees in the mirror."""
         infos = self.list_worktrees(ctx, include_diff=include_diff, base_branch=base_branch)
         base = base_branch or ctx.settings.default_base_branch
+        display_path = ctx.remote_mirror_path if ctx.is_remote else str(ctx.mirror_path)
         mirror_path = ctx.mirror_path
 
         non_main = [i for i in infos if not i.is_main]
         main_info = next((i for i in infos if i.is_main), None)
 
         lines: List[str] = []
-        lines.append(f"Worktrees for mirror '{ctx.settings.name}' ({mirror_path}):")
+        lines.append(f"Worktrees for mirror '{ctx.settings.name}' ({display_path}):")
         lines.append("")
 
         if include_main and main_info:
