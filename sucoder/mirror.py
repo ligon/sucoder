@@ -825,6 +825,17 @@ class MirrorManager:
         # Determine launch mode: explicit config > agent profile default > subprocess
         effective_mode = self._get_effective_launch_mode(command, launcher)
 
+        if ctx.is_remote:
+            # Wrap in tmux so the session survives SSH disconnects.
+            tmux_name = f"sucoder-{ctx.settings.name}"
+            agent_cmd_str = shlex.join(command)
+            # new-session -A attaches if it already exists, creates if not.
+            command = [
+                "tmux", "new-session", "-A",
+                "-s", tmux_name,
+                agent_cmd_str,
+            ]
+
         self.logger.info("Starting agent command: %s", shlex.join(command))
 
         if effective_mode == "exec":
