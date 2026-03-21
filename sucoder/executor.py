@@ -206,6 +206,7 @@ class RemoteExecutor(CommandExecutor):
     local_mirror_root: str = ""
     ssh_options: Dict[str, str] = field(default_factory=dict)
     control_socket_path: Optional[str] = None  # Path to ControlMaster socket
+    slurm_job_id: Optional[int] = None          # Active SLURM allocation, if any
 
     def run_agent(
         self,
