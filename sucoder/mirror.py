@@ -1545,6 +1545,12 @@ class MirrorManager:
         if system_block:
             blocks.append(system_block)
 
+        # Append target-specific prompt snippet if the active target
+        # defines one (e.g., platform-specific performance guidance).
+        target_block = self._target_prompt_block(ctx)
+        if target_block:
+            blocks.append(target_block)
+
         blocks.extend(self._skill_blocks(ctx))
 
         if not blocks:
@@ -1577,6 +1583,30 @@ class MirrorManager:
             return None
 
         header = f"SYSTEM PROMPT ({prompt_path})"
+        return f"{header}\n{content}"
+
+    def _target_prompt_block(self, ctx: MirrorContext) -> Optional[str]:
+        """Return an additional prompt block from the active target, if any."""
+        remote = ctx.settings.remote
+        if remote is None or remote.system_prompt_extra is None:
+            return None
+
+        prompt_path = remote.system_prompt_extra
+        if not prompt_path.exists():
+            self.logger.warning(
+                "Target system_prompt_extra not found: %s", prompt_path
+            )
+            return None
+
+        try:
+            content = prompt_path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            self.logger.warning(
+                "Failed to read target prompt at %s: %s", prompt_path, exc
+            )
+            return None
+
+        header = f"TARGET PROMPT ({prompt_path})"
         return f"{header}\n{content}"
 
     def _skill_blocks(self, ctx: MirrorContext) -> List[str]:

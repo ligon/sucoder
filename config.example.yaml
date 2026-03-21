@@ -20,6 +20,8 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #     transfer_host: dtn.brc.berkeley.edu
 #     mirror_root: ~/mirrors
 #     control_persist: 12h
+#     # Platform-specific prompt snippet appended to the base system prompt.
+#     system_prompt_extra: ~/.sucoder/prompts/savio-node.org
 #     slurm:
 #       partition: savio2
 #       account: fc_jevons

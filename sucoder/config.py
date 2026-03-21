@@ -62,6 +62,7 @@ class RemoteConfig:
     ssh_options: Dict[str, str] = field(default_factory=dict)
     control_persist: str = "12h"                    # ControlMaster socket lifetime
     slurm: Optional[SlurmConfig] = None             # Compute-node allocation params
+    system_prompt_extra: Optional[Path] = None      # Target-specific prompt snippet
 
 
 @dataclass
@@ -621,6 +622,12 @@ def _parse_remote_config(raw: Any) -> Optional[RemoteConfig]:
 
     slurm = _parse_slurm_config(raw.get("slurm"))
 
+    prompt_extra_raw = raw.get("system_prompt_extra")
+    prompt_extra = _expand_path(prompt_extra_raw) if prompt_extra_raw else None
+    # Don't error if the file is missing — targets may be defined in a
+    # shared config but only some machines carry the prompt snippet.
+    # The mirror module logs a warning at injection time instead.
+
     return RemoteConfig(
         gateway=gateway,
         transfer_host=transfer_host,
@@ -628,6 +635,7 @@ def _parse_remote_config(raw: Any) -> Optional[RemoteConfig]:
         ssh_options={str(k): str(v) for k, v in ssh_options.items()},
         control_persist=control_persist,
         slurm=slurm,
+        system_prompt_extra=prompt_extra,
     )
 
 
