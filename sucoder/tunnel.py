@@ -162,6 +162,8 @@ class SshControl:
                 # SSH respects ControlPath for ProxyJump targets.
                 cmd[:0] = []  # placeholder; options added below
                 # Reconstruct: we need ProxyJump to use the gateway socket.
+                # Accept host keys for internal nodes (compute nodes are
+                # dynamically assigned and may not be in known_hosts yet).
                 cmd = [
                     "ssh",
                     "-o", "ControlMaster=yes",
@@ -169,6 +171,7 @@ class SshControl:
                     "-o", f"ControlPersist={self.control_persist}",
                     "-o", "ServerAliveInterval=30",
                     "-o", "ServerAliveCountMax=3",
+                    "-o", "StrictHostKeyChecking=accept-new",
                     "-o", f"ProxyCommand=ssh -o ControlMaster=auto "
                           f"-o ControlPath={self.jump_control.socket_path} "
                           f"-W %h:%p {self.jump_host}",
