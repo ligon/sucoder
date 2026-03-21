@@ -333,7 +333,104 @@ def _ensure_slurm_node(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
 
+    # Start a deadline timer on the compute node so both the human
+    # (via tmux status message) and the agent (via a sentinel file)
+    # get warnings before the SLURM allocation expires.
+    _start_slurm_timer(
+        session, ln_control, cn_control, logger,
+    )
+
     return session.compute_node, cn_control
+
+
+def _start_slurm_timer(
+    session,
+    ln_control,
+    cn_control,
+    logger,
+):
+    """Launch a background timer on the compute node that warns before
+    the SLURM allocation expires.
+
+    Writes warnings to ``/tmp/slurm-deadline.warn`` (for the agent to
+    check) and flashes ``tmux display-message`` (for the human).
+    Warnings fire at 30, 15, and 5 minutes remaining.
+    """
+    import subprocess as _sp
+    import textwrap
+
+    job_id = session.slurm_job_id
+    if not job_id:
+        return
+
+    # The script runs on the compute node, querying squeue via the
+    # login node is unnecessary — SLURM_JOB_ID is in the environment
+    # and squeue works locally on compute nodes too.
+    timer_script = textwrap.dedent(f"""\
+        #!/bin/bash
+        WARN_FILE=/tmp/slurm-deadline.warn
+        rm -f /tmp/.slurm-warn-{{5,15,30}} "$WARN_FILE"
+        while true; do
+            left=$(squeue --job {job_id} --noheader -o "%L" 2>/dev/null)
+            if [ -z "$left" ]; then
+                msg="SLURM job {job_id} is no longer queued — allocation may have ended."
+                echo "$msg" > "$WARN_FILE"
+                tmux display-message "$msg" 2>/dev/null
+                break
+            fi
+            IFS=: read -ra parts <<< "$left"
+            if [ ${{#parts[@]}} -eq 3 ]; then
+                mins=$(( ${{parts[0]#0}}*60 + ${{parts[1]#0}} ))
+            elif [ ${{#parts[@]}} -eq 2 ]; then
+                mins=${{parts[0]#0}}
+            else
+                mins=999
+            fi
+            if [ "$mins" -le 5 ] && [ ! -f /tmp/.slurm-warn-5 ]; then
+                msg="SLURM: ~${{mins}} min left (job {job_id}). Commit and save NOW."
+                echo "$msg" > "$WARN_FILE"
+                tmux display-message "$msg" 2>/dev/null
+                touch /tmp/.slurm-warn-5
+            elif [ "$mins" -le 15 ] && [ ! -f /tmp/.slurm-warn-15 ]; then
+                msg="SLURM: ~${{mins}} min left (job {job_id}). Start wrapping up."
+                echo "$msg" > "$WARN_FILE"
+                tmux display-message "$msg" 2>/dev/null
+                touch /tmp/.slurm-warn-15
+            elif [ "$mins" -le 30 ] && [ ! -f /tmp/.slurm-warn-30 ]; then
+                msg="SLURM: ~${{mins}} min left (job {job_id})."
+                echo "$msg" > "$WARN_FILE"
+                tmux display-message "$msg" 2>/dev/null
+                touch /tmp/.slurm-warn-30
+            fi
+            sleep 60
+        done
+    """)
+
+    # Write the script to the compute node via stdin, then run it.
+    ssh_opts = cn_control.ssh_options()
+    node = session.compute_node
+
+    write_result = _sp.run(
+        ["ssh", *ssh_opts, node,
+         "cat > /tmp/slurm-timer.sh && chmod +x /tmp/slurm-timer.sh"],
+        input=timer_script, capture_output=True, text=True, check=False,
+    )
+    if write_result.returncode != 0:
+        logger.warning("Failed to write SLURM timer script: %s",
+                        write_result.stderr.strip())
+        return
+
+    run_result = _sp.run(
+        ["ssh", *ssh_opts, node,
+         "nohup /tmp/slurm-timer.sh > /dev/null 2>&1 &"],
+        capture_output=True, text=True, check=False,
+    )
+    if run_result.returncode == 0:
+        logger.info("SLURM deadline timer started on %s for job %d",
+                     node, job_id)
+    else:
+        logger.warning("Failed to start SLURM timer: %s",
+                        run_result.stderr.strip())
 
 
 def _prompt_yes_no(message: str) -> bool:
