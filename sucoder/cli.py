@@ -321,11 +321,18 @@ def _ensure_slurm_node(
         logger.info("SLURM job %d allocated node %s", job_id, compute_node)
 
     # Establish ControlMaster to the compute node via the login node.
+    # Compute nodes are ephemeral with rotating host keys; skip
+    # strict checking to avoid interactive prompts that break the
+    # ControlMaster handshake.
     cn_control = SshControl(
         gateway=session.compute_node,
         control_persist=remote.control_persist,
         jump_host=session.login_node,
         jump_control=ln_control,
+        extra_options=[
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null",
+        ],
     )
     try:
         cn_control.ensure(logger)

@@ -66,6 +66,7 @@ class SshControl:
     control_persist: str = "12h"
     jump_host: Optional[str] = None
     jump_control: Optional["SshControl"] = field(default=None, repr=False)
+    extra_options: List[str] = field(default_factory=list)
 
     @property
     def socket_path(self) -> Path:
@@ -176,6 +177,7 @@ class SshControl:
             else:
                 cmd.extend(["-J", self.jump_host])
 
+        cmd.extend(self.extra_options)
         cmd.extend(["-fN", self.gateway])
         logger.debug("ControlMaster command: %s", cmd)
 
