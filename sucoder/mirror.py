@@ -301,6 +301,7 @@ class MirrorManager:
         remote mirror via SSH tunnel to the data transfer node.
         """
         if ctx.is_remote:
+            self._pull_from_remote(ctx)
             self._sync_remote(ctx)
             return
 
@@ -333,24 +334,21 @@ class MirrorManager:
 
         return raw.replace("~", cached, 1)
 
-    def _sync_remote(self, ctx: MirrorContext) -> None:
-        """Push local canonical commits to the remote mirror.
+    def _remote_git_env(self, ctx: MirrorContext) -> tuple:
+        """Return ``(url, env)`` for git operations against the remote mirror.
 
-        Uses the login node ControlMaster for git transport — no
-        tunnel needed when the login node has internet access.
+        Builds the SSH transport command using the ControlMaster sockets
+        so that ``git fetch``/``git push`` can reach the mirror via the
+        login node.
         """
         remote = ctx.settings.remote
         assert remote is not None
 
         remote_path = self._resolve_remote_path(ctx)
 
-        # Resolve the login node from the executor or session.
         login_node = getattr(self.executor, "login_node", None)
         gateway = remote.gateway
 
-        # Build GIT_SSH_COMMAND to route through the ControlMaster.
-        # Include a ProxyCommand fallback through the gateway so that a
-        # stale login-node socket doesn't leave git with no route.
         ssh_cmd_parts = ["ssh"]
         control_path = getattr(self.executor, "control_socket_path", None)
         if control_path:
@@ -369,17 +367,142 @@ class MirrorManager:
                 ])
 
         git_ssh_cmd = " ".join(shlex.quote(p) for p in ssh_cmd_parts)
-        push_host = login_node or gateway
-        push_url = f"{push_host}:{remote_path}"
+        host = login_node or gateway
+        url = f"{host}:{remote_path}"
 
-        self.logger.info("Pushing to remote mirror %s on %s", remote_path, push_host)
-        push_env = dict(os.environ)
-        push_env["GIT_SSH_COMMAND"] = git_ssh_cmd
+        env = dict(os.environ)
+        env["GIT_SSH_COMMAND"] = git_ssh_cmd
+        return url, env
+
+    def _pull_from_remote(self, ctx: MirrorContext) -> None:
+        """Fetch agent commits from the remote mirror into canonical.
+
+        This must run *before* ``_sync_remote`` so that work the agent
+        committed on the mirror is not lost when the canonical repo
+        force-pushes over it.
+
+        Strategy:
+        1. Fetch the mirror's branch into a temporary ref — always safe.
+        2. If canonical is already up-to-date, nothing to do.
+        3. If the mirror is strictly ahead (fast-forward), update
+           canonical automatically.
+        4. If histories have diverged, warn the user and let them
+           decide whether to continue (discarding mirror-only commits)
+           or abort so they can reconcile manually.
+        """
+        import subprocess
+
+        url, env = self._remote_git_env(ctx)
+        base = ctx.settings.default_base_branch or "main"
+        tmp_ref = "refs/sucoder/mirror-head"
+
+        self.logger.info("Fetching agent commits from remote mirror")
+        result = self.executor.run_human(
+            ["git", "fetch", url, f"{base}:{tmp_ref}"],
+            check=False,
+            cwd=str(ctx.canonical_path),
+            env=env,
+        )
+        if result.returncode != 0:
+            # Mirror may be empty (first run) or unreachable.
+            self.logger.warning(
+                "Could not fetch from remote mirror (rc=%d): %s",
+                result.returncode,
+                (result.stderr or "").strip(),
+            )
+            return
+
+        canon = str(ctx.canonical_path)
+
+        # Resolve both tips.
+        def _rev(ref: str) -> Optional[str]:
+            r = subprocess.run(
+                ["git", "rev-parse", "--verify", ref],
+                capture_output=True, text=True, cwd=canon,
+            )
+            return r.stdout.strip() if r.returncode == 0 else None
+
+        local_head = _rev(f"refs/heads/{base}")
+        mirror_head = _rev(tmp_ref)
+
+        if not mirror_head:
+            return  # nothing fetched
+        if mirror_head == local_head:
+            self.logger.info("Canonical and mirror are in sync")
+            return
+
+        # Check if local is ancestor of mirror (fast-forward possible).
+        is_ancestor = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", base, tmp_ref],
+            capture_output=True, cwd=canon,
+        ).returncode == 0
+
+        if is_ancestor:
+            # Fast-forward: mirror is strictly ahead.
+            ahead = subprocess.run(
+                ["git", "log", "--oneline", f"{base}..{tmp_ref}"],
+                capture_output=True, text=True, cwd=canon,
+            ).stdout.strip()
+            self.logger.info(
+                "Mirror is ahead of canonical — fast-forwarding:\n%s",
+                ahead,
+            )
+            subprocess.run(
+                ["git", "update-ref", f"refs/heads/{base}", mirror_head],
+                check=True, cwd=canon,
+            )
+            # Update the working tree to match.
+            subprocess.run(
+                ["git", "reset", "--hard", base],
+                check=True, cwd=canon,
+            )
+            return
+
+        # Histories have diverged — need user input.
+        only_on_mirror = subprocess.run(
+            ["git", "log", "--oneline", f"{base}..{tmp_ref}"],
+            capture_output=True, text=True, cwd=canon,
+        ).stdout.strip()
+        only_on_canonical = subprocess.run(
+            ["git", "log", "--oneline", f"{tmp_ref}..{base}"],
+            capture_output=True, text=True, cwd=canon,
+        ).stdout.strip()
+
+        print("\n⚠  Mirror and canonical have diverged.")
+        print(f"\nCommits only on the mirror ({url}):")
+        print(f"  {only_on_mirror.replace(chr(10), chr(10) + '  ')}")
+        print(f"\nCommits only in canonical:")
+        print(f"  {only_on_canonical.replace(chr(10), chr(10) + '  ')}")
+        print()
+
+        answer = input(
+            "Continue syncing? This will DISCARD the mirror-only commits.\n"
+            "  [y] Continue and discard mirror commits\n"
+            "  [n] Abort so you can reconcile manually\n"
+            "  Choice [n]: "
+        ).strip().lower()
+
+        if answer != "y":
+            raise MirrorError(
+                "Aborting sync — mirror has diverged commits that need "
+                "manual reconciliation.  The mirror branch is available "
+                f"locally at {tmp_ref} for inspection."
+            )
+
+    def _sync_remote(self, ctx: MirrorContext) -> None:
+        """Push local canonical commits to the remote mirror.
+
+        Uses the login node ControlMaster for git transport — no
+        tunnel needed when the login node has internet access.
+        """
+        url, env = self._remote_git_env(ctx)
+
+        self.logger.info("Pushing to remote mirror %s", url)
         self.executor.run_human(
-            ["git", "push", push_url, "--all", "--force"],
+            ["git", "push", url, "--all", "--force"],
             check=True,
             cwd=str(ctx.canonical_path),
-            env=push_env,
+            env=env,
         )
 
     def ensure_remote_clone(self, ctx: MirrorContext) -> None:
@@ -431,6 +554,9 @@ class MirrorManager:
             check=True,
             cwd=abs_remote_path,
         )
+
+        # Pull any agent commits before overwriting the mirror.
+        self._pull_from_remote(ctx)
 
         # Push canonical content to the remote via tunnel.
         self._sync_remote(ctx)
