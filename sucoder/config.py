@@ -33,6 +33,21 @@ class BranchPrefixes:
 
 
 @dataclass
+class SlurmConfig:
+    """SLURM job parameters for compute-node targets.
+
+    When present on a :class:`RemoteConfig`, the session allocates a
+    compute node via ``salloc --no-shell`` and tunnels through the
+    login node to reach it.
+    """
+
+    partition: str
+    account: str
+    time: str = "02:00:00"
+    qos: Optional[str] = None
+
+
+@dataclass
 class RemoteConfig:
     """SSH connection details for running agent sessions on a remote host.
 
@@ -46,6 +61,7 @@ class RemoteConfig:
     mirror_root: Path = field(default_factory=lambda: Path("~/mirrors"))
     ssh_options: Dict[str, str] = field(default_factory=dict)
     control_persist: str = "12h"                    # ControlMaster socket lifetime
+    slurm: Optional[SlurmConfig] = None             # Compute-node allocation params
 
 
 @dataclass
@@ -603,12 +619,46 @@ def _parse_remote_config(raw: Any) -> Optional[RemoteConfig]:
     if not isinstance(control_persist, str):
         raise ConfigError("`remote.control_persist` must be a string (e.g. '12h', '1d').")
 
+    slurm = _parse_slurm_config(raw.get("slurm"))
+
     return RemoteConfig(
         gateway=gateway,
         transfer_host=transfer_host,
         mirror_root=mirror_root,
         ssh_options={str(k): str(v) for k, v in ssh_options.items()},
         control_persist=control_persist,
+        slurm=slurm,
+    )
+
+
+def _parse_slurm_config(raw: Any) -> Optional[SlurmConfig]:
+    """Parse an optional ``slurm:`` block inside a target/remote config."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ConfigError("`slurm` must be a mapping when provided.")
+
+    partition = raw.get("partition")
+    if not partition or not isinstance(partition, str):
+        raise ConfigError("`slurm.partition` must be a non-empty string.")
+
+    account = raw.get("account")
+    if not account or not isinstance(account, str):
+        raise ConfigError("`slurm.account` must be a non-empty string.")
+
+    time_limit = raw.get("time", "02:00:00")
+    if not isinstance(time_limit, str):
+        raise ConfigError("`slurm.time` must be a string (e.g. '02:00:00').")
+
+    qos = raw.get("qos")
+    if qos is not None and not isinstance(qos, str):
+        raise ConfigError("`slurm.qos` must be a string when provided.")
+
+    return SlurmConfig(
+        partition=partition,
+        account=account,
+        time=time_limit,
+        qos=qos,
     )
 
 

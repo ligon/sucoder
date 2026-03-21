@@ -24,6 +24,8 @@ class RemoteSession:
     tunnel_port: Optional[int] = None
     tunnel_pid: Optional[int] = None
     created: Optional[str] = None
+    slurm_job_id: Optional[int] = None
+    compute_node: Optional[str] = None
 
     # ------------------------------------------------------------------
     # Persistence
@@ -48,6 +50,8 @@ class RemoteSession:
             tunnel_port=data.get("tunnel_port"),
             tunnel_pid=data.get("tunnel_pid"),
             created=data.get("created"),
+            slurm_job_id=data.get("slurm_job_id"),
+            compute_node=data.get("compute_node"),
         )
 
     def save(self) -> None:
@@ -62,6 +66,8 @@ class RemoteSession:
             "tunnel_port": self.tunnel_port,
             "tunnel_pid": self.tunnel_pid,
             "created": self.created,
+            "slurm_job_id": self.slurm_job_id,
+            "compute_node": self.compute_node,
         }
         with path.open("w", encoding="utf-8") as fh:
             yaml.safe_dump(data, fh, default_flow_style=False)

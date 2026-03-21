@@ -9,10 +9,22 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 # Use --target/-T on the CLI to select one.
 # targets:
 #   savio:
-#     gateway: brc.berkeley.edu
+#     gateway: hpc.brc.berkeley.edu
 #     transfer_host: dtn.brc.berkeley.edu
 #     mirror_root: ~/mirrors
 #     control_persist: 12h
+#   # Compute-node target: allocates a SLURM node and tunnels through
+#   # the login node (which only proxies TCP — no shell, no load).
+#   savio-node:
+#     gateway: hpc.brc.berkeley.edu
+#     transfer_host: dtn.brc.berkeley.edu
+#     mirror_root: ~/mirrors
+#     control_persist: 12h
+#     slurm:
+#       partition: savio2
+#       account: fc_jevons
+#       time: "02:00:00"
+#       # qos: savio_normal  # optional
 
 # Mirrors are optional when using zero-config repo detection.
 mirrors:

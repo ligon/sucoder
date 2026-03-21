@@ -171,7 +171,17 @@ def _build_executor(
             typer.echo(str(exc), err=True)
             raise typer.Exit(code=1) from exc
 
-        # The executor uses the login node ControlMaster directly —
+        # 4. If SLURM is configured, allocate a compute node and
+        #    establish a ControlMaster through the login node to it.
+        #    The login node becomes a pure TCP proxy — no shell, no load.
+        target_node = session.login_node
+        target_control = ln_control
+        if remote.slurm is not None:
+            target_node, target_control = _ensure_slurm_node(
+                remote, session, ln_control, gw_control, logger,
+            )
+
+        # The executor uses the target node ControlMaster directly —
         # no -J needed since the socket routes through the gateway.
         return RemoteExecutor(
             human_user=config.human_user,
@@ -181,11 +191,11 @@ def _build_executor(
             dry_run=dry_run,
             use_sudo_for_agent=False,
             gateway=remote.gateway,
-            login_node=session.login_node,
+            login_node=target_node,
             remote_mirror_root=str(remote.mirror_root),
             local_mirror_root=str(config.mirror_root),
             ssh_options=remote.ssh_options,
-            control_socket_path=str(ln_control.socket_path),
+            control_socket_path=str(target_control.socket_path),
         )
 
     return CommandExecutor(
@@ -196,6 +206,134 @@ def _build_executor(
         dry_run=dry_run,
         use_sudo_for_agent=use_sudo_for_agent,
     )
+
+
+def _ensure_slurm_node(
+    remote,
+    session,
+    ln_control,
+    gw_control,
+    logger,
+):
+    """Allocate a SLURM compute node and establish SSH through the login node.
+
+    Re-uses an existing allocation if the session already has a live
+    SLURM job.  Returns ``(compute_node, SshControl)`` for the compute
+    node.
+    """
+    import subprocess as _sp
+    from .tunnel import SshControl, TunnelError
+
+    slurm = remote.slurm
+
+    # Check whether a previous allocation is still running.
+    if session.slurm_job_id and session.compute_node:
+        check_cmd = [
+            "ssh", *ln_control.ssh_options(), session.login_node,
+            f"squeue --job {session.slurm_job_id} --noheader -o %T",
+        ]
+        result = _sp.run(check_cmd, capture_output=True, text=True, check=False)
+        state = result.stdout.strip()
+        if state in ("RUNNING", "PENDING"):
+            logger.info(
+                "Reusing SLURM job %d on %s (state: %s)",
+                session.slurm_job_id, session.compute_node, state,
+            )
+        else:
+            logger.info(
+                "Previous SLURM job %d is %s; allocating a new node",
+                session.slurm_job_id, state or "gone",
+            )
+            session.slurm_job_id = None
+            session.compute_node = None
+
+    # Allocate a new compute node if needed.
+    if not session.slurm_job_id:
+        salloc_parts = [
+            "salloc", "--no-shell",
+            f"--partition={slurm.partition}",
+            f"--account={slurm.account}",
+            f"--time={slurm.time}",
+        ]
+        if slurm.qos:
+            salloc_parts.append(f"--qos={slurm.qos}")
+
+        salloc_cmd_str = " ".join(salloc_parts)
+        ssh_cmd = [
+            "ssh", *ln_control.ssh_options(), session.login_node,
+            salloc_cmd_str,
+        ]
+        typer.echo(f"Requesting SLURM allocation ({slurm.partition}, {slurm.time})...")
+        logger.debug("salloc command: %s", ssh_cmd)
+
+        try:
+            result = _sp.run(ssh_cmd, capture_output=True, text=True, check=True)
+        except _sp.CalledProcessError as exc:
+            typer.echo(
+                f"Failed to allocate SLURM node: {exc.stderr.strip()}",
+                err=True,
+            )
+            raise typer.Exit(code=1) from exc
+
+        # Parse job ID from salloc output.  Typical output:
+        #   "salloc: Granted job allocation 12345678"
+        combined = result.stdout + result.stderr
+        job_id = None
+        for line in combined.splitlines():
+            if "Granted job allocation" in line:
+                for token in line.split():
+                    if token.isdigit():
+                        job_id = int(token)
+                        break
+            if job_id:
+                break
+
+        if not job_id:
+            typer.echo(
+                f"Could not parse SLURM job ID from salloc output:\n{combined}",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        # Query squeue for the node name.
+        squeue_cmd = [
+            "ssh", *ln_control.ssh_options(), session.login_node,
+            f"squeue --job {job_id} --noheader -o %N",
+        ]
+        try:
+            result = _sp.run(squeue_cmd, capture_output=True, text=True, check=True)
+        except _sp.CalledProcessError as exc:
+            typer.echo(
+                f"Failed to query node for job {job_id}: {exc.stderr.strip()}",
+                err=True,
+            )
+            raise typer.Exit(code=1) from exc
+
+        compute_node = result.stdout.strip()
+        if not compute_node:
+            typer.echo(f"squeue returned empty node name for job {job_id}.", err=True)
+            raise typer.Exit(code=1)
+
+        session.slurm_job_id = job_id
+        session.compute_node = compute_node
+        session.save()
+        typer.echo(f"Allocated compute node {compute_node} (job {job_id})")
+        logger.info("SLURM job %d allocated node %s", job_id, compute_node)
+
+    # Establish ControlMaster to the compute node via the login node.
+    cn_control = SshControl(
+        gateway=session.compute_node,
+        control_persist=remote.control_persist,
+        jump_host=session.login_node,
+        jump_control=ln_control,
+    )
+    try:
+        cn_control.ensure(logger)
+    except TunnelError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    return session.compute_node, cn_control
 
 
 def _prompt_yes_no(message: str) -> bool:
@@ -832,17 +970,26 @@ def attach(
         raise typer.Exit(code=1)
 
     remote = settings.remote
+    logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
+
     # Reuse ControlMaster if active; re-establish if expired.
     control = SshControl(
         gateway=remote.gateway,
         control_persist=remote.control_persist,
     )
-    logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     try:
         control.ensure(logger)
     except Exception:
         pass  # Best-effort; ssh will prompt directly if needed
     control_opts = control.ssh_options() if control.is_active() else []
+
+    # For SLURM targets, attach to the compute node (via login node).
+    if session.compute_node and remote.slurm is not None:
+        attach_target = session.compute_node
+        jump_chain = f"{remote.gateway},{session.login_node}"
+    else:
+        attach_target = session.login_node
+        jump_chain = remote.gateway
 
     tmux_name = f"sucoder-{mirror}"
     attach_cmd = (
@@ -852,8 +999,8 @@ def attach(
     os.execvp("ssh", [
         "ssh", "-t",
         *control_opts,
-        "-J", remote.gateway,
-        session.login_node,
+        "-J", jump_chain,
+        attach_target,
         attach_cmd,
     ])
 
