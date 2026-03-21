@@ -196,6 +196,7 @@ def _build_executor(
             local_mirror_root=str(config.mirror_root),
             ssh_options=remote.ssh_options,
             control_socket_path=str(target_control.socket_path),
+            slurm_job_id=session.slurm_job_id,
         )
 
     return CommandExecutor(
@@ -355,6 +356,10 @@ def _start_slurm_timer(
     Writes warnings to ``/tmp/slurm-deadline.warn`` (for the agent to
     check) and flashes ``tmux display-message`` (for the human).
     Warnings fire at 30, 15, and 5 minutes remaining.
+
+    As a backstop, if the sucoder tmux session exits without cancelling
+    the job (crash, network loss, etc.), the timer cancels it to avoid
+    burning idle allocation time.
     """
     import subprocess as _sp
     import textwrap
@@ -362,6 +367,8 @@ def _start_slurm_timer(
     job_id = session.slurm_job_id
     if not job_id:
         return
+
+    tmux_session = f"sucoder-{session.mirror_name}"
 
     # The script runs on the compute node, querying squeue via the
     # login node is unnecessary — SLURM_JOB_ID is in the environment
@@ -378,6 +385,15 @@ def _start_slurm_timer(
                 tmux display-message "$msg" 2>/dev/null
                 break
             fi
+
+            # If the agent tmux session is gone, cancel the allocation
+            # to avoid burning idle compute time.
+            if ! tmux has-session -t {tmux_session} 2>/dev/null; then
+                scancel {job_id} 2>/dev/null
+                echo "Agent session ended; cancelled SLURM job {job_id}." > "$WARN_FILE"
+                break
+            fi
+
             IFS=: read -ra parts <<< "$left"
             if [ ${{#parts[@]}} -eq 3 ]; then
                 mins=$(( ${{parts[0]#0}}*60 + ${{parts[1]#0}} ))
@@ -389,17 +405,17 @@ def _start_slurm_timer(
             if [ "$mins" -le 5 ] && [ ! -f /tmp/.slurm-warn-5 ]; then
                 msg="SLURM: ~${{mins}} min left (job {job_id}). Commit and save NOW."
                 echo "$msg" > "$WARN_FILE"
-                tmux display-message "$msg" 2>/dev/null
+                tmux display-message -t {tmux_session} "$msg" 2>/dev/null
                 touch /tmp/.slurm-warn-5
             elif [ "$mins" -le 15 ] && [ ! -f /tmp/.slurm-warn-15 ]; then
                 msg="SLURM: ~${{mins}} min left (job {job_id}). Start wrapping up."
                 echo "$msg" > "$WARN_FILE"
-                tmux display-message "$msg" 2>/dev/null
+                tmux display-message -t {tmux_session} "$msg" 2>/dev/null
                 touch /tmp/.slurm-warn-15
             elif [ "$mins" -le 30 ] && [ ! -f /tmp/.slurm-warn-30 ]; then
                 msg="SLURM: ~${{mins}} min left (job {job_id})."
                 echo "$msg" > "$WARN_FILE"
-                tmux display-message "$msg" 2>/dev/null
+                tmux display-message -t {tmux_session} "$msg" 2>/dev/null
                 touch /tmp/.slurm-warn-30
             fi
             sleep 60

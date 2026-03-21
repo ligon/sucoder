@@ -840,6 +840,15 @@ class MirrorManager:
             # Wrap in tmux so the session survives SSH disconnects.
             tmux_name = f"sucoder-{ctx.settings.name}"
             agent_cmd_str = shlex.join(command)
+
+            # If a SLURM allocation is active, cancel it when the agent
+            # exits so we don't burn idle compute time.
+            slurm_job_id = getattr(self.executor, "slurm_job_id", None)
+            if slurm_job_id:
+                agent_cmd_str = (
+                    f"{agent_cmd_str}; scancel {slurm_job_id} 2>/dev/null"
+                )
+
             # new-session -A attaches if it already exists, creates if not.
             command = [
                 "tmux", "new-session", "-A",
