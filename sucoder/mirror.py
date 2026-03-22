@@ -318,12 +318,26 @@ class MirrorManager:
     def _resolve_remote_path(self, ctx: MirrorContext) -> str:
         """Return the absolute remote mirror path, resolving ~ via SSH.
 
+        When the executor overrides the mirror root (e.g. --local-disk
+        sets it to /local/mirrors), that takes precedence over the
+        config-derived ``ctx.remote_mirror_path``.
+
         Uses the login node when available (shared filesystem; avoids
         the fragile compute-node SSH chain).
         """
-        raw = ctx.remote_mirror_path
-        if raw is None:
-            raise MirrorError("No remote mirror path configured.")
+        # Check if the executor overrides the mirror root (e.g. --local-disk).
+        executor_root = getattr(self.executor, "remote_mirror_root", "")
+        config_root = str(ctx.settings.remote.mirror_root) if ctx.settings.remote else ""
+        if executor_root and executor_root != config_root:
+            # Executor has a different root (e.g. /local/mirrors).
+            # Build the path from the executor's root + mirror dirname.
+            dirname = ctx.settings.mirror_dirname
+            raw = f"{executor_root.rstrip('/')}/{dirname}"
+        else:
+            raw = ctx.remote_mirror_path
+            if raw is None:
+                raise MirrorError("No remote mirror path configured.")
+
         if not raw.startswith("~"):
             return raw
 
