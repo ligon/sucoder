@@ -1035,6 +1035,11 @@ def pull(
     ctx: typer.Context,
     mirror: Optional[str] = typer.Argument(None, help="Mirror name defined in configuration.", shell_complete=_mirror_completion),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
+    node: Optional[str] = typer.Option(
+        None,
+        "--node",
+        help="Pull from a specific compute node (e.g. --node n0047.savio2).",
+    ),
 ) -> None:
     """Fetch agent commits from the remote mirror into canonical.
 
@@ -1072,7 +1077,16 @@ def pull(
     _obj = (click_ctx.obj if click_ctx and click_ctx.obj else {}) or {}
     _tgt = _obj.get("target_name")
     session = RemoteSession.load(settings.name, target_name=_tgt)
-    if settings.remote and settings.remote.slurm and not session.slurm_job_id:
+
+    # If --node is specified, inject it so _build_executor allocates
+    # on that node (needed to SSH and pull from its local disk).
+    if node:
+        session.slurm_job_id = None
+        session.compute_node = node
+        session.save()
+        logger.info("Targeting node %s for pull", node)
+
+    if settings.remote and settings.remote.slurm and not session.slurm_job_id and not node:
         typer.echo(
             "No active SLURM allocation in the session.  "
             "Run `sucoder collaborate` first to establish one.",
@@ -1338,6 +1352,12 @@ def collaborate(
         "--lfs/--no-lfs",
         help="Download Git LFS objects during clone (default: skip LFS to avoid failures).",
     ),
+    node: Optional[str] = typer.Option(
+        None,
+        "--node",
+        help="Request a specific compute node (e.g. --node n0047.savio2). "
+             "Useful to recover work on local disk from a previous session.",
+    ),
     extra_args: Optional[List[str]] = typer.Argument(
         None,
         help="Additional arguments appended to the agent launch command.",
@@ -1348,6 +1368,24 @@ def collaborate(
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
+
+    # If --node is specified, inject it into the session so that
+    # _ensure_slurm_node uses --nodelist to request that node.
+    if node:
+        from .session import RemoteSession
+        try:
+            _click_ctx = click.get_current_context()
+        except RuntimeError:
+            _click_ctx = None
+        _tgt = ((_click_ctx.obj or {}).get("target_name") if _click_ctx else None)
+        _session = RemoteSession.load(mirror, target_name=_tgt)
+        # Clear the old job so _ensure_slurm_node allocates a new one,
+        # but set compute_node so it becomes the preferred_node.
+        _session.slurm_job_id = None
+        _session.compute_node = node
+        _session.save()
+        logger.info("Requesting specific node %s", node)
+
     manager = _build_manager_for_mirror(config, logger, dry_run, mirror)
     command_override = _parse_agent_command(agent_command) or (_agent_shorthand(agent) if agent else None)
     env_override = _parse_agent_env(agent_env)
