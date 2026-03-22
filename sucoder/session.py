@@ -20,6 +20,7 @@ class RemoteSession:
     """Tracks the pinned login node and SSH tunnel for a remote mirror."""
 
     mirror_name: str
+    target_name: Optional[str] = None  # e.g. "savio-node"; None = local
     login_node: Optional[str] = None
     tunnel_port: Optional[int] = None
     tunnel_pid: Optional[int] = None
@@ -32,21 +33,35 @@ class RemoteSession:
     # Persistence
     # ------------------------------------------------------------------
 
+    @property
+    def _session_key(self) -> str:
+        """Filename stem: ``mirror`` or ``mirror--target``."""
+        if self.target_name:
+            return f"{self.mirror_name}--{self.target_name}"
+        return self.mirror_name
+
     @classmethod
-    def load(cls, mirror_name: str) -> "RemoteSession":
-        """Load an existing session or return a blank one."""
-        path = _session_dir() / f"{mirror_name}.yaml"
+    def load(cls, mirror_name: str, target_name: Optional[str] = None) -> "RemoteSession":
+        """Load an existing session or return a blank one.
+
+        *target_name* scopes the session to a named target (e.g.
+        ``savio-node``) so that local and remote sessions for the
+        same mirror don't collide.
+        """
+        key = f"{mirror_name}--{target_name}" if target_name else mirror_name
+        path = _session_dir() / f"{key}.yaml"
         if not path.is_file():
-            return cls(mirror_name=mirror_name)
+            return cls(mirror_name=mirror_name, target_name=target_name)
         try:
             with path.open("r", encoding="utf-8") as fh:
                 data = yaml.safe_load(fh) or {}
         except (yaml.YAMLError, OSError):
-            return cls(mirror_name=mirror_name)
+            return cls(mirror_name=mirror_name, target_name=target_name)
         if not isinstance(data, dict):
-            return cls(mirror_name=mirror_name)
+            return cls(mirror_name=mirror_name, target_name=target_name)
         return cls(
             mirror_name=mirror_name,
+            target_name=target_name,
             login_node=data.get("login_node"),
             tunnel_port=data.get("tunnel_port"),
             tunnel_pid=data.get("tunnel_pid"),
@@ -62,7 +77,7 @@ class RemoteSession:
         directory.mkdir(parents=True, exist_ok=True)
         if not self.created:
             self.created = _dt.datetime.now(_dt.timezone.utc).isoformat()
-        path = directory / f"{self.mirror_name}.yaml"
+        path = directory / f"{self._session_key}.yaml"
         data = {
             "login_node": self.login_node,
             "tunnel_port": self.tunnel_port,
@@ -77,7 +92,7 @@ class RemoteSession:
 
     def clear(self) -> None:
         """Remove the session file."""
-        path = _session_dir() / f"{self.mirror_name}.yaml"
+        path = _session_dir() / f"{self._session_key}.yaml"
         try:
             path.unlink()
         except FileNotFoundError:

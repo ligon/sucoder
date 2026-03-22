@@ -167,6 +167,31 @@ def test_session_remote_mirror_root_roundtrip(tmp_path: Path, monkeypatch: pytes
     assert loaded.remote_mirror_root == "/local/mirrors"
 
 
+def test_session_target_scoping(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sessions for different targets don't collide."""
+    monkeypatch.setattr("sucoder.session._session_dir", lambda: tmp_path)
+
+    local = RemoteSession(mirror_name="proj", login_node="ln001")
+    local.save()
+
+    remote = RemoteSession(mirror_name="proj", target_name="savio-node",
+                           login_node="ln002", compute_node="n0101")
+    remote.save()
+
+    # Both files exist independently
+    assert (tmp_path / "proj.yaml").exists()
+    assert (tmp_path / "proj--savio-node.yaml").exists()
+
+    # Loading with target retrieves the right one
+    loaded_local = RemoteSession.load("proj")
+    assert loaded_local.login_node == "ln001"
+    assert loaded_local.compute_node is None
+
+    loaded_remote = RemoteSession.load("proj", target_name="savio-node")
+    assert loaded_remote.login_node == "ln002"
+    assert loaded_remote.compute_node == "n0101"
+
+
 def test_session_remote_mirror_root_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("sucoder.session._session_dir", lambda: tmp_path)
 

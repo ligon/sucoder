@@ -175,7 +175,15 @@ def _build_executor(
         from .tunnel import SshControl, TunnelError
 
         remote = mirror_settings.remote
-        session = RemoteSession.load(mirror_settings.name)
+
+        # Resolve the target name for session scoping.
+        _ctx = None
+        try:
+            _ctx = click.get_current_context()
+        except RuntimeError:
+            pass
+        _target_name = ((_ctx.obj or {}).get("target_name") if _ctx else None)
+        session = RemoteSession.load(mirror_settings.name, target_name=_target_name)
 
         # 1. Establish ControlMaster to the gateway (authenticates
         #    once; may prompt for pin + OTP).
@@ -1030,7 +1038,9 @@ def pull(
         typer.echo("pull is only meaningful for remote mirrors (use -T <target>).", err=True)
         raise typer.Exit(code=1)
 
-    session = RemoteSession.load(settings.name)
+    _obj = (click_ctx.obj if click_ctx and click_ctx.obj else {}) or {}
+    _tgt = _obj.get("target_name")
+    session = RemoteSession.load(settings.name, target_name=_tgt)
     if settings.remote and settings.remote.slurm and not session.slurm_job_id:
         typer.echo(
             "No active SLURM allocation in the session.  "
@@ -1358,7 +1368,8 @@ def attach(
     from .session import RemoteSession
     from .tunnel import SshControl
 
-    session = RemoteSession.load(mirror)
+    _tgt_name = ((click_ctx.obj or {}).get("target_name") if click_ctx else None)
+    session = RemoteSession.load(mirror, target_name=_tgt_name)
     if not session.login_node:
         typer.echo(
             "No active session found. Run 'sucoder collaborate' or "
