@@ -196,15 +196,49 @@ class SshControl:
                 f"Failed to establish SSH connection to {self.gateway}"
             ) from exc
 
+        self._record_debug_mode()
+
+    @property
+    def _debug_marker(self) -> Path:
+        """Sidecar file that records whether the socket was created with -vvv."""
+        return self.socket_path.with_suffix(".sock.debug")
+
+    def _record_debug_mode(self) -> None:
+        """Write or remove the debug marker to match current ``self.debug``."""
+        if self.debug:
+            self._debug_marker.touch()
+        else:
+            try:
+                self._debug_marker.unlink()
+            except FileNotFoundError:
+                pass
+
+    def _debug_mode_mismatch(self) -> bool:
+        """True if the live socket was created with a different debug setting."""
+        marker_exists = self._debug_marker.exists()
+        return marker_exists != self.debug
+
     def ensure(self, logger: logging.Logger) -> None:
         """Ensure the ControlMaster is active, re-establishing if needed.
 
         Call this before any operation that needs the connection.  If
         the socket has expired, the user will be prompted to
         authenticate again.
+
+        If the socket was created with a different ``debug`` setting
+        (e.g. previous run used ``--debug-ssh`` but this one doesn't),
+        the socket is closed and re-established so that SSH verbosity
+        matches the current session.
         """
         if self.is_active():
-            return
+            if self._debug_mode_mismatch():
+                logger.info(
+                    "SSH debug mode changed for %s, re-establishing connection",
+                    self.gateway,
+                )
+                self.close(logger)
+            else:
+                return
         logger.info("SSH connection to %s expired, re-authenticating", self.gateway)
         self.establish(logger)
 
@@ -223,6 +257,11 @@ class SshControl:
             text=True,
             check=False,
         )
+        # Clean up the debug marker.
+        try:
+            self._debug_marker.unlink()
+        except FileNotFoundError:
+            pass
         logger.debug("ControlMaster to %s closed", self.gateway)
 
     def ssh_options(self) -> List[str]:
