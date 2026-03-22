@@ -323,6 +323,102 @@ class RemoteExecutor(CommandExecutor):
             detail = "\n  - ".join([""] + hints)
             self.logger.error("SSH connection diagnostic:%s", detail)
 
+    def run_on_login_node(
+        self,
+        args: Sequence[str],
+        *,
+        check: bool = True,
+        cwd: Optional[str] = None,
+        env: Optional[Mapping[str, str]] = None,
+        timeout: Optional[int] = None,
+    ) -> CommandResult:
+        """Run a command on the login node (not the compute node).
+
+        For compute-node targets, filesystem scaffolding (mkdir, git
+        init, etc.) can run on the login node since Lustre is shared.
+        This avoids the fragile three-hop SSH chain through the compute
+        node.  For login-node targets, falls through to ``run_agent``.
+        """
+        if not (self.is_compute_node and self.proxy_node and self.proxy_socket_path):
+            return self.run_agent(
+                args, check=check, cwd=cwd, env=env, timeout=timeout,
+            )
+        remote_cwd = self._translate_path(cwd) if cwd else None
+        ssh_args = self._build_login_node_command(
+            args, cwd=remote_cwd, env=env,
+        )
+        effective_timeout = timeout if timeout is not None else self.DEFAULT_SSH_TIMEOUT
+        try:
+            result = self._run(
+                ssh_args,
+                check=check,
+                cwd=None,
+                env=None,
+                as_agent=False,
+                capture_output=True,
+                timeout=effective_timeout,
+            )
+            if self.debug_ssh and result.stderr:
+                self.logger.debug(
+                    "SSH debug (login-node %s):\n%s",
+                    _format_display(args),
+                    result.stderr.rstrip(),
+                )
+            return result
+        except CommandError as exc:
+            if self.debug_ssh and exc.result.stderr:
+                self.logger.error(
+                    "SSH debug (login-node FAILED %s):\n%s",
+                    _format_display(args),
+                    exc.result.stderr.rstrip(),
+                )
+            raise
+
+    def _build_login_node_command(
+        self,
+        args: Sequence[str],
+        *,
+        cwd: Optional[str] = None,
+        env: Optional[Mapping[str, str]] = None,
+    ) -> List[str]:
+        """Build an SSH command targeting the login node directly."""
+        from .tunnel import _control_socket_path as _gw_sock
+
+        ssh_cmd: List[str] = ["ssh"]
+        if self.debug_ssh:
+            ssh_cmd.append("-vvv")
+        ssh_cmd.extend([
+            "-o", "ControlMaster=auto",
+            "-o", f"ControlPath={self.proxy_socket_path}",
+        ])
+        # ProxyCommand fallback through gateway in case login-node
+        # socket is stale.
+        if self.gateway:
+            gw_socket = _gw_sock(self.gateway)
+            ssh_cmd.extend([
+                "-o",
+                f"ProxyCommand=ssh -o ControlMaster=auto "
+                f"-o ControlPath={gw_socket} "
+                f"-W %h:%p {self.gateway}",
+            ])
+        ssh_cmd.append(self.proxy_node)
+
+        parts: List[str] = []
+        if env:
+            for k, v in env.items():
+                parts.append(f"export {shlex.quote(k)}={shlex.quote(v)};")
+        if cwd:
+            if cwd.startswith("~/"):
+                cwd_expr = '"$HOME"/' + shlex.quote(cwd[2:])
+            elif cwd == "~":
+                cwd_expr = '"$HOME"'
+            else:
+                cwd_expr = shlex.quote(cwd)
+            parts.append(f"cd {cwd_expr} &&")
+        parts.append(_format_display(args))
+        ssh_cmd.append(" ".join(parts))
+        return ssh_cmd
+
     def run_agent_interactive(
         self,
         args: Sequence[str],

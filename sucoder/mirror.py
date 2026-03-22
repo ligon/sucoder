@@ -316,7 +316,11 @@ class MirrorManager:
         )
 
     def _resolve_remote_path(self, ctx: MirrorContext) -> str:
-        """Return the absolute remote mirror path, resolving ~ via SSH."""
+        """Return the absolute remote mirror path, resolving ~ via SSH.
+
+        Uses the login node when available (shared filesystem; avoids
+        the fragile compute-node SSH chain).
+        """
         raw = ctx.remote_mirror_path
         if raw is None:
             raise MirrorError("No remote mirror path configured.")
@@ -325,7 +329,8 @@ class MirrorManager:
 
         cached = getattr(self, "_resolved_remote_home", None)
         if cached is None:
-            result = self.executor.run_agent(
+            run = getattr(self.executor, "run_on_login_node", self.executor.run_agent)
+            result = run(
                 ["bash", "-c", "echo $HOME"],
                 check=True,
             )
@@ -338,45 +343,61 @@ class MirrorManager:
         """Return ``(url, env)`` for git operations against the remote mirror.
 
         Builds the SSH transport command using the ControlMaster sockets
-        so that ``git fetch``/``git push`` can reach the mirror via the
-        login node.
+        so that ``git fetch``/``git push`` can reach the mirror.
+
+        For compute-node targets the mirror lives on Lustre (shared
+        filesystem), so git transport is routed through the *login
+        node* — simpler, more reliable, and avoids the three-hop chain
+        to the compute node.
         """
         remote = ctx.settings.remote
         assert remote is not None
 
         remote_path = self._resolve_remote_path(ctx)
-
-        login_node = getattr(self.executor, "login_node", None)
         gateway = remote.gateway
-
-        ssh_cmd_parts = ["ssh"]
+        is_compute = getattr(self.executor, "is_compute_node", False)
         debug_ssh = getattr(self.executor, "debug_ssh", False)
+
+        # For compute-node targets, route git transport through the
+        # login node since the mirror is on shared Lustre.
+        if is_compute:
+            proxy_node = getattr(self.executor, "proxy_node", "")
+            proxy_sock = getattr(self.executor, "proxy_socket_path", "")
+            if proxy_node and proxy_sock:
+                ssh_cmd_parts = ["ssh"]
+                if debug_ssh:
+                    ssh_cmd_parts.append("-vvv")
+                ssh_cmd_parts.extend([
+                    "-o", "ControlMaster=auto",
+                    "-o", f"ControlPath={proxy_sock}",
+                ])
+                if gateway:
+                    from .tunnel import _control_socket_path as _gw_sock
+                    gw_socket = _gw_sock(gateway)
+                    ssh_cmd_parts.extend([
+                        "-o",
+                        f"ProxyCommand=ssh -o ControlMaster=auto "
+                        f"-o ControlPath={gw_socket} "
+                        f"-W %h:%p {gateway}",
+                    ])
+                git_ssh_cmd = " ".join(shlex.quote(p) for p in ssh_cmd_parts)
+                url = f"{proxy_node}:{remote_path}"
+                env = dict(os.environ)
+                env["GIT_SSH_COMMAND"] = git_ssh_cmd
+                return url, env
+
+        # Login-node target (or compute-node without proxy info).
+        login_node = getattr(self.executor, "login_node", None)
+        control_path = getattr(self.executor, "control_socket_path", None)
+        ssh_cmd_parts = ["ssh"]
         if debug_ssh:
             ssh_cmd_parts.append("-vvv")
-        control_path = getattr(self.executor, "control_socket_path", None)
-        is_compute = getattr(self.executor, "is_compute_node", False)
         if control_path:
             ssh_cmd_parts.extend([
                 "-o", "ControlMaster=auto",
                 "-o", f"ControlPath={control_path}",
             ])
-            if is_compute:
-                # Compute nodes are ephemeral; skip host-key checks and
-                # route through the login node's ControlMaster.
-                proxy_node = getattr(self.executor, "proxy_node", "")
-                proxy_sock = getattr(self.executor, "proxy_socket_path", "")
-                ssh_cmd_parts.extend([
-                    "-o", "StrictHostKeyChecking=no",
-                    "-o", "UserKnownHostsFile=/dev/null",
-                ])
-                if proxy_node and proxy_sock:
-                    ssh_cmd_parts.extend([
-                        "-o",
-                        f"ProxyCommand=ssh -o ControlMaster=auto "
-                        f"-o ControlPath={proxy_sock} "
-                        f"-W %h:%p {proxy_node}",
-                    ])
-            elif gateway:
+            if gateway:
                 from .tunnel import _control_socket_path as _gw_sock
                 gw_socket = _gw_sock(gateway)
                 ssh_cmd_parts.extend([
@@ -537,6 +558,13 @@ class MirrorManager:
 
         Initialises a bare-ish clone on the remote if it does not
         already exist, then pushes all branches from canonical.
+
+        Filesystem scaffolding (mkdir, git init, git config, etc.) is
+        routed through the login node when targeting a compute node,
+        because the mirror lives on a shared filesystem (Lustre) that
+        is accessible from any node.  This avoids the fragile three-hop
+        SSH chain to the compute node for operations that don't need
+        compute resources.
         """
         remote = ctx.settings.remote
         if remote is None:
@@ -548,8 +576,11 @@ class MirrorManager:
         # Resolve to absolute path so we don't fight tilde quoting.
         abs_remote_path = self._resolve_remote_path(ctx)
 
+        # Use the login node for filesystem scaffolding when available.
+        run = getattr(self.executor, "run_on_login_node", self.executor.run_agent)
+
         # Check if remote mirror is a valid git repo.
-        check = self.executor.run_agent(
+        check = run(
             ["git", "rev-parse", "--git-dir"],
             check=False,
             cwd=abs_remote_path,
@@ -558,17 +589,17 @@ class MirrorManager:
             self.logger.info("Remote mirror already exists at %s", remote_path)
         else:
             # Clean up broken directory from a previously failed init.
-            self.executor.run_agent(
+            run(
                 ["rm", "-rf", abs_remote_path],
                 check=False,
             )
             self.logger.info("Initialising remote mirror at %s", remote_path)
-            self.executor.run_agent(
+            run(
                 ["mkdir", "-p", abs_remote_path],
                 check=True,
             )
             base = ctx.settings.default_base_branch or "main"
-            self.executor.run_agent(
+            run(
                 ["git", "init", "-b", base],
                 check=True,
                 cwd=abs_remote_path,
@@ -576,7 +607,7 @@ class MirrorManager:
 
         # Always ensure the config is correct (may have been missed
         # by a failed earlier init).
-        self.executor.run_agent(
+        run(
             ["git", "config", "receive.denyCurrentBranch", "updateInstead"],
             check=True,
             cwd=abs_remote_path,
@@ -591,13 +622,13 @@ class MirrorManager:
         # Ensure HEAD points to the correct branch so that
         # updateInstead keeps the working tree in sync.
         base = ctx.settings.default_base_branch or "main"
-        self.executor.run_agent(
+        run(
             ["git", "symbolic-ref", "HEAD", f"refs/heads/{base}"],
             check=True,
             cwd=abs_remote_path,
         )
         # Reset the working tree to match the branch tip.
-        self.executor.run_agent(
+        run(
             ["git", "reset", "--hard", base],
             check=True,
             cwd=abs_remote_path,
