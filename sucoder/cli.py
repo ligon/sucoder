@@ -414,10 +414,14 @@ def _ensure_slurm_node(
                 session.slurm_job_id, state or "gone",
             )
             session.slurm_job_id = None
+            # Keep compute_node for --nodelist affinity (local-disk data
+            # may still be on that node).
+            preferred_node = session.compute_node
             session.compute_node = None
 
     # Allocate a new compute node if needed.
     if not session.slurm_job_id:
+        preferred_node = locals().get("preferred_node")
         salloc_parts = [
             "salloc", "--no-shell",
             f"--partition={slurm.partition}",
@@ -426,6 +430,15 @@ def _ensure_slurm_node(
         ]
         if slurm.qos:
             salloc_parts.append(f"--qos={slurm.qos}")
+        if preferred_node:
+            salloc_parts.extend([
+                f"--nodelist={preferred_node}",
+                "--immediate=30",
+            ])
+            logger.info(
+                "Requesting node %s (30s timeout before fallback)",
+                preferred_node,
+            )
 
         salloc_cmd_str = " ".join(salloc_parts)
         ssh_cmd = [
@@ -438,11 +451,40 @@ def _ensure_slurm_node(
             try:
                 result = _sp.run(ssh_cmd, capture_output=True, text=True, check=True)
             except _sp.CalledProcessError as exc:
-                typer.echo(
-                    f"Failed to allocate SLURM node: {exc.stderr.strip()}",
-                    err=True,
-                )
-                raise typer.Exit(code=1) from exc
+                if preferred_node:
+                    # Preferred node busy — retry without --nodelist.
+                    typer.echo(
+                        f"⚠  Node {preferred_node} unavailable; "
+                        "allocating any node.  Unpulled agent work on "
+                        f"{preferred_node}:/local/ may be orphaned — "
+                        "run `sucoder pull` when that node is reachable.",
+                        err=True,
+                    )
+                    fallback_parts = [
+                        p for p in salloc_parts
+                        if not p.startswith("--nodelist=")
+                        and not p.startswith("--immediate=")
+                    ]
+                    fallback_cmd = [
+                        "ssh", *ln_control.ssh_options(), session.login_node,
+                        " ".join(fallback_parts),
+                    ]
+                    try:
+                        result = _sp.run(
+                            fallback_cmd, capture_output=True, text=True, check=True,
+                        )
+                    except _sp.CalledProcessError as exc2:
+                        typer.echo(
+                            f"Failed to allocate SLURM node: {exc2.stderr.strip()}",
+                            err=True,
+                        )
+                        raise typer.Exit(code=1) from exc2
+                else:
+                    typer.echo(
+                        f"Failed to allocate SLURM node: {exc.stderr.strip()}",
+                        err=True,
+                    )
+                    raise typer.Exit(code=1) from exc
 
         # Parse job ID from salloc output.  Typical output:
         #   "salloc: Granted job allocation 12345678"
