@@ -5,7 +5,11 @@ from __future__ import annotations
 import os
 import shlex
 import pwd
+import sys
+import threading
+import time
 from collections import defaultdict
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
@@ -35,6 +39,51 @@ from .mirror import MirrorError, MirrorManager
 from .startup_checks import StartupError, run_startup_checks
 
 app = typer.Typer(help="sucoder – Unix-sandboxed agent collaboration toolkit for managing agent mirrors.")
+
+_SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+
+@contextmanager
+def _spinner(message: str):
+    """Show an animated spinner with *message* while the body executes.
+
+    The spinner writes to stderr so it doesn't pollute captured stdout.
+    When the body finishes the spinner line is replaced with a final
+    status (done or error).
+    """
+    is_tty = hasattr(sys.stderr, "isatty") and sys.stderr.isatty()
+    if not is_tty:
+        typer.echo(message + " ...", err=True)
+        yield
+        return
+
+    stop = threading.Event()
+    error = [False]
+
+    def _spin():
+        i = 0
+        while not stop.is_set():
+            frame = _SPINNER_FRAMES[i % len(_SPINNER_FRAMES)]
+            sys.stderr.write(f"\r{frame} {message} ...")
+            sys.stderr.flush()
+            i += 1
+            stop.wait(0.1)
+
+    t = threading.Thread(target=_spin, daemon=True)
+    t.start()
+    try:
+        yield
+    except BaseException:
+        error[0] = True
+        raise
+    finally:
+        stop.set()
+        t.join()
+        if error[0]:
+            sys.stderr.write(f"\r✗ {message}\n")
+        else:
+            sys.stderr.write(f"\r✓ {message}\n")
+        sys.stderr.flush()
 
 
 def _default_config_path() -> Path:
@@ -141,21 +190,22 @@ def _build_executor(
         # 2. Pin a login node through the authenticated connection.
         if not session.login_node:
             import subprocess as _sp
-            try:
-                result = _sp.run(
-                    ["ssh", *gw_control.ssh_options(), remote.gateway, "hostname"],
-                    capture_output=True, text=True, check=True,
-                )
-                session.login_node = result.stdout.strip()
-                session.save()
-                logger.info("Pinned login node: %s", session.login_node)
-            except _sp.CalledProcessError as exc:
-                typer.echo(
-                    f"Failed to reach remote gateway {remote.gateway}: "
-                    f"{exc.stderr.strip()}",
-                    err=True,
-                )
-                raise typer.Exit(code=1) from exc
+            with _spinner("Resolving login node"):
+                try:
+                    result = _sp.run(
+                        ["ssh", *gw_control.ssh_options(), remote.gateway, "hostname"],
+                        capture_output=True, text=True, check=True,
+                    )
+                    session.login_node = result.stdout.strip()
+                    session.save()
+                    logger.info("Pinned login node: %s", session.login_node)
+                except _sp.CalledProcessError as exc:
+                    typer.echo(
+                        f"Failed to reach remote gateway {remote.gateway}: "
+                        f"{exc.stderr.strip()}",
+                        err=True,
+                    )
+                    raise typer.Exit(code=1) from exc
 
         # 3. Establish ControlMaster to the login node (goes through
         #    the gateway ControlMaster — no re-auth needed).
@@ -165,11 +215,12 @@ def _build_executor(
             jump_host=remote.gateway,
             jump_control=gw_control,
         )
-        try:
-            ln_control.ensure(logger)
-        except TunnelError as exc:
-            typer.echo(str(exc), err=True)
-            raise typer.Exit(code=1) from exc
+        with _spinner(f"Connecting to {session.login_node}"):
+            try:
+                ln_control.ensure(logger)
+            except TunnelError as exc:
+                typer.echo(str(exc), err=True)
+                raise typer.Exit(code=1) from exc
 
         # 4. If SLURM is configured, allocate a compute node and
         #    establish a ControlMaster through the login node to it.
@@ -265,17 +316,17 @@ def _ensure_slurm_node(
             "ssh", *ln_control.ssh_options(), session.login_node,
             salloc_cmd_str,
         ]
-        typer.echo(f"Requesting SLURM allocation ({slurm.partition}, {slurm.time})...")
         logger.debug("salloc command: %s", ssh_cmd)
 
-        try:
-            result = _sp.run(ssh_cmd, capture_output=True, text=True, check=True)
-        except _sp.CalledProcessError as exc:
-            typer.echo(
-                f"Failed to allocate SLURM node: {exc.stderr.strip()}",
-                err=True,
-            )
-            raise typer.Exit(code=1) from exc
+        with _spinner(f"Requesting SLURM allocation ({slurm.partition}, {slurm.time})"):
+            try:
+                result = _sp.run(ssh_cmd, capture_output=True, text=True, check=True)
+            except _sp.CalledProcessError as exc:
+                typer.echo(
+                    f"Failed to allocate SLURM node: {exc.stderr.strip()}",
+                    err=True,
+                )
+                raise typer.Exit(code=1) from exc
 
         # Parse job ID from salloc output.  Typical output:
         #   "salloc: Granted job allocation 12345678"
@@ -336,11 +387,12 @@ def _ensure_slurm_node(
             "-o", "UserKnownHostsFile=/dev/null",
         ],
     )
-    try:
-        cn_control.ensure(logger)
-    except TunnelError as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(code=1) from exc
+    with _spinner(f"Connecting to compute node {session.compute_node}"):
+        try:
+            cn_control.ensure(logger)
+        except TunnelError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
 
     # Start a deadline timer on the compute node so both the human
     # (via tmux status message) and the agent (via a sentinel file)
