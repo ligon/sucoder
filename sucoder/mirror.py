@@ -347,9 +347,9 @@ class MirrorManager:
                         chk.returncode, chk.stdout.strip(),
                         chk.stderr.strip(),
                     )
-                    # Also try with -v for verbose SSH output
+                    # Probe with full verbose output
                     probe = _dbg_sp.run(
-                        ["ssh", "-v",
+                        ["ssh", "-vvv",
                          "-o", "ControlMaster=auto",
                          "-o", f"ControlPath={sock}",
                          node, "echo probe-ok"],
@@ -357,9 +357,23 @@ class MirrorManager:
                         timeout=10,
                     )
                     self.logger.info(
-                        "DEBUG probe rc=%d stdout=%r stderr=%r",
+                        "DEBUG probe rc=%d stdout=%r stderr=\n%s",
                         probe.returncode, probe.stdout.strip(),
-                        probe.stderr[:500],
+                        probe.stderr,
+                    )
+                    # Probe ignoring SSH config entirely
+                    probe2 = _dbg_sp.run(
+                        ["ssh", "-F", "/dev/null",
+                         "-o", "ControlMaster=auto",
+                         "-o", f"ControlPath={sock}",
+                         node, "echo probe-ok"],
+                        capture_output=True, text=True, check=False,
+                        timeout=10,
+                    )
+                    self.logger.info(
+                        "DEBUG probe -F/dev/null rc=%d stdout=%r stderr=%r",
+                        probe2.returncode, probe2.stdout.strip(),
+                        probe2.stderr.strip(),
                     )
             result = self.executor.run_agent(
                 ["bash", "-c", "echo $HOME"],
