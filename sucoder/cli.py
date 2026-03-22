@@ -167,6 +167,7 @@ def _build_executor(
     use_sudo_for_agent: bool = True,
     mirror_settings: Optional[MirrorSettings] = None,
     debug_ssh: bool = False,
+    local_disk_override: Optional[bool] = None,
 ) -> CommandExecutor:
     if mirror_settings and mirror_settings.remote:
         from .executor import RemoteExecutor
@@ -267,6 +268,34 @@ def _build_executor(
                 debug_ssh=debug_ssh,
             )
 
+        # Resolve local-disk setting: CLI flag overrides config.
+        use_local_disk = False
+        local_disk_root = ""
+        if remote.slurm is not None:
+            cfg_local_disk = remote.slurm.local_disk
+            if local_disk_override is True:
+                use_local_disk = True
+                local_disk_root = cfg_local_disk or "/local"
+            elif local_disk_override is False:
+                use_local_disk = False
+            elif cfg_local_disk:
+                use_local_disk = True
+                local_disk_root = cfg_local_disk
+            if use_local_disk:
+                logger.info(
+                    "Using local disk %s on compute node (bypassing shared FS)",
+                    local_disk_root,
+                )
+
+        # Compute the remote mirror root.  With local disk, the mirror
+        # lives on the compute node's local storage; otherwise on the
+        # shared filesystem (Lustre).
+        if use_local_disk:
+            mirror_name = mirror_settings.mirror_name if mirror_settings else ""
+            remote_mirror_root = f"{local_disk_root.rstrip('/')}/mirrors"
+        else:
+            remote_mirror_root = str(remote.mirror_root)
+
         # The executor uses the target node ControlMaster directly —
         # no -J needed since the socket routes through the gateway.
         # For compute-node targets, also pass the login node info so
@@ -281,7 +310,7 @@ def _build_executor(
             use_sudo_for_agent=False,
             gateway=remote.gateway,
             login_node=target_node,
-            remote_mirror_root=str(remote.mirror_root),
+            remote_mirror_root=remote_mirror_root,
             local_mirror_root=str(config.mirror_root),
             ssh_options=remote.ssh_options,
             control_socket_path=str(target_control.socket_path),
@@ -289,10 +318,17 @@ def _build_executor(
             slurm_job_id=session.slurm_job_id,
             debug_ssh=debug_ssh,
         )
-        # Route filesystem scaffolding and git transport through the
-        # DTN (or login node as fallback).
-        executor_kwargs["scaffolding_node"] = str(dtn_control.gateway)
-        executor_kwargs["scaffolding_socket_path"] = str(dtn_control.socket_path)
+        if use_local_disk:
+            # Local disk is only on the compute node — scaffolding
+            # and git transport must go through the compute node,
+            # not the DTN.  Don't set scaffolding_node so that
+            # run_on_login_node falls through to run_agent.
+            pass
+        else:
+            # Route filesystem scaffolding and git transport through
+            # the DTN (or login node as fallback).
+            executor_kwargs["scaffolding_node"] = str(dtn_control.gateway)
+            executor_kwargs["scaffolding_socket_path"] = str(dtn_control.socket_path)
         # For compute-node targets, the proxy fields are still needed
         # for the SSH ProxyCommand fallback to the login node.
         if remote.slurm is not None:
@@ -606,6 +642,12 @@ def _get_debug_ssh(ctx: Optional[click.Context]) -> bool:
     return bool(obj.get("debug_ssh", False))
 
 
+def _get_local_disk_override(ctx: Optional[click.Context]) -> Optional[bool]:
+    """Return the --local-disk CLI override, or None to use config default."""
+    obj = (ctx.obj if ctx and ctx.obj else {}) or {}
+    return obj.get("local_disk")
+
+
 def _build_manager_for_mirror(
     config: Config, logger, dry_run: bool, mirror_name: str,
 ) -> MirrorManager:
@@ -650,6 +692,7 @@ def _build_manager(
         use_sudo_for_agent=_get_use_sudo_for_agent(ctx, config),
         mirror_settings=mirror_settings,
         debug_ssh=_get_debug_ssh(ctx),
+        local_disk_override=_get_local_disk_override(ctx),
     )
     return MirrorManager(config, executor, logger, prompt_handler=_prompt_yes_no)
 
@@ -769,6 +812,12 @@ def main(
         "--debug-ssh",
         help="Enable verbose SSH tracing (-vvv) for all remote connections.",
     ),
+    local_disk: Optional[bool] = typer.Option(
+        None,
+        "--local-disk/--no-local-disk",
+        help="Use compute-node local disk instead of shared filesystem. "
+             "Overrides the slurm.local_disk config setting.",
+    ),
 ) -> None:
     """Load configuration once and store it on the Typer context."""
     config_explicitly_set = config is not None
@@ -831,6 +880,7 @@ def main(
         "target": resolved_target,
         "target_name": target,
         "debug_ssh": debug_ssh,
+        "local_disk": local_disk,
     }
 
 

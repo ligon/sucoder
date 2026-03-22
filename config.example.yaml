@@ -27,6 +27,7 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #       account: fc_jevons
 #       time: "02:00:00"
 #       # qos: savio_normal  # optional
+#       # local_disk: /local  # use compute-node local storage (bypasses Lustre)
 
 # Mirrors are optional when using zero-config repo detection.
 mirrors:

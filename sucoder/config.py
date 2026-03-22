@@ -45,6 +45,7 @@ class SlurmConfig:
     account: str
     time: str = "02:00:00"
     qos: Optional[str] = None
+    local_disk: Optional[str] = None  # e.g. "/local" — bypass shared FS
 
 
 @dataclass
@@ -662,11 +663,16 @@ def _parse_slurm_config(raw: Any) -> Optional[SlurmConfig]:
     if qos is not None and not isinstance(qos, str):
         raise ConfigError("`slurm.qos` must be a string when provided.")
 
+    local_disk = raw.get("local_disk")
+    if local_disk is not None and not isinstance(local_disk, str):
+        raise ConfigError("`slurm.local_disk` must be a string path (e.g. '/local').")
+
     return SlurmConfig(
         partition=partition,
         account=account,
         time=time_limit,
         qos=qos,
+        local_disk=local_disk,
     )
 
 

@@ -373,6 +373,43 @@ def test_parse_targets_valid() -> None:
     assert targets["lab"].mirror_root == Path("~/mirrors")  # default
 
 
+def test_parse_targets_with_slurm_local_disk() -> None:
+    from sucoder.config import _parse_targets
+
+    raw = {
+        "savio-node": {
+            "gateway": "brc.berkeley.edu",
+            "transfer_host": "dtn.brc.berkeley.edu",
+            "slurm": {
+                "partition": "savio2",
+                "account": "fc_jevons",
+                "local_disk": "/local",
+            },
+        },
+    }
+    targets = _parse_targets(raw)
+    assert targets["savio-node"].slurm is not None
+    assert targets["savio-node"].slurm.local_disk == "/local"
+
+
+def test_parse_targets_slurm_no_local_disk() -> None:
+    from sucoder.config import _parse_targets
+
+    raw = {
+        "savio-node": {
+            "gateway": "brc.berkeley.edu",
+            "transfer_host": "dtn.brc.berkeley.edu",
+            "slurm": {
+                "partition": "savio2",
+                "account": "fc_jevons",
+            },
+        },
+    }
+    targets = _parse_targets(raw)
+    assert targets["savio-node"].slurm is not None
+    assert targets["savio-node"].slurm.local_disk is None
+
+
 def test_parse_targets_none() -> None:
     from sucoder.config import _parse_targets
 
