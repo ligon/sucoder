@@ -214,9 +214,39 @@ class SshControl:
                 pass
 
     def _debug_mode_mismatch(self) -> bool:
-        """True if the live socket was created with a different debug setting."""
+        """True if the live socket was created with a different debug setting.
+
+        Handles legacy sockets (created before the marker feature) by
+        probing the socket for debug output.  A socket started with
+        ``-vvv`` emits ``debug1:`` lines on stderr even for a simple
+        ``true`` command.
+        """
         marker_exists = self._debug_marker.exists()
-        return marker_exists != self.debug
+        if marker_exists != self.debug:
+            return True
+        # If no marker and not requesting debug, probe for legacy
+        # debug sockets (created before the marker feature existed).
+        if not self.debug and not marker_exists and self.socket_path.exists():
+            try:
+                result = subprocess.run(
+                    [
+                        "ssh",
+                        "-o", "ControlMaster=auto",
+                        "-o", f"ControlPath={self.socket_path}",
+                        "-o", "ConnectTimeout=5",
+                        self.gateway,
+                        "true",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=10,
+                )
+                if "debug1:" in (result.stderr or ""):
+                    return True
+            except subprocess.TimeoutExpired:
+                pass
+        return False
 
     def ensure(self, logger: logging.Logger) -> None:
         """Ensure the ControlMaster is active, re-establishing if needed.
