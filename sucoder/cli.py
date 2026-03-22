@@ -414,15 +414,10 @@ def _ensure_slurm_node(
                 session.slurm_job_id, state or "gone",
             )
             session.slurm_job_id = None
-            # Keep compute_node so we can request the same node via
-            # --nodelist (useful for local-disk persistence).
-            preferred_node = session.compute_node
             session.compute_node = None
 
     # Allocate a new compute node if needed.
     if not session.slurm_job_id:
-        # Remember the previous node for --nodelist affinity.
-        preferred_node = getattr(session, "_preferred_node", None) or locals().get("preferred_node")
         salloc_parts = [
             "salloc", "--no-shell",
             f"--partition={slurm.partition}",
@@ -431,12 +426,6 @@ def _ensure_slurm_node(
         ]
         if slurm.qos:
             salloc_parts.append(f"--qos={slurm.qos}")
-        if preferred_node:
-            # Soft preference for the previous node (SLURM >= 21.08).
-            # SLURM uses this node if available, otherwise picks any
-            # eligible node — no manual fallback needed.
-            salloc_parts.append(f"--prefer={preferred_node}")
-            logger.info("Requesting preferred node %s", preferred_node)
 
         salloc_cmd_str = " ".join(salloc_parts)
         ssh_cmd = [
