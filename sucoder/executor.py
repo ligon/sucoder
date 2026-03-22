@@ -206,6 +206,7 @@ class RemoteExecutor(CommandExecutor):
     local_mirror_root: str = ""
     ssh_options: Dict[str, str] = field(default_factory=dict)
     control_socket_path: Optional[str] = None  # Path to ControlMaster socket
+    is_compute_node: bool = False                 # Target is a SLURM compute node
     slurm_job_id: Optional[int] = None          # Active SLURM allocation, if any
 
     def run_agent(
@@ -267,17 +268,19 @@ class RemoteExecutor(CommandExecutor):
         if allocate_tty:
             ssh_cmd.append("-t")
         # Reuse ControlMaster connection if available (avoids re-auth).
-        # Always include a ProxyCommand fallback through the gateway so
-        # that if the login-node ControlMaster socket is stale (TCP
-        # died but mux daemon lingers), SSH can still reach the login
-        # node via the gateway instead of attempting a direct connection
-        # to an unresolvable internal hostname.
+        # For login-node targets, include a ProxyCommand fallback through
+        # the gateway so that a stale socket doesn't leave SSH with no
+        # route to an unresolvable internal hostname.  For compute-node
+        # targets, skip the ProxyCommand — the gateway cannot reach
+        # compute nodes directly, so a fallback would just produce a
+        # confusing error.  If the compute-node ControlMaster dies the
+        # command will fail cleanly.
         if self.control_socket_path:
             ssh_cmd.extend([
                 "-o", "ControlMaster=auto",
                 "-o", f"ControlPath={self.control_socket_path}",
             ])
-            if self.gateway:
+            if self.gateway and not self.is_compute_node:
                 from .tunnel import _control_socket_path as _gw_sock
                 gw_socket = _gw_sock(self.gateway)
                 ssh_cmd.extend([
@@ -286,11 +289,12 @@ class RemoteExecutor(CommandExecutor):
                     f"-o ControlPath={gw_socket} "
                     f"-W %h:%p {self.gateway}",
                 ])
+        for key, val in self.ssh_options.items():
+            ssh_cmd.extend(["-o", f"{key}={val}"])
+        if self.control_socket_path:
             ssh_cmd.append(self.login_node)
         else:
             ssh_cmd.extend(["-J", self.gateway, self.login_node])
-        for key, val in self.ssh_options.items():
-            ssh_cmd.extend(["-o", f"{key}={val}"])
 
         # Build the remote shell command as a single string.
         parts: List[str] = []

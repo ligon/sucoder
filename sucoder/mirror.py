@@ -357,7 +357,11 @@ class MirrorManager:
                 "-o", "ControlMaster=auto",
                 "-o", f"ControlPath={control_path}",
             ])
-            if gateway:
+            # For login-node targets, include a ProxyCommand fallback
+            # through the gateway.  Skip it for compute nodes — the
+            # gateway cannot reach them directly.
+            is_compute = getattr(self.executor, "is_compute_node", False)
+            if gateway and not is_compute:
                 gw_socket = _gw_sock(gateway)
                 ssh_cmd_parts.extend([
                     "-o",

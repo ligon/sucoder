@@ -196,6 +196,7 @@ def _build_executor(
             local_mirror_root=str(config.mirror_root),
             ssh_options=remote.ssh_options,
             control_socket_path=str(target_control.socket_path),
+            is_compute_node=(remote.slurm is not None),
             slurm_job_id=session.slurm_job_id,
         )
 
