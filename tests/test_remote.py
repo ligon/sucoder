@@ -153,6 +153,30 @@ def test_session_clear(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert not (tmp_path / "test.yaml").exists()
 
 
+def test_session_remote_mirror_root_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sucoder.session._session_dir", lambda: tmp_path)
+
+    session = RemoteSession(
+        mirror_name="test",
+        login_node="ln003",
+        remote_mirror_root="/local/mirrors",
+    )
+    session.save()
+
+    loaded = RemoteSession.load("test")
+    assert loaded.remote_mirror_root == "/local/mirrors"
+
+
+def test_session_remote_mirror_root_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sucoder.session._session_dir", lambda: tmp_path)
+
+    session = RemoteSession(mirror_name="test", login_node="ln003")
+    session.save()
+
+    loaded = RemoteSession.load("test")
+    assert loaded.remote_mirror_root is None
+
+
 def test_session_clear_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Clearing a non-existent session is a no-op."""
     monkeypatch.setattr("sucoder.session._session_dir", lambda: tmp_path)

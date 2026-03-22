@@ -609,10 +609,21 @@ class MirrorManager:
                 check=False,
             )
             self.logger.info("Initialising remote mirror at %s", remote_path)
+            # Create with restrictive permissions — especially important
+            # on compute-node local disk (/local/) which is shared and
+            # persistent across jobs.
             run(
-                ["mkdir", "-p", abs_remote_path],
+                ["bash", "-c",
+                 f"umask 077 && mkdir -p {shlex.quote(abs_remote_path)}"],
                 check=True,
             )
+            # Lock down the parent mirrors/ directory too (if we created it).
+            mirrors_parent = abs_remote_path.rsplit("/", 1)[0]
+            if mirrors_parent:
+                run(
+                    ["chmod", "700", mirrors_parent],
+                    check=False,  # may not own the parent
+                )
             base = ctx.settings.default_base_branch or "main"
             run(
                 ["git", "init", "-b", base],

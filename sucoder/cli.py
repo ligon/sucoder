@@ -271,8 +271,8 @@ def _build_executor(
         # Resolve local-disk setting: CLI flag overrides config.
         use_local_disk = False
         local_disk_root = ""
+        cfg_local_disk = remote.slurm.local_disk if remote.slurm else None
         if remote.slurm is not None:
-            cfg_local_disk = remote.slurm.local_disk
             if local_disk_override is True:
                 use_local_disk = True
                 local_disk_root = cfg_local_disk or "/local"
@@ -290,9 +290,17 @@ def _build_executor(
         # Compute the remote mirror root.  With local disk, the mirror
         # lives on the compute node's local storage; otherwise on the
         # shared filesystem (Lustre).
+        #
+        # When the user hasn't expressed a preference (no --local-disk
+        # flag AND no config setting), fall back to the session's saved
+        # value.  This lets `sucoder pull` find the mirror without
+        # re-specifying --local-disk.
         if use_local_disk:
-            mirror_name = mirror_settings.mirror_name if mirror_settings else ""
             remote_mirror_root = f"{local_disk_root.rstrip('/')}/mirrors"
+        elif local_disk_override is None and not cfg_local_disk and session.remote_mirror_root:
+            remote_mirror_root = session.remote_mirror_root
+            if remote_mirror_root != str(remote.mirror_root):
+                logger.info("Using saved mirror root from session: %s", remote_mirror_root)
         else:
             remote_mirror_root = str(remote.mirror_root)
 
@@ -318,7 +326,13 @@ def _build_executor(
             slurm_job_id=session.slurm_job_id,
             debug_ssh=debug_ssh,
         )
-        if use_local_disk:
+        # Detect whether the resolved mirror root is on local disk
+        # (either from --local-disk flag, config, or session fallback).
+        is_local_disk = (
+            use_local_disk
+            or remote_mirror_root != str(remote.mirror_root)
+        )
+        if is_local_disk:
             # Local disk is only on the compute node — scaffolding
             # and git transport must go through the compute node,
             # not the DTN.  Don't set scaffolding_node so that
@@ -334,6 +348,13 @@ def _build_executor(
         if remote.slurm is not None:
             executor_kwargs["proxy_node"] = session.login_node
             executor_kwargs["proxy_socket_path"] = str(ln_control.socket_path)
+
+        # Persist the effective mirror root so that later commands
+        # (e.g. `sucoder pull`) know where the mirror lives without
+        # needing --local-disk.
+        session.remote_mirror_root = remote_mirror_root
+        session.save()
+
         return RemoteExecutor(**executor_kwargs)
 
     return CommandExecutor(
@@ -968,6 +989,66 @@ def sync(
     except MirrorError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
+
+
+@app.command("pull")
+def pull(
+    ctx: typer.Context,
+    mirror: Optional[str] = typer.Argument(None, help="Mirror name defined in configuration.", shell_complete=_mirror_completion),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
+) -> None:
+    """Fetch agent commits from the remote mirror into canonical.
+
+    Reconnects to the active SLURM allocation (if any) and pulls
+    any commits the agent made on the remote mirror back into the
+    canonical repository.  Works with both shared-filesystem and
+    local-disk mirrors — the session remembers where the mirror lives.
+    """
+    mirror = _resolve_mirror_name(ctx, mirror)
+    config = _get_config(ctx)
+    logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
+
+    # Check session health before reconnecting.
+    from .session import RemoteSession
+    settings = config.mirrors.get(mirror)
+    if settings is None:
+        typer.echo(f"Unknown mirror: {mirror}", err=True)
+        raise typer.Exit(code=1)
+
+    # Apply target overlay.
+    try:
+        click_ctx = click.get_current_context()
+    except RuntimeError:
+        click_ctx = None
+    target = _get_active_target(click_ctx)
+    if target is not None:
+        from dataclasses import replace
+        settings = replace(settings, remote=target)
+        config.mirrors[mirror] = settings  # type: ignore[index]
+
+    if not settings.is_remote:
+        typer.echo("pull is only meaningful for remote mirrors (use -T <target>).", err=True)
+        raise typer.Exit(code=1)
+
+    session = RemoteSession.load(settings.name)
+    if settings.remote and settings.remote.slurm and not session.slurm_job_id:
+        typer.echo(
+            "No active SLURM allocation in the session.  "
+            "Run `sucoder collaborate` first to establish one.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    manager = _build_manager_for_mirror(config, logger, False, mirror)
+    mirror_ctx = manager.context_for(mirror)
+
+    try:
+        manager._pull_from_remote(mirror_ctx)
+    except MirrorError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo("Pull complete.")
 
 
 @app.command("start-task")

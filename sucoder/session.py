@@ -26,6 +26,7 @@ class RemoteSession:
     created: Optional[str] = None
     slurm_job_id: Optional[int] = None
     compute_node: Optional[str] = None
+    remote_mirror_root: Optional[str] = None  # e.g. "/local/mirrors" or "~/mirrors"
 
     # ------------------------------------------------------------------
     # Persistence
@@ -52,6 +53,7 @@ class RemoteSession:
             created=data.get("created"),
             slurm_job_id=data.get("slurm_job_id"),
             compute_node=data.get("compute_node"),
+            remote_mirror_root=data.get("remote_mirror_root"),
         )
 
     def save(self) -> None:
@@ -68,6 +70,7 @@ class RemoteSession:
             "created": self.created,
             "slurm_job_id": self.slurm_job_id,
             "compute_node": self.compute_node,
+            "remote_mirror_root": self.remote_mirror_root,
         }
         with path.open("w", encoding="utf-8") as fh:
             yaml.safe_dump(data, fh, default_flow_style=False)
