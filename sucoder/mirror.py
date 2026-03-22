@@ -345,48 +345,46 @@ class MirrorManager:
         Builds the SSH transport command using the ControlMaster sockets
         so that ``git fetch``/``git push`` can reach the mirror.
 
-        For compute-node targets the mirror lives on Lustre (shared
-        filesystem), so git transport is routed through the *login
-        node* — simpler, more reliable, and avoids the three-hop chain
-        to the compute node.
+        When a scaffolding node (DTN) is configured, git transport is
+        routed through it — fat pipes, spare CPU, and the mirror lives
+        on shared Lustre visible from any cluster node.
         """
         remote = ctx.settings.remote
         assert remote is not None
 
         remote_path = self._resolve_remote_path(ctx)
         gateway = remote.gateway
-        is_compute = getattr(self.executor, "is_compute_node", False)
         debug_ssh = getattr(self.executor, "debug_ssh", False)
 
-        # For compute-node targets, route git transport through the
-        # login node since the mirror is on shared Lustre.
-        if is_compute:
-            proxy_node = getattr(self.executor, "proxy_node", "")
-            proxy_sock = getattr(self.executor, "proxy_socket_path", "")
-            if proxy_node and proxy_sock:
-                ssh_cmd_parts = ["ssh"]
-                if debug_ssh:
-                    ssh_cmd_parts.append("-vvv")
+        # Prefer the scaffolding node (DTN) for git transport when
+        # available.  It sees the same Lustre filesystem and avoids
+        # load on login nodes (or the fragile compute-node chain).
+        scaffolding_node = getattr(self.executor, "scaffolding_node", "")
+        scaffolding_sock = getattr(self.executor, "scaffolding_socket_path", "")
+        if scaffolding_node and scaffolding_sock:
+            ssh_cmd_parts = ["ssh"]
+            if debug_ssh:
+                ssh_cmd_parts.append("-vvv")
+            ssh_cmd_parts.extend([
+                "-o", "ControlMaster=auto",
+                "-o", f"ControlPath={scaffolding_sock}",
+            ])
+            if gateway:
+                from .tunnel import _control_socket_path as _gw_sock
+                gw_socket = _gw_sock(gateway)
                 ssh_cmd_parts.extend([
-                    "-o", "ControlMaster=auto",
-                    "-o", f"ControlPath={proxy_sock}",
+                    "-o",
+                    f"ProxyCommand=ssh -o ControlMaster=auto "
+                    f"-o ControlPath={gw_socket} "
+                    f"-W %h:%p {gateway}",
                 ])
-                if gateway:
-                    from .tunnel import _control_socket_path as _gw_sock
-                    gw_socket = _gw_sock(gateway)
-                    ssh_cmd_parts.extend([
-                        "-o",
-                        f"ProxyCommand=ssh -o ControlMaster=auto "
-                        f"-o ControlPath={gw_socket} "
-                        f"-W %h:%p {gateway}",
-                    ])
-                git_ssh_cmd = " ".join(shlex.quote(p) for p in ssh_cmd_parts)
-                url = f"{proxy_node}:{remote_path}"
-                env = dict(os.environ)
-                env["GIT_SSH_COMMAND"] = git_ssh_cmd
-                return url, env
+            git_ssh_cmd = " ".join(shlex.quote(p) for p in ssh_cmd_parts)
+            url = f"{scaffolding_node}:{remote_path}"
+            env = dict(os.environ)
+            env["GIT_SSH_COMMAND"] = git_ssh_cmd
+            return url, env
 
-        # Login-node target (or compute-node without proxy info).
+        # Fallback: use the target node directly.
         login_node = getattr(self.executor, "login_node", None)
         control_path = getattr(self.executor, "control_socket_path", None)
         ssh_cmd_parts = ["ssh"]

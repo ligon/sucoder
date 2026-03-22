@@ -745,38 +745,35 @@ def test_run_query_dispatch_local(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 
 
 def test_run_on_login_node_compute_target() -> None:
-    """run_on_login_node routes through the login node, not the compute node."""
+    """run_on_login_node routes through the DTN, not the compute node."""
     executor = _make_remote_executor(
         login_node="n0101.savio2",
         control_socket_path="/tmp/compute.sock",
         is_compute_node=True,
         proxy_node="ln001",
         proxy_socket_path="/tmp/login.sock",
+        scaffolding_node="dtn.brc.berkeley.edu",
+        scaffolding_socket_path="/tmp/dtn.sock",
     )
     # Build the command that run_on_login_node would use
     cmd = executor._build_login_node_command(["hostname"])
     joined = " ".join(cmd)
-    # Target is the login node, not the compute node
-    assert "ln001" in cmd
+    # Target is the DTN, not the compute node
+    assert "dtn.brc.berkeley.edu" in cmd
     assert "n0101.savio2" not in joined
-    # Uses the login node's ControlMaster socket
-    assert "/tmp/login.sock" in joined
+    # Uses the DTN's ControlMaster socket
+    assert "/tmp/dtn.sock" in joined
 
 
-def test_run_on_login_node_falls_through_for_login_target() -> None:
-    """run_on_login_node delegates to run_agent for non-compute targets."""
-    import logging
-
-    logger = logging.getLogger("test.remote")
+def test_run_on_login_node_falls_through_without_scaffolding() -> None:
+    """run_on_login_node delegates to run_agent without scaffolding node."""
     executor = _make_remote_executor(
         login_node="ln001",
         control_socket_path="/tmp/login.sock",
         is_compute_node=False,
     )
-    # It should not have _build_login_node_command behaviour — verify
-    # that the method exists but falls through by checking it doesn't
-    # have proxy_node set.
-    assert not executor.proxy_node
+    # No scaffolding node set — should fall through to run_agent
+    assert not executor.scaffolding_node
 
 
 def test_ssh_error_enrichment_no_agent(monkeypatch: pytest.MonkeyPatch) -> None:

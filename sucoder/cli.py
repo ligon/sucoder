@@ -233,6 +233,29 @@ def _build_executor(
                 typer.echo(str(exc), err=True)
                 raise typer.Exit(code=1) from exc
 
+        # 3b. Establish ControlMaster to the data transfer node (DTN).
+        #     The DTN has fat pipes and spare CPU compared with the
+        #     hammered login nodes, so filesystem scaffolding and git
+        #     transport route through it.
+        dtn_control = SshControl(
+            gateway=remote.transfer_host,
+            control_persist=remote.control_persist,
+            jump_host=remote.gateway,
+            jump_control=gw_control,
+            debug=debug_ssh,
+        )
+        with _spinner(f"Connecting to {remote.transfer_host}"):
+            try:
+                dtn_control.ensure(logger)
+            except TunnelError as exc:
+                # DTN is optional — fall back to the login node if
+                # the DTN is unreachable.
+                logger.warning(
+                    "DTN %s unreachable, falling back to login node: %s",
+                    remote.transfer_host, exc,
+                )
+                dtn_control = ln_control
+
         # 4. If SLURM is configured, allocate a compute node and
         #    establish a ControlMaster through the login node to it.
         #    The login node becomes a pure TCP proxy — no shell, no load.
@@ -266,6 +289,12 @@ def _build_executor(
             slurm_job_id=session.slurm_job_id,
             debug_ssh=debug_ssh,
         )
+        # Route filesystem scaffolding and git transport through the
+        # DTN (or login node as fallback).
+        executor_kwargs["scaffolding_node"] = str(dtn_control.gateway)
+        executor_kwargs["scaffolding_socket_path"] = str(dtn_control.socket_path)
+        # For compute-node targets, the proxy fields are still needed
+        # for the SSH ProxyCommand fallback to the login node.
         if remote.slurm is not None:
             executor_kwargs["proxy_node"] = session.login_node
             executor_kwargs["proxy_socket_path"] = str(ln_control.socket_path)

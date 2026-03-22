@@ -234,6 +234,8 @@ class RemoteExecutor(CommandExecutor):
     slurm_job_id: Optional[int] = None          # Active SLURM allocation, if any
     proxy_node: str = ""                         # Login node hostname (compute-node proxy)
     proxy_socket_path: Optional[str] = None      # Login node ControlMaster socket
+    scaffolding_node: str = ""                   # DTN (or login node) for filesystem ops
+    scaffolding_socket_path: Optional[str] = None  # DTN ControlMaster socket
     debug_ssh: bool = False                      # Emit -vvv SSH tracing
 
     # Default timeout (seconds) for remote SSH commands.  Long enough
@@ -332,14 +334,15 @@ class RemoteExecutor(CommandExecutor):
         env: Optional[Mapping[str, str]] = None,
         timeout: Optional[int] = None,
     ) -> CommandResult:
-        """Run a command on the login node (not the compute node).
+        """Run a command on the scaffolding node (DTN or login node).
 
-        For compute-node targets, filesystem scaffolding (mkdir, git
-        init, etc.) can run on the login node since Lustre is shared.
-        This avoids the fragile three-hop SSH chain through the compute
-        node.  For login-node targets, falls through to ``run_agent``.
+        Filesystem scaffolding (mkdir, git init, etc.) runs on the DTN
+        (data transfer node) when available, since it has fat pipes and
+        spare CPU.  Falls back to the login node, or to ``run_agent``
+        for non-compute targets without a separate scaffolding node.
         """
-        if not (self.is_compute_node and self.proxy_node and self.proxy_socket_path):
+        scaffolding = self.scaffolding_node and self.scaffolding_socket_path
+        if not scaffolding:
             return self.run_agent(
                 args, check=check, cwd=cwd, env=env, timeout=timeout,
             )
@@ -381,7 +384,7 @@ class RemoteExecutor(CommandExecutor):
         cwd: Optional[str] = None,
         env: Optional[Mapping[str, str]] = None,
     ) -> List[str]:
-        """Build an SSH command targeting the login node directly."""
+        """Build an SSH command targeting the scaffolding node (DTN)."""
         from .tunnel import _control_socket_path as _gw_sock
 
         ssh_cmd: List[str] = ["ssh"]
@@ -389,10 +392,10 @@ class RemoteExecutor(CommandExecutor):
             ssh_cmd.append("-vvv")
         ssh_cmd.extend([
             "-o", "ControlMaster=auto",
-            "-o", f"ControlPath={self.proxy_socket_path}",
+            "-o", f"ControlPath={self.scaffolding_socket_path}",
         ])
-        # ProxyCommand fallback through gateway in case login-node
-        # socket is stale.
+        # ProxyCommand fallback through gateway in case the socket
+        # is stale.
         if self.gateway:
             gw_socket = _gw_sock(self.gateway)
             ssh_cmd.extend([
@@ -401,7 +404,7 @@ class RemoteExecutor(CommandExecutor):
                 f"-o ControlPath={gw_socket} "
                 f"-W %h:%p {self.gateway}",
             ])
-        ssh_cmd.append(self.proxy_node)
+        ssh_cmd.append(self.scaffolding_node)
 
         parts: List[str] = []
         if env:
