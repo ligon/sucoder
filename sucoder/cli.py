@@ -385,6 +385,24 @@ def _start_slurm_timer(
         #!/bin/bash
         WARN_FILE=/tmp/slurm-deadline.warn
         rm -f /tmp/.slurm-warn-{{5,15,30}} "$WARN_FILE"
+
+        # Wait for the agent tmux session to appear before monitoring.
+        # The timer starts before the session is created, so we must
+        # not treat its absence as "agent exited".
+        TMUX_READY=0
+        for i in $(seq 1 120); do
+            if tmux has-session -t {tmux_session} 2>/dev/null; then
+                TMUX_READY=1
+                break
+            fi
+            sleep 5
+        done
+        if [ "$TMUX_READY" -eq 0 ]; then
+            echo "Timed out waiting for tmux session {tmux_session}." > "$WARN_FILE"
+            scancel {job_id} 2>/dev/null
+            exit 1
+        fi
+
         while true; do
             left=$(squeue --job {job_id} --noheader -o "%L" 2>/dev/null)
             if [ -z "$left" ]; then

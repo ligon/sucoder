@@ -325,56 +325,6 @@ class MirrorManager:
 
         cached = getattr(self, "_resolved_remote_home", None)
         if cached is None:
-            # Debug: check ControlMaster state before attempting the command.
-            sock = getattr(self.executor, "control_socket_path", None)
-            node = getattr(self.executor, "login_node", None)
-            if sock and node:
-                import subprocess as _dbg_sp
-                from pathlib import Path as _P
-                sock_exists = _P(sock).exists()
-                self.logger.info(
-                    "DEBUG _resolve_remote_path: socket %s exists=%s",
-                    sock, sock_exists,
-                )
-                if sock_exists:
-                    chk = _dbg_sp.run(
-                        ["ssh", "-o", f"ControlPath={sock}",
-                         "-O", "check", node],
-                        capture_output=True, text=True, check=False,
-                    )
-                    self.logger.info(
-                        "DEBUG mux check rc=%d stdout=%r stderr=%r",
-                        chk.returncode, chk.stdout.strip(),
-                        chk.stderr.strip(),
-                    )
-                    # Probe with full verbose output
-                    probe = _dbg_sp.run(
-                        ["ssh", "-vvv",
-                         "-o", "ControlMaster=auto",
-                         "-o", f"ControlPath={sock}",
-                         node, "echo probe-ok"],
-                        capture_output=True, text=True, check=False,
-                        timeout=10,
-                    )
-                    self.logger.info(
-                        "DEBUG probe rc=%d stdout=%r stderr=\n%s",
-                        probe.returncode, probe.stdout.strip(),
-                        probe.stderr,
-                    )
-                    # Probe ignoring SSH config entirely
-                    probe2 = _dbg_sp.run(
-                        ["ssh", "-F", "/dev/null",
-                         "-o", "ControlMaster=auto",
-                         "-o", f"ControlPath={sock}",
-                         node, "echo probe-ok"],
-                        capture_output=True, text=True, check=False,
-                        timeout=10,
-                    )
-                    self.logger.info(
-                        "DEBUG probe -F/dev/null rc=%d stdout=%r stderr=%r",
-                        probe2.returncode, probe2.stdout.strip(),
-                        probe2.stderr.strip(),
-                    )
             result = self.executor.run_agent(
                 ["bash", "-c", "echo $HOME"],
                 check=True,
