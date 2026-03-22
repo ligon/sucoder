@@ -59,6 +59,7 @@ class CommandExecutor:
         cwd: Optional[str] = None,
         env: Optional[Mapping[str, str]] = None,
         capture_output: bool = True,
+        timeout: Optional[int] = None,
     ) -> CommandResult:
         return self._run(
             list(args),
@@ -67,6 +68,7 @@ class CommandExecutor:
             env=env,
             as_agent=False,
             capture_output=capture_output,
+            timeout=timeout,
         )
 
     def run_agent(
@@ -78,6 +80,7 @@ class CommandExecutor:
         env: Optional[Mapping[str, str]] = None,
         umask: Optional[int] = None,
         capture_output: bool = True,
+        timeout: Optional[int] = None,
     ) -> CommandResult:
         return self._run(
             list(args),
@@ -87,6 +90,7 @@ class CommandExecutor:
             as_agent=True,
             umask=umask or self.default_umask,
             capture_output=capture_output,
+            timeout=timeout,
         )
 
     def _run(
@@ -99,6 +103,7 @@ class CommandExecutor:
         as_agent: bool,
         umask: Optional[int] = None,
         capture_output: bool = True,
+        timeout: Optional[int] = None,
     ) -> CommandResult:
         requested_args = list(args)
         executed_args = (
@@ -134,11 +139,30 @@ class CommandExecutor:
         }
         if capture_output:
             run_kwargs["capture_output"] = True
-        result_proc = subprocess.run(
-            executed_args,
-            check=False,
-            **run_kwargs,
-        )
+        if timeout is not None:
+            run_kwargs["timeout"] = timeout
+        try:
+            result_proc = subprocess.run(
+                executed_args,
+                check=False,
+                **run_kwargs,
+            )
+        except subprocess.TimeoutExpired:
+            message = (
+                f"Command timed out after {timeout}s: "
+                f"{_format_display(requested_args)}"
+            )
+            self.logger.error(message)
+            raise CommandError(
+                message,
+                CommandResult(
+                    requested_args=requested_args,
+                    executed_args=executed_args,
+                    stdout="",
+                    stderr="(timed out)",
+                    returncode=-1,
+                ),
+            )
 
         result = CommandResult(
             requested_args=requested_args,
@@ -208,6 +232,13 @@ class RemoteExecutor(CommandExecutor):
     control_socket_path: Optional[str] = None  # Path to ControlMaster socket
     is_compute_node: bool = False                 # Target is a SLURM compute node
     slurm_job_id: Optional[int] = None          # Active SLURM allocation, if any
+    proxy_node: str = ""                         # Login node hostname (compute-node proxy)
+    proxy_socket_path: Optional[str] = None      # Login node ControlMaster socket
+    debug_ssh: bool = False                      # Emit -vvv SSH tracing
+
+    # Default timeout (seconds) for remote SSH commands.  Long enough
+    # for normal Lustre latency, short enough to surface hangs.
+    DEFAULT_SSH_TIMEOUT: int = 120
 
     def run_agent(
         self,
@@ -218,6 +249,7 @@ class RemoteExecutor(CommandExecutor):
         env: Optional[Mapping[str, str]] = None,
         umask: Optional[int] = None,
         capture_output: bool = True,
+        timeout: Optional[int] = None,
     ) -> CommandResult:
         """Run a command on the remote login node via SSH."""
         remote_cwd = self._translate_path(cwd) if cwd else None
@@ -226,14 +258,70 @@ class RemoteExecutor(CommandExecutor):
         ssh_args = self._build_ssh_command(
             args, cwd=remote_cwd, env=env, allocate_tty=needs_tty,
         )
-        return self._run(
-            ssh_args,
-            check=check,
-            cwd=None,           # SSH itself runs locally
-            env=None,           # env is embedded in the remote command
-            as_agent=False,     # no sudo wrapping
-            capture_output=capture_output,
-        )
+        # Apply a default timeout for captured (non-interactive) SSH
+        # commands so Lustre hangs don't block forever.
+        effective_timeout = timeout
+        if effective_timeout is None and capture_output:
+            effective_timeout = self.DEFAULT_SSH_TIMEOUT
+        try:
+            result = self._run(
+                ssh_args,
+                check=check,
+                cwd=None,           # SSH itself runs locally
+                env=None,           # env is embedded in the remote command
+                as_agent=False,     # no sudo wrapping
+                capture_output=capture_output,
+                timeout=effective_timeout,
+            )
+            if self.debug_ssh and result.stderr:
+                self.logger.debug(
+                    "SSH debug (%s):\n%s",
+                    _format_display(args),
+                    result.stderr.rstrip(),
+                )
+            return result
+        except CommandError as exc:
+            if self.debug_ssh and exc.result.stderr:
+                self.logger.error(
+                    "SSH debug (FAILED %s):\n%s",
+                    _format_display(args),
+                    exc.result.stderr.rstrip(),
+                )
+            if exc.result.returncode == 255:
+                self._enrich_ssh_error(exc)
+            raise
+
+    def _enrich_ssh_error(self, exc: CommandError) -> None:
+        """Add diagnostic hints to SSH connection failures (exit 255)."""
+        import os as _os
+        hints: List[str] = []
+        sock = _os.environ.get("SSH_AUTH_SOCK")
+        if not sock:
+            hints.append(
+                "SSH_AUTH_SOCK is not set --- ssh-agent may not be running.  "
+                "Try: eval $(ssh-agent) && ssh-add"
+            )
+        elif not _os.path.exists(sock):
+            hints.append(
+                f"SSH_AUTH_SOCK points to {sock} which does not exist.  "
+                "The ssh-agent may have died.  Try: eval $(ssh-agent) && ssh-add"
+            )
+        if self.is_compute_node:
+            hints.append(
+                f"Target is compute node {self.login_node} --- "
+                "verify the SLURM allocation is still RUNNING "
+                f"(job {self.slurm_job_id})."
+            )
+        if self.control_socket_path:
+            from pathlib import Path as _Path
+            if not _Path(self.control_socket_path).exists():
+                hints.append(
+                    f"ControlMaster socket {self.control_socket_path} "
+                    "does not exist --- the connection has expired."
+                )
+        if hints:
+            detail = "\n  - ".join([""] + hints)
+            self.logger.error("SSH connection diagnostic:%s", detail)
 
     def run_agent_interactive(
         self,
@@ -265,22 +353,36 @@ class RemoteExecutor(CommandExecutor):
         allocate_tty: bool = False,
     ) -> List[str]:
         ssh_cmd: List[str] = ["ssh"]
+        if self.debug_ssh:
+            ssh_cmd.append("-vvv")
         if allocate_tty:
             ssh_cmd.append("-t")
         # Reuse ControlMaster connection if available (avoids re-auth).
-        # For login-node targets, include a ProxyCommand fallback through
-        # the gateway so that a stale socket doesn't leave SSH with no
-        # route to an unresolvable internal hostname.  For compute-node
-        # targets, skip the ProxyCommand — the gateway cannot reach
-        # compute nodes directly, so a fallback would just produce a
-        # confusing error.  If the compute-node ControlMaster dies the
-        # command will fail cleanly.
+        # Include a ProxyCommand fallback so that a stale socket doesn't
+        # leave SSH with no route to an unresolvable internal hostname.
+        #
+        # Login-node targets: proxy through the gateway.
+        # Compute-node targets: proxy through the login node (the
+        #   gateway cannot reach compute nodes, but the login node can).
         if self.control_socket_path:
             ssh_cmd.extend([
                 "-o", "ControlMaster=auto",
                 "-o", f"ControlPath={self.control_socket_path}",
             ])
-            if self.gateway and not self.is_compute_node:
+            if self.is_compute_node and self.proxy_node and self.proxy_socket_path:
+                # Compute nodes are ephemeral with rotating host keys.
+                ssh_cmd.extend([
+                    "-o", "StrictHostKeyChecking=no",
+                    "-o", "UserKnownHostsFile=/dev/null",
+                ])
+                # Route through the login node's ControlMaster.
+                ssh_cmd.extend([
+                    "-o",
+                    f"ProxyCommand=ssh -o ControlMaster=auto "
+                    f"-o ControlPath={self.proxy_socket_path} "
+                    f"-W %h:%p {self.proxy_node}",
+                ])
+            elif self.gateway and not self.is_compute_node:
                 from .tunnel import _control_socket_path as _gw_sock
                 gw_socket = _gw_sock(self.gateway)
                 ssh_cmd.extend([

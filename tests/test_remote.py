@@ -268,6 +268,60 @@ def test_build_ssh_command_without_control_socket() -> None:
     assert "ControlMaster" not in joined
 
 
+def test_build_ssh_command_compute_node_proxy() -> None:
+    """Compute-node targets include a ProxyCommand through the login node."""
+    executor = _make_remote_executor(
+        login_node="n0101.savio2",
+        control_socket_path="/tmp/compute.sock",
+        is_compute_node=True,
+        proxy_node="ln001",
+        proxy_socket_path="/tmp/login.sock",
+    )
+    cmd = executor._build_ssh_command(["hostname"])
+    joined = " ".join(cmd)
+    # Should include ProxyCommand through the login node
+    assert "ProxyCommand" in joined
+    assert "ln001" in joined
+    assert "/tmp/login.sock" in joined
+    # Should include host key options for ephemeral compute nodes
+    assert "StrictHostKeyChecking=no" in joined
+    assert "UserKnownHostsFile=/dev/null" in joined
+
+
+def test_build_ssh_command_compute_node_no_proxy_without_info() -> None:
+    """Compute node without proxy info falls through without ProxyCommand."""
+    executor = _make_remote_executor(
+        login_node="n0101.savio2",
+        control_socket_path="/tmp/compute.sock",
+        is_compute_node=True,
+        # No proxy_node or proxy_socket_path
+    )
+    cmd = executor._build_ssh_command(["hostname"])
+    joined = " ".join(cmd)
+    # Should NOT include ProxyCommand (no proxy info available)
+    assert "ProxyCommand" not in joined
+
+
+def test_build_ssh_command_debug_ssh() -> None:
+    """--debug-ssh adds -vvv to SSH commands."""
+    executor = _make_remote_executor(
+        control_socket_path="/tmp/test.sock",
+        debug_ssh=True,
+    )
+    cmd = executor._build_ssh_command(["hostname"])
+    assert "-vvv" in cmd
+
+
+def test_build_ssh_command_no_debug_ssh() -> None:
+    """Without --debug-ssh, -vvv is absent."""
+    executor = _make_remote_executor(
+        control_socket_path="/tmp/test.sock",
+        debug_ssh=False,
+    )
+    cmd = executor._build_ssh_command(["hostname"])
+    assert "-vvv" not in cmd
+
+
 # ------------------------------------------------------------------
 # SshControl
 # ------------------------------------------------------------------
@@ -688,6 +742,38 @@ def test_run_query_dispatch_local(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     manager._run_query(ctx, ["echo", "hi"])
     assert called["human"] is True
     assert called["agent"] is False
+
+
+def test_ssh_error_enrichment_no_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SSH exit 255 with no SSH_AUTH_SOCK logs a diagnostic hint."""
+    import logging
+
+    monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
+    executor = _make_remote_executor(
+        login_node="n0101.savio2",
+        control_socket_path="/tmp/nonexistent.sock",
+        is_compute_node=True,
+        slurm_job_id=12345,
+    )
+    # Capture log output
+    log_records: list = []
+    handler = logging.Handler()
+    handler.emit = lambda record: log_records.append(record)
+    executor.logger.addHandler(handler)
+
+    from sucoder.executor import CommandError, CommandResult
+
+    exc = CommandError(
+        "SSH failed",
+        CommandResult(["ssh", "n0101.savio2"], ["ssh", "n0101.savio2"], "", "", 255),
+    )
+    executor._enrich_ssh_error(exc)
+
+    messages = " ".join(r.getMessage() for r in log_records)
+    assert "SSH_AUTH_SOCK" in messages
+    assert "compute node" in messages
+    assert "12345" in messages
+    executor.logger.removeHandler(handler)
 
 
 def test_run_query_dispatch_remote(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

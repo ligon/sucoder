@@ -67,6 +67,7 @@ class SshControl:
     jump_host: Optional[str] = None
     jump_control: Optional["SshControl"] = field(default=None, repr=False)
     extra_options: List[str] = field(default_factory=list)
+    debug: bool = False
 
     @property
     def socket_path(self) -> Path:
@@ -181,11 +182,14 @@ class SshControl:
                 cmd.extend(["-J", self.jump_host])
 
         cmd.extend(self.extra_options)
+        if self.debug:
+            cmd.append("-vvv")
         cmd.extend(["-fN", self.gateway])
         logger.debug("ControlMaster command: %s", cmd)
 
         try:
             # Not capturing output --- the auth prompt needs the terminal.
+            # When debug is on, stderr shows the SSH negotiation trace.
             subprocess.run(cmd, check=True)
         except subprocess.CalledProcessError as exc:
             raise TunnelError(

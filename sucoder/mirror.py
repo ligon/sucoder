@@ -350,18 +350,34 @@ class MirrorManager:
         gateway = remote.gateway
 
         ssh_cmd_parts = ["ssh"]
+        debug_ssh = getattr(self.executor, "debug_ssh", False)
+        if debug_ssh:
+            ssh_cmd_parts.append("-vvv")
         control_path = getattr(self.executor, "control_socket_path", None)
+        is_compute = getattr(self.executor, "is_compute_node", False)
         if control_path:
-            from .tunnel import _control_socket_path as _gw_sock
             ssh_cmd_parts.extend([
                 "-o", "ControlMaster=auto",
                 "-o", f"ControlPath={control_path}",
             ])
-            # For login-node targets, include a ProxyCommand fallback
-            # through the gateway.  Skip it for compute nodes — the
-            # gateway cannot reach them directly.
-            is_compute = getattr(self.executor, "is_compute_node", False)
-            if gateway and not is_compute:
+            if is_compute:
+                # Compute nodes are ephemeral; skip host-key checks and
+                # route through the login node's ControlMaster.
+                proxy_node = getattr(self.executor, "proxy_node", "")
+                proxy_sock = getattr(self.executor, "proxy_socket_path", "")
+                ssh_cmd_parts.extend([
+                    "-o", "StrictHostKeyChecking=no",
+                    "-o", "UserKnownHostsFile=/dev/null",
+                ])
+                if proxy_node and proxy_sock:
+                    ssh_cmd_parts.extend([
+                        "-o",
+                        f"ProxyCommand=ssh -o ControlMaster=auto "
+                        f"-o ControlPath={proxy_sock} "
+                        f"-W %h:%p {proxy_node}",
+                    ])
+            elif gateway:
+                from .tunnel import _control_socket_path as _gw_sock
                 gw_socket = _gw_sock(gateway)
                 ssh_cmd_parts.extend([
                     "-o",
@@ -406,6 +422,7 @@ class MirrorManager:
             check=False,
             cwd=str(ctx.canonical_path),
             env=env,
+            timeout=self._GIT_REMOTE_TIMEOUT,
         )
         if result.returncode != 0:
             # Mirror may be empty (first run) or unreachable.
@@ -493,6 +510,11 @@ class MirrorManager:
                 f"locally at {tmp_ref} for inspection."
             )
 
+    # Timeout (seconds) for git push/fetch over SSH to the remote
+    # mirror.  Generous because large repos over contended Lustre can
+    # be slow, but not infinite so we surface hangs.
+    _GIT_REMOTE_TIMEOUT: int = 300
+
     def _sync_remote(self, ctx: MirrorContext) -> None:
         """Push local canonical commits to the remote mirror.
 
@@ -507,6 +529,7 @@ class MirrorManager:
             check=True,
             cwd=str(ctx.canonical_path),
             env=env,
+            timeout=self._GIT_REMOTE_TIMEOUT,
         )
 
     def ensure_remote_clone(self, ctx: MirrorContext) -> None:

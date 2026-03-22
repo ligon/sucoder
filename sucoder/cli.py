@@ -166,6 +166,7 @@ def _build_executor(
     *,
     use_sudo_for_agent: bool = True,
     mirror_settings: Optional[MirrorSettings] = None,
+    debug_ssh: bool = False,
 ) -> CommandExecutor:
     if mirror_settings and mirror_settings.remote:
         from .executor import RemoteExecutor
@@ -180,6 +181,7 @@ def _build_executor(
         gw_control = SshControl(
             gateway=remote.gateway,
             control_persist=remote.control_persist,
+            debug=debug_ssh,
         )
         try:
             gw_control.ensure(logger)
@@ -190,16 +192,24 @@ def _build_executor(
         # 2. Pin a login node through the authenticated connection.
         if not session.login_node:
             import subprocess as _sp
+            pin_cmd = ["ssh"]
+            if debug_ssh:
+                pin_cmd.append("-vvv")
+            pin_cmd.extend([*gw_control.ssh_options(), remote.gateway, "hostname"])
             with _spinner("Resolving login node"):
                 try:
                     result = _sp.run(
-                        ["ssh", *gw_control.ssh_options(), remote.gateway, "hostname"],
+                        pin_cmd,
                         capture_output=True, text=True, check=True,
                     )
+                    if debug_ssh and result.stderr:
+                        logger.debug("SSH debug (pin login node):\n%s", result.stderr.rstrip())
                     session.login_node = result.stdout.strip()
                     session.save()
                     logger.info("Pinned login node: %s", session.login_node)
                 except _sp.CalledProcessError as exc:
+                    if debug_ssh and exc.stderr:
+                        logger.error("SSH debug (pin login node FAILED):\n%s", exc.stderr.rstrip())
                     typer.echo(
                         f"Failed to reach remote gateway {remote.gateway}: "
                         f"{exc.stderr.strip()}",
@@ -214,6 +224,7 @@ def _build_executor(
             control_persist=remote.control_persist,
             jump_host=remote.gateway,
             jump_control=gw_control,
+            debug=debug_ssh,
         )
         with _spinner(f"Connecting to {session.login_node}"):
             try:
@@ -230,11 +241,15 @@ def _build_executor(
         if remote.slurm is not None:
             target_node, target_control = _ensure_slurm_node(
                 remote, session, ln_control, gw_control, logger,
+                debug_ssh=debug_ssh,
             )
 
         # The executor uses the target node ControlMaster directly —
         # no -J needed since the socket routes through the gateway.
-        return RemoteExecutor(
+        # For compute-node targets, also pass the login node info so
+        # that _build_ssh_command can include a ProxyCommand fallback
+        # through the login node if the compute-node socket is stale.
+        executor_kwargs: Dict[str, Any] = dict(
             human_user=config.human_user,
             agent_user=config.human_user,  # Same user on remote
             agent_group=config.human_user,
@@ -249,7 +264,12 @@ def _build_executor(
             control_socket_path=str(target_control.socket_path),
             is_compute_node=(remote.slurm is not None),
             slurm_job_id=session.slurm_job_id,
+            debug_ssh=debug_ssh,
         )
+        if remote.slurm is not None:
+            executor_kwargs["proxy_node"] = session.login_node
+            executor_kwargs["proxy_socket_path"] = str(ln_control.socket_path)
+        return RemoteExecutor(**executor_kwargs)
 
     return CommandExecutor(
         human_user=config.human_user,
@@ -267,6 +287,8 @@ def _ensure_slurm_node(
     ln_control,
     gw_control,
     logger,
+    *,
+    debug_ssh: bool = False,
 ):
     """Allocate a SLURM compute node and establish SSH through the login node.
 
@@ -386,6 +408,7 @@ def _ensure_slurm_node(
             "-o", "StrictHostKeyChecking=no",
             "-o", "UserKnownHostsFile=/dev/null",
         ],
+        debug=debug_ssh,
     )
     with _spinner(f"Connecting to compute node {session.compute_node}"):
         try:
@@ -537,6 +560,12 @@ def _get_active_target(ctx: Optional[click.Context]) -> Optional["RemoteConfig"]
     return obj.get("target")
 
 
+def _get_debug_ssh(ctx: Optional[click.Context]) -> bool:
+    """Return whether --debug-ssh was set."""
+    obj = (ctx.obj if ctx and ctx.obj else {}) or {}
+    return bool(obj.get("debug_ssh", False))
+
+
 def _build_manager_for_mirror(
     config: Config, logger, dry_run: bool, mirror_name: str,
 ) -> MirrorManager:
@@ -580,6 +609,7 @@ def _build_manager(
         dry_run=dry_run,
         use_sudo_for_agent=_get_use_sudo_for_agent(ctx, config),
         mirror_settings=mirror_settings,
+        debug_ssh=_get_debug_ssh(ctx),
     )
     return MirrorManager(config, executor, logger, prompt_handler=_prompt_yes_no)
 
@@ -694,6 +724,11 @@ def main(
         "-T",
         help="Named execution target (e.g. 'savio'). Omit for local execution.",
     ),
+    debug_ssh: bool = typer.Option(
+        False,
+        "--debug-ssh",
+        help="Enable verbose SSH tracing (-vvv) for all remote connections.",
+    ),
 ) -> None:
     """Load configuration once and store it on the Typer context."""
     config_explicitly_set = config is not None
@@ -755,6 +790,7 @@ def main(
         "is_default_config": is_default_config,
         "target": resolved_target,
         "target_name": target,
+        "debug_ssh": debug_ssh,
     }
 
 
