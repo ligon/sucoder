@@ -1411,11 +1411,13 @@ def attach(
 
     remote = settings.remote
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
+    debug_ssh = _get_debug_ssh(click_ctx)
 
     # Reuse ControlMaster if active; re-establish if expired.
     control = SshControl(
         gateway=remote.gateway,
         control_persist=remote.control_persist,
+        debug=debug_ssh,
     )
     try:
         control.ensure(logger)
