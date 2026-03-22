@@ -387,6 +387,7 @@ class MirrorManager:
         # Fallback: use the target node directly.
         login_node = getattr(self.executor, "login_node", None)
         control_path = getattr(self.executor, "control_socket_path", None)
+        is_compute = getattr(self.executor, "is_compute_node", False)
         ssh_cmd_parts = ["ssh"]
         if debug_ssh:
             ssh_cmd_parts.append("-vvv")
@@ -395,7 +396,23 @@ class MirrorManager:
                 "-o", "ControlMaster=auto",
                 "-o", f"ControlPath={control_path}",
             ])
-            if gateway:
+            if is_compute:
+                # Compute nodes: route through login node (gateway
+                # can't reach them) and skip host-key checks.
+                proxy_node = getattr(self.executor, "proxy_node", "")
+                proxy_sock = getattr(self.executor, "proxy_socket_path", "")
+                ssh_cmd_parts.extend([
+                    "-o", "StrictHostKeyChecking=no",
+                    "-o", "UserKnownHostsFile=/dev/null",
+                ])
+                if proxy_node and proxy_sock:
+                    ssh_cmd_parts.extend([
+                        "-o",
+                        f"ProxyCommand=ssh -o ControlMaster=auto "
+                        f"-o ControlPath={proxy_sock} "
+                        f"-W %h:%p {proxy_node}",
+                    ])
+            elif gateway:
                 from .tunnel import _control_socket_path as _gw_sock
                 gw_socket = _gw_sock(gateway)
                 ssh_cmd_parts.extend([
