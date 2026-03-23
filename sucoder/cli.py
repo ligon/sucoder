@@ -1413,6 +1413,11 @@ def attach(
     ctx: typer.Context,
     mirror: Optional[str] = typer.Argument(None, help="Mirror name defined in configuration.", shell_complete=_mirror_completion),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
+    node: Optional[str] = typer.Option(
+        None,
+        "--node",
+        help="Attach to a specific compute node (e.g. --node n0047.savio2).",
+    ),
 ) -> None:
     """Reconnect to an existing remote agent session via tmux."""
     mirror = _resolve_mirror_name(ctx, mirror)
@@ -1464,8 +1469,10 @@ def attach(
     control_opts = control.ssh_options() if control.is_active() else []
 
     # For SLURM targets, attach to the compute node (via login node).
-    if session.compute_node and remote.slurm is not None:
-        attach_target = session.compute_node
+    # --node overrides the session's compute_node.
+    compute = node or session.compute_node
+    if compute and remote.slurm is not None:
+        attach_target = compute
         jump_chain = f"{remote.gateway},{session.login_node}"
     else:
         attach_target = session.login_node
