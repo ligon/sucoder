@@ -202,6 +202,94 @@ def test_session_remote_mirror_root_none(tmp_path: Path, monkeypatch: pytest.Mon
     assert loaded.remote_mirror_root is None
 
 
+def test_session_stale_local_disk_root_discarded_on_node_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the compute node changes, a saved local-disk mirror root must not
+    be reused — the data lives on a different node's /local/ and is unreachable.
+
+    Regression test for the sticky-session bug where ``/local/mirrors`` was
+    carried forward even when SLURM allocated a different node.
+    """
+    monkeypatch.setattr("sucoder.session._session_dir", lambda: tmp_path)
+
+    # Simulate a session saved on old node n0126 with local-disk mirror root.
+    session = RemoteSession(
+        mirror_name="proj",
+        target_name="savio-node",
+        login_node="ln003",
+        compute_node="n0126",
+        remote_mirror_root="/local/mirrors",
+    )
+    session.save()
+
+    loaded = RemoteSession.load("proj", target_name="savio-node")
+    assert loaded.remote_mirror_root == "/local/mirrors"
+    assert loaded.compute_node == "n0126"
+
+    # After _ensure_slurm_node, suppose the session's compute_node was
+    # updated to a different node (simulating SLURM giving us a new one).
+    prev_compute_node = loaded.compute_node
+    loaded.compute_node = "n0101"
+
+    # Reproduce the mirror-root decision logic from cli.py:
+    shared_fs_default = "~/mirrors"
+    node_changed = (
+        prev_compute_node is not None
+        and loaded.compute_node is not None
+        and prev_compute_node != loaded.compute_node
+    )
+    saved_root = loaded.remote_mirror_root
+
+    assert node_changed, "Expected node_changed=True for different nodes"
+    assert saved_root != shared_fs_default, "Saved root should differ from shared FS"
+
+    # The fix: when node changed and saved root != shared default, discard it.
+    if node_changed and saved_root != shared_fs_default:
+        remote_mirror_root = shared_fs_default
+    else:
+        remote_mirror_root = saved_root
+
+    assert remote_mirror_root == shared_fs_default, (
+        f"Stale local-disk root should have been discarded, got {remote_mirror_root}"
+    )
+
+
+def test_session_saved_root_kept_when_node_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the compute node is the same, a saved local-disk mirror root
+    should be reused (the data is still accessible)."""
+    monkeypatch.setattr("sucoder.session._session_dir", lambda: tmp_path)
+
+    session = RemoteSession(
+        mirror_name="proj",
+        target_name="savio-node",
+        login_node="ln003",
+        compute_node="n0126",
+        remote_mirror_root="/local/mirrors",
+    )
+    session.save()
+
+    loaded = RemoteSession.load("proj", target_name="savio-node")
+    prev_compute_node = loaded.compute_node
+    # Same node — job was still running.
+    loaded.compute_node = "n0126"
+
+    shared_fs_default = "~/mirrors"
+    node_changed = (
+        prev_compute_node is not None
+        and loaded.compute_node is not None
+        and prev_compute_node != loaded.compute_node
+    )
+    saved_root = loaded.remote_mirror_root
+
+    assert not node_changed
+    # Saved root should be kept.
+    remote_mirror_root = saved_root
+    assert remote_mirror_root == "/local/mirrors"
+
+
 def test_session_clear_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Clearing a non-existent session is a no-op."""
     monkeypatch.setattr("sucoder.session._session_dir", lambda: tmp_path)

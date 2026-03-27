@@ -270,6 +270,7 @@ def _build_executor(
         #    The login node becomes a pure TCP proxy — no shell, no load.
         target_node = session.login_node
         target_control = ln_control
+        prev_compute_node = session.compute_node
         if remote.slurm is not None:
             target_node, target_control = _ensure_slurm_node(
                 remote, session, ln_control, gw_control, logger,
@@ -303,12 +304,33 @@ def _build_executor(
         # flag AND no config setting), fall back to the session's saved
         # value.  This lets `sucoder pull` find the mirror without
         # re-specifying --local-disk.
+        #
+        # However, if the compute node changed (SLURM gave us a
+        # different node) and the saved root is a node-local path,
+        # that data is unreachable — fall back to shared FS instead.
+        node_changed = (
+            prev_compute_node is not None
+            and session.compute_node is not None
+            and prev_compute_node != session.compute_node
+        )
         if use_local_disk:
             remote_mirror_root = f"{local_disk_root.rstrip('/')}/mirrors"
         elif local_disk_override is None and not cfg_local_disk and session.remote_mirror_root:
-            remote_mirror_root = session.remote_mirror_root
-            if remote_mirror_root != str(remote.mirror_root):
-                logger.info("Using saved mirror root from session: %s", remote_mirror_root)
+            saved_root = session.remote_mirror_root
+            if node_changed and saved_root != str(remote.mirror_root):
+                # The saved mirror root was on a different node's local
+                # disk; that storage is unreachable from the new node.
+                remote_mirror_root = str(remote.mirror_root)
+                logger.warning(
+                    "Compute node changed (%s -> %s); discarding stale "
+                    "local-disk mirror root %s — using shared FS: %s",
+                    prev_compute_node, session.compute_node,
+                    saved_root, remote_mirror_root,
+                )
+            else:
+                remote_mirror_root = saved_root
+                if remote_mirror_root != str(remote.mirror_root):
+                    logger.info("Using saved mirror root from session: %s", remote_mirror_root)
         else:
             remote_mirror_root = str(remote.mirror_root)
 
