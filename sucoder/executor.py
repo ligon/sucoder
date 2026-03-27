@@ -325,6 +325,13 @@ class RemoteExecutor(CommandExecutor):
             detail = "\n  - ".join([""] + hints)
             self.logger.error("SSH connection diagnostic:%s", detail)
 
+    # Return codes that indicate a DTN-level failure (not a command
+    # failure) and warrant falling back to the compute node.
+    _DTN_FALLBACK_RETURNCODES = frozenset({
+        -1,   # our timeout sentinel
+        255,  # SSH connection error
+    })
+
     def run_on_login_node(
         self,
         args: Sequence[str],
@@ -340,6 +347,10 @@ class RemoteExecutor(CommandExecutor):
         (data transfer node) when available, since it has fat pipes and
         spare CPU.  Falls back to the login node, or to ``run_agent``
         for non-compute targets without a separate scaffolding node.
+
+        If the DTN times out or the SSH connection fails, falls back to
+        ``run_agent`` (the compute node) since shared FS is visible
+        from all cluster nodes.
         """
         scaffolding = self.scaffolding_node and self.scaffolding_socket_path
         if not scaffolding:
@@ -374,6 +385,18 @@ class RemoteExecutor(CommandExecutor):
                     "SSH debug (login-node FAILED %s):\n%s",
                     _format_display(args),
                     exc.result.stderr.rstrip(),
+                )
+            # Timeout or SSH connection failure — the DTN itself is
+            # unreachable, not a problem with the command.  Fall back
+            # to the compute node (shared FS is visible from there).
+            if exc.result.returncode in self._DTN_FALLBACK_RETURNCODES:
+                self.logger.warning(
+                    "Scaffolding node %s unavailable (rc=%d); "
+                    "falling back to compute node",
+                    self.scaffolding_node, exc.result.returncode,
+                )
+                return self.run_agent(
+                    args, check=check, cwd=cwd, env=env, timeout=timeout,
                 )
             raise
 

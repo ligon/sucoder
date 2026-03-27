@@ -950,6 +950,133 @@ def test_run_on_login_node_falls_through_without_scaffolding() -> None:
     assert not executor.scaffolding_node
 
 
+def test_run_on_login_node_falls_back_on_dtn_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the DTN times out, run_on_login_node falls back to run_agent."""
+    from sucoder.executor import CommandError, CommandResult
+
+    executor = _make_remote_executor(
+        login_node="n0101.savio2",
+        control_socket_path="/tmp/compute.sock",
+        is_compute_node=True,
+        proxy_node="ln001",
+        proxy_socket_path="/tmp/login.sock",
+        scaffolding_node="dtn.brc.berkeley.edu",
+        scaffolding_socket_path="/tmp/dtn.sock",
+    )
+
+    # Make _run raise a timeout CommandError (returncode=-1).
+    def fake_run(*args, **kwargs):
+        raise CommandError(
+            "Command timed out after 120s",
+            CommandResult(
+                requested_args=["echo", "$HOME"],
+                executed_args=["ssh", "dtn.brc.berkeley.edu", "echo $HOME"],
+                stdout="",
+                stderr="(timed out)",
+                returncode=-1,
+            ),
+        )
+
+    fallback_called = {}
+
+    def fake_run_agent(args, **kwargs):
+        fallback_called["args"] = list(args)
+        return CommandResult(
+            requested_args=list(args),
+            executed_args=list(args),
+            stdout="/home/ligon",
+            stderr="",
+            returncode=0,
+        )
+
+    monkeypatch.setattr(executor, "_run", fake_run)
+    monkeypatch.setattr(executor, "run_agent", fake_run_agent)
+
+    result = executor.run_on_login_node(["echo", "$HOME"])
+    assert result.stdout == "/home/ligon"
+    assert fallback_called["args"] == ["echo", "$HOME"]
+
+
+def test_run_on_login_node_falls_back_on_ssh_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the DTN SSH connection fails (rc=255), fall back to run_agent."""
+    from sucoder.executor import CommandError, CommandResult
+
+    executor = _make_remote_executor(
+        login_node="n0101.savio2",
+        control_socket_path="/tmp/compute.sock",
+        is_compute_node=True,
+        scaffolding_node="dtn.brc.berkeley.edu",
+        scaffolding_socket_path="/tmp/dtn.sock",
+    )
+
+    def fake_run(*args, **kwargs):
+        raise CommandError(
+            "SSH connection failed",
+            CommandResult(
+                requested_args=["hostname"],
+                executed_args=["ssh", "dtn.brc.berkeley.edu", "hostname"],
+                stdout="",
+                stderr="ssh: connect to host dtn.brc.berkeley.edu: Connection refused",
+                returncode=255,
+            ),
+        )
+
+    fallback_called = {}
+
+    def fake_run_agent(args, **kwargs):
+        fallback_called["called"] = True
+        return CommandResult(
+            requested_args=list(args),
+            executed_args=list(args),
+            stdout="n0101",
+            stderr="",
+            returncode=0,
+        )
+
+    monkeypatch.setattr(executor, "_run", fake_run)
+    monkeypatch.setattr(executor, "run_agent", fake_run_agent)
+
+    result = executor.run_on_login_node(["hostname"])
+    assert fallback_called.get("called")
+    assert result.stdout == "n0101"
+
+
+def test_run_on_login_node_does_not_fallback_on_command_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A normal command failure on the DTN (rc=1) should NOT fall back."""
+    from sucoder.executor import CommandError, CommandResult
+
+    executor = _make_remote_executor(
+        login_node="n0101.savio2",
+        control_socket_path="/tmp/compute.sock",
+        is_compute_node=True,
+        scaffolding_node="dtn.brc.berkeley.edu",
+        scaffolding_socket_path="/tmp/dtn.sock",
+    )
+
+    def fake_run(*args, **kwargs):
+        raise CommandError(
+            "Command failed",
+            CommandResult(
+                requested_args=["git", "push"],
+                executed_args=["ssh", "dtn.brc.berkeley.edu", "git push"],
+                stdout="",
+                stderr="error: failed to push some refs",
+                returncode=1,
+            ),
+        )
+
+    monkeypatch.setattr(executor, "_run", fake_run)
+
+    with pytest.raises(CommandError):
+        executor.run_on_login_node(["git", "push"])
+
+
 def test_ssh_error_enrichment_no_agent(monkeypatch: pytest.MonkeyPatch) -> None:
     """SSH exit 255 with no SSH_AUTH_SOCK logs a diagnostic hint."""
     import logging
