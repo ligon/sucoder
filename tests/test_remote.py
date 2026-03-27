@@ -937,6 +937,18 @@ def test_run_on_login_node_compute_target() -> None:
     assert "n0101.savio2" not in joined
     # Uses the DTN's ControlMaster socket
     assert "/tmp/dtn.sock" in joined
+    # BatchMode prevents hanging on impossible password prompts when
+    # the ControlMaster socket is dead and SSH falls through to a
+    # fresh connection in a non-interactive context.
+    assert "BatchMode=yes" in joined
+    assert "ConnectTimeout=10" in joined
+    # The ProxyCommand also needs BatchMode + ConnectTimeout so the
+    # inner SSH (to the gateway) fails fast too.
+    proxy_args = [a for a in cmd if "ProxyCommand" in a]
+    assert proxy_args, "Expected a ProxyCommand option"
+    proxy_str = proxy_args[0]
+    assert "BatchMode=yes" in proxy_str
+    assert "ConnectTimeout=10" in proxy_str
 
 
 def test_run_on_login_node_falls_through_without_scaffolding() -> None:

@@ -407,7 +407,13 @@ class RemoteExecutor(CommandExecutor):
         cwd: Optional[str] = None,
         env: Optional[Mapping[str, str]] = None,
     ) -> List[str]:
-        """Build an SSH command targeting the scaffolding node (DTN)."""
+        """Build an SSH command targeting the scaffolding node (DTN).
+
+        Uses ``BatchMode=yes`` so that if the ControlMaster socket is
+        dead and the ProxyCommand falls through to a fresh connection,
+        SSH fails immediately instead of hanging for a password prompt
+        that will never be answered (we're running non-interactively).
+        """
         from .tunnel import _control_socket_path as _gw_sock
 
         ssh_cmd: List[str] = ["ssh"]
@@ -416,6 +422,8 @@ class RemoteExecutor(CommandExecutor):
         ssh_cmd.extend([
             "-o", "ControlMaster=auto",
             "-o", f"ControlPath={self.scaffolding_socket_path}",
+            "-o", "BatchMode=yes",
+            "-o", "ConnectTimeout=10",
         ])
         # ProxyCommand fallback through gateway in case the socket
         # is stale.
@@ -425,6 +433,7 @@ class RemoteExecutor(CommandExecutor):
                 "-o",
                 f"ProxyCommand=ssh -o ControlMaster=auto "
                 f"-o ControlPath={gw_socket} "
+                f"-o BatchMode=yes -o ConnectTimeout=10 "
                 f"-W %h:%p {self.gateway}",
             ])
         ssh_cmd.append(self.scaffolding_node)
