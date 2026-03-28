@@ -38,6 +38,7 @@ from .logging_utils import setup_logger
 from .mirror import MirrorError, MirrorManager
 from .startup_checks import StartupError, run_startup_checks
 
+
 def _version_callback(value: bool) -> None:
     if value:
         typer.echo(__version__)
@@ -916,8 +917,6 @@ def main(
     ),
 ) -> None:
     """Load configuration once and store it on the Typer context."""
-    if ctx.invoked_subcommand == "version":
-        return
     config_explicitly_set = config is not None
     default_path = _default_config_path()
     is_default_config = False
@@ -980,12 +979,6 @@ def main(
         "debug_ssh": debug_ssh,
         "local_disk": local_disk,
     }
-
-
-@app.command("version")
-def version() -> None:
-    """Display version information."""
-    typer.echo(__version__)
 
 
 @app.command("agents-clone")
