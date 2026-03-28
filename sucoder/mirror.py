@@ -1240,7 +1240,12 @@ class MirrorManager:
             ) from exc
 
     def _poetry_ensure_lock(self, mirror_path: Path) -> None:
-        """Run ``poetry lock --no-update`` so a stale lock file won't block install."""
+        """Run ``poetry lock`` so a stale lock file won't block install.
+
+        Tries ``--no-update`` first (preserves pinned versions), then
+        falls back to a plain ``poetry lock`` for older Poetry releases
+        that lack the flag.
+        """
         try:
             self.executor.run_agent(
                 ["poetry", "lock", "--no-update"],
@@ -1248,9 +1253,21 @@ class MirrorManager:
                 cwd=str(mirror_path),
                 capture_output=True,
             )
+            return
         except CommandError:
             self.logger.debug(
-                "`poetry lock --no-update` failed; proceeding with install anyway."
+                "`poetry lock --no-update` failed; retrying without --no-update."
+            )
+        try:
+            self.executor.run_agent(
+                ["poetry", "lock"],
+                check=True,
+                cwd=str(mirror_path),
+                capture_output=True,
+            )
+        except CommandError:
+            self.logger.debug(
+                "`poetry lock` failed; proceeding with install anyway."
             )
 
     def _poetry_python_version_error(self, error: CommandError) -> bool:

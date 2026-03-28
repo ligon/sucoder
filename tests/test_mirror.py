@@ -784,8 +784,8 @@ def test_launch_agent_skips_poetry_install_when_declined(tmp_path: Path, monkeyp
     assert all(call[0] != "poetry" for call in calls)
 
 
-def test_poetry_lock_failure_still_attempts_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """When ``poetry lock --no-update`` fails, we still attempt ``poetry install``."""
+def test_poetry_lock_no_update_failure_falls_back_to_plain_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """When ``poetry lock --no-update`` fails (old Poetry), fall back to ``poetry lock``."""
     manager = build_manager(tmp_path)
     ctx = manager.context_for("sample")
     manager.ensure_clone(ctx)
@@ -809,6 +809,51 @@ def test_poetry_lock_failure_still_attempts_install(tmp_path: Path, monkeypatch:
                 requested_args=args_list,
                 executed_args=args_list,
                 stdout="",
+                stderr='The option "--no-update" does not exist',
+                returncode=1,
+            )
+            raise CommandError("poetry lock --no-update failed", result)
+        return CommandResult(
+            requested_args=args_list,
+            executed_args=args_list,
+            stdout="",
+            stderr="",
+            returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+    manager.launch_agent(ctx, sync=False)
+
+    assert calls[0][:3] == ["poetry", "lock", "--no-update"]
+    assert calls[1] == ["poetry", "lock"]
+    assert calls[2][:2] == ["poetry", "install"]
+
+
+def test_poetry_lock_total_failure_still_attempts_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """When both lock variants fail, we still attempt ``poetry install``."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    (ctx.mirror_path / "pyproject.toml").write_text(
+        "[tool.poetry]\nname = \"demo\"\n",
+        encoding="utf-8",
+    )
+
+    prefs = WorkspacePrefs.load(ctx.mirror_path)
+    prefs.set_poetry_auto_install(True)
+    prefs.save()
+
+    calls = []
+
+    def fake_run_agent(args, **kwargs):
+        args_list = list(args)
+        calls.append(args_list)
+        if args_list[0:2] == ["poetry", "lock"]:
+            result = CommandResult(
+                requested_args=args_list,
+                executed_args=args_list,
+                stdout="",
                 stderr="lock failed",
                 returncode=1,
             )
@@ -825,7 +870,8 @@ def test_poetry_lock_failure_still_attempts_install(tmp_path: Path, monkeypatch:
     manager.launch_agent(ctx, sync=False)
 
     assert calls[0][:3] == ["poetry", "lock", "--no-update"]
-    assert calls[1][:2] == ["poetry", "install"]
+    assert calls[1] == ["poetry", "lock"]
+    assert calls[2][:2] == ["poetry", "install"]
 
 
 def test_launch_agent_wraps_command_with_nvm_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
