@@ -346,6 +346,49 @@ sucoder -T savio attach                    # reconnect via tmux
    =savio=) is added to the canonical repo so the human can
    =git fetch savio= to pull back agent work.
 
+*** Node pinning
+
+On SLURM clusters, =sucoder= allocates a compute node for the agent
+session.  The node is stored in =~/.sucoder/sessions/<mirror>.yaml= so
+that subsequent commands (=attach=, =pull=, =worktrees=) reconnect to
+the same node.
+
+To request a specific node (e.g., to recover work on local disk from a
+previous session):
+
+#+begin_src shell
+sucoder -T savio collaborate --node n0047.savio2
+sucoder -T savio attach --node n0047.savio2
+#+end_src
+
+The =--node= option sets a preferred node for the SLURM allocation.
+If that node is unavailable, SLURM may fall back to another node.
+
+*** Local disk
+
+By default, remote mirrors live on the shared filesystem.  On clusters
+where compute nodes have fast local scratch, use =--local-disk= to
+place the mirror there instead:
+
+#+begin_src shell
+sucoder --local-disk -T savio collaborate
+#+end_src
+
+This is faster for I/O-heavy agent work but the mirror is only
+accessible from that specific node.  Use =--node= on subsequent
+commands to return to the same node.  The setting can also be made
+permanent in =config.yaml=:
+
+#+begin_src yaml
+targets:
+  savio:
+    gateway: brc.berkeley.edu
+    transfer_host: dtn.brc.berkeley.edu
+    mirror_root: ~/mirrors
+    slurm:
+      local_disk: true
+#+end_src
+
 *** Reconnecting
 
 If the SSH connection drops, the tmux session on the login node
@@ -357,6 +400,18 @@ sucoder -T savio attach
 
 If the ControlMaster socket expires (default 12 hours), =sucoder=
 detects the stale socket and re-prompts for authentication.
+
+*** SSH robustness
+
+=sucoder= handles several common failure modes transparently:
+
+- *Stale ControlMaster sockets* are detected and recycled
+  automatically.
+- *DTN timeouts* --- if the data transfer node is unreachable,
+  =sucoder= falls back to pushing via the compute node.
+- *Debug mode changes* --- switching =--debug-ssh= on or off
+  automatically cycles the ControlMaster socket so the new setting
+  takes effect.
 
 ** Human: Review and Integrate Agent Work
 
