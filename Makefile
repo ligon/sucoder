@@ -11,6 +11,8 @@ CODER_CONFIG ?= $(CODER_CONFIG_DIR)/config.yaml
 SYSTEM_PROMPT ?= $(CODER_CONFIG_DIR)/system_prompt.org
 CONFIG_SRC ?= config.example.yaml
 SYSTEM_PROMPT_SRC ?= default_system_prompt.org
+AUDITOR_PROMPT ?= $(CODER_CONFIG_DIR)/auditor_prompt.org
+AUDITOR_PROMPT_SRC ?= default_auditor_prompt.org
 SKILLS_REPO ?= https://github.com/ligon/sucoder-skills.git
 SKILLS_CLONE ?= $(HOME)/Projects/sucoder-skills
 AUDITOR_USER ?= auditor
@@ -90,6 +92,12 @@ system-prompt:
 		install -m 640 -T $(SYSTEM_PROMPT_SRC) $(SYSTEM_PROMPT); \
 	else \
 		echo "$(SYSTEM_PROMPT) already exists; leaving in place"; \
+	fi
+	@if [ ! -f "$(AUDITOR_PROMPT)" ] && [ -f "$(AUDITOR_PROMPT_SRC)" ]; then \
+		echo "Copying $(AUDITOR_PROMPT_SRC) -> $(AUDITOR_PROMPT)"; \
+		install -m 644 -T $(AUDITOR_PROMPT_SRC) $(AUDITOR_PROMPT); \
+	elif [ -f "$(AUDITOR_PROMPT)" ]; then \
+		echo "$(AUDITOR_PROMPT) already exists; leaving in place"; \
 	fi
 
 skills-clone:

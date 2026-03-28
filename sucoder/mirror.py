@@ -1847,9 +1847,13 @@ class MirrorManager:
 
         # --- Invoke auditor agent ---
         self.logger.info("Running %s skills audit...", mode)
+        auditor_cmd = ["claude", "-p", prompt]
+        system_prompt = self._auditor_system_prompt()
+        if system_prompt:
+            auditor_cmd = ["claude", "--system-prompt", system_prompt, "-p", prompt]
         try:
             result = executor.run_agent(
-                ["claude", "-p", prompt],
+                auditor_cmd,
                 check=True,
                 capture_output=True,
             )
@@ -1937,6 +1941,23 @@ class MirrorManager:
             except (OSError, UnicodeDecodeError):
                 parts.append(f"--- {path.relative_to(skills_dir)} --- (unreadable)")
         return "\n\n".join(parts) if parts else "(empty skills directory)"
+
+    def _auditor_system_prompt(self) -> Optional[str]:
+        """Load the auditor system prompt if available."""
+        candidates = [
+            Path("~/.sucoder/auditor_prompt.org").expanduser(),
+            Path("~/.sucoder/auditor_prompt.md").expanduser(),
+        ]
+        for path in candidates:
+            if path.exists():
+                try:
+                    content = path.read_text(encoding="utf-8").strip()
+                    if content:
+                        self.logger.debug("Loaded auditor prompt from %s", path)
+                        return content
+                except OSError as exc:
+                    self.logger.warning("Failed to read auditor prompt %s: %s", path, exc)
+        return None
 
     @staticmethod
     def _compose_audit_prompt(content: str, mode: str) -> str:
