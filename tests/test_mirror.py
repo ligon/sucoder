@@ -874,6 +874,156 @@ def test_poetry_lock_total_failure_still_attempts_install(tmp_path: Path, monkey
     assert calls[2][:2] == ["poetry", "install"]
 
 
+def test_auto_commit_agent_skills_after_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """After a subprocess-mode session, changes in agent skills dir are auto-committed."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    # Set up a fake skills dir with git tracking.
+    skills_dir = tmp_path / "agent_skills"
+    skills_dir.mkdir()
+    run_git(["init", "-b", "main"], skills_dir)
+    run_git(["config", "user.email", "test@example.com"], skills_dir)
+    run_git(["config", "user.name", "Test"], skills_dir)
+    (skills_dir / "initial.md").write_text("# Skill\n", encoding="utf-8")
+    run_git(["add", "-A"], skills_dir)
+    run_git(["commit", "-m", "initial"], skills_dir)
+
+    # Point the manager at our test skills dir.
+    monkeypatch.setattr(type(manager), "_AGENT_SKILLS_DIR", skills_dir)
+
+    # Simulate agent writing a new skill file.
+    (skills_dir / "new-skill.md").write_text("# New\n", encoding="utf-8")
+
+    calls = []
+
+    def fake_run_agent(args, **kwargs):
+        calls.append(list(args))
+        return CommandResult(
+            requested_args=list(args),
+            executed_args=list(args),
+            stdout="?? new-skill.md\n" if args[:2] == ["git", "status"] else "",
+            stderr="",
+            returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+    manager.launch_agent(ctx, sync=False)
+
+    # Verify git add + commit happened for skills.
+    git_calls = [c for c in calls if c[0] == "git"]
+    status_calls = [c for c in git_calls if c[1] == "status"]
+    add_calls = [c for c in git_calls if c[1] == "add"]
+    commit_calls = [c for c in git_calls if c[1] == "commit"]
+    assert status_calls, "Should check skills dir for changes"
+    assert add_calls, "Should stage skill changes"
+    assert commit_calls, "Should commit skill changes"
+    assert any("Auto-snapshot" in str(c) for c in commit_calls)
+
+
+def test_auto_commit_skipped_when_no_skills_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """When agent skills dir does not exist, auto-commit is silently skipped."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    # Point at a nonexistent dir.
+    monkeypatch.setattr(type(manager), "_AGENT_SKILLS_DIR", tmp_path / "nonexistent")
+
+    calls = []
+
+    def fake_run_agent(args, **kwargs):
+        calls.append(list(args))
+        return CommandResult(
+            requested_args=list(args),
+            executed_args=list(args),
+            stdout="",
+            stderr="",
+            returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+    manager.launch_agent(ctx, sync=False)
+
+    # No git status/add/commit calls for skills — only the agent launch.
+    git_status_calls = [c for c in calls if c[:2] == ["git", "status"] and "--porcelain" in c]
+    assert not git_status_calls
+
+
+def test_auto_commit_skipped_when_no_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """When skills dir has no changes, no commit is created."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    # Set up a tracked skills dir.
+    skills_dir = tmp_path / "agent_skills"
+    skills_dir.mkdir()
+    run_git(["init", "-b", "main"], skills_dir)
+    run_git(["config", "user.email", "test@example.com"], skills_dir)
+    run_git(["config", "user.name", "Test"], skills_dir)
+    (skills_dir / "existing.md").write_text("# Skill\n", encoding="utf-8")
+    run_git(["add", "-A"], skills_dir)
+    run_git(["commit", "-m", "initial"], skills_dir)
+
+    monkeypatch.setattr(type(manager), "_AGENT_SKILLS_DIR", skills_dir)
+
+    calls = []
+
+    def fake_run_agent(args, **kwargs):
+        calls.append(list(args))
+        return CommandResult(
+            requested_args=list(args),
+            executed_args=list(args),
+            stdout="" if args[:2] == ["git", "status"] else "",
+            stderr="",
+            returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+    manager.launch_agent(ctx, sync=False)
+
+    # Should check status but not commit.
+    commit_calls = [c for c in calls if c[0] == "git" and c[1] == "commit"]
+    assert not commit_calls
+
+
+def test_skills_repo_initialized_on_first_commit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """If skills dir exists but is not a git repo, it gets initialized."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    # Untracked skills dir.
+    skills_dir = tmp_path / "agent_skills"
+    skills_dir.mkdir()
+    (skills_dir / "my-skill.md").write_text("# Skill\n", encoding="utf-8")
+
+    monkeypatch.setattr(type(manager), "_AGENT_SKILLS_DIR", skills_dir)
+
+    calls = []
+
+    def fake_run_agent(args, **kwargs):
+        calls.append(list(args))
+        return CommandResult(
+            requested_args=list(args),
+            executed_args=list(args),
+            stdout="" if args[:2] == ["git", "status"] else "",
+            stderr="",
+            returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+    manager.launch_agent(ctx, sync=False)
+
+    # Should have git init + initial add + initial commit.
+    init_calls = [c for c in calls if c[:2] == ["git", "init"]]
+    assert init_calls, "Should initialize git repo"
+    initial_commits = [c for c in calls if c[0] == "git" and c[1] == "commit" and "Initial" in str(c)]
+    assert initial_commits, "Should create initial snapshot commit"
+
+
 def test_launch_agent_wraps_command_with_nvm_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     manager = build_manager(tmp_path)
     ctx = manager.context_for("sample")

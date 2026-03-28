@@ -1099,6 +1099,9 @@ class MirrorManager:
                 capture_output=False,
             )
 
+            # Post-session: snapshot any agent-written skills.
+            self._auto_commit_agent_skills(ctx)
+
             if result.returncode != 0:
                 raise MirrorError(
                     f"Agent command exited with code {result.returncode} "
@@ -1709,6 +1712,80 @@ class MirrorManager:
                 "Failed to enforce setgid on %s: %s",
                 git_dir,
                 exc.result.stderr.strip() if exc.result.stderr else exc,
+            )
+
+    # -- Agent skills tracking -------------------------------------------
+
+    _AGENT_SKILLS_DIR = Path.home() / ".claude" / "skills"
+
+    def _ensure_skills_repo(self) -> Optional[Path]:
+        """Initialize ``~/.claude/skills/`` as a git repo if it exists and is not yet tracked."""
+        skills_dir = self._AGENT_SKILLS_DIR
+        if not skills_dir.is_dir():
+            return None
+        git_dir = skills_dir / ".git"
+        if git_dir.exists():
+            return skills_dir
+        try:
+            self.executor.run_agent(
+                ["git", "init"],
+                check=True,
+                cwd=str(skills_dir),
+                capture_output=True,
+            )
+            self.executor.run_agent(
+                ["git", "add", "-A"],
+                check=True,
+                cwd=str(skills_dir),
+                capture_output=True,
+            )
+            self.executor.run_agent(
+                ["git", "commit", "-m", "Initial skills snapshot", "--allow-empty"],
+                check=True,
+                cwd=str(skills_dir),
+                capture_output=True,
+            )
+            self.logger.info("Initialized git tracking for %s", skills_dir)
+        except CommandError as exc:
+            self.logger.warning(
+                "Failed to initialize skills repo at %s: %s", skills_dir, exc,
+            )
+            return None
+        return skills_dir
+
+    def _auto_commit_agent_skills(self, ctx: MirrorContext) -> None:
+        """Commit any changes the agent made to ``~/.claude/skills/``."""
+        skills_dir = self._ensure_skills_repo()
+        if skills_dir is None:
+            return
+        try:
+            # Check for uncommitted changes (staged or unstaged).
+            status = self.executor.run_agent(
+                ["git", "status", "--porcelain"],
+                check=True,
+                cwd=str(skills_dir),
+                capture_output=True,
+            )
+            if not status.stdout or not status.stdout.strip():
+                return
+
+            self.executor.run_agent(
+                ["git", "add", "-A"],
+                check=True,
+                cwd=str(skills_dir),
+                capture_output=True,
+            )
+            message = f"Auto-snapshot after session (mirror: {ctx.settings.name})"
+            self.executor.run_agent(
+                ["git", "commit", "-m", message],
+                check=True,
+                cwd=str(skills_dir),
+                capture_output=True,
+            )
+            self.logger.info("Committed agent skill changes for mirror %s.", ctx.settings.name)
+        except CommandError as exc:
+            self.logger.warning(
+                "Failed to auto-commit agent skills: %s", exc,
             )
 
     # -- Agent-agnostic symlinks ----------------------------------------

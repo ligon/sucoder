@@ -13,9 +13,11 @@ CONFIG_SRC ?= config.example.yaml
 SYSTEM_PROMPT_SRC ?= default_system_prompt.org
 SKILLS_REPO ?= https://github.com/ligon/sucoder-skills.git
 SKILLS_CLONE ?= $(HOME)/Projects/sucoder-skills
+AUDITOR_USER ?= auditor
+AUDITOR_GROUP ?= auditor
 SUDO ?= sudo
 
-.PHONY: help quick-start env-setup show-agent-user-commands create-agent-user config system-prompt skills-clone skills-update skills-link perms warmup poetry-ensure poetry-install test release
+.PHONY: help quick-start env-setup show-agent-user-commands create-agent-user create-auditor-user auditor-perms config system-prompt skills-clone skills-update skills-link perms warmup poetry-ensure poetry-install test release
 
 help:
 	@echo "Targets:"
@@ -34,6 +36,8 @@ help:
 	@echo "  poetry-install  Install project deps with Poetry"
 	@echo "  test            Run pytest"
 	@echo "  release         Create the next CalVer git tag (vYYYY.M.micro)"
+	@echo "  create-auditor-user  Create auditor user (not in coder group)"
+	@echo "  auditor-perms   Set o+r on paths the auditor needs to read"
 
 quick-start: create-agent-user
 	pip install .
@@ -157,3 +161,34 @@ release:
 	echo "Creating tag: $$TAG"; \
 	git tag "$$TAG"; \
 	echo "Tagged. Push with: git push origin $$TAG"
+
+create-auditor-user:
+	@echo "Ensuring auditor group/user exist (requires sudo)..."
+	$(SUDO) groupadd -f $(AUDITOR_GROUP)
+	@if id -u $(AUDITOR_USER) >/dev/null 2>&1; then \
+		echo "User $(AUDITOR_USER) already exists"; \
+	else \
+		echo "Creating $(AUDITOR_USER) with shell /bin/bash (NOT in $(AGENT_GROUP))"; \
+		$(SUDO) useradd -m -s /bin/bash -g $(AUDITOR_GROUP) $(AUDITOR_USER); \
+		$(SUDO) passwd -l $(AUDITOR_USER); \
+	fi
+	$(SUDO) chmod 755 /home/$(AUDITOR_USER) || true
+	@echo "$(AUDITOR_USER) is intentionally NOT in the $(AGENT_GROUP) group."
+	@echo "It reads agent files via world-readable (o+r) bits."
+
+auditor-perms:
+	@if ! id -u $(AUDITOR_USER) >/dev/null 2>&1; then \
+		echo "Error: User '$(AUDITOR_USER)' does not exist."; \
+		echo "Run 'make create-auditor-user' first."; \
+		exit 1; \
+	fi
+	@echo "Setting o+r on paths the auditor needs to read..."
+	$(SUDO) chmod -R o+rX /home/$(AGENT_USER)/.claude/skills 2>/dev/null || true
+	$(SUDO) chmod o+rx /home/$(AGENT_USER) /home/$(AGENT_USER)/.claude 2>/dev/null || true
+	$(SUDO) chmod -R o+rX $(SKILLS_CLONE) 2>/dev/null || true
+	@MIRROR_ROOT=$$(grep -oP 'mirror_root:\s*\K\S+' $(CODER_CONFIG) 2>/dev/null || echo ""); \
+	if [ -n "$$MIRROR_ROOT" ]; then \
+		echo "Setting o+rX on mirror root: $$MIRROR_ROOT"; \
+		$(SUDO) chmod -R o+rX "$$MIRROR_ROOT" 2>/dev/null || true; \
+	fi
+	@echo "Done. Verify with: sudo -u $(AUDITOR_USER) ls /home/$(AGENT_USER)/.claude/skills/"
