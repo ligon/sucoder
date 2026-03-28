@@ -176,10 +176,12 @@ create-auditor-user:
 	@echo "$(AUDITOR_USER) is intentionally NOT in the $(AGENT_GROUP) group."
 	@echo "It reads agent files via world-readable (o+r) bits."
 	@echo ""
+	@echo ""
 	@echo "Next steps:"
 	@echo "  1. Run 'make auditor-perms' to set o+r on agent paths"
-	@echo "  2. Run 'sudo -u $(AUDITOR_USER) claude login' to authenticate (one-time OAuth)"
-	@echo "  3. Then 'sucoder audit' is ready to use"
+	@echo "  2. Install Claude CLI: sudo -u $(AUDITOR_USER) npm install -g @anthropic-ai/claude-code"
+	@echo "  3. Authenticate: sudo -u $(AUDITOR_USER) claude login  (one-time OAuth)"
+	@echo "  4. Then 'sucoder audit' is ready to use"
 
 auditor-perms:
 	@if ! id -u $(AUDITOR_USER) >/dev/null 2>&1; then \
