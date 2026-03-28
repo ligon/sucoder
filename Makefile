@@ -15,7 +15,7 @@ SKILLS_REPO ?= https://github.com/ligon/sucoder-skills.git
 SKILLS_CLONE ?= $(HOME)/Projects/sucoder-skills
 SUDO ?= sudo
 
-.PHONY: help quick-start env-setup show-agent-user-commands create-agent-user config system-prompt skills-clone skills-update skills-link perms warmup poetry-ensure poetry-install test
+.PHONY: help quick-start env-setup show-agent-user-commands create-agent-user config system-prompt skills-clone skills-update skills-link perms warmup poetry-ensure poetry-install test release
 
 help:
 	@echo "Targets:"
@@ -33,6 +33,7 @@ help:
 	@echo "  poetry-ensure   Ensure Poetry is installed for $(AGENT_USER) (installs via curl if missing)"
 	@echo "  poetry-install  Install project deps with Poetry"
 	@echo "  test            Run pytest"
+	@echo "  release         Create the next CalVer git tag (vYYYY.M.micro)"
 
 quick-start: create-agent-user
 	pip install .
@@ -142,3 +143,17 @@ poetry-install:
 
 test:
 	pytest
+
+release:
+	@YEAR=$$(date +%Y); MONTH=$$(date +%-m); \
+	LAST=$$(git tag -l "v$$YEAR.$$MONTH.*" --sort=-v:refname | head -1); \
+	if [ -z "$$LAST" ]; then \
+		MICRO=1; \
+	else \
+		MICRO=$$(echo "$$LAST" | sed 's/.*\.\([0-9]*\)$$/\1/'); \
+		MICRO=$$((MICRO + 1)); \
+	fi; \
+	TAG="v$$YEAR.$$MONTH.$$MICRO"; \
+	echo "Creating tag: $$TAG"; \
+	git tag "$$TAG"; \
+	echo "Tagged. Push with: git push origin $$TAG"

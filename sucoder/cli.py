@@ -38,6 +38,12 @@ from .logging_utils import setup_logger
 from .mirror import MirrorError, MirrorManager
 from .startup_checks import StartupError, run_startup_checks
 
+def _version_callback(value: bool) -> None:
+    if value:
+        typer.echo(__version__)
+        raise typer.Exit()
+
+
 app = typer.Typer(help="sucoder – Unix-sandboxed agent collaboration toolkit for managing agent mirrors.")
 
 _SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
@@ -872,6 +878,14 @@ def _parse_agent_env(entries: Optional[List[str]]) -> Optional[Dict[str, str]]:
 @app.callback()
 def main(
     ctx: typer.Context,
+    version: Optional[bool] = typer.Option(
+        None,
+        "--version",
+        "-V",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show version and exit.",
+    ),
     config: Optional[Path] = typer.Option(
         None,
         "--config",
