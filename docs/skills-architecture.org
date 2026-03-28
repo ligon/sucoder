@@ -178,20 +178,23 @@
       alternative fast path: useful for immediate session context, but
       subject to compliance audit.
 
-* Open Questions
+* Resolved Questions
 
-  - Should the compliance agent prompt be a sucoder skill itself, or
-    hardcoded?  A skill is more flexible but creates a bootstrapping
-    question (who reviews the reviewer's instructions?).
-  - What granularity for audit reports?  Per-file, per-diff-hunk, or
-    summary-level?
-  - Should flagged skills be quarantined (moved/renamed) automatically,
-    or left in place pending human review?
-  - How does this interact with per-mirror =.skills/= that are tracked
-    in the project repo?  Those already have git review; double-auditing
-    may be unnecessary.
-  - Integration with =cq=: should the compliance agent also review new
-    =cq= proposals, or is the existing confirm/flag cycle sufficient?
+  - *Auditor prompt bootstrapping:* The prompt lives in
+    =~/.sucoder/auditor_prompt.org=, human-owned and read-only to both
+    =coder= and =auditor=.  It can be maintained as a skill; the
+    permissions boundary prevents either agent from modifying it.
+  - *Quarantine:* The =auditor= user is read-only by design.  It
+    reports concerns; the human decides what to do.  No
+    auto-quarantine.
+  - *In-repo =.skills/=:* Already git-reviewed on pull to canonical.
+    The auditor's scope is limited to =~coder/.claude/skills/= (the
+    unreviewed path).
+  - *cq integration:* The =cq= confirm/flag cycle is its own review
+    mechanism.  The auditor does not double-review =cq= proposals.
+  - *Report granularity:* Summary by default ("no concerns" is one
+    line).  Detailed per-file/per-hunk output when the auditor flags a
+    concern, so the human has enough context to act.
 
 * Implementation Phases
 
