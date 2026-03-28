@@ -1024,6 +1024,169 @@ def test_skills_repo_initialized_on_first_commit(tmp_path: Path, monkeypatch: py
     assert initial_commits, "Should create initial snapshot commit"
 
 
+def _make_skills_dir(tmp_path: Path) -> Path:
+    """Create a git-tracked skills directory with world-readable perms."""
+    skills_dir = tmp_path / "agent_skills"
+    skills_dir.mkdir(mode=0o755)
+    run_git(["init", "-b", "main"], skills_dir)
+    run_git(["config", "user.email", "test@example.com"], skills_dir)
+    run_git(["config", "user.name", "Test"], skills_dir)
+    return skills_dir
+
+
+def _write_skill(skills_dir: Path, name: str, content: str) -> Path:
+    path = skills_dir / name
+    path.write_text(content, encoding="utf-8")
+    path.chmod(0o644)  # Ensure o+r for audit checks.
+    return path
+
+
+def test_audit_full_review_when_no_baseline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Full review triggers when no refs/audited baseline exists."""
+    manager = build_manager(tmp_path)
+
+    skills_dir = _make_skills_dir(tmp_path)
+    _write_skill(skills_dir, "skill.md", "# A Skill\nDo stuff.\n")
+    run_git(["add", "-A"], skills_dir)
+    run_git(["commit", "-m", "initial"], skills_dir)
+
+    monkeypatch.setattr(type(manager), "_AGENT_SKILLS_DIR", skills_dir)
+
+    calls = []
+
+    def fake_run_agent(args, **kwargs):
+        calls.append(list(args))
+        if args[:3] == ["git", "rev-parse", "--verify"]:
+            # No baseline ref exists.
+            result = CommandResult(
+                requested_args=list(args), executed_args=list(args),
+                stdout="", stderr="", returncode=1,
+            )
+            raise CommandError("ref not found", result)
+        if args[0] == "claude" and "-p" in args:
+            return CommandResult(
+                requested_args=list(args), executed_args=list(args),
+                stdout="No concerns.", stderr="", returncode=0,
+            )
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="", stderr="", returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+    report = manager.audit_agent_skills()
+
+    assert report is not None
+    assert "No concerns" in report
+    # Should have invoked claude -p.
+    claude_calls = [c for c in calls if c[0] == "claude"]
+    assert claude_calls
+    assert "-p" in claude_calls[0]
+
+
+def test_audit_diff_review_with_baseline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Diff review triggers when refs/audited baseline exists."""
+    manager = build_manager(tmp_path)
+
+    skills_dir = _make_skills_dir(tmp_path)
+    _write_skill(skills_dir, "skill.md", "# Skill\n")
+    run_git(["add", "-A"], skills_dir)
+    run_git(["commit", "-m", "initial"], skills_dir)
+
+    monkeypatch.setattr(type(manager), "_AGENT_SKILLS_DIR", skills_dir)
+
+    calls = []
+
+    def fake_run_agent(args, **kwargs):
+        calls.append(list(args))
+        if args[:3] == ["git", "rev-parse", "--verify"]:
+            # Baseline exists.
+            return CommandResult(
+                requested_args=list(args), executed_args=list(args),
+                stdout="abc1234\n", stderr="", returncode=0,
+            )
+        if args[:2] == ["git", "diff"]:
+            return CommandResult(
+                requested_args=list(args), executed_args=list(args),
+                stdout="+new line in skill\n", stderr="", returncode=0,
+            )
+        if args[0] == "claude" and "-p" in args:
+            return CommandResult(
+                requested_args=list(args), executed_args=list(args),
+                stdout="No concerns.", stderr="", returncode=0,
+            )
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="", stderr="", returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+    report = manager.audit_agent_skills()
+
+    assert report is not None
+    assert "No concerns" in report
+
+
+def test_audit_returns_none_when_no_skills_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Audit returns None when skills dir does not exist."""
+    manager = build_manager(tmp_path)
+    monkeypatch.setattr(type(manager), "_AGENT_SKILLS_DIR", tmp_path / "nonexistent")
+
+    report = manager.audit_agent_skills()
+    assert report is None
+
+
+def test_audit_flags_unreadable_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Audit flags files that are not world-readable."""
+    manager = build_manager(tmp_path)
+
+    skills_dir = _make_skills_dir(tmp_path)
+    hidden = _write_skill(skills_dir, "hidden.md", "# Secret\n")
+    hidden.chmod(0o600)  # Remove o+r.
+    run_git(["add", "-A"], skills_dir)
+    run_git(["commit", "-m", "initial"], skills_dir)
+
+    monkeypatch.setattr(type(manager), "_AGENT_SKILLS_DIR", skills_dir)
+
+    report = manager.audit_agent_skills()
+
+    assert report is not None
+    assert "PERMISSIONS AUDIT FAILURE" in report
+    assert "hidden.md" in report
+
+
+def test_audit_returns_none_when_no_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Audit returns None when baseline exists and there are no changes."""
+    manager = build_manager(tmp_path)
+
+    skills_dir = _make_skills_dir(tmp_path)
+    _write_skill(skills_dir, "skill.md", "# Skill\n")
+    run_git(["add", "-A"], skills_dir)
+    run_git(["commit", "-m", "initial"], skills_dir)
+
+    monkeypatch.setattr(type(manager), "_AGENT_SKILLS_DIR", skills_dir)
+
+    def fake_run_agent(args, **kwargs):
+        if args[:3] == ["git", "rev-parse", "--verify"]:
+            return CommandResult(
+                requested_args=list(args), executed_args=list(args),
+                stdout="abc1234\n", stderr="", returncode=0,
+            )
+        if args[:2] == ["git", "diff"]:
+            return CommandResult(
+                requested_args=list(args), executed_args=list(args),
+                stdout="", stderr="", returncode=0,
+            )
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="", stderr="", returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+    report = manager.audit_agent_skills()
+    assert report is None
+
+
 def test_launch_agent_wraps_command_with_nvm_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     manager = build_manager(tmp_path)
     ctx = manager.context_for("sample")

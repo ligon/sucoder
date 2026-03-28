@@ -1439,6 +1439,78 @@ def collaborate(
         raise typer.Exit(code=1) from exc
 
 
+@app.command("audit")
+def audit(
+    ctx: typer.Context,
+    full: bool = typer.Option(
+        False,
+        "--full",
+        help="Review all skills from scratch instead of only changes since last audit.",
+    ),
+    approve: bool = typer.Option(
+        False,
+        "--approve",
+        help="Advance the audited baseline to the current state after review.",
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
+) -> None:
+    """Run a compliance audit on agent-written skills."""
+    config = _get_config(ctx)
+    logger = setup_logger("sucoder.audit", config.log_dir, verbose)
+
+    # Check auditor user exists.
+    auditor_user = os.environ.get("SUCODER_AUDITOR_USER", "auditor")
+    try:
+        import pwd as _pwd
+        _pwd.getpwnam(auditor_user)
+    except KeyError:
+        typer.echo(
+            f"Auditor user '{auditor_user}' does not exist.\n"
+            f"Create it with:  make create-auditor-user\n"
+            f"Or set SUCODER_AUDITOR_USER to use a different user.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    # Build an executor that runs commands as the auditor user.
+    from .executor import CommandExecutor
+    auditor_executor = CommandExecutor(
+        human_user=config.human_user,
+        agent_user=auditor_user,
+        agent_group=auditor_user,
+        logger=logger,
+        use_sudo_for_agent=ctx.obj.get("use_sudo_for_agent", True),
+    )
+
+    # We need a MirrorManager for the audit methods, but no specific mirror context.
+    manager = MirrorManager(
+        config=config,
+        executor=CommandExecutor(
+            human_user=config.human_user,
+            agent_user=config.agent_user,
+            agent_group=config.agent_group,
+            logger=logger,
+            use_sudo_for_agent=ctx.obj.get("use_sudo_for_agent", True),
+        ),
+        logger=logger,
+    )
+
+    report = manager.audit_agent_skills(
+        full=full,
+        auditor_executor=auditor_executor,
+    )
+
+    if report is None:
+        typer.echo("Nothing to audit.")
+        raise typer.Exit(0)
+
+    typer.echo(report)
+
+    if approve:
+        manager.advance_audited_ref(auditor_executor)
+        typer.echo("\nAudited baseline advanced to current state.")
+
+
 @app.command("attach")
 def attach(
     ctx: typer.Context,
