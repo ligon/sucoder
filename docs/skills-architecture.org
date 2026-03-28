@@ -1,0 +1,206 @@
+#+TITLE: Skills Architecture: Agent-Agnostic Discovery, Write Control, and Compliance
+#+DATE: 2026-03-28
+#+AUTHOR: Ligon and Sue the Coder
+
+* Motivation
+
+  Agents accumulate domain knowledge through multiple channels: curated
+  skill files, project conventions, and runtime learnings (=cq=).  Today
+  these channels have inconsistent discovery, overlapping scope, and
+  uneven write controls.  This document proposes a unified architecture
+  that:
+
+  - keeps one source of truth per project,
+  - works across agent types (Claude, Codex, Gemini),
+  - controls who can write skills and when,
+  - introduces lightweight compliance review for agent-authored changes.
+
+* Current State
+
+** Skill Sources
+
+   | Source                     | Scope       | Discovered by      | Writable by agent? | Review gate       |
+   |----------------------------+-------------+--------------------+--------------------+-------------------|
+   | =~/.sucoder/skills/=       | All mirrors | sucoder (injected) | No (human-owned)   | N/A               |
+   | =~coder/.claude/skills/=   | User-level  | Claude (native)    | Yes                | None              |
+   | =.claude/skills/= in repo  | Project     | Claude (native)    | Yes (in mirror)    | Git pull review   |
+   | =CLAUDE.md= in repo        | Project     | Claude (native)    | Yes (in mirror)    | Git pull review   |
+   | =AGENT.md= / =AGENT.org=   | Project     | sucoder (injected) | Yes (in mirror)    | Git pull review   |
+   | =cq= knowledge store       | Cross-project | cq plugin        | Via propose/confirm | Confidence + flag |
+
+** Problems
+
+   1. *Agent-specificity:* Claude natively discovers =.claude/skills/=
+      and =CLAUDE.md=; other agents do not.  Projects wanting
+      agent-agnostic conventions must duplicate content or rely on prompt
+      injection ("please read this file"), which is fragile.
+
+   2. *Unreviewed writes:* =~coder/.claude/skills/= is writable by the
+      agent user, persistent across sessions, and has no review
+      mechanism.  Today the risk is mainly cruft and drift; in a future
+      threat model this is a vector for instruction poisoning (prompt
+      injection, compromised dependencies, malicious actors with mirror
+      access).
+
+   3. *Overlap with cq:* The =cq= knowledge commons provides a
+      structured propose/confirm/flag cycle for agent-contributed
+      learnings.  Agent-writable skills bypass this entirely, creating a
+      parallel unreviewed channel for persistent instructions.
+
+* Design
+
+** Agent-Agnostic Discovery via Symlinks
+
+   Adopt agent-agnostic canonical names; create symlinks so
+   agent-specific native discovery still works.
+
+*** Project-Level Instructions
+
+    - Canonical: =AGENT.md= (or =AGENT.org=)
+    - Symlink: =CLAUDE.md -> AGENT.md=
+    - sucoder injects =AGENT.md= into the system prompt for non-Claude
+      agents.
+    - Claude discovers =CLAUDE.md= natively via the symlink.
+
+*** Project-Level Skills
+
+    - Canonical: =.skills/=
+    - Symlink: =.claude/skills -> .skills=
+    - sucoder passes =.skills/= to non-Claude agents via prompt/flags.
+    - Claude discovers =.claude/skills= natively via the symlink.
+
+*** When to Create Symlinks
+
+    sucoder creates symlinks during =ensure_clone= / mirror setup:
+    - If =AGENT.md= exists and =CLAUDE.md= does not: create symlink.
+    - If =.skills/= exists and =.claude/skills= does not: create
+      symlink.
+    - If both exist independently (no symlink): warn, do not overwrite.
+
+** Write Control Tiers
+
+   | Path                     | Policy    | Rationale                                         |
+   |--------------------------+-----------+---------------------------------------------------|
+   | =~/.sucoder/skills/=     | Read-only | Human-curated, shared across mirrors              |
+   | =.skills/= in mirror     | Writable  | Git-reviewed on pull to canonical                 |
+   | =~coder/.claude/skills/= | Writable  | Useful for session learnings; audited (see below) |
+   | =cq= store               | Structured | Propose/confirm/flag cycle provides review        |
+
+   The agent user (=coder=) can write to the mirror and to its own home
+   directory.  The human-owned paths (=~/.sucoder/skills/=) remain
+   read-only to the agent via Unix permissions, as today.
+
+   If a stricter posture is needed, =~coder/.claude/skills/= can be
+   locked down with permissions (=chmod=) at any time without
+   architectural changes.
+
+** Compliance Auditing
+
+*** Overview
+
+    A dedicated compliance agent reviews skill changes made by the
+    primary working agent.  It operates on diffs rather than full
+    reviews, keeping scope focused and cost low.
+
+*** Git-Tracked Agent Skills
+
+    =~coder/.claude/skills/= is maintained as a git repository:
+
+    - sucoder initializes the repo on first launch if it does not exist.
+    - After each agent session, sucoder auto-commits any changes with a
+      message referencing the mirror/session that produced them.
+    - The commit history provides full forensics: when a skill was
+      added, which session produced it, prior content.
+
+*** Audit Modes
+
+    The compliance agent operates in two modes:
+
+    - *Full review:* Examines all current skills from scratch.  Used on
+      first run (no audited baseline exists), on demand via
+      =sucoder skills-audit --full=, or whenever the human wants to
+      reset trust (delete the =refs/audited= ref and re-run).
+    - *Diff review:* Examines only changes since the last audited
+      commit.  This is the default for routine post-session audits.
+
+*** Audit Cycle
+
+    1. After auto-commit, sucoder checks for the =refs/audited= ref.
+       - If absent: trigger a *full review*.
+       - If present: compute the diff since that ref.  If non-empty,
+         trigger a *diff review*.
+    2. The compliance agent is invoked with:
+       - the diff (or full skill set for full review),
+       - the current set of skills (for context),
+       - a focused prompt (see below).
+    3. The compliance agent reports:
+       - *approve*: changes look routine.  Advance the audited ref.
+       - *flag*: concerns identified.  Report to human, do not advance
+         ref.  Optionally quarantine flagged files.
+    4. Human reviews flagged items at their convenience.
+
+*** Compliance Agent Properties
+
+    - *Separate prompt:* Focused on detecting drift, contradictions,
+      scope creep, instruction injection.  Not optimized for
+      helpfulness.
+    - *Read-only:* Can read skills, cq store, mirror contents.  Cannot
+      write to any of them.
+    - *Separate trust boundary:* Ideally a distinct user or at minimum
+      its own prompt/skills that the primary agent cannot modify.
+    - *Reports, does not remediate:* Flags concerns for human review.
+      Auto-remediation would be its own alignment risk.
+
+*** Trigger Conditions
+
+    - *First run:* Full review (no =refs/audited= baseline yet).
+    - *Default:* Diff review after every session that modifies skills.
+    - *Optional:* Scheduled periodic review (=cron=) as a backstop.
+    - *On demand:* =sucoder skills-audit= for manual trigger.
+
+** Relationship Between Skills and cq
+
+   Skills and =cq= serve complementary roles:
+
+   | Aspect    | Skills                          | cq                              |
+   |-----------+---------------------------------+---------------------------------|
+   | Content   | Curated instructions/procedures | Discovered learnings/pitfalls   |
+   | Lifecycle | Human-authored or promoted      | Agent-proposed, human-confirmed |
+   | Scope     | Per-project or shared           | Cross-project                   |
+   | Durability | Permanent until edited         | Confidence-scored, can decay    |
+
+   The intended flow:
+   1. Agent discovers something non-obvious during a session.
+   2. Agent proposes it to =cq= (structured, reviewable).
+   3. If a =cq= entry proves itself over time (confirmed, high
+      confidence), a human promotes it to a skill.
+   4. Agent-written skills in =~coder/.claude/skills/= are an
+      alternative fast path: useful for immediate session context, but
+      subject to compliance audit.
+
+* Open Questions
+
+  - Should the compliance agent prompt be a sucoder skill itself, or
+    hardcoded?  A skill is more flexible but creates a bootstrapping
+    question (who reviews the reviewer's instructions?).
+  - What granularity for audit reports?  Per-file, per-diff-hunk, or
+    summary-level?
+  - Should flagged skills be quarantined (moved/renamed) automatically,
+    or left in place pending human review?
+  - How does this interact with per-mirror =.skills/= that are tracked
+    in the project repo?  Those already have git review; double-auditing
+    may be unnecessary.
+  - Integration with =cq=: should the compliance agent also review new
+    =cq= proposals, or is the existing confirm/flag cycle sufficient?
+
+* Implementation Phases
+
+  1. *Symlinks:* Add symlink creation to =ensure_clone= for =AGENT.md=
+     and =.skills/=.  Update system prompt injection to prefer agnostic
+     names.
+  2. *Git-track agent skills:* Initialize =~coder/.claude/skills/= as a
+     repo; auto-commit after sessions.
+  3. *Compliance agent:* Define the agent profile, prompt, and audit
+     trigger in sucoder.  Start with after-session trigger.
+  4. *Visibility tooling:* =sucoder skills-audit= command for on-demand
+     review and status reporting.
