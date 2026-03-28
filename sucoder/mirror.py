@@ -1212,6 +1212,7 @@ class MirrorManager:
 
         self.logger.info("Running `poetry install` before launching the agent.")
         try:
+            self._poetry_ensure_lock(mirror_path)
             self.executor.run_agent(
                 ["poetry", "install"],
                 check=True,
@@ -1237,6 +1238,20 @@ class MirrorManager:
                 "`poetry install` failed while preparing mirror "
                 f"{ctx.settings.name}."
             ) from exc
+
+    def _poetry_ensure_lock(self, mirror_path: Path) -> None:
+        """Run ``poetry lock --no-update`` so a stale lock file won't block install."""
+        try:
+            self.executor.run_agent(
+                ["poetry", "lock", "--no-update"],
+                check=True,
+                cwd=str(mirror_path),
+                capture_output=True,
+            )
+        except CommandError:
+            self.logger.debug(
+                "`poetry lock --no-update` failed; proceeding with install anyway."
+            )
 
     def _poetry_python_version_error(self, error: CommandError) -> bool:
         """Detect Poetry failures caused by an incompatible Python interpreter."""
