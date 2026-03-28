@@ -252,9 +252,9 @@
   1. *Symlinks:* /(done)/ Add symlink creation to =ensure_clone= for
      =AGENT.md= and =.skills/=.  Update system prompt injection to
      prefer agnostic names.
-  2. *Git-track agent skills:* Initialize =~coder/.claude/skills/= as a
-     repo; auto-commit after sessions.
-  3. *Compliance agent:* Define the agent profile, prompt, and audit
-     trigger in sucoder.  Start with after-session trigger.
-  4. *Visibility tooling:* =sucoder skills-audit= command for on-demand
-     review and status reporting.
+  2. *Git-track agent skills:* /(done)/ Initialize =~coder/.claude/skills/=
+     as a repo; auto-commit after subprocess-mode sessions.
+  3. *Compliance agent:* /(done)/ =sucoder audit= command runs =claude -p=
+     as the =auditor= user.  Permissions check, full/diff modes,
+     =--approve= to advance baseline.
+  4. *Visibility tooling:* /(done)/ Folded into =sucoder audit=.
