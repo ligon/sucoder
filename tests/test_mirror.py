@@ -114,7 +114,11 @@ def build_manager(
             use_sudo_for_agent=False,
         )
 
-    return MirrorManager(config, executor, logger, prompt_handler=prompt_handler)
+    manager = MirrorManager(config, executor, logger, prompt_handler=prompt_handler)
+    # Point skills dir at a nonexistent path so auto-commit doesn't
+    # interfere with tests that don't care about skills tracking.
+    type(manager)._agent_skills_dir = property(lambda self, p=tmp_path / "_no_skills": p)
+    return manager
 
 
 def test_clone_sync_and_start_task(tmp_path: Path) -> None:
