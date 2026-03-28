@@ -175,6 +175,11 @@ create-auditor-user:
 	$(SUDO) chmod 755 /home/$(AUDITOR_USER) || true
 	@echo "$(AUDITOR_USER) is intentionally NOT in the $(AGENT_GROUP) group."
 	@echo "It reads agent files via world-readable (o+r) bits."
+	@echo ""
+	@echo "Next steps:"
+	@echo "  1. Run 'make auditor-perms' to set o+r on agent paths"
+	@echo "  2. Run 'sudo -u $(AUDITOR_USER) claude login' to authenticate (one-time OAuth)"
+	@echo "  3. Then 'sucoder audit' is ready to use"
 
 auditor-perms:
 	@if ! id -u $(AUDITOR_USER) >/dev/null 2>&1; then \
