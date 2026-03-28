@@ -1716,11 +1716,18 @@ class MirrorManager:
 
     # -- Agent skills tracking -------------------------------------------
 
-    _AGENT_SKILLS_DIR = Path.home() / ".claude" / "skills"
+    @property
+    def _agent_skills_dir(self) -> Path:
+        """Return the agent user's skills directory (``~<agent_user>/.claude/skills``)."""
+        try:
+            agent_home = Path(pwd.getpwnam(self.config.agent_user).pw_dir)
+        except KeyError:
+            agent_home = Path.home()
+        return agent_home / ".claude" / "skills"
 
     def _ensure_skills_repo(self) -> Optional[Path]:
-        """Initialize ``~/.claude/skills/`` as a git repo if it exists and is not yet tracked."""
-        skills_dir = self._AGENT_SKILLS_DIR
+        """Initialize the agent's skills dir as a git repo if it exists and is not yet tracked."""
+        skills_dir = self._agent_skills_dir
         if not skills_dir.is_dir():
             return None
         git_dir = skills_dir / ".git"
@@ -1810,7 +1817,7 @@ class MirrorManager:
         If *auditor_executor* is provided, the audit agent is launched
         via that executor (typically running as the ``auditor`` user).
         """
-        skills_dir = self._AGENT_SKILLS_DIR
+        skills_dir = self._agent_skills_dir
         if not skills_dir.is_dir() or not (skills_dir / ".git").exists():
             self.logger.info("No git-tracked skills directory at %s; nothing to audit.", skills_dir)
             return None
@@ -1868,7 +1875,7 @@ class MirrorManager:
 
     def advance_audited_ref(self, executor: Optional["CommandExecutor"] = None) -> None:
         """Advance ``refs/audited`` to the current HEAD of the skills repo."""
-        skills_dir = self._AGENT_SKILLS_DIR
+        skills_dir = self._agent_skills_dir
         if not skills_dir.is_dir() or not (skills_dir / ".git").exists():
             return
         ex = executor or self.executor

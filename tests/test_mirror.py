@@ -891,7 +891,7 @@ def test_auto_commit_agent_skills_after_session(tmp_path: Path, monkeypatch: pyt
     run_git(["commit", "-m", "initial"], skills_dir)
 
     # Point the manager at our test skills dir.
-    monkeypatch.setattr(type(manager), "_AGENT_SKILLS_DIR", skills_dir)
+    monkeypatch.setattr(type(manager), "_agent_skills_dir", property(lambda self: skills_dir))
 
     # Simulate agent writing a new skill file.
     (skills_dir / "new-skill.md").write_text("# New\n", encoding="utf-8")
@@ -929,7 +929,7 @@ def test_auto_commit_skipped_when_no_skills_dir(tmp_path: Path, monkeypatch: pyt
     manager.ensure_clone(ctx)
 
     # Point at a nonexistent dir.
-    monkeypatch.setattr(type(manager), "_AGENT_SKILLS_DIR", tmp_path / "nonexistent")
+    monkeypatch.setattr(type(manager), "_agent_skills_dir", property(lambda self, p=tmp_path / "nonexistent": p))
 
     calls = []
 
@@ -967,7 +967,7 @@ def test_auto_commit_skipped_when_no_changes(tmp_path: Path, monkeypatch: pytest
     run_git(["add", "-A"], skills_dir)
     run_git(["commit", "-m", "initial"], skills_dir)
 
-    monkeypatch.setattr(type(manager), "_AGENT_SKILLS_DIR", skills_dir)
+    monkeypatch.setattr(type(manager), "_agent_skills_dir", property(lambda self: skills_dir))
 
     calls = []
 
@@ -1000,7 +1000,7 @@ def test_skills_repo_initialized_on_first_commit(tmp_path: Path, monkeypatch: py
     skills_dir.mkdir()
     (skills_dir / "my-skill.md").write_text("# Skill\n", encoding="utf-8")
 
-    monkeypatch.setattr(type(manager), "_AGENT_SKILLS_DIR", skills_dir)
+    monkeypatch.setattr(type(manager), "_agent_skills_dir", property(lambda self: skills_dir))
 
     calls = []
 
@@ -1050,7 +1050,7 @@ def test_audit_full_review_when_no_baseline(tmp_path: Path, monkeypatch: pytest.
     run_git(["add", "-A"], skills_dir)
     run_git(["commit", "-m", "initial"], skills_dir)
 
-    monkeypatch.setattr(type(manager), "_AGENT_SKILLS_DIR", skills_dir)
+    monkeypatch.setattr(type(manager), "_agent_skills_dir", property(lambda self: skills_dir))
 
     calls = []
 
@@ -1093,7 +1093,7 @@ def test_audit_diff_review_with_baseline(tmp_path: Path, monkeypatch: pytest.Mon
     run_git(["add", "-A"], skills_dir)
     run_git(["commit", "-m", "initial"], skills_dir)
 
-    monkeypatch.setattr(type(manager), "_AGENT_SKILLS_DIR", skills_dir)
+    monkeypatch.setattr(type(manager), "_agent_skills_dir", property(lambda self: skills_dir))
 
     calls = []
 
@@ -1130,7 +1130,7 @@ def test_audit_diff_review_with_baseline(tmp_path: Path, monkeypatch: pytest.Mon
 def test_audit_returns_none_when_no_skills_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Audit returns None when skills dir does not exist."""
     manager = build_manager(tmp_path)
-    monkeypatch.setattr(type(manager), "_AGENT_SKILLS_DIR", tmp_path / "nonexistent")
+    monkeypatch.setattr(type(manager), "_agent_skills_dir", property(lambda self, p=tmp_path / "nonexistent": p))
 
     report = manager.audit_agent_skills()
     assert report is None
@@ -1146,7 +1146,7 @@ def test_audit_flags_unreadable_files(tmp_path: Path, monkeypatch: pytest.Monkey
     run_git(["add", "-A"], skills_dir)
     run_git(["commit", "-m", "initial"], skills_dir)
 
-    monkeypatch.setattr(type(manager), "_AGENT_SKILLS_DIR", skills_dir)
+    monkeypatch.setattr(type(manager), "_agent_skills_dir", property(lambda self: skills_dir))
 
     report = manager.audit_agent_skills()
 
@@ -1164,7 +1164,7 @@ def test_audit_returns_none_when_no_changes(tmp_path: Path, monkeypatch: pytest.
     run_git(["add", "-A"], skills_dir)
     run_git(["commit", "-m", "initial"], skills_dir)
 
-    monkeypatch.setattr(type(manager), "_AGENT_SKILLS_DIR", skills_dir)
+    monkeypatch.setattr(type(manager), "_agent_skills_dir", property(lambda self: skills_dir))
 
     def fake_run_agent(args, **kwargs):
         if args[:3] == ["git", "rev-parse", "--verify"]:
