@@ -155,6 +155,19 @@
     - *Diff review:* Examines only changes since the last audited
       commit.  This is the default for routine post-session audits.
 
+*** Permissions Audit
+
+    Before examining content, the auditor checks that all files under
+    =~coder/.claude/skills/= are world-readable (=o+r=, directories
+    =o+rx=).  Any file the =coder= agent has made unreadable (e.g. via
+    =chmod o-r=) is flagged immediately---the auditor cannot inspect it
+    and must assume the worst.  This prevents the working agent from
+    hiding modifications by restricting permissions.
+
+    sucoder can also re-enforce =o+r= during its own =_enforce_permissions=
+    pass, but the auditor's independent check is the trust boundary:
+    even if sucoder's enforcement is bypassed, the auditor will notice.
+
 *** Audit Cycle
 
     1. After auto-commit, sucoder checks for the =refs/audited= ref.
