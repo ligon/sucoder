@@ -173,6 +173,12 @@ create-auditor-user:
 		$(SUDO) passwd -l $(AUDITOR_USER); \
 	fi
 	$(SUDO) chmod 755 /home/$(AUDITOR_USER) || true
+	@if $(SUDO) test -d /home/$(AUDITOR_USER)/.git; then \
+		echo "Git repo already initialized in /home/$(AUDITOR_USER)"; \
+	else \
+		echo "Initializing git repo in /home/$(AUDITOR_USER) for auditor home tracking"; \
+		$(SUDO) -u $(AUDITOR_USER) git -C /home/$(AUDITOR_USER) init; \
+	fi
 	@echo "$(AUDITOR_USER) is intentionally NOT in the $(AGENT_GROUP) group."
 	@echo "It reads agent files via world-readable (o+r) bits."
 	@echo ""
