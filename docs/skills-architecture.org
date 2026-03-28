@@ -94,6 +94,38 @@
    locked down with permissions (=chmod=) at any time without
    architectural changes.
 
+** Auditor Permissions
+
+   The compliance agent runs as a dedicated Unix user (default:
+   =auditor=).  It is *not* a member of the =coder= group, so
+   group-writable files in mirrors and =~coder/= are not writable by
+   the auditor.
+
+   Read access is granted via world-readable bits (=o+r= on files,
+   =o+rx= on directories).  This is the simplest model that:
+
+   - survives git operations (checkout, fetch create files with
+     standard umask; no re-application step needed),
+   - works on every filesystem (no ACL support required),
+   - is visible in ordinary =ls -l= output (easy to debug),
+   - requires no special tooling for backups, copies, or rsync.
+
+   The tradeoff is that =o+r= opens read access to all users on the
+   system, not just the auditor.  For workstations and controlled
+   servers this is acceptable---mirrors contain code repos, not
+   secrets.  Credentials belong in environment variables or
+   permission-restricted files outside the mirror tree.
+
+   sucoder's =_enforce_permissions= pass (run after clone and sync)
+   should set =o+r= / =o+rx= on the mirror root and
+   =~coder/.claude/skills/=.
+
+   | User    | Group   | Mirror files | =~coder/.claude/skills/= | =~/.sucoder/skills/= |
+   |---------+---------+--------------+--------------------------+----------------------|
+   | human   | coder   | g+rw         | g+rw                     | owner rw             |
+   | coder   | coder   | g+rw         | u+rw                     | g+r                  |
+   | auditor | auditor | o+r          | o+r                      | o+r                  |
+
 ** Compliance Auditing
 
 *** Overview
@@ -141,13 +173,15 @@
 
 *** Compliance Agent Properties
 
-    - *Separate prompt:* Focused on detecting drift, contradictions,
-      scope creep, instruction injection.  Not optimized for
-      helpfulness.
-    - *Read-only:* Can read skills, cq store, mirror contents.  Cannot
-      write to any of them.
-    - *Separate trust boundary:* Ideally a distinct user or at minimum
-      its own prompt/skills that the primary agent cannot modify.
+    - *Dedicated user:* Runs as =auditor= (not in the =coder= group).
+      Write access to mirrors and agent skills is prevented by Unix
+      permissions, not by prompt instructions.
+    - *Separate prompt:* Stored in =~/.sucoder/auditor_prompt.org=,
+      human-owned and read-only to both =coder= and =auditor=.
+      Focused on detecting drift, contradictions, scope creep, and
+      instruction injection.
+    - *Read-only:* Reads skills, cq store, and mirror contents via
+      =o+r= bits.  Cannot write to any of them.
     - *Reports, does not remediate:* Flags concerns for human review.
       Auto-remediation would be its own alignment risk.
 
@@ -184,6 +218,10 @@
     =~/.sucoder/auditor_prompt.org=, human-owned and read-only to both
     =coder= and =auditor=.  It can be maintained as a skill; the
     permissions boundary prevents either agent from modifying it.
+  - *Auditor permissions:* The =auditor= user is a separate Unix user
+    outside the =coder= group.  Read access via =o+r= bits; write
+    access denied by standard Unix permissions.  No ACLs needed---they
+    don't survive git operations reliably and add debugging complexity.
   - *Quarantine:* The =auditor= user is read-only by design.  It
     reports concerns; the human decides what to do.  No
     auto-quarantine.
@@ -198,9 +236,9 @@
 
 * Implementation Phases
 
-  1. *Symlinks:* Add symlink creation to =ensure_clone= for =AGENT.md=
-     and =.skills/=.  Update system prompt injection to prefer agnostic
-     names.
+  1. *Symlinks:* /(done)/ Add symlink creation to =ensure_clone= for
+     =AGENT.md= and =.skills/=.  Update system prompt injection to
+     prefer agnostic names.
   2. *Git-track agent skills:* Initialize =~coder/.claude/skills/= as a
      repo; auto-commit after sessions.
   3. *Compliance agent:* Define the agent profile, prompt, and audit
