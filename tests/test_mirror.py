@@ -1536,6 +1536,193 @@ def test_ensure_clone_sets_parent_permissions(tmp_path: Path) -> None:
     assert chmod_calls
 
 
+def test_ensure_clone_creates_claude_md_symlink(tmp_path: Path) -> None:
+    """AGENT.md in the canonical repo produces a CLAUDE.md symlink in the mirror."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+
+    # Add AGENT.md to canonical before cloning.
+    canonical = tmp_path / "canonical"
+    canonical.chmod(canonical.stat().st_mode | 0o200)
+    (canonical / "AGENT.md").write_text("# Project instructions\n", encoding="utf-8")
+    run_git(["add", "AGENT.md"], canonical)
+    run_git(["commit", "-m", "add agent doc"], canonical)
+    canonical.chmod(canonical.stat().st_mode & ~0o200)
+
+    manager.ensure_clone(ctx)
+
+    claude_md = ctx.mirror_path / "CLAUDE.md"
+    assert claude_md.is_symlink()
+    assert os.readlink(str(claude_md)) == "AGENT.md"
+    assert claude_md.read_text(encoding="utf-8").startswith("# Project instructions")
+
+
+def test_ensure_clone_creates_claude_md_symlink_for_org(tmp_path: Path) -> None:
+    """AGENT.org also gets a CLAUDE.md symlink."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+
+    canonical = tmp_path / "canonical"
+    canonical.chmod(canonical.stat().st_mode | 0o200)
+    (canonical / "AGENT.org").write_text("#+TITLE: Instructions\n", encoding="utf-8")
+    run_git(["add", "AGENT.org"], canonical)
+    run_git(["commit", "-m", "add agent doc"], canonical)
+    canonical.chmod(canonical.stat().st_mode & ~0o200)
+
+    manager.ensure_clone(ctx)
+
+    claude_md = ctx.mirror_path / "CLAUDE.md"
+    assert claude_md.is_symlink()
+    assert os.readlink(str(claude_md)) == "AGENT.org"
+
+
+def test_ensure_clone_skips_symlink_when_claude_md_exists(tmp_path: Path) -> None:
+    """If CLAUDE.md already exists, do not create a symlink."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+
+    canonical = tmp_path / "canonical"
+    canonical.chmod(canonical.stat().st_mode | 0o200)
+    (canonical / "AGENT.md").write_text("agent\n", encoding="utf-8")
+    (canonical / "CLAUDE.md").write_text("claude\n", encoding="utf-8")
+    run_git(["add", "AGENT.md", "CLAUDE.md"], canonical)
+    run_git(["commit", "-m", "add both docs"], canonical)
+    canonical.chmod(canonical.stat().st_mode & ~0o200)
+
+    manager.ensure_clone(ctx)
+
+    claude_md = ctx.mirror_path / "CLAUDE.md"
+    assert not claude_md.is_symlink()
+    assert claude_md.read_text(encoding="utf-8") == "claude\n"
+
+
+def test_ensure_clone_creates_skills_symlink(tmp_path: Path) -> None:
+    """.skills/ in the repo produces a .claude/skills symlink."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+
+    canonical = tmp_path / "canonical"
+    canonical.chmod(canonical.stat().st_mode | 0o200)
+    skills_dir = canonical / ".skills"
+    skills_dir.mkdir()
+    (skills_dir / "my-skill.md").write_text("# Skill\n", encoding="utf-8")
+    run_git(["add", ".skills"], canonical)
+    run_git(["commit", "-m", "add skills"], canonical)
+    canonical.chmod(canonical.stat().st_mode & ~0o200)
+
+    manager.ensure_clone(ctx)
+
+    claude_skills = ctx.mirror_path / ".claude" / "skills"
+    assert claude_skills.is_symlink()
+    assert os.readlink(str(claude_skills)) == "../.skills"
+    assert (claude_skills / "my-skill.md").exists()
+
+
+def test_ensure_clone_skips_skills_symlink_when_claude_skills_exists(tmp_path: Path) -> None:
+    """If .claude/skills already exists, do not create a symlink."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+
+    canonical = tmp_path / "canonical"
+    canonical.chmod(canonical.stat().st_mode | 0o200)
+    (canonical / ".skills").mkdir()
+    (canonical / ".claude").mkdir()
+    (canonical / ".claude" / "skills").mkdir()
+    (canonical / ".claude" / "skills" / "native.md").write_text("# Native\n", encoding="utf-8")
+    run_git(["add", ".skills", ".claude"], canonical)
+    run_git(["commit", "-m", "add both skills dirs"], canonical)
+    canonical.chmod(canonical.stat().st_mode & ~0o200)
+
+    manager.ensure_clone(ctx)
+
+    claude_skills = ctx.mirror_path / ".claude" / "skills"
+    assert not claude_skills.is_symlink()
+    assert (claude_skills / "native.md").exists()
+
+
+def test_symlinks_created_on_existing_mirror(tmp_path: Path) -> None:
+    """Symlinks are created on subsequent ensure_clone calls for existing mirrors."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    # Now add AGENT.md to the mirror (simulating a fetch that brought new files).
+    (ctx.mirror_path / "AGENT.md").write_text("# Late addition\n", encoding="utf-8")
+
+    # Call ensure_clone again — mirror already exists path.
+    manager.ensure_clone(ctx)
+
+    claude_md = ctx.mirror_path / "CLAUDE.md"
+    assert claude_md.is_symlink()
+    assert os.readlink(str(claude_md)) == "AGENT.md"
+
+
+def test_agent_doc_injected_for_non_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """AGENT.md content is injected into the system prompt for non-Claude agents."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    (ctx.mirror_path / "AGENT.md").write_text("Use pytest for all tests.\n", encoding="utf-8")
+
+    # Use Codex (non-Claude) agent.
+    ctx.settings.agent_launcher = AgentLauncher(command=["codex"], launch_mode="subprocess")
+
+    calls = []
+
+    def fake_run_agent(args, **kwargs):
+        calls.append(list(args))
+        return CommandResult(
+            requested_args=list(args),
+            executed_args=list(args),
+            stdout="",
+            stderr="",
+            returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+    manager.launch_agent(ctx, sync=False)
+
+    # The trailing arg is the system prompt (codex uses inline prompt).
+    prelude = _extract_prelude(calls[-1])
+    assert "PROJECT INSTRUCTIONS (AGENT.md)" in prelude
+    assert "Use pytest for all tests." in prelude
+
+
+def test_agent_doc_not_injected_for_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """AGENT.md is NOT injected for Claude (it discovers via CLAUDE.md symlink)."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    (ctx.mirror_path / "AGENT.md").write_text("Use pytest for all tests.\n", encoding="utf-8")
+
+    # Use Claude agent.
+    ctx.settings.agent_launcher = AgentLauncher(command=["claude"], launch_mode="subprocess")
+
+    prompt_file = tmp_path / "prompt.org"
+    prompt_file.write_text("System prompt", encoding="utf-8")
+    manager.config.system_prompt = prompt_file
+
+    calls = []
+
+    def fake_run_agent(args, **kwargs):
+        calls.append(list(args))
+        return CommandResult(
+            requested_args=list(args),
+            executed_args=list(args),
+            stdout="",
+            stderr="",
+            returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+    manager.launch_agent(ctx, sync=False)
+
+    prelude = _extract_prelude(calls[-1])
+    assert "PROJECT INSTRUCTIONS" not in prelude
+
+
 def test_launch_agent_gemini_uses_prompt_interactive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that Gemini CLI uses --prompt-interactive for system prompt."""
     manager = build_manager(tmp_path)

@@ -171,6 +171,7 @@ class MirrorManager:
             self.logger.info("Mirror already exists at %s", mirror_path)
             self._verify_remote(ctx)
             self._enforce_permissions(ctx)
+            self._ensure_agent_agnostic_symlinks(mirror_path)
             self._allow_direnv_if_present(mirror_path)
             return
 
@@ -230,6 +231,7 @@ class MirrorManager:
 
         ensure_directory_mode(self.executor, mirror_path, "2770", as_agent=True)
         self._enforce_permissions(ctx)
+        self._ensure_agent_agnostic_symlinks(mirror_path)
         self._allow_direnv_if_present(mirror_path)
 
     def prepare_canonical(
@@ -1709,6 +1711,70 @@ class MirrorManager:
                 exc.result.stderr.strip() if exc.result.stderr else exc,
             )
 
+    # -- Agent-agnostic symlinks ----------------------------------------
+
+    _AGENT_DOC_NAMES = ("AGENT.md", "AGENT.org")
+    _SKILLS_DIR_NAME = ".skills"
+
+    def _ensure_agent_agnostic_symlinks(self, mirror_path: Path) -> None:
+        """Create Claude-discoverable symlinks for agent-agnostic conventions.
+
+        If the mirror contains ``AGENT.md`` (or ``.org``) but no ``CLAUDE.md``,
+        create ``CLAUDE.md -> AGENT.md`` so Claude discovers it natively.
+        Likewise, if ``.skills/`` exists but ``.claude/skills`` does not,
+        create the symlink so Claude discovers project skills natively.
+
+        Non-Claude agents are pointed at the agnostic paths via prompt
+        injection (see :meth:`_agent_doc_block`).
+        """
+        self._ensure_agent_doc_symlink(mirror_path)
+        self._ensure_skills_dir_symlink(mirror_path)
+
+    def _ensure_agent_doc_symlink(self, mirror_path: Path) -> None:
+        """Create ``CLAUDE.md -> AGENT.md`` (or ``.org``) if appropriate."""
+        claude_md = mirror_path / "CLAUDE.md"
+        if claude_md.exists() or claude_md.is_symlink():
+            return
+
+        for name in self._AGENT_DOC_NAMES:
+            agent_doc = mirror_path / name
+            if agent_doc.exists():
+                try:
+                    claude_md.symlink_to(name)
+                    self.logger.info("Created symlink CLAUDE.md -> %s", name)
+                except OSError as exc:
+                    self.logger.warning(
+                        "Could not create CLAUDE.md symlink in %s: %s",
+                        mirror_path, exc,
+                    )
+                return
+
+    def _ensure_skills_dir_symlink(self, mirror_path: Path) -> None:
+        """Create ``.claude/skills -> .skills`` if appropriate."""
+        skills_dir = mirror_path / self._SKILLS_DIR_NAME
+        if not skills_dir.is_dir():
+            return
+
+        claude_skills = mirror_path / ".claude" / "skills"
+        if claude_skills.exists() or claude_skills.is_symlink():
+            return
+
+        claude_dir = mirror_path / ".claude"
+        try:
+            claude_dir.mkdir(exist_ok=True)
+            # Relative symlink: .claude/skills -> ../.skills
+            claude_skills.symlink_to(Path("..") / self._SKILLS_DIR_NAME)
+            self.logger.info(
+                "Created symlink .claude/skills -> %s", self._SKILLS_DIR_NAME,
+            )
+        except OSError as exc:
+            self.logger.warning(
+                "Could not create .claude/skills symlink in %s: %s",
+                mirror_path, exc,
+            )
+
+    # -- direnv -------------------------------------------------------------
+
     def _allow_direnv_if_present(self, mirror_path: Path) -> None:
         """Trust a checked-in .envrc so Poetry layouts apply for the agent user."""
         envrc = mirror_path / ".envrc"
@@ -1816,6 +1882,10 @@ class MirrorManager:
         if target_block:
             blocks.append(target_block)
 
+        agent_doc = self._agent_doc_block(ctx)
+        if agent_doc:
+            blocks.append(agent_doc)
+
         blocks.extend(self._skill_blocks(ctx))
 
         if not blocks:
@@ -1873,6 +1943,33 @@ class MirrorManager:
 
         header = f"TARGET PROMPT ({prompt_path})"
         return f"{header}\n{content}"
+
+    def _agent_doc_block(self, ctx: MirrorContext) -> Optional[str]:
+        """Inject ``AGENT.md`` / ``AGENT.org`` for non-Claude agents.
+
+        Claude discovers the equivalent content natively via the
+        ``CLAUDE.md`` symlink, so injection is skipped for Claude.
+        """
+        agent_type = getattr(self, "_detected_agent_type", AgentType.UNKNOWN)
+        if agent_type == AgentType.CLAUDE:
+            return None
+
+        mirror_path = ctx.mirror_path
+        for name in self._AGENT_DOC_NAMES:
+            agent_doc = mirror_path / name
+            if agent_doc.exists():
+                try:
+                    content = agent_doc.read_text(encoding="utf-8").strip()
+                except OSError as exc:
+                    self.logger.warning(
+                        "Failed to read %s: %s", agent_doc, exc
+                    )
+                    return None
+                if not content:
+                    return None
+                header = f"PROJECT INSTRUCTIONS ({name})"
+                return f"{header}\n{content}"
+        return None
 
     def _skill_blocks(self, ctx: MirrorContext) -> List[str]:
         entries: List[Path] = list(ctx.skills)
