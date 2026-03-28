@@ -916,6 +916,8 @@ def main(
     ),
 ) -> None:
     """Load configuration once and store it on the Typer context."""
+    if ctx.invoked_subcommand == "version":
+        return
     config_explicitly_set = config is not None
     default_path = _default_config_path()
     is_default_config = False
