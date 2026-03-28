@@ -179,7 +179,7 @@ create-auditor-user:
 	@echo ""
 	@echo "Next steps:"
 	@echo "  1. Run 'make auditor-perms' to set o+r on agent paths"
-	@echo "  2. Install Claude CLI: sudo -u $(AUDITOR_USER) npm install -g @anthropic-ai/claude-code"
+	@echo "  2. Install Claude CLI: sudo -u $(AUDITOR_USER) bash -c 'curl -fsSL https://claude.ai/install.sh | sh'"
 	@echo "  3. Authenticate: sudo -u $(AUDITOR_USER) claude login  (one-time OAuth)"
 	@echo "  4. Then 'sucoder audit' is ready to use"
 
