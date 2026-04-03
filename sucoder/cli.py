@@ -1442,10 +1442,21 @@ def collaborate(
 @app.command("audit")
 def audit(
     ctx: typer.Context,
+    mirror: Optional[str] = typer.Argument(
+        None,
+        help="Mirror name (required for --target code/all).",
+        shell_complete=_mirror_completion,
+    ),
+    scope: str = typer.Option(
+        "skills",
+        "--scope",
+        "-s",
+        help="What to audit: 'skills', 'code', or 'all'.",
+    ),
     full: bool = typer.Option(
         False,
         "--full",
-        help="Review all skills from scratch instead of only changes since last audit.",
+        help="Review from scratch instead of only changes since last audit.",
     ),
     approve: bool = typer.Option(
         False,
@@ -1454,9 +1465,27 @@ def audit(
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
 ) -> None:
-    """Run a compliance audit on agent-written skills."""
+    """Run a compliance audit on agent-written skills and/or mirror code changes."""
+    valid_scopes = ("skills", "code", "all")
+    if scope not in valid_scopes:
+        typer.echo(f"--scope must be one of: {', '.join(valid_scopes)}", err=True)
+        raise typer.Exit(code=1)
+
     config = _get_config(ctx)
     logger = setup_logger("sucoder.audit", config.log_dir, verbose)
+
+    # Resolve mirror name when code audit is requested.
+    mirror_name: Optional[str] = None
+    if scope in ("code", "all"):
+        try:
+            mirror_name = _resolve_mirror_name(ctx, mirror)
+        except (typer.BadParameter, Exception) as exc:
+            typer.echo(
+                f"Mirror name required for code audit: {exc}\n"
+                f"Usage: sucoder audit MIRROR --scope {scope}",
+                err=True,
+            )
+            raise typer.Exit(code=1)
 
     # Check auditor user exists.
     auditor_user = os.environ.get("SUCODER_AUDITOR_USER", "auditor")
@@ -1482,7 +1511,7 @@ def audit(
         use_sudo_for_agent=ctx.obj.get("use_sudo_for_agent", True),
     )
 
-    # We need a MirrorManager for the audit methods, but no specific mirror context.
+    # We need a MirrorManager for the audit methods.
     manager = MirrorManager(
         config=config,
         executor=CommandExecutor(
@@ -1495,20 +1524,49 @@ def audit(
         logger=logger,
     )
 
-    report = manager.audit_agent_skills(
-        full=full,
-        auditor_executor=auditor_executor,
-    )
+    multi = scope == "all"
+    any_output = False
 
-    if report is None:
-        typer.echo("Nothing to audit.")
+    # --- Skills audit ---
+    if scope in ("skills", "all"):
+        if multi:
+            typer.echo("=== Skills Audit ===\n")
+        skills_report = manager.audit_agent_skills(
+            full=full,
+            auditor_executor=auditor_executor,
+        )
+        if skills_report is None:
+            typer.echo("Nothing to audit (skills).")
+        else:
+            typer.echo(skills_report)
+            any_output = True
+        if approve and skills_report is not None:
+            manager.advance_audited_ref(auditor_executor)
+            typer.echo("\nSkills audited baseline advanced to current state.")
+        if multi:
+            typer.echo("")  # blank separator
+
+    # --- Code audit ---
+    if scope in ("code", "all"):
+        assert mirror_name is not None
+        if multi:
+            typer.echo(f"=== Code Audit (mirror: {mirror_name}) ===\n")
+        code_report = manager.audit_code_changes(
+            mirror_name,
+            full=full,
+            auditor_executor=auditor_executor,
+        )
+        if code_report is None:
+            typer.echo("Nothing to audit (code).")
+        else:
+            typer.echo(code_report)
+            any_output = True
+        if approve and code_report is not None:
+            manager.advance_audited_code_ref(mirror_name, auditor_executor)
+            typer.echo("\nCode audited baseline advanced to current state.")
+
+    if not any_output and not multi:
         raise typer.Exit(0)
-
-    typer.echo(report)
-
-    if approve:
-        manager.advance_audited_ref(auditor_executor)
-        typer.echo("\nAudited baseline advanced to current state.")
 
 
 @app.command("attach")

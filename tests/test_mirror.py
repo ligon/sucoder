@@ -1191,6 +1191,255 @@ def test_audit_returns_none_when_no_changes(tmp_path: Path, monkeypatch: pytest.
     assert report is None
 
 
+# -- Code audit tests ---------------------------------------------------
+
+
+def _setup_code_audit_manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> MirrorManager:
+    """Build a MirrorManager with a cloned 'sample' mirror ready for code audit."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+    # Make mirror world-readable so the permissions check passes.
+    mirror = ctx.mirror_path
+    for p in mirror.rglob("*"):
+        if p.is_file():
+            p.chmod(p.stat().st_mode | 0o004)
+        elif p.is_dir():
+            p.chmod(p.stat().st_mode | 0o005)
+    # Neutralize skills dir so auto-commit doesn't interfere.
+    monkeypatch.setattr(type(manager), "_agent_skills_dir", property(lambda self, p=tmp_path / "no_skills": p))
+    return manager
+
+
+def test_code_audit_full_review_when_no_baseline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Full code review triggers when no refs/audited-code baseline exists."""
+    manager = _setup_code_audit_manager(tmp_path, monkeypatch)
+
+    calls: list = []
+
+    def fake_run_agent(args, **kwargs):
+        calls.append(list(args))
+        if args[:3] == ["git", "rev-parse", "--verify"]:
+            # No baseline ref exists.
+            result = CommandResult(
+                requested_args=list(args), executed_args=list(args),
+                stdout="", stderr="", returncode=1,
+            )
+            raise CommandError("ref not found", result)
+        if args[:2] == ["git", "diff"]:
+            return CommandResult(
+                requested_args=list(args), executed_args=list(args),
+                stdout="+hello code\n", stderr="", returncode=0,
+            )
+        if args[0] == "claude" and "-p" in args:
+            return CommandResult(
+                requested_args=list(args), executed_args=list(args),
+                stdout="No concerns.", stderr="", returncode=0,
+            )
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="", stderr="", returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+    report = manager.audit_code_changes("sample")
+
+    assert report is not None
+    assert "No concerns" in report
+    # Should have invoked claude -p.
+    claude_calls = [c for c in calls if c[0] == "claude"]
+    assert claude_calls
+    assert "-p" in claude_calls[0]
+
+
+def test_code_audit_diff_review_with_baseline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Diff code review triggers when refs/audited-code baseline exists."""
+    manager = _setup_code_audit_manager(tmp_path, monkeypatch)
+
+    calls: list = []
+
+    def fake_run_agent(args, **kwargs):
+        calls.append(list(args))
+        if args[:3] == ["git", "rev-parse", "--verify"]:
+            return CommandResult(
+                requested_args=list(args), executed_args=list(args),
+                stdout="abc1234\n", stderr="", returncode=0,
+            )
+        if args[:2] == ["git", "diff"]:
+            return CommandResult(
+                requested_args=list(args), executed_args=list(args),
+                stdout="+changed code\n", stderr="", returncode=0,
+            )
+        if args[0] == "claude" and "-p" in args:
+            return CommandResult(
+                requested_args=list(args), executed_args=list(args),
+                stdout="No concerns.", stderr="", returncode=0,
+            )
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="", stderr="", returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+    report = manager.audit_code_changes("sample")
+
+    assert report is not None
+    assert "No concerns" in report
+    # Diff calls should reference refs/audited-code.
+    diff_calls = [c for c in calls if c[:2] == ["git", "diff"]]
+    assert any("refs/audited-code" in c for c in diff_calls)
+
+
+def test_code_audit_returns_none_when_no_mirror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Code audit returns None when the mirror is not a git repo."""
+    manager = build_manager(tmp_path)
+    monkeypatch.setattr(type(manager), "_agent_skills_dir", property(lambda self, p=tmp_path / "no_skills": p))
+    # Don't clone — the mirror path won't be a git repo.
+    report = manager.audit_code_changes("sample")
+    assert report is None
+
+
+def test_code_audit_returns_none_when_no_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Code audit returns None when baseline exists and there are no changes."""
+    manager = _setup_code_audit_manager(tmp_path, monkeypatch)
+
+    def fake_run_agent(args, **kwargs):
+        if args[:3] == ["git", "rev-parse", "--verify"]:
+            return CommandResult(
+                requested_args=list(args), executed_args=list(args),
+                stdout="abc1234\n", stderr="", returncode=0,
+            )
+        if args[:2] == ["git", "diff"]:
+            return CommandResult(
+                requested_args=list(args), executed_args=list(args),
+                stdout="", stderr="", returncode=0,
+            )
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="", stderr="", returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+    report = manager.audit_code_changes("sample")
+    assert report is None
+
+
+def test_code_audit_flags_unreadable_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Code audit flags files that are not world-readable."""
+    manager = _setup_code_audit_manager(tmp_path, monkeypatch)
+
+    ctx = manager.context_for("sample")
+    secret = ctx.mirror_path / "secret.py"
+    secret.write_text("API_KEY = 'hunter2'\n", encoding="utf-8")
+    secret.chmod(0o600)  # Remove o+r.
+
+    report = manager.audit_code_changes("sample")
+
+    assert report is not None
+    assert "PERMISSIONS AUDIT FAILURE" in report
+    assert "secret.py" in report
+
+
+def test_advance_audited_code_ref(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """advance_audited_code_ref calls git update-ref with the right ref."""
+    manager = _setup_code_audit_manager(tmp_path, monkeypatch)
+
+    calls: list = []
+
+    def fake_run_agent(args, **kwargs):
+        calls.append(list(args))
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="", stderr="", returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+    manager.advance_audited_code_ref("sample")
+
+    update_ref_calls = [c for c in calls if c[:2] == ["git", "update-ref"]]
+    assert update_ref_calls
+    assert "refs/audited-code" in update_ref_calls[0]
+
+
+def test_code_audit_full_uses_empty_tree_diff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Full code audit diffs against the empty tree hash."""
+    manager = _setup_code_audit_manager(tmp_path, monkeypatch)
+
+    calls: list = []
+    empty_tree = "4b825dc642cb6eb9a060e54bf899d15f3780fcaa"
+
+    def fake_run_agent(args, **kwargs):
+        calls.append(list(args))
+        if args[:3] == ["git", "rev-parse", "--verify"]:
+            result = CommandResult(
+                requested_args=list(args), executed_args=list(args),
+                stdout="", stderr="", returncode=1,
+            )
+            raise CommandError("ref not found", result)
+        if args[:2] == ["git", "diff"]:
+            return CommandResult(
+                requested_args=list(args), executed_args=list(args),
+                stdout="+all the code\n", stderr="", returncode=0,
+            )
+        if args[0] == "claude" and "-p" in args:
+            return CommandResult(
+                requested_args=list(args), executed_args=list(args),
+                stdout="No concerns.", stderr="", returncode=0,
+            )
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="", stderr="", returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+    report = manager.audit_code_changes("sample", full=True)
+
+    assert report is not None
+    diff_calls = [c for c in calls if c[:2] == ["git", "diff"]]
+    assert any(empty_tree in c for c in diff_calls), f"Expected empty tree hash in diff calls: {diff_calls}"
+
+
+def test_code_audit_prompt_contains_security_checks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Code audit prompt includes security-specific review criteria."""
+    manager = _setup_code_audit_manager(tmp_path, monkeypatch)
+
+    captured_prompts: list = []
+
+    def fake_run_agent(args, **kwargs):
+        if args[:3] == ["git", "rev-parse", "--verify"]:
+            result = CommandResult(
+                requested_args=list(args), executed_args=list(args),
+                stdout="", stderr="", returncode=1,
+            )
+            raise CommandError("ref not found", result)
+        if args[:2] == ["git", "diff"]:
+            return CommandResult(
+                requested_args=list(args), executed_args=list(args),
+                stdout="+code\n", stderr="", returncode=0,
+            )
+        if args[0] == "claude" and "-p" in args:
+            idx = args.index("-p")
+            captured_prompts.append(args[idx + 1])
+            return CommandResult(
+                requested_args=list(args), executed_args=list(args),
+                stdout="No concerns.", stderr="", returncode=0,
+            )
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="", stderr="", returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+    manager.audit_code_changes("sample")
+
+    assert captured_prompts
+    prompt = captured_prompts[0]
+    assert "Credential leakage" in prompt
+    assert "Unsafe subprocess" in prompt
+    assert "Supply-chain" in prompt
+    assert "Permission escalation" in prompt
+
+
 def test_launch_agent_wraps_command_with_nvm_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     manager = build_manager(tmp_path)
     ctx = manager.context_for("sample")

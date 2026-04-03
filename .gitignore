@@ -7,3 +7,4 @@ __pycache__/
 .poetry-cache/
 .venv-app-data/
 .claude/settings.local.json
+_site/

@@ -1795,9 +1795,145 @@ class MirrorManager:
                 "Failed to auto-commit agent skills: %s", exc,
             )
 
-    # -- Skills audit ----------------------------------------------------
+    # -- Audit infrastructure -------------------------------------------
 
     _AUDITED_REF = "refs/audited"
+    _AUDITED_CODE_REF = "refs/audited-code"
+
+    # -- Generic audit helpers ------------------------------------------
+
+    def _run_audit(
+        self,
+        *,
+        content: str,
+        mode: str,
+        audit_kind: str,
+        system_prompt_candidates: List[Path],
+        compose_prompt: Callable[[str, str], str],
+        executor: "CommandExecutor",
+    ) -> str:
+        """Invoke the auditor agent and return its report.
+
+        Parameters
+        ----------
+        content
+            Diff text or full file listing to review.
+        mode
+            ``"full"`` or ``"diff"`` — passed to *compose_prompt*.
+        audit_kind
+            Human-readable label for logging (e.g. ``"skills"``, ``"code"``).
+        system_prompt_candidates
+            Ordered candidate paths for the system prompt file.
+        compose_prompt
+            ``(content, mode) -> str`` — builds the user prompt.
+        executor
+            Executor to use (typically running as the auditor user).
+        """
+        prompt = compose_prompt(content, mode)
+
+        self.logger.info("Running %s %s audit...", mode, audit_kind)
+        system_prompt = self._load_prompt_from_candidates(system_prompt_candidates, self.logger)
+        if system_prompt:
+            auditor_cmd = ["claude", "--system-prompt", system_prompt, "-p", prompt]
+        else:
+            auditor_cmd = ["claude", "-p", prompt]
+        try:
+            result = executor.run_agent(
+                auditor_cmd,
+                check=True,
+                capture_output=True,
+            )
+            report = result.stdout.strip() if result.stdout else "(empty report)"
+        except CommandError as exc:
+            report = f"Audit agent failed: {exc}"
+            if exc.result.stdout:
+                report += f"\n\nPartial output:\n{exc.result.stdout}"
+            self.logger.warning("%s audit agent invocation failed: %s", audit_kind.title(), exc)
+
+        return report
+
+    @staticmethod
+    def _load_prompt_from_candidates(
+        candidates: List[Path], logger: logging.Logger,
+    ) -> Optional[str]:
+        """Return the first readable, non-empty prompt from *candidates*."""
+        for path in candidates:
+            if path.exists():
+                try:
+                    content = path.read_text(encoding="utf-8").strip()
+                    if content:
+                        logger.debug("Loaded prompt from %s", path)
+                        return content
+                except OSError as exc:
+                    logger.warning("Failed to read prompt %s: %s", path, exc)
+        return None
+
+    @staticmethod
+    def _check_dir_readable(target_dir: Path) -> List[str]:
+        """Return list of paths under *target_dir* that are not world-readable."""
+        issues: List[str] = []
+        for path in target_dir.rglob("*"):
+            if path.name == ".git" or ".git" in path.parts:
+                continue
+            if path.is_file():
+                mode = path.stat().st_mode
+                if not (mode & 0o004):  # o+r not set
+                    issues.append(str(path))
+            elif path.is_dir():
+                mode = path.stat().st_mode
+                if not (mode & 0o005):  # o+rx not set
+                    issues.append(str(path))
+        return issues
+
+    def _has_ref(self, repo_dir: Path, ref: str, executor: "CommandExecutor") -> bool:
+        """Check whether *ref* exists in the repo at *repo_dir*."""
+        try:
+            executor.run_agent(
+                ["git", "rev-parse", "--verify", ref],
+                check=True,
+                cwd=str(repo_dir),
+                capture_output=True,
+            )
+            return True
+        except CommandError:
+            return False
+
+    def _diff_since_ref(
+        self, repo_dir: Path, ref: str, executor: "CommandExecutor",
+    ) -> str:
+        """Return ``git diff <ref> HEAD`` output for *repo_dir*."""
+        try:
+            result = executor.run_agent(
+                ["git", "diff", ref, "HEAD"],
+                check=True,
+                cwd=str(repo_dir),
+                capture_output=True,
+            )
+            return result.stdout or ""
+        except CommandError:
+            return ""
+
+    def _advance_ref(
+        self, repo_dir: Path, ref: str, executor: "CommandExecutor",
+    ) -> None:
+        """Advance *ref* to HEAD in *repo_dir*."""
+        try:
+            executor.run_agent(
+                ["git", "update-ref", ref, "HEAD"],
+                check=True,
+                cwd=str(repo_dir),
+                capture_output=True,
+            )
+            self.logger.info("Advanced %s to HEAD in %s.", ref, repo_dir)
+        except CommandError as exc:
+            self.logger.warning("Failed to advance %s: %s", ref, exc)
+
+    # -- Skills audit ----------------------------------------------------
+
+    _SKILLS_PROMPT_CANDIDATES = [
+        Path("~/.sucoder/auditor_prompt.org").expanduser(),
+        Path("~/.sucoder/auditor_prompt.md").expanduser(),
+    ]
 
     def audit_agent_skills(
         self,
@@ -1825,7 +1961,7 @@ class MirrorManager:
         executor = auditor_executor or self.executor
 
         # --- Permissions check: can we read everything? ---
-        perm_issues = self._check_skills_readable(skills_dir)
+        perm_issues = self._check_dir_readable(skills_dir)
         if perm_issues:
             header = "PERMISSIONS AUDIT FAILURE\n\nThe following files are not world-readable (o+r):\n"
             report = header + "\n".join(f"  - {p}" for p in perm_issues)
@@ -1837,101 +1973,33 @@ class MirrorManager:
             return report
 
         # --- Determine audit mode ---
-        has_baseline = self._has_audited_ref(skills_dir, executor)
+        has_baseline = self._has_ref(skills_dir, self._AUDITED_REF, executor)
 
         if full or not has_baseline:
             mode = "full"
             diff_text = self._full_skills_content(skills_dir, executor)
         else:
-            diff_text = self._skills_diff_since_audited(skills_dir, executor)
+            diff_text = self._diff_since_ref(skills_dir, self._AUDITED_REF, executor)
             if not diff_text or not diff_text.strip():
                 self.logger.info("No skill changes since last audit.")
                 return None
             mode = "diff"
 
-        # --- Compose audit prompt ---
-        prompt = self._compose_audit_prompt(diff_text, mode)
-
-        # --- Invoke auditor agent ---
-        self.logger.info("Running %s skills audit...", mode)
-        auditor_cmd = ["claude", "-p", prompt]
-        system_prompt = self._auditor_system_prompt()
-        if system_prompt:
-            auditor_cmd = ["claude", "--system-prompt", system_prompt, "-p", prompt]
-        try:
-            result = executor.run_agent(
-                auditor_cmd,
-                check=True,
-                capture_output=True,
-            )
-            report = result.stdout.strip() if result.stdout else "(empty report)"
-        except CommandError as exc:
-            report = f"Audit agent failed: {exc}"
-            if exc.result.stdout:
-                report += f"\n\nPartial output:\n{exc.result.stdout}"
-            self.logger.warning("Audit agent invocation failed: %s", exc)
-
-        return report
+        return self._run_audit(
+            content=diff_text,
+            mode=mode,
+            audit_kind="skills",
+            system_prompt_candidates=self._SKILLS_PROMPT_CANDIDATES,
+            compose_prompt=self._compose_skills_audit_prompt,
+            executor=executor,
+        )
 
     def advance_audited_ref(self, executor: Optional["CommandExecutor"] = None) -> None:
         """Advance ``refs/audited`` to the current HEAD of the skills repo."""
         skills_dir = self._agent_skills_dir
         if not skills_dir.is_dir() or not (skills_dir / ".git").exists():
             return
-        ex = executor or self.executor
-        try:
-            ex.run_agent(
-                ["git", "update-ref", self._AUDITED_REF, "HEAD"],
-                check=True,
-                cwd=str(skills_dir),
-                capture_output=True,
-            )
-            self.logger.info("Advanced %s to HEAD.", self._AUDITED_REF)
-        except CommandError as exc:
-            self.logger.warning("Failed to advance audited ref: %s", exc)
-
-    @staticmethod
-    def _check_skills_readable(skills_dir: Path) -> List[str]:
-        """Return list of files under *skills_dir* that are not world-readable."""
-        issues: List[str] = []
-        for path in skills_dir.rglob("*"):
-            if path.name == ".git" or ".git" in path.parts:
-                continue
-            if path.is_file():
-                mode = path.stat().st_mode
-                if not (mode & 0o004):  # o+r not set
-                    issues.append(str(path))
-            elif path.is_dir():
-                mode = path.stat().st_mode
-                if not (mode & 0o005):  # o+rx not set
-                    issues.append(str(path))
-        return issues
-
-    def _has_audited_ref(self, skills_dir: Path, executor: "CommandExecutor") -> bool:
-        try:
-            executor.run_agent(
-                ["git", "rev-parse", "--verify", self._AUDITED_REF],
-                check=True,
-                cwd=str(skills_dir),
-                capture_output=True,
-            )
-            return True
-        except CommandError:
-            return False
-
-    def _skills_diff_since_audited(
-        self, skills_dir: Path, executor: "CommandExecutor",
-    ) -> str:
-        try:
-            result = executor.run_agent(
-                ["git", "diff", self._AUDITED_REF, "HEAD"],
-                check=True,
-                cwd=str(skills_dir),
-                capture_output=True,
-            )
-            return result.stdout or ""
-        except CommandError:
-            return ""
+        self._advance_ref(skills_dir, self._AUDITED_REF, executor or self.executor)
 
     def _full_skills_content(
         self, skills_dir: Path, executor: "CommandExecutor",
@@ -1949,25 +2017,8 @@ class MirrorManager:
                 parts.append(f"--- {path.relative_to(skills_dir)} --- (unreadable)")
         return "\n\n".join(parts) if parts else "(empty skills directory)"
 
-    def _auditor_system_prompt(self) -> Optional[str]:
-        """Load the auditor system prompt if available."""
-        candidates = [
-            Path("~/.sucoder/auditor_prompt.org").expanduser(),
-            Path("~/.sucoder/auditor_prompt.md").expanduser(),
-        ]
-        for path in candidates:
-            if path.exists():
-                try:
-                    content = path.read_text(encoding="utf-8").strip()
-                    if content:
-                        self.logger.debug("Loaded auditor prompt from %s", path)
-                        return content
-                except OSError as exc:
-                    self.logger.warning("Failed to read auditor prompt %s: %s", path, exc)
-        return None
-
     @staticmethod
-    def _compose_audit_prompt(content: str, mode: str) -> str:
+    def _compose_skills_audit_prompt(content: str, mode: str) -> str:
         if mode == "full":
             intro = (
                 "You are a compliance auditor reviewing ALL agent-written skill files. "
@@ -1988,6 +2039,131 @@ Review the following for:
 3. Contradictions — skills that conflict with each other or with established conventions
 4. Sensitive data — credentials, tokens, or PII that should not be in skill files
 5. Excessive self-modification — skills that instruct the agent to modify its own skills
+
+Respond with a brief summary. If everything looks routine, say "No concerns."
+If you find issues, describe each one clearly with the filename and specific concern.
+
+{"=" * 60}
+{content}
+{"=" * 60}"""
+
+    # -- Code audit ------------------------------------------------------
+
+    _CODE_PROMPT_CANDIDATES = [
+        Path("~/.sucoder/code_auditor_prompt.org").expanduser(),
+        Path("~/.sucoder/code_auditor_prompt.md").expanduser(),
+    ]
+
+    def audit_code_changes(
+        self,
+        mirror_name: str,
+        *,
+        full: bool = False,
+        auditor_executor: Optional["CommandExecutor"] = None,
+    ) -> Optional[str]:
+        """Run a security audit on code changes in a mirror repository.
+
+        Returns the audit report as a string, or ``None`` if there is
+        nothing to audit.
+
+        When *full* is ``True`` (or no ``refs/audited-code`` baseline
+        exists), all tracked content is reviewed.  Otherwise only the
+        diff since the last audited-code commit is examined.
+        """
+        ctx = self.context_for(mirror_name)
+        mirror_path = ctx.mirror_path
+        if not self._is_git_repo(mirror_path):
+            self.logger.info("Mirror %s is not a git repo at %s; nothing to audit.", mirror_name, mirror_path)
+            return None
+
+        executor = auditor_executor or self.executor
+
+        # --- Permissions check ---
+        perm_issues = self._check_dir_readable(mirror_path)
+        if perm_issues:
+            header = (
+                f"PERMISSIONS AUDIT FAILURE (mirror: {mirror_name})\n\n"
+                "The following files are not world-readable (o+r):\n"
+            )
+            report = header + "\n".join(f"  - {p}" for p in perm_issues)
+            report += (
+                "\n\nThe working agent may have restricted permissions to "
+                "hide modifications.  Investigate before proceeding."
+            )
+            self.logger.warning("Code audit found %d unreadable files in %s.", len(perm_issues), mirror_name)
+            return report
+
+        # --- Determine audit mode ---
+        has_baseline = self._has_ref(mirror_path, self._AUDITED_CODE_REF, executor)
+
+        if full or not has_baseline:
+            mode = "full"
+            diff_text = self._full_repo_diff(mirror_path, executor)
+        else:
+            diff_text = self._diff_since_ref(mirror_path, self._AUDITED_CODE_REF, executor)
+            if not diff_text or not diff_text.strip():
+                self.logger.info("No code changes since last audit in %s.", mirror_name)
+                return None
+            mode = "diff"
+
+        return self._run_audit(
+            content=diff_text,
+            mode=mode,
+            audit_kind="code",
+            system_prompt_candidates=self._CODE_PROMPT_CANDIDATES,
+            compose_prompt=self._compose_code_audit_prompt,
+            executor=executor,
+        )
+
+    def advance_audited_code_ref(
+        self, mirror_name: str, executor: Optional["CommandExecutor"] = None,
+    ) -> None:
+        """Advance ``refs/audited-code`` to the current HEAD of a mirror."""
+        ctx = self.context_for(mirror_name)
+        mirror_path = ctx.mirror_path
+        if not self._is_git_repo(mirror_path):
+            return
+        self._advance_ref(mirror_path, self._AUDITED_CODE_REF, executor or self.executor)
+
+    def _full_repo_diff(self, repo_dir: Path, executor: "CommandExecutor") -> str:
+        """Return a diff of all tracked content vs. the empty tree."""
+        # The well-known SHA of git's empty tree object.
+        empty_tree = "4b825dc642cb6eb9a060e54bf899d15f3780fcaa"
+        try:
+            result = executor.run_agent(
+                ["git", "diff", empty_tree, "HEAD"],
+                check=True,
+                cwd=str(repo_dir),
+                capture_output=True,
+            )
+            return result.stdout or ""
+        except CommandError:
+            return ""
+
+    @staticmethod
+    def _compose_code_audit_prompt(content: str, mode: str) -> str:
+        if mode == "full":
+            intro = (
+                "You are a security auditor reviewing ALL code in a mirror repository "
+                "managed by an AI coding agent."
+            )
+        else:
+            intro = (
+                "You are a security auditor reviewing CHANGES to code in a mirror "
+                "repository since the last approved code audit."
+            )
+
+        return f"""{intro}
+
+Review the following for:
+1. Dependency injection — malicious or unexpected packages added to dependency files
+2. Credential leakage — hardcoded tokens, API keys, passwords, or PII in source
+3. Unsafe subprocess calls — shell=True, unsanitized input, eval/exec usage
+4. Permission escalation — chmod 777, setuid, capability changes, sudoers edits
+5. Unexpected network calls — new outbound connections to unknown hosts
+6. Overly broad file operations — recursive deletes, writes outside the project tree
+7. Supply-chain risks — typosquatting packages, unusual version pinning
+8. Obfuscated code — base64-encoded strings, minified inline scripts
 
 Respond with a brief summary. If everything looks routine, say "No concerns."
 If you find issues, describe each one clearly with the filename and specific concern.
