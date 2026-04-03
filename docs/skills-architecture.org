@@ -150,7 +150,7 @@
 
     - *Full review:* Examines all current skills from scratch.  Used on
       first run (no audited baseline exists), on demand via
-      =sucoder skills-audit --full=, or whenever the human wants to
+      =sucoder audit --full=, or whenever the human wants to
       reset trust (delete the =refs/audited= ref and re-run).
     - *Diff review:* Examines only changes since the last audited
       commit.  This is the default for routine post-session audits.
@@ -203,7 +203,7 @@
     - *First run:* Full review (no =refs/audited= baseline yet).
     - *Default:* Diff review after every session that modifies skills.
     - *Optional:* Scheduled periodic review (=cron=) as a backstop.
-    - *On demand:* =sucoder skills-audit= for manual trigger.
+    - *On demand:* =sucoder audit= for manual trigger.
 
 ** Relationship Between Skills and cq
 
