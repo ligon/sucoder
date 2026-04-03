@@ -87,7 +87,7 @@ The canonical repository remains unwritable by the agent throughout.
 | =agents-run=         | Launch the agent (steps 5--6)                |
 | =worktrees=          | List active worktrees with status             |
 | =attach=             | Reconnect to a remote tmux session            |
-| =audit=              | Run compliance review of agent-written skills |
+| =audit=              | Run compliance review of skills and/or code  |
 
 * Key Features
 - agents-clone :: Clone a canonical repository into an agent-owned mirror with strict permissions.
@@ -97,7 +97,7 @@ The canonical repository remains unwritable by the agent throughout.
 - collaborate :: Prepare canonical, ensure mirror, and launch agent in one step.
 - worktrees :: List active git worktrees in a mirror with per-worktree status (branch, commits ahead, dirty state).  Supports =--watch= for live monitoring and =--diff= for file-level changes.
 - attach :: Reconnect to a remote agent session via tmux after an SSH disconnect.
-- audit :: Run a compliance review of agent-written skills (see [[*Skills Auditing][Skills Auditing]]).
+- audit :: Run a compliance review of agent-written skills and/or mirror code changes (see [[*Auditing][Auditing]]).
 - --target/-T :: Select a named remote execution target (e.g., =--target savio=) to run the agent on a remote host.
 - --version/-V :: Print the installed sucoder version (CalVer, derived from git tags).
 - --dry-run :: Available on modifying commands to review logged operations without executing.
@@ -675,13 +675,14 @@ These persist across sessions and influence future agent behavior.
 - The commit history provides forensics: when a skill was added,
   which session produced it, and what it looked like before modification.
 
-* Skills Auditing
+* Auditing
 
-A dedicated compliance agent reviews skill changes made by the working
-agent.  The auditor runs as a separate Unix user (=auditor=) that is
-intentionally /not/ in the =coder= group, so write access to agent
-files is prevented by Unix permissions rather than prompt instructions.
-Read access is granted via world-readable bits (=o+r=).
+A dedicated compliance agent reviews changes made by the working
+agent---both skill files and code.  The auditor runs as a separate
+Unix user (=auditor=) that is intentionally /not/ in the =coder=
+group, so write access to agent files is prevented by Unix permissions
+rather than prompt instructions.  Read access is granted via
+world-readable bits (=o+r=).
 
 ** Setup
 
@@ -691,33 +692,71 @@ make auditor-perms         # set o+r on paths the auditor needs
 # Install Claude CLI and authenticate (one-time):
 sudo -u auditor bash -c 'curl -fsSL https://claude.ai/install.sh | bash'
 sudo -u auditor claude login
-# Copy the auditor prompt:
+# Copy auditor prompts:
 cp default_auditor_prompt.org ~/.sucoder/auditor_prompt.org
+cp default_code_auditor_prompt.org ~/.sucoder/code_auditor_prompt.org
 #+end_src
 
 ** Usage
 
+The =--scope= flag controls what is audited: =skills= (default), =code=, or =all=.
+
 #+begin_src shell
+# Skills audit (default) — reviews ~coder/.claude/skills/
 sucoder audit              # diff review since last approved baseline
 sucoder audit --full       # review all skills from scratch
 sucoder audit --approve    # advance the baseline after review
+
+# Code audit — reviews mirror repo changes
+sucoder audit MIRROR --scope code         # diff since last code baseline
+sucoder audit MIRROR --scope code --full  # review all tracked code
+sucoder audit MIRROR --scope code --approve
+
+# Both at once
+sucoder audit MIRROR --scope all
 #+end_src
+
+** Audit scopes
+
+*** Skills audit (=--scope skills=)
+
+Reviews agent-written skill files in =~coder/.claude/skills/=.
+Uses =~/.sucoder/auditor_prompt.org= as the system prompt.
+Tracks its baseline via =refs/audited= in the skills git repo.
+
+The auditor checks for instruction injection, scope creep,
+contradictions, sensitive data, and self-modification loops.
+
+*** Code audit (=--scope code=)
+
+Reviews code changes in a mirror repository.  Requires a mirror
+name argument.  Uses =~/.sucoder/code_auditor_prompt.org= as the
+system prompt.  Tracks its baseline via =refs/audited-code= in the
+mirror.
+
+The auditor checks for:
+1. Dependency injection (malicious or unexpected packages)
+2. Credential leakage (hardcoded tokens, API keys, passwords)
+3. Unsafe subprocess calls (=shell=True=, =eval=, =exec=)
+4. Permission escalation (=chmod 777=, setuid, sudoers edits)
+5. Unexpected network calls (outbound connections to unknown hosts)
+6. Overly broad file operations (recursive deletes, out-of-tree writes)
+7. Supply-chain risks (typosquatting, unusual version pinning)
+8. Obfuscated code (base64-encoded strings, minified inline scripts)
 
 ** How it works
 
 1. *Permissions check* --- Before examining content, the auditor verifies
-   that all files under =~coder/.claude/skills/= are world-readable.
-   Files the working agent has made unreadable (=chmod o-r=) are flagged
-   immediately as suspicious.
+   that all files are world-readable.  Files the working agent has made
+   unreadable (=chmod o-r=) are flagged immediately as suspicious.
 
-2. *Audit mode* --- If no baseline exists (=refs/audited= ref), a full
-   review runs.  Otherwise, only the diff since the last approved commit
-   is examined.
+2. *Audit mode* --- If no baseline exists (=refs/audited= for skills,
+   =refs/audited-code= for code), a full review runs.  Otherwise, only
+   the diff since the last approved commit is examined.
 
 3. *Auditor invocation* --- =claude -p= is run as the =auditor= user with
-   a focused system prompt (=~/.sucoder/auditor_prompt.org=).  The auditor
-   is instructed to detect instruction injection, scope creep,
-   contradictions, sensitive data, and self-modification loops.
+   a scope-specific system prompt.  The skills auditor and code auditor
+   use different prompts tuned to their respective concerns.
 
 4. *Report* --- The auditor prints a summary.  If concerns are found, each
    is listed with filename and severity.  Pass =--approve= to advance the
