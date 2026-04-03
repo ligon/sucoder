@@ -1,0 +1,24 @@
+#+TITLE: SuCoder Documentation
+#+OPTIONS: toc:nil num:nil html-postamble:nil
+#+HTML_HEAD: <link rel="stylesheet" type="text/css" href="style.css" />
+
+* SuCoder
+
+Unix-user sandboxing for AI coding agents.  One account per agent, filesystem-enforced boundaries, plain =git=.
+
+** Getting Started
+
+- [[file:../README.html][Full Documentation]] --- project overview, quick start, configuration, and command reference.
+- [[file:host-environment-setup.html][Host Environment Setup]] --- checklist for provisioning a new machine.
+
+** Architecture
+
+- [[file:skills-architecture.html][Skills Architecture]] --- agent-agnostic discovery, write control, and compliance auditing.
+
+** Examples
+
+- [[https://github.com/ligon/SuCoder/blob/main/docs/examples/org-authoring-demo.org][Org Authoring Playground]] --- demonstrates Org skills for humans and agents (view source on GitHub; requires =citeproc= for local HTML export).
+
+** Source
+
+- [[https://github.com/ligon/SuCoder][GitHub repository]]

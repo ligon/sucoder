@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.11"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Poetry
+        run: pip install poetry
+
+      - name: Install dependencies
+        run: poetry install
+
+      - name: Run tests
+        run: poetry run pytest
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Emacs
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq emacs-nox
+
+      - name: Build HTML with org-publish
+        run: emacs --batch -l docs/publish.el --funcall org-publish-all
+
+      - name: Create root index redirect
+        run: |
+          cat > _site/index.html <<'REDIRECT'
+          <!DOCTYPE html>
+          <html><head>
+            <meta http-equiv="refresh" content="0; url=docs/index.html" />
+            <title>Redirecting…</title>
+          </head><body>
+            <p><a href="docs/index.html">SuCoder Documentation</a></p>
+          </body></html>
+          REDIRECT
+
+      - name: Upload Pages artifact
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: [test, docs]
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
