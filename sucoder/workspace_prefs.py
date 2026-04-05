@@ -69,3 +69,24 @@ class WorkspacePrefs:
             "enabled": enabled,
             "decided_at": _utc_now_iso(),
         }
+
+    def mcp_discovery(self) -> Optional[Dict[str, bool]]:
+        """Return per-server accept/decline decisions, or ``None`` if never asked."""
+        raw = self.data.get("mcp_discovery")
+        if isinstance(raw, dict) and "servers" in raw:
+            servers = raw["servers"]
+            if isinstance(servers, dict):
+                return servers
+        return None
+
+    def set_mcp_discovery(self, servers: Dict[str, bool]) -> None:
+        """Record which discovered servers were accepted or declined."""
+        existing = self.data.get("mcp_discovery", {})
+        if not isinstance(existing, dict):
+            existing = {}
+        merged = dict(existing.get("servers", {}))
+        merged.update(servers)
+        self.data["mcp_discovery"] = {
+            "servers": merged,
+            "decided_at": _utc_now_iso(),
+        }

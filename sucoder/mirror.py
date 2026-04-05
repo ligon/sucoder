@@ -1034,6 +1034,7 @@ class MirrorManager:
         )
 
         self._maybe_run_poetry_auto_install(ctx, mirror_path)
+        self._maybe_suggest_mcp_servers(ctx, mirror_path)
 
         # Get merged templates (per-mirror > global > agent profile)
         templates = self._get_merged_templates(command, launcher)
@@ -1299,6 +1300,67 @@ class MirrorManager:
                 if "Python version" in line or "compatible version" in line:
                     highlights.append(line)
         return highlights
+
+    def _maybe_suggest_mcp_servers(self, ctx: MirrorContext, mirror_path: Path) -> None:
+        """Scan the mirror for tech-stack indicators and offer relevant MCP servers."""
+        if ctx.is_remote:
+            return
+
+        from .mcp_discovery import detect_suggestions
+
+        prefs = WorkspacePrefs.load(mirror_path)
+        previous = prefs.mcp_discovery()
+
+        existing = dict(ctx.settings.mcp_servers)
+        suggestions = detect_suggestions(mirror_path, existing)
+        if not suggestions:
+            return
+
+        # Filter out servers the user already decided on.
+        if previous is not None:
+            suggestions = [s for s in suggestions if s.name not in previous]
+        if not suggestions:
+            return
+
+        if self._prompt_handler is None:
+            self.logger.info("Skipping MCP discovery (no prompt handler).")
+            return
+
+        lines = ["Detected tech stack suggests these MCP servers:"]
+        for s in suggestions:
+            env_note = f" (requires: {', '.join(s.required_env)})" if s.required_env else ""
+            lines.append(f"  - {s.name}: {s.description}{env_note}")
+        lines.append("Enable discovered servers?")
+        message = "\n".join(lines)
+
+        try:
+            accepted = bool(self._prompt_handler(message))
+        except Exception:
+            accepted = False
+
+        new_decisions: Dict[str, bool] = {}
+        for s in suggestions:
+            new_decisions[s.name] = accepted
+            if not accepted:
+                continue
+            missing = [v for v in s.required_env if not os.environ.get(v)]
+            if missing:
+                self.logger.info(
+                    "Skipping MCP server %s: missing env var(s) %s",
+                    s.name,
+                    ", ".join(missing),
+                )
+                continue
+            from .config import McpServerConfig
+            server = McpServerConfig(
+                command=s.server.command,
+                args=list(s.server.args),
+                env={k: os.environ.get(k, "") for k in s.required_env} if s.required_env else {},
+            )
+            ctx.settings.mcp_servers[s.name] = server
+
+        prefs.set_mcp_discovery(new_decisions)
+        prefs.save()
 
     def bootstrap(
         self,
