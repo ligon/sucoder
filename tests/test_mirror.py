@@ -9,7 +9,7 @@ from typing import Callable, Optional
 import pytest
 
 import sucoder.mirror as mirror
-from sucoder.config import AgentLauncher, BranchPrefixes, Config, MirrorSettings, NvmConfig
+from sucoder.config import AgentLauncher, BranchPrefixes, Config, McpServerConfig, MirrorSettings, NvmConfig
 from sucoder.executor import CommandError, CommandExecutor, CommandResult
 from sucoder.mirror import (
     MirrorError,
@@ -2675,3 +2675,162 @@ def test_worktrees_summary_include_main(tmp_path: Path) -> None:
     assert "main" in output
     # The "(main worktree)" label should appear
     assert "(main worktree)" in output
+
+
+# ---- MCP config tests ----
+
+import json
+
+
+def test_resolve_mcp_config_returns_none_when_empty(tmp_path: Path) -> None:
+    """No MCP servers configured means no config file generated."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    assert ctx.settings.mcp_servers == {}
+    result = manager._resolve_mcp_config(ctx)
+    assert result is None
+
+
+def test_resolve_mcp_config_generates_json(tmp_path: Path) -> None:
+    """MCP servers in config produce a valid .sucoder-mcp.json file."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    ctx.settings.mcp_servers = {
+        "filesystem": McpServerConfig(
+            command="npx",
+            args=["-y", "@modelcontextprotocol/server-filesystem", "/data"],
+        ),
+        "github": McpServerConfig(
+            command="npx",
+            args=["-y", "@modelcontextprotocol/server-github"],
+            env={"GITHUB_TOKEN": "tok-123"},
+        ),
+    }
+
+    result = manager._resolve_mcp_config(ctx)
+    assert result is not None
+    assert result.name == ".sucoder-mcp.json"
+    assert result.exists()
+
+    data = json.loads(result.read_text(encoding="utf-8"))
+    assert "mcpServers" in data
+    assert "filesystem" in data["mcpServers"]
+    assert data["mcpServers"]["filesystem"]["command"] == "npx"
+    assert data["mcpServers"]["filesystem"]["args"] == [
+        "-y", "@modelcontextprotocol/server-filesystem", "/data",
+    ]
+    # env omitted when empty
+    assert "env" not in data["mcpServers"]["filesystem"]
+
+    assert data["mcpServers"]["github"]["env"] == {"GITHUB_TOKEN": "tok-123"}
+
+    # Verify git exclude
+    exclude_file = ctx.mirror_path / ".git" / "info" / "exclude"
+    assert ".sucoder-mcp.json" in exclude_file.read_text(encoding="utf-8")
+
+
+def test_resolve_mcp_config_idempotent_exclude(tmp_path: Path) -> None:
+    """Calling _resolve_mcp_config twice doesn't duplicate the exclude entry."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    ctx.settings.mcp_servers = {
+        "tool": McpServerConfig(command="my-tool"),
+    }
+
+    manager._resolve_mcp_config(ctx)
+    manager._resolve_mcp_config(ctx)
+
+    exclude_file = ctx.mirror_path / ".git" / "info" / "exclude"
+    content = exclude_file.read_text(encoding="utf-8")
+    assert content.count(".sucoder-mcp.json") == 1
+
+
+def test_merge_flag_templates_includes_mcp_config() -> None:
+    """mcp_config participates in the three-level merge."""
+    from sucoder.config import AgentFlagTemplates
+    from sucoder.mirror import _merge_flag_templates
+
+    per_mirror = AgentFlagTemplates()
+    global_config = AgentFlagTemplates()
+    profile = AgentFlagTemplates(mcp_config="--mcp-config {path}")
+
+    merged = _merge_flag_templates(per_mirror, global_config, profile)
+    assert merged.mcp_config == "--mcp-config {path}"
+
+    # Per-mirror overrides profile
+    per_mirror2 = AgentFlagTemplates(mcp_config="--custom-mcp {path}")
+    merged2 = _merge_flag_templates(per_mirror2, global_config, profile)
+    assert merged2.mcp_config == "--custom-mcp {path}"
+
+
+def test_launch_agent_includes_mcp_config_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """When MCP servers are configured, --mcp-config appears in the Claude command."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    ctx.settings.agent_launcher = AgentLauncher(command=["claude"])
+    ctx.settings.mcp_servers = {
+        "test-tool": McpServerConfig(command="test-server", args=["--port", "8080"]),
+    }
+
+    calls = []
+
+    def fake_run_agent(args, **kwargs):
+        calls.append(list(args))
+        return CommandResult(
+            requested_args=list(args),
+            executed_args=list(args),
+            stdout="",
+            stderr="",
+            returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+
+    manager.launch_agent(ctx, sync=False)
+
+    assert len(calls) == 1
+    cmd = calls[0]
+    assert "--mcp-config" in cmd
+    mcp_idx = cmd.index("--mcp-config")
+    mcp_path = cmd[mcp_idx + 1]
+    assert mcp_path.endswith(".sucoder-mcp.json")
+
+    # Verify the file contents
+    data = json.loads(Path(mcp_path).read_text(encoding="utf-8"))
+    assert data["mcpServers"]["test-tool"]["command"] == "test-server"
+
+
+def test_launch_agent_no_mcp_flag_without_servers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without MCP servers, no --mcp-config flag is added."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    ctx.settings.agent_launcher = AgentLauncher(command=["claude"])
+
+    calls = []
+
+    def fake_run_agent(args, **kwargs):
+        calls.append(list(args))
+        return CommandResult(
+            requested_args=list(args),
+            executed_args=list(args),
+            stdout="",
+            stderr="",
+            returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+
+    manager.launch_agent(ctx, sync=False)
+
+    assert len(calls) == 1
+    assert "--mcp-config" not in calls[0]

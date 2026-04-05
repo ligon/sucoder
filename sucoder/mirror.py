@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+import json
 import logging
 import os
 import pwd
@@ -1416,6 +1417,15 @@ class MirrorManager:
                         tokens = self._render_flag_template(template, path=str(path))
                         command_list.extend(tokens)
 
+        # mcp_config intent
+        if templates.mcp_config:
+            mcp_config_path = self._resolve_mcp_config(ctx)
+            if mcp_config_path:
+                tokens = self._render_flag_template(
+                    templates.mcp_config, path=str(mcp_config_path),
+                )
+                command_list.extend(tokens)
+
         return command_list
 
     def _resolved_writable_dirs(
@@ -1507,6 +1517,46 @@ class MirrorManager:
     @staticmethod
     def _default_skills_dir() -> Path:
         return Path("~/.sucoder/skills").expanduser()
+
+    _SUCODER_MCP_FILENAME = ".sucoder-mcp.json"
+
+    def _resolve_mcp_config(self, ctx: MirrorContext) -> Optional[Path]:
+        """Generate a ``.sucoder-mcp.json`` file from sucoder-config-level MCP servers.
+
+        Returns the path to the generated file, or ``None`` if no servers
+        are configured.  The file is added to the mirror's local git
+        exclude so it is never committed.
+        """
+        servers = ctx.settings.mcp_servers
+        if not servers:
+            return None
+
+        mirror_path = ctx.mirror_path
+        mcp_path = mirror_path / self._SUCODER_MCP_FILENAME
+
+        payload = {
+            "mcpServers": {
+                name: {
+                    "command": srv.command,
+                    "args": srv.args,
+                    **({"env": srv.env} if srv.env else {}),
+                }
+                for name, srv in servers.items()
+            }
+        }
+
+        mcp_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+        # Exclude from git so the generated file is never committed.
+        exclude_file = mirror_path / ".git" / "info" / "exclude"
+        if exclude_file.exists():
+            existing = exclude_file.read_text(encoding="utf-8")
+            if self._SUCODER_MCP_FILENAME not in existing:
+                with exclude_file.open("a", encoding="utf-8") as fh:
+                    fh.write(f"{self._SUCODER_MCP_FILENAME}\n")
+
+        self.logger.info("Generated MCP config at %s with %d server(s)", mcp_path, len(servers))
+        return mcp_path
 
     def _wrap_with_nvm(self, command: Sequence[str], launcher: AgentLauncher) -> List[str]:
         """Wrap the agent command so it runs under a specific nvm-managed Node version.
@@ -3064,4 +3114,5 @@ def _merge_flag_templates(
         default_flag=_pick("default_flag"),
         skills=_pick("skills"),
         system_prompt=_pick("system_prompt"),
+        mcp_config=_pick("mcp_config"),
     )

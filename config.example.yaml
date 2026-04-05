@@ -46,3 +46,15 @@ mirrors:
         - "~"
       flags:
         skills: "--skills {path}"
+    # MCP servers available to the agent in this mirror (optional).
+    # These are written to .sucoder-mcp.json and passed via --mcp-config.
+    # Repos can also ship their own .mcp.json which Claude discovers natively.
+    # mcp_servers:
+    #   filesystem:
+    #     command: npx
+    #     args: ["-y", "@modelcontextprotocol/server-filesystem", "/data"]
+    #   github:
+    #     command: npx
+    #     args: ["-y", "@modelcontextprotocol/server-github"]
+    #     env:
+    #       GITHUB_TOKEN: "<token>"

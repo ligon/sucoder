@@ -75,6 +75,15 @@ class NvmConfig:
 
 
 @dataclass
+class McpServerConfig:
+    """Definition of a single MCP server."""
+
+    command: str
+    args: List[str] = field(default_factory=list)
+    env: Dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
 class AgentLauncher:
     """Configuration for launching the agent process."""
 
@@ -104,6 +113,7 @@ class AgentFlagTemplates:
     default_flag: Optional[str] = "{flag}"
     skills: Optional[str] = None
     system_prompt: Optional[str] = None
+    mcp_config: Optional[str] = None
 
 
 # Agent profiles provide CLI-specific default flag templates.
@@ -115,24 +125,28 @@ AGENT_PROFILES: Dict[AgentType, AgentFlagTemplates] = {
         writable_dir=None,
         system_prompt=None,
         skills=None,
+        mcp_config=None,
     ),
     AgentType.CLAUDE: AgentFlagTemplates(
         yolo="--dangerously-skip-permissions",
         writable_dir="--add-dir {path}",
         system_prompt="--system-prompt",  # Flag only; content added as separate arg
         skills=None,  # Claude doesn't have a direct skills flag
+        mcp_config="--mcp-config {path}",
     ),
     AgentType.CODEX: AgentFlagTemplates(
         yolo="--sandbox danger-full-access --ask-for-approval never",
         writable_dir=None,  # codex uses sandbox permissions instead
         system_prompt=None,  # codex uses trailing text
         skills=None,
+        mcp_config=None,
     ),
     AgentType.GEMINI: AgentFlagTemplates(
         yolo="--yolo",
         writable_dir="--include-directories {path}",
         system_prompt="--prompt-interactive",  # stays interactive after prompt
         skills=None,
+        mcp_config=None,
     ),
 }
 
@@ -159,6 +173,7 @@ class MirrorSettings:
     task_branch_prefix: str = "task"
     agent_launcher: AgentLauncher = field(default_factory=AgentLauncher)
     skills: List[Path] = field(default_factory=list)
+    mcp_servers: Dict[str, McpServerConfig] = field(default_factory=dict)
     remote: Optional[RemoteConfig] = None
 
     @property
@@ -177,6 +192,7 @@ class Config:
     agent_group: str = "coder"
     mirror_root: Path = field(default_factory=Path)
     skills: List[Path] = field(default_factory=list)
+    mcp_servers: Dict[str, McpServerConfig] = field(default_factory=dict)
     system_prompt: Optional[Path] = None
     log_dir: Optional[Path] = None
     agent_launcher: Optional[AgentLauncher] = None  # Global defaults for all mirrors
@@ -373,6 +389,7 @@ def _build_config(data: Dict[str, Any], *, path: Path) -> Config:
         raise ConfigError(f"Configured system_prompt file not found: {system_prompt}")
 
     global_skills = _parse_skills(data.get("skills"))
+    global_mcp_servers = _parse_mcp_servers(data.get("mcp_servers"))
 
     # Parse global agent_launcher defaults (applies to all mirrors unless overridden)
     global_agent_launcher = None
@@ -380,7 +397,10 @@ def _build_config(data: Dict[str, Any], *, path: Path) -> Config:
         global_agent_launcher = _parse_agent_launcher(data.get("agent_launcher"))
 
     targets = _parse_targets(data.get("targets"))
-    mirrors = _parse_mirrors(data.get("mirrors"), global_skills=global_skills, path=path)
+    mirrors = _parse_mirrors(
+        data.get("mirrors"), global_skills=global_skills,
+        global_mcp_servers=global_mcp_servers, path=path,
+    )
 
     mirror_root = _expand_path(mirror_root_raw)
     if mirror_root is None:
@@ -392,6 +412,7 @@ def _build_config(data: Dict[str, Any], *, path: Path) -> Config:
         agent_group=data.get("agent_group", data.get("agent_user", "coder")),
         mirror_root=mirror_root,
         skills=global_skills,
+        mcp_servers=global_mcp_servers,
         system_prompt=system_prompt,
         log_dir=log_dir,
         agent_launcher=global_agent_launcher,
@@ -400,7 +421,13 @@ def _build_config(data: Dict[str, Any], *, path: Path) -> Config:
     )
 
 
-def _parse_mirrors(raw: Any, *, global_skills: List[Path], path: Path) -> Dict[str, MirrorSettings]:
+def _parse_mirrors(
+    raw: Any,
+    *,
+    global_skills: List[Path],
+    global_mcp_servers: Dict[str, McpServerConfig],
+    path: Path,
+) -> Dict[str, MirrorSettings]:
     if raw is None:
         return {}  # No mirrors configured; zero-config detection will add them.
     if isinstance(raw, list):
@@ -438,6 +465,13 @@ def _parse_mirrors(raw: Any, *, global_skills: List[Path], path: Path) -> Dict[s
         skills_raw_present = "skills" in value
         skills = _parse_skills(value.get("skills")) if skills_raw_present else list(global_skills)
 
+        mcp_raw_present = "mcp_servers" in value
+        mcp_servers = (
+            _parse_mcp_servers(value.get("mcp_servers"))
+            if mcp_raw_present
+            else dict(global_mcp_servers)
+        )
+
         canonical_repo = _expand_path(canonical_raw)
         if canonical_repo is None:
             raise ConfigError(
@@ -453,6 +487,7 @@ def _parse_mirrors(raw: Any, *, global_skills: List[Path], path: Path) -> Dict[s
             task_branch_prefix=value.get("task_branch_prefix", "task"),
             agent_launcher=launcher,
             skills=skills,
+            mcp_servers=mcp_servers,
             remote=remote,
         )
 
@@ -577,6 +612,7 @@ def _parse_flag_templates(raw: Any) -> AgentFlagTemplates:
         default_flag=_template("default_flag"),
         skills=_template("skills"),
         system_prompt=_template("system_prompt"),
+        mcp_config=_template("mcp_config"),
     )
 
 
@@ -693,3 +729,34 @@ def _parse_skills(raw: Any) -> List[Path]:
             continue
         skills.append(expanded)
     return skills
+
+
+def _parse_mcp_servers(raw: Any) -> Dict[str, McpServerConfig]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ConfigError("`mcp_servers` must be a mapping of server names to configurations.")
+
+    servers: Dict[str, McpServerConfig] = {}
+    for name, value in raw.items():
+        if not isinstance(name, str):
+            raise ConfigError("`mcp_servers` keys must be strings.")
+        if not isinstance(value, dict):
+            raise ConfigError(f"`mcp_servers.{name}` must be a mapping.")
+
+        command = value.get("command")
+        if not command or not isinstance(command, str):
+            raise ConfigError(f"`mcp_servers.{name}.command` must be a non-empty string.")
+
+        args = value.get("args", [])
+        if not isinstance(args, list) or any(not isinstance(a, str) for a in args):
+            raise ConfigError(f"`mcp_servers.{name}.args` must be a list of strings.")
+
+        env = value.get("env", {})
+        if not isinstance(env, dict) or any(
+            not isinstance(k, str) or not isinstance(v, str) for k, v in env.items()
+        ):
+            raise ConfigError(f"`mcp_servers.{name}.env` must be a mapping of strings to strings.")
+
+        servers[name] = McpServerConfig(command=command, args=list(args), env=dict(env))
+    return servers
