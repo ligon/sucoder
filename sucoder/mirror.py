@@ -532,7 +532,21 @@ class MirrorManager:
             )
             return
 
-        # Histories have diverged — need user input.
+        # Check reverse: canonical is ahead of the mirror (mirror is
+        # an ancestor of canonical).  Nothing to pull — the upcoming
+        # push will bring the mirror up to date.
+        mirror_behind = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", tmp_ref, base],
+            capture_output=True, cwd=canon,
+        ).returncode == 0
+
+        if mirror_behind:
+            self.logger.info(
+                "Canonical is ahead of mirror — nothing to pull"
+            )
+            return
+
+        # Histories have genuinely diverged — need user input.
         only_on_mirror = subprocess.run(
             ["git", "log", "--oneline", f"{base}..{tmp_ref}"],
             capture_output=True, text=True, cwd=canon,
@@ -550,18 +564,137 @@ class MirrorManager:
         print()
 
         answer = input(
-            "Continue syncing? This will DISCARD the mirror-only commits.\n"
-            "  [y] Continue and discard mirror commits\n"
+            "How would you like to reconcile?\n"
+            "  [m] Merge mirror commits into canonical (default)\n"
+            "  [s] Stash mirror commits on a local branch, then sync\n"
+            "  [d] Discard mirror-only commits\n"
             "  [n] Abort so you can reconcile manually\n"
-            "  Choice [n]: "
-        ).strip().lower()
+            "  Choice [m]: "
+        ).strip().lower() or "m"
 
-        if answer != "y":
+        if answer == "m":
+            self._merge_mirror_commits(canon, base, tmp_ref, url)
+        elif answer == "s":
+            self._stash_mirror_commits(canon, tmp_ref, base)
+        elif answer == "d":
+            self.logger.info(
+                "Discarding mirror-only commits; canonical will "
+                "overwrite the mirror on next push"
+            )
+        else:
             raise MirrorError(
                 "Aborting sync — mirror has diverged commits that need "
                 "manual reconciliation.  The mirror branch is available "
                 f"locally at {tmp_ref} for inspection."
             )
+
+    def _merge_mirror_commits(
+        self,
+        canon: str,
+        base: str,
+        tmp_ref: str,
+        url: str,
+    ) -> None:
+        """Attempt to merge mirror-only commits into canonical.
+
+        If the merge applies cleanly, the canonical branch incorporates
+        both histories and the subsequent push brings the mirror up to
+        date with a fast-forward.
+
+        If there are conflicts, the merge is aborted and the caller is
+        given the choice to discard or reconcile manually.
+        """
+        import subprocess
+
+        self.logger.info("Attempting to merge mirror commits into canonical")
+
+        result = subprocess.run(
+            ["git", "merge", "--no-edit", tmp_ref],
+            capture_output=True,
+            text=True,
+            cwd=canon,
+        )
+
+        if result.returncode == 0:
+            self.logger.info(
+                "Merge succeeded — canonical now includes mirror commits"
+            )
+            return
+
+        # Merge failed (conflicts).  Abort and let the user decide.
+        self.logger.warning("Merge has conflicts — aborting merge")
+        subprocess.run(
+            ["git", "merge", "--abort"],
+            capture_output=True,
+            cwd=canon,
+            check=False,
+        )
+
+        print("\n⚠  Automatic merge failed due to conflicts.")
+        print(f"  Mirror branch is available locally at {tmp_ref}")
+        print()
+
+        fallback = input(
+            "  [d] Discard mirror-only commits and continue\n"
+            "  [n] Abort so you can reconcile manually\n"
+            "  Choice [n]: "
+        ).strip().lower()
+
+        if fallback == "d":
+            self.logger.info(
+                "Discarding mirror-only commits; canonical will "
+                "overwrite the mirror on next push"
+            )
+            return
+
+        raise MirrorError(
+            "Aborting sync — merge had conflicts.  The mirror branch "
+            f"is available locally at {tmp_ref} for manual resolution.  "
+            f"Try: git merge {tmp_ref}  (in the canonical repo)"
+        )
+
+    def _stash_mirror_commits(
+        self,
+        canon: str,
+        tmp_ref: str,
+        base: str,
+    ) -> None:
+        """Save mirror-only commits on a dated local branch.
+
+        Creates ``mirror-stash/<base>/<YYYY-MM-DD>`` (with a numeric
+        suffix if the name is already taken) so the work is preserved
+        for later merging.  The sync then proceeds as a discard —
+        canonical overwrites the mirror on the next push.
+        """
+        import datetime as _dt
+        import subprocess
+
+        today = _dt.date.today().isoformat()
+        candidate = f"mirror-stash/{base}/{today}"
+
+        # Find a unique branch name.
+        suffix = 0
+        branch = candidate
+        while True:
+            exists = subprocess.run(
+                ["git", "rev-parse", "--verify", f"refs/heads/{branch}"],
+                capture_output=True, cwd=canon,
+            ).returncode == 0
+            if not exists:
+                break
+            suffix += 1
+            branch = f"{candidate}-{suffix}"
+
+        subprocess.run(
+            ["git", "branch", branch, tmp_ref],
+            check=True,
+            capture_output=True,
+            cwd=canon,
+        )
+        self.logger.info(
+            "Mirror commits saved on branch '%s' — merge when ready",
+            branch,
+        )
 
     # Timeout (seconds) for git push/fetch over SSH to the remote
     # mirror.  Generous because large repos over contended Lustre can
