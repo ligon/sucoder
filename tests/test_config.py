@@ -9,6 +9,7 @@ from sucoder.config import (
     KNOWN_AGENTS,
     BranchPrefixes,
     ConfigError,
+    McpServerConfig,
     build_default_config,
     detect_agent_command,
     load_config,
@@ -58,7 +59,10 @@ mirrors:
     assert sample.agent_launcher.flags.default_flag == "{flag}"
     assert sample.agent_launcher.flags.skills is None
     assert sample.agent_launcher.flags.system_prompt is None
+    assert sample.agent_launcher.flags.mcp_config is None
     assert sample.skills == []
+    assert sample.mcp_servers == {}
+    assert cfg.mcp_servers == {}
     assert cfg.system_prompt is None
 
 
@@ -249,6 +253,7 @@ mirrors:
     assert flags.workdir == "--here {path}"
     assert flags.default_flag == "--add {flag}"
     assert flags.skills == "--skills {path}"
+    assert flags.mcp_config is None
 
 
 def test_load_config_with_system_prompt(tmp_path: Path) -> None:
@@ -520,3 +525,173 @@ def test_detect_agent_multiple_prompts(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert result == ["claude"]
     # Verify it saved the preference
     assert pref_file.read_text(encoding="utf-8").strip() == "claude"
+
+
+# ---- MCP server config tests ----
+
+
+def test_load_config_with_mcp_servers(tmp_path: Path) -> None:
+    config_path = write_config(
+        tmp_path,
+        """
+human_user: ligon
+mirror_root: ./mirrors
+mirrors:
+  sample:
+    canonical_repo: ./canonical
+    mcp_servers:
+      filesystem:
+        command: npx
+        args: ["-y", "@modelcontextprotocol/server-filesystem", "/data"]
+      github:
+        command: npx
+        args: ["-y", "@modelcontextprotocol/server-github"]
+        env:
+          GITHUB_TOKEN: "tok-123"
+""",
+    )
+    cfg = load_config(config_path)
+    sample = cfg.mirrors["sample"]
+    assert len(sample.mcp_servers) == 2
+
+    fs = sample.mcp_servers["filesystem"]
+    assert fs.command == "npx"
+    assert fs.args == ["-y", "@modelcontextprotocol/server-filesystem", "/data"]
+    assert fs.env == {}
+
+    gh = sample.mcp_servers["github"]
+    assert gh.command == "npx"
+    assert gh.args == ["-y", "@modelcontextprotocol/server-github"]
+    assert gh.env == {"GITHUB_TOKEN": "tok-123"}
+
+
+def test_load_config_mcp_servers_defaults_empty(tmp_path: Path) -> None:
+    config_path = write_config(
+        tmp_path,
+        """
+human_user: ligon
+mirror_root: ./mirrors
+mirrors:
+  sample:
+    canonical_repo: ./canonical
+""",
+    )
+    cfg = load_config(config_path)
+    assert cfg.mirrors["sample"].mcp_servers == {}
+    assert cfg.mcp_servers == {}
+
+
+def test_load_config_global_mcp_servers_inherited(tmp_path: Path) -> None:
+    config_path = write_config(
+        tmp_path,
+        """
+human_user: ligon
+mirror_root: ./mirrors
+mcp_servers:
+  shared-tool:
+    command: my-tool
+    args: ["--mode", "shared"]
+mirrors:
+  sample:
+    canonical_repo: ./canonical
+""",
+    )
+    cfg = load_config(config_path)
+    # Global servers inherited by mirror that doesn't define its own
+    assert "shared-tool" in cfg.mirrors["sample"].mcp_servers
+    assert cfg.mirrors["sample"].mcp_servers["shared-tool"].command == "my-tool"
+
+
+def test_load_config_per_mirror_mcp_servers_overrides_global(tmp_path: Path) -> None:
+    config_path = write_config(
+        tmp_path,
+        """
+human_user: ligon
+mirror_root: ./mirrors
+mcp_servers:
+  shared-tool:
+    command: global-tool
+mirrors:
+  sample:
+    canonical_repo: ./canonical
+    mcp_servers:
+      local-tool:
+        command: local-tool
+""",
+    )
+    cfg = load_config(config_path)
+    sample = cfg.mirrors["sample"]
+    # Per-mirror fully replaces global (same pattern as skills)
+    assert "local-tool" in sample.mcp_servers
+    assert "shared-tool" not in sample.mcp_servers
+
+
+@pytest.mark.parametrize(
+    "yaml_content, message",
+    [
+        (
+            """
+human_user: ligon
+mirror_root: ./mirrors
+mcp_servers: not-a-dict
+""",
+            "`mcp_servers` must be a mapping",
+        ),
+        (
+            """
+human_user: ligon
+mirror_root: ./mirrors
+mcp_servers:
+  bad:
+    command: 123
+""",
+            "`mcp_servers.bad.command` must be a non-empty string",
+        ),
+        (
+            """
+human_user: ligon
+mirror_root: ./mirrors
+mcp_servers:
+  bad:
+    command: ok
+    args: "not-a-list"
+""",
+            "`mcp_servers.bad.args` must be a list of strings",
+        ),
+        (
+            """
+human_user: ligon
+mirror_root: ./mirrors
+mcp_servers:
+  bad:
+    command: ok
+    env: "not-a-dict"
+""",
+            "`mcp_servers.bad.env` must be a mapping",
+        ),
+    ],
+)
+def test_load_config_invalid_mcp_servers(
+    tmp_path: Path, yaml_content: str, message: str,
+) -> None:
+    config_path = write_config(tmp_path, yaml_content)
+    with pytest.raises(ConfigError, match=message):
+        load_config(config_path)
+
+
+def test_load_config_mcp_config_flag_template(tmp_path: Path) -> None:
+    config_path = write_config(
+        tmp_path,
+        """
+human_user: ligon
+mirror_root: ./mirrors
+mirrors:
+  sample:
+    canonical_repo: ./canonical
+    agent_launcher:
+      flags:
+        mcp_config: "--mcp-config {path}"
+""",
+    )
+    cfg = load_config(config_path)
+    assert cfg.mirrors["sample"].agent_launcher.flags.mcp_config == "--mcp-config {path}"
