@@ -23,6 +23,8 @@ For multi-repo setups, skills, and system prompts, see [[*Configuration][Configu
 - Linux (user/group sandboxing relies on =useradd=, =groupadd=, and setgid)
 - Python >= 3.9 with pip
 - git
+- git-crypt (for decrypting =.mcp.json= which contains MCP server tokens)
+- Node.js and npx (MCP servers are distributed as npm packages)
 - sudo
 - make (optional; you can run the setup commands by hand)
 - bash
@@ -508,9 +510,81 @@ per-mirror > global > profile > UNKNOWN.
 | default_flag   | Pass through default flags  | {flag}                                                | {flag}                       | {flag}                             | Each default flag is rendered through this template. |
 | skills         | Expose skills paths         | (none)                                                | (none)                       | (none)                             | Use "--skills {path}" or similar if your CLI supports it. |
 | system_prompt  | Inject system prompt        | (none)                                                | --system-prompt              | --prompt-interactive               | If unset, sucoder appends the prompt as trailing text when inline prompts are supported. |
+| mcp_config     | Pass MCP server config      | (none)                                                | --mcp-config {path}          | (none)                             | Only used for sucoder-config-level MCP servers; repo-shipped =.mcp.json= is discovered natively. |
 
 If you change any defaults, update =AGENT_PROFILES= in =sucoder/config.py= alongside the
 README so the documentation stays in sync.
+
+** MCP servers (repo-specific tools)
+
+MCP (Model Context Protocol) servers give agents access to external services---GitHub, web pages, databases---via a standardised tool interface.  Claude Code on the web injects GitHub tools automatically, but the CLI (=claude=) does not.  Since =sucoder= launches agents via the CLI, MCP servers bridge the gap.
+
+*** How it works
+
+There are two independent sources of MCP configuration; Claude merges them automatically:
+
+1. *Repo-shipped =.mcp.json=* --- lives in the repository root.  Claude discovers it natively when launched in the mirror.  This is the simplest approach: add the file, commit it, and every agent session gets those tools.
+
+2. *Sucoder-config =mcp_servers=* --- defined in =~/.sucoder/config.yaml= at the global or per-mirror level.  Sucoder generates a =.sucoder-mcp.json= file in the mirror and passes it via =--mcp-config=.  Use this for infrastructure tools that are not part of any single repo.
+
+*** Shipped MCP servers
+
+This repository includes a =.mcp.json= with three servers:
+
+| Server   | Purpose                                              |
+|----------+------------------------------------------------------|
+| =github= | Read/write GitHub issues, PRs, CI status, comments   |
+| =fetch=  | Fetch web pages and URLs (documentation, references)  |
+| =memory= | Persistent knowledge graph across agent sessions      |
+
+The =github= server requires a =GITHUB_TOKEN= environment variable.  Because =.mcp.json= contains this secret, the file is encrypted with =git-crypt=.
+
+*** Setting up git-crypt (first time)
+
+After cloning the repository, unlock the encrypted files:
+
+#+begin_src shell
+# Install git-crypt if needed
+brew install git-crypt   # macOS
+sudo apt install git-crypt  # Debian/Ubuntu
+
+# If you are initialising git-crypt for the first time in this repo:
+git-crypt init
+git-crypt add-gpg-user <your-gpg-key-id>
+
+# Edit .mcp.json to add your real GITHUB_TOKEN, then commit.
+# The file will be stored encrypted in the repo but readable in your checkout.
+
+# If git-crypt is already initialised, just unlock:
+git-crypt unlock
+#+end_src
+
+Collaborators who have been added via =git-crypt add-gpg-user= can unlock with their GPG key.  The agent user (=coder=) works in a mirror cloned from an already-unlocked checkout, so the plaintext =.mcp.json= is available without additional setup.
+
+*** Configuring MCP servers via =config.yaml=
+
+For MCP servers that should be available across multiple repos (not shipped in any single repo), add them to the sucoder configuration:
+
+#+begin_src yaml
+# Global MCP servers (available to all mirrors)
+mcp_servers:
+  my-database:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-postgres"]
+    env:
+      DATABASE_URL: "postgresql://localhost/mydb"
+
+# Or per-mirror (overrides global for that mirror)
+mirrors:
+  project:
+    canonical_repo: ~/src/project.git
+    mcp_servers:
+      custom-tool:
+        command: my-mcp-server
+        args: ["--port", "8080"]
+#+end_src
+
+Sucoder writes these to =.sucoder-mcp.json= in the mirror (excluded from git) and passes =--mcp-config= to Claude.  If the repo also ships a =.mcp.json=, Claude merges servers from both sources.
 
 ** Agent capability comparison
 
