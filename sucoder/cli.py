@@ -1797,3 +1797,64 @@ def _collect_directory_preview(path: Path, executor: CommandExecutor, limit: int
         trimmed.append(f"...(+{extras})")
         return trimmed
     return entries
+
+
+@app.command("mcp-suggest")
+def mcp_suggest(
+    ctx: typer.Context,
+    mirror: Optional[str] = typer.Argument(
+        None, help="Mirror name (auto-detected when omitted).",
+        shell_complete=_mirror_completion,
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
+    apply: bool = typer.Option(False, "--apply", help="Save accepted servers to mirror prefs."),
+) -> None:
+    """Scan mirror for tech stack indicators and suggest MCP servers."""
+    import json as _json
+
+    from .config import McpServerConfig
+    from .mcp_discovery import detect_suggestions
+    from .workspace_prefs import WorkspacePrefs
+
+    mirror_name = _resolve_mirror_name(ctx, mirror)
+    config = _get_config(ctx)
+    logger = setup_logger(f"sucoder.{mirror_name}", config.log_dir, verbose)
+    manager = _build_manager_for_mirror(config, logger, False, mirror_name)
+    mirror_ctx = manager.context_for(mirror_name)
+    mirror_path = mirror_ctx.mirror_path
+
+    if not mirror_path.exists():
+        typer.secho(f"Mirror path does not exist: {mirror_path}", fg="red")
+        raise typer.Exit(code=1)
+
+    existing: Dict[str, McpServerConfig] = dict(mirror_ctx.settings.mcp_servers)
+    repo_mcp = mirror_path / ".mcp.json"
+    if repo_mcp.exists():
+        try:
+            repo_data = _json.loads(repo_mcp.read_text(encoding="utf-8"))
+            for name in repo_data.get("mcpServers", {}):
+                existing[name] = McpServerConfig(command="")
+        except (_json.JSONDecodeError, OSError):
+            pass
+
+    suggestions = detect_suggestions(mirror_path, existing)
+
+    if not suggestions:
+        typer.echo("No additional MCP servers suggested for this repo.")
+        raise typer.Exit()
+
+    typer.echo(f"Suggested MCP servers for {mirror_name}:\n")
+    for s in suggestions:
+        env_note = f"  (requires: {', '.join(s.required_env)})" if s.required_env else ""
+        if s.required_env and not all(os.environ.get(v) for v in s.required_env):
+            status = typer.style("missing env", fg="yellow")
+        else:
+            status = typer.style("ready", fg="green")
+        typer.echo(f"  {s.name}: {s.description}{env_note} [{status}]")
+
+    if apply:
+        prefs = WorkspacePrefs.load(mirror_path)
+        decisions = {s.name: True for s in suggestions}
+        prefs.set_mcp_discovery(decisions)
+        prefs.save()
+        typer.echo(f"\nSaved {len(suggestions)} server(s) to mirror prefs.")
