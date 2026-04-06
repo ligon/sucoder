@@ -4,5 +4,5 @@ set -euo pipefail
 remote=${1:-coder}
 prefix=${2:-coder}
 
-git fetch "${remote}"
+git fetch --no-recurse-submodules "${remote}"
 git for-each-ref "refs/remotes/${remote}/${prefix}/" --format='%(refname:strip=2)'

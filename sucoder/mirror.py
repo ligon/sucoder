@@ -1376,6 +1376,13 @@ class MirrorManager:
                     "and re-run `poetry install` manually before retrying."
                 )
                 return
+            if self._poetry_vcs_detection_error(exc):
+                self.logger.warning(
+                    "Poetry could not detect the VCS in %s (git-crypt filter issue?). "
+                    "Skipping auto-install; the agent can run `poetry install` itself.",
+                    ctx.settings.name,
+                )
+                return
             raise MirrorError(
                 "`poetry install` failed while preparing mirror "
                 f"{ctx.settings.name}."
@@ -1421,6 +1428,13 @@ class MirrorManager:
             "python version" in combined
             and "not supported by the project" in combined
         )
+
+    def _poetry_vcs_detection_error(self, error: CommandError) -> bool:
+        """Detect Poetry failures caused by VCS detection (e.g. git-crypt filter errors)."""
+        combined = "\n".join(
+            part for part in (error.result.stdout, error.result.stderr) if part
+        ).lower()
+        return "unable to detect version control system" in combined
 
     def _poetry_error_highlights(self, error: CommandError) -> Sequence[str]:
         """Extract notable lines from Poetry output for logging."""
@@ -2431,21 +2445,84 @@ If you find issues, describe each one clearly with the filename and specific con
         (``.git/git-crypt/keys/default``) can unlock the mirror without
         requiring GPG.  This is a no-op when git-crypt is not in use or
         the mirror is already unlocked.
+
+        Handles a chicken-and-egg problem: when the mirror is locked,
+        git-crypt's clean filter breaks ``git status``, which in turn
+        prevents ``git-crypt unlock`` from running.  We work around this
+        by temporarily neutering the filter, stashing dirty state, then
+        unlocking.
         """
         canonical_key = ctx.canonical_path / ".git" / "git-crypt" / "keys" / "default"
         if not canonical_key.is_file():
             return  # canonical repo doesn't use git-crypt or is locked
 
-        # Check whether the mirror is already unlocked by looking for its
-        # own key file (git-crypt writes it on unlock).
-        mirror_key = mirror_path / ".git" / "git-crypt" / "keys" / "default"
-        if mirror_key.is_file():
-            return  # already unlocked
+        # Quick check: can the agent run ``git status`` without error?
+        # If yes and git-crypt reports no encrypted files, we're already unlocked.
+        try:
+            result = self.executor.run_agent(
+                ["git-crypt", "status"],
+                check=False,
+                cwd=str(mirror_path),
+            )
+            if result.returncode == 0 and "encrypted:" not in result.stdout:
+                return  # already unlocked
+        except FileNotFoundError:
+            self.logger.warning("git-crypt not found; skipping unlock")
+            return
 
         self.logger.info("Unlocking git-crypt in mirror using canonical key")
+
+        # Ensure the canonical key is readable by the agent user.
+        try:
+            self.executor.run_human(
+                ["chmod", "g+r", str(canonical_key)],
+                check=True,
+            )
+        except CommandError as exc:
+            self.logger.warning(
+                "Could not make canonical git-crypt key group-readable: %s", exc
+            )
+
+        # Remove a stale key file left by a prior failed unlock so
+        # git-crypt doesn't think the mirror is already unlocked.
+        mirror_key = mirror_path / ".git" / "git-crypt" / "keys" / "default"
+        if mirror_key.exists():
+            try:
+                self.executor.run_agent(
+                    ["rm", "-f", str(mirror_key)],
+                    check=False,
+                    cwd=str(mirror_path),
+                )
+            except CommandError:
+                pass
+
+        # Attempt a straight unlock first.
         try:
             self.executor.run_agent(
                 ["git-crypt", "unlock", str(canonical_key)],
+                check=True,
+                cwd=str(mirror_path),
+            )
+            return
+        except (CommandError, FileNotFoundError):
+            self.logger.debug(
+                "Direct git-crypt unlock failed; trying filter-neuter workaround"
+            )
+
+        # Workaround: the git-crypt filter is configured but broken
+        # (mirror is locked), so ``git status`` fails and git-crypt
+        # refuses to unlock.  Temporarily replace the filter with ``cat``
+        # so git can operate, stash any dirty state, unlock, then pop.
+        try:
+            neuter_script = (
+                'git config --local filter.git-crypt.clean cat && '
+                'git config --local filter.git-crypt.smudge cat && '
+                'git stash --include-untracked && '
+                f'git-crypt unlock {shlex.quote(str(canonical_key))} && '
+                'git stash pop || true'
+            )
+            self.executor.run_agent(
+                ["bash", "-c", neuter_script],
                 check=True,
                 cwd=str(mirror_path),
             )
