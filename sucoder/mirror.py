@@ -172,6 +172,7 @@ class MirrorManager:
             self.logger.info("Mirror already exists at %s", mirror_path)
             self._verify_remote(ctx)
             self._enforce_permissions(ctx)
+            self._unlock_git_crypt(ctx, mirror_path)
             self._ensure_agent_agnostic_symlinks(mirror_path)
             self._allow_direnv_if_present(mirror_path)
             return
@@ -232,6 +233,7 @@ class MirrorManager:
 
         ensure_directory_mode(self.executor, mirror_path, "2770", as_agent=True)
         self._enforce_permissions(ctx)
+        self._unlock_git_crypt(ctx, mirror_path)
         self._ensure_agent_agnostic_symlinks(mirror_path)
         self._allow_direnv_if_present(mirror_path)
 
@@ -2421,6 +2423,34 @@ If you find issues, describe each one clearly with the filename and specific con
 
     _AGENT_DOC_NAMES = ("AGENT.md", "AGENT.org")
     _SKILLS_DIR_NAME = ".skills"
+
+    def _unlock_git_crypt(self, ctx: MirrorContext, mirror_path: Path) -> None:
+        """Unlock git-crypt in the mirror using the canonical repo's symmetric key.
+
+        If the canonical repo has git-crypt unlocked, its symmetric key
+        (``.git/git-crypt/keys/default``) can unlock the mirror without
+        requiring GPG.  This is a no-op when git-crypt is not in use or
+        the mirror is already unlocked.
+        """
+        canonical_key = ctx.canonical_path / ".git" / "git-crypt" / "keys" / "default"
+        if not canonical_key.is_file():
+            return  # canonical repo doesn't use git-crypt or is locked
+
+        # Check whether the mirror is already unlocked by looking for its
+        # own key file (git-crypt writes it on unlock).
+        mirror_key = mirror_path / ".git" / "git-crypt" / "keys" / "default"
+        if mirror_key.is_file():
+            return  # already unlocked
+
+        self.logger.info("Unlocking git-crypt in mirror using canonical key")
+        try:
+            self.executor.run_agent(
+                ["git-crypt", "unlock", str(canonical_key)],
+                check=True,
+                cwd=str(mirror_path),
+            )
+        except (CommandError, FileNotFoundError) as exc:
+            self.logger.warning("git-crypt unlock failed (non-fatal): %s", exc)
 
     def _ensure_agent_agnostic_symlinks(self, mirror_path: Path) -> None:
         """Create Claude-discoverable symlinks for agent-agnostic conventions.

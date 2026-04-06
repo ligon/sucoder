@@ -82,7 +82,7 @@ def _read_repo_mcp_server_names(mirror_path: Path) -> set[str]:
     try:
         data = json.loads(mcp_file.read_text(encoding="utf-8"))
         return set(data.get("mcpServers", {}).keys())
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError, ValueError):
         return set()
 
 
