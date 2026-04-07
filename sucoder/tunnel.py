@@ -92,6 +92,7 @@ class SshControl:
                 self.gateway,
             ],
             capture_output=True,
+            stdin=subprocess.DEVNULL,
             text=True,
             check=False,
         )
@@ -109,6 +110,7 @@ class SshControl:
                     "true",
                 ],
                 capture_output=True,
+                stdin=subprocess.DEVNULL,
                 text=True,
                 check=False,
                 timeout=10,
@@ -238,6 +240,7 @@ class SshControl:
                         "true",
                     ],
                     capture_output=True,
+                    stdin=subprocess.DEVNULL,
                     text=True,
                     check=False,
                     timeout=10,
@@ -284,6 +287,7 @@ class SshControl:
                 self.gateway,
             ],
             capture_output=True,
+            stdin=subprocess.DEVNULL,
             text=True,
             check=False,
         )
@@ -364,6 +368,7 @@ class SshTunnel:
                 cmd,
                 check=True,
                 capture_output=True,
+                stdin=subprocess.DEVNULL,
                 text=True,
             )
         except subprocess.CalledProcessError as exc:
@@ -425,6 +430,7 @@ class SshTunnel:
             result = subprocess.run(
                 ["pgrep", "-f", f"-L {self.local_port}:{self.target_host}:{self.target_port}"],
                 capture_output=True,
+                stdin=subprocess.DEVNULL,
                 text=True,
                 check=False,
             )

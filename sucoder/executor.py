@@ -139,6 +139,13 @@ class CommandExecutor:
         }
         if capture_output:
             run_kwargs["capture_output"] = True
+            # Prevent subprocesses (especially SSH) from inheriting and
+            # consuming the parent's stdin.  Without this, SSH may read
+            # from stdin for password/host-key prompts, corrupting it
+            # before interactive helpers like _prompt_choice() call
+            # input().  Commands that genuinely need stdin use
+            # capture_output=False.
+            run_kwargs["stdin"] = subprocess.DEVNULL
         if timeout is not None:
             run_kwargs["timeout"] = timeout
         try:
