@@ -2834,3 +2834,230 @@ def test_launch_agent_no_mcp_flag_without_servers(tmp_path: Path, monkeypatch: p
 
     assert len(calls) == 1
     assert "--mcp-config" not in calls[0]
+
+
+# ------------------------------------------------------------------
+# Interactive helpers: _prompt_choice, _unique_branch_name
+# ------------------------------------------------------------------
+
+
+class TestPromptChoice:
+    """Tests for MirrorManager._prompt_choice."""
+
+    def test_returns_user_choice(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("builtins.input", lambda _prompt: "d")
+        result = MirrorManager._prompt_choice(
+            "Pick one:",
+            [("a", "Alpha"), ("d", "Delta")],
+            default="a",
+        )
+        assert result == "d"
+
+    def test_returns_default_on_empty_input(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("builtins.input", lambda _prompt: "")
+        result = MirrorManager._prompt_choice(
+            "Pick one:",
+            [("m", "Merge"), ("n", "Abort")],
+            default="m",
+        )
+        assert result == "m"
+
+    def test_lowercases_input(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("builtins.input", lambda _prompt: " S ")
+        result = MirrorManager._prompt_choice(
+            "Pick:", [("s", "Stash")], default="n",
+        )
+        assert result == "s"
+
+
+class TestUniqueBranchName:
+    """Tests for MirrorManager._unique_branch_name."""
+
+    def test_first_name_available(self) -> None:
+        branch = MirrorManager._unique_branch_name(
+            "rescue", exists_fn=lambda _name: False,
+        )
+        # Should be rescue/YYYY-MM-DD with no suffix.
+        assert branch.startswith("rescue/")
+        assert "-" in branch  # date contains dashes
+        parts = branch.split("/", 1)[1].split("-")
+        assert len(parts) == 3  # YYYY-MM-DD
+
+    def test_appends_suffix_when_taken(self) -> None:
+        taken: set[str] = set()
+
+        def _exists(name: str) -> bool:
+            # First two names are taken.
+            if len(taken) < 2:
+                taken.add(name)
+                return True
+            return False
+
+        branch = MirrorManager._unique_branch_name(
+            "mirror-stash/main", exists_fn=_exists,
+        )
+        assert branch.endswith("-2")
+        assert branch.startswith("mirror-stash/main/")
+
+
+# ------------------------------------------------------------------
+# _ensure_remote_worktree_clean
+# ------------------------------------------------------------------
+
+
+def _make_fake_run(status_output: str = "", stash_fail: bool = False):
+    """Return a fake ``run`` callable and a log of calls made to it.
+
+    *status_output* is returned as stdout for ``git status --porcelain``.
+    """
+    calls: list[list[str]] = []
+
+    def fake_run(args, *, check=False, cwd=None, **_kwargs):
+        calls.append(list(args))
+        cmd = " ".join(args)
+
+        if "status --porcelain" in cmd:
+            return CommandResult(
+                requested_args=list(args),
+                executed_args=list(args),
+                stdout=status_output,
+                stderr="",
+                returncode=0,
+            )
+
+        if "rev-parse --verify" in cmd:
+            # Branch never exists — first name is always available.
+            return CommandResult(
+                requested_args=list(args),
+                executed_args=list(args),
+                stdout="",
+                stderr="",
+                returncode=1,
+            )
+
+        if "symbolic-ref" in cmd:
+            return CommandResult(
+                requested_args=list(args),
+                executed_args=list(args),
+                stdout="main\n",
+                stderr="",
+                returncode=0,
+            )
+
+        if "stash" in cmd and stash_fail:
+            raise CommandError("stash failed", CommandResult(
+                requested_args=list(args),
+                executed_args=list(args),
+                stdout="",
+                stderr="stash failed",
+                returncode=1,
+            ))
+
+        # Default: succeed.
+        return CommandResult(
+            requested_args=list(args),
+            executed_args=list(args),
+            stdout="",
+            stderr="",
+            returncode=0,
+        )
+
+    return fake_run, calls
+
+
+class TestEnsureRemoteWorktreeClean:
+    """Tests for MirrorManager._ensure_remote_worktree_clean."""
+
+    def _manager(self) -> MirrorManager:
+        """Build a minimal MirrorManager (no real repos needed)."""
+        logger = logging.getLogger("sucoder.test.worktree_clean")
+        logger.setLevel(logging.DEBUG)
+        if not logger.handlers:
+            logger.addHandler(logging.NullHandler())
+        # We only call static/instance methods that don't touch config,
+        # so we can pass None for fields we don't need.
+        return MirrorManager.__new__(MirrorManager)
+
+    def _init_manager(self) -> MirrorManager:
+        mgr = self._manager()
+        mgr.logger = logging.getLogger("sucoder.test.worktree_clean")
+        mgr.logger.setLevel(logging.DEBUG)
+        if not mgr.logger.handlers:
+            mgr.logger.addHandler(logging.NullHandler())
+        return mgr
+
+    def test_clean_worktree_is_noop(self) -> None:
+        mgr = self._init_manager()
+        run, calls = _make_fake_run(status_output="")
+        # Should return without prompting.
+        mgr._ensure_remote_worktree_clean(run, "/fake/path")
+        assert len(calls) == 1  # only the status call
+        assert "status" in " ".join(calls[0])
+
+    def test_rescue_commit(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mgr = self._init_manager()
+        run, calls = _make_fake_run(status_output=" M file.txt\n?? new.py\n")
+        monkeypatch.setattr("builtins.input", lambda _prompt: "c")
+
+        mgr._ensure_remote_worktree_clean(run, "/fake/path")
+
+        cmds = [" ".join(c) for c in calls]
+        assert any("checkout -b" in c and "rescue/" in c for c in cmds)
+        assert any("git add -A" in c for c in cmds)
+        assert any("git commit" in c for c in cmds)
+        # Must switch back to original branch.
+        assert any(c == "git checkout main" for c in cmds)
+
+    def test_stash(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mgr = self._init_manager()
+        run, calls = _make_fake_run(status_output=" M dirty.txt\n")
+        monkeypatch.setattr("builtins.input", lambda _prompt: "s")
+
+        mgr._ensure_remote_worktree_clean(run, "/fake/path")
+
+        cmds = [" ".join(c) for c in calls]
+        assert any("stash" in c for c in cmds)
+
+    def test_discard(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mgr = self._init_manager()
+        run, calls = _make_fake_run(status_output=" M dirty.txt\n")
+        monkeypatch.setattr("builtins.input", lambda _prompt: "d")
+
+        mgr._ensure_remote_worktree_clean(run, "/fake/path")
+
+        cmds = [" ".join(c) for c in calls]
+        assert any("checkout -- ." in c for c in cmds)
+        assert any("clean -fd" in c for c in cmds)
+
+    def test_abort_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mgr = self._init_manager()
+        run, _calls = _make_fake_run(status_output=" M dirty.txt\n")
+        monkeypatch.setattr("builtins.input", lambda _prompt: "n")
+
+        with pytest.raises(MirrorError, match="uncommitted changes"):
+            mgr._ensure_remote_worktree_clean(run, "/fake/path")
+
+    def test_default_is_rescue_commit(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Empty input should default to 'c' (rescue commit)."""
+        mgr = self._init_manager()
+        run, calls = _make_fake_run(status_output=" M file.txt\n")
+        monkeypatch.setattr("builtins.input", lambda _prompt: "")
+
+        mgr._ensure_remote_worktree_clean(run, "/fake/path")
+
+        cmds = [" ".join(c) for c in calls]
+        assert any("checkout -b" in c and "rescue/" in c for c in cmds)
+
+    def test_truncates_long_file_list(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """More than 20 dirty files should show a '… and N more' line."""
+        mgr = self._init_manager()
+        lines = "\n".join(f" M file{i}.txt" for i in range(25))
+        run, _calls = _make_fake_run(status_output=lines)
+        monkeypatch.setattr("builtins.input", lambda _prompt: "d")
+
+        mgr._ensure_remote_worktree_clean(run, "/fake/path")
+
+        captured = capsys.readouterr().out
+        assert "… and 5 more files" in captured
