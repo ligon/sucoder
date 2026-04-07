@@ -449,6 +449,39 @@ class MirrorManager:
         env["GIT_SSH_COMMAND"] = git_ssh_cmd
         return url, env
 
+    # -- Interactive helpers ---------------------------------------------
+
+    @staticmethod
+    def _prompt_choice(
+        header: str,
+        options: Sequence[Tuple[str, str]],
+        default: str,
+    ) -> str:
+        """Print *header*, show a lettered menu, and return the chosen key."""
+        print(header)
+        menu = "\n".join(f"  [{key}] {label}" for key, label in options)
+        return input(f"{menu}\n  Choice [{default}]: ").strip().lower() or default
+
+    @staticmethod
+    def _unique_branch_name(
+        prefix: str,
+        *,
+        exists_fn: Callable[[str], bool],
+    ) -> str:
+        """Return ``<prefix>/<YYYY-MM-DD>``, appending ``-N`` if taken."""
+        import datetime as _dt
+
+        today = _dt.date.today().isoformat()
+        candidate = f"{prefix}/{today}"
+        suffix = 0
+        branch = candidate
+        while exists_fn(branch):
+            suffix += 1
+            branch = f"{candidate}-{suffix}"
+        return branch
+
+    # -- Remote sync -----------------------------------------------------
+
     def _pull_from_remote(self, ctx: MirrorContext) -> None:
         """Fetch agent commits from the remote mirror into canonical.
 
@@ -558,21 +591,20 @@ class MirrorManager:
             capture_output=True, text=True, cwd=canon,
         ).stdout.strip()
 
-        print("\n⚠  Mirror and canonical have diverged.")
-        print(f"\nCommits only on the mirror ({url}):")
-        print(f"  {only_on_mirror.replace(chr(10), chr(10) + '  ')}")
-        print(f"\nCommits only in canonical:")
-        print(f"  {only_on_canonical.replace(chr(10), chr(10) + '  ')}")
-        print()
-
-        answer = input(
-            "How would you like to reconcile?\n"
-            "  [m] Merge mirror commits into canonical (default)\n"
-            "  [s] Stash mirror commits on a local branch, then sync\n"
-            "  [d] Discard mirror-only commits\n"
-            "  [n] Abort so you can reconcile manually\n"
-            "  Choice [m]: "
-        ).strip().lower() or "m"
+        header = (
+            "\n⚠  Mirror and canonical have diverged."
+            f"\n\nCommits only on the mirror ({url}):"
+            f"\n  {only_on_mirror.replace(chr(10), chr(10) + '  ')}"
+            "\n\nCommits only in canonical:"
+            f"\n  {only_on_canonical.replace(chr(10), chr(10) + '  ')}"
+            "\n"
+        )
+        answer = self._prompt_choice(header, [
+            ("m", "Merge mirror commits into canonical (default)"),
+            ("s", "Stash mirror commits on a local branch, then sync"),
+            ("d", "Discard mirror-only commits"),
+            ("n", "Abort so you can reconcile manually"),
+        ], default="m")
 
         if answer == "m":
             self._merge_mirror_commits(canon, base, tmp_ref, url)
@@ -632,15 +664,15 @@ class MirrorManager:
             check=False,
         )
 
-        print("\n⚠  Automatic merge failed due to conflicts.")
-        print(f"  Mirror branch is available locally at {tmp_ref}")
-        print()
-
-        fallback = input(
-            "  [d] Discard mirror-only commits and continue\n"
-            "  [n] Abort so you can reconcile manually\n"
-            "  Choice [n]: "
-        ).strip().lower()
+        fallback = self._prompt_choice(
+            f"\n⚠  Automatic merge failed due to conflicts."
+            f"\n  Mirror branch is available locally at {tmp_ref}\n",
+            [
+                ("d", "Discard mirror-only commits and continue"),
+                ("n", "Abort so you can reconcile manually"),
+            ],
+            default="n",
+        )
 
         if fallback == "d":
             self.logger.info(
@@ -668,24 +700,17 @@ class MirrorManager:
         for later merging.  The sync then proceeds as a discard —
         canonical overwrites the mirror on the next push.
         """
-        import datetime as _dt
         import subprocess
 
-        today = _dt.date.today().isoformat()
-        candidate = f"mirror-stash/{base}/{today}"
-
-        # Find a unique branch name.
-        suffix = 0
-        branch = candidate
-        while True:
-            exists = subprocess.run(
-                ["git", "rev-parse", "--verify", f"refs/heads/{branch}"],
+        def _exists(name: str) -> bool:
+            return subprocess.run(
+                ["git", "rev-parse", "--verify", f"refs/heads/{name}"],
                 capture_output=True, cwd=canon,
             ).returncode == 0
-            if not exists:
-                break
-            suffix += 1
-            branch = f"{candidate}-{suffix}"
+
+        branch = self._unique_branch_name(
+            f"mirror-stash/{base}", exists_fn=_exists,
+        )
 
         subprocess.run(
             ["git", "branch", branch, tmp_ref],
@@ -702,6 +727,130 @@ class MirrorManager:
     # mirror.  Generous because large repos over contended Lustre can
     # be slow, but not infinite so we surface hangs.
     _GIT_REMOTE_TIMEOUT: int = 300
+
+    def _ensure_remote_worktree_clean(
+        self,
+        run: Callable,
+        remote_path: str,
+    ) -> None:
+        """Check the remote mirror working tree and prompt if dirty.
+
+        ``receive.denyCurrentBranch=updateInstead`` rejects pushes when
+        the remote working tree has unstaged changes.  Rather than
+        silently discarding work, we show the user what's dirty and
+        let them choose how to proceed.
+        """
+        result = run(
+            ["git", "status", "--porcelain"],
+            check=False,
+            cwd=remote_path,
+        )
+        dirty = (result.stdout or "").strip()
+        if not dirty:
+            return
+
+        # Show at most 20 lines to avoid flooding the terminal.
+        lines = dirty.splitlines()
+        summary = "\n".join(f"  {l}" for l in lines[:20])
+        if len(lines) > 20:
+            summary += f"\n  … and {len(lines) - 20} more files"
+
+        answer = self._prompt_choice(
+            f"\n⚠  Remote mirror has uncommitted changes:\n{summary}\n",
+            [
+                ("c", "Commit changes to a rescue branch, then push (default)"),
+                ("s", "Stash changes on the remote, then push"),
+                ("d", "Discard remote changes and push"),
+                ("n", "Abort"),
+            ],
+            default="c",
+        )
+
+        if answer == "c":
+            self._rescue_commit_remote(run, remote_path)
+        elif answer == "s":
+            run(
+                ["git", "stash", "--include-untracked"],
+                check=True,
+                cwd=remote_path,
+            )
+            self.logger.info("Remote changes stashed")
+        elif answer == "d":
+            run(
+                ["git", "checkout", "--", "."],
+                check=True,
+                cwd=remote_path,
+            )
+            # Also clean untracked files shown in porcelain output.
+            run(
+                ["git", "clean", "-fd"],
+                check=False,
+                cwd=remote_path,
+            )
+            self.logger.info("Remote uncommitted changes discarded")
+        else:
+            raise MirrorError(
+                "Aborting — remote mirror has uncommitted changes.  "
+                "Resolve them manually and retry."
+            )
+
+    def _rescue_commit_remote(
+        self,
+        run: Callable,
+        remote_path: str,
+    ) -> None:
+        """Commit dirty remote working tree onto a rescue branch.
+
+        Creates ``rescue/<YYYY-MM-DD>`` (with a numeric suffix if the
+        name is taken), commits everything there, then switches back to
+        the original branch so the subsequent push can proceed cleanly.
+        """
+        import datetime as _dt
+
+        # Remember current branch to switch back.
+        head_result = run(
+            ["git", "symbolic-ref", "--short", "HEAD"],
+            check=False,
+            cwd=remote_path,
+        )
+        original_branch = (head_result.stdout or "").strip() or "main"
+
+        def _exists(name: str) -> bool:
+            return run(
+                ["git", "rev-parse", "--verify", f"refs/heads/{name}"],
+                check=False, cwd=remote_path,
+            ).returncode == 0
+
+        branch = self._unique_branch_name("rescue", exists_fn=_exists)
+
+        run(
+            ["git", "checkout", "-b", branch],
+            check=True,
+            cwd=remote_path,
+        )
+        run(
+            ["git", "add", "-A"],
+            check=True,
+            cwd=remote_path,
+        )
+        today = _dt.date.today().isoformat()
+        run(
+            ["git", "commit", "-m",
+             f"rescue: uncommitted agent work ({today})"],
+            check=True,
+            cwd=remote_path,
+        )
+        self.logger.info(
+            "Remote uncommitted changes saved on branch '%s'", branch
+        )
+
+        # Switch back so the working tree is on the expected branch
+        # and the incoming push via updateInstead can proceed.
+        run(
+            ["git", "checkout", original_branch],
+            check=True,
+            cwd=remote_path,
+        )
 
     def _sync_remote(self, ctx: MirrorContext) -> None:
         """Push local canonical commits to the remote mirror.
@@ -793,6 +942,12 @@ class MirrorManager:
 
         # Pull any agent commits before overwriting the mirror.
         self._pull_from_remote(ctx)
+
+        # The remote mirror uses receive.denyCurrentBranch=updateInstead,
+        # which requires a clean working tree.  If the agent (or a
+        # previous failed sync) left unstaged changes the push will be
+        # rejected.  Detect this and let the user decide what to do.
+        self._ensure_remote_worktree_clean(run, abs_remote_path)
 
         # Push canonical content to the remote via tunnel.
         self._sync_remote(ctx)
