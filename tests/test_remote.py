@@ -335,7 +335,9 @@ def _make_remote_executor(**kwargs) -> RemoteExecutor:
 def test_build_ssh_command_basic() -> None:
     executor = _make_remote_executor()
     cmd = executor._build_ssh_command(["git", "status"])
-    assert cmd[:2] == ["ssh", "-J"]
+    assert cmd[0] == "ssh"
+    # Non-interactive commands get BatchMode=yes to prevent /dev/tty prompts.
+    assert "-o" in cmd and "BatchMode=yes" in cmd
     assert "brc.berkeley.edu" in cmd
     assert "ln003" in cmd
     assert "git status" in cmd[-1]
@@ -362,14 +364,15 @@ def test_build_ssh_command_with_tty() -> None:
     executor = _make_remote_executor()
     cmd = executor._build_ssh_command(["bash"], allocate_tty=True)
     assert "-t" in cmd
+    # Interactive commands must NOT get BatchMode — they may need auth prompts.
+    assert "BatchMode=yes" not in cmd
 
 
 def test_build_ssh_command_with_options() -> None:
     executor = _make_remote_executor(ssh_options={"StrictHostKeyChecking": "no"})
     cmd = executor._build_ssh_command(["ls"])
-    assert "-o" in cmd
-    idx = cmd.index("-o")
-    assert cmd[idx + 1] == "StrictHostKeyChecking=no"
+    # Custom ssh_options are passed through as -o flags.
+    assert "StrictHostKeyChecking=no" in cmd
 
 
 def test_translate_path_rewrites_mirror_root() -> None:

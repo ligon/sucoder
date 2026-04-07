@@ -495,6 +495,10 @@ class RemoteExecutor(CommandExecutor):
             ssh_cmd.append("-vvv")
         if allocate_tty:
             ssh_cmd.append("-t")
+        else:
+            # Non-interactive: fail immediately instead of opening
+            # /dev/tty for a password prompt that would look like a hang.
+            ssh_cmd.extend(["-o", "BatchMode=yes"])
         # Reuse ControlMaster connection if available (avoids re-auth).
         # Include a ProxyCommand fallback so that a stale socket doesn't
         # leave SSH with no route to an unresolvable internal hostname.
@@ -514,19 +518,23 @@ class RemoteExecutor(CommandExecutor):
                     "-o", "UserKnownHostsFile=/dev/null",
                 ])
                 # Route through the login node's ControlMaster.
+                proxy_batch = "" if allocate_tty else " -o BatchMode=yes"
                 ssh_cmd.extend([
                     "-o",
                     f"ProxyCommand=ssh -o ControlMaster=auto "
-                    f"-o ControlPath={self.proxy_socket_path} "
+                    f"-o ControlPath={self.proxy_socket_path}"
+                    f"{proxy_batch} "
                     f"-W %h:%p {self.proxy_node}",
                 ])
             elif self.gateway and not self.is_compute_node:
                 from .tunnel import _control_socket_path as _gw_sock
                 gw_socket = _gw_sock(self.gateway)
+                proxy_batch = "" if allocate_tty else " -o BatchMode=yes"
                 ssh_cmd.extend([
                     "-o",
                     f"ProxyCommand=ssh -o ControlMaster=auto "
-                    f"-o ControlPath={gw_socket} "
+                    f"-o ControlPath={gw_socket}"
+                    f"{proxy_batch} "
                     f"-W %h:%p {self.gateway}",
                 ])
         for key, val in self.ssh_options.items():

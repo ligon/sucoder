@@ -823,6 +823,7 @@ class MirrorManager:
 
         branch = self._unique_branch_name("rescue", exists_fn=_exists)
 
+        self.logger.info("Saving remote changes to branch '%s' …", branch)
         run(
             ["git", "checkout", "-b", branch],
             check=True,
