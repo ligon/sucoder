@@ -809,14 +809,13 @@ def test_poetry_lock_no_update_failure_falls_back_to_plain_lock(tmp_path: Path, 
         args_list = list(args)
         calls.append(args_list)
         if args_list[:3] == ["poetry", "lock", "--no-update"]:
-            result = CommandResult(
+            return CommandResult(
                 requested_args=args_list,
                 executed_args=args_list,
                 stdout="",
                 stderr='The option "--no-update" does not exist',
                 returncode=1,
             )
-            raise CommandError("poetry lock --no-update failed", result)
         return CommandResult(
             requested_args=args_list,
             executed_args=args_list,
@@ -853,7 +852,17 @@ def test_poetry_lock_total_failure_still_attempts_install(tmp_path: Path, monkey
     def fake_run_agent(args, **kwargs):
         args_list = list(args)
         calls.append(args_list)
-        if args_list[0:2] == ["poetry", "lock"]:
+        if args_list[:3] == ["poetry", "lock", "--no-update"]:
+            # --no-update uses check=False, so return a failed result
+            return CommandResult(
+                requested_args=args_list,
+                executed_args=args_list,
+                stdout="",
+                stderr="lock failed",
+                returncode=1,
+            )
+        if args_list == ["poetry", "lock"]:
+            # plain lock uses check=True, so raise
             result = CommandResult(
                 requested_args=args_list,
                 executed_args=args_list,

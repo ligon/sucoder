@@ -1548,21 +1548,20 @@ class MirrorManager:
         """Run ``poetry lock`` so a stale lock file won't block install.
 
         Tries ``--no-update`` first (preserves pinned versions), then
-        falls back to a plain ``poetry lock`` for older Poetry releases
-        that lack the flag.
+        falls back to a plain ``poetry lock`` for Poetry releases (e.g.
+        Poetry 2.x) that removed the flag.
         """
-        try:
-            self.executor.run_agent(
-                ["poetry", "lock", "--no-update"],
-                check=True,
-                cwd=str(mirror_path),
-                capture_output=True,
-            )
+        result = self.executor.run_agent(
+            ["poetry", "lock", "--no-update"],
+            check=False,
+            cwd=str(mirror_path),
+            capture_output=True,
+        )
+        if result.returncode == 0:
             return
-        except CommandError:
-            self.logger.debug(
-                "`poetry lock --no-update` failed; retrying without --no-update."
-            )
+        self.logger.debug(
+            "`poetry lock --no-update` failed; retrying without --no-update."
+        )
         try:
             self.executor.run_agent(
                 ["poetry", "lock"],
@@ -2109,6 +2108,7 @@ class MirrorManager:
         )
 
         git_dir = _resolve_git_dir(mirror_path)
+        agent_user = self.executor.agent_user
         try:
             self.executor.run_agent(
                 [
@@ -2116,6 +2116,8 @@ class MirrorManager:
                     str(git_dir),
                     "-type",
                     "d",
+                    "-user",
+                    agent_user,
                     "-exec",
                     "chmod",
                     "g+s",

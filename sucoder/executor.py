@@ -210,8 +210,17 @@ class CommandExecutor:
             f"exit 1; "
             f"fi"
         )
-        script = f"{check}; umask {umask_value}; {command_str}"
-        command: List[str] = ["bash", "-lc", script]
+        # Use explicit profile sourcing instead of ``bash -l`` so that
+        # stderr noise from login scripts (e.g. D-Bus errors from
+        # /etc/profile.d/sommelier.sh on headless systems) is suppressed.
+        profile_source = (
+            "{ . /etc/profile 2>/dev/null; "
+            "[ -f ~/.bash_profile ] && . ~/.bash_profile 2>/dev/null "
+            "|| { [ -f ~/.bash_login ] && . ~/.bash_login 2>/dev/null "
+            "|| { [ -f ~/.profile ] && . ~/.profile 2>/dev/null; }; }; } 2>/dev/null; "
+        )
+        script = f"{profile_source}{check}; umask {umask_value}; {command_str}"
+        command: List[str] = ["bash", "-c", script]
 
         if env:
             env_args = ["env"] + [f"{key}={value}" for key, value in env.items()]

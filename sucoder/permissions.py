@@ -78,6 +78,7 @@ def apply_agent_repo_permissions(
             repo,
             "-user",
             agent_user,
+            "-not", "-type", "l",  # Skip symlinks: chmod follows the target
             "-exec",
             "chmod",
             "g+rwX",
