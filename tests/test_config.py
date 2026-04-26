@@ -7,6 +7,7 @@ import pytest
 
 from sucoder.config import (
     KNOWN_AGENTS,
+    AuditConfig,
     BranchPrefixes,
     ConfigError,
     McpServerConfig,
@@ -695,3 +696,71 @@ mirrors:
     )
     cfg = load_config(config_path)
     assert cfg.mirrors["sample"].agent_launcher.flags.mcp_config == "--mcp-config {path}"
+
+
+# -- audit config parsing -----------------------------------------------
+
+
+def test_load_config_audit_default(tmp_path: Path) -> None:
+    """Missing ``audit:`` block → defaults (auto-trigger off, scope all)."""
+    config_path = write_config(
+        tmp_path,
+        """
+human_user: ligon
+mirror_root: ./mirrors
+""",
+    )
+    cfg = load_config(config_path)
+    assert cfg.audit == AuditConfig()
+    assert cfg.audit.auto_after_session is False
+    assert cfg.audit.scope == "all"
+
+
+def test_load_config_audit_enabled(tmp_path: Path) -> None:
+    """Opt-in ``audit.auto_after_session: true`` parses cleanly."""
+    config_path = write_config(
+        tmp_path,
+        """
+human_user: ligon
+mirror_root: ./mirrors
+audit:
+  auto_after_session: true
+  scope: code
+""",
+    )
+    cfg = load_config(config_path)
+    assert cfg.audit.auto_after_session is True
+    assert cfg.audit.scope == "code"
+
+
+@pytest.mark.parametrize(
+    "yaml_audit, message",
+    [
+        ("audit: not-a-mapping", "must be a mapping"),
+        (
+            "audit:\n  auto_after_session: yes-please",
+            "must be a boolean",
+        ),
+        (
+            "audit:\n  scope: 42",
+            "must be a string",
+        ),
+        (
+            "audit:\n  scope: everything",
+            r"must be one of 'skills', 'code', or 'all'",
+        ),
+    ],
+)
+def test_load_config_audit_invalid(
+    tmp_path: Path, yaml_audit: str, message: str,
+) -> None:
+    config_path = write_config(
+        tmp_path,
+        f"""
+human_user: ligon
+mirror_root: ./mirrors
+{yaml_audit}
+""",
+    )
+    with pytest.raises(ConfigError, match=message):
+        load_config(config_path)

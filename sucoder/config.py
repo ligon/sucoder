@@ -185,6 +185,29 @@ class MirrorSettings:
         return self.remote is not None
 
 
+@dataclass(frozen=True)
+class AuditConfig:
+    """Controls automatic post-session audit invocation.
+
+    The compliance audit subsystem (skills + code) can run on demand
+    via ``sucoder audit`` but can also fire automatically after each
+    agent session.  Auto-trigger is opt-in: the default leaves
+    behaviour exactly as before (no extra LLM calls at session
+    teardown, no new file writes).
+    """
+
+    auto_after_session: bool = False
+    """If True, run skills+code audits after every agent session.
+
+    Reports are saved under ``<log_dir>/audits/<mirror>-<kind>-<timestamp>.log``.
+    A one-line summary is logged to the console.  Audit failures are
+    logged at WARNING level but never block session teardown.
+    """
+
+    scope: str = "all"
+    """Which audits to run: ``"skills"``, ``"code"``, or ``"all"``."""
+
+
 @dataclass
 class Config:
     human_user: str
@@ -198,6 +221,7 @@ class Config:
     agent_launcher: Optional[AgentLauncher] = None  # Global defaults for all mirrors
     mirrors: Mapping[str, MirrorSettings] = field(default_factory=dict)
     targets: Dict[str, RemoteConfig] = field(default_factory=dict)
+    audit: AuditConfig = field(default_factory=AuditConfig)
 
     def resolve_target(self, target_name: Optional[str]) -> Optional[RemoteConfig]:
         """Look up a named target, returning ``None`` for local execution."""
@@ -397,6 +421,7 @@ def _build_config(data: Dict[str, Any], *, path: Path) -> Config:
         global_agent_launcher = _parse_agent_launcher(data.get("agent_launcher"))
 
     targets = _parse_targets(data.get("targets"))
+    audit = _parse_audit_config(data.get("audit"), path=path)
     mirrors = _parse_mirrors(
         data.get("mirrors"), global_skills=global_skills,
         global_mcp_servers=global_mcp_servers, path=path,
@@ -418,7 +443,42 @@ def _build_config(data: Dict[str, Any], *, path: Path) -> Config:
         agent_launcher=global_agent_launcher,
         mirrors=mirrors,
         targets=targets,
+        audit=audit,
     )
+
+
+def _parse_audit_config(raw: Any, *, path: Path) -> AuditConfig:
+    """Parse the ``audit:`` block from a sucoder config file.
+
+    Missing or empty → defaults (auto-trigger off, scope ``"all"``).
+    """
+    if raw is None:
+        return AuditConfig()
+    if not isinstance(raw, dict):
+        raise ConfigError(
+            f"`audit` must be a mapping in {path}, got {type(raw).__name__}."
+        )
+
+    auto_raw = raw.get("auto_after_session", False)
+    if not isinstance(auto_raw, bool):
+        raise ConfigError(
+            f"`audit.auto_after_session` must be a boolean in {path}, "
+            f"got {type(auto_raw).__name__}."
+        )
+
+    scope_raw = raw.get("scope", "all")
+    if not isinstance(scope_raw, str):
+        raise ConfigError(
+            f"`audit.scope` must be a string in {path}, "
+            f"got {type(scope_raw).__name__}."
+        )
+    if scope_raw not in ("skills", "code", "all"):
+        raise ConfigError(
+            f"`audit.scope` must be one of 'skills', 'code', or 'all' "
+            f"in {path}, got {scope_raw!r}."
+        )
+
+    return AuditConfig(auto_after_session=auto_raw, scope=scope_raw)
 
 
 def _parse_mirrors(
