@@ -45,6 +45,23 @@ def run_git(args, cwd: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _git_is(args, *want: str) -> bool:
+    """Match a git invocation, skipping leading ``-c <value>`` flags.
+
+    ``MirrorManager._safe_directory_args`` prepends one or more
+    ``-c safe.directory=<path>`` pairs to git invocations, so naive
+    prefix matches like ``_git_is(args, "rev-parse", "--verify")``
+    no longer hold.  This helper walks past any ``-c <value>`` pairs
+    after the leading ``git`` and then checks the remaining prefix.
+    """
+    if not args or args[0] != "git":
+        return False
+    i = 1
+    while i + 1 < len(args) and args[i] == "-c":
+        i += 2
+    return list(args[i:i + len(want)]) == list(want)
+
+
 def create_canonical_repo(path: Path) -> None:
     run_git(["init", "-b", "main"], path)
     run_git(["config", "user.email", "test@example.com"], path)
@@ -916,7 +933,7 @@ def test_auto_commit_agent_skills_after_session(tmp_path: Path, monkeypatch: pyt
         return CommandResult(
             requested_args=list(args),
             executed_args=list(args),
-            stdout="?? new-skill.md\n" if args[:2] == ["git", "status"] else "",
+            stdout="?? new-skill.md\n" if _git_is(args, "status") else "",
             stderr="",
             returncode=0,
         )
@@ -989,7 +1006,7 @@ def test_auto_commit_skipped_when_no_changes(tmp_path: Path, monkeypatch: pytest
         return CommandResult(
             requested_args=list(args),
             executed_args=list(args),
-            stdout="" if args[:2] == ["git", "status"] else "",
+            stdout="" if _git_is(args, "status") else "",
             stderr="",
             returncode=0,
         )
@@ -1022,7 +1039,7 @@ def test_skills_repo_initialized_on_first_commit(tmp_path: Path, monkeypatch: py
         return CommandResult(
             requested_args=list(args),
             executed_args=list(args),
-            stdout="" if args[:2] == ["git", "status"] else "",
+            stdout="" if _git_is(args, "status") else "",
             stderr="",
             returncode=0,
         )
@@ -1069,7 +1086,7 @@ def test_audit_full_review_when_no_baseline(tmp_path: Path, monkeypatch: pytest.
 
     def fake_run_agent(args, **kwargs):
         calls.append(list(args))
-        if args[:3] == ["git", "rev-parse", "--verify"]:
+        if _git_is(args, "rev-parse", "--verify"):
             # No baseline ref exists.
             result = CommandResult(
                 requested_args=list(args), executed_args=list(args),
@@ -1112,13 +1129,13 @@ def test_audit_diff_review_with_baseline(tmp_path: Path, monkeypatch: pytest.Mon
 
     def fake_run_agent(args, **kwargs):
         calls.append(list(args))
-        if args[:3] == ["git", "rev-parse", "--verify"]:
+        if _git_is(args, "rev-parse", "--verify"):
             # Baseline exists.
             return CommandResult(
                 requested_args=list(args), executed_args=list(args),
                 stdout="abc1234\n", stderr="", returncode=0,
             )
-        if args[:2] == ["git", "diff"]:
+        if _git_is(args, "diff"):
             return CommandResult(
                 requested_args=list(args), executed_args=list(args),
                 stdout="+new line in skill\n", stderr="", returncode=0,
@@ -1273,12 +1290,12 @@ def test_audit_returns_none_when_no_changes(tmp_path: Path, monkeypatch: pytest.
     monkeypatch.setattr(type(manager), "_agent_skills_dir", property(lambda self: skills_dir))
 
     def fake_run_agent(args, **kwargs):
-        if args[:3] == ["git", "rev-parse", "--verify"]:
+        if _git_is(args, "rev-parse", "--verify"):
             return CommandResult(
                 requested_args=list(args), executed_args=list(args),
                 stdout="abc1234\n", stderr="", returncode=0,
             )
-        if args[:2] == ["git", "diff"]:
+        if _git_is(args, "diff"):
             return CommandResult(
                 requested_args=list(args), executed_args=list(args),
                 stdout="", stderr="", returncode=0,
@@ -1321,14 +1338,14 @@ def test_code_audit_full_review_when_no_baseline(tmp_path: Path, monkeypatch: py
 
     def fake_run_agent(args, **kwargs):
         calls.append(list(args))
-        if args[:3] == ["git", "rev-parse", "--verify"]:
+        if _git_is(args, "rev-parse", "--verify"):
             # No baseline ref exists.
             result = CommandResult(
                 requested_args=list(args), executed_args=list(args),
                 stdout="", stderr="", returncode=1,
             )
             raise CommandError("ref not found", result)
-        if args[:2] == ["git", "diff"]:
+        if _git_is(args, "diff"):
             return CommandResult(
                 requested_args=list(args), executed_args=list(args),
                 stdout="+hello code\n", stderr="", returncode=0,
@@ -1362,12 +1379,12 @@ def test_code_audit_diff_review_with_baseline(tmp_path: Path, monkeypatch: pytes
 
     def fake_run_agent(args, **kwargs):
         calls.append(list(args))
-        if args[:3] == ["git", "rev-parse", "--verify"]:
+        if _git_is(args, "rev-parse", "--verify"):
             return CommandResult(
                 requested_args=list(args), executed_args=list(args),
                 stdout="abc1234\n", stderr="", returncode=0,
             )
-        if args[:2] == ["git", "diff"]:
+        if _git_is(args, "diff"):
             return CommandResult(
                 requested_args=list(args), executed_args=list(args),
                 stdout="+changed code\n", stderr="", returncode=0,
@@ -1388,7 +1405,7 @@ def test_code_audit_diff_review_with_baseline(tmp_path: Path, monkeypatch: pytes
     assert report is not None
     assert "No concerns" in report
     # Diff calls should reference refs/audited-code.
-    diff_calls = [c for c in calls if c[:2] == ["git", "diff"]]
+    diff_calls = [c for c in calls if _git_is(c, "diff")]
     assert any("refs/audited-code" in c for c in diff_calls)
 
 
@@ -1406,12 +1423,12 @@ def test_code_audit_returns_none_when_no_changes(tmp_path: Path, monkeypatch: py
     manager = _setup_code_audit_manager(tmp_path, monkeypatch)
 
     def fake_run_agent(args, **kwargs):
-        if args[:3] == ["git", "rev-parse", "--verify"]:
+        if _git_is(args, "rev-parse", "--verify"):
             return CommandResult(
                 requested_args=list(args), executed_args=list(args),
                 stdout="abc1234\n", stderr="", returncode=0,
             )
-        if args[:2] == ["git", "diff"]:
+        if _git_is(args, "diff"):
             return CommandResult(
                 requested_args=list(args), executed_args=list(args),
                 stdout="", stderr="", returncode=0,
@@ -1468,7 +1485,7 @@ def test_advance_audited_code_ref(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
     manager.advance_audited_code_ref("sample")
 
-    update_ref_calls = [c for c in calls if c[:2] == ["git", "update-ref"]]
+    update_ref_calls = [c for c in calls if _git_is(c, "update-ref")]
     assert update_ref_calls
     assert "refs/audited-code" in update_ref_calls[0]
 
@@ -1482,13 +1499,13 @@ def test_code_audit_full_uses_empty_tree_diff(tmp_path: Path, monkeypatch: pytes
 
     def fake_run_agent(args, **kwargs):
         calls.append(list(args))
-        if args[:3] == ["git", "rev-parse", "--verify"]:
+        if _git_is(args, "rev-parse", "--verify"):
             result = CommandResult(
                 requested_args=list(args), executed_args=list(args),
                 stdout="", stderr="", returncode=1,
             )
             raise CommandError("ref not found", result)
-        if args[:2] == ["git", "diff"]:
+        if _git_is(args, "diff"):
             return CommandResult(
                 requested_args=list(args), executed_args=list(args),
                 stdout="+all the code\n", stderr="", returncode=0,
@@ -1507,7 +1524,7 @@ def test_code_audit_full_uses_empty_tree_diff(tmp_path: Path, monkeypatch: pytes
     report = manager.audit_code_changes("sample", full=True)
 
     assert report is not None
-    diff_calls = [c for c in calls if c[:2] == ["git", "diff"]]
+    diff_calls = [c for c in calls if _git_is(c, "diff")]
     assert any(empty_tree in c for c in diff_calls), f"Expected empty tree hash in diff calls: {diff_calls}"
 
 
@@ -1518,13 +1535,13 @@ def test_code_audit_prompt_contains_security_checks(tmp_path: Path, monkeypatch:
     captured_prompts: list = []
 
     def fake_run_agent(args, **kwargs):
-        if args[:3] == ["git", "rev-parse", "--verify"]:
+        if _git_is(args, "rev-parse", "--verify"):
             result = CommandResult(
                 requested_args=list(args), executed_args=list(args),
                 stdout="", stderr="", returncode=1,
             )
             raise CommandError("ref not found", result)
-        if args[:2] == ["git", "diff"]:
+        if _git_is(args, "diff"):
             return CommandResult(
                 requested_args=list(args), executed_args=list(args),
                 stdout="+code\n", stderr="", returncode=0,

@@ -2324,9 +2324,14 @@ class MirrorManager:
         # the orchestrator's own context — listing the index doesn't
         # require auditor privileges and sidesteps the case where the
         # auditor can't read ``.git/`` (typically mode 0750 group=agent).
+        # The orchestrator may not own the repo either (e.g. a human
+        # running sucoder over a coder-owned mirror), so include
+        # safe.directory flags to neutralise CVE-2022-24765 mitigation.
+        safe_dir_args = MirrorManager._safe_directory_args(target_dir)
         try:
             ls = subprocess.run(
-                ["git", "-C", str(target_dir), "ls-files", "-z"],
+                ["git", *safe_dir_args, "-C", str(target_dir),
+                 "ls-files", "-z"],
                 check=True,
                 capture_output=True,
             )
@@ -2360,9 +2365,14 @@ class MirrorManager:
         # Newline-separated output: tracked-file paths essentially never
         # contain newlines in practice, and using NUL would require
         # binary capture which the executor doesn't support.
+        #
+        # Embed the safe.directory flags directly in the git invocation
+        # so the auditor user (who doesn't own the repo) can read the
+        # index.
+        safe_dir_flags = " ".join(shlex.quote(a) for a in safe_dir_args)
         script = f"""
             set -e
-            git ls-files | while IFS= read -r f; do
+            git {safe_dir_flags} ls-files | while IFS= read -r f; do
                 case "$f" in
                     {skip_alternatives}) continue ;;
                 esac
@@ -2385,11 +2395,31 @@ class MirrorManager:
         ]
         return [str(target_dir / p) for p in unreadable_rel]
 
+    @staticmethod
+    def _safe_directory_args(repo_dir: Path) -> List[str]:
+        """Return ``-c safe.directory=<path>`` flags for *repo_dir*.
+
+        The audit's executor sudoes to a different user (e.g. ``auditor``)
+        which doesn't own the agent's mirror or skills repo.  Without these
+        flags git refuses to operate with::
+
+            fatal: detected dubious ownership in repository at ...
+
+        Adding the entries via ``-c`` is per-invocation and stateless,
+        which matches the pattern already used by the clone path
+        (search ``_ensure_canonical_safe_directory``).
+        """
+        return [
+            "-c", f"safe.directory={repo_dir}",
+            "-c", f"safe.directory={repo_dir / '.git'}",
+        ]
+
     def _has_ref(self, repo_dir: Path, ref: str, executor: "CommandExecutor") -> bool:
         """Check whether *ref* exists in the repo at *repo_dir*."""
         try:
             executor.run_agent(
-                ["git", "rev-parse", "--verify", ref],
+                ["git", *self._safe_directory_args(repo_dir),
+                 "rev-parse", "--verify", ref],
                 check=True,
                 cwd=str(repo_dir),
                 capture_output=True,
@@ -2404,7 +2434,8 @@ class MirrorManager:
         """Return ``git diff <ref> HEAD`` output for *repo_dir*."""
         try:
             result = executor.run_agent(
-                ["git", "diff", ref, "HEAD"],
+                ["git", *self._safe_directory_args(repo_dir),
+                 "diff", ref, "HEAD"],
                 check=True,
                 cwd=str(repo_dir),
                 capture_output=True,
@@ -2419,7 +2450,8 @@ class MirrorManager:
         """Advance *ref* to HEAD in *repo_dir*."""
         try:
             executor.run_agent(
-                ["git", "update-ref", ref, "HEAD"],
+                ["git", *self._safe_directory_args(repo_dir),
+                 "update-ref", ref, "HEAD"],
                 check=True,
                 cwd=str(repo_dir),
                 capture_output=True,
@@ -2638,7 +2670,8 @@ If you find issues, describe each one clearly with the filename and specific con
         empty_tree = "4b825dc642cb6eb9a060e54bf899d15f3780fcaa"
         try:
             result = executor.run_agent(
-                ["git", "diff", empty_tree, "HEAD"],
+                ["git", *self._safe_directory_args(repo_dir),
+                 "diff", empty_tree, "HEAD"],
                 check=True,
                 cwd=str(repo_dir),
                 capture_output=True,
