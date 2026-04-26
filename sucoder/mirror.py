@@ -2415,18 +2415,23 @@ class MirrorManager:
         ]
 
     def _has_ref(self, repo_dir: Path, ref: str, executor: "CommandExecutor") -> bool:
-        """Check whether *ref* exists in the repo at *repo_dir*."""
-        try:
-            executor.run_agent(
-                ["git", *self._safe_directory_args(repo_dir),
-                 "rev-parse", "--verify", ref],
-                check=True,
-                cwd=str(repo_dir),
-                capture_output=True,
-            )
-            return True
-        except CommandError:
-            return False
+        """Check whether *ref* exists in the repo at *repo_dir*.
+
+        Uses ``rev-parse --verify --quiet`` so that the ref-doesn't-exist
+        case (the common "no audit baseline yet" path) produces empty
+        stderr and a non-zero exit code, instead of stderr containing
+        "fatal: Needed a single revision" which the executor would
+        otherwise log at ERROR level.  We treat any non-zero exit as
+        "ref absent".
+        """
+        result = executor.run_agent(
+            ["git", *self._safe_directory_args(repo_dir),
+             "rev-parse", "--verify", "--quiet", ref],
+            check=False,
+            cwd=str(repo_dir),
+            capture_output=True,
+        )
+        return result.returncode == 0
 
     def _diff_since_ref(
         self, repo_dir: Path, ref: str, executor: "CommandExecutor",

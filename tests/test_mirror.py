@@ -1088,11 +1088,10 @@ def test_audit_full_review_when_no_baseline(tmp_path: Path, monkeypatch: pytest.
         calls.append(list(args))
         if _git_is(args, "rev-parse", "--verify"):
             # No baseline ref exists.
-            result = CommandResult(
+            return CommandResult(
                 requested_args=list(args), executed_args=list(args),
                 stdout="", stderr="", returncode=1,
             )
-            raise CommandError("ref not found", result)
         if args[0] == "claude" and "-p" in args:
             return CommandResult(
                 requested_args=list(args), executed_args=list(args),
@@ -1340,11 +1339,10 @@ def test_code_audit_full_review_when_no_baseline(tmp_path: Path, monkeypatch: py
         calls.append(list(args))
         if _git_is(args, "rev-parse", "--verify"):
             # No baseline ref exists.
-            result = CommandResult(
+            return CommandResult(
                 requested_args=list(args), executed_args=list(args),
                 stdout="", stderr="", returncode=1,
             )
-            raise CommandError("ref not found", result)
         if _git_is(args, "diff"):
             return CommandResult(
                 requested_args=list(args), executed_args=list(args),
@@ -1500,11 +1498,10 @@ def test_code_audit_full_uses_empty_tree_diff(tmp_path: Path, monkeypatch: pytes
     def fake_run_agent(args, **kwargs):
         calls.append(list(args))
         if _git_is(args, "rev-parse", "--verify"):
-            result = CommandResult(
+            return CommandResult(
                 requested_args=list(args), executed_args=list(args),
                 stdout="", stderr="", returncode=1,
             )
-            raise CommandError("ref not found", result)
         if _git_is(args, "diff"):
             return CommandResult(
                 requested_args=list(args), executed_args=list(args),
@@ -1536,11 +1533,10 @@ def test_code_audit_prompt_contains_security_checks(tmp_path: Path, monkeypatch:
 
     def fake_run_agent(args, **kwargs):
         if _git_is(args, "rev-parse", "--verify"):
-            result = CommandResult(
+            return CommandResult(
                 requested_args=list(args), executed_args=list(args),
                 stdout="", stderr="", returncode=1,
             )
-            raise CommandError("ref not found", result)
         if _git_is(args, "diff"):
             return CommandResult(
                 requested_args=list(args), executed_args=list(args),
