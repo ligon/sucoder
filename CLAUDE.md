@@ -14,7 +14,7 @@ default for all mirrors and is meant to stay project-agnostic.
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **SuCoder** (1930 symbols, 3540 relationships, 139 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **SuCoder** (1980 symbols, 4214 relationships, 151 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -52,8 +52,5 @@ This project is indexed by GitNexus as **SuCoder** (1930 symbols, 3540 relations
 | Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
 | Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
-| Work in the Tests area (236 symbols) | `.claude/skills/generated/tests/SKILL.md` |
-| Work in the Sucoder area (85 symbols) | `.claude/skills/generated/sucoder/SKILL.md` |
-| Work in the Scripts area (10 symbols) | `.claude/skills/generated/scripts/SKILL.md` |
 
 <!-- gitnexus:end -->
