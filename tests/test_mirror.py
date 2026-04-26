@@ -1150,22 +1150,115 @@ def test_audit_returns_none_when_no_skills_dir(tmp_path: Path, monkeypatch: pyte
 
 
 def test_audit_flags_unreadable_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Audit flags files that are not world-readable."""
+    """Audit flags tracked files the auditor cannot read."""
     manager = build_manager(tmp_path)
 
     skills_dir = _make_skills_dir(tmp_path)
     hidden = _write_skill(skills_dir, "hidden.md", "# Secret\n")
-    hidden.chmod(0o600)  # Remove o+r.
     run_git(["add", "-A"], skills_dir)
     run_git(["commit", "-m", "initial"], skills_dir)
+    # Mode 000 means even the file owner is denied by `[ -r ]`, so the
+    # readability test fails regardless of which user the test runs as.
+    hidden.chmod(0o000)
 
     monkeypatch.setattr(type(manager), "_agent_skills_dir", property(lambda self: skills_dir))
 
-    report = manager.audit_agent_skills()
+    try:
+        report = manager.audit_agent_skills()
+    finally:
+        # Restore perms so pytest's tmp_path cleanup can remove the file.
+        hidden.chmod(0o644)
 
     assert report is not None
     assert "PERMISSIONS AUDIT FAILURE" in report
     assert "hidden.md" in report
+
+
+def test_audit_skips_gitignored_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Audit ignores virtualenvs / caches / build output (not git-tracked)."""
+    manager = build_manager(tmp_path)
+
+    skills_dir = _make_skills_dir(tmp_path)
+    # Gitignore .venv (matches reality — virtualenvs are never tracked).
+    (skills_dir / ".gitignore").write_text(".venv/\n", encoding="utf-8")
+    # A perfectly normal tracked file.
+    _write_skill(skills_dir, "skill.md", "# Skill\n")
+    run_git(["add", "-A"], skills_dir)
+    run_git(["commit", "-m", "initial"], skills_dir)
+    # An untracked, gitignored virtualenv-shaped file with restrictive
+    # perms — exactly the false-positive class that flooded the audit
+    # before the fix.
+    venv_dir = skills_dir / ".venv" / "lib"
+    venv_dir.mkdir(parents=True)
+    venv_file = venv_dir / "blob.so"
+    venv_file.write_bytes(b"\x7fELF...")
+    venv_file.chmod(0o000)
+
+    monkeypatch.setattr(type(manager), "_agent_skills_dir", property(lambda self: skills_dir))
+
+    # Stub out the LLM call so the audit doesn't try to invoke claude.
+    def fake_run_agent(args, **kwargs):
+        if args[:1] == ["claude"]:
+            return CommandResult(
+                requested_args=list(args), executed_args=list(args),
+                stdout="No concerns.", stderr="", returncode=0,
+            )
+        # Fall through to the real executor for git/sh — needed for the
+        # readability check.
+        return original_run_agent(args, **kwargs)
+
+    original_run_agent = manager.executor.run_agent
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+
+    try:
+        report = manager.audit_agent_skills(full=True)
+    finally:
+        venv_file.chmod(0o644)
+
+    # We should NOT have flagged the .venv blob.
+    assert report is None or "PERMISSIONS AUDIT FAILURE" not in report
+    if report is not None:
+        assert "blob.so" not in report
+
+
+def test_audit_skips_git_crypt_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Audit hard-skips .git-crypt/keys/ even though those files are tracked."""
+    manager = build_manager(tmp_path)
+
+    skills_dir = _make_skills_dir(tmp_path)
+    _write_skill(skills_dir, "skill.md", "# Skill\n")
+    keys_dir = skills_dir / ".git-crypt" / "keys" / "default" / "0"
+    keys_dir.mkdir(parents=True)
+    keyfile = keys_dir / "ABCDEF.gpg"
+    keyfile.write_bytes(b"encrypted-key-bytes")
+    run_git(["add", "-A"], skills_dir)
+    run_git(["commit", "-m", "initial"], skills_dir)
+    # Realistic perms for a git-crypt key after commit — secret, denies
+    # even the owner so the readability test would flag it without the
+    # _AUDIT_SKIP_PREFIXES exclusion.
+    keyfile.chmod(0o000)
+
+    monkeypatch.setattr(type(manager), "_agent_skills_dir", property(lambda self: skills_dir))
+
+    def fake_run_agent(args, **kwargs):
+        if args[:1] == ["claude"]:
+            return CommandResult(
+                requested_args=list(args), executed_args=list(args),
+                stdout="No concerns.", stderr="", returncode=0,
+            )
+        return original_run_agent(args, **kwargs)
+
+    original_run_agent = manager.executor.run_agent
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+
+    try:
+        report = manager.audit_agent_skills(full=True)
+    finally:
+        keyfile.chmod(0o644)
+
+    assert report is None or "PERMISSIONS AUDIT FAILURE" not in report
+    if report is not None:
+        assert "ABCDEF.gpg" not in report
 
 
 def test_audit_returns_none_when_no_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1334,15 +1427,25 @@ def test_code_audit_returns_none_when_no_changes(tmp_path: Path, monkeypatch: py
 
 
 def test_code_audit_flags_unreadable_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Code audit flags files that are not world-readable."""
+    """Code audit flags tracked files the auditor cannot read."""
     manager = _setup_code_audit_manager(tmp_path, monkeypatch)
 
     ctx = manager.context_for("sample")
     secret = ctx.mirror_path / "secret.py"
     secret.write_text("API_KEY = 'hunter2'\n", encoding="utf-8")
-    secret.chmod(0o600)  # Remove o+r.
+    # Track the file — the audit only looks at git-tracked content now.
+    run_git(["config", "user.email", "test@example.com"], ctx.mirror_path)
+    run_git(["config", "user.name", "Test"], ctx.mirror_path)
+    run_git(["add", "secret.py"], ctx.mirror_path)
+    run_git(["commit", "-m", "add secret"], ctx.mirror_path)
+    # Mode 000 — denies even the owner, so the readability test fails
+    # regardless of which user runs the test.
+    secret.chmod(0o000)
 
-    report = manager.audit_code_changes("sample")
+    try:
+        report = manager.audit_code_changes("sample")
+    finally:
+        secret.chmod(0o644)
 
     assert report is not None
     assert "PERMISSIONS AUDIT FAILURE" in report

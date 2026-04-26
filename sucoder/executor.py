@@ -107,7 +107,7 @@ class CommandExecutor:
     ) -> CommandResult:
         requested_args = list(args)
         executed_args = (
-            self._wrap_agent_command(args, env=env, umask=umask)
+            self._wrap_agent_command(args, env=env, umask=umask, cwd=cwd)
             if as_agent
             else list(args)
         )
@@ -196,6 +196,7 @@ class CommandExecutor:
         *,
         env: Optional[Mapping[str, str]],
         umask: Optional[int],
+        cwd: Optional[str] = None,
     ) -> List[str]:
         if not self.use_sudo_for_agent:
             return list(args)
@@ -219,7 +220,16 @@ class CommandExecutor:
             "|| { [ -f ~/.bash_login ] && . ~/.bash_login 2>/dev/null "
             "|| { [ -f ~/.profile ] && . ~/.profile 2>/dev/null; }; }; } 2>/dev/null; "
         )
-        script = f"{profile_source}{check}; umask {umask_value}; {command_str}"
+        # `sudo` resets the working directory to the target user's home
+        # (unless sudoers `cwd=*` is configured), so passing `cwd=` to
+        # subprocess.run() only affects the outer sudo process, not the
+        # bash that ultimately runs the command.  Embed `cd` in the
+        # wrapped script so callers' `cwd` argument is honoured for the
+        # actual command.  Using `cd ... || exit 1` rather than `&&` so
+        # the failure mode is loud (non-zero exit) instead of silent
+        # (running the command in the wrong directory).
+        cd_clause = f"cd {shlex.quote(cwd)} || exit 1; " if cwd else ""
+        script = f"{profile_source}{check}; {cd_clause}umask {umask_value}; {command_str}"
         command: List[str] = ["bash", "-c", script]
 
         if env:

@@ -10,6 +10,7 @@ import pwd
 import re
 import shlex
 import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Literal, Mapping, NoReturn, Optional, Sequence, Tuple
@@ -2287,22 +2288,102 @@ class MirrorManager:
                     logger.warning("Failed to read prompt %s: %s", path, exc)
         return None
 
+    # Tracked subtrees that the audit deliberately skips.
+    #
+    # ``.git-crypt/keys/`` holds GPG-encrypted symmetric keys.  By design
+    # those files are *not* world-readable, and forcing them to be would
+    # be a security regression.  They are not source the auditor needs.
+    _AUDIT_SKIP_PREFIXES: Tuple[str, ...] = (".git-crypt/keys/",)
+
     @staticmethod
-    def _check_dir_readable(target_dir: Path) -> List[str]:
-        """Return list of paths under *target_dir* that are not world-readable."""
-        issues: List[str] = []
-        for path in target_dir.rglob("*"):
-            if path.name == ".git" or ".git" in path.parts:
-                continue
-            if path.is_file():
-                mode = path.stat().st_mode
-                if not (mode & 0o004):  # o+r not set
-                    issues.append(str(path))
-            elif path.is_dir():
-                mode = path.stat().st_mode
-                if not (mode & 0o005):  # o+rx not set
-                    issues.append(str(path))
-        return issues
+    def _check_dir_readable(
+        target_dir: Path, executor: "CommandExecutor",
+    ) -> List[str]:
+        """Return git-tracked paths under *target_dir* the auditor cannot read.
+
+        Two changes vs. the historical "walk everything, require world-read"
+        check:
+
+        1. *Scope*: only files tracked by git are considered.  Virtualenvs
+           (``.venv/``), pip caches, ``__pycache__/``, build output
+           (``_site/``), and the gitnexus index (``.gitnexus/``) are
+           gitignored, so they fall out of scope automatically and don't
+           drown the audit in irrelevant findings.
+
+        2. *Predicate*: the readability test is delegated to the supplied
+           executor (typically the ``auditor`` user via sudo) using a
+           shell ``[ -r ]`` test.  This answers the right question — "can
+           the auditor read this file?" — instead of using the
+           world-read bit as a proxy that flags any file that just
+           happens to be owned by the agent's group.
+
+        Hard-excludes ``.git-crypt/keys/`` (see :data:`_AUDIT_SKIP_PREFIXES`)
+        because those files are encrypted secrets, not source code.
+        """
+        # Step 1: enumerate tracked files.  Run via plain subprocess in
+        # the orchestrator's own context — listing the index doesn't
+        # require auditor privileges and sidesteps the case where the
+        # auditor can't read ``.git/`` (typically mode 0750 group=agent).
+        try:
+            ls = subprocess.run(
+                ["git", "-C", str(target_dir), "ls-files", "-z"],
+                check=True,
+                capture_output=True,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return []
+
+        raw = ls.stdout.decode("utf-8", errors="replace")
+        tracked_rel = [
+            p for p in raw.split("\x00")
+            if p and not p.startswith(MirrorManager._AUDIT_SKIP_PREFIXES)
+        ]
+        if not tracked_rel:
+            return []
+
+        # Step 2: have the auditor's executor test each file's
+        # readability.  Use a single shell loop so we don't fire one
+        # process per file (slow) or hit argv length limits (an
+        # individual list-of-thousands).  The shell reads paths from
+        # ``git ls-files`` directly so we don't have to round-trip them
+        # through Python; this also means the auditor can use *its* own
+        # cwd-anchored git invocation.
+        #
+        # The skip-prefix patterns must NOT be shell-quoted: ``case``
+        # treats quoted characters as literal, and we need the trailing
+        # ``*`` to glob.  Each prefix is a hardcoded literal so escaping
+        # is a non-issue here.
+        skip_alternatives = "|".join(
+            prefix.rstrip("/") + "/*"
+            for prefix in MirrorManager._AUDIT_SKIP_PREFIXES
+        )
+        # Newline-separated output: tracked-file paths essentially never
+        # contain newlines in practice, and using NUL would require
+        # binary capture which the executor doesn't support.
+        script = f"""
+            set -e
+            git ls-files | while IFS= read -r f; do
+                case "$f" in
+                    {skip_alternatives}) continue ;;
+                esac
+                [ -e "$f" ] && [ ! -r "$f" ] && printf '%s\\n' "$f"
+            done
+        """
+        try:
+            proc = executor.run_agent(
+                ["sh", "-c", script],
+                cwd=str(target_dir),
+                check=False,
+                capture_output=True,
+            )
+        except CommandError:
+            return []
+
+        unreadable_rel = [
+            line.strip() for line in (proc.stdout or "").splitlines()
+            if line.strip()
+        ]
+        return [str(target_dir / p) for p in unreadable_rel]
 
     def _has_ref(self, repo_dir: Path, ref: str, executor: "CommandExecutor") -> bool:
         """Check whether *ref* exists in the repo at *repo_dir*."""
@@ -2379,14 +2460,19 @@ class MirrorManager:
 
         executor = auditor_executor or self.executor
 
-        # --- Permissions check: can we read everything? ---
-        perm_issues = self._check_dir_readable(skills_dir)
+        # --- Permissions check: can the auditor read everything? ---
+        perm_issues = self._check_dir_readable(skills_dir, executor)
         if perm_issues:
-            header = "PERMISSIONS AUDIT FAILURE\n\nThe following files are not world-readable (o+r):\n"
+            header = (
+                "PERMISSIONS AUDIT FAILURE\n\n"
+                "The following git-tracked files are not readable by the "
+                "auditor user:\n"
+            )
             report = header + "\n".join(f"  - {p}" for p in perm_issues)
             report += (
                 "\n\nThe working agent may have restricted permissions to "
-                "hide modifications.  Investigate before proceeding."
+                "hide modifications, or the auditor user may need to be "
+                "added to the agent's group.  Investigate before proceeding."
             )
             self.logger.warning("Skills audit found %d unreadable files.", len(perm_issues))
             return report
@@ -2497,17 +2583,19 @@ If you find issues, describe each one clearly with the filename and specific con
 
         executor = auditor_executor or self.executor
 
-        # --- Permissions check ---
-        perm_issues = self._check_dir_readable(mirror_path)
+        # --- Permissions check: can the auditor read everything? ---
+        perm_issues = self._check_dir_readable(mirror_path, executor)
         if perm_issues:
             header = (
                 f"PERMISSIONS AUDIT FAILURE (mirror: {mirror_name})\n\n"
-                "The following files are not world-readable (o+r):\n"
+                "The following git-tracked files are not readable by the "
+                "auditor user:\n"
             )
             report = header + "\n".join(f"  - {p}" for p in perm_issues)
             report += (
                 "\n\nThe working agent may have restricted permissions to "
-                "hide modifications.  Investigate before proceeding."
+                "hide modifications, or the auditor user may need to be "
+                "added to the agent's group.  Investigate before proceeding."
             )
             self.logger.warning("Code audit found %d unreadable files in %s.", len(perm_issues), mirror_name)
             return report
