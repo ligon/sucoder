@@ -2215,6 +2215,135 @@ class MirrorManager:
                 "Failed to auto-commit agent skills: %s", exc,
             )
 
+    # -- Post-session auto-audit hook -----------------------------------
+
+    def _maybe_run_audit(self, ctx: MirrorContext) -> None:
+        """Run skills+code audits after a session if config opts in.
+
+        Reports are saved under ``<log_dir>/audits/`` and a one-line
+        summary is logged for the human.  Failures (e.g. an expired
+        auditor token) are reported at WARNING level but never block
+        session teardown.
+
+        The audit is opt-in via ``audit.auto_after_session`` in
+        ``~/.sucoder/config.yaml``; when not set, this method is a
+        no-op and behaviour is identical to historical sucoder.
+
+        On the first invocation against a never-audited mirror there
+        is no ``refs/audited`` / ``refs/audited-code`` baseline, so the
+        underlying ``audit_*`` methods run a *full* review (which is
+        more expensive in LLM tokens than a diff review).  Run
+        ``sucoder audit … --approve`` once to seed the baseline; after
+        that, auto-audits skip entirely when the diff is empty and run
+        in cheap diff mode otherwise.
+        """
+        audit_cfg = self.config.audit
+        if not audit_cfg.auto_after_session:
+            return
+
+        # Silently skip if the auditor user isn't provisioned — the
+        # alternative ("error out at session teardown") is hostile to
+        # operators who haven't yet run ``make create-auditor-user``.
+        auditor_user = os.environ.get("SUCODER_AUDITOR_USER", "auditor")
+        try:
+            pwd.getpwnam(auditor_user)
+        except KeyError:
+            self.logger.info(
+                "audit.auto_after_session is on, but user %r does not exist; "
+                "skipping post-session audit (run `make create-auditor-user` to enable).",
+                auditor_user,
+            )
+            return
+
+        # Build the auditor executor mirroring the agent executor's
+        # sudo / umask settings, but switching the target user.
+        auditor_executor = CommandExecutor(
+            human_user=self.config.human_user,
+            agent_user=auditor_user,
+            agent_group=auditor_user,
+            logger=self.logger,
+            dry_run=self.executor.dry_run,
+            use_sudo_for_agent=self.executor.use_sudo_for_agent,
+            default_umask=self.executor.default_umask,
+        )
+
+        scope = audit_cfg.scope
+        if scope in ("skills", "all"):
+            self._run_one_audit(
+                ctx, "skills",
+                lambda: self.audit_agent_skills(auditor_executor=auditor_executor),
+            )
+        if scope in ("code", "all"):
+            self._run_one_audit(
+                ctx, "code",
+                lambda: self.audit_code_changes(
+                    ctx.settings.name, auditor_executor=auditor_executor,
+                ),
+            )
+
+    def _run_one_audit(
+        self,
+        ctx: MirrorContext,
+        kind: str,
+        run: Callable[[], Optional[str]],
+    ) -> None:
+        """Execute one audit (skills or code) and surface the outcome.
+
+        Catches *all* exceptions: a flaky LLM call or expired auditor
+        credentials must not block the session from ending cleanly.
+        """
+        try:
+            report = run()
+        except Exception as exc:  # noqa: BLE001 — defensive at teardown
+            self.logger.warning(
+                "Post-session %s audit failed: %s", kind, exc,
+            )
+            return
+
+        if not report:
+            # ``None`` from the audit means "nothing to audit" (no
+            # changes since the last approved baseline, or no skills
+            # repo / mirror).  Treat as silent success.
+            self.logger.info(
+                "Post-session %s audit: nothing to audit.", kind,
+            )
+            return
+
+        path = self._save_audit_report(ctx, kind, report)
+
+        # The auditor prompt instructs the LLM to say "No concerns."
+        # when nothing is amiss.  This is a heuristic for surfacing
+        # only when there's actual signal; the report is saved either
+        # way so the audit trail is complete.
+        if "No concerns" in report and "PERMISSIONS AUDIT FAILURE" not in report:
+            self.logger.info(
+                "Post-session %s audit: no concerns (%s).", kind, path,
+            )
+        else:
+            self.logger.warning(
+                "Post-session %s audit produced findings: %s", kind, path,
+            )
+
+    def _save_audit_report(
+        self,
+        ctx: MirrorContext,
+        kind: str,
+        report: str,
+    ) -> Path:
+        """Write *report* to ``<log_dir>/audits/<mirror>-<kind>-<ts>.log``.
+
+        Uses ``log_dir`` from sucoder config when set; falls back to
+        ``~/.sucoder/logs`` when not.  Creates the audits subdirectory
+        on demand.
+        """
+        base_dir = self.config.log_dir or Path("~/.sucoder/logs").expanduser()
+        audits_dir = base_dir / "audits"
+        audits_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = _dt.datetime.now().strftime("%Y%m%dT%H%M%S")
+        path = audits_dir / f"{ctx.settings.name}-{kind}-{timestamp}.log"
+        path.write_text(report, encoding="utf-8")
+        return path
+
     # -- Audit infrastructure -------------------------------------------
 
     _AUDITED_REF = "refs/audited"

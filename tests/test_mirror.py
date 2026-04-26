@@ -3,13 +3,14 @@ import logging
 import os
 import pwd
 import subprocess
+import types
 from pathlib import Path
 from typing import Callable, Optional
 
 import pytest
 
 import sucoder.mirror as mirror
-from sucoder.config import AgentLauncher, BranchPrefixes, Config, McpServerConfig, MirrorSettings, NvmConfig
+from sucoder.config import AgentLauncher, AuditConfig, BranchPrefixes, Config, McpServerConfig, MirrorSettings, NvmConfig
 from sucoder.executor import CommandError, CommandExecutor, CommandResult
 from sucoder.mirror import (
     MirrorError,
@@ -1572,6 +1573,248 @@ def test_code_audit_prompt_contains_security_checks(tmp_path: Path, monkeypatch:
     assert "Unsafe subprocess" in prompt
     assert "Supply-chain" in prompt
     assert "Permission escalation" in prompt
+
+
+# -- Post-session auto-audit hook ---------------------------------------
+
+
+def _make_audit_manager(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    auto_after_session: bool,
+    scope: str = "all",
+) -> MirrorManager:
+    """Build a manager with the auto-audit hook configured.
+
+    Replaces the auditor-existence check (``pwd.getpwnam("auditor")``)
+    with a stub that always succeeds, since CI/test environments rarely
+    have a real ``auditor`` user.
+    """
+    manager = build_manager(tmp_path)
+    # Replace the frozen audit config — Config itself is mutable, but
+    # AuditConfig is frozen, so swap the whole instance.
+    object.__setattr__(
+        manager.config,
+        "audit",
+        AuditConfig(auto_after_session=auto_after_session, scope=scope),
+    )
+    monkeypatch.setattr(
+        "sucoder.mirror.pwd.getpwnam",
+        lambda name: types.SimpleNamespace(pw_name=name),
+    )
+    return manager
+
+
+def test_maybe_run_audit_noop_when_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Auto-audit is opt-in; disabled config = no audit calls."""
+    manager = _make_audit_manager(
+        tmp_path, monkeypatch, auto_after_session=False,
+    )
+    ctx = manager.context_for("sample")
+
+    skills_called: list = []
+    code_called: list = []
+    monkeypatch.setattr(
+        manager, "audit_agent_skills",
+        lambda **kw: skills_called.append(kw) or "",
+    )
+    monkeypatch.setattr(
+        manager, "audit_code_changes",
+        lambda mn, **kw: code_called.append((mn, kw)) or "",
+    )
+
+    manager._maybe_run_audit(ctx)
+
+    assert skills_called == []
+    assert code_called == []
+
+
+def test_maybe_run_audit_silent_when_auditor_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When the auditor user doesn't exist, log + skip; don't raise."""
+    manager = build_manager(tmp_path)
+    object.__setattr__(
+        manager.config, "audit",
+        AuditConfig(auto_after_session=True, scope="all"),
+    )
+    # Simulate missing auditor user.
+    def _raise(name: str):
+        raise KeyError(name)
+    monkeypatch.setattr("sucoder.mirror.pwd.getpwnam", _raise)
+
+    audit_called: list = []
+    monkeypatch.setattr(
+        manager, "audit_agent_skills",
+        lambda **kw: audit_called.append("skills") or "",
+    )
+    monkeypatch.setattr(
+        manager, "audit_code_changes",
+        lambda mn, **kw: audit_called.append("code") or "",
+    )
+
+    ctx = manager.context_for("sample")
+    with caplog.at_level("INFO", logger="sucoder.test"):
+        manager._maybe_run_audit(ctx)
+
+    assert audit_called == []
+    assert any(
+        "auditor" in r.message and "does not exist" in r.message
+        for r in caplog.records
+    )
+
+
+def test_maybe_run_audit_runs_both_audits_when_enabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``scope: all`` triggers skills AND code audits and saves both reports."""
+    manager = _make_audit_manager(
+        tmp_path, monkeypatch, auto_after_session=True, scope="all",
+    )
+    object.__setattr__(
+        manager.config, "log_dir", tmp_path / "logs",
+    )
+    ctx = manager.context_for("sample")
+
+    monkeypatch.setattr(
+        manager, "audit_agent_skills",
+        lambda **kw: "No concerns.\n",
+    )
+    monkeypatch.setattr(
+        manager, "audit_code_changes",
+        lambda mn, **kw: "Found a token at line 42.\n",
+    )
+
+    manager._maybe_run_audit(ctx)
+
+    audits_dir = tmp_path / "logs" / "audits"
+    assert audits_dir.is_dir()
+    written = sorted(p.name for p in audits_dir.iterdir())
+    assert any(name.startswith("sample-skills-") for name in written), written
+    assert any(name.startswith("sample-code-") for name in written), written
+
+
+def test_maybe_run_audit_skills_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``scope: skills`` runs the skills audit, not the code audit."""
+    manager = _make_audit_manager(
+        tmp_path, monkeypatch, auto_after_session=True, scope="skills",
+    )
+    object.__setattr__(
+        manager.config, "log_dir", tmp_path / "logs",
+    )
+    ctx = manager.context_for("sample")
+
+    code_called: list = []
+    monkeypatch.setattr(
+        manager, "audit_agent_skills",
+        lambda **kw: "No concerns.\n",
+    )
+    monkeypatch.setattr(
+        manager, "audit_code_changes",
+        lambda mn, **kw: code_called.append("code") or "",
+    )
+
+    manager._maybe_run_audit(ctx)
+
+    assert code_called == []
+    audits_dir = tmp_path / "logs" / "audits"
+    written = sorted(p.name for p in audits_dir.iterdir())
+    assert all(name.startswith("sample-skills-") for name in written)
+
+
+def test_maybe_run_audit_swallows_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An audit raising must not propagate; session teardown continues."""
+    manager = _make_audit_manager(
+        tmp_path, monkeypatch, auto_after_session=True, scope="all",
+    )
+    ctx = manager.context_for("sample")
+
+    def _boom(**kw):
+        raise RuntimeError("auditor token expired")
+    def _boom_code(mn, **kw):
+        raise RuntimeError("disk full")
+    monkeypatch.setattr(manager, "audit_agent_skills", _boom)
+    monkeypatch.setattr(manager, "audit_code_changes", _boom_code)
+
+    with caplog.at_level("WARNING", logger="sucoder.test"):
+        manager._maybe_run_audit(ctx)  # must not raise
+
+    messages = " ".join(r.message for r in caplog.records)
+    assert "skills audit failed" in messages
+    assert "code audit failed" in messages
+
+
+def test_maybe_run_audit_skips_when_audit_returns_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When the audit returns None (nothing to audit), no file is written."""
+    manager = _make_audit_manager(
+        tmp_path, monkeypatch, auto_after_session=True, scope="all",
+    )
+    object.__setattr__(
+        manager.config, "log_dir", tmp_path / "logs",
+    )
+    ctx = manager.context_for("sample")
+
+    monkeypatch.setattr(manager, "audit_agent_skills", lambda **kw: None)
+    monkeypatch.setattr(manager, "audit_code_changes", lambda mn, **kw: None)
+
+    with caplog.at_level("INFO", logger="sucoder.test"):
+        manager._maybe_run_audit(ctx)
+
+    audits_dir = tmp_path / "logs" / "audits"
+    assert not audits_dir.exists() or list(audits_dir.iterdir()) == []
+    messages = [r.message for r in caplog.records]
+    assert any("nothing to audit" in m for m in messages)
+
+
+def test_maybe_run_audit_log_dir_falls_back_to_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When config.log_dir is None, reports land under ~/.sucoder/logs/audits/."""
+    manager = _make_audit_manager(
+        tmp_path, monkeypatch, auto_after_session=True, scope="skills",
+    )
+    # Force log_dir to None to exercise the fallback.
+    object.__setattr__(manager.config, "log_dir", None)
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    monkeypatch.setattr(manager, "audit_agent_skills", lambda **kw: "Findings\n")
+
+    ctx = manager.context_for("sample")
+    manager._maybe_run_audit(ctx)
+
+    fallback = fake_home / ".sucoder" / "logs" / "audits"
+    assert fallback.is_dir()
+    assert list(fallback.iterdir())  # at least one report written
+
+
+def test_save_audit_report_writes_to_disk(
+    tmp_path: Path,
+) -> None:
+    """``_save_audit_report`` returns the path it wrote to."""
+    manager = build_manager(tmp_path)
+    object.__setattr__(manager.config, "log_dir", tmp_path / "logs")
+    ctx = manager.context_for("sample")
+
+    path = manager._save_audit_report(ctx, "code", "REPORT BODY")
+
+    assert path.exists()
+    assert path.read_text(encoding="utf-8") == "REPORT BODY"
+    assert path.parent.name == "audits"
+    assert path.name.startswith("sample-code-")
 
 
 def test_launch_agent_wraps_command_with_nvm_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
