@@ -2670,9 +2670,41 @@ If you find issues, describe each one clearly with the filename and specific con
         self._advance_ref(mirror_path, self._AUDITED_CODE_REF, executor or self.executor)
 
     def _full_repo_diff(self, repo_dir: Path, executor: "CommandExecutor") -> str:
-        """Return a diff of all tracked content vs. the empty tree."""
-        # The well-known SHA of git's empty tree object.
-        empty_tree = "4b825dc642cb6eb9a060e54bf899d15f3780fcaa"
+        """Return a diff of all tracked content vs. the empty tree.
+
+        We don't hardcode the empty-tree SHA because:
+
+          (1) The "well-known" constant ``4b825dc642cb6eb9a060e54bf899d15f3780fcaa``
+              that previously lived here is *wrong* — git's actual empty-tree
+              SHA-1 is ``4b825dc642cb6eb9a060e54bf8d69288fbee4904`` (the last
+              15 hex digits differ).  This was a silent bug: ``git diff
+              <wrong-sha> HEAD`` returns ``fatal: bad object <sha>`` and
+              ``_full_repo_diff`` quietly returned an empty string, so the
+              code auditor was reviewing an empty diff instead of the full
+              tree.
+
+          (2) Even with the correct SHA, ``git diff`` requires the object
+              to exist in the repository's object database.  In a freshly
+              indexed repo it may not.
+
+        Use ``git mktree`` with empty stdin to write (or no-op if already
+        present) the empty tree object and capture its SHA in this repo's
+        active hash algorithm.  The executor sets stdin=DEVNULL when
+        ``capture_output=True``, which is exactly the empty stdin mktree
+        wants.
+        """
+        try:
+            mktree = executor.run_agent(
+                ["git", *self._safe_directory_args(repo_dir), "mktree"],
+                check=True,
+                cwd=str(repo_dir),
+                capture_output=True,
+            )
+        except CommandError:
+            return ""
+        empty_tree = (mktree.stdout or "").strip()
+        if not empty_tree:
+            return ""
         try:
             result = executor.run_agent(
                 ["git", *self._safe_directory_args(repo_dir),

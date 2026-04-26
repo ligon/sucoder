@@ -1493,7 +1493,11 @@ def test_code_audit_full_uses_empty_tree_diff(tmp_path: Path, monkeypatch: pytes
     manager = _setup_code_audit_manager(tmp_path, monkeypatch)
 
     calls: list = []
-    empty_tree = "4b825dc642cb6eb9a060e54bf899d15f3780fcaa"
+    # The fake mktree returns this stand-in for "the empty tree".  The
+    # real empty-tree SHA-1 is ``4b825dc642cb6eb9a060e54bf8d69288fbee4904``
+    # but the test only checks that whatever mktree returned is what the
+    # subsequent diff was passed.
+    empty_tree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
     def fake_run_agent(args, **kwargs):
         calls.append(list(args))
@@ -1501,6 +1505,11 @@ def test_code_audit_full_uses_empty_tree_diff(tmp_path: Path, monkeypatch: pytes
             return CommandResult(
                 requested_args=list(args), executed_args=list(args),
                 stdout="", stderr="", returncode=1,
+            )
+        if _git_is(args, "mktree"):
+            return CommandResult(
+                requested_args=list(args), executed_args=list(args),
+                stdout=empty_tree + "\n", stderr="", returncode=0,
             )
         if _git_is(args, "diff"):
             return CommandResult(
