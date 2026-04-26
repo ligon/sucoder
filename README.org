@@ -23,7 +23,7 @@ For multi-repo setups, skills, and system prompts, see [[*Configuration][Configu
 - Linux (user/group sandboxing relies on =useradd=, =groupadd=, and setgid)
 - Python >= 3.9 with pip
 - git
-- git-crypt (for decrypting =.mcp.json= which contains MCP server tokens)
+- git-crypt (optional; only needed if you have other =.gitattributes=-encrypted files. =.mcp.json= no longer contains secrets --- see "MCP servers" below for the new token-handling guidance)
 - Node.js and npx (MCP servers are distributed as npm packages)
 - sudo
 - make (optional; you can run the setup commands by hand)
@@ -537,29 +537,39 @@ This repository includes a =.mcp.json= with three servers:
 | =fetch=  | Fetch web pages and URLs (documentation, references)  |
 | =memory= | Persistent knowledge graph across agent sessions      |
 
-The =github= server requires a =GITHUB_TOKEN= environment variable.  Because =.mcp.json= contains this secret, the file is encrypted with =git-crypt=.
+The =github= server requires a =GITHUB_TOKEN= environment variable.  *Do not commit the token to =.mcp.json=.* Earlier revisions of this repository did so (encrypted via =git-crypt=), but a security audit flagged that approach: the decrypted plaintext is visible to anyone with read access to a working tree, and any token committed to history --- even encrypted --- is permanently compromised once a single key is leaked.  The current =.mcp.json= no longer carries an =env= block; the GitHub MCP server reads =GITHUB_TOKEN= from its parent process's environment.
 
-*** Setting up git-crypt (first time)
-
-After cloning the repository, unlock the encrypted files:
+Set the token in the agent user's shell environment so it propagates to spawned MCP servers.  The simplest approach is to add it to the agent user's =.bashrc= (or equivalent), because sucoder sources the agent's profile when wrapping commands:
 
 #+begin_src shell
-# Install git-crypt if needed
+# As root or via sudo, append to /home/coder/.bashrc (replace USER and TOKEN):
+echo 'export GITHUB_TOKEN="ghp_YOUR_REAL_TOKEN_HERE"' \
+    | sudo tee -a /home/coder/.bashrc
+sudo chown coder:coder /home/coder/.bashrc
+sudo chmod 0640 /home/coder/.bashrc
+#+end_src
+
+If you prefer to keep the token out of any on-disk file altogether, configure your launcher to inject it via =sudo --preserve-env=GITHUB_TOKEN= or an equivalent mechanism.  Either way, no GitHub credential should appear in =.mcp.json= or anywhere else under git tracking.
+
+After provisioning the new mechanism, *rotate* any token that ever appeared in committed history --- the previous repo HEAD shipped a literal PAT, so that token must be considered burned.
+
+*** Note on =git-crypt=
+
+=git-crypt= is still configured for =.mcp.json= via =.gitattributes=, but the file no longer contains secrets, so the encryption is now redundant.  You can safely:
+
+  - leave it as-is (no harm; future secret-bearing files in =.mcp.json= would still be encrypted), or
+  - remove the =filter=git-crypt diff=git-crypt= line for =.mcp.json= from =.gitattributes= and re-commit the file as plain text.
+
+#+begin_src shell
+# Install git-crypt if needed for other encrypted files in this repo:
 brew install git-crypt   # macOS
 sudo apt install git-crypt  # Debian/Ubuntu
 
-# If you are initialising git-crypt for the first time in this repo:
-git-crypt init
-git-crypt add-gpg-user <your-gpg-key-id>
-
-# Edit .mcp.json to add your real GITHUB_TOKEN, then commit.
-# The file will be stored encrypted in the repo but readable in your checkout.
-
-# If git-crypt is already initialised, just unlock:
+# Unlock encrypted files (one-time per checkout):
 git-crypt unlock
 #+end_src
 
-Collaborators who have been added via =git-crypt add-gpg-user= can unlock with their GPG key.  The agent user (=coder=) works in a mirror cloned from an already-unlocked checkout, so the plaintext =.mcp.json= is available without additional setup.
+Collaborators who have been added via =git-crypt add-gpg-user= can unlock with their GPG key.
 
 *** Configuring MCP servers via =config.yaml=
 
