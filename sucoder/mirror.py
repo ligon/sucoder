@@ -1396,6 +1396,14 @@ class MirrorManager:
             # Post-session: snapshot any agent-written skills.
             self._auto_commit_agent_skills(ctx)
 
+            # Post-session: optionally run compliance audits.  Opt-in
+            # via ``audit.auto_after_session`` in config.yaml; default
+            # is off, so this is a no-op for operators who haven't
+            # opted in.  Failures inside _maybe_run_audit are logged
+            # but not raised, so a flaky LLM call doesn't turn a
+            # successful agent session into a teardown error.
+            self._maybe_run_audit(ctx)
+
             if result.returncode != 0:
                 raise MirrorError(
                     f"Agent command exited with code {result.returncode} "

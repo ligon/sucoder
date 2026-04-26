@@ -5,6 +5,19 @@ mirror_root: /var/tmp/coder-mirrors
 log_dir: /home/<your-username>/.sucoder/logs
 system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 
+# Compliance audits (optional; defaults to off).
+# When `auto_after_session: true`, sucoder runs the configured audit
+# scope after every agent session and saves the report to
+# <log_dir>/audits/<mirror>-<kind>-<timestamp>.log.  Failures are
+# logged but never block session teardown.  The first run with no
+# baseline does a full review; run `sucoder audit … --approve` once
+# to seed `refs/audited` / `refs/audited-code`, after which subsequent
+# auto-audits run in cheap diff mode.  See README § "Auditing →
+# Auto-trigger after each session".
+# audit:
+#   auto_after_session: true
+#   scope: all                  # skills | code | all
+
 # Named execution targets for remote hosts (optional).
 # Use --target/-T on the CLI to select one.
 # targets:

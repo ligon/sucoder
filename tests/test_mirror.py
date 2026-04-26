@@ -953,6 +953,91 @@ def test_auto_commit_agent_skills_after_session(tmp_path: Path, monkeypatch: pyt
     assert any("Auto-snapshot" in str(c) for c in commit_calls)
 
 
+def test_launch_agent_fires_auto_audit_hook(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When ``audit.auto_after_session`` is True, ``launch_agent`` calls
+    ``_maybe_run_audit`` after the auto-commit step.
+
+    This is the integration check that the hook is wired into the
+    session-teardown path.  The unit tests for ``_maybe_run_audit``
+    itself live elsewhere (see "Post-session auto-audit hook"
+    section).
+    """
+    manager = build_manager(tmp_path)
+    object.__setattr__(
+        manager.config, "audit",
+        AuditConfig(auto_after_session=True, scope="all"),
+    )
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    # Stub run_agent so the test doesn't require a real agent CLI.
+    def fake_run_agent(args, **kwargs):
+        return CommandResult(
+            requested_args=list(args),
+            executed_args=list(args),
+            stdout="",
+            stderr="",
+            returncode=0,
+        )
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+
+    # Capture the call to _maybe_run_audit instead of letting it run.
+    invocations: list = []
+    def fake_maybe(ctx_arg):
+        invocations.append(ctx_arg.settings.name)
+    monkeypatch.setattr(manager, "_maybe_run_audit", fake_maybe)
+
+    manager.launch_agent(ctx, sync=False)
+
+    assert invocations == ["sample"], (
+        "_maybe_run_audit must be called exactly once after a session, "
+        f"with the session's mirror context (got {invocations!r})"
+    )
+
+
+def test_launch_agent_no_audit_when_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default config (auto_after_session=False) → hook is still called,
+    but it short-circuits to a no-op without touching the audit functions.
+
+    We exercise the *real* ``_maybe_run_audit`` here (no monkeypatch)
+    to confirm the opt-in default genuinely produces zero side effects.
+    """
+    manager = build_manager(tmp_path)
+    # Default Config().audit has auto_after_session=False; no need to set.
+    assert manager.config.audit.auto_after_session is False
+
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    def fake_run_agent(args, **kwargs):
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="", stderr="", returncode=0,
+        )
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+
+    audit_called: list = []
+    monkeypatch.setattr(
+        manager, "audit_agent_skills",
+        lambda **kw: audit_called.append("skills") or "",
+    )
+    monkeypatch.setattr(
+        manager, "audit_code_changes",
+        lambda mn, **kw: audit_called.append("code") or "",
+    )
+
+    manager.launch_agent(ctx, sync=False)
+
+    assert audit_called == [], (
+        "Default opt-out must not invoke any audit function; "
+        f"got {audit_called!r}"
+    )
+
+
 def test_auto_commit_skipped_when_no_skills_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """When agent skills dir does not exist, auto-commit is silently skipped."""
     manager = build_manager(tmp_path)

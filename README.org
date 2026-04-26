@@ -836,6 +836,45 @@ The auditor checks for:
    is listed with filename and severity.  Pass =--approve= to advance the
    baseline; omit it to leave the baseline unchanged for human review.
 
+** Auto-trigger after each session
+
+Auditing on demand only catches issues when the human remembers to run
+=sucoder audit=.  To close that loop, opt in to a post-session auto
+trigger via =~/.sucoder/config.yaml=:
+
+#+begin_src yaml
+audit:
+  auto_after_session: true   # default false; explicit opt-in
+  scope: all                  # skills | code | all
+#+end_src
+
+When enabled, =sucoder collaborate= (and other launch paths) call the
+audit subsystem after =_auto_commit_agent_skills= runs.  The auditor
+operates exactly as if you had typed =sucoder audit MIRROR --scope <X>=,
+with three differences:
+
+  - Reports are saved to =<log_dir>/audits/<mirror>-<kind>-<timestamp>.log=
+    rather than printed to stdout (the session has ended; nobody is
+    watching).  When =log_dir= is unset, =~/.sucoder/logs/audits/= is
+    used.
+
+  - A one-line summary is logged: =INFO: Post-session code audit: no
+    concerns (<path>)= when the report says so, =WARNING: Post-session
+    code audit produced findings: <path>= otherwise.  Watch =log_dir=
+    or pipe sessions through =tee= if you want a durable record.
+
+  - Failures are non-blocking.  An expired auditor token, missing
+    auditor user, network blip --- all log a warning and let session
+    teardown succeed.  Audit infrastructure must never make a
+    successful agent session look failed.
+
+*Pre-flight*: the first auto-audit against a never-audited mirror has
+no =refs/audited= / =refs/audited-code= baseline, so it runs in *full*
+mode.  That's the most expensive variant in LLM tokens.  Run
+=sucoder audit MIRROR --scope all --approve= once after you're happy
+with the initial review; subsequent auto-audits then run in cheap diff
+mode (or skip entirely when there are no changes).
+
 ** Relationship with cq
 
 The =cq= knowledge commons and agent skills serve complementary roles:
