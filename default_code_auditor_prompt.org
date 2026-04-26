@@ -53,3 +53,42 @@ changes.  These changes may introduce:
 - Do not second-guess project-specific conventions you don't
   understand---flag them as "unclear, human should verify" rather
   than declaring them wrong.
+
+* Deployment context for severity grading
+
+This repository ships from a single-developer laptop and is never
+pushed to a public forge.  Files filtered through =git-crypt= (per
+=.gitattributes=) are encrypted in commit history and decrypted only
+into the working tree of authorised key-holders.  In practice this
+means a "literal secret in a =git-crypt=-filtered file" has the same
+exposure footprint as a secret in =~/.bashrc=: present on one trusted
+machine, never on the network.  Take this boundary into account when
+grading secrets findings:
+
+- A secret inside a =git-crypt=-filtered file is *not automatically
+  HIGH*.  Default to LOW unless you can show one of:
+  - the file is mis-configured (committed in plaintext form, or
+    =.gitattributes= no longer routes it through =git-crypt=);
+  - the secret has been transmitted in plaintext to a third party
+    (LLM-provider telemetry, error-reporting endpoint, etc.);
+  - the trust boundary is wider than this one laptop --- e.g.,
+    additional GPG keys are authorised, the repo has been pushed
+    to a hosted forge, or the working tree is exposed to other
+    accounts on a multi-tenant machine.
+
+  When the boundary is unclear, prefer "MEDIUM, requires human
+  review of the encryption boundary" over HIGH.
+
+- A secret in an *un*-encrypted tracked file remains HIGH.  The
+  =git-crypt= boundary is the load-bearing assumption; without it,
+  the secret is committed plaintext.
+
+- To check whether a path is =git-crypt=-filtered, look at
+  =.gitattributes= for a line of the form ``<path> filter=git-crypt
+  diff=git-crypt``.  If you can't determine encryption status from
+  the diff alone, flag the finding as MEDIUM with the note "verify
+  =git-crypt= coverage" rather than HIGH.
+
+Other categories of finding (injection, race conditions, missing
+timeouts, permission escalation, supply-chain risks, etc.) should be
+graded on their own merits without this context applying.
