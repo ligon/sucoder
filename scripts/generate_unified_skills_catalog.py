@@ -99,17 +99,20 @@ def load_local_skills(catalog_path: Path, source: Source) -> List[SkillEntry]:
     return entries
 
 
+_HTTP_TIMEOUT_SECONDS = 30
+
+
 def _fetch_json(url: str) -> List[dict]:
     request = Request(url, headers={"Accept": "application/vnd.github.v3+json"})
-    with urlopen(request) as response:
+    with urlopen(request, timeout=_HTTP_TIMEOUT_SECONDS) as response:
         return json.load(response)
 
 
 def _fetch_skill_description_from_raw(url: str) -> Optional[str]:
     try:
-        with urlopen(url) as response:
+        with urlopen(url, timeout=_HTTP_TIMEOUT_SECONDS) as response:
             text = response.read().decode("utf-8")
-    except (HTTPError, URLError):
+    except (HTTPError, URLError, TimeoutError):
         return None
 
     if not text.startswith("---"):

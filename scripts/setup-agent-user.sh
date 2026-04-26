@@ -65,8 +65,22 @@ if [[ -z "$HUMAN_USER" ]]; then
     exit 1
 fi
 
+# `getent passwd` is the safe alternative to `eval echo "~$user"`:
+# the latter passes the user-supplied $HUMAN_USER through `eval`, which
+# is a shell-injection vector if the variable ever contains
+# metacharacters.  getent reads /etc/passwd (or NSS) without invoking
+# the shell.
+home_of() {
+    local user="$1"
+    getent passwd "$user" | cut -d: -f6
+}
+
 if [[ -z "$CONFIG_DIR" ]]; then
-    HUMAN_HOME=$(eval echo "~$HUMAN_USER")
+    HUMAN_HOME=$(home_of "$HUMAN_USER")
+    if [[ -z "$HUMAN_HOME" ]]; then
+        echo "Error: could not resolve home directory for user '$HUMAN_USER'." >&2
+        exit 1
+    fi
     CONFIG_DIR="$HUMAN_HOME/.sucoder"
 fi
 
@@ -109,7 +123,11 @@ else
 fi
 
 # ── 2b. Set restrictive umask for agent ──────────────────────────────────
-AGENT_HOME=$(eval echo "~$AGENT_USER")
+AGENT_HOME=$(home_of "$AGENT_USER")
+if [[ -z "$AGENT_HOME" ]]; then
+    echo "Error: could not resolve home directory for user '$AGENT_USER'." >&2
+    exit 1
+fi
 BASHRC="$AGENT_HOME/.bashrc"
 info "Ensuring restrictive umask (0077) in $BASHRC..."
 if [[ -f "$BASHRC" ]] && grep -q 'umask 0077' "$BASHRC" 2>/dev/null; then

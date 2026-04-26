@@ -601,14 +601,20 @@ def _start_slurm_timer(
     """Launch a background timer on the compute node that warns before
     the SLURM allocation expires.
 
-    Writes warnings to ``/tmp/slurm-deadline.warn`` (for the agent to
-    check) and flashes ``tmux display-message`` (for the human).
-    Warnings fire at 30, 15, and 5 minutes remaining.
+    Writes warnings to ``$HOME/.cache/sucoder/slurm-deadline.warn`` (for
+    the agent to check) and flashes ``tmux display-message`` (for the
+    human).  Warnings fire at 30, 15, and 5 minutes remaining.
+
+    NOTE: previously these paths lived under ``/tmp/`` which is
+    world-writable on shared compute nodes.  Per-session prompts that
+    reference the old location (e.g. ``~/.sucoder/prompts/savio-node.org``)
+    should be updated to the new path.
 
     As a backstop, if the sucoder tmux session exits without cancelling
     the job (crash, network loss, etc.), the timer cancels it to avoid
     burning idle allocation time.
     """
+    import shlex
     import subprocess as _sp
     import textwrap
 
@@ -618,35 +624,63 @@ def _start_slurm_timer(
 
     tmux_session = f"sucoder-{session.mirror_name}"
 
+    # Defensive shell-quoting.  ``mirror_name`` and therefore
+    # ``tmux_session`` come from configuration the user controls; if a
+    # mirror were ever named with shell metacharacters the unquoted
+    # interpolation below would be a command-injection vector.
+    # ``job_id`` is an int from ``int(token)`` so it's already safe, but
+    # we quote it for symmetry and to insulate against future changes.
+    q_tmux = shlex.quote(tmux_session)
+    q_job = shlex.quote(str(job_id))
+
+    # Use a per-user runtime directory rather than world-writable /tmp.
+    # On a shared HPC compute node, predictable /tmp/slurm-*.warn paths
+    # are subject to symlink races: a co-resident user can pre-create
+    # the path as a symlink to a sensitive file and have the timer
+    # overwrite it.  ``$HOME/.cache/sucoder/`` is per-user (NFS-shared
+    # across nodes, owned by the same uid) and not writable by other
+    # local users on the compute node, which closes that vector.
+    #
+    # The agent reads ``slurm-deadline.warn`` from the same location
+    # (the agent runs as the same user inside tmux on the compute
+    # node), so the path remains discoverable to consumers.
+
     # The script runs on the compute node, querying squeue via the
     # login node is unnecessary — SLURM_JOB_ID is in the environment
     # and squeue works locally on compute nodes too.
     timer_script = textwrap.dedent(f"""\
         #!/bin/bash
-        WARN_FILE=/tmp/slurm-deadline.warn
-        rm -f /tmp/.slurm-warn-{{5,15,30}} "$WARN_FILE"
+        set -u
+        STATE_DIR="${{HOME}}/.cache/sucoder"
+        mkdir -p "$STATE_DIR"
+        chmod 700 "$STATE_DIR" 2>/dev/null || true
+        WARN_FILE="$STATE_DIR/slurm-deadline.warn"
+        WARN5="$STATE_DIR/.slurm-warn-5"
+        WARN15="$STATE_DIR/.slurm-warn-15"
+        WARN30="$STATE_DIR/.slurm-warn-30"
+        rm -f "$WARN5" "$WARN15" "$WARN30" "$WARN_FILE"
 
         # Wait for the agent tmux session to appear before monitoring.
         # The timer starts before the session is created, so we must
         # not treat its absence as "agent exited".
         TMUX_READY=0
         for i in $(seq 1 120); do
-            if tmux has-session -t {tmux_session} 2>/dev/null; then
+            if tmux has-session -t {q_tmux} 2>/dev/null; then
                 TMUX_READY=1
                 break
             fi
             sleep 5
         done
         if [ "$TMUX_READY" -eq 0 ]; then
-            echo "Timed out waiting for tmux session {tmux_session}." > "$WARN_FILE"
-            scancel {job_id} 2>/dev/null
+            echo "Timed out waiting for tmux session {q_tmux}." > "$WARN_FILE"
+            scancel {q_job} 2>/dev/null
             exit 1
         fi
 
         while true; do
-            left=$(squeue --job {job_id} --noheader -o "%L" 2>/dev/null)
+            left=$(squeue --job {q_job} --noheader -o "%L" 2>/dev/null)
             if [ -z "$left" ]; then
-                msg="SLURM job {job_id} is no longer queued — allocation may have ended."
+                msg="SLURM job {q_job} is no longer queued — allocation may have ended."
                 echo "$msg" > "$WARN_FILE"
                 tmux display-message "$msg" 2>/dev/null
                 break
@@ -654,9 +688,9 @@ def _start_slurm_timer(
 
             # If the agent tmux session is gone, cancel the allocation
             # to avoid burning idle compute time.
-            if ! tmux has-session -t {tmux_session} 2>/dev/null; then
-                scancel {job_id} 2>/dev/null
-                echo "Agent session ended; cancelled SLURM job {job_id}." > "$WARN_FILE"
+            if ! tmux has-session -t {q_tmux} 2>/dev/null; then
+                scancel {q_job} 2>/dev/null
+                echo "Agent session ended; cancelled SLURM job {q_job}." > "$WARN_FILE"
                 break
             fi
 
@@ -668,33 +702,40 @@ def _start_slurm_timer(
             else
                 mins=999
             fi
-            if [ "$mins" -le 5 ] && [ ! -f /tmp/.slurm-warn-5 ]; then
-                msg="SLURM: ~${{mins}} min left (job {job_id}). Commit and save NOW."
+            if [ "$mins" -le 5 ] && [ ! -f "$WARN5" ]; then
+                msg="SLURM: ~${{mins}} min left (job {q_job}). Commit and save NOW."
                 echo "$msg" > "$WARN_FILE"
-                tmux display-message -t {tmux_session} "$msg" 2>/dev/null
-                touch /tmp/.slurm-warn-5
-            elif [ "$mins" -le 15 ] && [ ! -f /tmp/.slurm-warn-15 ]; then
-                msg="SLURM: ~${{mins}} min left (job {job_id}). Start wrapping up."
+                tmux display-message -t {q_tmux} "$msg" 2>/dev/null
+                touch "$WARN5"
+            elif [ "$mins" -le 15 ] && [ ! -f "$WARN15" ]; then
+                msg="SLURM: ~${{mins}} min left (job {q_job}). Start wrapping up."
                 echo "$msg" > "$WARN_FILE"
-                tmux display-message -t {tmux_session} "$msg" 2>/dev/null
-                touch /tmp/.slurm-warn-15
-            elif [ "$mins" -le 30 ] && [ ! -f /tmp/.slurm-warn-30 ]; then
-                msg="SLURM: ~${{mins}} min left (job {job_id})."
+                tmux display-message -t {q_tmux} "$msg" 2>/dev/null
+                touch "$WARN15"
+            elif [ "$mins" -le 30 ] && [ ! -f "$WARN30" ]; then
+                msg="SLURM: ~${{mins}} min left (job {q_job})."
                 echo "$msg" > "$WARN_FILE"
-                tmux display-message -t {tmux_session} "$msg" 2>/dev/null
-                touch /tmp/.slurm-warn-30
+                tmux display-message -t {q_tmux} "$msg" 2>/dev/null
+                touch "$WARN30"
             fi
             sleep 60
         done
     """)
 
     # Write the script to the compute node via stdin, then run it.
+    # The script lives in the user's runtime cache rather than /tmp for
+    # the same symlink-race reasons; the path is computed remotely
+    # (rather than passed in argv) so a stale local copy can't trip up
+    # the SSH command-line.
     ssh_opts = cn_control.ssh_options()
     node = session.compute_node
 
     write_result = _sp.run(
         ["ssh", *ssh_opts, node,
-         "cat > /tmp/slurm-timer.sh && chmod +x /tmp/slurm-timer.sh"],
+         'mkdir -p "$HOME/.cache/sucoder" && '
+         'chmod 700 "$HOME/.cache/sucoder" 2>/dev/null || true; '
+         'cat > "$HOME/.cache/sucoder/slurm-timer.sh" && '
+         'chmod 700 "$HOME/.cache/sucoder/slurm-timer.sh"'],
         input=timer_script, capture_output=True, text=True, check=False,
     )
     if write_result.returncode != 0:
@@ -704,7 +745,7 @@ def _start_slurm_timer(
 
     run_result = _sp.run(
         ["ssh", *ssh_opts, node,
-         "nohup /tmp/slurm-timer.sh > /dev/null 2>&1 &"],
+         'nohup "$HOME/.cache/sucoder/slurm-timer.sh" > /dev/null 2>&1 &'],
         capture_output=True, text=True, check=False,
     )
     if run_result.returncode == 0:
