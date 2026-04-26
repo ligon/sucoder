@@ -8,3 +8,4 @@ __pycache__/
 .venv-app-data/
 .claude/settings.local.json
 _site/
+.gitnexus
