@@ -3138,6 +3138,29 @@ If you find issues, describe each one clearly with the filename and specific con
     def _compose_context_prelude(self, ctx: MirrorContext) -> str:
         blocks: List[str] = []
 
+        # Capture the consuming host's context so path-rendering helpers
+        # (_portable_skill_path / _collapse_home) can emit paths valid on
+        # the machine that will actually read this prelude.  For remote
+        # sessions the prelude is shipped over SSH, so eagerly resolve the
+        # remote $HOME (cached on self._resolved_remote_home as a side
+        # effect).  Best-effort: on failure we fall back to today's
+        # non-portable absolute path rather than emitting a wrong one.
+        self._render_is_remote = ctx.is_remote
+        if ctx.is_remote and getattr(self, "_resolved_remote_home", None) is None:
+            try:
+                self._resolve_remote_path(ctx)
+            except Exception as exc:  # noqa: BLE001 - best effort, see above
+                self.logger.debug(
+                    "Could not resolve remote home for portable skill paths: %s",
+                    exc,
+                )
+
+        # Surface a clear warning if the portability invariant
+        # (`<home>/.sucoder/skills` exists and is accessible on the host
+        # that consumes this prelude) is violated.  Non-fatal: skills are
+        # optional and this is on every session's critical path.
+        self._warn_if_skills_base_unusable(ctx)
+
         system_block = self._system_prompt_block()
         if system_block:
             blocks.append(system_block)
@@ -3183,7 +3206,7 @@ If you find issues, describe each one clearly with the filename and specific con
             )
             return None
 
-        header = f"SYSTEM PROMPT ({prompt_path})"
+        header = f"SYSTEM PROMPT ({self._collapse_home(prompt_path)})"
         return f"{header}\n{content}"
 
     def _target_prompt_block(self, ctx: MirrorContext) -> Optional[str]:
@@ -3207,7 +3230,7 @@ If you find issues, describe each one clearly with the filename and specific con
             )
             return None
 
-        header = f"TARGET PROMPT ({prompt_path})"
+        header = f"TARGET PROMPT ({self._collapse_home(prompt_path)})"
         return f"{header}\n{content}"
 
     def _agent_doc_block(self, ctx: MirrorContext) -> Optional[str]:
@@ -3485,16 +3508,178 @@ If you find issues, describe each one clearly with the filename and specific con
             return name, description
         return path.stem, ""
 
+    def _render_target_home(self) -> Optional[str]:
+        """Home directory of the host that will *consume* this prelude.
+
+        Local sessions: the agent runs here, so the local home is right.
+        Remote sessions: the prelude is shipped over SSH and consumed on
+        the remote host, so use the resolved remote ``$HOME`` when known
+        (``None`` when it could not be resolved -> caller falls back).
+        """
+        if getattr(self, "_render_is_remote", False):
+            return getattr(self, "_resolved_remote_home", None) or None
+        return str(Path.home())
+
+    @staticmethod
+    def _relative_to_or_none(path: Path, base: Path) -> Optional[Path]:
+        try:
+            return path.relative_to(base)
+        except ValueError:
+            return None
+
+    def _portable_skill_path(self, path: Path) -> str:
+        """Render *path* portably for the host that will consume the prelude.
+
+        Skill-tree paths are expressed *through* the stable
+        ``<home>/.sucoder/skills`` symlink -- whose target varies per
+        machine -- rather than its resolved target.  Other under-home
+        paths are re-rooted on the consuming host's home.  Paths that
+        cannot be re-rooted (outside home, or remote home unknown) fall
+        back to the original absolute string, i.e. today's behaviour, so
+        there is no regression.  The result stays absolute, so Claude's
+        Read tool (which does not expand ``~``) keeps working.
+        """
+        original = str(path)
+        target_home = self._render_target_home()
+        if not target_home:
+            return original
+        target_home = target_home.rstrip("/")
+
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path
+
+        skills_real = self._default_skills_dir()  # ~/.sucoder/skills
+        try:
+            skills_real = skills_real.resolve()
+        except OSError:
+            pass
+
+        rel = self._relative_to_or_none(resolved, skills_real)
+        if rel is not None:
+            suffix = rel.as_posix()
+            base = f"{target_home}/.sucoder/skills"
+            return base if suffix in ("", ".") else f"{base}/{suffix}"
+
+        try:
+            local_home = Path.home().resolve()
+        except OSError:
+            local_home = Path.home()
+        rel = self._relative_to_or_none(resolved, local_home)
+        if rel is not None:
+            suffix = rel.as_posix()
+            return target_home if suffix in ("", ".") else f"{target_home}/{suffix}"
+
+        return original
+
+    @staticmethod
+    def _collapse_home(path: Path) -> str:
+        """Collapse a local-home path to a ``$HOME``-relative string.
+
+        Used only for informational prompt headers (never for a path an
+        agent feeds to a Read tool), so the literal ``$HOME`` is safe and
+        avoids leaking/assuming a specific username across machines.
+        """
+        try:
+            rel = path.resolve().relative_to(Path.home().resolve())
+        except (ValueError, OSError):
+            return str(path)
+        suffix = rel.as_posix()
+        return "$HOME" if suffix in ("", ".") else f"$HOME/{suffix}"
+
+    @staticmethod
+    def _classify_skills_base(exists: bool, accessible: bool) -> str:
+        """Pure status mapping (kept separate so it is trivially testable)."""
+        if not exists:
+            return "MISSING"
+        if not accessible:
+            return "PERMS"
+        return "OK"
+
+    def _emit_skills_base_warning(self, status: str, path_str: str, where: str) -> None:
+        if status == "OK":
+            return
+        if status == "MISSING":
+            self.logger.warning(
+                "Skills directory %s is missing or a broken symlink on %s. "
+                "Skill-load hints in the prompt will point at a path that "
+                "does not exist there. Expected a readable symlink "
+                "`~/.sucoder/skills` -> the sucoder-skills checkout.",
+                path_str,
+                where,
+            )
+        elif status == "PERMS":
+            self.logger.warning(
+                "Skills directory %s exists on %s but is not readable/"
+                "traversable by the agent account. Fix permissions so "
+                "`~/.sucoder/skills` is at least r-x for the agent user.",
+                path_str,
+                where,
+            )
+
+    def _warn_if_skills_base_unusable(self, ctx: MirrorContext) -> None:
+        """Warn (never raise) if ``<home>/.sucoder/skills`` is unusable.
+
+        Portable skill paths assume this symlink exists and is accessible
+        on the host that *consumes* the prelude.  Local sessions are
+        checked in-process (no subprocess -- this is on every session's
+        critical path); remote sessions need one advisory SSH probe.
+        Best-effort: any failure is logged at debug, never raised.
+        """
+        if not ctx.is_remote:
+            base = self._default_skills_dir()
+            try:
+                exists = base.exists()  # follows symlink: broken link -> False
+                accessible = exists and os.access(base, os.R_OK | os.X_OK)
+            except OSError as exc:
+                self.logger.debug("Local skills-base check failed: %s", exc)
+                return
+            status = self._classify_skills_base(exists, accessible)
+            self._emit_skills_base_warning(status, str(base), "this host")
+            return
+
+        remote_home = getattr(self, "_resolved_remote_home", None)
+        if not remote_home:
+            self.logger.debug(
+                "Skipping remote skills-base check: remote home unresolved."
+            )
+            return
+        path_str = f"{remote_home.rstrip('/')}/.sucoder/skills"
+        probe = (
+            f'if [ ! -e "{path_str}" ]; then echo MISSING; '
+            f'elif [ ! -r "{path_str}" ] || [ ! -x "{path_str}" ]; '
+            f'then echo PERMS; else echo OK; fi'
+        )
+        try:
+            result = self.executor.run_agent(
+                ["bash", "-lc", probe], check=False, timeout=30
+            )
+        except Exception as exc:  # noqa: BLE001 - probe is advisory only
+            self.logger.debug("Remote skills-base probe could not run: %s", exc)
+            return
+        lines = (result.stdout or "").strip().splitlines()
+        status = lines[-1].strip() if lines else ""
+        if status in {"MISSING", "PERMS"}:
+            self._emit_skills_base_warning(status, path_str, "remote host")
+        elif status != "OK":
+            self.logger.debug(
+                "Remote skills-base probe inconclusive (rc=%s, out=%r).",
+                getattr(result, "returncode", "?"),
+                result.stdout,
+            )
+
     def _file_read_hint(self, path: Path) -> str:
         """Return an agent-appropriate file-read command hint for the given path."""
         agent_type = getattr(self, "_detected_agent_type", AgentType.UNKNOWN)
+        display = self._portable_skill_path(path)
         if agent_type == AgentType.CODEX:
-            return f"codex read {path}"
+            return f"codex read {display}"
         if agent_type == AgentType.CLAUDE:
-            return f"Read tool: {path}"
+            return f"Read tool: {display}"
         if agent_type == AgentType.GEMINI:
-            return f"read {path}"
-        return f"load {path}"
+            return f"read {display}"
+        return f"load {display}"
 
     def _format_skill_reference(self, reference: Path) -> str:
         normalized = (
@@ -3565,12 +3750,13 @@ If you find issues, describe each one clearly with the filename and specific con
         for path in files[:20]:
             rel = path.relative_to(skill_dir)
             extension = path.suffix.lower()
+            disp = self._portable_skill_path(path)
             if extension in {".py"}:
-                suggestion = f"python {path}"
+                suggestion = f"python {disp}"
             elif extension in {".sh", ".bash"}:
-                suggestion = f"bash {path}"
+                suggestion = f"bash {disp}"
             else:
-                suggestion = str(path)
+                suggestion = disp
             lines.append(f"- {rel} — e.g., `{suggestion}`")
         if len(files) > 20:
             lines.append(f"- ... ({len(files) - 20} more)")
