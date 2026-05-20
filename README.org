@@ -359,8 +359,8 @@ To request a specific node (e.g., to recover work on local disk from a
 previous session):
 
 #+begin_src shell
-sucoder -T savio collaborate --node n0047.savio2
-sucoder -T savio attach --node n0047.savio2
+sucoder -T savio collaborate --node n0047.savio3
+sucoder -T savio attach --node n0047.savio3
 #+end_src
 
 The =--node= option sets a preferred node for the SLURM allocation.

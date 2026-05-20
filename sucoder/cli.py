@@ -1110,7 +1110,7 @@ def pull(
     node: Optional[str] = typer.Option(
         None,
         "--node",
-        help="Pull from a specific compute node (e.g. --node n0047.savio2).",
+        help="Pull from a specific compute node (e.g. --node n0047.savio3).",
     ),
 ) -> None:
     """Fetch agent commits from the remote mirror into canonical.
@@ -1427,7 +1427,7 @@ def collaborate(
     node: Optional[str] = typer.Option(
         None,
         "--node",
-        help="Request a specific compute node (e.g. --node n0047.savio2). "
+        help="Request a specific compute node (e.g. --node n0047.savio3). "
              "Useful to recover work on local disk from a previous session.",
     ),
     extra_args: Optional[List[str]] = typer.Argument(
@@ -1618,7 +1618,7 @@ def attach(
     node: Optional[str] = typer.Option(
         None,
         "--node",
-        help="Attach to a specific compute node (e.g. --node n0047.savio2).",
+        help="Attach to a specific compute node (e.g. --node n0047.savio3).",
     ),
 ) -> None:
     """Reconnect to an existing remote agent session via tmux."""

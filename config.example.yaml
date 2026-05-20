@@ -36,7 +36,7 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #     # Platform-specific prompt snippet appended to the base system prompt.
 #     system_prompt_extra: ~/.sucoder/prompts/savio-node.org
 #     slurm:
-#       partition: savio2
+#       partition: savio3
 #       account: fc_jevons
 #       time: "02:00:00"
 #       # qos: savio_normal  # optional

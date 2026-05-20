@@ -411,7 +411,7 @@ def test_build_ssh_command_without_control_socket() -> None:
 def test_build_ssh_command_compute_node_proxy() -> None:
     """Compute-node targets include a ProxyCommand through the login node."""
     executor = _make_remote_executor(
-        login_node="n0101.savio2",
+        login_node="n0101.savio3",
         control_socket_path="/tmp/compute.sock",
         is_compute_node=True,
         proxy_node="ln001",
@@ -431,7 +431,7 @@ def test_build_ssh_command_compute_node_proxy() -> None:
 def test_build_ssh_command_compute_node_no_proxy_without_info() -> None:
     """Compute node without proxy info falls through without ProxyCommand."""
     executor = _make_remote_executor(
-        login_node="n0101.savio2",
+        login_node="n0101.savio3",
         control_socket_path="/tmp/compute.sock",
         is_compute_node=True,
         # No proxy_node or proxy_socket_path
@@ -521,7 +521,7 @@ def test_parse_targets_with_slurm_local_disk() -> None:
             "gateway": "brc.berkeley.edu",
             "transfer_host": "dtn.brc.berkeley.edu",
             "slurm": {
-                "partition": "savio2",
+                "partition": "savio3",
                 "account": "fc_jevons",
                 "local_disk": "/local",
             },
@@ -540,7 +540,7 @@ def test_parse_targets_slurm_no_local_disk() -> None:
             "gateway": "brc.berkeley.edu",
             "transfer_host": "dtn.brc.berkeley.edu",
             "slurm": {
-                "partition": "savio2",
+                "partition": "savio3",
                 "account": "fc_jevons",
             },
         },
@@ -924,7 +924,7 @@ def test_run_query_dispatch_local(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 def test_run_on_login_node_compute_target() -> None:
     """run_on_login_node routes through the DTN, not the compute node."""
     executor = _make_remote_executor(
-        login_node="n0101.savio2",
+        login_node="n0101.savio3",
         control_socket_path="/tmp/compute.sock",
         is_compute_node=True,
         proxy_node="ln001",
@@ -937,7 +937,7 @@ def test_run_on_login_node_compute_target() -> None:
     joined = " ".join(cmd)
     # Target is the DTN, not the compute node
     assert "dtn.brc.berkeley.edu" in cmd
-    assert "n0101.savio2" not in joined
+    assert "n0101.savio3" not in joined
     # Uses the DTN's ControlMaster socket
     assert "/tmp/dtn.sock" in joined
     # BatchMode prevents hanging on impossible password prompts when
@@ -972,7 +972,7 @@ def test_run_on_login_node_falls_back_on_dtn_timeout(
     from sucoder.executor import CommandError, CommandResult
 
     executor = _make_remote_executor(
-        login_node="n0101.savio2",
+        login_node="n0101.savio3",
         control_socket_path="/tmp/compute.sock",
         is_compute_node=True,
         proxy_node="ln001",
@@ -1021,7 +1021,7 @@ def test_run_on_login_node_falls_back_on_ssh_error(
     from sucoder.executor import CommandError, CommandResult
 
     executor = _make_remote_executor(
-        login_node="n0101.savio2",
+        login_node="n0101.savio3",
         control_socket_path="/tmp/compute.sock",
         is_compute_node=True,
         scaffolding_node="dtn.brc.berkeley.edu",
@@ -1067,7 +1067,7 @@ def test_run_on_login_node_does_not_fallback_on_command_error(
     from sucoder.executor import CommandError, CommandResult
 
     executor = _make_remote_executor(
-        login_node="n0101.savio2",
+        login_node="n0101.savio3",
         control_socket_path="/tmp/compute.sock",
         is_compute_node=True,
         scaffolding_node="dtn.brc.berkeley.edu",
@@ -1098,7 +1098,7 @@ def test_ssh_error_enrichment_no_agent(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
     executor = _make_remote_executor(
-        login_node="n0101.savio2",
+        login_node="n0101.savio3",
         control_socket_path="/tmp/nonexistent.sock",
         is_compute_node=True,
         slurm_job_id=12345,
@@ -1113,7 +1113,7 @@ def test_ssh_error_enrichment_no_agent(monkeypatch: pytest.MonkeyPatch) -> None:
 
     exc = CommandError(
         "SSH failed",
-        CommandResult(["ssh", "n0101.savio2"], ["ssh", "n0101.savio2"], "", "", 255),
+        CommandResult(["ssh", "n0101.savio3"], ["ssh", "n0101.savio3"], "", "", 255),
     )
     executor._enrich_ssh_error(exc)
 
