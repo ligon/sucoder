@@ -57,6 +57,11 @@ def _spinner(message: str):
     The spinner writes to stderr so it doesn't pollute captured stdout.
     When the body finishes the spinner line is replaced with a final
     status (done or error).
+
+    DO NOT use this around code that may trigger an interactive SSH
+    auth prompt: the 100 ms refresh overwrites the password/OTP prompt
+    on the terminal, producing what looks like a silent hang.  Use
+    :func:`_ensure_ssh_visible` for SSH ControlMaster setup instead.
     """
     is_tty = hasattr(sys.stderr, "isatty") and sys.stderr.isatty()
     if not is_tty:
@@ -91,6 +96,28 @@ def _spinner(message: str):
         else:
             sys.stderr.write(f"\r✓ {message}\n")
         sys.stderr.flush()
+
+
+def _ensure_ssh_visible(control, label: str, logger) -> None:
+    """Bring a ControlMaster (and any jump-host parents) online with
+    auth prompts visible to the user.
+
+    Replaces ``with _spinner(...): control.ensure(logger)`` for SSH
+    chain setup.  ``ensure()`` may recurse into ``jump_control.ensure``
+    when a parent socket has expired, which triggers an interactive
+    auth prompt (password / OTP) written to ``/dev/tty``.  Inside a
+    spinner block, the 100 ms refresh thread overwrites that prompt
+    and the user sees only the spinner — indistinguishable from a
+    network hang.
+
+    By echoing a plain ``"Connecting to X ..."`` line and letting
+    ``ensure()`` run without animation, the prompt stays on screen.
+    Raises :class:`TunnelError` unchanged so callers can decide
+    whether to exit or fall back.
+    """
+    typer.echo(f"Connecting to {label} ...", err=True)
+    control.ensure(logger)
+    typer.echo(f"✓ Connected to {label}", err=True)
 
 
 def _default_config_path() -> Path:
@@ -234,7 +261,11 @@ def _build_executor(
                     raise typer.Exit(code=1) from exc
 
         # 3. Establish ControlMaster to the login node (goes through
-        #    the gateway ControlMaster — no re-auth needed).
+        #    the gateway ControlMaster — no re-auth needed if gw is
+        #    still fresh; if it's not, ensure() will recurse into
+        #    jump_control.ensure() and prompt for the gateway password
+        #    again.  That prompt must be visible (no spinner overlay),
+        #    so we use _ensure_ssh_visible instead of _spinner.
         ln_control = SshControl(
             gateway=session.login_node,
             control_persist=remote.control_persist,
@@ -242,12 +273,11 @@ def _build_executor(
             jump_control=gw_control,
             debug=debug_ssh,
         )
-        with _spinner(f"Connecting to {session.login_node}"):
-            try:
-                ln_control.ensure(logger)
-            except TunnelError as exc:
-                typer.echo(str(exc), err=True)
-                raise typer.Exit(code=1) from exc
+        try:
+            _ensure_ssh_visible(ln_control, session.login_node, logger)
+        except TunnelError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
 
         # 3b. Establish ControlMaster to the data transfer node (DTN).
         #     The DTN has fat pipes and spare CPU compared with the
@@ -260,17 +290,16 @@ def _build_executor(
             jump_control=gw_control,
             debug=debug_ssh,
         )
-        with _spinner(f"Connecting to {remote.transfer_host}"):
-            try:
-                dtn_control.ensure(logger)
-            except TunnelError as exc:
-                # DTN is optional — fall back to the login node if
-                # the DTN is unreachable.
-                logger.warning(
-                    "DTN %s unreachable, falling back to login node: %s",
-                    remote.transfer_host, exc,
-                )
-                dtn_control = ln_control
+        try:
+            _ensure_ssh_visible(dtn_control, remote.transfer_host, logger)
+        except TunnelError as exc:
+            # DTN is optional — fall back to the login node if
+            # the DTN is unreachable.
+            logger.warning(
+                "DTN %s unreachable, falling back to login node: %s",
+                remote.transfer_host, exc,
+            )
+            dtn_control = ln_control
 
         # 4. If SLURM is configured, allocate a compute node and
         #    establish a ControlMaster through the login node to it.
@@ -575,12 +604,16 @@ def _ensure_slurm_node(
         ],
         debug=debug_ssh,
     )
-    with _spinner(f"Connecting to compute node {session.compute_node}"):
-        try:
-            cn_control.ensure(logger)
-        except TunnelError as exc:
-            typer.echo(str(exc), err=True)
-            raise typer.Exit(code=1) from exc
+    # No spinner here: ensure() may recurse through ln_control and
+    # gw_control, either of which can trigger a re-auth prompt.  A
+    # spinner would obscure the prompt and look like a hang.
+    try:
+        _ensure_ssh_visible(
+            cn_control, f"compute node {session.compute_node}", logger,
+        )
+    except TunnelError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
 
     # Start a deadline timer on the compute node so both the human
     # (via tmux status message) and the agent (via a sentinel file)

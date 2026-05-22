@@ -80,29 +80,46 @@ class SshControl:
         A zombie socket (mux running, TCP dead) passes that check but
         fails when a real session is requested.  We follow up with a
         lightweight ``true`` command to confirm end-to-end connectivity.
+
+        Both probes use ``BatchMode=yes`` and a wall-clock timeout so
+        that a stale or wedged mux can never fall through to interactive
+        ``/dev/tty`` auth (which would hang silently inside a spinner
+        block); if the socket is bad the probe fails fast and
+        :meth:`ensure` will surface a visible re-auth prompt instead.
         """
         if not self.socket_path.exists():
             return False
         # Quick structural check --- is the mux daemon running?
-        result = subprocess.run(
-            [
-                "ssh",
-                "-o", f"ControlPath={self.socket_path}",
-                "-O", "check",
-                self.gateway,
-            ],
-            capture_output=True,
-            stdin=subprocess.DEVNULL,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            return False
-        # End-to-end check --- can we actually open a session?
+        # Timeout guards against a wedged mux daemon; BatchMode keeps
+        # ssh from prompting if -O check is somehow misrouted.
         try:
             result = subprocess.run(
                 [
                     "ssh",
+                    "-o", "BatchMode=yes",
+                    "-o", f"ControlPath={self.socket_path}",
+                    "-O", "check",
+                    self.gateway,
+                ],
+                capture_output=True,
+                stdin=subprocess.DEVNULL,
+                text=True,
+                check=False,
+                timeout=5,
+            )
+        except subprocess.TimeoutExpired:
+            return False
+        if result.returncode != 0:
+            return False
+        # End-to-end check --- can we actually open a session?
+        # BatchMode=yes is critical: without it, an unattachable mux
+        # causes ssh to fall back to interactive auth on /dev/tty,
+        # which bypasses stdin=DEVNULL and capture_output.
+        try:
+            result = subprocess.run(
+                [
+                    "ssh",
+                    "-o", "BatchMode=yes",
                     "-o", "ControlMaster=auto",
                     "-o", f"ControlPath={self.socket_path}",
                     "-o", "ConnectTimeout=5",
@@ -228,11 +245,14 @@ class SshControl:
             return True
         # If no marker and not requesting debug, probe for legacy
         # debug sockets (created before the marker feature existed).
+        # BatchMode=yes prevents the probe from blocking on /dev/tty if
+        # the socket is somehow unattachable.
         if not self.debug and not marker_exists and self.socket_path.exists():
             try:
                 result = subprocess.run(
                     [
                         "ssh",
+                        "-o", "BatchMode=yes",
                         "-o", "ControlMaster=auto",
                         "-o", f"ControlPath={self.socket_path}",
                         "-o", "ConnectTimeout=5",

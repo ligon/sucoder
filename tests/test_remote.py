@@ -486,6 +486,116 @@ def test_ssh_control_options() -> None:
     assert any("ControlPath=" in o for o in opts)
 
 
+def test_ssh_control_is_active_uses_batchmode(monkeypatch, tmp_path) -> None:
+    """Regression: both is_active() probes must set BatchMode=yes and a
+    wall-clock timeout.
+
+    Without BatchMode, a stale/unattachable mux can fall through to
+    interactive auth on /dev/tty (bypassing stdin=DEVNULL and
+    capture_output), and the probe blocks until the timeout — which
+    previously made gateway re-auth invisible inside spinner blocks
+    and produced an apparent hang.
+    """
+    from sucoder.tunnel import SshControl
+
+    # Build a control with a socket file that exists so we exercise
+    # both the structural and end-to-end probes.
+    socket_file = tmp_path / "gw.sock"
+    socket_file.touch()
+    control = SshControl(gateway="gw")
+    monkeypatch.setattr(
+        SshControl, "socket_path",
+        property(lambda self: socket_file),
+    )
+
+    calls: list[dict] = []
+
+    class _Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def _fake_run(cmd, **kwargs):
+        calls.append({"cmd": list(cmd), "kwargs": dict(kwargs)})
+        return _Result()
+
+    monkeypatch.setattr("sucoder.tunnel.subprocess.run", _fake_run)
+    assert control.is_active() is True
+
+    # Both probes must have run.
+    assert len(calls) == 2, f"expected 2 ssh probes, got {len(calls)}"
+
+    for probe in calls:
+        cmd = probe["cmd"]
+        joined = " ".join(cmd)
+        # BatchMode=yes prevents fallback to interactive /dev/tty auth.
+        assert "BatchMode=yes" in cmd, (
+            f"is_active probe missing BatchMode=yes: {cmd!r}"
+        )
+        # Both probes need a hard timeout so a wedged mux can never
+        # block forever (the structural probe previously had none).
+        assert probe["kwargs"].get("timeout") is not None, (
+            f"is_active probe missing timeout=: {cmd!r}"
+        )
+        # Defensive: never inherit parent stdin (would let ssh read
+        # the user's terminal).
+        import subprocess as _sp
+        assert probe["kwargs"].get("stdin") is _sp.DEVNULL, (
+            f"is_active probe missing stdin=DEVNULL: {cmd!r}"
+        )
+        # The end-to-end probe also needs ConnectTimeout for the TCP
+        # leg; structural probe only needs the wall-clock timeout.
+        if "true" in cmd:
+            assert "ConnectTimeout=5" in joined, (
+                f"end-to-end probe missing ConnectTimeout: {cmd!r}"
+            )
+
+
+def test_ensure_ssh_visible_runs_outside_spinner(monkeypatch) -> None:
+    """Regression: _ensure_ssh_visible must NOT wrap ensure() in
+    _spinner.
+
+    A spinner's 100 ms refresh thread overwrites the SSH password /
+    OTP prompt that ssh writes to /dev/tty, producing an invisible
+    hang.  The visible-auth helper exists specifically to avoid that
+    overlay; if a future refactor accidentally re-introduces _spinner
+    around ensure() this test fails.
+    """
+    from contextlib import contextmanager
+    import logging
+
+    from sucoder import cli as cli_mod
+
+    spinner_active = [False]
+
+    @contextmanager
+    def _watching_spinner(message: str):
+        spinner_active[0] = True
+        try:
+            yield
+        finally:
+            spinner_active[0] = False
+
+    monkeypatch.setattr(cli_mod, "_spinner", _watching_spinner)
+
+    class _FakeControl:
+        def __init__(self) -> None:
+            self.ensured = False
+
+        def ensure(self, logger) -> None:
+            assert not spinner_active[0], (
+                "ensure() was called inside a _spinner block — "
+                "SSH auth prompts would be obscured by the spinner refresh"
+            )
+            self.ensured = True
+
+    ctrl = _FakeControl()
+    cli_mod._ensure_ssh_visible(ctrl, "ln002.brc", logging.getLogger("t"))
+    assert ctrl.ensured is True
+    # _spinner should never have been entered.
+    assert spinner_active[0] is False
+
+
 # ------------------------------------------------------------------
 # Targets (top-level config)
 # ------------------------------------------------------------------
