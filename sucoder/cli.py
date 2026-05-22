@@ -1659,6 +1659,18 @@ def attach(
         "--node",
         help="Attach to a specific compute node (e.g. --node n0047.savio3).",
     ),
+    via_srun: bool = typer.Option(
+        False,
+        "--via-srun",
+        help=(
+            "Reconnect by running 'srun --jobid=<JOB> --overlap --pty' on "
+            "the login node instead of SSHing directly to the compute "
+            "node.  Useful when (a) direct SSH login->compute is blocked "
+            "by site policy, (b) the session's compute_node was not "
+            "recorded, or (c) you need to be inside the job's cgroup "
+            "for diagnostics.  SLURM targets only."
+        ),
+    ),
 ) -> None:
     """Reconnect to an existing remote agent session via tmux."""
     mirror = _resolve_mirror_name(ctx, mirror)
@@ -1678,6 +1690,26 @@ def attach(
 
     if not settings or not settings.remote:
         typer.echo("Mirror is not configured for remote execution.", err=True)
+        raise typer.Exit(code=1)
+
+    # Refuse incoherent --via-srun usage early, before any SSH / squeue
+    # round-trips.  --via-srun is only meaningful for SLURM allocations
+    # (it joins the job via srun --overlap), and it ignores --node
+    # because srun routes via the jobid, not a hostname — passing both
+    # is almost always a mistake we should surface rather than paper
+    # over.
+    if via_srun and settings.remote.slurm is None:
+        typer.echo(
+            "--via-srun requires a SLURM target.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    if via_srun and node:
+        typer.echo(
+            "--via-srun ignores --node (srun routes via the jobid). "
+            "Drop one of the two.",
+            err=True,
+        )
         raise typer.Exit(code=1)
 
     from .session import RemoteSession
@@ -1710,9 +1742,13 @@ def attach(
     control_opts = control.ssh_options() if control.is_active() else []
 
     # For SLURM targets, attach to the compute node (via login node).
-    # --node overrides the session's compute_node.
+    # --node overrides the session's compute_node.  --via-srun stays
+    # on the login node and steps into the allocation with `srun
+    # --overlap`, so a missing compute_node is acceptable in that mode
+    # (srun finds the node from the jobid).
     compute = node or session.compute_node
-    if remote.slurm is not None and compute and session.slurm_job_id:
+    srun_prefix = ""
+    if remote.slurm is not None and session.slurm_job_id and (compute or via_srun):
         # Verify the SLURM allocation is still ours before routing to
         # the compute node.  Without this check we'd silently fall
         # through to a login-node shell (or worse, attach to a node
@@ -1732,11 +1768,25 @@ def attach(
         except _sp.TimeoutExpired:
             state = ""
         if state in ("RUNNING", "PENDING"):
-            attach_target = compute
-            jump_chain = f"{remote.gateway},{session.login_node}"
+            if via_srun:
+                # Land on the login node; `srun --overlap` joins the
+                # existing allocation and drops us on the compute node
+                # *inside the job's cgroup*.  This is the recovery
+                # path for orphaned sessions and for clusters that
+                # block direct SSH to compute nodes.
+                attach_target = session.login_node
+                jump_chain = remote.gateway
+                srun_prefix = (
+                    f"srun --jobid={shlex.quote(str(session.slurm_job_id))} "
+                    "--overlap --pty "
+                )
+            else:
+                attach_target = compute
+                jump_chain = f"{remote.gateway},{session.login_node}"
         else:
+            where = compute or f"jobid {session.slurm_job_id}"
             typer.echo(
-                f"SLURM job {session.slurm_job_id} on {compute} is "
+                f"SLURM job {session.slurm_job_id} on {where} is "
                 f"{state or 'gone'} — the allocation has ended.\n"
                 "Run `sucoder collaborate` to start a new one, or "
                 "`sucoder release` to clear the stale session record.",
@@ -1759,9 +1809,12 @@ def attach(
         jump_chain = remote.gateway
 
     tmux_name = f"sucoder-{mirror}"
+    # When via_srun is set, `srun_prefix` is applied to both branches
+    # so the fallback `tmux new-session` also runs inside the
+    # allocation, not on the login node.
     attach_cmd = (
-        f"tmux attach-session -t {shlex.quote(tmux_name)} "
-        f"|| tmux new-session -s {shlex.quote(tmux_name)}"
+        f"{srun_prefix}tmux attach-session -t {shlex.quote(tmux_name)} "
+        f"|| {srun_prefix}tmux new-session -s {shlex.quote(tmux_name)}"
     )
     os.execvp("ssh", [
         "ssh", "-t",

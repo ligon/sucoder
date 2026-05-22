@@ -403,6 +403,34 @@ sucoder -T savio attach
 If the ControlMaster socket expires (default 12 hours), =sucoder=
 detects the stale socket and re-prompts for authentication.
 
+**** Orphaned sessions (SLURM)
+
+If you lose the SSH connection but the tmux server is still running on
+the compute node --- and =sucoder attach= fails (e.g. the session JSON
+is missing, the compute-node hostname wasn't recorded, or the site
+blocks direct SSH login -> compute) --- attach via the allocation itself:
+
+#+begin_src shell
+sucoder -T savio attach --via-srun
+#+end_src
+
+This stops at the login node and joins the running job with =srun
+--jobid=<JOB> --overlap --pty=, which lands you on the compute node
+*inside the job's cgroup*.  =--overlap= is the key flag: it lets you
+add a step to an existing allocation without trying to consume extra
+resources.
+
+If =sucoder= itself isn't available (different machine, no install),
+the manual recipe is:
+
+#+begin_src shell
+ssh <gateway>
+ssh ln001                                  # or whichever login node
+squeue -u $USER                            # find your JOBID
+srun --jobid=<JOBID> --overlap --pty bash -l
+tmux attach -t sucoder-<mirror>            # or just: tmux a
+#+end_src
+
 *** SSH robustness
 
 =sucoder= handles several common failure modes transparently:

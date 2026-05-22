@@ -514,3 +514,136 @@ def test_attach_refuses_silent_login_node_fallback(tmp_path, monkeypatch):
     # Should reference SLURM and suggest collaborate.
     assert "slurm" in combined.lower(), combined
     assert "collaborate" in combined.lower(), combined
+
+
+def test_attach_via_srun_uses_overlap_step(tmp_path, monkeypatch):
+    """`sucoder attach --via-srun` should stop at the login node and
+    join the allocation with `srun --jobid=<JOB> --overlap --pty`
+    rather than SSHing directly to the compute node.  This is the
+    recovery path for orphaned sessions and for clusters that block
+    direct login -> compute SSH.
+    """
+    from sucoder import session as session_mod
+
+    runner = CliRunner()
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+
+    config_path = _slurm_config(tmp_path)
+
+    # Healthy session: login node, jobid, compute node all recorded.
+    sessions_dir = fake_home / ".sucoder" / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    (sessions_dir / "sample--fake-slurm.yaml").write_text(
+        "login_node: ln001\nslurm_job_id: 1234567\ncompute_node: n0148\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(session_mod, "_session_dir", lambda: sessions_dir)
+
+    # Pretend squeue says the job is still RUNNING.
+    def _fake_squeue(cmd, **kw):
+        return SimpleNamespace(stdout="RUNNING\n", stderr="", returncode=0)
+    monkeypatch.setattr(subprocess, "run", _fake_squeue)
+
+    # Capture the execvp args instead of actually exec'ing ssh.
+    captured: dict = {}
+    def _fake_execvp(prog, argv):
+        captured["prog"] = prog
+        captured["argv"] = list(argv)
+        raise SystemExit(0)  # halt the command cleanly
+    monkeypatch.setattr(os, "execvp", _fake_execvp)
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "--config", str(config_path),
+            "-T", "fake-slurm",
+            "attach", "sample", "--via-srun",
+        ],
+    )
+    # SystemExit(0) from our fake_execvp bubbles up as exit_code 0.
+    assert result.exit_code == 0, (result.stdout, result.exception)
+
+    argv = captured["argv"]
+    # Single hop via gateway to the login node — NOT a two-hop jump to
+    # the compute node.
+    assert "-J" in argv
+    jump = argv[argv.index("-J") + 1]
+    assert jump == "gw.example.org", argv
+    # Target host is the login node, not the compute node.
+    assert "ln001" in argv, argv
+    assert not any("n0148" in part for part in argv), argv
+    # The remote command must include `srun --jobid=1234567 --overlap --pty`
+    # in front of tmux attach.
+    remote_cmd = argv[-1]
+    assert "srun --jobid=1234567 --overlap --pty" in remote_cmd, remote_cmd
+    assert "tmux attach-session -t sucoder-sample" in remote_cmd, remote_cmd
+
+
+def test_attach_via_srun_rejects_non_slurm_target(tmp_path, monkeypatch):
+    """`--via-srun` only makes sense for SLURM targets — refuse it on
+    a plain remote target so the user doesn't think it did something
+    silent."""
+    runner = CliRunner()
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+
+    human = os.environ.get("USER", "coder")
+    mirror_root = tmp_path / "mirrors"
+    mirror_root.mkdir(exist_ok=True)
+    canonical_repo = tmp_path / "canonical"
+    canonical_repo.mkdir(exist_ok=True)
+
+    # Remote target WITHOUT a slurm: stanza.
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"""
+human_user: {human}
+agent_user: {human}
+agent_group: {human}
+mirror_root: {mirror_root}
+mirrors:
+  sample:
+    canonical_repo: {canonical_repo}
+    mirror_name: sample
+    branch_prefixes:
+      human: {human}
+      agent: {human}
+targets:
+  plain-remote:
+    gateway: gw.example.org
+    transfer_host: dtn.example.org
+""",
+        encoding="utf-8",
+    )
+
+    # Need a session file so we get past the "no session" check and
+    # reach the --via-srun validation.
+    sessions_dir = fake_home / ".sucoder" / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    (sessions_dir / "sample--plain-remote.yaml").write_text(
+        "login_node: ln001\nslurm_job_id: null\ncompute_node: null\n",
+        encoding="utf-8",
+    )
+    from sucoder import session as session_mod
+    monkeypatch.setattr(session_mod, "_session_dir", lambda: sessions_dir)
+
+    def _no_real_ssh(*a, **kw):
+        raise AssertionError("attach should not reach exec/SSH path")
+    monkeypatch.setattr(os, "execvp", _no_real_ssh)
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "--config", str(config_path),
+            "-T", "plain-remote",
+            "attach", "sample", "--via-srun",
+        ],
+    )
+    assert result.exit_code != 0
+    combined = result.stdout + (result.output or "")
+    assert "slurm" in combined.lower(), combined
