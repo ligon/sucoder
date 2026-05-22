@@ -1358,16 +1358,24 @@ class MirrorManager:
 
         if ctx.is_remote:
             # Wrap in tmux so the session survives SSH disconnects.
+            #
+            # We deliberately do NOT append `; scancel $JOB` here.  Any
+            # agent exit (clean /exit, crash, or shell-out that closes
+            # the process) would otherwise cancel the SLURM allocation
+            # and tear down the whole reattach chain — turning a
+            # transient agent failure into a catastrophic session
+            # teardown.  SLURM lifecycle is now the user's
+            # responsibility; see ``sucoder release <mirror>`` for
+            # explicit cancellation.
+            #
+            # We also append ``; exec bash -l`` so the tmux window
+            # stays alive after the agent exits.  The user can then
+            # ``sucoder attach`` later, land in a bash shell on the
+            # compute node inside the same tmux session, and decide
+            # what to do (re-run ``claude --continue``, inspect state,
+            # detach with Ctrl-b d, etc.).
             tmux_name = f"sucoder-{ctx.settings.name}"
-            agent_cmd_str = shlex.join(command)
-
-            # If a SLURM allocation is active, cancel it when the agent
-            # exits so we don't burn idle compute time.
-            slurm_job_id = getattr(self.executor, "slurm_job_id", None)
-            if slurm_job_id:
-                agent_cmd_str = (
-                    f"{agent_cmd_str}; scancel {slurm_job_id} 2>/dev/null"
-                )
+            agent_cmd_str = f"{shlex.join(command)}; exec bash -l"
 
             # new-session -A attaches if it already exists, creates if not.
             command = [

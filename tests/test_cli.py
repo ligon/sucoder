@@ -333,3 +333,184 @@ def test_resolve_mirror_name_not_in_git_repo(tmp_path, monkeypatch):
 
     result = runner.invoke(cli.app, ["status"])
     assert "specify one of" in (result.stdout + (result.output or "")).lower()
+
+
+# ------------------------------------------------------------------
+# Detach / scancel-lifecycle regressions
+# ------------------------------------------------------------------
+
+
+def test_slurm_timer_script_omits_scancel():
+    """Regression: the backstop timer must NOT auto-scancel.
+
+    Previously the on-compute-node monitor script ran
+    ``scancel $JOB`` both on tmux-startup-timeout and on tmux-session-
+    gone.  Either auto-cancel turned a transient agent failure into a
+    catastrophic teardown (allocation released, no reattach possible).
+    User now owns the SLURM lifecycle via ``sucoder release``.
+
+    This is a source-inspection guard: it scans the body of
+    ``_start_slurm_timer`` for any bare ``scancel <something>`` line
+    that would execute as a shell command at runtime.  ``scancel``
+    *can* appear in user-facing warning strings (e.g. "Run
+    `scancel {q_job}` to free the allocation") — those are fine
+    because they're inside an ``echo``/string, not a shell statement.
+    """
+    import inspect
+    src = inspect.getsource(cli._start_slurm_timer)
+    for raw in src.splitlines():
+        stripped = raw.strip()
+        # Skip strings that mention scancel for documentation/warnings.
+        if not stripped.startswith("scancel"):
+            continue
+        # If we got here, a bare `scancel ...` shell command remains.
+        pytest.fail(
+            "_start_slurm_timer still emits a `scancel` shell "
+            f"command line: {stripped!r}.  User owns SLURM lifecycle "
+            "now; use `sucoder release` for explicit cancel."
+        )
+
+
+def _slurm_config(tmp_path: Path, *, with_session_jobid: bool = False) -> Path:
+    """Write a config with a SLURM-backed target and (optionally) a
+    saved RemoteSession for the sample mirror."""
+    human = os.environ.get("USER", "coder")
+    mirror_root = tmp_path / "mirrors"
+    mirror_root.mkdir(exist_ok=True)
+    canonical_repo = tmp_path / "canonical"
+    canonical_repo.mkdir(exist_ok=True)
+
+    config_content = f"""
+human_user: {human}
+agent_user: {human}
+agent_group: {human}
+mirror_root: {mirror_root}
+mirrors:
+  sample:
+    canonical_repo: {canonical_repo}
+    mirror_name: sample
+    branch_prefixes:
+      human: {human}
+      agent: {human}
+targets:
+  fake-slurm:
+    gateway: gw.example.org
+    transfer_host: dtn.example.org
+    slurm:
+      partition: test
+      account: test_acct
+"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_content, encoding="utf-8")
+    return config_path
+
+
+def test_release_command_rejects_non_slurm_target(tmp_path, monkeypatch):
+    """`sucoder release` should fail clearly when the target has no
+    SLURM config (nothing to release)."""
+    runner = CliRunner()
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+
+    human = os.environ.get("USER", "coder")
+    mirror_root = tmp_path / "mirrors"
+    mirror_root.mkdir(exist_ok=True)
+    canonical_repo = tmp_path / "canonical"
+    canonical_repo.mkdir(exist_ok=True)
+
+    # No remote / no slurm — pure local mirror.
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"""
+human_user: {human}
+agent_user: {human}
+agent_group: {human}
+mirror_root: {mirror_root}
+mirrors:
+  sample:
+    canonical_repo: {canonical_repo}
+    mirror_name: sample
+    branch_prefixes:
+      human: {human}
+      agent: {human}
+""",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(cli.app, ["--config", str(config_path), "release", "sample"])
+    assert result.exit_code != 0
+    combined = (result.stdout + (result.output or "") + (str(result.stderr_bytes or b""))).lower()
+    assert "not configured for remote" in combined or "no slurm" in combined
+
+
+def test_release_command_no_recorded_job(tmp_path, monkeypatch):
+    """`sucoder release` should exit cleanly (code 0) saying nothing
+    to release when no SLURM job is recorded in the session."""
+    runner = CliRunner()
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+
+    config_path = _slurm_config(tmp_path)
+
+    # No session file written, so session.slurm_job_id is None.
+    result = runner.invoke(
+        cli.app,
+        ["--config", str(config_path), "-T", "fake-slurm", "release", "sample"],
+    )
+    assert result.exit_code == 0
+    combined = result.stdout + (result.output or "")
+    assert "nothing to release" in combined.lower()
+
+
+def test_attach_refuses_silent_login_node_fallback(tmp_path, monkeypatch):
+    """Regression: `sucoder attach` on a SLURM target without a
+    recorded SLURM job must NOT silently drop the user onto the login
+    node — that masks the underlying problem (allocation died, or the
+    session was never set up properly).  It must exit with a clear
+    'run sucoder collaborate' message.
+    """
+    from sucoder import session as session_mod
+
+    runner = CliRunner()
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+
+    config_path = _slurm_config(tmp_path)
+
+    # Write a session that records a login_node but NO slurm_job_id —
+    # the regression target.  Pre-fix, attach would fall through to
+    # `ssh -t -J gw ln_node 'tmux attach || tmux new-session'`,
+    # leaving the user in a fresh shell on the login node.
+    sessions_dir = fake_home / ".sucoder" / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    (sessions_dir / "sample--fake-slurm.yaml").write_text(
+        "login_node: ln001\nslurm_job_id: null\ncompute_node: null\n",
+        encoding="utf-8",
+    )
+
+    # Belt-and-suspenders: also patch _session_dir in case HOME isn't
+    # honored by some path normalization.
+    monkeypatch.setattr(session_mod, "_session_dir", lambda: sessions_dir)
+
+    # Make sure ensure_ssh_visible / SshControl don't try to actually
+    # SSH anywhere.  We expect attach to bail out BEFORE the SSH
+    # exec, so this is just a safety net.
+    def _no_real_ssh(*a, **kw):
+        raise AssertionError("attach should not reach exec/SSH path")
+    monkeypatch.setattr(os, "execvp", _no_real_ssh)
+
+    result = runner.invoke(
+        cli.app,
+        ["--config", str(config_path), "-T", "fake-slurm", "attach", "sample"],
+    )
+    assert result.exit_code != 0
+    combined = result.stdout + (result.output or "")
+    # Should reference SLURM and suggest collaborate.
+    assert "slurm" in combined.lower(), combined
+    assert "collaborate" in combined.lower(), combined

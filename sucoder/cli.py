@@ -705,8 +705,11 @@ def _start_slurm_timer(
             sleep 5
         done
         if [ "$TMUX_READY" -eq 0 ]; then
-            echo "Timed out waiting for tmux session {q_tmux}." > "$WARN_FILE"
-            scancel {q_job} 2>/dev/null
+            # User owns SLURM lifecycle (see `sucoder release`); leave
+            # the allocation alone even if the agent's tmux session
+            # never appeared, since the user may want to debug or
+            # reuse the compute node manually.
+            echo "Timed out waiting for tmux session {q_tmux}; SLURM job {q_job} kept alive. Run 'sucoder release' or 'scancel {q_job}' to free the allocation." > "$WARN_FILE"
             exit 1
         fi
 
@@ -719,11 +722,14 @@ def _start_slurm_timer(
                 break
             fi
 
-            # If the agent tmux session is gone, cancel the allocation
-            # to avoid burning idle compute time.
+            # If the agent tmux session is gone, write a warning but
+            # do NOT auto-cancel the SLURM allocation.  Users own the
+            # SLURM lifecycle (use `sucoder release <mirror>` for
+            # explicit cancel); an automatic scancel here would tear
+            # down the allocation on transient agent failures and
+            # destroy any chance of reattaching.
             if ! tmux has-session -t {q_tmux} 2>/dev/null; then
-                scancel {q_job} 2>/dev/null
-                echo "Agent session ended; cancelled SLURM job {q_job}." > "$WARN_FILE"
+                echo "Agent tmux session is gone; SLURM job {q_job} kept alive. Run 'sucoder release' or 'scancel {q_job}' to free the allocation." > "$WARN_FILE"
                 break
             fi
 
@@ -1706,10 +1712,49 @@ def attach(
     # For SLURM targets, attach to the compute node (via login node).
     # --node overrides the session's compute_node.
     compute = node or session.compute_node
-    if compute and remote.slurm is not None:
-        attach_target = compute
-        jump_chain = f"{remote.gateway},{session.login_node}"
+    if remote.slurm is not None and compute and session.slurm_job_id:
+        # Verify the SLURM allocation is still ours before routing to
+        # the compute node.  Without this check we'd silently fall
+        # through to a login-node shell (or worse, attach to a node
+        # that now belongs to someone else's job).
+        import subprocess as _sp
+        check_cmd = [
+            "ssh", *control_opts, "-J", remote.gateway, session.login_node,
+            f"squeue --job {shlex.quote(str(session.slurm_job_id))} "
+            "--noheader -o %T 2>/dev/null",
+        ]
+        try:
+            check = _sp.run(
+                check_cmd, capture_output=True, text=True, check=False,
+                timeout=20,
+            )
+            state = check.stdout.strip()
+        except _sp.TimeoutExpired:
+            state = ""
+        if state in ("RUNNING", "PENDING"):
+            attach_target = compute
+            jump_chain = f"{remote.gateway},{session.login_node}"
+        else:
+            typer.echo(
+                f"SLURM job {session.slurm_job_id} on {compute} is "
+                f"{state or 'gone'} — the allocation has ended.\n"
+                "Run `sucoder collaborate` to start a new one, or "
+                "`sucoder release` to clear the stale session record.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+    elif remote.slurm is not None and not session.slurm_job_id:
+        # SLURM target but no recorded job — likely a stale session
+        # from before the SLURM allocation succeeded.  Refuse to put
+        # the user on the login node silently.
+        typer.echo(
+            "No SLURM job recorded for this session — nothing to "
+            "attach to.  Run `sucoder collaborate` to start one.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
     else:
+        # Non-SLURM remote: attach on the login node.
         attach_target = session.login_node
         jump_chain = remote.gateway
 
@@ -1725,6 +1770,143 @@ def attach(
         attach_target,
         attach_cmd,
     ])
+
+
+@app.command("release")
+def release(
+    ctx: typer.Context,
+    mirror: Optional[str] = typer.Argument(None, help="Mirror name defined in configuration.", shell_complete=_mirror_completion),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Skip the confirmation prompt.",
+    ),
+) -> None:
+    """Cancel the SLURM allocation for this mirror and clear session state.
+
+    Use after ``sucoder collaborate`` on a SLURM-backed target when
+    you're done with the compute node.  Auto-cancel was deliberately
+    removed from the agent wrapper and the backstop timer (so a
+    transient agent failure can't tear down your allocation); this
+    command is the explicit way to free the resources.
+    """
+    mirror = _resolve_mirror_name(ctx, mirror)
+    config = _get_config(ctx)
+    settings = config.mirrors.get(mirror)
+
+    try:
+        click_ctx = click.get_current_context()
+    except RuntimeError:
+        click_ctx = None
+    target = _get_active_target(click_ctx)
+    if target is not None and settings is not None:
+        from dataclasses import replace
+        settings = replace(settings, remote=target)
+
+    if not settings or not settings.remote:
+        typer.echo("Mirror is not configured for remote execution.", err=True)
+        raise typer.Exit(code=1)
+    if settings.remote.slurm is None:
+        typer.echo(
+            f"Target for mirror {mirror} has no SLURM config; "
+            "nothing to release.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    from .session import RemoteSession
+    from .tunnel import SshControl
+
+    _tgt_name = ((click_ctx.obj or {}).get("target_name") if click_ctx else None)
+    session = RemoteSession.load(mirror, target_name=_tgt_name)
+    if not session.slurm_job_id:
+        typer.echo(
+            f"No SLURM allocation recorded for mirror {mirror}"
+            f"{f' (target {_tgt_name})' if _tgt_name else ''}. "
+            "Nothing to release.",
+        )
+        raise typer.Exit(code=0)
+
+    job_id = session.slurm_job_id
+    compute_node = session.compute_node or "<unknown>"
+    if not force:
+        if not _prompt_yes_no(
+            f"Cancel SLURM job {job_id} on {compute_node} for mirror {mirror}? [y/N] ",
+        ):
+            typer.echo("Aborted.")
+            raise typer.Exit(code=0)
+
+    remote = settings.remote
+    logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
+    debug_ssh = _get_debug_ssh(click_ctx)
+
+    # Reuse / re-establish the gateway and login-node ControlMasters
+    # so scancel reaches the cluster.
+    gw_control = SshControl(
+        gateway=remote.gateway,
+        control_persist=remote.control_persist,
+        debug=debug_ssh,
+    )
+    try:
+        _ensure_ssh_visible(gw_control, remote.gateway, logger)
+    except Exception as exc:  # noqa: BLE001  -- want broad fallback here
+        typer.echo(f"Failed to reach gateway: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if not session.login_node:
+        typer.echo(
+            "No login node recorded in session; cannot reach SLURM. "
+            f"Run `scancel {job_id}` manually from a login node.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    ln_control = SshControl(
+        gateway=session.login_node,
+        control_persist=remote.control_persist,
+        jump_host=remote.gateway,
+        jump_control=gw_control,
+        debug=debug_ssh,
+    )
+    try:
+        _ensure_ssh_visible(ln_control, session.login_node, logger)
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"Failed to reach login node: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    import subprocess as _sp
+    scancel_cmd = [
+        "ssh", *ln_control.ssh_options(), session.login_node,
+        f"scancel {shlex.quote(str(job_id))}",
+    ]
+    logger.debug("scancel command: %s", scancel_cmd)
+    result = _sp.run(scancel_cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        # scancel exits 0 even for nonexistent jobs (just prints a
+        # warning to stderr), so a real failure usually means an SSH
+        # or auth problem.
+        typer.echo(
+            f"scancel returned {result.returncode}: {result.stderr.strip()}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    # Clear the SLURM-specific session fields so future commands don't
+    # think a stale allocation is still ours.  Keep login_node so
+    # subsequent attaches can still resolve the gateway path.
+    session.slurm_job_id = None
+    session.compute_node = None
+    # The mirror root may have been on the now-released local disk;
+    # forget it so the next collaborate picks a fresh root.
+    if session.remote_mirror_root and session.remote_mirror_root.startswith("/local"):
+        session.remote_mirror_root = None
+    session.save()
+
+    typer.echo(f"Released SLURM job {job_id} on {compute_node}.")
+    if result.stderr.strip():
+        typer.echo(result.stderr.strip(), err=True)
 
 
 @app.command("mirrors-list")
