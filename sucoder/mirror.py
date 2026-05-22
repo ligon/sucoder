@@ -733,13 +733,18 @@ class MirrorManager:
         self,
         run: Callable,
         remote_path: str,
-    ) -> None:
+    ) -> bool:
         """Check the remote mirror working tree and prompt if dirty.
 
         ``receive.denyCurrentBranch=updateInstead`` rejects pushes when
         the remote working tree has unstaged changes.  Rather than
         silently discarding work, we show the user what's dirty and
         let them choose how to proceed.
+
+        Returns ``True`` if the caller should proceed with the push,
+        ``False`` if the user chose to leave the remote untouched
+        ("skip push" — they will pull from inside the session instead).
+        Raises ``MirrorError`` if the user aborted.
         """
         result = run(
             ["git", "status", "--porcelain"],
@@ -748,7 +753,7 @@ class MirrorManager:
         )
         dirty = (result.stdout or "").strip()
         if not dirty:
-            return
+            return True
 
         # Show at most 20 lines to avoid flooding the terminal.
         lines = dirty.splitlines()
@@ -762,6 +767,8 @@ class MirrorManager:
                 ("c", "Commit changes to a rescue branch, then push (default)"),
                 ("s", "Stash changes on the remote, then push"),
                 ("d", "Discard remote changes and push"),
+                ("k", "Skip the push — leave remote as-is "
+                      "(pull from inside the session when ready)"),
                 ("n", "Abort"),
             ],
             default="c",
@@ -789,11 +796,24 @@ class MirrorManager:
                 cwd=remote_path,
             )
             self.logger.info("Remote uncommitted changes discarded")
+        elif answer == "k":
+            # Leave the remote alone.  The agent / user can run
+            # `git pull` inside the session once they've decided how
+            # to reconcile.  This is the least destructive option and
+            # is the right call when another user may be working in
+            # the same repo on the shared node.
+            self.logger.info(
+                "Skipping push to remote mirror %s; remote working tree "
+                "left untouched.  Pull from inside the session when ready.",
+                remote_path,
+            )
+            return False
         else:
             raise MirrorError(
                 "Aborting — remote mirror has uncommitted changes.  "
                 "Resolve them manually and retry."
             )
+        return True
 
     def _rescue_commit_remote(
         self,
@@ -871,7 +891,7 @@ class MirrorManager:
             timeout=self._GIT_REMOTE_TIMEOUT,
         )
 
-    def ensure_remote_clone(self, ctx: MirrorContext) -> None:
+    def ensure_remote_clone(self, ctx: MirrorContext) -> bool:
         """Ensure the mirror exists on the remote host.
 
         Initialises a bare-ish clone on the remote if it does not
@@ -883,6 +903,12 @@ class MirrorManager:
         is accessible from any node.  This avoids the fragile three-hop
         SSH chain to the compute node for operations that don't need
         compute resources.
+
+        Returns ``True`` if canonical was pushed to the remote (the
+        normal path), or ``False`` if the user chose to leave the
+        remote untouched in response to a dirty-worktree prompt.  The
+        latter lets callers (notably ``start_with_agent``) suppress a
+        follow-on ``sync()`` that would just re-prompt or fail.
         """
         remote = ctx.settings.remote
         if remote is None:
@@ -949,7 +975,14 @@ class MirrorManager:
         # which requires a clean working tree.  If the agent (or a
         # previous failed sync) left unstaged changes the push will be
         # rejected.  Detect this and let the user decide what to do.
-        self._ensure_remote_worktree_clean(run, abs_remote_path)
+        should_push = self._ensure_remote_worktree_clean(run, abs_remote_path)
+
+        if not should_push:
+            # User picked "skip push" — leave the remote working tree
+            # alone.  We deliberately skip the HEAD / reset --hard
+            # below too: those would clobber the very state the user
+            # is trying to preserve.
+            return False
 
         # Push canonical content to the remote via tunnel.
         self._sync_remote(ctx)
@@ -968,6 +1001,7 @@ class MirrorManager:
             check=True,
             cwd=abs_remote_path,
         )
+        return True
 
     # (Tunnel helper removed — git transport now goes through the login
     # node ControlMaster directly, no port-forward tunnel needed.)
@@ -1706,8 +1740,19 @@ class MirrorManager:
                 setup_agent_remote=setup_agent_remote,
             )
         if ctx.is_remote:
-            self.ensure_remote_clone(ctx)
+            pushed = self.ensure_remote_clone(ctx)
             self._configure_target_remote(ctx)
+            if not pushed and sync:
+                # User asked to leave the remote alone (dirty-worktree
+                # prompt → 'k').  Don't immediately re-attempt a push
+                # via launch_agent's sync — that would either re-prompt
+                # or fail.  The agent / user can ``git pull`` from
+                # inside the session once they've reconciled.
+                self.logger.info(
+                    "Skipping launch-time sync: remote push was skipped "
+                    "at the user's request.",
+                )
+                sync = False
         else:
             self.ensure_clone(ctx, skip_lfs=skip_lfs)
         return self.launch_agent(

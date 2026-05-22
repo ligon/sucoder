@@ -564,6 +564,81 @@ def test_launch_agent_supports_overrides(tmp_path: Path, monkeypatch: pytest.Mon
     assert "INLINE CONTEXT" not in recorded["args"]
 
 
+def test_launch_agent_remote_wraps_without_scancel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: the remote tmux wrapper must NOT auto-cancel SLURM.
+
+    Previously ``; scancel $JOB_ID`` was appended to the wrapped agent
+    command.  That turned any agent exit (including a transient `!ls`
+    shell-out that crashes claude) into a catastrophic teardown: the
+    SLURM allocation was released, the tmux session died, and the user
+    was thrown back to their laptop with no way to reattach.
+
+    The wrapper must end in ``; exec bash -l`` instead, so the tmux
+    window survives the agent exit and the user can reattach via
+    ``sucoder attach`` and inspect / restart claude.
+    """
+    from sucoder.config import RemoteConfig, SlurmConfig
+
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    # Promote the mirror to remote (so the tmux-wrapping branch fires).
+    ctx.settings.remote = RemoteConfig(
+        gateway="brc.berkeley.edu",
+        transfer_host="dtn.brc.berkeley.edu",
+        slurm=SlurmConfig(partition="savio3", account="fc_jevons"),
+    )
+
+    # Pretend the executor has a SLURM job id assigned (this is what
+    # _ensure_slurm_node sets on RemoteExecutor at runtime).  Previously
+    # the wrapper used this to emit `; scancel <job_id>` — that's the
+    # regression we're guarding.
+    manager.executor.slurm_job_id = 1234567  # type: ignore[attr-defined]
+
+    recorded = {}
+
+    def fake_run_agent(args, **kwargs):
+        recorded["args"] = list(args)
+        return CommandResult(
+            requested_args=list(args),
+            executed_args=list(args),
+            stdout="",
+            stderr="",
+            returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+    monkeypatch.setattr(
+        MirrorManager,
+        "_default_system_prompt_path",
+        staticmethod(lambda: Path("/nonexistent-system-prompt")),
+    )
+    manager.config.system_prompt = None
+
+    manager.launch_agent(ctx, sync=False)
+
+    args = recorded["args"]
+    # Must be wrapped in tmux new-session -A.
+    assert args[0] == "tmux"
+    assert "new-session" in args
+    assert "-A" in args
+    # Last arg is the in-tmux command string.
+    cmd_str = args[-1]
+    # MUST NOT auto-cancel SLURM (the regression we're preventing).
+    assert "scancel" not in cmd_str, (
+        "Agent wrapper still contains scancel — that auto-cancel "
+        "destroys the SLURM allocation on any agent exit (including "
+        f"crash or shell-out). Full wrapper: {cmd_str!r}"
+    )
+    # MUST end with `exec bash -l` so the tmux window survives.
+    assert cmd_str.rstrip().endswith("exec bash -l"), (
+        "Agent wrapper must append `; exec bash -l` so the tmux "
+        "window stays alive after claude exits and the user can "
+        f"reattach.  Full wrapper: {cmd_str!r}"
+    )
+
+
 def test_launch_agent_raises_on_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     manager = build_manager(tmp_path)
     ctx = manager.context_for("sample")
@@ -3451,8 +3526,8 @@ class TestEnsureRemoteWorktreeClean:
     def test_clean_worktree_is_noop(self) -> None:
         mgr = self._init_manager()
         run, calls = _make_fake_run(status_output="")
-        # Should return without prompting.
-        mgr._ensure_remote_worktree_clean(run, "/fake/path")
+        # Should return without prompting, signalling "ok to push".
+        assert mgr._ensure_remote_worktree_clean(run, "/fake/path") is True
         assert len(calls) == 1  # only the status call
         assert "status" in " ".join(calls[0])
 
@@ -3461,7 +3536,7 @@ class TestEnsureRemoteWorktreeClean:
         run, calls = _make_fake_run(status_output=" M file.txt\n?? new.py\n")
         monkeypatch.setattr("builtins.input", lambda _prompt: "c")
 
-        mgr._ensure_remote_worktree_clean(run, "/fake/path")
+        result = mgr._ensure_remote_worktree_clean(run, "/fake/path")
 
         cmds = [" ".join(c) for c in calls]
         assert any("checkout -b" in c and "rescue/" in c for c in cmds)
@@ -3469,27 +3544,47 @@ class TestEnsureRemoteWorktreeClean:
         assert any("git commit" in c for c in cmds)
         # Must switch back to original branch.
         assert any(c == "git checkout main" for c in cmds)
+        # Caller should proceed with the push.
+        assert result is True
 
     def test_stash(self, monkeypatch: pytest.MonkeyPatch) -> None:
         mgr = self._init_manager()
         run, calls = _make_fake_run(status_output=" M dirty.txt\n")
         monkeypatch.setattr("builtins.input", lambda _prompt: "s")
 
-        mgr._ensure_remote_worktree_clean(run, "/fake/path")
+        result = mgr._ensure_remote_worktree_clean(run, "/fake/path")
 
         cmds = [" ".join(c) for c in calls]
         assert any("stash" in c for c in cmds)
+        assert result is True
 
     def test_discard(self, monkeypatch: pytest.MonkeyPatch) -> None:
         mgr = self._init_manager()
         run, calls = _make_fake_run(status_output=" M dirty.txt\n")
         monkeypatch.setattr("builtins.input", lambda _prompt: "d")
 
-        mgr._ensure_remote_worktree_clean(run, "/fake/path")
+        result = mgr._ensure_remote_worktree_clean(run, "/fake/path")
 
         cmds = [" ".join(c) for c in calls]
         assert any("checkout -- ." in c for c in cmds)
         assert any("clean -fd" in c for c in cmds)
+        assert result is True
+
+    def test_skip_push(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """'k' leaves the remote untouched and returns False."""
+        mgr = self._init_manager()
+        run, calls = _make_fake_run(status_output=" M dirty.txt\n?? new.py\n")
+        monkeypatch.setattr("builtins.input", lambda _prompt: "k")
+
+        result = mgr._ensure_remote_worktree_clean(run, "/fake/path")
+
+        cmds = [" ".join(c) for c in calls]
+        # Only the initial status check should have run — no
+        # checkout/stash/clean/commit on the remote.
+        assert len(calls) == 1
+        assert "status" in cmds[0]
+        # And the caller is told to skip the push.
+        assert result is False
 
     def test_abort_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         mgr = self._init_manager()
@@ -3505,10 +3600,33 @@ class TestEnsureRemoteWorktreeClean:
         run, calls = _make_fake_run(status_output=" M file.txt\n")
         monkeypatch.setattr("builtins.input", lambda _prompt: "")
 
-        mgr._ensure_remote_worktree_clean(run, "/fake/path")
+        result = mgr._ensure_remote_worktree_clean(run, "/fake/path")
 
         cmds = [" ".join(c) for c in calls]
         assert any("checkout -b" in c and "rescue/" in c for c in cmds)
+        # Default path still pushes.
+        assert result is True
+
+    def test_skip_push_offered_in_prompt(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The 'skip push' option should appear in the menu."""
+        mgr = self._init_manager()
+        run, _calls = _make_fake_run(status_output=" M dirty.txt\n")
+        prompts: list[str] = []
+
+        def _capture(prompt: str) -> str:
+            prompts.append(prompt)
+            return "k"
+
+        monkeypatch.setattr("builtins.input", _capture)
+
+        mgr._ensure_remote_worktree_clean(run, "/fake/path")
+
+        assert prompts, "input() was never called"
+        menu = prompts[-1]
+        assert "[k]" in menu
+        assert "Skip the push" in menu
 
     def test_truncates_long_file_list(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
