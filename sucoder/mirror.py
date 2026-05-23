@@ -283,6 +283,30 @@ class MirrorManager:
         for cmd in commands:
             self.executor.run_human(_maybe_sudo(cmd), check=True)
 
+        # When we're not going to escalate via sudo, drop any tracked paths
+        # we don't own — chgrp would die on them with "Operation not
+        # permitted" and abort the whole bootstrap. This is the common
+        # case on personal-dotfile mirrors that picked up a file from
+        # another user (a packaged shim, a file restored from backup,
+        # etc.). Warn once so the user can chown / re-run with --sudo
+        # if they care.
+        if not use_sudo and not self.executor.dry_run:
+            tracked_dirs, skipped_dirs = self._partition_owned(tracked_dirs)
+            tracked_files, skipped_files = self._partition_owned(tracked_files)
+            skipped = skipped_dirs + skipped_files
+            if skipped:
+                preview = ", ".join(str(p) for p in skipped[:5])
+                more = "" if len(skipped) <= 5 else f" (+{len(skipped) - 5} more)"
+                self.logger.warning(
+                    "Skipping chgrp/chmod on %d tracked path(s) not owned by "
+                    "uid=%d: %s%s. Re-run with --sudo or chown them if the "
+                    "agent needs to read them.",
+                    len(skipped),
+                    os.geteuid(),
+                    preview,
+                    more,
+                )
+
         # 2) Selective pass over the working tree: only git-tracked content.
         # Directories first (need g+x to traverse before chmod'ing files).
         if tracked_dirs:
@@ -360,6 +384,13 @@ class MirrorManager:
         Untracked files and directories are *not* included; the agent does
         not need them, and on a shared machine they may not even be ours
         to chgrp.
+
+        Tracked **symlinks** are also dropped: chgrp/chmod on a symlink
+        dereferences the target by default, which blows up on dangling
+        links (common in dotfile mirrors). The symlink itself has no
+        meaningful mode bits on Linux, so skipping is safe — the agent
+        accesses the target, whose perms are managed via its own tracked
+        entry (or are simply not ours to touch).
         """
         result = self.executor.run_human(
             ["git", "-C", str(canonical), "ls-files", "-z"],
@@ -370,6 +401,15 @@ class MirrorManager:
         dirs: set[Path] = {canonical}
         for rel in rel_files:
             abs_path = canonical / rel
+            # Skip symlinks: chgrp/chmod would follow the link and die on
+            # dangling targets. lstat() so we inspect the link itself.
+            try:
+                if abs_path.is_symlink():
+                    continue
+            except OSError:
+                # If we can't even stat it, leave it out — better to skip
+                # than to abort prep over a missing path.
+                continue
             files.append(abs_path)
             parent = abs_path.parent
             while parent != canonical and canonical in parent.parents:
@@ -377,6 +417,33 @@ class MirrorManager:
                 parent = parent.parent
         sorted_dirs = sorted(dirs, key=lambda p: (len(p.parts), str(p)))
         return files, sorted_dirs
+
+    def _partition_owned(
+        self, paths: Sequence[Path]
+    ) -> Tuple[List[Path], List[Path]]:
+        """Split *paths* into (owned, unowned) by the current effective uid.
+
+        Used when running without ``--sudo``: ``chgrp`` refuses to change
+        the group of files the caller doesn't own (errno EPERM), and any
+        single such failure aborts the whole batch. Pre-filter so we only
+        attempt files we have the right to touch.
+        """
+        my_uid = os.geteuid()
+        owned: List[Path] = []
+        unowned: List[Path] = []
+        for path in paths:
+            try:
+                st = os.lstat(path)
+            except OSError:
+                # Path vanished between ls-files and now; treat as unowned
+                # so we surface it in the warning instead of crashing.
+                unowned.append(path)
+                continue
+            if st.st_uid == my_uid:
+                owned.append(path)
+            else:
+                unowned.append(path)
+        return owned, unowned
 
     def _run_batched(
         self,

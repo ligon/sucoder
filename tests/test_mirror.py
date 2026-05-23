@@ -491,6 +491,132 @@ def test_prepare_canonical_skips_untracked_files(tmp_path: Path) -> None:
     assert str(canonical / "README.md") in touched_paths
 
 
+def test_prepare_canonical_skips_tracked_symlinks(tmp_path: Path) -> None:
+    """Tracked symlinks (including dangling ones) are not passed to chgrp/chmod.
+
+    Regression test for the case where ``sucoder collaborate`` runs against
+    a mirror like ``~/.Misc`` that tracks symlinks pointing at files which
+    don't exist on this host (e.g. ``Organization/are212.org``). Passing
+    them directly to ``chgrp`` makes the system call dereference the link
+    and abort with "cannot dereference: No such file or directory".
+    """
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    canonical = ctx.canonical_path
+    canonical.chmod(canonical.stat().st_mode | 0o200)
+
+    # Two tracked symlinks: one well-formed, one dangling. Both must be
+    # excluded from chgrp/chmod args regardless of target validity.
+    target = canonical / "real_target.txt"
+    target.write_text("contents\n", encoding="utf-8")
+    good_link = canonical / "live_link.org"
+    good_link.symlink_to(target)
+    bad_link = canonical / "dangling_link.org"
+    bad_link.symlink_to(canonical / "does_not_exist.org")
+    run_git(["add", "real_target.txt", "live_link.org", "dangling_link.org"], canonical)
+    run_git(["commit", "-m", "add symlinks"], canonical)
+
+    captured: list[list[str]] = []
+    original_run_human = manager.executor.run_human
+
+    def spy(args, **kwargs):
+        captured.append(list(args))
+        return original_run_human(args, **kwargs)
+
+    manager.executor.run_human = spy  # type: ignore[assignment]
+    try:
+        manager.prepare_canonical(ctx, use_sudo=False)
+    finally:
+        manager.executor.run_human = original_run_human  # type: ignore[assignment]
+
+    touched_paths: set[str] = set()
+    for args in captured:
+        if not args or args[0] not in {"chgrp", "chmod", "find"}:
+            continue
+        for token in args[1:]:
+            if token.startswith(str(canonical)):
+                touched_paths.add(token)
+
+    # Neither symlink may appear as an arg to chgrp/chmod.
+    assert str(good_link) not in touched_paths
+    assert str(bad_link) not in touched_paths
+    # But the symlink target (a regular tracked file) is touched.
+    assert str(target) in touched_paths
+
+
+def test_prepare_canonical_skips_unowned_tracked_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Tracked files owned by another uid are skipped (warn, don't crash) when --no-sudo.
+
+    Regression test for the case where ``sucoder collaborate`` hits a tracked
+    file installed by another user (e.g. a packaged shim like
+    ``~/.Misc/bin/evince``). Without ``--sudo``, ``chgrp`` returns EPERM on
+    those entries and the single non-zero exit aborts the whole batch.
+    """
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    canonical = ctx.canonical_path
+    canonical.chmod(canonical.stat().st_mode | 0o200)
+
+    foreign = canonical / "bin" / "evince"
+    foreign.parent.mkdir(parents=True)
+    foreign.write_text("#!/bin/sh\n", encoding="utf-8")
+    run_git(["add", "bin/evince"], canonical)
+    run_git(["commit", "-m", "add foreign tool"], canonical)
+
+    # Pretend `bin/evince` is owned by a different uid. lstat() returns
+    # an os.stat_result; we wrap it to override st_uid for this one path.
+    real_lstat = os.lstat
+    foreign_resolved = str(foreign)
+
+    class _FakeStat:
+        def __init__(self, base, fake_uid):
+            self._base = base
+            self.st_uid = fake_uid
+        def __getattr__(self, name):
+            return getattr(self._base, name)
+
+    def fake_lstat(p):
+        st = real_lstat(p)
+        if str(p) == foreign_resolved:
+            return _FakeStat(st, os.geteuid() + 9999)
+        return st
+
+    monkeypatch.setattr(mirror.os, "lstat", fake_lstat)
+
+    captured: list[list[str]] = []
+    original_run_human = manager.executor.run_human
+
+    def spy(args, **kwargs):
+        captured.append(list(args))
+        return original_run_human(args, **kwargs)
+
+    manager.executor.run_human = spy  # type: ignore[assignment]
+    try:
+        with caplog.at_level(logging.WARNING, logger=manager.logger.name):
+            manager.prepare_canonical(ctx, use_sudo=False)
+    finally:
+        manager.executor.run_human = original_run_human  # type: ignore[assignment]
+
+    touched_paths: set[str] = set()
+    for args in captured:
+        if not args or args[0] not in {"chgrp", "chmod", "find"}:
+            continue
+        for token in args[1:]:
+            if token.startswith(str(canonical)):
+                touched_paths.add(token)
+
+    # Foreign file must not be chgrp/chmod'd.
+    assert foreign_resolved not in touched_paths
+    # README is owned by us → still touched.
+    assert str(canonical / "README.md") in touched_paths
+    # User got a warning naming the skipped path.
+    warning_text = " ".join(rec.getMessage() for rec in caplog.records)
+    assert "evince" in warning_text
+    assert "--sudo" in warning_text or "chown" in warning_text
+
+
 def test_validate_canonical_rejects_writable(tmp_path: Path) -> None:
     """_validate_canonical raises MirrorError when the agent can write to canonical."""
     manager = build_manager(tmp_path)
