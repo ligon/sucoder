@@ -658,6 +658,75 @@ def test_parse_targets_slurm_no_local_disk() -> None:
     targets = _parse_targets(raw)
     assert targets["savio-node"].slurm is not None
     assert targets["savio-node"].slurm.local_disk is None
+    # cpus_per_task and mem default to None so the salloc command keeps
+    # the partition's defaults (i.e. whole-node on exclusive partitions).
+    assert targets["savio-node"].slurm.cpus_per_task is None
+    assert targets["savio-node"].slurm.mem is None
+
+
+def test_parse_targets_with_slurm_cpus_and_mem() -> None:
+    """Shared partitions (e.g. savio4_htc) need cpus_per_task + mem."""
+    from sucoder.config import _parse_targets
+
+    raw = {
+        "savio-htc": {
+            "gateway": "brc.berkeley.edu",
+            "transfer_host": "dtn.brc.berkeley.edu",
+            "slurm": {
+                "partition": "savio4_htc",
+                "account": "fc_jevons",
+                "qos": "savio_normal",
+                "cpus_per_task": 4,
+                "mem": "16G",
+                "time": "24:00:00",
+            },
+        },
+    }
+    targets = _parse_targets(raw)
+    slurm = targets["savio-htc"].slurm
+    assert slurm is not None
+    assert slurm.partition == "savio4_htc"
+    assert slurm.cpus_per_task == 4
+    assert slurm.mem == "16G"
+    assert slurm.qos == "savio_normal"
+
+
+@pytest.mark.parametrize("bad_value", [0, -1, "4", 4.0, True])
+def test_parse_targets_slurm_cpus_per_task_rejects_bad_values(bad_value: object) -> None:
+    from sucoder.config import _parse_targets
+
+    raw = {
+        "savio-htc": {
+            "gateway": "brc.berkeley.edu",
+            "transfer_host": "dtn.brc.berkeley.edu",
+            "slurm": {
+                "partition": "savio4_htc",
+                "account": "fc_jevons",
+                "cpus_per_task": bad_value,
+            },
+        },
+    }
+    with pytest.raises(ConfigError, match="cpus_per_task"):
+        _parse_targets(raw)
+
+
+@pytest.mark.parametrize("bad_value", ["", "   ", 16, 16.0, True])
+def test_parse_targets_slurm_mem_rejects_bad_values(bad_value: object) -> None:
+    from sucoder.config import _parse_targets
+
+    raw = {
+        "savio-htc": {
+            "gateway": "brc.berkeley.edu",
+            "transfer_host": "dtn.brc.berkeley.edu",
+            "slurm": {
+                "partition": "savio4_htc",
+                "account": "fc_jevons",
+                "mem": bad_value,
+            },
+        },
+    }
+    with pytest.raises(ConfigError, match="mem"):
+        _parse_targets(raw)
 
 
 def test_parse_targets_none() -> None:

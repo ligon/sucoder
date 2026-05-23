@@ -45,7 +45,11 @@ class SlurmConfig:
     account: str
     time: str = "02:00:00"
     qos: Optional[str] = None
-    local_disk: Optional[str] = None  # e.g. "/local" — bypass shared FS
+    cpus_per_task: Optional[int] = None  # request a fractional slice on
+                                         # shared partitions (e.g. savio4_htc)
+    mem: Optional[str] = None            # e.g. "16G"; required on shared
+                                         # partitions where the default is tiny
+    local_disk: Optional[str] = None     # e.g. "/local" — bypass shared FS
 
 
 @dataclass
@@ -759,6 +763,25 @@ def _parse_slurm_config(raw: Any) -> Optional[SlurmConfig]:
     if qos is not None and not isinstance(qos, str):
         raise ConfigError("`slurm.qos` must be a string when provided.")
 
+    cpus_per_task = raw.get("cpus_per_task")
+    if cpus_per_task is not None:
+        # YAML may parse "4" as int already; reject bools (which are int
+        # subclasses) and anything non-positive.
+        if isinstance(cpus_per_task, bool) or not isinstance(cpus_per_task, int):
+            raise ConfigError(
+                "`slurm.cpus_per_task` must be a positive integer when provided."
+            )
+        if cpus_per_task <= 0:
+            raise ConfigError(
+                "`slurm.cpus_per_task` must be a positive integer when provided."
+            )
+
+    mem = raw.get("mem")
+    if mem is not None and (not isinstance(mem, str) or not mem.strip()):
+        raise ConfigError(
+            "`slurm.mem` must be a non-empty string (e.g. '16G', '4000M') when provided."
+        )
+
     local_disk = raw.get("local_disk")
     if local_disk is not None and not isinstance(local_disk, str):
         raise ConfigError("`slurm.local_disk` must be a string path (e.g. '/local').")
@@ -768,6 +791,8 @@ def _parse_slurm_config(raw: Any) -> Optional[SlurmConfig]:
         account=account,
         time=time_limit,
         qos=qos,
+        cpus_per_task=cpus_per_task,
+        mem=mem,
         local_disk=local_disk,
     )
 

@@ -488,6 +488,10 @@ def _ensure_slurm_node(
         ]
         if slurm.qos:
             salloc_parts.append(f"--qos={slurm.qos}")
+        if slurm.cpus_per_task:
+            salloc_parts.append(f"--cpus-per-task={slurm.cpus_per_task}")
+        if slurm.mem:
+            salloc_parts.append(f"--mem={slurm.mem}")
         if preferred_node:
             salloc_parts.extend([
                 f"--nodelist={preferred_node}",

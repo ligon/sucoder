@@ -41,6 +41,22 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #       time: "02:00:00"
 #       # qos: savio_normal  # optional
 #       # local_disk: /local  # use compute-node local storage (bypasses Lustre)
+#   # Shared-partition target: requests a fractional slice of an HTC node
+#   # instead of an entire compute node.  Useful when an agent session
+#   # only needs a few cores.
+#   savio-htc:
+#     gateway: hpc.brc.berkeley.edu
+#     transfer_host: dtn.brc.berkeley.edu
+#     mirror_root: ~/mirrors
+#     control_persist: 24h
+#     system_prompt_extra: ~/.sucoder/prompts/savio-node.org
+#     slurm:
+#       partition: savio4_htc
+#       account: fc_jevons
+#       qos: savio_normal
+#       cpus_per_task: 4    # 4 cores out of the shared node
+#       mem: 16G            # per-job memory (required on shared partitions)
+#       time: "24:00:00"
 
 # Mirrors are optional when using zero-config repo detection.
 mirrors:

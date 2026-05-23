@@ -391,6 +391,34 @@ targets:
       local_disk: true
 #+end_src
 
+*** Shared partitions (fractional allocations)
+
+Exclusive partitions (e.g. =savio3=) hand out an entire compute node.
+Shared/HTC partitions (e.g. =savio4_htc=) expect each job to declare how
+much of the node it wants; without =cpus_per_task= and =mem= you get the
+partition's minimal default (typically 1 core / a few hundred MB).
+
+#+begin_src yaml
+targets:
+  savio-htc:
+    gateway: hpc.brc.berkeley.edu
+    transfer_host: dtn.brc.berkeley.edu
+    mirror_root: ~/mirrors
+    control_persist: 24h
+    slurm:
+      partition: savio4_htc
+      account: fc_jevons
+      qos: savio_normal
+      cpus_per_task: 4   # cores
+      mem: 16G           # per-job memory
+      time: "24:00:00"
+#+end_src
+
+=cpus_per_task= must be a positive integer; =mem= is passed verbatim to
+=salloc --mem=, so use SLURM's own units (=16G=, =4000M=, etc.).  Both
+fields are optional --- omitting them keeps the partition default, which
+is the right behaviour for whole-node partitions.
+
 *** Reconnecting
 
 If the SSH connection drops, the tmux session on the login node
