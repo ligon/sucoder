@@ -429,6 +429,68 @@ def test_prepare_canonical_passes_with_accessible_parents(tmp_path: Path) -> Non
     manager.prepare_canonical(ctx, use_sudo=False)
 
 
+def test_prepare_canonical_skips_untracked_files(tmp_path: Path) -> None:
+    """Untracked files (and dirs only containing untracked files) are not chgrp'd.
+
+    Regression test for the case where ``sucoder collaborate`` runs against a
+    working tree that holds untracked clutter the human user can't chgrp
+    (caches owned by other users, lockfiles, etc.). The recursive chgrp used
+    to abort the whole bootstrap; now we only touch git-tracked paths.
+    """
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    canonical = ctx.canonical_path
+
+    canonical.chmod(canonical.stat().st_mode | 0o200)
+
+    # Sentinel untracked tree: a directory full of files that should be
+    # ignored by prepare_canonical entirely.
+    untracked_dir = canonical / ".aws" / "cli" / "cache"
+    untracked_dir.mkdir(parents=True)
+    untracked_file = untracked_dir / "session.db-wal"
+    untracked_file.write_text("not git's business", encoding="utf-8")
+
+    captured: list[list[str]] = []
+    original_run_human = manager.executor.run_human
+
+    def spy(args, **kwargs):
+        captured.append(list(args))
+        return original_run_human(args, **kwargs)
+
+    manager.executor.run_human = spy  # type: ignore[assignment]
+    try:
+        manager.prepare_canonical(ctx, use_sudo=False)
+    finally:
+        manager.executor.run_human = original_run_human  # type: ignore[assignment]
+
+    # Reconstruct the list of paths handed to chgrp/chmod against the working
+    # tree (any call where one of the args lives under canonical).
+    touched_paths: set[str] = set()
+    for args in captured:
+        if not args:
+            continue
+        cmd = args[0]
+        if cmd not in {"chgrp", "chmod", "find"}:
+            continue
+        for token in args[1:]:
+            if token.startswith(str(canonical)):
+                touched_paths.add(token)
+
+    untracked_str = str(untracked_file)
+    untracked_dir_str = str(untracked_dir)
+    aws_dir_str = str(canonical / ".aws")
+
+    # The untracked file and the dirs that exist only to hold it must not
+    # appear as arguments to chgrp/chmod.
+    assert untracked_str not in touched_paths
+    assert untracked_dir_str not in touched_paths
+    assert aws_dir_str not in touched_paths
+
+    # Sanity: the tracked README and canonical itself *are* touched.
+    assert str(canonical) in touched_paths
+    assert str(canonical / "README.md") in touched_paths
+
+
 def test_validate_canonical_rejects_writable(tmp_path: Path) -> None:
     """_validate_canonical raises MirrorError when the agent can write to canonical."""
     manager = build_manager(tmp_path)

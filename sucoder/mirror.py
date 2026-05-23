@@ -250,25 +250,71 @@ class MirrorManager:
         if not canonical.exists():
             raise MirrorError(f"Canonical repository not found at {canonical}")
 
-        # Ensure both the working tree and the git dir are group-readable so the agent
-        # can traverse and clone. The git dir may be separate (e.g., worktree), so
-        # handle both paths.
+        # Ensure both the working tree and the git dir are group-readable so the
+        # agent can traverse and clone. The git dir may be separate (e.g.,
+        # worktree), so handle both paths.
+        #
+        # For the working tree we deliberately *do not* recurse blindly: the
+        # canonical directory often holds untracked clutter (build output,
+        # caches owned by other users, sockets, etc.) that we have neither
+        # the right nor the need to touch. Only git-tracked files plus the
+        # directories required to reach them get the chgrp/chmod treatment.
+        # The .git directory itself is entirely under our control, so it
+        # still gets the recursive pass.
         git_dir = _resolve_git_dir(canonical)
-        target_paths = {canonical, git_dir}
-        commands = []
-        for path in sorted(target_paths):
+        tracked_files, tracked_dirs = self._collect_tracked_paths(canonical)
+
+        def _maybe_sudo(cmd: List[str]) -> List[str]:
+            return ["sudo"] + cmd if use_sudo and not self.executor.dry_run else cmd
+
+        commands: List[List[str]] = []
+
+        # 1) Recursive pass over the separate .git directory, if any.
+        if git_dir != canonical:
             commands.extend(
                 [
-                    ["chgrp", "-R", self.config.agent_group, str(path)],
-                    ["chmod", "-R", "g+rx", str(path)],
-                    ["chmod", "-R", "g-w", str(path)],
-                    ["find", str(path), "-type", "d", "-exec", "chmod", "g+s", "{}", "+"],
+                    ["chgrp", "-R", self.config.agent_group, str(git_dir)],
+                    ["chmod", "-R", "g+rx", str(git_dir)],
+                    ["chmod", "-R", "g-w", str(git_dir)],
+                    ["find", str(git_dir), "-type", "d", "-exec", "chmod", "g+s", "{}", "+"],
                 ]
             )
 
         for cmd in commands:
-            run_args = ["sudo"] + cmd if use_sudo and not self.executor.dry_run else cmd
-            self.executor.run_human(run_args, check=True)
+            self.executor.run_human(_maybe_sudo(cmd), check=True)
+
+        # 2) Selective pass over the working tree: only git-tracked content.
+        # Directories first (need g+x to traverse before chmod'ing files).
+        if tracked_dirs:
+            dir_args = [str(p) for p in tracked_dirs]
+            for base in (
+                ["chgrp", self.config.agent_group],
+                ["chmod", "g+rx"],
+                ["chmod", "g-w"],
+                ["chmod", "g+s"],
+            ):
+                self._run_batched(_maybe_sudo, base, dir_args)
+        if tracked_files:
+            file_args = [str(p) for p in tracked_files]
+            for base in (
+                ["chgrp", self.config.agent_group],
+                ["chmod", "g+r"],
+                ["chmod", "g-w"],
+            ):
+                self._run_batched(_maybe_sudo, base, file_args)
+
+        # If .git is a pointer file (linked worktree), chgrp it explicitly —
+        # git ls-files never reports .git, but the agent needs to read it.
+        git_pointer = canonical / ".git"
+        if git_pointer.is_file():
+            self.executor.run_human(
+                _maybe_sudo(["chgrp", self.config.agent_group, str(git_pointer)]),
+                check=True,
+            )
+            self.executor.run_human(
+                _maybe_sudo(["chmod", "g+r", str(git_pointer)]),
+                check=True,
+            )
 
         # Verify that every parent directory is traversable by the agent.
         blocking = check_parent_traversable(
@@ -299,6 +345,52 @@ class MirrorManager:
         if setup_agent_remote:
             self._configure_agent_remote(ctx)
             self._write_agent_fetch_helper(ctx)
+
+    def _collect_tracked_paths(
+        self, canonical: Path
+    ) -> Tuple[List[Path], List[Path]]:
+        """Return ``(files, dirs)`` for git-tracked content under *canonical*.
+
+        ``files`` is a list of absolute paths of every git-tracked file in
+        the working tree. ``dirs`` is the set of directories that must be
+        traversed to reach those files — canonical itself plus every
+        intermediate parent — also as absolute paths, sorted shallowest
+        first.
+
+        Untracked files and directories are *not* included; the agent does
+        not need them, and on a shared machine they may not even be ours
+        to chgrp.
+        """
+        result = self.executor.run_human(
+            ["git", "-C", str(canonical), "ls-files", "-z"],
+            check=True,
+        )
+        rel_files = [p for p in (result.stdout or "").split("\0") if p]
+        files: List[Path] = []
+        dirs: set[Path] = {canonical}
+        for rel in rel_files:
+            abs_path = canonical / rel
+            files.append(abs_path)
+            parent = abs_path.parent
+            while parent != canonical and canonical in parent.parents:
+                dirs.add(parent)
+                parent = parent.parent
+        sorted_dirs = sorted(dirs, key=lambda p: (len(p.parts), str(p)))
+        return files, sorted_dirs
+
+    def _run_batched(
+        self,
+        wrap: Callable[[List[str]], List[str]],
+        base_cmd: Sequence[str],
+        paths: Sequence[str],
+        *,
+        batch_size: int = 1000,
+    ) -> None:
+        """Invoke ``base_cmd`` over *paths* in chunks to stay under ARG_MAX."""
+        base = list(base_cmd)
+        for i in range(0, len(paths), batch_size):
+            chunk = paths[i : i + batch_size]
+            self.executor.run_human(wrap(base + list(chunk)), check=True)
 
     def sync(self, ctx: MirrorContext) -> None:
         """Fetch updates from the canonical repository.
