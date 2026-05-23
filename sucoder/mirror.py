@@ -643,11 +643,54 @@ class MirrorManager:
     # -- Remote sync -----------------------------------------------------
 
     def _pull_from_remote(self, ctx: MirrorContext) -> None:
-        """Fetch agent commits from the remote mirror into canonical.
+        """Fetch agent commits from the remote mirror into canonical."""
+        url, env = self._remote_git_env(ctx)
+        self._pull_from_url(
+            ctx,
+            url,
+            env=env,
+            source_label="remote mirror",
+            timeout=self._GIT_REMOTE_TIMEOUT,
+        )
 
-        This must run *before* ``_sync_remote`` so that work the agent
-        committed on the mirror is not lost when the canonical repo
-        force-pushes over it.
+    def _pull_from_local(self, ctx: MirrorContext) -> None:
+        """Fetch agent commits from a local-disk mirror into canonical.
+
+        Counterpart to ``_pull_from_remote`` for mirrors that live on
+        the same host as canonical (the typical ``sucoder collaborate``
+        layout where the agent runs as a different uid against
+        ``~/Projects/<repo>``). No SLURM/SSH plumbing is involved — we
+        just fetch from the mirror's filesystem path.
+        """
+        mirror_path = ctx.mirror_path
+        if not self._is_git_repo(mirror_path):
+            raise MirrorError(
+                f"Local mirror at {mirror_path} is not a git repository — "
+                f"run `sucoder collaborate {ctx.settings.name}` once to "
+                f"create it before pulling."
+            )
+        self._pull_from_url(
+            ctx,
+            str(mirror_path),
+            env=None,
+            source_label=f"local mirror at {mirror_path}",
+        )
+
+    def _pull_from_url(
+        self,
+        ctx: MirrorContext,
+        url: str,
+        *,
+        env: Optional[Mapping[str, str]] = None,
+        source_label: str = "mirror",
+        timeout: Optional[int] = None,
+    ) -> None:
+        """Fetch agent commits from *url* into canonical and reconcile.
+
+        Shared by ``_pull_from_remote`` (SSH/tunnel URL) and
+        ``_pull_from_local`` (filesystem path). Must run *before*
+        ``_sync_remote`` so that work the agent committed on the mirror
+        is not lost when the canonical repo force-pushes over it.
 
         Strategy:
         1. Fetch the mirror's branch into a temporary ref — always safe.
@@ -660,22 +703,22 @@ class MirrorManager:
         """
         import subprocess
 
-        url, env = self._remote_git_env(ctx)
         base = ctx.settings.default_base_branch or "main"
         tmp_ref = "refs/sucoder/mirror-head"
 
-        self.logger.info("Fetching agent commits from remote mirror")
+        self.logger.info("Fetching agent commits from %s", source_label)
         result = self.executor.run_human(
             ["git", "fetch", url, f"{base}:{tmp_ref}"],
             check=False,
             cwd=str(ctx.canonical_path),
             env=env,
-            timeout=self._GIT_REMOTE_TIMEOUT,
+            timeout=timeout,
         )
         if result.returncode != 0:
             # Mirror may be empty (first run) or unreachable.
             self.logger.warning(
-                "Could not fetch from remote mirror (rc=%d): %s",
+                "Could not fetch from %s (rc=%d): %s",
+                source_label,
                 result.returncode,
                 (result.stderr or "").strip(),
             )

@@ -2608,6 +2608,47 @@ def test_prepare_canonical_skip_agent_remote(tmp_path: Path) -> None:
     assert not helper_script.exists()
 
 
+def test_pull_from_local_fast_forwards_canonical(tmp_path: Path) -> None:
+    """_pull_from_local brings agent commits in the local mirror back into canonical."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+
+    manager.ensure_clone(ctx)
+    mirror_path = ctx.mirror_path
+    canonical = ctx.canonical_path
+
+    # Make a commit on the mirror's main branch that does not exist in
+    # canonical — the realistic case where the agent did some work
+    # locally and we want to pull it back.
+    run_git(["checkout", "main"], mirror_path)
+    run_git(["config", "user.email", "agent@example.com"], mirror_path)
+    run_git(["config", "user.name", "Agent"], mirror_path)
+    (mirror_path / "AGENT_NOTE.md").write_text("from the agent\n", encoding="utf-8")
+    run_git(["add", "AGENT_NOTE.md"], mirror_path)
+    run_git(["commit", "-m", "agent note"], mirror_path)
+    mirror_head = run_git(["rev-parse", "HEAD"], mirror_path).stdout.strip()
+
+    # Canonical was made writable by ensure_clone via prepare_canonical;
+    # make sure we can still update refs (git update-ref needs +w on
+    # .git, which prepare_canonical preserves).
+    canonical.chmod(canonical.stat().st_mode | 0o200)
+
+    manager._pull_from_local(ctx)
+
+    canonical_head = run_git(["rev-parse", "HEAD"], canonical).stdout.strip()
+    assert canonical_head == mirror_head
+    assert (canonical / "AGENT_NOTE.md").exists()
+
+
+def test_pull_from_local_raises_when_mirror_missing(tmp_path: Path) -> None:
+    """_pull_from_local raises a clear MirrorError when no mirror exists yet."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    # Deliberately skip ensure_clone — mirror_path does not exist.
+    with pytest.raises(MirrorError, match="not a git repository"):
+        manager._pull_from_local(ctx)
+
+
 def test_bootstrap_invokes_steps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     manager = build_manager(tmp_path)
     ctx = manager.context_for("sample")

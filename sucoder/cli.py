@@ -1152,12 +1152,13 @@ def pull(
         help="Pull from a specific compute node (e.g. --node n0047.savio3).",
     ),
 ) -> None:
-    """Fetch agent commits from the remote mirror into canonical.
+    """Fetch agent commits from the mirror into canonical.
 
-    Reconnects to the active SLURM allocation (if any) and pulls
-    any commits the agent made on the remote mirror back into the
-    canonical repository.  Works with both shared-filesystem and
-    local-disk mirrors — the session remembers where the mirror lives.
+    Works for both local mirrors (filesystem path on the same host)
+    and remote mirrors (over SSH, possibly via a SLURM allocation).
+    For remote mirrors, reconnects to the active SLURM allocation
+    (if any) and uses the configured tunnel. For local mirrors, just
+    fetches from the mirror's filesystem path — no SLURM/SSH needed.
     """
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
@@ -1181,9 +1182,24 @@ def pull(
         settings = replace(settings, remote=target)
         config.mirrors[mirror] = settings  # type: ignore[index]
 
+    manager = _build_manager_for_mirror(config, logger, False, mirror)
+    mirror_ctx = manager.context_for(mirror)
+
     if not settings.is_remote:
-        typer.echo("pull is only meaningful for remote mirrors (use -T <target>).", err=True)
-        raise typer.Exit(code=1)
+        # Local mirrors: just fetch agent commits from the mirror's
+        # filesystem path. No SLURM/SSH plumbing needed.
+        if node:
+            typer.echo(
+                "--node is only meaningful for remote mirrors; ignoring.",
+                err=True,
+            )
+        try:
+            manager._pull_from_local(mirror_ctx)
+        except MirrorError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
+        typer.echo("Pull complete.")
+        return
 
     _obj = (click_ctx.obj if click_ctx and click_ctx.obj else {}) or {}
     _tgt = _obj.get("target_name")
@@ -1204,9 +1220,6 @@ def pull(
             err=True,
         )
         raise typer.Exit(code=1)
-
-    manager = _build_manager_for_mirror(config, logger, False, mirror)
-    mirror_ctx = manager.context_for(mirror)
 
     try:
         manager._pull_from_remote(mirror_ctx)
