@@ -944,6 +944,27 @@ def _parse_agent_command(command: Optional[str]) -> Optional[List[str]]:
     return parts or None
 
 
+def _parse_optional_bool(value: Optional[str], *, option_name: str) -> Optional[bool]:
+    """Parse a tri-state CLI string (``true``/``false``/unset) into ``Optional[bool]``.
+
+    Used for options like ``--inline-prompt true`` that need to distinguish
+    "unset" (auto-detect) from "explicitly true" and "explicitly false".
+    Modelled as a string rather than ``Optional[bool]`` with ``is_flag=False``
+    because the latter relies on a typer/click handshake that is deprecated in
+    typer >=0.21 and broken across typer 0.12 + click >=8.2.
+    """
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if normalized in ("true", "yes", "1", "on"):
+        return True
+    if normalized in ("false", "no", "0", "off"):
+        return False
+    raise typer.BadParameter(
+        f"{option_name} must be one of true/false (got `{value}`).",
+    )
+
+
 def _parse_agent_env(entries: Optional[List[str]]) -> Optional[Dict[str, str]]:
     if not entries:
         return None
@@ -1379,11 +1400,11 @@ def agents_run(
         help="Override or add agent environment variables (repeat as KEY=VALUE).",
         metavar="KEY=VALUE",
     ),
-    inline_prompt: Optional[bool] = typer.Option(
+    inline_prompt: Optional[str] = typer.Option(
         None,
         "--inline-prompt",
-        is_flag=False,
-        help="Force whether context prelude text is appended to the agent command (true/false).",
+        help="Force whether context prelude text is appended to the agent command "
+             "(true/false; omit for auto-detect).",
     ),
     lfs: bool = typer.Option(
         False,
@@ -1403,6 +1424,7 @@ def agents_run(
     manager = _build_manager_for_mirror(config, logger, dry_run, mirror)
     command_override = _parse_agent_command(agent_command) or (_agent_shorthand(agent) if agent else None)
     env_override = _parse_agent_env(agent_env)
+    inline_prompt_flag = _parse_optional_bool(inline_prompt, option_name="--inline-prompt")
     try:
         manager.launch_agent(
             manager.context_for(mirror),
@@ -1412,7 +1434,7 @@ def agents_run(
             extra_args=extra_args,
             command_override=command_override,
             env_override=env_override,
-            supports_inline_prompt=inline_prompt,
+            supports_inline_prompt=inline_prompt_flag,
         )
     except MirrorError as exc:
         typer.echo(str(exc), err=True)
@@ -1469,11 +1491,11 @@ def collaborate(
         help="Override or add agent environment variables (repeat as KEY=VALUE).",
         metavar="KEY=VALUE",
     ),
-    inline_prompt: Optional[bool] = typer.Option(
+    inline_prompt: Optional[str] = typer.Option(
         None,
         "--inline-prompt",
-        is_flag=False,
-        help="Force whether context prelude text is appended to the agent command (true/false).",
+        help="Force whether context prelude text is appended to the agent command "
+             "(true/false; omit for auto-detect).",
     ),
     lfs: bool = typer.Option(
         False,
@@ -1517,6 +1539,7 @@ def collaborate(
     manager = _build_manager_for_mirror(config, logger, dry_run, mirror)
     command_override = _parse_agent_command(agent_command) or (_agent_shorthand(agent) if agent else None)
     env_override = _parse_agent_env(agent_env)
+    inline_prompt_flag = _parse_optional_bool(inline_prompt, option_name="--inline-prompt")
     try:
         manager.bootstrap(
             manager.context_for(mirror),
@@ -1528,7 +1551,7 @@ def collaborate(
             extra_args=extra_args,
             command_override=command_override,
             env_override=env_override,
-            supports_inline_prompt=inline_prompt,
+            supports_inline_prompt=inline_prompt_flag,
             skip_lfs=not lfs,
         )
     except MirrorError as exc:
