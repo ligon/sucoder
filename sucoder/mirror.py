@@ -3164,18 +3164,48 @@ If you find issues, describe each one clearly with the filename and specific con
         if not canonical_key.is_file():
             return  # canonical repo doesn't use git-crypt or is locked
 
-        # Quick check: can the agent run ``git status`` without error?
-        # If yes and git-crypt reports no encrypted files, we're already unlocked.
+        # Fast path: if the mirror already has its own git-crypt key
+        # installed AND ``git status`` runs cleanly, the clean/smudge
+        # filter is working -- meaning the mirror is already unlocked.
+        #
+        # We deliberately do NOT rely on ``git-crypt status`` here: that
+        # command lists ``encrypted: <path>`` lines for every file
+        # *configured* to be encrypted, regardless of whether the working
+        # tree is currently locked or unlocked.  A previous version of
+        # this check ("returncode 0 and 'encrypted:' not in stdout") never
+        # fired when git-crypt was in use, which meant every session
+        # start deleted the live mirror key and re-ran the chicken-and-egg
+        # workaround.
+        mirror_key = mirror_path / ".git" / "git-crypt" / "keys" / "default"
+        if mirror_key.is_file():
+            try:
+                status_result = self.executor.run_agent(
+                    ["git", "status", "--porcelain"],
+                    check=False,
+                    cwd=str(mirror_path),
+                )
+            except FileNotFoundError:
+                self.logger.warning("git not found; skipping git-crypt unlock")
+                return
+            if status_result.returncode == 0:
+                return  # already unlocked and filters are healthy
+
+        # We're going to (re-)unlock.  Make sure git-crypt itself is
+        # available before doing destructive things.
         try:
-            result = self.executor.run_agent(
-                ["git-crypt", "status"],
+            version_result = self.executor.run_agent(
+                ["git-crypt", "--version"],
                 check=False,
                 cwd=str(mirror_path),
             )
-            if result.returncode == 0 and "encrypted:" not in result.stdout:
-                return  # already unlocked
         except FileNotFoundError:
             self.logger.warning("git-crypt not found; skipping unlock")
+            return
+        if version_result.returncode != 0:
+            self.logger.warning(
+                "git-crypt --version failed (%s); skipping unlock",
+                version_result.returncode,
+            )
             return
 
         self.logger.info("Unlocking git-crypt in mirror using canonical key")
@@ -3192,8 +3222,10 @@ If you find issues, describe each one clearly with the filename and specific con
             )
 
         # Remove a stale key file left by a prior failed unlock so
-        # git-crypt doesn't think the mirror is already unlocked.
-        mirror_key = mirror_path / ".git" / "git-crypt" / "keys" / "default"
+        # git-crypt doesn't think the mirror is already unlocked.  By
+        # the time we reach this point we've confirmed the mirror is
+        # NOT in a healthy unlocked state (either no key file, or
+        # ``git status`` was failing), so the existing key is unusable.
         if mirror_key.exists():
             try:
                 self.executor.run_agent(

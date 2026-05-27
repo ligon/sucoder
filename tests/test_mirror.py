@@ -210,6 +210,97 @@ def test_clone_allows_direnv_for_envrc(tmp_path: Path, monkeypatch: pytest.Monke
     assert (ctx.mirror_path / ".envrc").exists()
 
 
+def test_unlock_git_crypt_no_op_when_already_unlocked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``_unlock_git_crypt`` short-circuits when the mirror is already unlocked.
+
+    Regression test: a previous version of the function looked for
+    ``"encrypted:" not in `git-crypt status` stdout`` to detect the
+    already-unlocked case.  ``git-crypt status`` prints
+    ``encrypted: <path>`` for every file *configured* to be encrypted
+    regardless of lock state, so the early-exit never fired.  That made
+    every session start delete the live mirror key and then claw its way
+    back out via the chicken-and-egg filter-neuter workaround -- emitting
+    alarming ``git-crypt: Error: Unable to open key file`` /
+    ``fatal: clean filter 'git-crypt' failed`` messages each time.
+
+    The new check is: mirror key file present AND ``git status`` clean ->
+    we're already unlocked, do nothing.  This test asserts no
+    ``git-crypt`` invocation and no removal of the mirror key.
+    """
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+    mirror_path = ctx.mirror_path
+
+    # Stage "git-crypt unlocked": both canonical and mirror have a key
+    # file at .git/git-crypt/keys/default.  The bytes don't have to be
+    # a real git-crypt key -- nothing in this test actually invokes
+    # git-crypt on them.
+    fake_key = b"\x00GITCRYPTKEY\x00\x00\x00\x02\x00\x00\x00\x00"
+    for repo in (ctx.canonical_path, mirror_path):
+        keys_dir = repo / ".git" / "git-crypt" / "keys"
+        keys_dir.mkdir(parents=True, exist_ok=True)
+        (keys_dir / "default").write_bytes(fake_key)
+    mirror_key = mirror_path / ".git" / "git-crypt" / "keys" / "default"
+
+    original_run_agent = manager.executor.run_agent
+    git_crypt_calls: list[list[str]] = []
+    rm_key_calls: list[list[str]] = []
+
+    def spy_run_agent(args, **kwargs):
+        args_list = list(args)
+        if args_list[:1] == ["git-crypt"]:
+            git_crypt_calls.append(args_list)
+        if args_list[:2] == ["rm", "-f"] and str(mirror_key) in args_list:
+            rm_key_calls.append(args_list)
+        return original_run_agent(args, **kwargs)
+
+    monkeypatch.setattr(manager.executor, "run_agent", spy_run_agent)
+
+    manager._unlock_git_crypt(ctx, mirror_path)
+
+    assert mirror_key.is_file(), "Mirror key should not have been deleted."
+    assert git_crypt_calls == [], (
+        "_unlock_git_crypt should be a no-op when the mirror is already "
+        f"unlocked; got git-crypt calls: {git_crypt_calls}"
+    )
+    assert rm_key_calls == [], (
+        "_unlock_git_crypt should not delete the mirror key when it is "
+        f"already unlocked; got rm calls: {rm_key_calls}"
+    )
+
+
+def test_unlock_git_crypt_skipped_when_canonical_unlocked_but_no_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No canonical key => nothing to do, regardless of mirror state."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+    mirror_path = ctx.mirror_path
+
+    # No .git/git-crypt/keys/default in the canonical -> bail immediately.
+    original_run_agent = manager.executor.run_agent
+    calls: list[list[str]] = []
+
+    def spy_run_agent(args, **kwargs):
+        calls.append(list(args))
+        return original_run_agent(args, **kwargs)
+
+    monkeypatch.setattr(manager.executor, "run_agent", spy_run_agent)
+
+    manager._unlock_git_crypt(ctx, mirror_path)
+
+    assert not any(c[:1] == ["git-crypt"] for c in calls), (
+        f"Should not invoke git-crypt when canonical has no key; got: {calls}"
+    )
+    assert not any(c[:1] == ["git"] and "status" in c for c in calls), (
+        f"Should not even probe `git status` when canonical has no key; got: {calls}"
+    )
+
+
 def test_ensure_clone_skips_lfs_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """ensure_clone sets GIT_LFS_SKIP_SMUDGE=1 when skip_lfs is True (default)."""
     manager = build_manager(tmp_path)
