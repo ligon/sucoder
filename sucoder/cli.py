@@ -202,6 +202,7 @@ def _build_executor(
     mirror_settings: Optional[MirrorSettings] = None,
     debug_ssh: bool = False,
     local_disk_override: Optional[bool] = None,
+    cli_ctx: Optional[click.Context] = None,
 ) -> CommandExecutor:
     if mirror_settings and mirror_settings.remote:
         from .executor import RemoteExecutor
@@ -210,13 +211,19 @@ def _build_executor(
 
         remote = mirror_settings.remote
 
-        # Resolve the target name for session scoping.
-        _ctx = None
-        try:
-            _ctx = click.get_current_context()
-        except RuntimeError:
-            pass
-        _target_name = ((_ctx.obj or {}).get("target_name") if _ctx else None)
+        # Resolve the target name for session scoping.  Prefer the
+        # explicit ``cli_ctx``; fall back to ``click.get_current_context``
+        # as a best-effort -- typer >=0.21 (with typer 0.26 in particular)
+        # no longer pushes its Context onto Click's global stack, so the
+        # fallback raises RuntimeError in normal CLI invocations and we
+        # end up with ``_target_name = None``.  Callers in subcommands
+        # have the typer.Context in hand and MUST pass it as ``cli_ctx``.
+        if cli_ctx is None:
+            try:
+                cli_ctx = click.get_current_context()
+            except RuntimeError:
+                cli_ctx = None
+        _target_name = ((cli_ctx.obj or {}).get("target_name") if cli_ctx else None)
         session = RemoteSession.load(mirror_settings.name, target_name=_target_name)
 
         # 1. Establish ControlMaster to the gateway (authenticates
@@ -823,6 +830,8 @@ def _get_local_disk_override(ctx: Optional[click.Context]) -> Optional[bool]:
 
 def _build_manager_for_mirror(
     config: Config, logger, dry_run: bool, mirror_name: str,
+    *,
+    cli_ctx: Optional[click.Context] = None,
 ) -> MirrorManager:
     """Build a MirrorManager with the correct executor for the given mirror.
 
@@ -830,15 +839,22 @@ def _build_manager_for_mirror(
     is applied to the mirror settings (overriding any per-mirror
     ``remote`` block).  For local execution the standard
     :class:`CommandExecutor` is used.
+
+    Callers in subcommands must pass ``cli_ctx`` (their typer.Context).
+    The fallback to ``click.get_current_context`` exists only for
+    library-style callers; in typer >=0.21 it raises RuntimeError
+    during normal CLI invocations because typer no longer pushes its
+    Context onto Click's global stack.
     """
     settings = config.mirrors.get(mirror_name)
 
     # Overlay the CLI target onto the mirror settings if provided.
-    try:
-        click_ctx = click.get_current_context()
-    except RuntimeError:
-        click_ctx = None
-    target = _get_active_target(click_ctx)
+    if cli_ctx is None:
+        try:
+            cli_ctx = click.get_current_context()
+        except RuntimeError:
+            cli_ctx = None
+    target = _get_active_target(cli_ctx)
     if target is not None and settings is not None:
         # Apply target's remote config to a copy of the settings and
         # store it back so that context_for() also sees it.
@@ -846,26 +862,30 @@ def _build_manager_for_mirror(
         settings = replace(settings, remote=target)
         config.mirrors[mirror_name] = settings  # type: ignore[index]
 
-    return _build_manager(config, logger, dry_run, mirror_settings=settings)
+    return _build_manager(
+        config, logger, dry_run, mirror_settings=settings, cli_ctx=cli_ctx,
+    )
 
 
 def _build_manager(
     config: Config, logger, dry_run: bool, *, mirror_settings: Optional[MirrorSettings] = None,
+    cli_ctx: Optional[click.Context] = None,
 ) -> MirrorManager:
-    ctx = None
-    try:
-        ctx = click.get_current_context()
-    except RuntimeError:
-        ctx = None
+    if cli_ctx is None:
+        try:
+            cli_ctx = click.get_current_context()
+        except RuntimeError:
+            cli_ctx = None
 
     executor = _build_executor(
         config,
         logger,
         dry_run=dry_run,
-        use_sudo_for_agent=_get_use_sudo_for_agent(ctx, config),
+        use_sudo_for_agent=_get_use_sudo_for_agent(cli_ctx, config),
         mirror_settings=mirror_settings,
-        debug_ssh=_get_debug_ssh(ctx),
-        local_disk_override=_get_local_disk_override(ctx),
+        debug_ssh=_get_debug_ssh(cli_ctx),
+        local_disk_override=_get_local_disk_override(cli_ctx),
+        cli_ctx=cli_ctx,
     )
     return MirrorManager(config, executor, logger, prompt_handler=_prompt_yes_no)
 
@@ -1102,7 +1122,7 @@ def agents_clone(
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
-    manager = _build_manager_for_mirror(config, logger, dry_run, mirror)
+    manager = _build_manager_for_mirror(config, logger, dry_run, mirror, cli_ctx=ctx)
     mirror_ctx = manager.context_for(mirror)
     try:
         if mirror_ctx.is_remote:
@@ -1135,7 +1155,7 @@ def prepare_canonical(
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
-    manager = _build_manager(config, logger, dry_run=dry_run)
+    manager = _build_manager(config, logger, dry_run=dry_run, cli_ctx=ctx)
     try:
         manager.prepare_canonical(
             manager.context_for(mirror),
@@ -1158,7 +1178,7 @@ def sync(
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
-    manager = _build_manager_for_mirror(config, logger, dry_run, mirror)
+    manager = _build_manager_for_mirror(config, logger, dry_run, mirror, cli_ctx=ctx)
     try:
         manager.sync(manager.context_for(mirror))
     except MirrorError as exc:
@@ -1196,18 +1216,18 @@ def pull(
         typer.echo(f"Unknown mirror: {mirror}", err=True)
         raise typer.Exit(code=1)
 
-    # Apply target overlay.
-    try:
-        click_ctx = click.get_current_context()
-    except RuntimeError:
-        click_ctx = None
-    target = _get_active_target(click_ctx)
+    # Apply target overlay.  ``ctx`` is the typer.Context for this
+    # subcommand; it is a click.Context subclass and carries the
+    # callback's obj.  Don't use ``click.get_current_context()`` here --
+    # typer >=0.21 does not push its Context onto Click's global
+    # stack, so that call raises RuntimeError under normal CLI usage.
+    target = _get_active_target(ctx)
     if target is not None:
         from dataclasses import replace
         settings = replace(settings, remote=target)
         config.mirrors[mirror] = settings  # type: ignore[index]
 
-    manager = _build_manager_for_mirror(config, logger, False, mirror)
+    manager = _build_manager_for_mirror(config, logger, False, mirror, cli_ctx=ctx)
     mirror_ctx = manager.context_for(mirror)
 
     if not settings.is_remote:
@@ -1226,7 +1246,7 @@ def pull(
         typer.echo("Pull complete.")
         return
 
-    _obj = (click_ctx.obj if click_ctx and click_ctx.obj else {}) or {}
+    _obj = (ctx.obj if ctx.obj else {}) or {}
     _tgt = _obj.get("target_name")
     session = RemoteSession.load(settings.name, target_name=_tgt)
 
@@ -1273,7 +1293,7 @@ def start_task(
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
-    manager = _build_manager(config, logger, dry_run=dry_run)
+    manager = _build_manager(config, logger, dry_run=dry_run, cli_ctx=ctx)
     try:
         branch = manager.start_task(
             manager.context_for(mirror),
@@ -1297,7 +1317,7 @@ def status(
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
-    manager = _build_manager_for_mirror(config, logger, False, mirror)
+    manager = _build_manager_for_mirror(config, logger, False, mirror, cli_ctx=ctx)
     try:
         output = manager.status(manager.context_for(mirror))
     except MirrorError as exc:
@@ -1331,7 +1351,7 @@ def worktrees(
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
-    manager = _build_manager_for_mirror(config, logger, False, mirror)
+    manager = _build_manager_for_mirror(config, logger, False, mirror, cli_ctx=ctx)
     mirror_ctx = manager.context_for(mirror)
 
     def _display() -> None:
@@ -1421,7 +1441,7 @@ def agents_run(
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
-    manager = _build_manager_for_mirror(config, logger, dry_run, mirror)
+    manager = _build_manager_for_mirror(config, logger, dry_run, mirror, cli_ctx=ctx)
     command_override = _parse_agent_command(agent_command) or (_agent_shorthand(agent) if agent else None)
     env_override = _parse_agent_env(agent_env)
     inline_prompt_flag = _parse_optional_bool(inline_prompt, option_name="--inline-prompt")
@@ -1523,11 +1543,10 @@ def collaborate(
     # _ensure_slurm_node uses --nodelist to request that node.
     if node:
         from .session import RemoteSession
-        try:
-            _click_ctx = click.get_current_context()
-        except RuntimeError:
-            _click_ctx = None
-        _tgt = ((_click_ctx.obj or {}).get("target_name") if _click_ctx else None)
+        # ``ctx`` is the typer.Context for this subcommand and carries
+        # the callback's obj; don't go through click.get_current_context
+        # (typer >=0.21 doesn't push onto Click's global stack).
+        _tgt = ((ctx.obj or {}).get("target_name") if ctx else None)
         _session = RemoteSession.load(mirror, target_name=_tgt)
         # Clear the old job so _ensure_slurm_node allocates a new one,
         # but set compute_node so it becomes the preferred_node.
@@ -1536,7 +1555,7 @@ def collaborate(
         _session.save()
         logger.info("Requesting specific node %s", node)
 
-    manager = _build_manager_for_mirror(config, logger, dry_run, mirror)
+    manager = _build_manager_for_mirror(config, logger, dry_run, mirror, cli_ctx=ctx)
     command_override = _parse_agent_command(agent_command) or (_agent_shorthand(agent) if agent else None)
     env_override = _parse_agent_env(agent_env)
     inline_prompt_flag = _parse_optional_bool(inline_prompt, option_name="--inline-prompt")
@@ -1718,12 +1737,11 @@ def attach(
     settings = config.mirrors.get(mirror)
 
     # Apply --target overlay so `-T savio attach` works the same as
-    # `-T savio collaborate`.
-    try:
-        click_ctx = click.get_current_context()
-    except RuntimeError:
-        click_ctx = None
-    target = _get_active_target(click_ctx)
+    # `-T savio collaborate`.  ``ctx`` is the typer.Context for this
+    # subcommand (a click.Context subclass); use it directly rather
+    # than ``click.get_current_context``, which raises under typer
+    # >=0.21 (it no longer pushes onto Click's global stack).
+    target = _get_active_target(ctx)
     if target is not None and settings is not None:
         from dataclasses import replace
         settings = replace(settings, remote=target)
@@ -1755,7 +1773,7 @@ def attach(
     from .session import RemoteSession
     from .tunnel import SshControl
 
-    _tgt_name = ((click_ctx.obj or {}).get("target_name") if click_ctx else None)
+    _tgt_name = ((ctx.obj or {}).get("target_name") if ctx else None)
     session = RemoteSession.load(mirror, target_name=_tgt_name)
     if not session.login_node:
         typer.echo(
@@ -1767,7 +1785,7 @@ def attach(
 
     remote = settings.remote
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
-    debug_ssh = _get_debug_ssh(click_ctx)
+    debug_ssh = _get_debug_ssh(ctx)
 
     # Reuse ControlMaster if active; re-establish if expired.
     control = SshControl(
@@ -1889,11 +1907,10 @@ def release(
     config = _get_config(ctx)
     settings = config.mirrors.get(mirror)
 
-    try:
-        click_ctx = click.get_current_context()
-    except RuntimeError:
-        click_ctx = None
-    target = _get_active_target(click_ctx)
+    # ``ctx`` is the typer.Context for this subcommand and carries the
+    # callback's obj; don't go through ``click.get_current_context``
+    # (typer >=0.21 doesn't push onto Click's global stack).
+    target = _get_active_target(ctx)
     if target is not None and settings is not None:
         from dataclasses import replace
         settings = replace(settings, remote=target)
@@ -1912,7 +1929,7 @@ def release(
     from .session import RemoteSession
     from .tunnel import SshControl
 
-    _tgt_name = ((click_ctx.obj or {}).get("target_name") if click_ctx else None)
+    _tgt_name = ((ctx.obj or {}).get("target_name") if ctx else None)
     session = RemoteSession.load(mirror, target_name=_tgt_name)
     if not session.slurm_job_id:
         typer.echo(
@@ -1933,7 +1950,7 @@ def release(
 
     remote = settings.remote
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
-    debug_ssh = _get_debug_ssh(click_ctx)
+    debug_ssh = _get_debug_ssh(ctx)
 
     # Reuse / re-establish the gateway and login-node ControlMasters
     # so scancel reaches the cluster.
@@ -2038,6 +2055,7 @@ def skills_list(
         logger,
         dry_run=False,
         use_sudo_for_agent=_get_use_sudo_for_agent(ctx, config),
+        cli_ctx=ctx,
     )
 
     path_usage: Dict[Path, Set[str]] = defaultdict(set)
@@ -2168,7 +2186,7 @@ def mcp_suggest(
     mirror_name = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror_name}", config.log_dir, verbose)
-    manager = _build_manager_for_mirror(config, logger, False, mirror_name)
+    manager = _build_manager_for_mirror(config, logger, False, mirror_name, cli_ctx=ctx)
     mirror_ctx = manager.context_for(mirror_name)
     mirror_path = mirror_ctx.mirror_path
 

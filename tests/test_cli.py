@@ -647,3 +647,133 @@ targets:
     assert result.exit_code != 0
     combined = result.stdout + (result.output or "")
     assert "slurm" in combined.lower(), combined
+
+
+def test_collaborate_applies_target_overlay(tmp_path, monkeypatch):
+    """``sucoder -T <target> collaborate <mirror>`` must overlay the
+    target's RemoteConfig onto the mirror settings so the bootstrap
+    flow takes the remote branch.
+
+    Regression test: typer >=0.21 stopped pushing its Context onto
+    Click's global stack, so ``click.get_current_context()`` raises
+    ``RuntimeError`` inside subcommand bodies.  The previous CLI code
+    relied on that call to fish ``-T`` out of ``ctx.obj`` -- which
+    silently dropped the overlay and routed every ``-T <target>
+    collaborate`` invocation through the local executor.  The user-
+    visible symptom was ``sucoder -T savio-node collaborate``
+    reporting ``Mirror already exists at /home/coder/mirrors/<name>``
+    (the LOCAL mirror) instead of clone/sync against the remote.
+
+    The fix threads the typer ``ctx`` through the helper chain as
+    ``cli_ctx=``.  This test pins the contract: bootstrap must
+    receive ``ctx.is_remote=True`` and ``ctx.settings.remote`` set
+    to the resolved target.
+    """
+    runner = CliRunner()
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+
+    human = os.environ.get("USER", "coder")
+    mirror_root = tmp_path / "mirrors"
+    mirror_root.mkdir(exist_ok=True)
+    canonical_repo = tmp_path / "canonical"
+    canonical_repo.mkdir(exist_ok=True)
+    # Init the canonical so prepare_canonical doesn't choke -- though
+    # we short-circuit before it actually runs.
+    subprocess.run(
+        ["git", "init", "-b", "main", str(canonical_repo)],
+        check=True, capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(canonical_repo), "config", "user.email", "t@t"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(canonical_repo), "config", "user.name", "t"],
+        check=True,
+    )
+    (canonical_repo / "README.md").write_text("hi\n")
+    subprocess.run(
+        ["git", "-C", str(canonical_repo), "add", "README.md"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(canonical_repo), "commit", "-m", "init"],
+        check=True, capture_output=True,
+    )
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"""
+human_user: {human}
+agent_user: {human}
+agent_group: {human}
+mirror_root: {mirror_root}
+mirrors:
+  sample:
+    canonical_repo: {canonical_repo}
+    mirror_name: sample
+    branch_prefixes:
+      human: {human}
+      agent: {human}
+targets:
+  plain-remote:
+    gateway: gw.example.org
+    transfer_host: dtn.example.org
+""",
+        encoding="utf-8",
+    )
+
+    # Intercept _build_manager_for_mirror after the target overlay has
+    # been applied but BEFORE _build_executor establishes an SSH
+    # ControlMaster (which would try to reach the fake gateway).  The
+    # overlay writes the resolved RemoteConfig back to
+    # ``config.mirrors[mirror_name].remote``; that's what we inspect.
+    captured: dict = {}
+    original_bmfm = cli._build_manager_for_mirror
+
+    def spy_bmfm(config, logger, dry_run, mirror_name, *, cli_ctx=None):
+        # Re-run the overlay logic just like the helper would do, then
+        # raise before constructing a RemoteExecutor (which would dial
+        # the fake gateway).
+        settings = config.mirrors.get(mirror_name)
+        target = cli._get_active_target(cli_ctx)
+        if target is not None and settings is not None:
+            from dataclasses import replace
+            settings = replace(settings, remote=target)
+            config.mirrors[mirror_name] = settings  # type: ignore[index]
+        captured["is_remote"] = bool(settings and settings.remote)
+        captured["remote_gateway"] = (
+            settings.remote.gateway if settings and settings.remote else None
+        )
+        captured["cli_ctx_obj_target"] = (
+            (cli_ctx.obj or {}).get("target") if cli_ctx else None
+        )
+        raise SystemExit(99)
+
+    monkeypatch.setattr(cli, "_build_manager_for_mirror", spy_bmfm)
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "--config", str(config_path),
+            "-T", "plain-remote",
+            "collaborate", "sample",
+        ],
+    )
+
+    # SystemExit(99) bubbles up through the typer command wrapper.
+    assert result.exit_code == 99, (result.stdout, result.exception)
+    assert captured.get("cli_ctx_obj_target") is not None, (
+        "Subcommand failed to forward its typer.Context to "
+        f"_build_manager_for_mirror as cli_ctx=; got: {captured}"
+    )
+    assert captured.get("is_remote") is True, (
+        "Expected `-T plain-remote collaborate` to overlay the target's "
+        f"RemoteConfig onto mirror settings; got: {captured}"
+    )
+    assert captured.get("remote_gateway") == "gw.example.org", (
+        f"Expected target overlay to apply correctly; got: {captured}"
+    )
