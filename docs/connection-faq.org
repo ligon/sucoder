@@ -1,0 +1,286 @@
+#+title: Remote & Connection FAQ
+#+description: Tunnels, sessions, TRAMP, and cost questions for SLURM-backed targets (e.g. savio-node).
+
+* About this FAQ
+This covers the day-to-day connection questions for running agents on a
+remote cluster target through =sucoder= --- setting up tunnels,
+reattaching to sessions, editing remote files from Emacs, and keeping
+compute costs under control.
+
+Throughout, =savio-node= is used as the example target (a SLURM-backed
+target on UC Berkeley's Savio cluster).  Substitute your own target name
+after =-T=.  Commands that operate on a *target* (the =tunnel= group)
+don't need a mirror or a particular directory; commands that operate on a
+*mirror* (=collaborate=, =attach=, =release=) either take a mirror name or
+auto-detect it from the git repo you're standing in.
+
+* Concepts
+
+** What are the "tunnels", and which ones cost money?
+Reaching a compute node on Savio is a chain of SSH hops:
+
+- *gateway* (e.g. =hpc.brc.berkeley.edu=) --- the public login gateway;
+  authenticating here requires your PIN + OTP.
+- *login node* (e.g. =ln003.brc=) --- reachable only *through* the
+  gateway; it is not a name your laptop can resolve directly.
+- *DTN* (=dtn.brc.berkeley.edu=) --- the data-transfer node, used for git
+  transport.
+- *compute node* (e.g. =n0019.savio3=) --- allocated by SLURM; **this is
+  the only hop that costs compute budget.**
+
+The gateway, login node, and DTN are free to hold open.  A compute-node
+allocation bills for its entire wall-clock lifetime (often a 24-hour
+=salloc=), whether or not an agent is actually working on it.
+
+** What's the difference between =tunnel= and =collaborate=?
+- =sucoder -T savio-node tunnel up= establishes and warms only the *free*
+  hops (gateway/login/DTN).  No compute node, no cost.  Do this once and
+  many later commands ride the warm connection without re-authenticating.
+- =sucoder -T savio-node collaborate= allocates a *compute node* (cost)
+  and launches the agent there.
+
+Think of =tunnel up= as "open the door to the cluster" and =collaborate=
+as "rent a machine and start working."
+
+* Tunnels and warm connections
+
+** When should I set up a tunnel?
+Run =tunnel up= when you're about to do *several* remote operations in a
+session --- one or more =collaborate=/=attach= runs, or editing files over
+TRAMP --- and don't want to type your PIN + OTP each time.  It pays for
+itself after the second connection.  It costs nothing to leave up, so
+"first thing in the morning" is a reasonable habit.
+
+You don't strictly need it: =collaborate= will establish its own
+connection on demand.  But without a warm gateway mux, each fresh
+connection can prompt for the OTP again.
+
+** How do I set up a persistent tunnel?
+#+begin_src shell
+sucoder -T savio-node tunnel up
+#+end_src
+This authenticates once (PIN + OTP), warms the gateway/login/DTN
+ControlMasters, pins a login node, and writes a managed block of SSH host
+aliases (=savio-node-gw=, =savio-node-ln=, =savio-node-dtn=) into
+=~/.ssh/config= so that plain =ssh= and Emacs/TRAMP can reuse the same
+sockets.  Pass =--no-config-edit= to warm the sockets without touching
+=~/.ssh/config=.
+
+** How do I check whether my tunnels are live?
+#+begin_src shell
+sucoder -T savio-node tunnel status        # human-readable
+sucoder -T savio-node tunnel status --json  # scriptable
+#+end_src
+This is read-only --- it probes each ControlMaster socket and reports
+=ACTIVE=/=DEAD= plus whether the =~/.ssh/config= block is present.  No
+authentication, no network cost.
+
+** How do I tear a tunnel down?
+#+begin_src shell
+sucoder -T savio-node tunnel down            # close the sockets
+sucoder -T savio-node tunnel down --prune    # also remove the ssh_config block
+#+end_src
+
+** How long does a tunnel stay warm? Do I have to re-authenticate?
+While the ControlMaster is alive, =collaborate=, plain =ssh=, and TRAMP
+reuse it with *no* prompt.  The client-side idle lifetime is governed by
+=control_persist= on the target (the =tunnel up= output shows the current
+value).  You only re-authenticate (PIN + OTP) when the *gateway* mux
+expires; because the login and DTN aliases jump through the gateway,
+re-authenticating the gateway once re-warms everything.
+
+Caveat: =control_persist= bounds *client idle* only.  The real ceiling is
+the cluster's server-side session policy, which =sucoder= does not
+control --- so treat a long =control_persist= as best-effort, not a
+guarantee.
+
+* Editing remote files from Emacs / TRAMP
+
+** How do I open a file on the login node in Emacs?
+1. Warm the tunnel once: =sucoder -T savio-node tunnel up=.
+2. Tell TRAMP to honor =~/.ssh/config= instead of opening its own
+   connection (in your Emacs init, once):
+   #+begin_src emacs-lisp
+   (setq tramp-use-connection-share nil)
+   #+end_src
+   On Emacs < 30.1 the variable is named =tramp-use-ssh-controlmaster-options=
+   (now an obsolete alias); set it to =nil= either way.
+3. Open the file via the alias:
+   #+begin_src text
+   C-x C-f /ssh:savio-node-ln:/global/home/users/<you>/project/file.py
+   #+end_src
+TRAMP runs =ssh savio-node-ln=, which =ProxyJump='s the gateway and
+attaches to the warm socket --- no password.
+
+** Why does TRAMP (or =ssh savio-node-ln=) keep prompting for a password?
+Two usual causes:
+
+1. *Your =~/.ssh/config= shadows the managed block.*  ssh uses the *first*
+   value it finds for each keyword, so a =Host *= block with its own
+   =ControlPath= that appears *before* the managed block wins, and ssh
+   looks for a socket that doesn't exist --- then falls back to a fresh,
+   re-authenticating connection.  Diagnose it:
+   #+begin_src shell
+   sucoder -T savio-node tunnel doctor
+   #+end_src
+   The fix is to re-run =tunnel up= (which writes the block at the top of
+   the file) or move the managed block above the offending =Host *=.
+
+2. *TRAMP cached the old connection.*  Changing
+   =tramp-use-connection-share= doesn't affect an already-open connection:
+   =M-x tramp-cleanup-all-connections=, then reopen the file.
+
+Isolate which layer is at fault by testing outside Emacs first:
+=ssh savio-node-ln true= should return instantly and silently once the
+tunnel is warm.  If *that* prompts, it's the ssh_config/tunnel; if only
+TRAMP prompts, it's TRAMP caching or the variable not taking effect.
+
+* Sessions: starting, reattaching, recovering
+
+** How do I start an agent session on savio-node?
+From inside your project's git repo:
+#+begin_src shell
+sucoder -T savio-node collaborate
+#+end_src
+This allocates a compute node, mirrors the repo, and launches the agent
+in a tmux session named =sucoder-<mirror>= on that node.
+
+** How do I reattach to a job on savio-node?
+#+begin_src shell
+sucoder -T savio-node attach            # auto-detects the mirror from cwd
+sucoder -T savio-node attach <mirror>   # or name it explicitly
+#+end_src
+=attach= verifies the SLURM job is still running, jumps through the
+gateway and login node to the compute node, and reattaches to the
+=sucoder-<mirror>= tmux.
+
+If direct login-to-compute SSH is blocked, or the compute node wasn't
+recorded, use the recovery path that joins the allocation by job id:
+#+begin_src shell
+sucoder -T savio-node attach <mirror> --via-srun
+#+end_src
+
+** Why does =attach= say "Mirror is not configured for remote execution"?
+The mirror name didn't resolve to a configured (or cwd-matching) mirror.
+=attach=/=release= accept an explicit name only if it's configured or it
+matches the git repo you're standing in.  Easiest fix: run the command
+from inside the repo directory, with or without the name.
+
+** Why did =attach= drop me into a bash shell instead of the agent?
+The agent process inside the tmux exited.  =collaborate= launches the
+agent as =<agent>; exec bash -l=, so when the agent quits, the tmux window
+stays alive at a shell rather than closing.  You can re-run the agent
+(e.g. =claude --continue=) right there, inspect state, or detach with
+=C-b d=.
+
+For a SLURM target, =attach= will *not* silently put you on a login-node
+shell: if no live job is recorded, or the compute node is unknown and you
+didn't pass =--via-srun=, it refuses with a clear message instead of
+handing you an empty shell that looks like a session.
+
+** How do I find my running jobs and tmux sessions?
+On the cluster (cheap once the tunnel is warm):
+#+begin_src shell
+ssh savio-node-ln squeue --me                 # your live allocations + nodes
+ssh savio-node-ln tmux ls                      # tmux sessions on the login node
+# tmux on a specific compute node, joined via the job:
+ssh savio-node-ln "srun --jobid=<JOB> --overlap tmux ls"
+#+end_src
+
+** A crashed agent took my session with it --- can I recover the conversation?
+Often yes.  Claude Code persists the conversation transcript under
+=~/.claude/projects/<cwd-key>/<session-id>.jsonl=.  On a cluster where
+=$HOME= is shared (NFS), that survives the compute node going away.
+
+1. Find the session id:
+   #+begin_src shell
+   ls -lt ~/.claude/projects/ | head           # locate the project dir
+   ls -lt ~/.claude/projects/<dir>/*.jsonl      # newest = the lost session
+   #+end_src
+2. Resume it as the launched agent (instead of a fresh one):
+   #+begin_src shell
+   sucoder -T savio-node collaborate --agent-command 'claude --resume <session-id>'
+   #+end_src
+   A bare =collaborate= would start a *new* session; =--agent-command=
+   overrides what gets launched while still doing the allocation and env
+   setup.
+
+Caveats: resume works cleanly only if the mirror was on *shared* storage
+(so the working directory still exists); a mirror on compute-node
+=/local= disk is gone with the node.  An in-flight background *workflow*
+cannot be auto-resumed after the host process dies --- but completed
+sub-results are saved under =~/.claude/projects/<key>/<session-id>/workflows/=,
+so the resumed agent can read them and re-dispatch only the unfinished
+work.
+
+* Cost and lifecycle
+
+** Does the agent keep running if I disconnect?
+Yes.  Detaching from tmux (or losing your SSH connection) leaves the agent
+running and the SLURM allocation billing.  This is deliberate --- a
+dropped connection shouldn't kill your work --- but it means *you* are
+responsible for releasing the allocation when you're done.
+
+** How do I free a compute allocation when I'm finished?
+#+begin_src shell
+sucoder -T savio-node release            # cancels the SLURM job, clears the session
+#+end_src
+
+** I think I have orphaned allocations. How do I find and cancel them?
+#+begin_src shell
+ssh savio-node-ln squeue --me            # list everything running under your account
+#+end_src
+*Before cancelling, make sure nothing live is on the node.*  An allocation
+can host a running agent even when =tmux ls= shows nothing on the default
+socket (e.g. a session you're driving from the Claude phone app via
+=/remote-control=, which reaches the agent through Anthropic's servers,
+not SSH).  Check for the process first:
+#+begin_src shell
+ssh savio-node-ln "srun --jobid=<JOB> --overlap ps -u $USER -o pid,etime,cmd" \
+  | grep -iE 'claude|node'
+#+end_src
+Cancel only the jobs that are genuinely idle:
+#+begin_src shell
+ssh savio-node-ln scancel <JOB> [<JOB> ...]
+#+end_src
+
+* Troubleshooting reference
+
+** "Session open refused by peer" / "Could not resolve hostname ln003.brc"
+A transient SSH multiplexing hiccup: the shared connection refused a new
+session and ssh fell back to dialing a jump-only hostname directly.
+Recent =sucoder= routes that fallback through the gateway, so simply
+re-running the command usually succeeds.  If it persists, re-warm the
+tunnel: =sucoder -T savio-node tunnel up=.
+
+** =tunnel status= shows ACTIVE but I still get a password prompt
+Classic =~/.ssh/config= shadowing --- run =sucoder -T savio-node tunnel
+doctor=.  See "Why does TRAMP keep prompting" above.
+
+** What does =tunnel doctor= check?
+#+begin_src shell
+sucoder -T savio-node tunnel doctor
+#+end_src
+- the managed =~/.ssh/config= block is present;
+- no earlier =Host=/=Match= block shadows the managed aliases'
+  =ControlPath=/=ControlMaster= (the first-value-wins trap);
+- the login-node alias still matches the pinned login node (catches the
+  cluster reassigning your login node).
+
+It exits non-zero if any problem is found, so you can use it as a
+pre-flight check.
+
+* Command quick reference
+| Task                                    | Command                                                       |
+|-----------------------------------------+---------------------------------------------------------------|
+| Warm the free tunnels (auth once)       | =sucoder -T savio-node tunnel up=                             |
+| Check tunnel liveness                   | =sucoder -T savio-node tunnel status=                        |
+| Diagnose ssh_config / pin issues        | =sucoder -T savio-node tunnel doctor=                        |
+| Close the tunnels                       | =sucoder -T savio-node tunnel down [--prune]=                |
+| Start an agent on a compute node        | =sucoder -T savio-node collaborate=                          |
+| Reattach to the agent session           | =sucoder -T savio-node attach=                               |
+| Reattach via the allocation (recovery)  | =sucoder -T savio-node attach --via-srun=                    |
+| Resume a crashed conversation           | =sucoder -T savio-node collaborate --agent-command 'claude --resume <id>'= |
+| Free a compute allocation               | =sucoder -T savio-node release=                              |
+| Edit remote files in Emacs              | =C-x C-f /ssh:savio-node-ln:/path=  (with =tramp-use-connection-share= nil) |
+| List your jobs / cancel an orphan       | =ssh savio-node-ln squeue --me=  /  =ssh savio-node-ln scancel <JOB>= |

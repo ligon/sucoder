@@ -10,6 +10,7 @@ Unix-user sandboxing for AI coding agents.  One account per agent, filesystem-en
 
 - [[file:../README.html][Full Documentation]] --- project overview, quick start, configuration, and command reference.
 - [[file:host-environment-setup.html][Host Environment Setup]] --- checklist for provisioning a new machine.
+- [[file:connection-faq.html][Remote & Connection FAQ]] --- tunnels, reattaching to sessions, TRAMP, and managing compute cost on SLURM-backed targets.
 
 ** Architecture
 
