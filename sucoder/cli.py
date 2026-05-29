@@ -2290,6 +2290,82 @@ def tunnel_status(
     typer.echo(f"  ssh_config block: {'present' if cfg_present else 'absent'}")
 
 
+@tunnel_app.command("doctor")
+def tunnel_doctor(ctx: typer.Context) -> None:
+    """Diagnose ssh_config / session issues that silently break tunnel reuse.
+
+    The headline check is *shadowing*: a ``Host *`` (or other matching)
+    block earlier in ``~/.ssh/config`` that sets ``ControlPath``/
+    ``ControlMaster`` overrides the managed aliases (ssh uses the first
+    value per keyword), so ssh looks for the wrong socket and
+    re-authenticates.  Also flags a missing block and login-node pin
+    drift.  Exits non-zero if any problem is found.
+    """
+    from . import sshconfig
+    from .session import RemoteSession
+
+    remote, target_name = _resolve_tunnel_target(ctx)
+    session = RemoteSession.load(_tunnel_session_name(target_name))
+    aliases = sshconfig.alias_names(target_name)
+    problems = 0
+
+    typer.echo(f"tunnel doctor — target {target_name}:")
+
+    # 1. Managed block present?
+    if sshconfig.block_present(target_name):
+        typer.echo(
+            f"  ✓ ssh_config block present "
+            f"({aliases['gw']}, {aliases['ln']}, {aliases['dtn']})"
+        )
+    else:
+        problems += 1
+        typer.echo(
+            "  ✗ ssh_config block missing — run "
+            f"`sucoder -T {target_name} tunnel up`"
+        )
+
+    # 2. Shadowing Host/Match blocks before ours (the ControlPath trap).
+    shadow = sshconfig.find_shadowing_hosts(target_name)
+    if shadow:
+        problems += 1
+        typer.echo(
+            "  ✗ a block BEFORE the managed block shadows its connection "
+            "sharing (ssh uses the first value per keyword):"
+        )
+        for label, key in shadow:
+            typer.echo(f"      `{label}` sets {key} — the alias's {key} is ignored.")
+        typer.echo(
+            f"    Fix: re-run `sucoder -T {target_name} tunnel up` (writes the "
+            "block at the top), or move the block above that stanza."
+        )
+    else:
+        typer.echo("  ✓ no preceding block shadows the managed aliases")
+
+    # 3. Login-node pin drift: alias HostName vs the pinned node.
+    if session.login_node:
+        configured = sshconfig.managed_hostnames(target_name).get(aliases["ln"])
+        if configured and configured != session.login_node:
+            problems += 1
+            typer.echo(
+                f"  ✗ login alias HostName ({configured}) != pinned login "
+                f"node ({session.login_node}) — re-run "
+                f"`sucoder -T {target_name} tunnel up` to re-pin."
+            )
+        else:
+            typer.echo(f"  ✓ login node pinned: {session.login_node}")
+    else:
+        typer.echo(
+            f"  • login node not pinned yet — run "
+            f"`sucoder -T {target_name} tunnel up`"
+        )
+
+    typer.echo("  (run `tunnel status` to check whether the sockets are live)")
+    if problems:
+        typer.echo(f"\n{problems} problem(s) found.", err=True)
+        raise typer.Exit(code=1)
+    typer.echo("\nAll checks passed.")
+
+
 @tunnel_app.command("down")
 def tunnel_down(
     ctx: typer.Context,

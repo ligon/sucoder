@@ -18,11 +18,20 @@ block never disturbs another target's block or the user's own config.
 
 from __future__ import annotations
 
+import fnmatch
 import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
+
+# ssh keywords that govern connection sharing.  If any of these is set by a
+# Host/Match stanza that precedes our managed block AND matches our aliases,
+# it shadows the alias's own value (ssh uses the first value per keyword).
+_SHARE_KEYWORDS = {"controlpath", "controlmaster"}
+
+# "Keyword value" or "Keyword=value"; ssh keywords are case-insensitive.
+_DIRECTIVE_RE = re.compile(r"([A-Za-z]\w*)\s*=?\s+(.*)")
 
 from .tunnel import _control_socket_path
 
@@ -193,3 +202,113 @@ def block_present(target: str, *, path: Optional[Path] = None) -> bool:
     if not cfg.is_file():
         return False
     return _begin_marker(target) in cfg.read_text(encoding="utf-8")
+
+
+def find_shadowing_hosts(
+    target: str, *, path: Optional[Path] = None,
+) -> List[Tuple[str, str]]:
+    """Return ``[(host_pattern, keyword)]`` for stanzas that shadow the block.
+
+    ssh uses the *first* value it obtains for each keyword.  A ``Host``/
+    ``Match`` stanza that appears **before** the managed block, matches one
+    of the target's aliases, and sets a connection-sharing keyword
+    (``ControlPath``/``ControlMaster``) therefore overrides the alias's own
+    value -- so ssh looks for the wrong socket and re-authenticates instead
+    of reusing the warm mux.  This is exactly the ``Host * ControlPath
+    ~/.ssh/sockets/%r@%h-%p`` trap.
+
+    Only content *before* the managed block is inspected (a stanza after it
+    can't win the first-value race).  If the block is absent, the whole
+    file is treated as preceding.  Results are de-duplicated, order
+    preserved.
+    """
+    cfg = path or _config_path()
+    if not cfg.is_file():
+        return []
+    text = cfg.read_text(encoding="utf-8")
+    begin = _begin_marker(target)
+    head = text.split(begin, 1)[0] if begin in text else text
+    aliases = set(alias_names(target).values())
+
+    results: List[Tuple[str, str]] = []
+    seen = set()
+    patterns: Optional[List[str]] = None   # current Host stanza patterns
+    label: Optional[str] = None            # human label for the stanza
+    is_match = False                       # inside a Match block?
+
+    for raw in head.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = _DIRECTIVE_RE.match(line)
+        if not m:
+            continue
+        key = m.group(1).lower()
+        val = m.group(2).strip()
+        if key == "host":
+            patterns = val.split()
+            label = "Host " + val
+            is_match = False
+            continue
+        if key == "match":
+            patterns = None
+            label = "Match " + val
+            is_match = True
+            continue
+        if key not in _SHARE_KEYWORDS:
+            continue
+        # A sharing keyword: does its enclosing stanza apply to our aliases?
+        applies = False
+        if is_match:
+            # Conservative: a Match block before us may match anything.
+            applies = True
+        elif patterns:
+            for pat in patterns:
+                if pat.startswith("!"):
+                    continue
+                if any(fnmatch.fnmatch(a, pat) for a in aliases):
+                    applies = True
+                    break
+        if applies and label is not None:
+            entry = (label, key)
+            if entry not in seen:
+                seen.add(entry)
+                results.append(entry)
+    return results
+
+
+def managed_hostnames(
+    target: str, *, path: Optional[Path] = None,
+) -> Dict[str, Optional[str]]:
+    """Return ``{alias: HostName-or-None}`` parsed from the managed block.
+
+    Used to detect login-node pin drift -- if the cluster reassigned the
+    login node, the alias's ``HostName`` no longer matches the pinned node
+    and the socket names diverge.
+    """
+    cfg = path or _config_path()
+    if not cfg.is_file():
+        return {}
+    text = cfg.read_text(encoding="utf-8")
+    begin, end = _begin_marker(target), _end_marker(target)
+    if begin not in text or end not in text:
+        return {}
+    block = text.split(begin, 1)[1].split(end, 1)[0]
+
+    result: Dict[str, Optional[str]] = {}
+    current: Optional[str] = None
+    for raw in block.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = _DIRECTIVE_RE.match(line)
+        if not m:
+            continue
+        key = m.group(1).lower()
+        val = m.group(2).strip()
+        if key == "host":
+            current = val.split()[0]
+            result[current] = None
+        elif key == "hostname" and current is not None:
+            result[current] = val
+    return result

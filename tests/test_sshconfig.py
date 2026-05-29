@@ -232,3 +232,120 @@ def test_tunnel_status_reports_dead_when_no_sockets(tmp_path, monkeypatch) -> No
     hop_names = {h["hop"] for h in payload["hops"]}
     assert {"gateway", "dtn"} <= hop_names
     assert all(h["active"] is False for h in payload["hops"])
+
+
+# ------------------------------------------------------------------
+# doctor: shadowing / pin-drift detection
+# ------------------------------------------------------------------
+
+
+def test_find_shadowing_hosts_detects_preceding_wildcard(tmp_path) -> None:
+    """A `Host *` ControlPath BEFORE the managed block must be flagged."""
+    cfg = tmp_path / "config"
+    cfg.write_text(
+        "Host *\n    ControlPath ~/.ssh/sockets/%r@%h-%p\n\n",
+        encoding="utf-8",
+    )
+    sshconfig.write_block(
+        sshconfig.render_block("savio-node", "gw", "dtn", login_node="ln003.brc"),
+        "savio-node", path=cfg,
+    )
+    # write_block prepends, so re-add the wildcard ABOVE to simulate the
+    # bad ordering a hand-edited config could have.
+    text = cfg.read_text(encoding="utf-8")
+    cfg.write_text("Host *\n    ControlPath ~/.ssh/sockets/%r@%h-%p\n\n" + text,
+                   encoding="utf-8")
+
+    shadow = sshconfig.find_shadowing_hosts("savio-node", path=cfg)
+    assert shadow, "expected the preceding Host * ControlPath to be flagged"
+    assert any(key == "controlpath" for _, key in shadow)
+    assert any("Host *" in label for label, _ in shadow)
+
+
+def test_find_shadowing_hosts_ignores_following_and_nonmatching(tmp_path) -> None:
+    cfg = tmp_path / "config"
+    # Managed block first (the correct, post-fix layout), then a Host *.
+    sshconfig.write_block(
+        sshconfig.render_block("savio-node", "gw", "dtn", login_node="ln003.brc"),
+        "savio-node", path=cfg,
+    )
+    with cfg.open("a", encoding="utf-8") as fh:
+        fh.write("\nHost *\n    ControlPath ~/.ssh/sockets/%r@%h-%p\n")
+    # A Host * AFTER the block can't win the first-value race → not flagged.
+    assert sshconfig.find_shadowing_hosts("savio-node", path=cfg) == []
+
+    # A preceding but non-matching Host pattern is also fine.
+    cfg2 = tmp_path / "config2"
+    sshconfig.write_block(
+        sshconfig.render_block("savio-node", "gw", "dtn", login_node="ln1"),
+        "savio-node", path=cfg2,
+    )
+    cfg2.write_text(
+        "Host buildbox\n    ControlPath ~/.ssh/sockets/bb\n\n" + cfg2.read_text(),
+        encoding="utf-8",
+    )
+    # `buildbox` doesn't glob-match any savio-node-* alias → no shadow.
+    assert sshconfig.find_shadowing_hosts("savio-node", path=cfg2) == []
+
+
+def test_find_shadowing_hosts_matches_glob_alias(tmp_path) -> None:
+    """A wildcard that globs the alias (e.g. `Host savio-*`) is flagged."""
+    cfg = tmp_path / "config"
+    sshconfig.write_block(
+        sshconfig.render_block("savio-node", "gw", "dtn", login_node="ln1"),
+        "savio-node", path=cfg,
+    )
+    cfg.write_text(
+        "Host savio-*\n    ControlMaster no\n\n" + cfg.read_text(),
+        encoding="utf-8",
+    )
+    shadow = sshconfig.find_shadowing_hosts("savio-node", path=cfg)
+    assert any(key == "controlmaster" for _, key in shadow)
+
+
+def test_managed_hostnames_parses_block(tmp_path) -> None:
+    cfg = tmp_path / "config"
+    sshconfig.write_block(
+        sshconfig.render_block("savio-node", "gw.h", "dtn.h", login_node="ln003.brc"),
+        "savio-node", path=cfg,
+    )
+    names = sshconfig.managed_hostnames("savio-node", path=cfg)
+    assert names["savio-node-gw"] == "gw.h"
+    assert names["savio-node-ln"] == "ln003.brc"
+    assert names["savio-node-dtn"] == "dtn.h"
+
+
+def test_tunnel_doctor_flags_shadowing(tmp_path, monkeypatch) -> None:
+    """`tunnel doctor` exits non-zero and names the shadowing stanza."""
+    from typer.testing import CliRunner
+    from sucoder import cli
+
+    home = tmp_path / "home"
+    (home / ".ssh").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+    config_path = _write_tunnel_config(tmp_path, os.environ.get("USER", "coder"))
+
+    # Managed block present but a Host * ControlPath sits ABOVE it.
+    from sucoder import sshconfig
+    ssh_cfg = home / ".ssh" / "config"
+    sshconfig.write_block(
+        sshconfig.render_block(
+            "savio-node", "hpc.brc.berkeley.edu", "dtn.brc.berkeley.edu",
+            login_node="ln003.brc",
+        ),
+        "savio-node", path=ssh_cfg,
+    )
+    ssh_cfg.write_text(
+        "Host *\n    ControlPath ~/.ssh/sockets/%r@%h-%p\n\n" + ssh_cfg.read_text(),
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.app, ["--config", str(config_path), "-T", "savio-node", "tunnel", "doctor"],
+    )
+    assert result.exit_code == 1, result.output
+    out = result.output + (result.stdout or "")
+    assert "shadows" in out.lower()
+    assert "controlpath" in out.lower()
