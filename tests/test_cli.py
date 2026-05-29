@@ -777,3 +777,63 @@ targets:
     assert captured.get("remote_gateway") == "gw.example.org", (
         f"Expected target overlay to apply correctly; got: {captured}"
     )
+
+
+def test_ensure_slurm_node_persists_job_id_before_node_query(tmp_path, monkeypatch):
+    """Regression: a granted SLURM allocation must be recorded BEFORE the
+    squeue node-query.
+
+    salloc bills from the moment the job is granted.  The historical code
+    only persisted ``slurm_job_id`` *after* resolving the node via squeue,
+    so a node-query failure (the original mux-refusal bug) left a
+    granted-but-unrecorded 24h allocation that ``release``/``scancel``
+    could not find -- a silent compute-budget leak.  This pins that the
+    job id is on disk even when the node-query then fails.
+    """
+    import logging
+
+    import typer
+
+    from sucoder import session as session_mod
+    from sucoder.config import RemoteConfig, SlurmConfig
+
+    sessions = tmp_path / "sessions"
+    monkeypatch.setattr(session_mod, "_session_dir", lambda: sessions)
+
+    remote = RemoteConfig(
+        gateway="gw",
+        transfer_host="dtn",
+        slurm=SlurmConfig(partition="savio3", account="acct", time="24:00:00"),
+    )
+    sess = session_mod.RemoteSession(
+        mirror_name="Emu-GMM", target_name="savio-node", login_node="ln003.brc",
+    )
+
+    class _FakeControl:
+        def ssh_options(self, **kw):
+            return []
+
+    granted = "salloc: Granted job allocation 34688352\n"
+
+    def fake_run(cmd, *a, **kw):
+        joined = " ".join(cmd) if isinstance(cmd, (list, tuple)) else str(cmd)
+        if "salloc" in joined:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr=granted)
+        if "squeue --job" in joined:
+            # Simulate the node-query failing (e.g. wedged mux).
+            raise subprocess.CalledProcessError(
+                1, cmd, stderr="Session open refused by peer",
+            )
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(typer.Exit):
+        cli._ensure_slurm_node(
+            remote, sess, _FakeControl(), _FakeControl(), logging.getLogger("t"),
+        )
+
+    # Despite the node-query failure, the job id must be recoverable.
+    reloaded = session_mod.RemoteSession.load("Emu-GMM", target_name="savio-node")
+    assert reloaded.slurm_job_id == 34688352
+    assert reloaded.compute_node is None

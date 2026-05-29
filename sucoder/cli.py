@@ -576,6 +576,18 @@ def _ensure_slurm_node(
             )
             raise typer.Exit(code=1)
 
+        # Persist the job id NOW, before the node-query below.  salloc has
+        # already granted the allocation (it bills from this point), so if
+        # anything downstream fails -- the squeue node-query, the SSH to
+        # the compute node, agent launch -- the job id must be on disk so
+        # `sucoder release` / `scancel` can reclaim it.  Recording it only
+        # after the node-query (the historical behaviour) leaked the
+        # allocation on any failure in between: a granted-but-unrecorded
+        # 24h job that nothing could find.
+        session.slurm_job_id = job_id
+        session.save()
+        logger.info("Recorded SLURM job %d (node pending)", job_id)
+
         # Query squeue for the node name.
         squeue_cmd = [
             "ssh", *ln_control.ssh_options(with_fallback=True), session.login_node,
@@ -595,7 +607,7 @@ def _ensure_slurm_node(
             typer.echo(f"squeue returned empty node name for job {job_id}.", err=True)
             raise typer.Exit(code=1)
 
-        session.slurm_job_id = job_id
+        # job id already persisted above; now record the resolved node.
         session.compute_node = compute_node
         session.save()
         typer.echo(f"Allocated compute node {compute_node} (job {job_id})")
