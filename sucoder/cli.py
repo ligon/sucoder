@@ -2020,6 +2020,249 @@ def release(
         typer.echo(result.stderr.strip(), err=True)
 
 
+# ----------------------------------------------------------------------
+# Persistent (warm) tunnels — the cheap hops cost no compute money, so
+# keeping the gateway / login-node / DTN ControlMasters alive removes the
+# OTP friction from every `collaborate` and lets plain ssh / Emacs TRAMP
+# ride the same mux.  This is the `up`/`status` spike; `down` is included
+# so the warm sockets can be torn down and re-tested.
+# ----------------------------------------------------------------------
+
+tunnel_app = typer.Typer(
+    help="Keep the cheap SSH tunnels (gateway/login/DTN) to a target warm.",
+)
+app.add_typer(tunnel_app, name="tunnel")
+
+
+def _resolve_tunnel_target(ctx: typer.Context):
+    """Return ``(RemoteConfig, target_name)`` for a `tunnel` subcommand.
+
+    The tunnel commands are target-scoped, not mirror-scoped: they bring
+    up the hops shared by every mirror on that cluster.  A ``-T <target>``
+    is therefore required.
+    """
+    remote = _get_active_target(ctx)
+    target_name = (ctx.obj or {}).get("target_name") if ctx.obj else None
+    if remote is None or not target_name:
+        typer.echo(
+            "`tunnel` requires a target: `sucoder -T <target> tunnel ...`",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    return remote, target_name
+
+
+def _tunnel_session_name(target_name: str) -> str:
+    """Session key for a target's warm-tunnel state (login-node pin)."""
+    return f"tunnel-{target_name}"
+
+
+def _warm_free_tunnels(remote, session, logger, *, debug_ssh: bool):
+    """Bring the gateway, login-node, and DTN ControlMasters online.
+
+    Returns ``(gw_control, ln_control, dtn_control)``.  ``ln_control``
+    may be ``None`` if the login node could not be pinned; ``dtn_control``
+    may be ``None`` if the DTN is unreachable (it is optional).  Pins and
+    persists the login node into *session* on first run.
+    """
+    import subprocess as _sp
+    from .tunnel import SshControl, TunnelError
+
+    gw_control = SshControl(
+        gateway=remote.gateway,
+        control_persist=remote.control_persist,
+        debug=debug_ssh,
+    )
+    _ensure_ssh_visible(gw_control, remote.gateway, logger)
+
+    # Pin a login node through the (now warm) gateway if we don't have one.
+    if not session.login_node:
+        pin_cmd = ["ssh", *gw_control.ssh_options(), remote.gateway, "hostname"]
+        try:
+            result = _sp.run(pin_cmd, capture_output=True, text=True, check=True)
+            session.login_node = result.stdout.strip()
+            session.save()
+            logger.info("Pinned login node: %s", session.login_node)
+        except _sp.CalledProcessError as exc:
+            logger.warning(
+                "Could not pin login node: %s", (exc.stderr or "").strip(),
+            )
+
+    ln_control = None
+    if session.login_node:
+        ln_control = SshControl(
+            gateway=session.login_node,
+            control_persist=remote.control_persist,
+            jump_host=remote.gateway,
+            jump_control=gw_control,
+            debug=debug_ssh,
+        )
+        try:
+            _ensure_ssh_visible(ln_control, session.login_node, logger)
+        except TunnelError as exc:
+            logger.warning("Login node %s unreachable: %s", session.login_node, exc)
+            ln_control = None
+
+    dtn_control = SshControl(
+        gateway=remote.transfer_host,
+        control_persist=remote.control_persist,
+        jump_host=remote.gateway,
+        jump_control=gw_control,
+        debug=debug_ssh,
+    )
+    try:
+        _ensure_ssh_visible(dtn_control, remote.transfer_host, logger)
+    except TunnelError as exc:
+        logger.warning("DTN %s unreachable: %s", remote.transfer_host, exc)
+        dtn_control = None
+
+    return gw_control, ln_control, dtn_control
+
+
+@tunnel_app.command("up")
+def tunnel_up(
+    ctx: typer.Context,
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
+    no_config_edit: bool = typer.Option(
+        False,
+        "--no-config-edit",
+        help="Warm the sockets but do not touch ~/.ssh/config.",
+    ),
+) -> None:
+    """Authenticate once and warm the gateway/login/DTN ControlMasters.
+
+    Subsequent `sucoder -T <target> collaborate`, plain `ssh`, and Emacs
+    TRAMP reuse these warm sockets without a fresh OTP prompt.  Unless
+    `--no-config-edit` is given, writes a managed `~/.ssh/config` block of
+    `<target>-gw`/`-ln`/`-dtn` aliases pointing at the same sockets.
+    """
+    import getpass
+    from . import sshconfig
+    from .session import RemoteSession
+    from .tunnel import TunnelError
+
+    config = _get_config(ctx)
+    remote, target_name = _resolve_tunnel_target(ctx)
+    logger = setup_logger("sucoder.tunnel", config.log_dir, verbose)
+    debug_ssh = _get_debug_ssh(ctx)
+    session = RemoteSession.load(_tunnel_session_name(target_name))
+
+    try:
+        gw, ln, dtn = _warm_free_tunnels(remote, session, logger, debug_ssh=debug_ssh)
+    except TunnelError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"Warm tunnels for target {target_name} (ControlPersist {remote.control_persist}):")
+    typer.echo(f"  {'✓' if gw and gw.is_active() else '✗'} gateway  {remote.gateway}")
+    if session.login_node:
+        typer.echo(f"  {'✓' if ln and ln.is_active() else '✗'} login    {session.login_node}")
+    else:
+        typer.echo("  ✗ login    (not pinned)")
+    typer.echo(f"  {'✓' if dtn and dtn.is_active() else '✗'} DTN      {remote.transfer_host}")
+
+    if no_config_edit:
+        return
+
+    block = sshconfig.render_block(
+        target_name,
+        remote.gateway,
+        remote.transfer_host,
+        login_node=session.login_node,
+        user=getpass.getuser(),
+        control_persist=remote.control_persist,
+    )
+    path = sshconfig.write_block(block, target_name)
+    aliases = sshconfig.alias_names(target_name)
+    typer.echo(
+        f"Wrote ~/.ssh/config block: {aliases['gw']}, {aliases['ln']}, {aliases['dtn']}  ({path})"
+    )
+
+
+@tunnel_app.command("status")
+def tunnel_status(
+    ctx: typer.Context,
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Report whether each warm tunnel is alive (no auth, no network cost)."""
+    from . import sshconfig
+    from .session import RemoteSession
+    from .tunnel import SshControl
+
+    remote, target_name = _resolve_tunnel_target(ctx)
+    session = RemoteSession.load(_tunnel_session_name(target_name))
+
+    gw = SshControl(gateway=remote.gateway, control_persist=remote.control_persist)
+    hops = [("gateway", remote.gateway, gw)]
+    if session.login_node:
+        hops.append((
+            "login", session.login_node,
+            SshControl(
+                gateway=session.login_node,
+                control_persist=remote.control_persist,
+                jump_host=remote.gateway,
+                jump_control=gw,
+            ),
+        ))
+    hops.append((
+        "dtn", remote.transfer_host,
+        SshControl(
+            gateway=remote.transfer_host,
+            control_persist=remote.control_persist,
+            jump_host=remote.gateway,
+            jump_control=gw,
+        ),
+    ))
+
+    results = [
+        {"hop": name, "host": host, "active": ctrl.is_active()}
+        for name, host, ctrl in hops
+    ]
+    cfg_present = sshconfig.block_present(target_name)
+
+    if json_output:
+        import json
+        typer.echo(json.dumps(
+            {"target": target_name, "ssh_config": cfg_present, "hops": results},
+            indent=2,
+        ))
+        return
+
+    typer.echo(f"Warm tunnels for target {target_name}:")
+    for r in results:
+        mark = "✓ ACTIVE" if r["active"] else "✗ DEAD  "
+        typer.echo(f"  {mark}  {r['hop']:<8} {r['host']}")
+    typer.echo(f"  ssh_config block: {'present' if cfg_present else 'absent'}")
+
+
+@tunnel_app.command("down")
+def tunnel_down(
+    ctx: typer.Context,
+    prune: bool = typer.Option(
+        False, "--prune", help="Also remove the ~/.ssh/config block.",
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
+) -> None:
+    """Close the warm tunnels for a target (`ssh -O exit` on each socket)."""
+    from . import sshconfig
+    from .session import RemoteSession
+    from .tunnel import SshControl
+
+    config = _get_config(ctx)
+    remote, target_name = _resolve_tunnel_target(ctx)
+    logger = setup_logger("sucoder.tunnel", config.log_dir, verbose)
+    session = RemoteSession.load(_tunnel_session_name(target_name))
+
+    # Close children before the gateway they ride on.
+    hosts = [h for h in (session.login_node, remote.transfer_host, remote.gateway) if h]
+    for host in hosts:
+        SshControl(gateway=host, control_persist=remote.control_persist).close(logger)
+        typer.echo(f"  closed {host}")
+
+    if prune and sshconfig.remove_block(target_name):
+        typer.echo(f"Removed ~/.ssh/config block for {target_name}.")
+
+
 @app.command("mirrors-list")
 def mirrors_list(ctx: typer.Context) -> None:
     """Display configured mirrors with their canonical repositories."""
