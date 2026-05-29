@@ -86,8 +86,43 @@ def test_write_block_preserves_user_content_and_other_targets(tmp_path) -> None:
     # Both target blocks present.
     assert "Host savio-node-gw" in text
     assert "Host savio-htc-gw" in text
+    # Managed blocks are PREPENDED, ahead of the user's own content, so a
+    # later `Host *` cannot shadow our ControlPath.
+    assert text.index("Host savio-node-gw") < text.index("Host myserver")
+    assert text.index("Host savio-htc-gw") < text.index("Host myserver")
     # Mode tightened to 0600.
     assert (os.stat(cfg).st_mode & 0o777) == 0o600
+
+
+def test_write_block_precedes_wildcard_controlpath(tmp_path) -> None:
+    """Regression: a user's ``Host *`` ControlPath must not shadow ours.
+
+    ssh uses the first value it obtains per keyword, so the managed block
+    has to be written *before* a general ``Host *`` default.  The bug:
+    appending the block left the wildcard's ControlPath winning, so ssh
+    looked for a socket SuCoder never created and re-authenticated.
+    """
+    cfg = tmp_path / "config"
+    cfg.write_text(
+        "Host *\n"
+        "    ControlMaster auto\n"
+        "    ControlPath ~/.ssh/sockets/%r@%h-%p\n"
+        "    ControlPersist 10m\n",
+        encoding="utf-8",
+    )
+
+    block = sshconfig.render_block(
+        "savio-node", "hpc.brc.berkeley.edu", "dtn.brc.berkeley.edu",
+        login_node="ln003.brc",
+    )
+    sshconfig.write_block(block, "savio-node", path=cfg)
+
+    text = cfg.read_text(encoding="utf-8")
+    # Our specific aliases must come before the wildcard so their
+    # ControlPath is the first value ssh obtains.
+    assert text.index("Host savio-node-ln") < text.index("Host *")
+    # Wildcard block preserved (not clobbered).
+    assert "ControlPath ~/.ssh/sockets/%r@%h-%p" in text
 
 
 def test_write_block_replaces_in_place_no_duplication(tmp_path) -> None:
