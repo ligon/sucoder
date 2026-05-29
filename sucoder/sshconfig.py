@@ -144,11 +144,16 @@ def write_block(
     had_block = _begin_marker(target) in existing
     stripped = _strip_block(existing, target) if had_block else existing
 
-    if stripped and not stripped.endswith("\n"):
-        stripped += "\n"
-    if stripped and not stripped.endswith("\n\n"):
-        stripped += "\n"
-    new_text = stripped + block
+    # PREPEND, do not append.  ssh uses the *first* value it obtains for
+    # each keyword, so host-specific blocks must precede a general
+    # ``Host *`` default (ssh_config(5): "more host-specific declarations
+    # should be given near the beginning of the file, and general
+    # defaults at the end").  A user's ``Host *  ControlPath
+    # ~/.ssh/sockets/%r@%h-%p`` would otherwise shadow our ControlPath
+    # and break socket reuse -- ssh would look for a socket we never
+    # created and fall through to a fresh (re-authenticating) connection.
+    stripped = stripped.lstrip("\n")
+    new_text = block if not stripped else block + "\n" + stripped
 
     tmp = cfg.with_name(cfg.name + ".sucoder.tmp")
     tmp.write_text(new_text, encoding="utf-8")
