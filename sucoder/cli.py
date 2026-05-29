@@ -903,24 +903,65 @@ def _build_manager(
     return MirrorManager(config, executor, logger, prompt_handler=_prompt_yes_no)
 
 
-def _resolve_mirror_name(ctx: typer.Context, mirror: Optional[str]) -> str:
-    """Return the mirror name, defaulting to the sole mirror when omitted.
+def _create_ephemeral_mirror(config: Config, git_toplevel: Path) -> str:
+    """Build a :class:`MirrorSettings` from a git root, inject it into the
+    in-memory config, and return its name.
 
-    Resolution order when *mirror* is ``None``:
+    Mirrors :func:`build_default_config`'s derivation so that an
+    unconfigured-but-cwd-resident repo can be operated on transparently.
+    """
+    mirror_name = git_toplevel.name
+    prefixes = BranchPrefixes(human=config.human_user, agent=config.agent_user)
+    launcher = config.agent_launcher or AgentLauncher()
+    ephemeral = MirrorSettings(
+        name=mirror_name,
+        canonical_repo=git_toplevel,
+        mirror_name=mirror_name,
+        branch_prefixes=prefixes,
+        agent_launcher=launcher,
+        skills=list(config.skills),
+    )
+    # config.mirrors is typed as Mapping but is a plain dict at runtime.
+    config.mirrors[mirror_name] = ephemeral  # type: ignore[index]
+    return mirror_name
+
+
+def _resolve_mirror_name(ctx: typer.Context, mirror: Optional[str]) -> str:
+    """Return the mirror name, creating an ephemeral entry when needed.
+
+    When *mirror* is given explicitly but is not configured, and we're
+    inside a git repo whose root name matches it, synthesise an ephemeral
+    mirror just like the no-arg path does.  Without this, ``attach Foo`` /
+    ``release Foo`` rejected the very mirror that a no-arg ``collaborate``
+    had auto-created from the same directory ("Mirror is not configured
+    for remote execution").
+
+    When *mirror* is ``None``:
 
     1. If the config contains exactly one mirror, use it.
-    2. Detect the git root of the current working directory and match it
-       against the ``canonical_repo`` of every configured mirror.
-    3. If no configured mirror matches, create an ephemeral
-       :class:`MirrorSettings` from the git root (analogous to
-       :func:`build_default_config`) and inject it into the in-memory
-       config so downstream code can use it normally.
-    4. If we're not inside a git repo at all, fall through to the
-       original "Multiple mirrors configured" error.
+    2. Match the cwd's git root against each mirror's ``canonical_repo``.
+    3. Otherwise create an ephemeral :class:`MirrorSettings` from the git
+       root and inject it into the in-memory config.
+    4. If we're not inside a git repo at all, raise "Multiple mirrors
+       configured".
     """
-    if mirror is not None:
-        return mirror
     config = _get_config(ctx)
+
+    if mirror is not None:
+        if mirror in config.mirrors:
+            return mirror
+        # Explicit name that isn't configured: accept it only if it names
+        # the git repo we're standing in (don't fabricate a mismatched
+        # canonical_repo for an arbitrary name — let downstream report
+        # "not configured" in that case).
+        try:
+            git_toplevel = _detect_git_toplevel()
+        except ConfigError:
+            return mirror
+        if git_toplevel.name == mirror:
+            return _create_ephemeral_mirror(config, git_toplevel)
+        return mirror
+
     names = list(config.mirrors.keys())
     if len(names) == 1:
         return names[0]
@@ -942,21 +983,8 @@ def _resolve_mirror_name(ctx: typer.Context, mirror: Optional[str]) -> str:
             return name
 
     # Step 2: create an ephemeral mirror for an unconfigured repo.
-    mirror_name = git_toplevel.name
-    if mirror_name not in config.mirrors:
-        prefixes = BranchPrefixes(human=config.human_user, agent=config.agent_user)
-        launcher = config.agent_launcher or AgentLauncher()
-        ephemeral = MirrorSettings(
-            name=mirror_name,
-            canonical_repo=git_toplevel,
-            mirror_name=mirror_name,
-            branch_prefixes=prefixes,
-            agent_launcher=launcher,
-            skills=list(config.skills),
-        )
-        # config.mirrors is typed as Mapping but is a plain dict at runtime.
-        config.mirrors[mirror_name] = ephemeral  # type: ignore[index]
-        return mirror_name
+    if git_toplevel.name not in config.mirrors:
+        return _create_ephemeral_mirror(config, git_toplevel)
 
     # Name collision with an existing mirror – require explicit selection.
     raise typer.BadParameter(
@@ -1819,11 +1847,36 @@ def attach(
     # (srun finds the node from the jobid).
     compute = node or session.compute_node
     srun_prefix = ""
-    if remote.slurm is not None and session.slurm_job_id and (compute or via_srun):
+    if remote.slurm is not None:
+        # SLURM target: NEVER silently fall through to a login-node shell.
+        # A bare login-node tmux masquerades as the agent session and
+        # hides the fact that there's nothing to attach to (observed in
+        # the field: `attach` spawned an empty shell on the login node
+        # while the real allocation was elsewhere / gone).
+        if not session.slurm_job_id:
+            # No recorded job — likely a stale session from before the
+            # allocation succeeded (or a crash that didn't persist it).
+            typer.echo(
+                "No SLURM job recorded for this session — nothing to "
+                "attach to.  Run `sucoder collaborate` to start one.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        if not (compute or via_srun):
+            # We have a job id but no idea which node it landed on, and
+            # the caller didn't ask to join via srun.  Refuse rather than
+            # dropping onto the login node.
+            typer.echo(
+                f"SLURM job {session.slurm_job_id} is recorded but its "
+                "compute node is unknown.  Re-run with `--via-srun` to "
+                "join the allocation by jobid, or pass `--node <node>`.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
         # Verify the SLURM allocation is still ours before routing to
-        # the compute node.  Without this check we'd silently fall
-        # through to a login-node shell (or worse, attach to a node
-        # that now belongs to someone else's job).
+        # the compute node, so we don't attach to a node that now
+        # belongs to someone else's job.
         import subprocess as _sp
         check_cmd = [
             "ssh", *control_opts, "-J", remote.gateway, session.login_node,
@@ -1864,18 +1917,8 @@ def attach(
                 err=True,
             )
             raise typer.Exit(code=1)
-    elif remote.slurm is not None and not session.slurm_job_id:
-        # SLURM target but no recorded job — likely a stale session
-        # from before the SLURM allocation succeeded.  Refuse to put
-        # the user on the login node silently.
-        typer.echo(
-            "No SLURM job recorded for this session — nothing to "
-            "attach to.  Run `sucoder collaborate` to start one.",
-            err=True,
-        )
-        raise typer.Exit(code=1)
     else:
-        # Non-SLURM remote: attach on the login node.
+        # Genuine non-SLURM remote: attach on the login node.
         attach_target = session.login_node
         jump_chain = remote.gateway
 

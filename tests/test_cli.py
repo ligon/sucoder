@@ -335,6 +335,94 @@ def test_resolve_mirror_name_not_in_git_repo(tmp_path, monkeypatch):
     assert "specify one of" in (result.stdout + (result.output or "")).lower()
 
 
+def test_resolve_mirror_name_explicit_unconfigured_matches_cwd(tmp_path, monkeypatch):
+    """Regression: an explicit mirror name that isn't configured but names
+    the git repo we're standing in must get an ephemeral entry — the same
+    one a no-arg `collaborate` auto-creates.
+
+    Field symptom: a no-arg `collaborate` from ~/Projects/Emu-GMM created
+    the mirror and ran, but `attach Emu-GMM` (explicit) then reported
+    'Mirror is not configured for remote execution' because the explicit
+    path returned the name blindly and skipped ephemeral creation.
+    """
+    from types import SimpleNamespace
+
+    cfg = _multi_mirror_config(tmp_path)
+    repo = tmp_path / "Emu-GMM"
+    repo.mkdir()
+    monkeypatch.setattr(cli, "_detect_git_toplevel", lambda: repo)
+
+    ctx = SimpleNamespace(obj={"config": cfg})
+    resolved = cli._resolve_mirror_name(ctx, "Emu-GMM")
+
+    assert resolved == "Emu-GMM"
+    # The ephemeral mirror must now exist so attach/release can use it.
+    assert "Emu-GMM" in cfg.mirrors
+    assert cfg.mirrors["Emu-GMM"].canonical_repo == repo
+
+
+def test_resolve_mirror_name_explicit_unconfigured_name_mismatch(tmp_path, monkeypatch):
+    """An explicit name that does NOT match the cwd repo is returned as-is
+    (no fabricated ephemeral) so downstream reports 'not configured'."""
+    from types import SimpleNamespace
+
+    cfg = _multi_mirror_config(tmp_path)
+    repo = tmp_path / "SomethingElse"
+    repo.mkdir()
+    monkeypatch.setattr(cli, "_detect_git_toplevel", lambda: repo)
+
+    ctx = SimpleNamespace(obj={"config": cfg})
+    resolved = cli._resolve_mirror_name(ctx, "Emu-GMM")
+
+    assert resolved == "Emu-GMM"
+    # No ephemeral fabricated for a name that doesn't match the cwd repo.
+    assert "Emu-GMM" not in cfg.mirrors
+    assert "SomethingElse" not in cfg.mirrors
+
+
+def test_attach_refuses_login_node_when_compute_unknown(tmp_path, monkeypatch):
+    """Regression: `attach` on a SLURM target with a recorded job but an
+    UNKNOWN compute node (and no --via-srun) must refuse, not silently
+    drop the user onto the login node.
+
+    This is the gap the earlier `slurm_job_id: null` test didn't cover:
+    a job IS recorded, but `compute_node` is null and the caller didn't
+    ask to join via srun.  Pre-fix this fell through the `else` branch to
+    a bare login-node tmux.
+    """
+    from sucoder import session as session_mod
+
+    runner = CliRunner()
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+
+    config_path = _slurm_config(tmp_path)
+
+    sessions_dir = fake_home / ".sucoder" / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    # Job recorded, but compute node unknown.
+    (sessions_dir / "sample--fake-slurm.yaml").write_text(
+        "login_node: ln001\nslurm_job_id: 7654321\ncompute_node: null\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(session_mod, "_session_dir", lambda: sessions_dir)
+
+    def _no_real_ssh(*a, **kw):
+        raise AssertionError("attach must bail out before exec/SSH")
+    monkeypatch.setattr(os, "execvp", _no_real_ssh)
+
+    result = runner.invoke(
+        cli.app,
+        ["--config", str(config_path), "-T", "fake-slurm", "attach", "sample"],
+    )
+    assert result.exit_code != 0
+    combined = (result.stdout + (result.output or "")).lower()
+    assert "compute node is unknown" in combined, combined
+    assert "via-srun" in combined, combined
+
+
 # ------------------------------------------------------------------
 # Detach / scancel-lifecycle regressions
 # ------------------------------------------------------------------
