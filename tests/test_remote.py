@@ -484,6 +484,48 @@ def test_ssh_control_options() -> None:
     assert "-o" in opts
     assert "ControlMaster=auto" in opts
     assert any("ControlPath=" in o for o in opts)
+    # Default (no fallback) must NOT emit a ProxyJump/ProxyCommand.
+    assert not any("Proxy" in o for o in opts)
+
+
+def test_ssh_control_options_fallback_uses_jump_control() -> None:
+    """Regression: ``with_fallback=True`` must route a fresh dial through
+    the jump host's ControlMaster so a wedged login-node mux doesn't make
+    ssh fall back to a direct dial of a jump-only hostname.
+
+    Symptom (savio-node): the mux refused a session
+    (``Session open refused by peer``) and ssh then tried to resolve the
+    pinned login node ``ln003.brc`` directly -> ``Could not resolve
+    hostname``.  The fallback ProxyCommand reuses the gateway mux instead.
+    """
+    from sucoder.tunnel import SshControl
+
+    gw = SshControl(gateway="brc.berkeley.edu")
+    ln = SshControl(
+        gateway="ln003.brc",
+        jump_host="brc.berkeley.edu",
+        jump_control=gw,
+    )
+    opts = ln.ssh_options(with_fallback=True)
+    proxy = [o for o in opts if o.startswith("ProxyCommand=")]
+    assert proxy, f"expected a ProxyCommand fallback, got {opts}"
+    # Must reuse the gateway's ControlMaster socket and tunnel via -W.
+    assert str(gw.socket_path) in proxy[0]
+    assert "-W %h:%p brc.berkeley.edu" in proxy[0]
+    # Still reuses the login-node mux when alive.
+    assert "ControlMaster=auto" in opts
+    assert any(f"ControlPath={ln.socket_path}" == o for o in opts)
+
+
+def test_ssh_control_options_fallback_plain_proxyjump() -> None:
+    """With a jump_host but no jump_control, the fallback emits a plain
+    ProxyJump (ssh re-authenticates the hop itself)."""
+    from sucoder.tunnel import SshControl
+
+    ln = SshControl(gateway="ln003.brc", jump_host="brc.berkeley.edu")
+    opts = ln.ssh_options(with_fallback=True)
+    assert "ProxyJump=brc.berkeley.edu" in opts
+    assert not any(o.startswith("ProxyCommand=") for o in opts)
 
 
 def test_ssh_control_is_active_uses_batchmode(monkeypatch, tmp_path) -> None:

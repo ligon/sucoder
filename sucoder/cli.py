@@ -463,7 +463,7 @@ def _ensure_slurm_node(
     # Check whether a previous allocation is still running.
     if session.slurm_job_id and session.compute_node:
         check_cmd = [
-            "ssh", *ln_control.ssh_options(), session.login_node,
+            "ssh", *ln_control.ssh_options(with_fallback=True), session.login_node,
             f"squeue --job {session.slurm_job_id} --noheader -o %T",
         ]
         result = _sp.run(check_cmd, capture_output=True, text=True, check=False)
@@ -511,7 +511,7 @@ def _ensure_slurm_node(
 
         salloc_cmd_str = " ".join(salloc_parts)
         ssh_cmd = [
-            "ssh", *ln_control.ssh_options(), session.login_node,
+            "ssh", *ln_control.ssh_options(with_fallback=True), session.login_node,
             salloc_cmd_str,
         ]
         logger.debug("salloc command: %s", ssh_cmd)
@@ -535,7 +535,8 @@ def _ensure_slurm_node(
                         and not p.startswith("--immediate=")
                     ]
                     fallback_cmd = [
-                        "ssh", *ln_control.ssh_options(), session.login_node,
+                        "ssh", *ln_control.ssh_options(with_fallback=True),
+                        session.login_node,
                         " ".join(fallback_parts),
                     ]
                     try:
@@ -577,7 +578,7 @@ def _ensure_slurm_node(
 
         # Query squeue for the node name.
         squeue_cmd = [
-            "ssh", *ln_control.ssh_options(), session.login_node,
+            "ssh", *ln_control.ssh_options(with_fallback=True), session.login_node,
             f"squeue --job {job_id} --noheader -o %N",
         ]
         try:
@@ -777,7 +778,7 @@ def _start_slurm_timer(
     # the same symlink-race reasons; the path is computed remotely
     # (rather than passed in argv) so a stale local copy can't trip up
     # the SSH command-line.
-    ssh_opts = cn_control.ssh_options()
+    ssh_opts = cn_control.ssh_options(with_fallback=True)
     node = session.compute_node
 
     write_result = _sp.run(
@@ -1988,7 +1989,7 @@ def release(
 
     import subprocess as _sp
     scancel_cmd = [
-        "ssh", *ln_control.ssh_options(), session.login_node,
+        "ssh", *ln_control.ssh_options(with_fallback=True), session.login_node,
         f"scancel {shlex.quote(str(job_id))}",
     ]
     logger.debug("scancel command: %s", scancel_cmd)

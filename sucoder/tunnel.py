@@ -318,12 +318,39 @@ class SshControl:
             pass
         logger.debug("ControlMaster to %s closed", self.gateway)
 
-    def ssh_options(self) -> List[str]:
-        """Return the -o flags needed to reuse this ControlMaster."""
-        return [
+    def ssh_options(self, *, with_fallback: bool = False) -> List[str]:
+        """Return the -o flags needed to reuse this ControlMaster.
+
+        With ``ControlMaster=auto`` ssh reuses the live mux when it can.
+        But if the mux refuses a new session (``mux_client_request_session:
+        ... Session open refused by peer``), ssh falls back to opening a
+        *fresh* connection to ``self.gateway`` directly.  For a jump-only
+        host such as a pinned login node (``ln003.brc``), that direct dial
+        fails with ``Could not resolve hostname`` because the name only
+        resolves *inside* the gateway.
+
+        ``with_fallback=True`` makes that fresh connection route through
+        the jump host instead.  When a ``jump_control`` is set, the
+        fallback reuses the jump host's own ControlMaster socket (no
+        re-auth); otherwise it emits a plain ``ProxyJump``.  This mirrors
+        :meth:`establish`'s jump handling so one-off commands survive a
+        wedged mux without trying to resolve a jump-only hostname locally.
+        """
+        opts = [
             "-o", "ControlMaster=auto",
             "-o", f"ControlPath={self.socket_path}",
         ]
+        if with_fallback and self.jump_host:
+            if self.jump_control is not None:
+                opts.extend([
+                    "-o",
+                    "ProxyCommand=ssh -o ControlMaster=auto "
+                    f"-o ControlPath={self.jump_control.socket_path} "
+                    f"-W %h:%p {self.jump_host}",
+                ])
+            else:
+                opts.extend(["-o", f"ProxyJump={self.jump_host}"])
+        return opts
 
 
 # ------------------------------------------------------------------
