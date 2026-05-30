@@ -94,6 +94,40 @@ the cluster's server-side session policy, which =sucoder= does not
 control --- so treat a long =control_persist= as best-effort, not a
 guarantee.
 
+** Do tunnels survive a laptop suspend / hibernate or a network change?
+No --- and they can't.  Two things break them, and the second is the more
+common culprit:
+
+1. *Suspend tears down the network stack*, so the TCP connections under
+   the ControlMaster sockets die and the cluster drops them.
+2. *Changing networks changes your IP address.*  A TCP connection is
+   identified by the four-tuple (source IP, source port, destination IP,
+   destination port); when your source IP changes --- roaming from home
+   WiFi to the office, a new DHCP lease, a VPN toggling --- the existing
+   connections are dead by definition, and there is no way for standard
+   SSH to migrate them.  This kills the tunnels even on a *brief* suspend,
+   or with no suspend at all if you just switch networks.  (=mosh= roams
+   across IP changes for interactive shells, but ssh ControlMaster sockets
+   do not.)
+
+Either way, because the gateway requires PIN + OTP, the only way back is
+to re-authenticate once.
+
+=sucoder= detects the dead-but-zombie sockets correctly: =tunnel status=
+does an end-to-end probe (not just a local mux check), so it reports
+=DEAD= rather than a misleading =ACTIVE=.  Recovery is one command:
+#+begin_src shell
+sucoder -T savio-node tunnel up        # one OTP, re-warms the whole chain
+sucoder -T savio-node tunnel status    # confirm ACTIVE
+#+end_src
+Re-warm *before* opening TRAMP --- otherwise TRAMP finds the stale login
+socket, falls back to a fresh =ProxyJump=, and you get an awkward auth
+prompt inside Emacs instead of a clean one on a real terminal.  If you
+suspend and resume frequently, a system suspend/resume hook
+(=systemd-sleep= on Linux, =sleepwatcher= on macOS) can run =tunnel down=
+on resume to clear the zombies immediately --- though it can't re-auth for
+you (that OTP is yours to type).
+
 * Editing remote files from Emacs / TRAMP
 
 ** How do I open a file on the login node in Emacs?
