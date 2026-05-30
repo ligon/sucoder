@@ -123,10 +123,11 @@ sucoder -T savio-node tunnel status    # confirm ACTIVE
 Re-warm *before* opening TRAMP --- otherwise TRAMP finds the stale login
 socket, falls back to a fresh =ProxyJump=, and you get an awkward auth
 prompt inside Emacs instead of a clean one on a real terminal.  If you
-suspend and resume frequently, a system suspend/resume hook
-(=systemd-sleep= on Linux, =sleepwatcher= on macOS) can run =tunnel down=
-on resume to clear the zombies immediately --- though it can't re-auth for
-you (that OTP is yours to type).
+suspend/resume or change networks frequently, a system hook can clear the
+zombie sockets automatically on resume so nothing trips on them --- see
+[[*Appendix: clearing stale tunnels automatically][the appendix]] for
+ready-to-use Linux and macOS examples.  (A hook can only *clean up*; it
+can't re-authenticate for you --- that OTP is yours to type.)
 
 * Editing remote files from Emacs / TRAMP
 
@@ -318,3 +319,100 @@ pre-flight check.
 | Free a compute allocation               | =sucoder -T savio-node release=                              |
 | Edit remote files in Emacs              | =C-x C-f /ssh:savio-node-ln:/path=  (with =tramp-use-connection-share= nil) |
 | List your jobs / cancel an orphan       | =ssh savio-node-ln squeue --me=  /  =ssh savio-node-ln scancel <JOB>= |
+
+* Appendix: clearing stale tunnels automatically
+After a suspend/resume or a network move, the ControlMaster sockets under
+=~/.sucoder/ssh/= are zombies (the local mux daemon survives, but its TCP
+connection is dead).  =sucoder= detects this and =tunnel up= re-establishes
+cleanly, but a plain =ssh= or a TRAMP buffer opened *before* you re-warm
+will trip on the dead socket and prompt awkwardly.  The hooks below tear
+the zombies down on resume so nothing trips on them.
+
+They only *clean up* --- they cannot re-authenticate (the gateway OTP is
+yours to type).  After resume you still run =sucoder -T <target> tunnel up=
+once to re-warm.
+
+All three use the same cleanup: for each socket, ask its master to exit
+(a local operation --- no network needed); if the master is already gone,
+remove the stale socket file.  The socket filename is the hostname, which
+is also the destination =ssh -O exit= expects.
+
+** Linux --- systemd suspend/resume hook
+Create =/usr/lib/systemd/system-sleep/sucoder-tunnels= (root-owned,
+=chmod +x=).  systemd runs it as *root* with =$1= = =pre=/=post= and =$2=
+= =suspend=/=hibernate=/...; we drop to your user on =post= to clean
+that user's sockets.  Edit =USER_NAME=.
+
+#+begin_src sh
+#!/bin/sh
+# /usr/lib/systemd/system-sleep/sucoder-tunnels
+USER_NAME=ligon              # <-- your login name
+
+case "$1" in
+  post)
+    runuser -l "$USER_NAME" -c '
+      for sock in "$HOME"/.sucoder/ssh/*.sock; do
+        [ -S "$sock" ] || continue
+        host=$(basename "$sock" .sock)
+        ssh -o ControlPath="$sock" -O exit "$host" 2>/dev/null || rm -f "$sock"
+      done
+    '
+    ;;
+esac
+#+end_src
+
+#+begin_src shell
+sudo install -m 0755 sucoder-tunnels /usr/lib/systemd/system-sleep/sucoder-tunnels
+#+end_src
+
+** macOS --- sleepwatcher wake hook
+=sleepwatcher= runs =~/.wakeup= on wake.  Install it, create the script,
+and start the daemon:
+
+#+begin_src shell
+brew install sleepwatcher
+#+end_src
+
+#+begin_src sh
+# ~/.wakeup  (chmod +x)
+#!/bin/sh
+for sock in "$HOME"/.sucoder/ssh/*.sock; do
+  [ -S "$sock" ] || continue
+  host=$(basename "$sock" .sock)
+  ssh -o ControlPath="$sock" -O exit "$host" 2>/dev/null || rm -f "$sock"
+done
+#+end_src
+
+#+begin_src shell
+chmod +x ~/.wakeup
+brew services start sleepwatcher
+#+end_src
+
+** Optional --- Linux network-change hook (NetworkManager)
+A suspend hook won't fire when you only *switch networks* (no suspend).
+If that's your common case, add a NetworkManager dispatcher script that
+cleans up when connectivity changes.  Create
+=/etc/NetworkManager/dispatcher.d/90-sucoder-tunnels= (root-owned,
+=chmod +x=); it runs as root with =$1= = interface and =$2= = action.
+
+#+begin_src sh
+#!/bin/sh
+# /etc/NetworkManager/dispatcher.d/90-sucoder-tunnels
+USER_NAME=ligon              # <-- your login name
+
+case "$2" in
+  up|connectivity-change)
+    runuser -l "$USER_NAME" -c '
+      for sock in "$HOME"/.sucoder/ssh/*.sock; do
+        [ -S "$sock" ] || continue
+        host=$(basename "$sock" .sock)
+        ssh -o ControlPath="$sock" -O exit "$host" 2>/dev/null || rm -f "$sock"
+      done
+    '
+    ;;
+esac
+#+end_src
+
+This clears the tunnels on *every* connectivity change, including
+reconnecting to the same network --- harmless (you re-warm on demand), but
+slightly eager.  Skip it if you only ever lose tunnels across a suspend.
