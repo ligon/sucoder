@@ -440,6 +440,49 @@ def _build_executor(
     )
 
 
+def _adopt_existing_allocation(node, ln_control, login_node, logger):
+    """Find a live SLURM job the current user already holds on *node*.
+
+    Returns ``(job_id, node_name)`` for the first RUNNING job the user
+    owns on *node*, or ``None`` when there is none (or the probe fails).
+
+    This lets a second ``collaborate <mirror> --node <held-node>`` attach
+    to a node the user already reserved.  A whole-node allocation is
+    exclusive, so a fresh ``salloc --nodelist`` on it would just time out
+    and fall back to a different node.  Adopting the existing job id means
+    we SSH straight into the node we already own and share it.
+    """
+    import subprocess as _sp
+
+    if not login_node:
+        return None
+    probe = (
+        f"squeue --me --nodelist={shlex.quote(node)} "
+        "--states=RUNNING --noheader -o '%i %N'"
+    )
+    cmd = [
+        "ssh", *ln_control.ssh_options(with_fallback=True), login_node, probe,
+    ]
+    result = _sp.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        logger.debug(
+            "adopt probe for %s failed (%s); will allocate instead",
+            node, result.stderr.strip(),
+        )
+        return None
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        token = parts[0]
+        # salloc --no-shell jobs have plain-integer ids; skip array
+        # elements like "12345_1" which aren't a whole-node reservation
+        # we'd want to share this way.
+        if token.isdigit():
+            return int(token), parts[1]
+    return None
+
+
 def _ensure_slurm_node(
     remote,
     session,
@@ -484,9 +527,33 @@ def _ensure_slurm_node(
             preferred_node = session.compute_node
             session.compute_node = None
 
-    # Allocate a new compute node if needed.
+    # Resolve the preferred node: either carried over from a dead job
+    # (local-disk affinity, set above) or explicitly requested via
+    # --node (collaborate stores it in session.compute_node with no job
+    # id).  Then, before reserving anything, see whether we already hold
+    # a live allocation on that node and adopt it instead.
     if not session.slurm_job_id:
-        preferred_node = locals().get("preferred_node")
+        preferred_node = locals().get("preferred_node") or session.compute_node
+        if preferred_node:
+            adopted = _adopt_existing_allocation(
+                preferred_node, ln_control, session.login_node, logger,
+            )
+            if adopted is not None:
+                job_id, node_name = adopted
+                session.slurm_job_id = job_id
+                session.compute_node = node_name
+                session.save()
+                typer.echo(
+                    f"Adopting existing SLURM job {job_id} on {node_name} "
+                    "(sharing the reserved node)."
+                )
+                logger.info(
+                    "Adopted SLURM job %d on %s for mirror %s",
+                    job_id, node_name, session.mirror_name,
+                )
+
+    # Allocate a new compute node if we still don't have one.
+    if not session.slurm_job_id:
         salloc_parts = [
             "salloc", "--no-shell",
             f"--partition={slurm.partition}",
@@ -1567,7 +1634,9 @@ def collaborate(
         None,
         "--node",
         help="Request a specific compute node (e.g. --node n0047.savio3). "
-             "Useful to recover work on local disk from a previous session.",
+             "Useful to recover work on local disk from a previous session. "
+             "If you already hold a live allocation on that node, this "
+             "session adopts (shares) it instead of reserving a new one.",
     ),
     extra_args: Optional[List[str]] = typer.Argument(
         None,
@@ -1997,10 +2066,24 @@ def release(
 
     job_id = session.slurm_job_id
     compute_node = session.compute_node or "<unknown>"
+    # Other sessions co-resident on this node share the same job id.
+    # Releasing must not scancel the allocation out from under them.
+    siblings = RemoteSession.holders_of_job(
+        job_id, exclude_key=session._session_key,
+    )
     if not force:
-        if not _prompt_yes_no(
-            f"Cancel SLURM job {job_id} on {compute_node} for mirror {mirror}? [y/N] ",
-        ):
+        if siblings:
+            prompt = (
+                f"SLURM job {job_id} on {compute_node} is shared with "
+                f"{', '.join(siblings)}. Detach mirror {mirror} (kill its "
+                "agent) but keep the job alive for the others? [y/N] "
+            )
+        else:
+            prompt = (
+                f"Cancel SLURM job {job_id} on {compute_node} for mirror "
+                f"{mirror}? [y/N] "
+            )
+        if not _prompt_yes_no(prompt):
             typer.echo("Aborted.")
             raise typer.Exit(code=0)
 
@@ -2043,21 +2126,52 @@ def release(
         raise typer.Exit(code=1) from exc
 
     import subprocess as _sp
-    scancel_cmd = [
-        "ssh", *ln_control.ssh_options(with_fallback=True), session.login_node,
-        f"scancel {shlex.quote(str(job_id))}",
-    ]
-    logger.debug("scancel command: %s", scancel_cmd)
-    result = _sp.run(scancel_cmd, capture_output=True, text=True, check=False)
-    if result.returncode != 0:
-        # scancel exits 0 even for nonexistent jobs (just prints a
-        # warning to stderr), so a real failure usually means an SSH
-        # or auth problem.
+    if siblings:
+        # Another session still holds this job; detach this mirror rather
+        # than cancelling the shared allocation.  Kill this mirror's tmux
+        # session on the node (best effort) so its agent stops, but leave
+        # the SLURM job running for the co-resident sessions.
+        if session.compute_node:
+            cn_control = SshControl(
+                gateway=session.compute_node,
+                control_persist=remote.control_persist,
+                jump_host=session.login_node,
+                jump_control=ln_control,
+                extra_options=[
+                    "-o", "StrictHostKeyChecking=no",
+                    "-o", "UserKnownHostsFile=/dev/null",
+                ],
+                debug=debug_ssh,
+            )
+            tmux_name = f"sucoder-{mirror}"
+            kill_cmd = [
+                "ssh", *cn_control.ssh_options(with_fallback=True),
+                session.compute_node,
+                f"tmux kill-session -t {shlex.quote(tmux_name)} "
+                "2>/dev/null || true",
+            ]
+            logger.debug("detach tmux command: %s", kill_cmd)
+            _sp.run(kill_cmd, capture_output=True, text=True, check=False)
         typer.echo(
-            f"scancel returned {result.returncode}: {result.stderr.strip()}",
-            err=True,
+            f"Detached mirror {mirror} from SLURM job {job_id}; the "
+            f"allocation stays alive for: {', '.join(siblings)}."
         )
-        raise typer.Exit(code=1)
+    else:
+        scancel_cmd = [
+            "ssh", *ln_control.ssh_options(with_fallback=True), session.login_node,
+            f"scancel {shlex.quote(str(job_id))}",
+        ]
+        logger.debug("scancel command: %s", scancel_cmd)
+        result = _sp.run(scancel_cmd, capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            # scancel exits 0 even for nonexistent jobs (just prints a
+            # warning to stderr), so a real failure usually means an SSH
+            # or auth problem.
+            typer.echo(
+                f"scancel returned {result.returncode}: {result.stderr.strip()}",
+                err=True,
+            )
+            raise typer.Exit(code=1)
 
     # Clear the SLURM-specific session fields so future commands don't
     # think a stale allocation is still ours.  Keep login_node so

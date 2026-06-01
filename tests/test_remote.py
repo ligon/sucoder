@@ -308,6 +308,132 @@ def test_session_tunnel_alive_dead_pid() -> None:
 
 
 # ------------------------------------------------------------------
+# Shared-node allocation: holders_of_job + adopt probe
+# ------------------------------------------------------------------
+
+
+def test_holders_of_job_finds_siblings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Other sessions sharing a job id are reported; the caller is excluded."""
+    monkeypatch.setattr("sucoder.session._session_dir", lambda: tmp_path)
+    RemoteSession(
+        mirror_name="Foo", target_name="savio-node",
+        slurm_job_id=12345, compute_node="n0020.savio3",
+    ).save()
+    RemoteSession(
+        mirror_name="Bar", target_name="savio-node",
+        slurm_job_id=12345, compute_node="n0020.savio3",
+    ).save()
+    RemoteSession(
+        mirror_name="Baz", target_name="savio-node",
+        slurm_job_id=999, compute_node="n0099.savio3",
+    ).save()
+
+    holders = RemoteSession.holders_of_job(12345, exclude_key="Foo--savio-node")
+    assert holders == ["Bar--savio-node"]
+
+
+def test_holders_of_job_none_when_unique(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("sucoder.session._session_dir", lambda: tmp_path)
+    RemoteSession(
+        mirror_name="Solo", target_name="savio-node",
+        slurm_job_id=777, compute_node="n0001.savio3",
+    ).save()
+    assert RemoteSession.holders_of_job(777, exclude_key="Solo--savio-node") == []
+
+
+def test_holders_of_job_handles_none_and_missing_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("sucoder.session._session_dir", lambda: tmp_path / "nope")
+    assert RemoteSession.holders_of_job(None) == []
+    assert RemoteSession.holders_of_job(123) == []
+
+
+class _FakeControl:
+    def ssh_options(self, with_fallback: bool = False):
+        return ["-o", "ControlPath=/tmp/x"]
+
+
+class _FakeProc:
+    def __init__(self, returncode: int, stdout: str = "", stderr: str = "") -> None:
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def test_adopt_existing_allocation_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    import logging
+
+    from sucoder import cli
+
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda *a, **k: _FakeProc(0, stdout="12345 n0020.savio3\n"),
+    )
+    out = cli._adopt_existing_allocation(
+        "n0020.savio3", _FakeControl(), "ln001", logging.getLogger("t"),
+    )
+    assert out == (12345, "n0020.savio3")
+
+
+def test_adopt_existing_allocation_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    import logging
+
+    from sucoder import cli
+
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: _FakeProc(0, stdout="\n"))
+    assert cli._adopt_existing_allocation(
+        "n0020.savio3", _FakeControl(), "ln001", logging.getLogger("t"),
+    ) is None
+
+
+def test_adopt_existing_allocation_probe_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import logging
+
+    from sucoder import cli
+
+    monkeypatch.setattr(
+        "subprocess.run", lambda *a, **k: _FakeProc(1, stderr="bad node"),
+    )
+    assert cli._adopt_existing_allocation(
+        "bogus", _FakeControl(), "ln001", logging.getLogger("t"),
+    ) is None
+
+
+def test_adopt_existing_allocation_no_login_node() -> None:
+    import logging
+
+    from sucoder import cli
+
+    assert cli._adopt_existing_allocation(
+        "n0020.savio3", _FakeControl(), None, logging.getLogger("t"),
+    ) is None
+
+
+def test_adopt_existing_allocation_skips_array_elements(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Array-element ids like 12345_1 aren't whole-node reservations."""
+    import logging
+
+    from sucoder import cli
+
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda *a, **k: _FakeProc(0, stdout="12345_1 n0020.savio3\n"),
+    )
+    assert cli._adopt_existing_allocation(
+        "n0020.savio3", _FakeControl(), "ln001", logging.getLogger("t"),
+    ) is None
+
+
+# ------------------------------------------------------------------
 # RemoteExecutor
 # ------------------------------------------------------------------
 

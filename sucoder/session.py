@@ -90,6 +90,35 @@ class RemoteSession:
         with path.open("w", encoding="utf-8") as fh:
             yaml.safe_dump(data, fh, default_flow_style=False)
 
+    @classmethod
+    def holders_of_job(cls, job_id, exclude_key: Optional[str] = None) -> list:
+        """Return session keys that reference *job_id*.
+
+        A key is ``mirror`` or ``mirror--target`` (the filename stem).
+        Used by ``sucoder release`` to detect when a SLURM job is shared
+        by several sessions (e.g. two mirrors co-resident on one node) so
+        it can detach this mirror instead of cancelling a job the others
+        still need.  *exclude_key* omits the caller's own session.
+        """
+        holders: list = []
+        if job_id is None:
+            return holders
+        directory = _session_dir()
+        if not directory.is_dir():
+            return holders
+        for path in sorted(directory.glob("*.yaml")):
+            stem = path.stem
+            if exclude_key is not None and stem == exclude_key:
+                continue
+            try:
+                with path.open("r", encoding="utf-8") as fh:
+                    data = yaml.safe_load(fh) or {}
+            except (yaml.YAMLError, OSError):
+                continue
+            if isinstance(data, dict) and data.get("slurm_job_id") == job_id:
+                holders.append(stem)
+        return holders
+
     def clear(self) -> None:
         """Remove the session file."""
         path = _session_dir() / f"{self._session_key}.yaml"

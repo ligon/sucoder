@@ -366,6 +366,27 @@ sucoder -T savio attach --node n0047.savio3
 The =--node= option sets a preferred node for the SLURM allocation.
 If that node is unavailable, SLURM may fall back to another node.
 
+**** Sharing a reserved node
+
+An exclusive partition hands out the whole node, but a single agent
+session often leaves it underused.  If you already hold a live
+allocation on a node, point a *second* mirror at it with =--node= and
+=sucoder= adopts the existing job instead of reserving another:
+
+#+begin_src shell
+sucoder -T savio collaborate Foo                      # reserves n0020.savio3
+sucoder -T savio collaborate Bar --node n0020.savio3  # shares it
+#+end_src
+
+Each mirror gets its own tmux session (=sucoder-Foo=, =sucoder-Bar=)
+and its own clone, so the two agents run side by side on one node.
+Adoption only ever attaches to *your own* RUNNING jobs on that node.
+
+Because the sessions share one SLURM job, =sucoder release= is
+job-aware: releasing a mirror while siblings still hold the job
+*detaches* it (kills that mirror's tmux session) but keeps the
+allocation alive.  Only the last holder's =release= runs =scancel=.
+
 *** Local disk
 
 By default, remote mirrors live on the shared filesystem.  On clusters
