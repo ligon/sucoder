@@ -631,6 +631,44 @@ def test_build_ssh_command_compute_node_no_proxy_without_info() -> None:
     assert "ProxyCommand" not in joined
 
 
+def test_build_ssh_command_failfast_guards_noninteractive() -> None:
+    """One-shot commands carry ConnectTimeout + ServerAlive fail-fast guards."""
+    executor = _make_remote_executor(control_socket_path="/tmp/test.sock")
+    cmd = executor._build_ssh_command(["git", "status"])
+    assert f"ConnectTimeout={executor.CONNECT_TIMEOUT}" in cmd
+    assert f"ServerAliveInterval={executor.KEEPALIVE_INTERVAL}" in cmd
+    assert f"ServerAliveCountMax={executor.KEEPALIVE_COUNT_MAX}" in cmd
+    # The detection window must stay under the outer subprocess ceiling.
+    assert (
+        executor.KEEPALIVE_INTERVAL * executor.KEEPALIVE_COUNT_MAX
+        < executor.DEFAULT_SSH_TIMEOUT
+    )
+
+
+def test_build_ssh_command_no_failfast_guards_interactive() -> None:
+    """Interactive sessions keep the ControlMaster's longer tolerance."""
+    executor = _make_remote_executor(control_socket_path="/tmp/test.sock")
+    cmd = executor._build_ssh_command(["bash"], allocate_tty=True)
+    joined = " ".join(cmd)
+    assert "ServerAliveInterval" not in joined
+    assert "ServerAliveCountMax" not in joined
+    assert "ConnectTimeout" not in joined
+
+
+def test_build_ssh_command_proxy_failfast_noninteractive() -> None:
+    """The compute-node ProxyCommand hop also bounds its inner dial."""
+    executor = _make_remote_executor(
+        login_node="n0101.savio3",
+        control_socket_path="/tmp/compute.sock",
+        is_compute_node=True,
+        proxy_node="ln001",
+        proxy_socket_path="/tmp/login.sock",
+    )
+    cmd = executor._build_ssh_command(["hostname"])
+    proxy = next(opt for opt in cmd if opt.startswith("ProxyCommand="))
+    assert f"ConnectTimeout={executor.CONNECT_TIMEOUT}" in proxy
+
+
 def test_build_ssh_command_debug_ssh() -> None:
     """--debug-ssh adds -vvv to SSH commands."""
     executor = _make_remote_executor(
@@ -1305,6 +1343,35 @@ def test_ensure_remote_mirror_exists_failure(
 
     with pytest.raises(MirrorError):
         manager._ensure_mirror_exists(ctx)
+
+
+def test_ensure_remote_mirror_exists_timeout_is_graceful(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A timed-out probe raises a clean MirrorError, not a raw CommandError."""
+    from sucoder.executor import CommandError, CommandResult
+    from sucoder.mirror import MirrorError
+
+    manager = _build_remote_manager(tmp_path)
+    ctx = manager.context_for("rproj")
+
+    def fake_run_agent(args, **kwargs):
+        # The git probe is what hangs; the `echo $HOME` path-resolution
+        # call that precedes it must still succeed.
+        if "rev-parse" in args:
+            raise CommandError(
+                "Command timed out after 120s",
+                CommandResult(list(args), list(args), "", "(timed out)", -1),
+            )
+        return CommandResult(list(args), list(args), "/home/ligon", "", 0)
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+
+    with pytest.raises(MirrorError) as excinfo:
+        manager._ensure_mirror_exists(ctx)
+    # The message must point at unresponsiveness, not a missing mirror.
+    assert "not responding" in str(excinfo.value)
+    assert "agents-clone" not in str(excinfo.value)
 
 
 def test_run_query_dispatch_local(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

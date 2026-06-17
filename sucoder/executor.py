@@ -268,6 +268,23 @@ class RemoteExecutor(CommandExecutor):
     # for normal Lustre latency, short enough to surface hangs.
     DEFAULT_SSH_TIMEOUT: int = 120
 
+    # Fail-fast guards for one-shot (non-interactive) SSH commands.
+    # These are deliberately *tighter* than the ControlMaster's own
+    # keepalive (which wants to linger for days, see RemoteConfig):
+    # a one-shot command is already bounded by DEFAULT_SSH_TIMEOUT, so
+    # when the master has died and ssh falls back to a fresh dial we want
+    # a wedged *transport* (dead node, half-open connection) surfaced as
+    # a clean SSH error (exit 255) well inside that ceiling instead of
+    # burning the full 120s.  ServerAlive* only tears down a genuinely
+    # dead link; a slow-but-alive remote command (e.g. a Lustre stat that
+    # blocks but whose sshd still answers keepalive probes) still rides to
+    # the subprocess timeout, which is the correct outcome.
+    # CONNECT_TIMEOUT bounds the initial dial; INTERVAL x COUNT_MAX (45s)
+    # bounds an established-but-silent link.  Both sit under 120s.
+    CONNECT_TIMEOUT: int = 10
+    KEEPALIVE_INTERVAL: int = 15
+    KEEPALIVE_COUNT_MAX: int = 3
+
     def run_agent(
         self,
         args: Sequence[str],
@@ -518,6 +535,16 @@ class RemoteExecutor(CommandExecutor):
             # Non-interactive: fail immediately instead of opening
             # /dev/tty for a password prompt that would look like a hang.
             ssh_cmd.extend(["-o", "BatchMode=yes"])
+            # Fail-fast guards (one-shot commands only; the interactive
+            # path keeps the ControlMaster's longer tolerance so a live
+            # tmux session is never torn down).  A dead/wedged transport
+            # now surfaces as exit 255 in ~45s instead of eating the full
+            # DEFAULT_SSH_TIMEOUT.
+            ssh_cmd.extend([
+                "-o", f"ConnectTimeout={self.CONNECT_TIMEOUT}",
+                "-o", f"ServerAliveInterval={self.KEEPALIVE_INTERVAL}",
+                "-o", f"ServerAliveCountMax={self.KEEPALIVE_COUNT_MAX}",
+            ])
         # Reuse ControlMaster connection if available (avoids re-auth).
         # Include a ProxyCommand fallback so that a stale socket doesn't
         # leave SSH with no route to an unresolvable internal hostname.
@@ -537,7 +564,12 @@ class RemoteExecutor(CommandExecutor):
                     "-o", "UserKnownHostsFile=/dev/null",
                 ])
                 # Route through the login node's ControlMaster.
-                proxy_batch = "" if allocate_tty else " -o BatchMode=yes"
+                # One-shot hops also bound the inner dial so a wedged
+                # proxy fails fast rather than hanging the whole command.
+                proxy_batch = (
+                    "" if allocate_tty
+                    else f" -o BatchMode=yes -o ConnectTimeout={self.CONNECT_TIMEOUT}"
+                )
                 ssh_cmd.extend([
                     "-o",
                     f"ProxyCommand=ssh -o ControlMaster=auto "
@@ -548,7 +580,12 @@ class RemoteExecutor(CommandExecutor):
             elif self.gateway and not self.is_compute_node:
                 from .tunnel import _control_socket_path as _gw_sock
                 gw_socket = _gw_sock(self.gateway)
-                proxy_batch = "" if allocate_tty else " -o BatchMode=yes"
+                # One-shot hops also bound the inner dial so a wedged
+                # proxy fails fast rather than hanging the whole command.
+                proxy_batch = (
+                    "" if allocate_tty
+                    else f" -o BatchMode=yes -o ConnectTimeout={self.CONNECT_TIMEOUT}"
+                )
                 ssh_cmd.extend([
                     "-o",
                     f"ProxyCommand=ssh -o ControlMaster=auto "

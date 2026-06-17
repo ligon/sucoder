@@ -2312,11 +2312,25 @@ class MirrorManager:
         remote_path = ctx.remote_mirror_path
         assert remote_path is not None
         abs_path = self._resolve_remote_path(ctx)
-        check = self.executor.run_agent(
-            ["git", "rev-parse", "--git-dir"],
-            check=False,
-            cwd=abs_path,
-        )
+        try:
+            check = self.executor.run_agent(
+                ["git", "rev-parse", "--git-dir"],
+                check=False,
+                cwd=abs_path,
+            )
+        except CommandError as exc:
+            # A timeout (or wedged SSH transport) here means the remote
+            # host is unresponsive, not that the mirror is missing.  This
+            # is the first command actually run *on* a freshly allocated
+            # compute node, so a transient node/Lustre stall lands here.
+            # Surface a clean, actionable error instead of a raw traceback.
+            raise MirrorError(
+                f"Timed out probing the remote mirror at {remote_path}: the "
+                "remote host is not responding.  This is usually a transient "
+                "compute-node or Lustre stall, not a missing mirror.  Retry "
+                "the command; if it persists, check the node is healthy "
+                "(squeue / ssh in) and the filesystem is responsive."
+            ) from exc
         if check.returncode != 0:
             raise MirrorError(
                 f"Remote mirror at {remote_path} does not exist. Run agents-clone first."
