@@ -313,11 +313,30 @@ targets:
     gateway: brc.berkeley.edu
     transfer_host: dtn.brc.berkeley.edu
     mirror_root: ~/mirrors
-    control_persist: 12h
+    control_persist: 7d          # warm-tunnel idle lifetime (optional)
+    keepalive_interval: 30       # ServerAliveInterval, seconds (optional)
+    keepalive_count_max: 120     # ServerAliveCountMax (optional)
 #+end_src
 
 No =mirrors:= entry is needed---zero-config repo detection works with
 targets.  The target can be used with any repo.
+
+The three SSH connection-sharing knobs are optional and default to the
+values shown above; tune them per target:
+
+- =control_persist= --- how long a warm =ControlMaster= lingers after the
+  last client disconnects (ssh time format: =7d=, =12h=, =90m=...).  This
+  is the "tunnel stays open" lever: a longer value means =collaborate=,
+  plain =ssh=, and Emacs TRAMP reuse the socket --- no PIN/OTP --- for
+  longer.  The cluster's server-side idle policy is the real ceiling, so
+  treat a long value as best-effort, not a guarantee.
+- =keepalive_interval= / =keepalive_count_max= --- the =ServerAlive*=
+  pair.  Their product is the grace budget before a stalled connection is
+  torn down (=30 x 120 = 1h= by default), which is what lets a tunnel ride
+  out a brief network blip or a laptop nap *on the same network*.  Keep the
+  interval short (the probes also keep NAT/firewall mappings warm); raise
+  =count_max= for a longer budget.  Neither can revive a connection the
+  server already reaped or one whose IP changed --- those still re-auth.
 
 *** Usage
 
@@ -541,7 +560,7 @@ targets:
     gateway: brc.berkeley.edu
     transfer_host: dtn.brc.berkeley.edu
     mirror_root: ~/mirrors
-    control_persist: 12h
+    control_persist: 7d
 
 # Mirrors are optional when using zero-config repo detection.
 mirrors:

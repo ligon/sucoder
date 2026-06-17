@@ -230,7 +230,7 @@ def _build_executor(
         #    once; may prompt for pin + OTP).
         gw_control = SshControl(
             gateway=remote.gateway,
-            control_persist=remote.control_persist,
+            **remote.ssh_control_kwargs(),
             debug=debug_ssh,
         )
         try:
@@ -275,7 +275,7 @@ def _build_executor(
         #    so we use _ensure_ssh_visible instead of _spinner.
         ln_control = SshControl(
             gateway=session.login_node,
-            control_persist=remote.control_persist,
+            **remote.ssh_control_kwargs(),
             jump_host=remote.gateway,
             jump_control=gw_control,
             debug=debug_ssh,
@@ -292,7 +292,7 @@ def _build_executor(
         #     transport route through it.
         dtn_control = SshControl(
             gateway=remote.transfer_host,
-            control_persist=remote.control_persist,
+            **remote.ssh_control_kwargs(),
             jump_host=remote.gateway,
             jump_control=gw_control,
             debug=debug_ssh,
@@ -686,7 +686,7 @@ def _ensure_slurm_node(
     # ControlMaster handshake.
     cn_control = SshControl(
         gateway=session.compute_node,
-        control_persist=remote.control_persist,
+        **remote.ssh_control_kwargs(),
         jump_host=session.login_node,
         jump_control=ln_control,
         extra_options=[
@@ -1900,7 +1900,7 @@ def attach(
     # Reuse ControlMaster if active; re-establish if expired.
     control = SshControl(
         gateway=remote.gateway,
-        control_persist=remote.control_persist,
+        **remote.ssh_control_kwargs(),
         debug=debug_ssh,
     )
     try:
@@ -2095,7 +2095,7 @@ def release(
     # so scancel reaches the cluster.
     gw_control = SshControl(
         gateway=remote.gateway,
-        control_persist=remote.control_persist,
+        **remote.ssh_control_kwargs(),
         debug=debug_ssh,
     )
     try:
@@ -2114,7 +2114,7 @@ def release(
 
     ln_control = SshControl(
         gateway=session.login_node,
-        control_persist=remote.control_persist,
+        **remote.ssh_control_kwargs(),
         jump_host=remote.gateway,
         jump_control=gw_control,
         debug=debug_ssh,
@@ -2134,7 +2134,7 @@ def release(
         if session.compute_node:
             cn_control = SshControl(
                 gateway=session.compute_node,
-                control_persist=remote.control_persist,
+                **remote.ssh_control_kwargs(),
                 jump_host=session.login_node,
                 jump_control=ln_control,
                 extra_options=[
@@ -2239,7 +2239,7 @@ def _warm_free_tunnels(remote, session, logger, *, debug_ssh: bool):
 
     gw_control = SshControl(
         gateway=remote.gateway,
-        control_persist=remote.control_persist,
+        **remote.ssh_control_kwargs(),
         debug=debug_ssh,
     )
     _ensure_ssh_visible(gw_control, remote.gateway, logger)
@@ -2261,7 +2261,7 @@ def _warm_free_tunnels(remote, session, logger, *, debug_ssh: bool):
     if session.login_node:
         ln_control = SshControl(
             gateway=session.login_node,
-            control_persist=remote.control_persist,
+            **remote.ssh_control_kwargs(),
             jump_host=remote.gateway,
             jump_control=gw_control,
             debug=debug_ssh,
@@ -2274,7 +2274,7 @@ def _warm_free_tunnels(remote, session, logger, *, debug_ssh: bool):
 
     dtn_control = SshControl(
         gateway=remote.transfer_host,
-        control_persist=remote.control_persist,
+        **remote.ssh_control_kwargs(),
         jump_host=remote.gateway,
         jump_control=gw_control,
         debug=debug_ssh,
@@ -2339,7 +2339,7 @@ def tunnel_up(
         remote.transfer_host,
         login_node=session.login_node,
         user=getpass.getuser(),
-        control_persist=remote.control_persist,
+        **remote.ssh_control_kwargs(),
     )
     path = sshconfig.write_block(block, target_name)
     aliases = sshconfig.alias_names(target_name)
@@ -2361,14 +2361,14 @@ def tunnel_status(
     remote, target_name = _resolve_tunnel_target(ctx)
     session = RemoteSession.load(_tunnel_session_name(target_name))
 
-    gw = SshControl(gateway=remote.gateway, control_persist=remote.control_persist)
+    gw = SshControl(gateway=remote.gateway, **remote.ssh_control_kwargs())
     hops = [("gateway", remote.gateway, gw)]
     if session.login_node:
         hops.append((
             "login", session.login_node,
             SshControl(
                 gateway=session.login_node,
-                control_persist=remote.control_persist,
+                **remote.ssh_control_kwargs(),
                 jump_host=remote.gateway,
                 jump_control=gw,
             ),
@@ -2377,7 +2377,7 @@ def tunnel_status(
         "dtn", remote.transfer_host,
         SshControl(
             gateway=remote.transfer_host,
-            control_persist=remote.control_persist,
+            **remote.ssh_control_kwargs(),
             jump_host=remote.gateway,
             jump_control=gw,
         ),
@@ -2501,7 +2501,7 @@ def tunnel_down(
     # Close children before the gateway they ride on.
     hosts = [h for h in (session.login_node, remote.transfer_host, remote.gateway) if h]
     for host in hosts:
-        SshControl(gateway=host, control_persist=remote.control_persist).close(logger)
+        SshControl(gateway=host, **remote.ssh_control_kwargs()).close(logger)
         typer.echo(f"  closed {host}")
 
     if prune and sshconfig.remove_block(target_name):

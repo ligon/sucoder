@@ -25,14 +25,23 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #     gateway: hpc.brc.berkeley.edu
 #     transfer_host: dtn.brc.berkeley.edu
 #     mirror_root: ~/mirrors
-#     control_persist: 12h
+#     # SSH connection-sharing knobs (all optional; defaults shown).
+#     control_persist: 7d        # how long a warm ControlMaster lingers idle
+#                                # (ssh time fmt: 7d, 12h, 90m...).  This is the
+#                                # "tunnel stays open" lever.  Server-side idle
+#                                # policy is the real ceiling; treat as best-effort.
+#     keepalive_interval: 30     # ServerAliveInterval, seconds.  Keep short so the
+#                                # probes also hold NAT/firewall mappings open.
+#     keepalive_count_max: 120   # ServerAliveCountMax.  interval x count = the grace
+#                                # budget before a stalled link is torn down
+#                                # (30s x 120 = 1h; rides out a laptop nap).
 #   # Compute-node target: allocates a SLURM node and tunnels through
 #   # the login node (which only proxies TCP — no shell, no load).
 #   savio-node:
 #     gateway: hpc.brc.berkeley.edu
 #     transfer_host: dtn.brc.berkeley.edu
 #     mirror_root: ~/mirrors
-#     control_persist: 12h
+#     control_persist: 7d
 #     # Platform-specific prompt snippet appended to the base system prompt.
 #     system_prompt_extra: ~/.sucoder/prompts/savio-node.org
 #     slurm:

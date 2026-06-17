@@ -67,6 +67,69 @@ def test_parse_remote_config_bad_type() -> None:
         _parse_remote_config("not-a-dict")
 
 
+def test_parse_remote_config_keepalive_defaults() -> None:
+    """Persistence/keepalive defaults: long-lived warm tunnel (7d) with a
+    1-hour keepalive grace budget (30s x 120)."""
+    rc = _parse_remote_config({"gateway": "gw", "transfer_host": "dtn"})
+    assert rc is not None
+    assert rc.control_persist == "7d"
+    assert rc.keepalive_interval == 30
+    assert rc.keepalive_count_max == 120
+
+
+def test_parse_remote_config_keepalive_custom() -> None:
+    rc = _parse_remote_config({
+        "gateway": "gw",
+        "transfer_host": "dtn",
+        "control_persist": "3d",
+        "keepalive_interval": 15,
+        "keepalive_count_max": 240,
+    })
+    assert rc is not None
+    assert rc.control_persist == "3d"
+    assert rc.keepalive_interval == 15
+    assert rc.keepalive_count_max == 240
+
+
+@pytest.mark.parametrize("key", ["keepalive_interval", "keepalive_count_max"])
+@pytest.mark.parametrize("bad_value", [0, -1, "30", 30.0, True, False])
+def test_parse_remote_config_keepalive_rejects_bad_values(key: str, bad_value: object) -> None:
+    raw = {"gateway": "gw", "transfer_host": "dtn", key: bad_value}
+    with pytest.raises(ConfigError, match=key):
+        _parse_remote_config(raw)
+
+
+def test_remote_config_ssh_control_kwargs() -> None:
+    """The helper is the single source of persist/keepalive kwargs threaded
+    into SshControl / SshTunnel / render_block."""
+    rc = RemoteConfig(
+        gateway="gw",
+        transfer_host="dtn",
+        control_persist="2d",
+        keepalive_interval=45,
+        keepalive_count_max=80,
+    )
+    assert rc.ssh_control_kwargs() == {
+        "control_persist": "2d",
+        "keepalive_interval": 45,
+        "keepalive_count_max": 80,
+    }
+
+
+def test_ssh_control_kwargs_match_sshcontrol_fields() -> None:
+    """Regression guard: every key the helper emits must be a real
+    SshControl constructor kwarg, since cli.py splats it as
+    ``SshControl(..., **remote.ssh_control_kwargs())``."""
+    from sucoder.tunnel import SshControl
+
+    rc = RemoteConfig(gateway="gw", transfer_host="dtn")
+    # Must not raise TypeError on unexpected keyword argument.
+    control = SshControl(gateway="gw", **rc.ssh_control_kwargs())
+    assert control.control_persist == "7d"
+    assert control.keepalive_interval == 30
+    assert control.keepalive_count_max == 120
+
+
 def test_mirror_settings_is_remote() -> None:
     from sucoder.config import BranchPrefixes
 
@@ -612,6 +675,43 @@ def test_ssh_control_options() -> None:
     assert any("ControlPath=" in o for o in opts)
     # Default (no fallback) must NOT emit a ProxyJump/ProxyCommand.
     assert not any("Proxy" in o for o in opts)
+
+
+def test_ssh_control_establish_uses_configured_keepalive(monkeypatch, tmp_path) -> None:
+    """establish() must emit the instance's persist/keepalive values, not
+    the old hardcoded 12h / 30 / 3."""
+    import logging
+
+    from sucoder.tunnel import SshControl
+
+    socket_file = tmp_path / "gw.sock"
+    monkeypatch.setattr(
+        SshControl, "socket_path", property(lambda self: socket_file),
+    )
+    control = SshControl(
+        gateway="gw",
+        control_persist="3d",
+        keepalive_interval=45,
+        keepalive_count_max=200,
+    )
+    monkeypatch.setattr(control, "is_active", lambda: False)
+
+    captured: dict = {}
+
+    class _R:
+        returncode = 0
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = list(cmd)
+        return _R()
+
+    monkeypatch.setattr("sucoder.tunnel.subprocess.run", fake_run)
+    control.establish(logging.getLogger("t"))
+
+    joined = " ".join(captured["cmd"])
+    assert "ControlPersist=3d" in joined
+    assert "ServerAliveInterval=45" in joined
+    assert "ServerAliveCountMax=200" in joined
 
 
 def test_ssh_control_options_fallback_uses_jump_control() -> None:

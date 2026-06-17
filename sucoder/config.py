@@ -65,9 +65,27 @@ class RemoteConfig:
     transfer_host: str                              # DTN for git transport
     mirror_root: Path = field(default_factory=lambda: Path("~/mirrors"))
     ssh_options: Dict[str, str] = field(default_factory=dict)
-    control_persist: str = "12h"                    # ControlMaster socket lifetime
+    control_persist: str = "7d"                     # ControlMaster idle lifetime (ssh time fmt)
+    keepalive_interval: int = 30                    # ServerAliveInterval (seconds)
+    keepalive_count_max: int = 120                  # ServerAliveCountMax (probes before teardown)
     slurm: Optional[SlurmConfig] = None             # Compute-node allocation params
     system_prompt_extra: Optional[Path] = None      # Target-specific prompt snippet
+
+    def ssh_control_kwargs(self) -> Dict[str, Any]:
+        """Persistence/keepalive kwargs shared by SshControl, SshTunnel,
+        and ``sshconfig.render_block``.
+
+        Keeping these in one place means the three SSH knobs
+        (``control_persist`` + the two ``keepalive_*`` values) are
+        threaded identically everywhere a connection is built, so a
+        target's config is honoured at every hop instead of silently
+        falling back to the dataclass defaults at some call sites.
+        """
+        return {
+            "control_persist": self.control_persist,
+            "keepalive_interval": self.keepalive_interval,
+            "keepalive_count_max": self.keepalive_count_max,
+        }
 
 
 @dataclass
@@ -680,6 +698,23 @@ def _parse_flag_templates(raw: Any) -> AgentFlagTemplates:
     )
 
 
+def _parse_positive_int(raw: Any, key: str, *, default: int) -> int:
+    """Parse an optional positive-integer config value.
+
+    ``None`` (key absent) returns *default*.  Bools are rejected even
+    though ``bool`` is an ``int`` subclass, and non-positive values are
+    errors.  Used for the SSH keepalive knobs (``keepalive_interval`` /
+    ``keepalive_count_max``).
+    """
+    if raw is None:
+        return default
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise ConfigError(f"`{key}` must be a positive integer when provided.")
+    if raw <= 0:
+        raise ConfigError(f"`{key}` must be a positive integer when provided.")
+    return raw
+
+
 def _parse_targets(raw: Any) -> Dict[str, RemoteConfig]:
     """Parse the top-level ``targets:`` mapping."""
     if raw is None:
@@ -717,9 +752,16 @@ def _parse_remote_config(raw: Any) -> Optional[RemoteConfig]:
     if not isinstance(ssh_options, dict):
         raise ConfigError("`remote.ssh_options` must be a mapping when provided.")
 
-    control_persist = raw.get("control_persist", "12h")
+    control_persist = raw.get("control_persist", "7d")
     if not isinstance(control_persist, str):
-        raise ConfigError("`remote.control_persist` must be a string (e.g. '12h', '1d').")
+        raise ConfigError("`remote.control_persist` must be a string (e.g. '7d', '12h', '1d').")
+
+    keepalive_interval = _parse_positive_int(
+        raw.get("keepalive_interval"), "remote.keepalive_interval", default=30,
+    )
+    keepalive_count_max = _parse_positive_int(
+        raw.get("keepalive_count_max"), "remote.keepalive_count_max", default=120,
+    )
 
     slurm = _parse_slurm_config(raw.get("slurm"))
 
@@ -735,6 +777,8 @@ def _parse_remote_config(raw: Any) -> Optional[RemoteConfig]:
         mirror_root=mirror_root,
         ssh_options={str(k): str(v) for k, v in ssh_options.items()},
         control_persist=control_persist,
+        keepalive_interval=keepalive_interval,
+        keepalive_count_max=keepalive_count_max,
         slurm=slurm,
         system_prompt_extra=prompt_extra,
     )

@@ -84,22 +84,43 @@ sucoder -T savio-node tunnel down --prune    # also remove the ssh_config block
 ** How long does a tunnel stay warm? Do I have to re-authenticate?
 While the ControlMaster is alive, =collaborate=, plain =ssh=, and TRAMP
 reuse it with *no* prompt.  The client-side idle lifetime is governed by
-=control_persist= on the target (the =tunnel up= output shows the current
-value).  You only re-authenticate (PIN + OTP) when the *gateway* mux
-expires; because the login and DTN aliases jump through the gateway,
-re-authenticating the gateway once re-warms everything.
+=control_persist= on the target (default =7d=; the =tunnel up= output
+shows the current value).  You only re-authenticate (PIN + OTP) when the
+*gateway* mux expires; because the login and DTN aliases jump through the
+gateway, re-authenticating the gateway once re-warms everything.
 
-Caveat: =control_persist= bounds *client idle* only.  The real ceiling is
-the cluster's server-side session policy, which =sucoder= does not
-control --- so treat a long =control_persist= as best-effort, not a
-guarantee.
+Two independent timers are in play, and it helps to keep them straight:
+
+- =control_persist= --- *idle* lifetime: how long the mux lingers after
+  the last client disconnects.  This is the "stays open" lever.
+- =keepalive_interval= x =keepalive_count_max= (the =ServerAlive*= pair,
+  default =30s x 120 = 1h=) --- the *in-flight* grace budget: how long an
+  established connection may go unanswered before it is declared dead and
+  torn down.  This is *not* a lifetime knob; it is what lets a live link
+  ride out a brief stall (see the suspend question below).
+
+Caveat: both bound the *client* side only.  The real ceiling is the
+cluster's server-side session policy, which =sucoder= does not control ---
+so treat a long =control_persist= as best-effort, not a guarantee.
 
 ** Do tunnels survive a laptop suspend / hibernate or a network change?
-No --- and they can't.  Two things break them, and the second is the more
+Sometimes a *brief suspend on the same network* now survives; a *network
+change* never does.
+
+The default keepalive budget (=30s x 120 = 1h=) is deliberately generous:
+when you wake the laptop, the client tolerates up to an hour of missed
+probes before declaring the link dead, so if the connection was still
+valid underneath --- the server hadn't reaped it and your IP hadn't
+changed --- it simply resumes with no prompt.  Raise =keepalive_count_max=
+on the target if you routinely nap longer than that.
+
+But two things still break tunnels for good, and the second is the more
 common culprit:
 
-1. *Suspend tears down the network stack*, so the TCP connections under
-   the ControlMaster sockets die and the cluster drops them.
+1. *A long suspend lets the server (or a stateful firewall) drop the
+   connection.*  Once the cluster sends a reset or the NAT mapping
+   expires, the TCP connection under the ControlMaster socket is dead and
+   no client-side budget can revive it.
 2. *Changing networks changes your IP address.*  A TCP connection is
    identified by the four-tuple (source IP, source port, destination IP,
    destination port); when your source IP changes --- roaming from home

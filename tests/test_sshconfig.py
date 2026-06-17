@@ -38,6 +38,9 @@ def test_render_block_full() -> None:
     assert "User eligon" in block
     assert "ControlPersist 168h" in block
     assert "ControlMaster auto" in block
+    # Keepalive defaults to the long (1h) grace budget: 30s x 120.
+    assert "ServerAliveInterval 30" in block
+    assert "ServerAliveCountMax 120" in block
     # ControlPath must match the SshControl socket for the same host so
     # SuCoder, ssh, and TRAMP share one mux.
     from sucoder.tunnel import _control_socket_path
@@ -45,6 +48,25 @@ def test_render_block_full() -> None:
     # Fenced by per-target sentinels.
     assert ">>> sucoder managed block: savio-node >>>" in block
     assert "<<< sucoder managed block: savio-node <<<" in block
+
+
+def test_render_block_custom_keepalive() -> None:
+    """Custom keepalive values flow into every alias stanza so plain ssh /
+    TRAMP match SuCoder's own keepalive tolerance."""
+    block = sshconfig.render_block(
+        "savio-node",
+        "hpc.brc.berkeley.edu",
+        "dtn.brc.berkeley.edu",
+        login_node="ln003.brc",
+        control_persist="3d",
+        keepalive_interval=60,
+        keepalive_count_max=30,
+    )
+    # One stanza per hop (gw/ln/dtn) => three of each directive.
+    assert block.count("ServerAliveInterval 60") == 3
+    assert block.count("ServerAliveCountMax 30") == 3
+    assert block.count("ControlPersist 3d") == 3
+    assert "ServerAliveInterval 30" not in block
 
 
 def test_render_block_unpinned_login_node() -> None:

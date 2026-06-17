@@ -63,7 +63,9 @@ class SshControl:
     """
 
     gateway: str
-    control_persist: str = "12h"
+    control_persist: str = "7d"
+    keepalive_interval: int = 30
+    keepalive_count_max: int = 120
     jump_host: Optional[str] = None
     jump_control: Optional["SshControl"] = field(default=None, repr=False)
     extra_options: List[str] = field(default_factory=list)
@@ -169,8 +171,8 @@ class SshControl:
             "-o", "ControlMaster=yes",
             "-o", f"ControlPath={self.socket_path}",
             "-o", f"ControlPersist={self.control_persist}",
-            "-o", "ServerAliveInterval=30",
-            "-o", "ServerAliveCountMax=3",
+            "-o", f"ServerAliveInterval={self.keepalive_interval}",
+            "-o", f"ServerAliveCountMax={self.keepalive_count_max}",
         ]
         # Route through jump host's ControlMaster if available.
         if self.jump_host:
@@ -190,8 +192,8 @@ class SshControl:
                     "-o", "ControlMaster=yes",
                     "-o", f"ControlPath={self.socket_path}",
                     "-o", f"ControlPersist={self.control_persist}",
-                    "-o", "ServerAliveInterval=30",
-                    "-o", "ServerAliveCountMax=3",
+                    "-o", f"ServerAliveInterval={self.keepalive_interval}",
+                    "-o", f"ServerAliveCountMax={self.keepalive_count_max}",
                     "-o", "StrictHostKeyChecking=accept-new",
                     "-o", f"ProxyCommand=ssh -o ControlMaster=auto "
                           f"-o ControlPath={self.jump_control.socket_path} "
@@ -372,6 +374,8 @@ class SshTunnel:
     target_host: str
     target_port: int = 22
     local_port: Optional[int] = None
+    keepalive_interval: int = 30
+    keepalive_count_max: int = 120
     control: Optional[SshControl] = field(default=None, repr=False)
     _pid: Optional[int] = field(default=None, repr=False)
 
@@ -392,8 +396,8 @@ class SshTunnel:
             "-N",                               # no remote command
             "-L", forward_spec,                 # local forward
             "-o", "ExitOnForwardFailure=yes",
-            "-o", "ServerAliveInterval=30",
-            "-o", "ServerAliveCountMax=3",
+            "-o", f"ServerAliveInterval={self.keepalive_interval}",
+            "-o", f"ServerAliveCountMax={self.keepalive_count_max}",
         ]
         # Reuse ControlMaster if available — no re-authentication.
         if self.control is not None:
