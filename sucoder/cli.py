@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import pwd
+import subprocess
 import sys
 import threading
 import time
@@ -2187,6 +2189,180 @@ def release(
     typer.echo(f"Released SLURM job {job_id} on {compute_node}.")
     if result.stderr.strip():
         typer.echo(result.stderr.strip(), err=True)
+
+
+def _run_remote_capture(
+    control, host: str, command: str, *, debug: bool = False, timeout: int = 30
+) -> subprocess.CompletedProcess:
+    """Run *command* on *host* over an established ControlMaster socket.
+
+    Reuses the warm mux (``ControlMaster=auto`` via
+    :meth:`SshControl.ssh_options`) so no re-auth is needed when the
+    tunnel is already up.  ``BatchMode=yes`` is a post-auth safety belt:
+    if the mux has died since :func:`_ensure_ssh_visible` brought it up,
+    ssh fails fast instead of silently dropping to an interactive
+    ``/dev/tty`` prompt (which a captured-output run would hang on).
+
+    ``BatchMode`` blocks an interactive *prompt* but not a wedged TCP
+    path (a zombie mux whose daemon answers ``-O check`` but whose
+    connection is dead), so a wall-clock ``timeout`` bounds the run the
+    way the probes in :mod:`sucoder.tunnel` do.  A timeout is returned as
+    a synthetic non-zero ``CompletedProcess`` (exit 124) so the caller's
+    return-code handling covers it.
+
+    Returns the :class:`subprocess.CompletedProcess` (``check=False``);
+    the caller decides what a non-zero exit means.
+    """
+    ssh_cmd = ["ssh"]
+    if debug:
+        ssh_cmd.append("-v")
+    ssh_cmd += [*control.ssh_options(), "-o", "BatchMode=yes", host, command]
+    try:
+        return subprocess.run(
+            ssh_cmd, capture_output=True, text=True, check=False, timeout=timeout
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout or ""
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode("utf-8", "replace")
+        return subprocess.CompletedProcess(
+            ssh_cmd,
+            124,
+            stdout=stdout,
+            stderr=f"timed out after {timeout}s (wedged tunnel?)",
+        )
+
+
+# SLURM partition names are alphanumeric plus `_`, `-`, `.`; a comma lets
+# `sinfo -p` take a list (e.g. `savio3,savio4_htc`).  Restricting to this
+# set (and rejecting a leading `-`) keeps shell metacharacters out and
+# stops a value being mistaken for an `sinfo` option.
+# `\Z` (not `$`) so a trailing newline can't sneak through.
+_PARTITION_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_,.-]*\Z")
+
+
+@app.command("nodes")
+def nodes(
+    ctx: typer.Context,
+    partition: Optional[str] = typer.Argument(
+        None,
+        help="SLURM partition to query (defaults to the target's slurm.partition).",
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Increase console logging."
+    ),
+) -> None:
+    """Show compute-node availability for a SLURM partition (read-only).
+
+    Reuses the target's warm gateway ControlMaster, so it costs no OTP
+    when a tunnel is already up (and falls back to a fresh,
+    OTP-prompting connection otherwise).  Runs ``sinfo`` on the login
+    node and prints one row per node --- state, CPUs
+    (Allocated/Idle/Other/Total) and load --- followed by the
+    drained/down nodes and their reasons.
+
+    The partition defaults to the target's ``slurm.partition``; an
+    optional positional argument overrides it (e.g. ``savio3_gpu``).
+    Composes with ``collaborate --node`` / ``--local-disk``: see which
+    nodes are free, then aim at one.
+
+    Caveat: ``sinfo`` reports SLURM state, not Lustre health.  A node can
+    show ``idle`` while its filesystem mount is wedged, so weigh the
+    drain reasons and any anomalous load on an otherwise-idle node --- the
+    query cannot promise a node's filesystem is healthy.
+    """
+    config = _get_config(ctx)
+    remote = _get_active_target(ctx)
+    if remote is None:
+        typer.echo(
+            "`nodes` needs a remote target; pass one with -T, "
+            "e.g. `sucoder -T savio-node nodes`.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    part = partition or (remote.slurm.partition if remote.slurm else None)
+    if not part:
+        typer.echo(
+            "No partition given and the target has no `slurm.partition`. "
+            "Pass one explicitly, e.g. `sucoder -T <target> nodes savio3`.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    if not _PARTITION_RE.match(part):
+        typer.echo(
+            f"Invalid partition name {part!r}; expected letters, digits, and "
+            "'_', '-', '.', ',' (e.g. savio3 or savio3,savio4_htc).",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    logger = setup_logger("sucoder.nodes", config.log_dir, verbose)
+    debug_ssh = _get_debug_ssh(ctx)
+
+    from .tunnel import SshControl
+
+    # A jump-less control to the gateway.  On BRC `ssh <gateway>` lands
+    # on a login node (the same host `_build_executor` pins via `ssh
+    # <gateway> hostname`), where the SLURM client commands live, so we
+    # can run sinfo directly over this socket without pinning a node.
+    gw_control = SshControl(
+        gateway=remote.gateway,
+        **remote.ssh_control_kwargs(),
+        debug=debug_ssh,
+    )
+    try:
+        _ensure_ssh_visible(gw_control, remote.gateway, logger)
+    except Exception as exc:  # noqa: BLE001 -- surface any setup failure
+        typer.echo(f"Failed to reach gateway {remote.gateway}: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    q = shlex.quote(part)
+    avail = _run_remote_capture(
+        gw_control,
+        remote.gateway,
+        f'sinfo -p {q} -N -o "%N %6t %.15C %.6O"',
+        debug=debug_ssh,
+    )
+    if avail.returncode != 0:
+        detail = avail.stderr.strip() or avail.stdout.strip() or "(no output)"
+        typer.echo(
+            f"`sinfo -p {part}` failed on {remote.gateway} "
+            f"(exit {avail.returncode}): {detail}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    drain = _run_remote_capture(
+        gw_control, remote.gateway, f"sinfo -p {q} -R", debug=debug_ssh
+    )
+
+    typer.echo(f"Partition {part}:")
+    typer.echo(avail.stdout.rstrip("\n"))
+    typer.echo("")
+    typer.echo("Drained/down nodes (admins often drain sick nodes):")
+    if drain.returncode != 0:
+        # Don't masquerade a failed query as a healthy partition.
+        typer.echo("  (could not query drain reasons)")
+        detail = drain.stderr.strip()
+        if detail:
+            typer.echo(f"  sinfo -R failed: {detail}", err=True)
+    else:
+        # `sinfo -R` prints a header row even when nothing is drained, so
+        # a header-only result (<= 1 line) means "none".
+        drain_lines = drain.stdout.strip().splitlines()
+        if len(drain_lines) <= 1:
+            typer.echo("  (none reported)")
+        else:
+            typer.echo(drain.stdout.rstrip("\n"))
+
+    typer.echo(
+        "\nNote: sinfo reports SLURM state, not Lustre health --- a node can "
+        "show 'idle' while its filesystem mount is wedged. Weigh drain "
+        "reasons and anomalous load on idle nodes accordingly.",
+        err=True,
+    )
 
 
 # ----------------------------------------------------------------------

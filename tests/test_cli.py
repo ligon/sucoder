@@ -925,3 +925,322 @@ def test_ensure_slurm_node_persists_job_id_before_node_query(tmp_path, monkeypat
     reloaded = session_mod.RemoteSession.load("Emu-GMM", target_name="savio-node")
     assert reloaded.slurm_job_id == 34688352
     assert reloaded.compute_node is None
+
+
+# ----------------------------------------------------------------------
+# `sucoder nodes` — read-only SLURM node-availability query
+# ----------------------------------------------------------------------
+
+
+def _write_nodes_config(tmp_path: Path) -> Path:
+    """Config with a SLURM target (`savio-node`) and a plain target."""
+    human = os.environ.get("USER", "coder")
+    agent = os.environ.get("USER", "coder")
+    mirror_root = tmp_path / "mirrors"
+    mirror_root.mkdir(exist_ok=True)
+    canonical_repo = tmp_path / "canonical"
+    canonical_repo.mkdir(exist_ok=True)
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir(exist_ok=True)
+
+    config_content = f"""
+human_user: {human}
+agent_user: {agent}
+agent_group: {agent}
+mirror_root: {mirror_root}
+targets:
+  savio-node:
+    gateway: hpc.example.edu
+    transfer_host: dtn.example.edu
+    slurm:
+      partition: savio3
+      account: fc_test
+  plain:
+    gateway: gw.example.edu
+    transfer_host: dtn.example.edu
+mirrors:
+  sample:
+    canonical_repo: {canonical_repo}
+    mirror_name: sample
+    branch_prefixes:
+      human: {human}
+      agent: {agent}
+    skills:
+      - {skills_dir}
+"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_content, encoding="utf-8")
+    return config_path
+
+
+_SINFO_AVAIL = (
+    "NODELIST       STATE      CPUS(A/I/O/T)  CPU_LOAD\n"
+    "n0000.savio3   idle             0/32/0/32      0.01\n"
+    "n0001.savio3   mix             16/16/0/32      8.20\n"
+)
+_SINFO_DRAIN = (
+    "REASON               USER      TIMESTAMP           NODELIST\n"
+    "Lustre client hung   root      2026-06-15T09:12:00 n0123.savio3\n"
+)
+
+
+_SINFO_DRAIN_NONE = "REASON               USER      TIMESTAMP           NODELIST\n"
+
+
+def _install_nodes_fakes(
+    monkeypatch,
+    *,
+    avail_rc: int = 0,
+    avail_stderr: str = "",
+    drain_rc: int = 0,
+    drain_stdout: str = _SINFO_DRAIN,
+    drain_stderr: str = "",
+):
+    """Stub startup checks, SSH setup, and the remote sinfo runner.
+
+    Returns a list that records each ``(host, command)`` actually sent
+    to :func:`cli._run_remote_capture`.
+    """
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_ensure_ssh_visible", lambda *a, **k: None)
+
+    calls: list = []
+
+    def fake_run(control, host, command, *, debug=False, timeout=30):
+        calls.append((host, command))
+        if " -R" in command:  # drain query
+            return SimpleNamespace(
+                returncode=drain_rc, stdout=drain_stdout, stderr=drain_stderr
+            )
+        return SimpleNamespace(
+            returncode=avail_rc,
+            stdout="" if avail_rc else _SINFO_AVAIL,
+            stderr=avail_stderr,
+        )
+
+    monkeypatch.setattr(cli, "_run_remote_capture", fake_run)
+    return calls
+
+
+def test_nodes_defaults_partition_from_target(tmp_path, monkeypatch):
+    runner = CliRunner()
+    calls = _install_nodes_fakes(monkeypatch)
+    cfg = _write_nodes_config(tmp_path)
+
+    result = runner.invoke(
+        cli.app, ["--config", str(cfg), "-T", "savio-node", "nodes"]
+    )
+
+    assert result.exit_code == 0, result.output
+    # Partition defaulted from the target's slurm.partition, and the
+    # exact columnar format is what produces the documented output.
+    avail_cmd = calls[0][1]
+    assert "-p savio3 " in avail_cmd and "-N" in avail_cmd
+    assert '-o "%N %6t %.15C %.6O"' in avail_cmd
+    assert any(" -R" in cmd for _, cmd in calls)
+    assert "n0000.savio3" in result.output
+    assert "n0123.savio3" in result.output  # drain section
+
+
+def test_nodes_positional_overrides_partition(tmp_path, monkeypatch):
+    runner = CliRunner()
+    calls = _install_nodes_fakes(monkeypatch)
+    cfg = _write_nodes_config(tmp_path)
+
+    result = runner.invoke(
+        cli.app,
+        ["--config", str(cfg), "-T", "savio-node", "nodes", "savio3_gpu"],
+    )
+
+    assert result.exit_code == 0, result.output
+    # Positional overrides the default; the target's `savio3` is unused.
+    assert all("-p savio3_gpu" in cmd for _, cmd in calls)
+    assert all("-p savio3 " not in cmd for _, cmd in calls)
+
+
+def test_nodes_requires_target(tmp_path, monkeypatch):
+    runner = CliRunner()
+    _install_nodes_fakes(monkeypatch)
+    cfg = _write_nodes_config(tmp_path)
+
+    result = runner.invoke(cli.app, ["--config", str(cfg), "nodes"])
+
+    assert result.exit_code == 2  # usage error, not a runtime failure
+    assert "remote target" in result.output.lower()
+
+
+def test_nodes_requires_partition_without_slurm(tmp_path, monkeypatch):
+    runner = CliRunner()
+    _install_nodes_fakes(monkeypatch)
+    cfg = _write_nodes_config(tmp_path)
+
+    result = runner.invoke(
+        cli.app, ["--config", str(cfg), "-T", "plain", "nodes"]
+    )
+
+    assert result.exit_code == 2  # usage error, not a runtime failure
+    assert "partition" in result.output.lower()
+
+
+def test_nodes_surfaces_sinfo_failure(tmp_path, monkeypatch):
+    runner = CliRunner()
+    _install_nodes_fakes(
+        monkeypatch, avail_rc=1, avail_stderr="Invalid partition name specified"
+    )
+    cfg = _write_nodes_config(tmp_path)
+
+    result = runner.invoke(
+        cli.app, ["--config", str(cfg), "-T", "savio-node", "nodes", "bogus"]
+    )
+
+    assert result.exit_code == 1
+    assert "Invalid partition name specified" in result.output
+
+
+def test_partition_re_accepts_and_rejects():
+    accept = ["savio3", "savio4_htc", "savio3_gpu", "savio2_bigmem",
+              "savio3,savio4_htc", "a", "P1.2"]
+    reject = ["", "-N", "--help", "a b", "a;b", "a|b", "a&b", "$(x)",
+              "`x`", "a'b", 'a"b', "savio3\n", "\nsavio3", ",savio3", ".savio3"]
+    for p in accept:
+        assert cli._PARTITION_RE.match(p), f"should accept {p!r}"
+    for p in reject:
+        assert not cli._PARTITION_RE.match(p), f"should reject {p!r}"
+
+
+def test_nodes_reports_none_when_no_drained_nodes(tmp_path, monkeypatch):
+    """`sinfo -R` header-only output must read as 'none', not a bare header."""
+    runner = CliRunner()
+    _install_nodes_fakes(monkeypatch, drain_stdout=_SINFO_DRAIN_NONE)
+    cfg = _write_nodes_config(tmp_path)
+
+    result = runner.invoke(
+        cli.app, ["--config", str(cfg), "-T", "savio-node", "nodes"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "(none reported)" in result.output
+    assert "n0123.savio3" not in result.output
+
+
+def test_nodes_handles_drain_query_failure(tmp_path, monkeypatch):
+    """A failed drain query must not masquerade as a healthy partition."""
+    runner = CliRunner()
+    _install_nodes_fakes(
+        monkeypatch, drain_rc=1, drain_stdout="", drain_stderr="sinfo: error"
+    )
+    cfg = _write_nodes_config(tmp_path)
+
+    result = runner.invoke(
+        cli.app, ["--config", str(cfg), "-T", "savio-node", "nodes"]
+    )
+
+    # Availability succeeded, so the command still exits 0...
+    assert result.exit_code == 0, result.output
+    # ...but the drain failure is surfaced, not swallowed as "(none reported)".
+    assert "could not query drain reasons" in result.output
+    assert "(none reported)" not in result.output
+
+
+def test_nodes_rejects_partition_with_metacharacters(tmp_path, monkeypatch):
+    """A partition carrying shell metacharacters is rejected before any ssh."""
+    runner = CliRunner()
+    calls = _install_nodes_fakes(monkeypatch)
+    cfg = _write_nodes_config(tmp_path)
+
+    result = runner.invoke(
+        cli.app, ["--config", str(cfg), "-T", "savio-node", "nodes", "a;rm -rf ~"]
+    )
+
+    assert result.exit_code == 2
+    assert "invalid partition" in result.output.lower()
+    assert calls == []  # never reached the remote
+
+
+def test_nodes_rejects_option_like_partition(tmp_path, monkeypatch):
+    """A `-`-prefixed value can't slip through as an sinfo flag."""
+    runner = CliRunner()
+    calls = _install_nodes_fakes(monkeypatch)
+    cfg = _write_nodes_config(tmp_path)
+
+    # `--` stops Typer option parsing so the value reaches the command.
+    result = runner.invoke(
+        cli.app, ["--config", str(cfg), "-T", "savio-node", "nodes", "--", "-N"]
+    )
+
+    assert result.exit_code == 2
+    assert "invalid partition" in result.output.lower()
+    assert calls == []
+
+
+def test_nodes_stdout_carries_data_stderr_carries_caveat(tmp_path, monkeypatch):
+    """Piping hygiene: sinfo rows go to stdout, the Lustre caveat to stderr."""
+    import inspect
+    from click.testing import CliRunner as ClickRunner
+    from typer.main import get_command
+
+    _install_nodes_fakes(monkeypatch)
+    cfg = _write_nodes_config(tmp_path)
+
+    # click <8.2 needs mix_stderr=False to split streams; >=8.2 splits
+    # unconditionally and dropped the kwarg.
+    if "mix_stderr" in inspect.signature(ClickRunner.__init__).parameters:
+        runner = ClickRunner(mix_stderr=False)
+    else:  # pragma: no cover - depends on installed click
+        runner = ClickRunner()
+    result = runner.invoke(
+        get_command(cli.app),
+        ["--config", str(cfg), "-T", "savio-node", "nodes"],
+    )
+
+    assert result.exit_code == 0, result.stderr
+    assert "n0000.savio3" in result.stdout          # data on stdout
+    assert "Lustre health" in result.stderr         # caveat on stderr
+    assert "Lustre health" not in result.stdout     # ...and not polluting stdout
+
+
+def test_run_remote_capture_builds_batchmode_command(monkeypatch):
+    """The query reuses the mux (ControlMaster=auto) under BatchMode=yes."""
+
+    class _Ctl:
+        def ssh_options(self, **kwargs):
+            return ["-o", "ControlMaster=auto", "-o", "ControlPath=/tmp/x.sock"]
+
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    out = cli._run_remote_capture(_Ctl(), "host.example", "sinfo -p p -R")
+
+    cmd = captured["cmd"]
+    assert cmd[0] == "ssh"
+    assert "BatchMode=yes" in cmd
+    assert "ControlMaster=auto" in cmd
+    assert cmd[-2:] == ["host.example", "sinfo -p p -R"]
+    assert captured["kwargs"].get("capture_output") is True
+    assert captured["kwargs"].get("check") is False
+    assert captured["kwargs"].get("timeout")  # bounded, never unbounded
+    assert out.stdout == "ok"
+
+
+def test_run_remote_capture_timeout_returns_124(monkeypatch):
+    """A wedged tunnel is bounded and surfaced as a synthetic failure."""
+
+    class _Ctl:
+        def ssh_options(self, **kwargs):
+            return ["-o", "ControlMaster=auto"]
+
+    def fake_run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout", 1))
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    out = cli._run_remote_capture(_Ctl(), "host", "sinfo -p p -R", timeout=2)
+
+    assert out.returncode == 124
+    assert "timed out" in out.stderr

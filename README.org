@@ -99,6 +99,7 @@ The canonical repository remains unwritable by the agent throughout.
 - collaborate :: Prepare canonical, ensure mirror, and launch agent in one step.
 - worktrees :: List active git worktrees in a mirror with per-worktree status (branch, commits ahead, dirty state).  Supports =--watch= for live monitoring and =--diff= for file-level changes.
 - attach :: Reconnect to a remote agent session via tmux after an SSH disconnect.
+- nodes :: Show compute-node availability for a SLURM partition (read-only =sinfo= query over the warm gateway tunnel; see [[*Inspecting node availability][Inspecting node availability]]).
 - audit :: Run a compliance review of agent-written skills and/or mirror code changes (see [[*Auditing][Auditing]]).
 - --target/-T :: Select a named remote execution target (e.g., =--target savio=) to run the agent on a remote host.
 - --version/-V :: Print the installed sucoder version (CalVer, derived from git tags).
@@ -366,6 +367,29 @@ sucoder -T savio attach                    # reconnect via tmux
 6. *Add a git remote* --- A remote named after the target (e.g.,
    =savio=) is added to the canonical repo so the human can
    =git fetch savio= to pull back agent work.
+
+*** Inspecting node availability
+
+Before reserving a node (or targeting one with =--node= /
+=--local-disk=), =sucoder nodes= shows which nodes in a partition are
+free, reusing the target's warm gateway ControlMaster so it costs no
+OTP when a tunnel is already up:
+
+#+begin_src shell
+sucoder -T savio-node nodes            # partition defaults to slurm.partition (savio3)
+sucoder -T savio-htc  nodes            # -> savio4_htc
+sucoder -T savio-node nodes savio3_gpu # positional arg overrides the partition
+#+end_src
+
+It prints one row per node --- state, CPUs (Allocated/Idle/Other/Total)
+and load --- followed by the drained/down nodes and their reasons
+(=sinfo -R=).  The query is read-only: no allocation, no session
+changes.
+
+Caveat: =sinfo= reports SLURM state, not Lustre health.  A node can
+read =idle= while its filesystem mount is wedged, so weigh the drain
+reasons and any anomalous load on an otherwise-idle node --- the query
+cannot promise a node's filesystem is healthy.
 
 *** Node pinning
 
