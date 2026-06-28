@@ -718,6 +718,37 @@ def _ensure_slurm_node(
     return session.compute_node, cn_control
 
 
+# Bash helper embedded verbatim into the on-node deadline timer (see
+# ``_start_slurm_timer``).  Converts SLURM ``squeue -o %L`` time-left
+# (TIME_LEFT) into whole minutes remaining.  ``%L`` renders as
+# ``D-HH:MM:SS`` once a day or more remains, ``HH:MM:SS`` under a day,
+# and ``MM:SS`` under an hour; a job with no time limit prints
+# ``UNLIMITED``.  Splitting on ``:`` alone mis-handles the ``D-HH``
+# field (bash reads ``D-HH`` as the arithmetic ``D - HH``), so the day
+# component is split off on ``-`` first.  Leading zeros are forced to
+# base 10 to avoid octal errors (``08``/``09``).  Non-numeric values
+# (``UNLIMITED``/``INVALID``/empty) return a large sentinel so no
+# deadline warning ever fires.  Kept as a module constant (not inlined
+# in the f-string) so it is unit-testable under bash and free of
+# brace-escaping noise.
+_SLURM_TIME_LEFT_TO_MINS_SH = r'''
+left_to_mins() {
+    local s="$1" days=0 rest a b c
+    if [ -z "$s" ]; then echo 999999; return; fi
+    case "$s" in
+        *-*) days="${s%%-*}"; rest="${s#*-}" ;;
+        *)   rest="$s" ;;
+    esac
+    IFS=: read -r a b c <<< "$rest"
+    if [ -z "$c" ]; then b="$a"; a=0; fi
+    case "${days}${a}${b}" in
+        *[!0-9]*) echo 999999; return ;;
+    esac
+    echo $(( 10#${days:-0}*1440 + 10#${a:-0}*60 + 10#${b:-0} ))
+}
+'''.strip("\n")
+
+
 def _start_slurm_timer(
     session,
     ln_control,
@@ -736,9 +767,15 @@ def _start_slurm_timer(
     reference the old location (e.g. ``~/.sucoder/prompts/savio-node.org``)
     should be updated to the new path.
 
-    As a backstop, if the sucoder tmux session exits without cancelling
-    the job (crash, network loss, etc.), the timer cancels it to avoid
-    burning idle allocation time.
+    If the sucoder tmux session disappears (crash, network loss, etc.),
+    the timer records a warning and exits but deliberately does NOT
+    ``scancel`` the job -- the user owns the SLURM lifecycle (see
+    ``sucoder release``), and auto-cancelling on a transient agent
+    hiccup would destroy any chance of reattaching.
+
+    Time-left parsing is delegated to the ``left_to_mins`` bash helper
+    (module constant ``_SLURM_TIME_LEFT_TO_MINS_SH``) so the
+    ``D-HH:MM:SS`` day format is handled correctly and is unit-testable.
     """
     import shlex
     import subprocess as _sp
@@ -806,6 +843,11 @@ def _start_slurm_timer(
             exit 1
         fi
 
+        # Make each deadline warning linger on the status line so a
+        # full-screen agent TUI doesn't redraw over it before the human
+        # notices (scoped to our session via -t, not the global -g).
+        tmux set-option -t {q_tmux} display-time 15000 2>/dev/null || true
+
         while true; do
             left=$(squeue --job {q_job} --noheader -o "%L" 2>/dev/null)
             if [ -z "$left" ]; then
@@ -826,14 +868,7 @@ def _start_slurm_timer(
                 break
             fi
 
-            IFS=: read -ra parts <<< "$left"
-            if [ ${{#parts[@]}} -eq 3 ]; then
-                mins=$(( ${{parts[0]#0}}*60 + ${{parts[1]#0}} ))
-            elif [ ${{#parts[@]}} -eq 2 ]; then
-                mins=${{parts[0]#0}}
-            else
-                mins=999
-            fi
+            mins=$(left_to_mins "$left")
             if [ "$mins" -le 5 ] && [ ! -f "$WARN5" ]; then
                 msg="SLURM: ~${{mins}} min left (job {q_job}). Commit and save NOW."
                 echo "$msg" > "$WARN_FILE"
@@ -853,6 +888,17 @@ def _start_slurm_timer(
             sleep 60
         done
     """)
+
+    # Inject the time-left parser (kept as a module constant so it can
+    # be unit-tested under bash) ahead of the monitoring loop.  Done
+    # post-dedent so the helper's column-0 body doesn't flatten the
+    # common-indent prefix and push the ``#!`` off byte 0.
+    timer_script = timer_script.replace(
+        'rm -f "$WARN5" "$WARN15" "$WARN30" "$WARN_FILE"\n',
+        'rm -f "$WARN5" "$WARN15" "$WARN30" "$WARN_FILE"\n\n'
+        + _SLURM_TIME_LEFT_TO_MINS_SH + "\n",
+        1,
+    )
 
     # Write the script to the compute node via stdin, then run it.
     # The script lives in the user's runtime cache rather than /tmp for
