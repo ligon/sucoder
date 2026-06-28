@@ -95,6 +95,21 @@ A persistent presence survives the two forced-turnover events --
 courtesy =time= expiry and maintenance reboot -- with minimal manual
 intervention and graceful context handoff.
 
+** Status (v1 implemented)
+The controller ships as =sucoder/renew.py= (pure decision logic + loop,
+fully unit-tested in =tests/test_renew.py=) wired to the =sucoder
+renew= CLI command, with a =detached= relaunch path added to
+=MirrorManager.launch_agent= (=tmux new-session -A -d=).  Implemented:
+SLURM-state polling with correct =D-HH:MM:SS= parsing, the
+HOLD/DRAINING/LOST decision machine (a failed probe never relaunches),
+checkpoint-sentinel signalling, exponential backoff, overlap
+re-allocation, and old-job =scancel=.  *Cluster-validate*: the live
+re-allocate/relaunch/=scancel= path and the shared-partition cgroup
+entry (Deliverable A open requirement) have not been exercised on
+Savio.  Deferred: =max_idle= idle-release, reading renew tunables from
+a =slurm.renew= config block (currently CLI flags), and the
+login-node-daemon controller variant (v2).
+
 ** Principles
 1. *Authoritative state from SLURM, not the watchdog.*  The renew
    controller polls =squeue -o %L= / =sacct -o State=, parsing

@@ -2279,6 +2279,206 @@ def _run_remote_capture(
         )
 
 
+def _relaunch_session(mirror, config, ctx, logger, dry_run):
+    """Re-allocate a fresh SLURM node and relaunch the agent detached.
+
+    Clears the recorded job/node so the executor allocates anew (rather
+    than adopting the slice we're replacing), rebuilds the manager (which
+    re-allocates and re-arms the on-node deadline timer), and launches
+    the agent in a *detached* tmux on the new node.  Returns the new job
+    id, or ``None`` if anything failed.
+
+    On the NFS-backed condo target the mirror persists across nodes, so
+    no re-clone is needed; ``sync=False`` leaves the working tree exactly
+    as the previous agent left it (it rehydrates from its handoff note).
+
+    NB: drives the real allocation + launch path; cluster-validate.  The
+    relaunch uses the mirror's *configured* agent (any per-invocation
+    ``--agent``/``--agent-command`` override from the original
+    ``collaborate`` is not persisted, so configure the agent in
+    config.yaml for a renewable target).
+    """
+    from .session import RemoteSession
+
+    _tgt = ((ctx.obj or {}).get("target_name") if ctx else None)
+    session = RemoteSession.load(mirror, target_name=_tgt)
+    # Force a fresh allocation: clear job AND node so _ensure_slurm_node
+    # does not adopt the slice we're about to replace.
+    session.slurm_job_id = None
+    session.compute_node = None
+    session.save()
+    try:
+        manager = _build_manager_for_mirror(
+            config, logger, dry_run, mirror, cli_ctx=ctx,
+        )
+        manager.launch_agent(
+            manager.context_for(mirror),
+            sync=False,
+            detached=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - relaunch must not crash the loop
+        logger.warning("relaunch failed: %s", exc)
+        return None
+    return RemoteSession.load(mirror, target_name=_tgt).slurm_job_id
+
+
+@app.command("renew")
+def renew(
+    ctx: typer.Context,
+    mirror: Optional[str] = typer.Argument(
+        None, help="Mirror name defined in configuration.",
+        shell_complete=_mirror_completion,
+    ),
+    drain_minutes: int = typer.Option(
+        20, "--drain-minutes",
+        help="Start a proactive re-allocation this many minutes before --time.",
+    ),
+    poll_interval: int = typer.Option(
+        60, "--poll-interval",
+        help="Seconds between SLURM job-state probes.",
+    ),
+    checkpoint_grace: int = typer.Option(
+        60, "--checkpoint-grace",
+        help="Seconds to let the agent commit/push after the drain nudge.",
+    ),
+    once: bool = typer.Option(
+        False, "--once",
+        help="Run a single probe/act cycle and exit (for cron-driven renewal "
+             "or smoke checks); pair with --poll-interval 0.",
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print commands without executing."),
+) -> None:
+    """Keep a persistent SLURM session alive across allocation turnover.
+
+    Monitors the current allocation and, as it nears its courtesy
+    ``--time`` (or if it vanishes at a maintenance reboot), re-allocates
+    a fresh node and relaunches the agent in a *detached* tmux.  Reattach
+    any time with ``sucoder attach``; stop with Ctrl-C (the allocation is
+    left running) or ``sucoder release`` (frees it).
+
+    Requires an existing ``sucoder collaborate`` session on a SLURM
+    target.  A transient probe failure (SSH blip) never triggers a
+    relaunch -- only a successful probe reporting the job gone/terminal
+    does.
+    """
+    mirror = _resolve_mirror_name(ctx, mirror)
+    config = _get_config(ctx)
+    settings = config.mirrors.get(mirror)
+    target = _get_active_target(ctx)
+    if target is not None and settings is not None:
+        from dataclasses import replace
+        settings = replace(settings, remote=target)
+    if not settings or not settings.remote or settings.remote.slurm is None:
+        typer.echo("renew requires a SLURM-backed remote target.", err=True)
+        raise typer.Exit(code=1)
+
+    from .session import RemoteSession
+    from .tunnel import SshControl, TunnelError
+    from .renew import JobStatus, RenewSettings, parse_time_left, run_renew_loop
+
+    _tgt_name = ((ctx.obj or {}).get("target_name") if ctx else None)
+    session = RemoteSession.load(mirror, target_name=_tgt_name)
+    if not session.slurm_job_id or not session.login_node:
+        typer.echo(
+            f"No live SLURM session for mirror {mirror}. "
+            "Run `sucoder collaborate` first.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    remote = settings.remote
+    logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
+    debug_ssh = _get_debug_ssh(ctx)
+    login_node = session.login_node
+
+    # Establish (or reuse) the gateway + login-node ControlMasters once;
+    # probe/scancel multiplex through them for the life of the loop.
+    gw_control = SshControl(
+        gateway=remote.gateway, **remote.ssh_control_kwargs(), debug=debug_ssh,
+    )
+    ln_control = SshControl(
+        gateway=login_node, **remote.ssh_control_kwargs(),
+        jump_host=remote.gateway, jump_control=gw_control, debug=debug_ssh,
+    )
+    try:
+        _ensure_ssh_visible(gw_control, remote.gateway, logger)
+        _ensure_ssh_visible(ln_control, login_node, logger)
+    except TunnelError as exc:
+        typer.echo(f"Failed to reach the cluster: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    def probe(job_id):
+        cmd = f"squeue --job {shlex.quote(str(job_id))} -h -o '%T|%L'"
+        result = _run_remote_capture(ln_control, login_node, cmd, debug=debug_ssh)
+        if result.returncode != 0:
+            logger.debug("probe failed rc=%s: %s", result.returncode, result.stderr.strip())
+            return JobStatus(ok=False)
+        line = result.stdout.strip()
+        if not line:
+            return JobStatus(ok=True, state=None)  # job no longer queued
+        state, _, left = line.partition("|")
+        return JobStatus(
+            ok=True, state=state.strip() or None, mins_left=parse_time_left(left),
+        )
+
+    def scancel(job_id):
+        _run_remote_capture(
+            ln_control, login_node, f"scancel {shlex.quote(str(job_id))}", debug=debug_ssh,
+        )
+
+    def request_checkpoint():
+        cur = RemoteSession.load(mirror, target_name=_tgt_name)
+        node = cur.compute_node
+        if not node:
+            return
+        cn = SshControl(
+            gateway=node, **remote.ssh_control_kwargs(),
+            jump_host=login_node, jump_control=ln_control,
+            extra_options=[
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "UserKnownHostsFile=/dev/null",
+            ],
+            debug=debug_ssh,
+        )
+        msg = "renew: re-allocation imminent -- commit, push, write handoff now"
+        write = (
+            'mkdir -p "$HOME/.cache/sucoder" && '
+            f'printf %s {shlex.quote(msg)} > "$HOME/.cache/sucoder/renew-requested"'
+        )
+        _run_remote_capture(cn, node, write, debug=debug_ssh)
+
+    def _log(message):
+        logger.info(message)
+        typer.echo(message)
+
+    rs = RenewSettings(
+        poll_interval=poll_interval,
+        drain_minutes=drain_minutes,
+        checkpoint_grace=checkpoint_grace,
+    )
+    typer.echo(
+        f"Renewing mirror {mirror}: watching job {session.slurm_job_id} on "
+        f"{session.compute_node or '?'} (drain {drain_minutes}m, poll "
+        f"{poll_interval}s). Ctrl-C to stop."
+    )
+    try:
+        run_renew_loop(
+            session.slurm_job_id, rs,
+            probe=probe,
+            relaunch=lambda: _relaunch_session(mirror, config, ctx, logger, dry_run),
+            scancel=scancel,
+            request_checkpoint=request_checkpoint,
+            log=_log,
+            max_iterations=1 if once else None,
+        )
+    except KeyboardInterrupt:
+        typer.echo(
+            "\nrenew stopped; the allocation is left running "
+            "(`sucoder release` to free it)."
+        )
+
+
 # SLURM partition names are alphanumeric plus `_`, `-`, `.`; a comma lets
 # `sinfo -p` take a list (e.g. `savio3,savio4_htc`).  Restricting to this
 # set (and rejecting a leading `-`) keeps shell metacharacters out and

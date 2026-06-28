@@ -523,6 +523,37 @@ srun --jobid=<JOBID> --overlap --pty bash -l
 tmux attach -t sucoder-<mirror>            # or just: tmux a
 #+end_src
 
+*** Persistent sessions (auto-renew)
+
+On a condo QOS with no wall-clock cap (e.g. =carleton_htc4_normal= on
+=savio4_htc=), a session can outlive any single allocation.  =sucoder
+renew= watches the current job and, as it nears its courtesy =--time=
+(or if it vanishes at a maintenance reboot), re-allocates a fresh node
+and relaunches the agent in a *detached* tmux --- so the presence
+survives turnover hands-off.
+
+#+begin_src shell
+sucoder -T carleton-htc collaborate          # start the session
+sucoder -T carleton-htc renew                # another terminal: keep it alive
+#+end_src
+
+The loop is conservative: a transient probe failure (SSH blip) never
+triggers a relaunch --- only a *successful* probe reporting the job
+gone/terminal does.  Tunables: =--drain-minutes= (lead time before
+=--time=, default 20), =--poll-interval= (seconds, default 60),
+=--checkpoint-grace= (seconds to let the agent commit/push after the
+drain nudge).  =--once= runs a single probe/act cycle, for cron-driven
+renewal.
+
+Before each turnover the loop writes
+=$HOME/.cache/sucoder/renew-requested= on the compute node; the agent
+(per its =system_prompt_extra=) commits, pushes, and writes a handoff
+note, then rehydrates from that note after relaunch.  Stop renewal with
+Ctrl-C (the allocation is left running) or =sucoder release= (frees it).
+
+See [[file:docs/persistent-presence.org][docs/persistent-presence.org]]
+for the design and the open cgroup-confinement caveat.
+
 *** SSH robustness
 
 =sucoder= handles several common failure modes transparently:

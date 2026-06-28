@@ -1513,6 +1513,21 @@ class MirrorManager:
             return None
         return result.stdout.strip()
 
+    @staticmethod
+    def _build_tmux_launch_command(tmux_name, agent_cmd_str, *, detached):
+        """Build the ``tmux new-session`` command that wraps the agent.
+
+        ``-A`` attaches-or-creates the session; the auto-renew loop adds
+        ``-d`` (detached) to relaunch on a fresh node WITHOUT attaching a
+        terminal, leaving a session the human can ``sucoder attach`` to.
+        ``-A -d`` is idempotent when the session already exists.
+        """
+        session_flags = ["-A", "-d"] if detached else ["-A"]
+        return [
+            "tmux", "new-session", *session_flags,
+            "-s", tmux_name, agent_cmd_str,
+        ]
+
     def launch_agent(
         self,
         ctx: MirrorContext,
@@ -1524,8 +1539,15 @@ class MirrorManager:
         command_override: Optional[Sequence[str]] = None,
         env_override: Optional[Mapping[str, str]] = None,
         supports_inline_prompt: Optional[bool] = None,
+        detached: bool = False,
     ) -> int:
-        """Launch the configured agent command within the mirror working tree."""
+        """Launch the configured agent command within the mirror working tree.
+
+        When ``detached`` is True (used by the auto-renew loop), a remote
+        agent is started in a *detached* tmux session and this returns
+        immediately instead of attaching a terminal; post-session hooks
+        are skipped because the agent is still running.
+        """
         mirror_path = self._ensure_mirror_exists(ctx)
 
         if task_name:
@@ -1613,17 +1635,16 @@ class MirrorManager:
             tmux_name = f"sucoder-{ctx.settings.name}"
             agent_cmd_str = f"{shlex.join(command)}; exec bash -l"
 
-            # new-session -A attaches if it already exists, creates if not.
-            command = [
-                "tmux", "new-session", "-A",
-                "-s", tmux_name,
-                agent_cmd_str,
-            ]
+            command = self._build_tmux_launch_command(
+                tmux_name, agent_cmd_str, detached=detached,
+            )
 
         self.logger.info("Starting agent command: %s", shlex.join(command))
 
-        if effective_mode == "exec":
-            # Replace current process with agent (preserves TTY)
+        if effective_mode == "exec" and not detached:
+            # Replace current process with agent (preserves TTY).  Never
+            # taken for a detached relaunch -- exec would replace the
+            # renew-loop process with tmux.
             self._exec_agent(command, mirror_path, env_to_use)
             # _exec_agent never returns; this is unreachable but satisfies type checker
             return 0  # pragma: no cover
@@ -1637,16 +1658,21 @@ class MirrorManager:
                 capture_output=False,
             )
 
-            # Post-session: snapshot any agent-written skills.
-            self._auto_commit_agent_skills(ctx)
+            # Post-session hooks belong to an *ended* attached session.
+            # A detached relaunch (auto-renew) leaves the agent running,
+            # so skip them here; they run when the eventual attached
+            # session ends.
+            if not detached:
+                # Post-session: snapshot any agent-written skills.
+                self._auto_commit_agent_skills(ctx)
 
-            # Post-session: optionally run compliance audits.  Opt-in
-            # via ``audit.auto_after_session`` in config.yaml; default
-            # is off, so this is a no-op for operators who haven't
-            # opted in.  Failures inside _maybe_run_audit are logged
-            # but not raised, so a flaky LLM call doesn't turn a
-            # successful agent session into a teardown error.
-            self._maybe_run_audit(ctx)
+                # Post-session: optionally run compliance audits.  Opt-in
+                # via ``audit.auto_after_session`` in config.yaml; default
+                # is off, so this is a no-op for operators who haven't
+                # opted in.  Failures inside _maybe_run_audit are logged
+                # but not raised, so a flaky LLM call doesn't turn a
+                # successful agent session into a teardown error.
+                self._maybe_run_audit(ctx)
 
             if result.returncode != 0:
                 raise MirrorError(
