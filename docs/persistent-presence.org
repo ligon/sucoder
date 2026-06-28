@@ -1,0 +1,229 @@
+#+title: Persistent Agent Presence on a Condo HTC Slice
+#+description: Design note + config for a free, long-lived sucoder presence on savio4_htc under co_carleton, with an auto-renew/respawn loop across forced turnover.
+
+* Motivation
+The default Savio flow (=-T savio-node=) parks an *exclusive*, *billed*
+=savio3= node for the agent's whole session.  For an interactive agent
+that is idle most of the time (it blocks on API round-trips, not CPU),
+that is expensive on both axes the =scrum-master-hpc= skill names:
+private SUs drawn from =fc_jevons=, and the social cost of holding a
+whole node others could use.
+
+The condo QOS =carleton_htc4_normal= on =savio4_htc= changes the
+calculus:
+
+- *No wall-clock cap.*  =MaxWall= is empty; the partition =MaxTime= is
+  =UNLIMITED=.  A job is not killed for running long.  (An FCA QOS like
+  =savio_normal= caps at 72h.)
+- *Normal, non-preemptible priority.*  Unlike a =co_*= lowprio job on
+  the general pool, a normal-QOS slice here is not evicted, so it can
+  *host* a persistent presence, not just run batch.
+- *Free.*  Usage is not deducted from an FCA allowance.
+- *Per-core scheduling.*  Request only the cores you need; the rest of
+  the node serves co-tenants.
+
+So this partition is the one place that is simultaneously free,
+persistent, and compute-bearing -- which a login node cannot be (login
+nodes forbid local compute and reap long processes).
+
+** What still bounds "indefinitely"
+Three limits the scheduler does not show:
+
+1. *Maintenance reboots* (~monthly/quarterly) drain and reboot nodes;
+   every job dies, unlimited-walltime included.  This is the real
+   ceiling.
+2. *The shared pool.*  =GrpTRES cpu=224, mem~2TB= is shared across all
+   =co_carleton= normal-priority users.  An idle interactive hold
+   consumes part of the group's pool and can block Carleton
+   co-members.  Etiquette limit.
+3. *BRC "don't waste resources" stance.*  Idle interactive sessions are
+   discouraged even when technically allowed.
+
+Design implications: keep the standing slice *thin*; set a *courtesy*
+=time= and renew rather than squatting unbounded; release when idle.
+
+* Deliverable A: target configuration
+Drop into =~/.sucoder/config.yaml=.  Uses only existing config keys
+(no parser change); it is the =savio-htc= shape re-pointed to the condo
+account.
+
+#+begin_src yaml
+targets:
+  carleton-htc:
+    gateway: hpc.brc.berkeley.edu
+    transfer_host: dtn.brc.berkeley.edu
+    mirror_root: ~/mirrors          # NFS $HOME -- survives node turnover
+    control_persist: 36h
+    slurm:
+      partition: savio4_htc
+      account: co_carleton
+      qos: carleton_htc4_normal
+      cpus_per_task: 4              # thin: fast to (re)schedule, light on the 224-core pool
+      mem: 16G
+      time: "24:00:00"             # courtesy cadence; NOT a hard cap (QOS has none)
+      # local_disk: false          # keep work on NFS, not /local (orphaned on re-grab)
+      system_prompt_extra: ~/.sucoder/prompts/carleton-htc.org
+#+end_src
+
+Knobs:
+
+- =cpus_per_task=/=mem= -- keep small (2--4 cores).  A thin ask
+  re-grabs faster under contention *and* is the most defensible thing
+  to be holding when a co-member queues.  Escalate by dispatching
+  *additional* short jobs, never by fattening the standing slice.
+- =time= -- this is your *re-grab cadence*, not a limit (see "courtesy
+  vs cadence" below).  The in-node deadline warner now parses the
+  =D-HH:MM:SS= day format correctly (Appendix), so a multi-day value
+  (e.g. =3-00:00:00=) is safe and cuts turnover frequency.
+
+** Open requirement: cgroup entry on a shared node
+=savio4_htc= is shared, so a job must stay inside its step cgroup or it
+will step on co-tenants and escape its slice.  =collaborate= currently
+does =salloc --no-shell= then *direct SSH* to the node
+(=cli.py:559=, =cli.py:689=).  On a shared node, direct SSH may land
+*outside* the job cgroup.  The correct entry is
+=srun --jobid=<J> --overlap --pty= (the path =attach --via-srun=
+already uses, =cli.py:1974=).  *Verify before trusting the htc target
+for real compute*: allocate, enter, and check =cat
+/proc/self/cgroup= and =nproc= reflect the 4-core slice, not the whole
+node.  If direct SSH escapes the cgroup, the executor's entry path for
+shared partitions must switch to =srun --overlap=.
+
+* Deliverable B: auto-renew / respawn spec
+** Goal
+A persistent presence survives the two forced-turnover events --
+courtesy =time= expiry and maintenance reboot -- with minimal manual
+intervention and graceful context handoff.
+
+** Principles
+1. *Authoritative state from SLURM, not the watchdog.*  The renew
+   controller polls =squeue -o %L= / =sacct -o State=, parsing
+   =D-HH:MM:SS= correctly.  It does not depend on the in-node
+   =slurm-deadline.warn= warner regardless of the latter's health
+   (now fixed; see Appendix) -- the two channels stay independent.
+2. *Files survive, process does not.*  The repo on NFS =$HOME= plus a
+   pushed mirror are durable; the agent's *conversation context* dies
+   on turnover.  Every turnover is therefore bracketed by
+   commit+push+handoff *before* and rehydrate-from-handoff *after*.
+3. *Thin and courteous.*  Renew re-allocates the *same thin slice*;
+   never escalate cores on renew.
+
+** State machine
+- *HOLDING* -- job =J= running on node =N=, agent in tmux
+  =sucoder-<mirror>=.
+- *DRAINING* (time-left < =courtesy_drain_min=, default 20m): signal
+  the agent to checkpoint (commit, push, write handoff); wait for its
+  "ready" marker or a timeout; allocate =J'= *while J still holds*
+  (overlap, so the queue slot is never dropped under contention);
+  relaunch the agent in =J'=; update session YAML; =scancel J=.
+- *LOST* (=squeue= empty / =sacct= terminal -- reboot, crash):
+  re-allocate =J'= with exponential backoff (a maintenance window may
+  keep the partition down for hours); relaunch; the agent rehydrates
+  from the last handoff plus =git log=.
+- *RELEASED* (=sucoder release=): controller exits; no renew.
+- *IDLE-RELEASE* (optional, etiquette): no agent activity for
+  =max_idle= -> push+handoff+=scancel=, so an unused presence stops
+  squatting the condo pool.  Re-=collaborate= to wake.
+
+** Courtesy vs cadence (the core tension)
+The QOS has no =MaxWall=, but a *running* job's =TimeLimit= cannot be
+raised by a non-operator, so "renew" means *re-allocate*, not extend.
+Therefore =time= directly sets turnover frequency, and *every turnover
+costs a context reset* (the agent process restarts).  Pick =time= to
+balance:
+
+- shorter (=24h=) -> more polite, but daily context resets;
+- longer (=3--7d=) -> rare resets approaching the reboot cadence, at
+  the cost of a longer idle hold.
+
+A *thin* slice makes the longer choice defensible (small footprint)
+and makes re-grab fast when turnover does happen.  Recommended:
+=time: "3-00:00:00"= with =max_idle= as the real courtesy guard.
+
+** Handoff / rehydration
+- Before turnover the agent writes a structured note to a fixed NFS
+  path, e.g. =~/mirrors/<mirror>/.sucoder/handoff.org=: current task,
+  branch, last commit SHA, open questions, next action.
+- On relaunch, =system_prompt_extra= instructs the agent to *first*
+  read the handoff + =git log -5= + =git status=, summarize the
+  resumed state back to the human, then continue.  This turns a cold
+  start into a one-message rehydration.
+
+** Signaling the agent to checkpoint
+The watchdog's *delivery* is the weak link, so the controller writes a
+durable sentinel (=~/.cache/sucoder/renew-requested=) AND the prompt
+instructs the agent to poll it at natural checkpoints (between tool
+batches), not passively.  Optional upgrade: =tmux send-keys= a notice
+into the agent pane (more reliable than a status-line flash, but
+fiddly to inject into an interactive TUI) -- defer past v1.
+
+** Where the controller runs
+- *v1: operator-side loop* -- =sucoder -T carleton-htc collaborate
+  --renew= (or =sucoder renew <mirror>=) reuses the warm
+  ControlMaster, session YAML, and =_ensure_slurm_node=.  Smallest
+  delta to existing code.  Caveat: dies if the operator box sleeps.
+- *v2: login-node daemon* -- more autonomous (survives laptop sleep)
+  but adds a login-node footprint and itself dies on login-node
+  reboot.  Revisit only if v1's sleep caveat bites.
+
+** Proposed CLI / config surface
+#+begin_src yaml
+slurm:
+  renew:
+    courtesy_drain_min: 20     # start DRAINING this many minutes before time
+    overlap: true              # allocate J' before cancelling J
+    max_idle: "12h"            # IDLE-RELEASE threshold (0 = never)
+    backoff_max: "30m"         # LOST re-allocate backoff ceiling
+#+end_src
+
+- =sucoder -T carleton-htc collaborate --renew [--renew-detach]=
+- =sucoder -T carleton-htc renew <mirror>=  (attach loop to a live session)
+
+** Interaction with the existing watchdog
+The renew controller *supersedes* the in-node timer's renewal role.
+Keep =_start_slurm_timer= only as a human courtesy (after fixing the
+Appendix bug and improving delivery), or retire it.  Nothing in the
+renew path reads =slurm-deadline.warn=.
+
+** Open questions
+1. Shared-partition cgroup entry (Deliverable A "Open requirement") --
+   must resolve before real compute on the slice.
+2. Reliable checkpoint signal -- sentinel + prompt (v1) vs
+   =tmux send-keys= (later).
+3. Controller home across operator sleep -- operator-side (v1) vs
+   login-node daemon (v2).
+4. Maintenance-window awareness -- reactive =LOST= re-allocate (v1) vs
+   pre-draining on a fed-in schedule (later).
+
+* Appendix: watchdog day-format bug
+=_start_slurm_timer= (=sucoder/cli.py:721=) parses =squeue -o %L=
+time-left at =cli.py:829--836=:
+
+#+begin_src bash
+IFS=: read -ra parts <<< "$left"
+if [ ${#parts[@]} -eq 3 ]; then
+    mins=$(( ${parts[0]#0}*60 + ${parts[1]#0} ))     # assumes HH:MM:SS
+...
+#+end_src
+
+When >= 1 day remains, =%L= is =D-HH:MM:SS=.  Splitting on =:= yields
+=parts=("D-HH" "00" "00")=, and =$(( D-HH*60 + 00 ))= evaluates as
+arithmetic =D - HH*60 + 00=, collapsing =mins= to ~the day count.  The
+timer then fires all three warnings in the first minutes, sets the
+WARN5/15/30 sentinels, and stays silent forever after -- including at
+the true deadline.  A =24:00:00= job mostly escapes (it drops below a
+day within seconds, before the first poll), which is why the symptom is
+*silence* rather than *spurious noise*; a multi-day =time= is fully
+broken.
+
+*Fixed* (this change): the parser is extracted to a =left_to_mins=
+bash helper (module constant =_SLURM_TIME_LEFT_TO_MINS_SH= in
+=sucoder/cli.py=) that splits the optional =D-= day prefix on =-=
+before the =:= split, forces base-10 to dodge octal traps (=08=/=09=),
+and returns a large sentinel for non-numeric values
+(=UNLIMITED=/=INVALID=/empty) so no spurious warning fires.  Covered by
+=tests/test_slurm_timer.py= (=3-00:00:00=, =23:59:00=, =45:00=,
+=UNLIMITED=, ...).  As separate hardening, each warning now sets a 15s
+per-session =display-time= so a full-screen agent TUI does not redraw
+over it before the human notices.  The renew controller still reads
+SLURM state directly and does not depend on the warner.
