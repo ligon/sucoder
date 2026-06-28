@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import warnings
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
@@ -263,6 +264,27 @@ class Config:
 
 class ConfigError(RuntimeError):
     """Raised when configuration cannot be loaded or validated."""
+
+
+class ConfigWarning(UserWarning):
+    """Non-fatal configuration problem (e.g. an ignored/misplaced key)."""
+
+
+# Keys accepted inside a ``slurm:`` block.  Anything else is ignored
+# with a :class:`ConfigWarning` -- most often a target-level option
+# mistakenly nested under ``slurm:`` (e.g. ``system_prompt_extra``),
+# which the parser silently drops, so the option appears to do nothing.
+_VALID_SLURM_KEYS = frozenset({
+    "partition", "account", "time", "qos",
+    "cpus_per_task", "mem", "local_disk",
+})
+# Target-level options commonly misplaced under ``slurm:``; warned about
+# with a tailored "move it up a level" hint.
+_TARGET_LEVEL_KEYS = frozenset({
+    "gateway", "transfer_host", "mirror_root", "ssh_options",
+    "control_persist", "keepalive_interval", "keepalive_count_max",
+    "system_prompt_extra",
+})
 
 
 def _expand_path(raw: Optional[str]) -> Optional[Path]:
@@ -829,6 +851,28 @@ def _parse_slurm_config(raw: Any) -> Optional[SlurmConfig]:
     local_disk = raw.get("local_disk")
     if local_disk is not None and not isinstance(local_disk, str):
         raise ConfigError("`slurm.local_disk` must be a string path (e.g. '/local').")
+
+    # Surface keys that the parser will ignore.  The common case is a
+    # target-level option (notably ``system_prompt_extra``) indented one
+    # level too deep, under ``slurm:`` instead of beside it -- which
+    # silently changes nothing.  Warn rather than error so existing
+    # configs keep loading.
+    for key in sorted(set(raw) - _VALID_SLURM_KEYS):
+        if key in _TARGET_LEVEL_KEYS:
+            warnings.warn(
+                f"`{key}` is nested under `slurm:` but is a target-level "
+                f"option; it is being ignored. Move it up one level, to a "
+                f"sibling of `slurm:`.",
+                ConfigWarning,
+                stacklevel=2,
+            )
+        else:
+            warnings.warn(
+                f"Unknown key `{key}` under `slurm:` is ignored "
+                f"(valid keys: {', '.join(sorted(_VALID_SLURM_KEYS))}).",
+                ConfigWarning,
+                stacklevel=2,
+            )
 
     return SlurmConfig(
         partition=partition,
