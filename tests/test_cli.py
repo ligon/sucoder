@@ -670,6 +670,139 @@ def test_attach_via_srun_uses_overlap_step(tmp_path, monkeypatch):
     assert "tmux attach-session -t sucoder-sample" in remote_cmd, remote_cmd
 
 
+def _confined_config(tmp_path: Path) -> Path:
+    """Write a config with a ``confined`` SLURM target named fake-confined."""
+    human = os.environ.get("USER", "coder")
+    mirror_root = tmp_path / "mirrors"
+    mirror_root.mkdir(exist_ok=True)
+    canonical_repo = tmp_path / "canonical"
+    canonical_repo.mkdir(exist_ok=True)
+    config_content = f"""
+human_user: {human}
+agent_user: {human}
+agent_group: {human}
+mirror_root: {mirror_root}
+mirrors:
+  sample:
+    canonical_repo: {canonical_repo}
+    mirror_name: sample
+    branch_prefixes:
+      human: {human}
+      agent: {human}
+targets:
+  fake-confined:
+    gateway: gw.example.org
+    transfer_host: dtn.example.org
+    mirror_root: ~/mirrors
+    slurm:
+      partition: savio4_htc
+      account: co_carleton
+      qos: carleton_htc4_normal
+      cpus_per_task: 4
+      mem: 16G
+      confined: true
+"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_content, encoding="utf-8")
+    return config_path
+
+
+def test_attach_confined_uses_srun_overlap_dedicated_socket(tmp_path, monkeypatch):
+    """`attach` on a confined target must join via `srun --overlap` on the
+    dedicated `-L` socket (so it lands INSIDE the job cgroup) and must NOT
+    carry the `|| tmux new-session` fallback (which would spawn an
+    unconfined orphan).  via-srun is auto-selected -- the user need not pass
+    it."""
+    from sucoder import session as session_mod
+
+    runner = CliRunner()
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+
+    config_path = _confined_config(tmp_path)
+
+    sessions_dir = fake_home / ".sucoder" / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    (sessions_dir / "sample--fake-confined.yaml").write_text(
+        "login_node: ln001\nslurm_job_id: 1234567\ncompute_node: n0148\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(session_mod, "_session_dir", lambda: sessions_dir)
+
+    def _fake_squeue(cmd, **kw):
+        return SimpleNamespace(stdout="RUNNING\n", stderr="", returncode=0)
+    monkeypatch.setattr(subprocess, "run", _fake_squeue)
+
+    captured: dict = {}
+    def _fake_execvp(prog, argv):
+        captured["argv"] = list(argv)
+        raise SystemExit(0)
+    monkeypatch.setattr(os, "execvp", _fake_execvp)
+
+    # NOTE: no --via-srun; confined must force it.
+    result = runner.invoke(
+        cli.app,
+        ["--config", str(config_path), "-T", "fake-confined", "attach", "sample"],
+    )
+    assert result.exit_code == 0, (result.stdout, result.exception)
+
+    argv = captured["argv"]
+    # Single hop via gateway to the login node (srun routes by jobid).
+    assert argv[argv.index("-J") + 1] == "gw.example.org", argv
+    assert "ln001" in argv and not any("n0148" in p for p in argv), argv
+    remote_cmd = argv[-1]
+    assert "srun --jobid=1234567 --overlap --pty" in remote_cmd, remote_cmd
+    # Dedicated socket + sanitized session name; attach-session only.
+    assert "tmux -L sucoder-sample attach-session -t sucoder-sample" in remote_cmd, remote_cmd
+    # NO new-session fallback for confined.
+    assert "new-session" not in remote_cmd, remote_cmd
+
+
+def test_attach_unconfined_keeps_new_session_fallback(tmp_path, monkeypatch):
+    """Regression: the confined-only attach branch must NOT perturb the
+    unconfined attach command -- it still carries the `|| tmux new-session`
+    fallback and uses the default socket (no `-L`)."""
+    from sucoder import session as session_mod
+
+    runner = CliRunner()
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+
+    config_path = _slurm_config(tmp_path)
+    sessions_dir = fake_home / ".sucoder" / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    (sessions_dir / "sample--fake-slurm.yaml").write_text(
+        "login_node: ln001\nslurm_job_id: 1234567\ncompute_node: n0148\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(session_mod, "_session_dir", lambda: sessions_dir)
+
+    def _fake_squeue(cmd, **kw):
+        return SimpleNamespace(stdout="RUNNING\n", stderr="", returncode=0)
+    monkeypatch.setattr(subprocess, "run", _fake_squeue)
+
+    captured: dict = {}
+    def _fake_execvp(prog, argv):
+        captured["argv"] = list(argv)
+        raise SystemExit(0)
+    monkeypatch.setattr(os, "execvp", _fake_execvp)
+
+    result = runner.invoke(
+        cli.app,
+        ["--config", str(config_path), "-T", "fake-slurm", "attach", "sample", "--via-srun"],
+    )
+    assert result.exit_code == 0, (result.stdout, result.exception)
+    remote_cmd = captured["argv"][-1]
+    # Unchanged unconfined form: default socket (no -L), with the fallback.
+    assert "tmux attach-session -t sucoder-sample" in remote_cmd, remote_cmd
+    assert "|| " in remote_cmd and "tmux new-session -s sucoder-sample" in remote_cmd, remote_cmd
+    assert "-L sucoder-sample" not in remote_cmd, remote_cmd
+
+
 def test_attach_via_srun_rejects_non_slurm_target(tmp_path, monkeypatch):
     """`--via-srun` only makes sense for SLURM targets — refuse it on
     a plain remote target so the user doesn't think it did something

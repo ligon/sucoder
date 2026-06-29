@@ -2046,6 +2046,13 @@ def attach(
     # (srun finds the node from the jobid).
     compute = node or session.compute_node
     srun_prefix = ""
+    confined = remote.slurm is not None and remote.slurm.confined
+    if confined:
+        # A confined agent runs INSIDE its job cgroup; a direct SSH to the
+        # compute node would land OUTSIDE it (the very escape confinement
+        # exists to prevent).  So always join via `srun --overlap`, even
+        # though compute_node is recorded.
+        via_srun = True
     if remote.slurm is not None:
         # SLURM target: NEVER silently fall through to a login-node shell.
         # A bare login-node tmux masquerades as the agent session and
@@ -2121,14 +2128,25 @@ def attach(
         attach_target = session.login_node
         jump_chain = remote.gateway
 
-    tmux_name = f"sucoder-{mirror}"
-    # When via_srun is set, `srun_prefix` is applied to both branches
-    # so the fallback `tmux new-session` also runs inside the
-    # allocation, not on the login node.
-    attach_cmd = (
-        f"{srun_prefix}tmux attach-session -t {shlex.quote(tmux_name)} "
-        f"|| {srun_prefix}tmux new-session -s {shlex.quote(tmux_name)}"
-    )
+    if confined:
+        # Confined attach: dedicated `-L` socket + sanitized session name,
+        # and NO `|| tmux new-session` fallback (which would spawn an
+        # unconfined orphan on the login node).  `confined_attach_command`
+        # already carries its own `srun --jobid --overlap --pty` prefix, so
+        # `srun_prefix` is unused here.
+        session_name, socket = confined_tmux_target(mirror)
+        attach_cmd = shlex.join(
+            confined_attach_command(session.slurm_job_id, session_name, socket)
+        )
+    else:
+        tmux_name = f"sucoder-{mirror}"
+        # When via_srun is set, `srun_prefix` is applied to both branches
+        # so the fallback `tmux new-session` also runs inside the
+        # allocation, not on the login node.
+        attach_cmd = (
+            f"{srun_prefix}tmux attach-session -t {shlex.quote(tmux_name)} "
+            f"|| {srun_prefix}tmux new-session -s {shlex.quote(tmux_name)}"
+        )
     os.execvp("ssh", [
         "ssh", "-t",
         *control_opts,
@@ -2470,6 +2488,7 @@ def renew(
         raise typer.Exit(code=1)
 
     remote = settings.remote
+    confined = remote.slurm is not None and remote.slurm.confined
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     debug_ssh = _get_debug_ssh(ctx)
     login_node = session.login_node
@@ -2510,6 +2529,17 @@ def renew(
         )
 
     def request_checkpoint():
+        msg = "renew: re-allocation imminent -- commit, push, write handoff now"
+        write = (
+            'mkdir -p "$HOME/.cache/sucoder" && '
+            f'printf %s {shlex.quote(msg)} > "$HOME/.cache/sucoder/renew-requested"'
+        )
+        if confined:
+            # The sentinel lives on NFS $HOME (visible from the login node)
+            # and the confined agent polls it from inside its cgroup -- no
+            # compute-node SSH (which would land OUTSIDE the cgroup) needed.
+            _run_remote_capture(ln_control, login_node, write, debug=debug_ssh)
+            return
         cur = RemoteSession.load(mirror, target_name=_tgt_name)
         node = cur.compute_node
         if not node:
@@ -2522,11 +2552,6 @@ def renew(
                 "-o", "UserKnownHostsFile=/dev/null",
             ],
             debug=debug_ssh,
-        )
-        msg = "renew: re-allocation imminent -- commit, push, write handoff now"
-        write = (
-            'mkdir -p "$HOME/.cache/sucoder" && '
-            f'printf %s {shlex.quote(msg)} > "$HOME/.cache/sucoder/renew-requested"'
         )
         _run_remote_capture(cn, node, write, debug=debug_ssh)
 

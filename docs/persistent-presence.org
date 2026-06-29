@@ -68,9 +68,26 @@ outcome" + "Must-keep fixes" below are the spec):
    confined never opens; renew.py (reads SLURM state directly) +
    =--time= backstop cover turnover, so this is a lost courtesy not a
    safety hole.
-4. Gate =attach= (=-L=, drop =|| new-session=), =release=, =renew=
-   (=sbatch= relaunch, block until RUNNING), skip =_adopt_*=.
+4. *[DONE]* Gated =attach=/=release=/=renew= for confined.  =attach=:
+   a confined-only branch forces =via_srun= (direct SSH to the compute
+   node escapes the cgroup), builds the command from
+   =confined_attach_command= (=srun --overlap --pty tmux -L <socket>
+   attach-session=, *no* =|| new-session= fallback), sanitized session
+   name; the unconfined =attach_cmd= stays byte-identical (regression-
+   tested).  =release=: unchanged -- =scancel <job_id>= is name-
+   independent and the sibling-detach branch is unreachable for confined
+   (each =sbatch= is its own job, so =holders_of_job= is empty).  =renew=:
+   the =sbatch= relaunch goes through =_launch_confined= (step 3), which
+   blocks until RUNNING (the poll), so the overlap-scancel no-gap
+   invariant holds; =_adopt_*= is naturally skipped (confined bypasses
+   =_ensure_slurm_node=); =request_checkpoint= writes the renew sentinel
+   over the *login* node for confined (NFS =$HOME=; no compute-node SSH).
+   Tests: =test_cli.py= (confined attach srun/-L/no-new-session; unconfined
+   attach unchanged).
 5. Add =confined: true= to the =carleton-htc= stanza (inert until 1-4).
+   *Still the LAST step* -- and HUMAN-GATED: it needs a live-cluster
+   validation pass (collaborate -> =nproc=4= + job cgroup; detach/attach;
+   release; ControlMaster-lapse survival) under the =coder= tunnel + OTP.
 
 *Testing note (human's insight):* all of the above drives the cluster
 through the *login-node ControlMaster* sucoder already maintains (same
