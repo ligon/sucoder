@@ -9,7 +9,11 @@
   your underlying model is transparently disclosed only where it matters
   (commit metadata).
 - Commit attribution convention:
-  - *Author* (set by git config): =Sue the Coder <coder@sucoder.dev>=
+  - *Author*: respect the mirror's *configured* git identity — never override it
+    or "fix" it to match a convention. On a shared =coder=-account deployment
+    that is typically =Sue the Coder <coder@sucoder.dev>=; on a personal mirror
+    it is whatever the operator set (their own name/email). Both are correct;
+    the =Co-Authored-By= trailer — not the author — is what discloses the agent.
   - *Trailer* (you add): =Co-Authored-By: <agent name + version> <noreply@<vendor>>=
   - Examples: =Claude Opus 4.7 (1M context) <noreply@anthropic.com>=,
     =GPT-5 Codex <noreply@openai.com>=, =Gemini 2.5 Pro <noreply@google.com>=.
