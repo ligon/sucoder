@@ -1560,6 +1560,53 @@ class MirrorManager:
         )
         return agent_cmd_str.replace(sentinel, f'"$(cat {remote_path})"')
 
+    @staticmethod
+    def _build_batch_script(
+        *,
+        tmux_session: str,
+        socket: str,
+        mirror_path: str,
+        agent_cmd_str: str,
+        env: Optional[Mapping[str, str]] = None,
+    ) -> str:
+        """sbatch script body for a ``confined`` launch (shared partitions).
+
+        Runs as the job's *main task* -- natively inside the job cgroup --
+        so the tmux server it starts (and the agent inside it) are confined
+        to the reserved cores.  Spike-validated on savio4_htc 2026-06-29
+        (=nproc= 4 in the pane, =/proc/self/cgroup= -> job step).
+
+        A *dedicated* tmux socket (``-L <socket>``) is REQUIRED: without it
+        tmux reuses any already-running shared server (e.g. another
+        session's, which lives in a different cgroup), and the session
+        dies on contact -- the v1/v2 spike failure.  Env vars are prepended
+        to the window command because ``sbatch`` does not carry
+        ``agent_launcher.env``.  ``new-session -A -d`` is idempotent and
+        detached; the human attaches separately via
+        ``srun --overlap --pty tmux -L <socket> attach``.  The keeper loop
+        holds the job while the session lives; when the agent exits, the
+        session ends, the keeper exits, and the job frees.
+        """
+        q_sess = shlex.quote(tmux_session)
+        q_sock = shlex.quote(socket)
+        q_dir = shlex.quote(mirror_path)
+        exports = ""
+        if env:
+            exports = "".join(
+                f"export {shlex.quote(k)}={shlex.quote(str(v))}; "
+                for k, v in env.items()
+            )
+        q_win = shlex.quote(exports + agent_cmd_str)
+        return (
+            "#!/bin/bash\n"
+            "set -u\n"
+            f"cd {q_dir} || exit 1\n"
+            f"tmux -L {q_sock} new-session -A -d -s {q_sess} {q_win}\n"
+            f"while tmux -L {q_sock} has-session -t {q_sess} 2>/dev/null; do\n"
+            "    sleep 15\n"
+            "done\n"
+        )
+
     def launch_agent(
         self,
         ctx: MirrorContext,

@@ -1,6 +1,153 @@
 #+title: Persistent Agent Presence on a Condo HTC Slice
 #+description: Design note + config for a free, long-lived sucoder presence on savio4_htc under co_carleton, with an auto-renew/respawn loop across forced turnover.
 
+* Confined launch on shared partitions (sbatch)
+** The problem (confirmed on n0052.savio4, 2026-06-29)
+On a *shared* partition the agent must run inside its SLURM job cgroup
+or it is not confined to the cores it reserved.  =collaborate=
+allocates with =salloc --no-shell= then reaches the node by *direct
+SSH*.  Measured on Savio =savio4_htc=:
+
+- A direct-SSH session lands in =/user.slice/.../session-cN.scope= (a
+  logind user scope) with =nproc= 56 (whole node) -- NOT the job cgroup.
+  This held with a *single* job on the node, so =pam_slurm_adopt= is not
+  adopting here (absent or disabled on =savio4_htc=; =/etc/pam.d/sshd=
+  is root-only, so we can't read which).
+- A step joined with =srun --jobid=J --overlap --pty= lands in the job
+  cgroup: =nproc= 4.  So core confinement *is* enforced (cpuset); the
+  only problem is getting the agent into the cgroup.
+
+On =savio3= (exclusive, =savio-node=) this never showed -- the whole
+node is yours.
+
+** Rejected: host-step (=srun --overlap= + keeper)
+A backgrounded =srun --overlap bash <keeper>= on the login node was
+designed and partly built (=_build_host_step_script=, the
+=launch_via_srun= flag).  A four-reviewer red-team rejected it:
+
+- The login-node =srun= is the step's *shepherd*; if the ControlMaster
+  lapses, the login node reaps it, or the laptop drops, the step (cgroup
+  + tmux) dies -- *worse* persistence than direct-SSH tmux today.
+- The executor connects to the *compute* node (=is_compute_node=True=),
+  so "run srun on the login node via the executor" was wrong -- it would
+  background srun inside the very user scope we're escaping.
+- Holding a *step* alive with a sleep-loop is non-idiomatic; the *job*
+  should own tmux.
+
+** Chosen: sbatch wrapper
+=sbatch= a script whose body runs as the job's main task -- *natively
+inside the job cgroup*: no =--overlap= step, no keeper-babysitter step,
+no fragile login-node shepherd.  =slurmd= manages it on the node, so it
+survives ControlMaster expiry, login-node reboot, and laptop sleep --
+*more* persistent than today's direct-SSH tmux.
+
+Flow for a =confined= target (renamed from =launch_via_srun=):
+
+1. Build =agent_cmd_str= (prelude externalized) as today.
+2. Write the prelude file and the batch script to NFS
+   =$HOME/.cache/sucoder/= via the login/DTN (NFS -> node-independent).
+3. ~sbatch --partition .. --account .. --qos .. --cpus-per-task ..
+   --mem .. --time .. -J sucoder-<mirror> -o <log> <script>~ -> job id.
+4. Poll =squeue= until RUNNING + node known (bounded; surface PENDING /
+   queue waits instead of hanging).
+5. The batch script (in the job cgroup) runs:
+   #+begin_src bash
+   #!/bin/bash
+   set -u
+   SESSION="sucoder-<mirror>"
+   cd <mirror_path>
+   tmux new-session -A -d -s "$SESSION" "<agent_cmd_str>"
+   while tmux has-session -t "$SESSION" 2>/dev/null; do sleep 15; done
+   #+end_src
+6. Poll until the tmux session exists (bounded; on failure surface the
+   job log -- the detached pane's output is NOT on the script's stdout).
+7. Attach: =srun --jobid=J --overlap --pty tmux attach -t <name>= from
+   the login node (the existing =attach --via-srun= path; auto-selected
+   for =confined= targets; *drop* the =|| new-session= fallback so attach
+   never spawns an unconfined orphan).
+
+Renew = =sbatch= a fresh job on turnover (simpler than the host-step
+relaunch; the renew loop's probe/scancel logic is unchanged).
+Release = =scancel=.
+
+** Open design decisions (RED-TEAM THESE)
+1. *Agent-exit teardown.*  With =; exec bash -l= the tmux session
+   outlives a clean agent =/exit=, so the keeper loops forever and the
+   job holds the (free but shared) condo pool until =release=.  Options:
+   (a) keep =exec bash -l= + a courtesy =--time= cap so the job
+   auto-frees at walltime; (b) drop =exec bash -l= for =confined= targets
+   so agent-exit -> session ends -> keeper exits -> job frees (loses
+   post-exit reattach; re-=collaborate= re-=sbatch=s); (c) idle timeout
+   in the keeper.  Lean (a)+(c).
+2. *Deadline warnings.*  =_start_slurm_timer= runs a nohup on the compute
+   node today; under sbatch the batch script can emit the 30/15/5-min
+   warnings itself (one place, in-cgroup).  Fold in or keep separate?
+3. *Flag name.*  =confined= vs =sbatch_launch= vs =shared_node=
+   (intent-named =confined= preferred; nothing is committed yet).
+4. *Node selection / sharing.*  sbatch can target a node with
+   =--nodelist=; the "adopt an existing job to share a node" feature does
+   not apply (each =sbatch= is its own job).  =confined= targets forgo
+   node-sharing.
+5. *Job stdout.*  =sbatch -o ~/.cache/sucoder/job-<mirror>-%j.out=; the
+   batch script must echo a clear marker if =new-session= fails so launch
+   failures are diagnosable.
+6. *Queue wait.*  =sbatch= may queue (vs =salloc='s immediate-or-fail);
+   collaborate must show "PENDING / waiting for the scheduler".
+
+** Must-keep fixes from the review (any in-cgroup launch)
+- =tmux new-session -A -d= (idempotent), not bare =-d=.
+- Sanitize the tmux session name (only the prelude filename is today).
+- Bound every poll; log the *agent's* stderr, not just the launcher's.
+- Drop the =|| tmux new-session= attach fallback for =confined= targets.
+
+** Red-team outcome (sbatch design, 2026-06-29)
+Three-reviewer red-team; survivors folded in.  *Resolved decisions:*
+keep =_start_slurm_timer= as-is (its =tmux display-message= reaches the
+human; batch stdout only hits the job log -- do NOT fold warnings in);
+launch the agent via =bash -lc= so the login env (PATH/nvm) resolves;
+carry =agent_launcher.env= vars into the launch (sbatch drops them);
+=--time= as a hard backstop against squatting (idle-timeout deferred);
+flag name =confined=; skip =_adopt_existing_allocation=; pass
+=--no-requeue=.
+
+*Additional code-certain fixes:* write the prelude + batch script to NFS
+via the login/DTN *before* =sbatch= (=_externalize_prelude= currently
+targets the not-yet-existent compute node); split =launch_agent='s
+remote block so confined = submit-then-=srun --overlap= attach while the
+non-confined path stays byte-identical (regression-test it); add a
+bounded RUNNING-poll that surfaces the queue reason and, on timeout,
+leaves the job queued with a "still PENDING" message rather than an
+empty-=%N= abort that *leaks* the job; persist the node before returning
+so the reuse-probe doesn't submit a second job; ensure the sbatch
+relaunch blocks until RUNNING so renew's overlap-scancel keeps its
+no-gap invariant; delete the dead host-step code
+(=_build_host_step_script=, the =launch_via_srun= flag).
+
+*Cluster-only assumptions -- validate with the spike before building:*
+(1) an actual =sbatch= job confines the tmux pane (=nproc=4=); (2) the
+agent starts in the non-interactive batch + detached-tmux context
+(PATH, no TTY client); (3) the tmux socket is reachable from direct SSH
+(so =attach=/=release=/timer needn't all go through =srun --overlap=);
+(4) persistence across detach.  Spike: =~/.sucoder/sucoder-sbatch-spike.sh=.
+
+*Spike result (n0055.savio4, 2026-06-29): ALL GREEN.*  =pane_nproc=4=,
+=pane_cgroup= -> =job_*/step_batch=, =claude= resolves on PATH (it lives
+in =~/.local/bin=, so =bash -lc= is belt-and-suspenders, not required),
+and the job persisted.  *Required detail the spike surfaced:* a *per-
+mirror dedicated tmux socket* (=tmux -L sucoder-<mirror>=).  Without it
+tmux reuses an already-running shared server (e.g. the operator's live
+=collaborate= session, in a different cgroup) and the new session dies
+on contact -- the v1/v2 spike failure.  Folded into
+=_build_batch_script= (tmux 2.7 on the node; =-A -d=, =-L=, env-export,
+=cd= all confirmed via =bash -n= + the spike).
+
+** Cluster validation
+On =carleton-htc=: =collaborate=, then in the agent =nproc= (expect 4)
+and =cat /proc/self/cgroup= (expect a job cgroup, not =user.slice/...=).
+Detach and re-=attach=; confirm survival + confinement.  =release= tears
+down.  Let the ControlMaster lapse / drop the laptop and confirm the job
++ agent survive (the persistence win over host-step).
+
 * Motivation
 The default Savio flow (=-T savio-node=) parks an *exclusive*, *billed*
 =savio3= node for the agent's whole session.  For an interactive agent

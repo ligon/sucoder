@@ -51,6 +51,10 @@ class SlurmConfig:
     mem: Optional[str] = None            # e.g. "16G"; required on shared
                                          # partitions where the default is tiny
     local_disk: Optional[str] = None     # e.g. "/local" — bypass shared FS
+    confined: bool = False               # shared partitions: launch the agent
+                                         # via `sbatch` so it runs inside the
+                                         # job cgroup, confined to the reserved
+                                         # cores instead of the whole node
 
 
 @dataclass
@@ -276,7 +280,7 @@ class ConfigWarning(UserWarning):
 # which the parser silently drops, so the option appears to do nothing.
 _VALID_SLURM_KEYS = frozenset({
     "partition", "account", "time", "qos",
-    "cpus_per_task", "mem", "local_disk",
+    "cpus_per_task", "mem", "local_disk", "confined",
 })
 # Target-level options commonly misplaced under ``slurm:``; warned about
 # with a tailored "move it up a level" hint.
@@ -852,6 +856,10 @@ def _parse_slurm_config(raw: Any) -> Optional[SlurmConfig]:
     if local_disk is not None and not isinstance(local_disk, str):
         raise ConfigError("`slurm.local_disk` must be a string path (e.g. '/local').")
 
+    confined = raw.get("confined", False)
+    if not isinstance(confined, bool):
+        raise ConfigError("`slurm.confined` must be a boolean when provided.")
+
     # Surface keys that the parser will ignore.  The common case is a
     # target-level option (notably ``system_prompt_extra``) indented one
     # level too deep, under ``slurm:`` instead of beside it -- which
@@ -882,6 +890,7 @@ def _parse_slurm_config(raw: Any) -> Optional[SlurmConfig]:
         cpus_per_task=cpus_per_task,
         mem=mem,
         local_disk=local_disk,
+        confined=confined,
     )
 
 
