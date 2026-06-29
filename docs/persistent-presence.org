@@ -1,6 +1,45 @@
 #+title: Persistent Agent Presence on a Condo HTC Slice
 #+description: Design note + config for a free, long-lived sucoder presence on savio4_htc under co_carleton, with an auto-renew/respawn loop across forced turnover.
 
+* Status & handoff (2026-06-29)
+*Branch* =feat/confined-sbatch-launch= off =main= (=main= unchanged at
+=e2bc338=, pulled by the human).  Commits: =9abed14= (foundation),
+=563eab5= (sbatch arg builder).  Not pushed.  ~431 tests pass.
+
+*Mechanism: cluster-validated.*  Spike on n0055.savio4 confirmed an
+=sbatch= batch task runs in the job cgroup, =nproc=4= in the tmux pane,
+=claude= on PATH, persists.  *Required detail it surfaced:* a per-mirror
+dedicated tmux socket (=tmux -L sucoder-<mirror>=) -- a shared socket
+reuses another session's server (wrong cgroup) and dies.
+
+*Built + tested* (gated by =slurm.confined=, default off -> existing
+targets byte-identical): =config.py= =confined= flag;
+=mirror.py:_build_batch_script= (the sbatch body: =-L= socket, env-carry,
+=cd=, =-A -d=, keeper); =cli.py:_build_sbatch_command=.  Tests:
+=tests/test_batch_script.py=, =tests/test_sbatch_command.py=.
+
+*Remaining: the allocation/launch restructure* (this section + "Red-team
+outcome" + "Must-keep fixes" below are the spec):
+1. =_build_executor=/=_ensure_slurm_node=: skip salloc for =confined=
+   (the =sbatch= fuses allocate+launch).
+2. Extract =agent_cmd_str= from =mirror.py:launch_agent= (~1731) and
+   write the prelude via the *login* node, not the not-yet-existent
+   compute node (=_externalize_prelude= uses the compute-node executor).
+3. Confined =collaborate=: write prelude+script to NFS via login/DTN ->
+   =sbatch= (=_build_sbatch_command=) -> poll RUNNING+node (bounded;
+   surface PENDING, don't orphan) -> persist node -> attach via
+   =srun --overlap --pty tmux -L=.
+4. Gate =attach= (=-L=, drop =|| new-session=), =release=, =renew=
+   (=sbatch= relaunch, block until RUNNING), skip =_adopt_*=.
+5. Add =confined: true= to the =carleton-htc= stanza (inert until 1-4).
+
+*Testing note (human's insight):* all of the above drives the cluster
+through the *login-node ControlMaster* sucoder already maintains (same
+path as today's =salloc=/=attach=/=srun=).  So a thin harness can submit
+the confined batch script via the tunnel and observe -- the restructure
+is testable in pieces against the live cluster from the operator box,
+not only via a full =collaborate=.
+
 * Confined launch on shared partitions (sbatch)
 ** The problem (confirmed on n0052.savio4, 2026-06-29)
 On a *shared* partition the agent must run inside its SLURM job cgroup
