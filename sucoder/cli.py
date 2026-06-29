@@ -37,7 +37,16 @@ from .config import (
 )
 from .executor import CommandExecutor
 from .logging_utils import setup_logger
-from .mirror import MirrorError, MirrorManager
+from .mirror import (
+    MirrorError,
+    MirrorManager,
+    # Re-exported for backward-compatible imports (e.g. tests) and reuse;
+    # the implementations live in mirror.py so the confined launch path can
+    # build them without importing cli (which would be a circular import).
+    _build_sbatch_command,
+    confined_attach_command,
+    confined_tmux_target,
+)
 from .startup_checks import StartupError, run_startup_checks
 
 
@@ -544,33 +553,9 @@ def _adopt_existing_allocation(node, ln_control, login_node, logger):
     return None
 
 
-def _build_sbatch_command(slurm, *, job_name, log_path, script_path, nodelist=None):
-    """Build the ``sbatch`` argv for a ``confined`` launch.
-
-    Mirrors the ``salloc`` construction in :func:`_ensure_slurm_node` but
-    submits a batch script (whose body runs in the job cgroup) instead of
-    reserving a node to SSH into.  ``--parsable`` makes sbatch print just
-    the job id; ``--no-requeue`` keeps a node failure from silently
-    requeuing a job whose tmux is gone (a confusing zombie).
-    """
-    parts = [
-        "sbatch", "--parsable", "--no-requeue",
-        f"--job-name={job_name}",
-        f"--output={log_path}",
-        f"--partition={slurm.partition}",
-        f"--account={slurm.account}",
-        f"--time={slurm.time}",
-    ]
-    if slurm.qos:
-        parts.append(f"--qos={slurm.qos}")
-    if slurm.cpus_per_task:
-        parts.append(f"--cpus-per-task={slurm.cpus_per_task}")
-    if slurm.mem:
-        parts.append(f"--mem={slurm.mem}")
-    if nodelist:
-        parts.append(f"--nodelist={nodelist}")
-    parts.append(script_path)
-    return parts
+# ``_build_sbatch_command`` moved to mirror.py (and is re-exported via the
+# ``from .mirror import ...`` block at the top of this module) so the confined
+# launch path in mirror.py can build the sbatch argv without importing cli.
 
 
 def _ensure_slurm_node(
@@ -1105,7 +1090,14 @@ def _build_manager(
         local_disk_override=_get_local_disk_override(cli_ctx),
         cli_ctx=cli_ctx,
     )
-    return MirrorManager(config, executor, logger, prompt_handler=_prompt_yes_no)
+    # Derive target_name with the SAME expression _build_executor uses (the
+    # bare obj lookup, NOT the gateway-split fallback), so the confined launch
+    # persists its job id to the same session file attach/release/renew read.
+    target_name = (cli_ctx.obj or {}).get("target_name") if cli_ctx else None
+    return MirrorManager(
+        config, executor, logger,
+        prompt_handler=_prompt_yes_no, target_name=target_name,
+    )
 
 
 def _create_ephemeral_mirror(config: Config, git_toplevel: Path) -> str:

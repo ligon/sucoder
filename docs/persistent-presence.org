@@ -38,10 +38,36 @@ outcome" + "Must-keep fixes" below are the spec):
    =test_cli.py= (=_build_executor= confined-skips-salloc + control).
    *Ordering invariant:* keep step 5 (flip =confined: true=) LAST -- until
    step 3 lands, a confined target hits the guard, not a launch.
-3. Confined =collaborate=: write prelude+script to NFS via login/DTN ->
-   =sbatch= (=_build_sbatch_command=) -> poll RUNNING+node (bounded;
-   surface PENDING, don't orphan) -> persist node -> attach via
-   =srun --overlap --pty tmux -L=.
+3. *[DONE]* Confined =collaborate= via =mirror.py:_launch_confined= (and
+   helpers), replacing the step-2 guard in =launch_agent=.  Flow:
+   reuse-probe -> build agent cmd (prelude to NFS, =bash -lc= wrap so the
+   login env/PATH/nvm resolve) -> stage batch script to NFS (absolute
+   path; sbatch won't expand =$HOME=) -> =sbatch= -> persist job id
+   *immediately* (pre-poll, so a poll failure leaves the job RECORDED not
+   leaked) -> bounded three-way RUNNING-poll -> persist node -> confirm
+   tmux session -> attach (=srun --overlap --pty tmux -L=) for an
+   interactive launch / return for a detached (renew) relaunch.  A
+   3-reviewer design red-team hardened it: (a) the reuse-probe and poll
+   distinguish a squeue *failure* (raise, never resubmit -- a live job
+   would orphan) from a job *gone* (resubmit); (b) defensive sbatch-id
+   parse (=<id>;<cluster>= / MOTD lines); (c) three-way poll
+   (RUNNING+node / PENDING-wait / empty=terminal) never persists the
+   literal state word as a node; (d) =target_name= on =MirrorManager=,
+   derived identically to =_build_executor=, so the job id lands in the
+   same session file =attach=/=release=/=renew= read; (e) the batch
+   script catches a =new-session= failure and emits a =SUCODER:= marker +
+   =exit 1= instead of silently COMPLETEing exit 0; (f) shared sanitized
+   =confined_tmux_target= / =confined_attach_command= helpers so launch
+   and attach use one session+socket name.  =_build_sbatch_command= moved
+   to =mirror.py= (re-exported by cli) to dodge the import cycle.  Tests:
+   =test_mirror.py= (parser, three-way poll, reuse-probe failure-vs-gone,
+   submit/persist/attach, persist-before-poll, detached-no-attach,
+   bash-lc, session-not-ready), =test_batch_script.py= (failure marker).
+   *Deferred (flagged):* confined has no in-tmux 30/15/5-min deadline
+   warning -- =_start_slurm_timer= needs a compute-node ControlMaster
+   confined never opens; renew.py (reads SLURM state directly) +
+   =--time= backstop cover turnover, so this is a lost courtesy not a
+   safety hole.
 4. Gate =attach= (=-L=, drop =|| new-session=), =release=, =renew=
    (=sbatch= relaunch, block until RUNNING), skip =_adopt_*=.
 5. Add =confined: true= to the =carleton-htc= stanza (inert until 1-4).

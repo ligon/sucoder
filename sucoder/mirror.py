@@ -11,6 +11,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Literal, Mapping, NoReturn, Optional, Sequence, Tuple
@@ -148,6 +149,94 @@ class MirrorContext:
         return str(remote.mirror_root / self.settings.mirror_dirname)
 
 
+# ---------------------------------------------------------------------------
+# Confined (sbatch) launch helpers — shared by the manager's launch path and
+# the cli ``attach``/``release``/``renew`` commands so the tmux session and
+# its dedicated socket are named IDENTICALLY everywhere.  If launch sanitizes
+# but attach does not (or one omits ``-L <socket>``), they target different
+# tmux servers and the session is unreachable.
+# ---------------------------------------------------------------------------
+
+_CONFINED_NAME_RE = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def _sanitize_session_token(name: str) -> str:
+    """Map a mirror name to a tmux-/socket-safe token.
+
+    A no-op for names already in ``[A-Za-z0-9._-]`` (e.g. ``SuCoder``,
+    ``K-Aggregators``); it only arms for names with shell/tmux metachars.
+    """
+    return _CONFINED_NAME_RE.sub("_", name)
+
+
+def confined_tmux_target(mirror_name: str) -> Tuple[str, str]:
+    """Return ``(session_name, socket)`` for a confined launch.
+
+    Both are ``sucoder-<sanitized-mirror>``.  A *dedicated* tmux socket
+    (``tmux -L <socket>``) is mandatory: the spike showed a shared socket
+    reuses another cgroup's already-running server and the new session dies
+    on contact.  Every confined tmux op -- launch, attach, release, renew --
+    MUST use these identical names.
+    """
+    safe = _sanitize_session_token(mirror_name)
+    return f"sucoder-{safe}", f"sucoder-{safe}"
+
+
+def confined_attach_command(
+    job_id: int, session_name: str, socket: str
+) -> List[str]:
+    """Argv that joins a confined job's tmux session *inside its cgroup*.
+
+    ``srun --jobid=J --overlap --pty tmux -L <socket> attach-session -t
+    <session>``.  Returns TOKENS (not a string): the executor renders argv
+    with ``shlex.join``, so a single string would be quoted into one
+    literally-named command.  cli callers that embed this as an ``ssh``
+    remote-command string should ``shlex.join`` the tokens themselves.
+
+    Deliberately OMITS the ``|| tmux new-session`` fallback the unconfined
+    attach uses, so a confined attach never spawns an unconfined orphan on
+    the login node.
+    """
+    return [
+        "srun", f"--jobid={job_id}", "--overlap", "--pty",
+        "tmux", "-L", socket, "attach-session", "-t", session_name,
+    ]
+
+
+def _build_sbatch_command(slurm, *, job_name, log_path, script_path, nodelist=None):
+    """Build the ``sbatch`` argv for a ``confined`` launch.
+
+    Submits a batch script (whose body runs in the job cgroup) instead of
+    reserving a node to SSH into.  ``--parsable`` makes sbatch print just
+    the job id (``<id>`` on a single cluster, ``<id>;<cluster>`` on a
+    federated one -- the caller must parse defensively); ``--no-requeue``
+    keeps a node failure from silently requeuing a job whose tmux is gone
+    (a confusing zombie).
+
+    Lives here (not in cli.py) so the manager's confined launch can build it
+    without importing cli (which would be a cycle).  cli.py re-exports it for
+    backward-compatible imports.
+    """
+    parts = [
+        "sbatch", "--parsable", "--no-requeue",
+        f"--job-name={job_name}",
+        f"--output={log_path}",
+        f"--partition={slurm.partition}",
+        f"--account={slurm.account}",
+        f"--time={slurm.time}",
+    ]
+    if slurm.qos:
+        parts.append(f"--qos={slurm.qos}")
+    if slurm.cpus_per_task:
+        parts.append(f"--cpus-per-task={slurm.cpus_per_task}")
+    if slurm.mem:
+        parts.append(f"--mem={slurm.mem}")
+    if nodelist:
+        parts.append(f"--nodelist={nodelist}")
+    parts.append(script_path)
+    return parts
+
+
 class MirrorManager:
     """Perform operations against configured mirrors."""
 
@@ -157,11 +246,20 @@ class MirrorManager:
         executor: CommandExecutor,
         logger: logging.Logger,
         prompt_handler: Optional[Callable[[str], bool]] = None,
+        target_name: Optional[str] = None,
     ) -> None:
         self.config = config
         self.executor = executor
         self.logger = logger
         self._prompt_handler = prompt_handler
+        # The ``-T`` target name (e.g. "carleton-htc"), used ONLY to scope the
+        # RemoteSession the confined launch persists its job id / node to.  It
+        # MUST be derived identically to ``_build_executor`` (the bare
+        # ``(cli_ctx.obj or {}).get("target_name")``) or the confined job id
+        # lands in a different ``<mirror>--<target>.yaml`` than attach/release/
+        # renew read -- an invisible, leaked job.  Appended last so existing
+        # positional constructions keep working.
+        self.target_name = target_name
 
     def context_for(self, mirror_name: str) -> MirrorContext:
         try:
@@ -1612,11 +1710,20 @@ class MirrorManager:
                 for k, v in env.items()
             )
         q_win = shlex.quote(exports + agent_cmd_str)
+        # Capture new-session's rc and emit a marker on failure: the agent
+        # runs detached, so a silent new-session failure would otherwise let
+        # the keeper loop fall through and the job COMPLETE with exit 0
+        # within a second (no diagnostic, agent never started).
         return (
             "#!/bin/bash\n"
             "set -u\n"
-            f"cd {q_dir} || exit 1\n"
+            f"cd {q_dir} || {{ echo \"SUCODER: cd failed\" >&2; exit 1; }}\n"
             f"tmux -L {q_sock} new-session -A -d -s {q_sess} {q_win}\n"
+            "rc=$?\n"
+            "if [ \"$rc\" -ne 0 ]; then\n"
+            "    echo \"SUCODER: tmux new-session failed (rc=$rc)\" >&2\n"
+            "    exit 1\n"
+            "fi\n"
             f"while tmux -L {q_sock} has-session -t {q_sess} 2>/dev/null; do\n"
             "    sleep 15\n"
             "done\n"
@@ -1664,6 +1771,356 @@ class MirrorManager:
                 agent_cmd_str, prelude_sentinel, remote_prelude_text, ctx,
             )
         return agent_cmd_str
+
+    # ------------------------------------------------------------------
+    # Confined (sbatch) launch.  A confined target fuses allocate+launch:
+    # ``sbatch`` a script whose body runs IN the job cgroup and starts the
+    # agent in a dedicated-socket tmux.  Everything here drives the cluster
+    # through the login-node executor (no compute-node SSH).
+    # ------------------------------------------------------------------
+
+    def _resolve_remote_home(self, ctx: MirrorContext) -> str:
+        """Resolve + cache the absolute remote ``$HOME`` on the login node.
+
+        sbatch does NOT expand ``~``/``$HOME`` in ``--output`` and the
+        executor quotes argv tokens literally, so confined paths need an
+        absolute home for the script/log paths.  Shares the
+        ``_resolved_remote_home`` cache with ``_resolve_remote_path`` but
+        resolves it directly (``echo $HOME``) rather than depending on a
+        ``~``-rooted mirror path to have populated it.
+        """
+        cached = getattr(self, "_resolved_remote_home", None)
+        if cached:
+            return cached
+        run = getattr(self.executor, "run_on_login_node", self.executor.run_agent)
+        result = run(["bash", "-c", "echo $HOME"], check=True)
+        home = result.stdout.strip()
+        if not home:
+            raise MirrorError(
+                "Could not resolve the remote $HOME for the confined launch."
+            )
+        self._resolved_remote_home = home
+        return home
+
+    @staticmethod
+    def _parse_sbatch_job_id(stdout: str, sbatch_argv: Sequence[str]) -> int:
+        """Parse the job id from ``sbatch --parsable`` output, defensively.
+
+        ``--parsable`` prints ``<id>`` on a single cluster but
+        ``<id>;<cluster>`` on a federated one, and MOTD / warning lines can
+        precede it.  Take the last non-empty line, field 0 before any ``;``.
+        The job is ALREADY queued by the time we parse, so on a parse miss we
+        raise with the raw output + a scancel hint rather than swallowing it
+        (a swallowed id is a leaked job).
+        """
+        raw = (stdout or "").strip()
+        token = ""
+        for line in reversed(raw.splitlines()):
+            if line.strip():
+                token = line.strip().split(";")[0].strip()
+                break
+        try:
+            return int(token)
+        except ValueError as exc:
+            raise MirrorError(
+                "sbatch was submitted but its job id could not be parsed "
+                f"from output {raw!r}.  A job may be queued -- find it with "
+                "`squeue --me` and `scancel` it to avoid a leak."
+            ) from exc
+
+    def _confined_job_live(self, job_id: int) -> bool:
+        """Return True iff *job_id* is confidently still alive (queued/running).
+
+        The reuse-probe must NEVER resubmit over a live job, so it
+        distinguishes three squeue outcomes:
+
+        - exit 0 + a queued/running state -> live (True).
+        - exit 0 + empty, or a non-zero exit whose stderr says "invalid job
+          id" -> gone (False); safe to submit a fresh job.
+        - any other failure (SSH blip, slurmctld down) -> raise; the caller
+          must NOT resubmit (it could orphan a job that is actually alive).
+        """
+        result = self.executor.run_agent(
+            ["squeue", "--job", str(job_id), "--noheader", "-o", "%T"],
+            check=False, capture_output=True,
+        )
+        state = result.stdout.strip()
+        if result.returncode == 0:
+            if not state:
+                return False
+            return state in (
+                "RUNNING", "PENDING", "CONFIGURING", "COMPLETING", "RESIZING",
+            )
+        if "invalid job id" in result.stderr.lower():
+            return False
+        raise MirrorError(
+            f"Could not verify SLURM job {job_id} (squeue exit "
+            f"{result.returncode}): {result.stderr.strip()}.  Retry, or "
+            "`sucoder release` to clear a stale session record."
+        )
+
+    def _confined_terminal_reason(self, job_id: int) -> str:
+        """Best-effort sacct terminal state for a job that left the queue."""
+        try:
+            result = self.executor.run_agent(
+                ["sacct", "-j", str(job_id), "-n", "-P", "-o", "State"],
+                check=False, capture_output=True,
+            )
+        except Exception:  # noqa: BLE001 -- diagnostics only
+            return "?"
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip().splitlines()[0].strip() or "?"
+        return "?"
+
+    def _poll_confined_node(
+        self, job_id: int, *, attempts: int = 40, delay: int = 15
+    ) -> str:
+        """Poll until *job_id* is RUNNING on a node; return the node name.
+
+        Three-way per poll (``squeue -o '%T %N'``):
+
+        - RUNNING + non-empty ``%N`` -> return the node.
+        - PENDING/CONFIGURING (state present, ``%N`` empty) -> keep waiting.
+        - empty output / "invalid job id" -> the job LEFT the queue
+          (terminal/failed): raise with the sacct reason.  Never mislabel
+          this as PENDING (the handoff's "empty-%N abort that leaks" trap)
+          and never persist the literal state word as a node.
+
+        On exhausting *attempts* while still PENDING, raise tagged PENDING:
+        the job is already persisted, so the caller leaves it RECORDED (no
+        orphan) and the operator attaches later.  A probe failure raises
+        too; the poll NEVER scancels (persist-before-poll keeps it
+        recoverable).
+        """
+        last_state = "?"
+        for _ in range(max(1, attempts)):
+            result = self.executor.run_agent(
+                ["squeue", "--job", str(job_id), "--noheader", "-o", "%T %N"],
+                check=False, capture_output=True,
+            )
+            if result.returncode != 0:
+                if "invalid job id" in result.stderr.lower():
+                    raise MirrorError(self._confined_terminal_message(job_id))
+                raise MirrorError(
+                    f"Could not poll SLURM job {job_id} (squeue exit "
+                    f"{result.returncode}): {result.stderr.strip()}.  It is "
+                    "recorded; attach later with `sucoder attach`."
+                )
+            line = result.stdout.strip()
+            if not line:
+                raise MirrorError(self._confined_terminal_message(job_id))
+            parts = line.split()
+            last_state = parts[0]
+            if last_state == "RUNNING" and len(parts) >= 2 and parts[1]:
+                return parts[1]
+            time.sleep(delay)
+        raise MirrorError(
+            f"SLURM job {job_id} still PENDING after ~{attempts * delay}s "
+            f"(last state: {last_state}).  It is recorded; the scheduler "
+            "will start it -- attach later with `sucoder attach`."
+        )
+
+    def _confined_terminal_message(self, job_id: int) -> str:
+        reason = self._confined_terminal_reason(job_id)
+        return (
+            f"SLURM job {job_id} ended before its tmux session came up "
+            f"(sacct state: {reason}).  Inspect the job log under "
+            "~/.cache/sucoder/ for a `SUCODER:` marker, then re-run "
+            "`sucoder collaborate`."
+        )
+
+    def _confined_session_ready(
+        self,
+        job_id: int,
+        session_name: str,
+        socket: str,
+        *,
+        attempts: int = 20,
+        delay: int = 3,
+    ) -> bool:
+        """Bounded poll that the confined tmux session has actually come up.
+
+        sbatch RUNNING != tmux-session-exists (the batch body still has to
+        ``cd`` + ``new-session``).  Confined attach drops the
+        ``|| new-session`` fallback, so attaching before the session exists
+        fails spuriously -- this gate prevents that.  Probes
+        ``srun --jobid=J --overlap tmux -L sock has-session -t sess``.
+        """
+        for _ in range(max(1, attempts)):
+            result = self.executor.run_agent(
+                [
+                    "srun", f"--jobid={job_id}", "--overlap",
+                    "tmux", "-L", socket, "has-session", "-t", session_name,
+                ],
+                check=False, capture_output=True,
+            )
+            if result.returncode == 0:
+                return True
+            time.sleep(delay)
+        return False
+
+    def _confined_capture_pane(
+        self, job_id: int, session_name: str, socket: str
+    ) -> str:
+        """Best-effort capture of the agent's tmux pane.
+
+        The agent runs detached, so its stderr lives in the pane buffer, not
+        on the batch script's stdout -- surface it on a launch failure.
+        Returns '' on any error (diagnostics must never raise).
+        """
+        try:
+            result = self.executor.run_agent(
+                [
+                    "srun", f"--jobid={job_id}", "--overlap",
+                    "tmux", "-L", socket, "capture-pane", "-p", "-t", session_name,
+                ],
+                check=False, capture_output=True,
+            )
+        except Exception:  # noqa: BLE001 -- diagnostics only
+            return ""
+        return result.stdout.strip() if result.returncode == 0 else ""
+
+    def _attach_confined(self, job_id: int, session_name: str, socket: str) -> int:
+        """Interactively attach to the confined job's in-cgroup tmux session.
+
+        ``srun --jobid=J --overlap --pty tmux -L sock attach-session -t sess``
+        over the login-node executor with a TTY (``capture_output=False``).
+        ``check=False`` so a clean detach (Ctrl-b d -> srun exits 0) or a
+        gone job returns its rc rather than raising.
+        """
+        argv = confined_attach_command(job_id, session_name, socket)
+        result = self.executor.run_agent(argv, check=False, capture_output=False)
+        return result.returncode
+
+    def _launch_confined(
+        self,
+        ctx: MirrorContext,
+        command: Sequence[str],
+        *,
+        remote_prelude_text: Optional[str],
+        prelude_sentinel: str,
+        env: Optional[Mapping[str, str]],
+        detached: bool,
+    ) -> int:
+        """Submit + (for interactive) attach a confined sbatch launch.
+
+        Flow: reuse-probe -> build agent cmd (prelude to NFS, ``bash -lc``
+        wrap) -> stage batch script to NFS -> ``sbatch`` -> persist id
+        IMMEDIATELY -> bounded RUNNING-poll -> persist node -> confirm the
+        tmux session -> attach (interactive) or return (detached / renew).
+
+        Post-session hooks (``_auto_commit_agent_skills`` / ``_maybe_run_audit``)
+        are intentionally NOT run: detaching tmux returns rc=0 while the
+        agent keeps running inside the job, so those end-of-session hooks
+        would fire wrongly.  The agent's lifecycle is owned by the job.
+        """
+        from .session import RemoteSession
+
+        assert ctx.settings.remote is not None and ctx.settings.remote.slurm is not None
+        slurm = ctx.settings.remote.slurm
+        session_name, socket = confined_tmux_target(ctx.settings.name)
+
+        # Reuse-probe: never submit a second job while one is live.
+        sess = RemoteSession.load(ctx.settings.name, target_name=self.target_name)
+        if sess.slurm_job_id and self._confined_job_live(sess.slurm_job_id):
+            self.logger.info(
+                "Reusing live confined SLURM job %s for mirror %s.",
+                sess.slurm_job_id, ctx.settings.name,
+            )
+            if detached:
+                return 0
+            # The agent may already have exited (the keeper holds the job
+            # after a clean /exit), so this attach can land in a bare login
+            # shell rather than a running agent.
+            if not self._confined_session_ready(
+                sess.slurm_job_id, session_name, socket
+            ):
+                self.logger.warning(
+                    "Confined job %s is live but its tmux session is not up; "
+                    "attach may fail.", sess.slurm_job_id,
+                )
+            return self._attach_confined(sess.slurm_job_id, session_name, socket)
+
+        # Build the in-tmux command and wrap in `bash -lc` so the agent
+        # resolves the login env (PATH/nvm); sbatch runs the batch body with
+        # a minimal, non-login env (the non-confined direct-SSH path keeps
+        # the login env, so it does NOT get this wrap).
+        agent_cmd_str = self._build_remote_agent_cmd_str(
+            ctx, command,
+            remote_prelude_text=remote_prelude_text,
+            prelude_sentinel=prelude_sentinel,
+        )
+        windowed_cmd = f"bash -lc {shlex.quote(agent_cmd_str)}"
+
+        # Stage the batch script to NFS at an ABSOLUTE path (sbatch will not
+        # expand ~/$HOME); keep %j literal for slurm to expand in the log.
+        home = self._resolve_remote_home(ctx)
+        safe = _sanitize_session_token(ctx.settings.name)
+        cache_dir = f"{home}/.cache/sucoder"
+        script_path = f"{cache_dir}/job-{safe}.sh"
+        log_path = f"{cache_dir}/job-{safe}-%j.out"
+
+        mirror_path = self._resolve_remote_path(ctx)
+        script = self._build_batch_script(
+            tmux_session=session_name, socket=socket,
+            mirror_path=mirror_path, agent_cmd_str=windowed_cmd, env=env,
+        )
+        self.executor.run_agent(
+            [
+                "sh", "-c",
+                f"umask 077 && mkdir -p {shlex.quote(cache_dir)} "
+                f"&& cat > {shlex.quote(script_path)}",
+            ],
+            input=script, check=True, capture_output=True,
+        )
+
+        # Submit.  check=True so a *failed* sbatch raises before we parse.
+        sbatch_argv = _build_sbatch_command(
+            slurm, job_name=session_name, log_path=log_path,
+            script_path=script_path,
+        )
+        result = self.executor.run_agent(
+            sbatch_argv, check=True, capture_output=True,
+        )
+        job_id = self._parse_sbatch_job_id(result.stdout, sbatch_argv)
+
+        # Persist the id IMMEDIATELY (before the poll): any later exception
+        # then leaves the job RECORDED (recoverable via attach/release),
+        # never silently leaked.
+        sess.slurm_job_id = job_id
+        sess.compute_node = None
+        try:
+            sess.save()
+        except OSError as exc:
+            self.logger.error(
+                "Submitted confined SLURM job %s but FAILED to persist it "
+                "(%s).  Run `scancel %s` on a login node if you do not want "
+                "it to keep running.", job_id, exc, job_id,
+            )
+            raise
+
+        self.logger.info(
+            "Submitted confined SLURM job %s; waiting for RUNNING...", job_id,
+        )
+        node = self._poll_confined_node(job_id)
+        sess.compute_node = node
+        sess.save()
+        self.logger.info("Confined SLURM job %s RUNNING on %s.", job_id, node)
+
+        # Confirm the tmux session actually came up before declaring success
+        # (the confined attach has no `|| new-session` fallback).
+        if not self._confined_session_ready(job_id, session_name, socket):
+            pane = self._confined_capture_pane(job_id, session_name, socket)
+            raise MirrorError(
+                f"Confined SLURM job {job_id} is RUNNING on {node} but its "
+                f"tmux session '{session_name}' did not come up.  Inspect "
+                f"{cache_dir}/job-{safe}-{job_id}.out for a `SUCODER:` marker."
+                + (f"\n--- agent pane ---\n{pane}" if pane else "")
+            )
+
+        if detached:
+            return 0
+        return self._attach_confined(job_id, session_name, socket)
 
     def launch_agent(
         self,
@@ -1770,16 +2227,22 @@ class MirrorManager:
 
         if ctx.is_remote:
             if ctx.confined:
-                # A confined target must launch via ``sbatch`` so the agent
-                # runs inside the job cgroup (confined to the reserved
-                # cores).  Running tmux directly here would put the agent on
-                # the *login* node, unconfined -- the very thing confinement
-                # avoids.  That wiring lives in the confined collaborate
-                # flow; until it lands, refuse rather than launch unconfined.
-                raise MirrorError(
-                    f"Confined launch for mirror {ctx.settings.name} is not "
-                    "wired through launch_agent yet; it must go through the "
-                    "confined collaborate (sbatch) path."
+                # A confined target launches via ``sbatch`` so the agent runs
+                # inside the job cgroup (confined to the reserved cores).
+                # Running tmux directly here would put the agent on the
+                # *login* node, unconfined.  ``_launch_confined`` submits the
+                # batch job (whose body starts the tmux), persists the job
+                # id/node, and -- for an interactive (non-detached) launch --
+                # attaches via ``srun --overlap``.  It returns instead of
+                # falling through to the non-confined tmux/exec/subprocess
+                # tail below.
+                return self._launch_confined(
+                    ctx,
+                    command,
+                    remote_prelude_text=remote_prelude_text,
+                    prelude_sentinel=prelude_sentinel,
+                    env=env_to_use,
+                    detached=detached,
                 )
 
             # Wrap in tmux so the session survives SSH disconnects, with the

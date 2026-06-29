@@ -37,13 +37,40 @@ def _bash_n(script):
 def test_structure():
     s = MirrorManager._build_batch_script(**_BASE)
     assert s.startswith("#!/bin/bash\n")
-    assert "cd /global/home/users/ligon/mirrors/K-Aggregators || exit 1" in s
+    assert "cd /global/home/users/ligon/mirrors/K-Aggregators || " in s
     # Dedicated -L socket on BOTH new-session and the keeper -- the
     # spike-required detail (else tmux reuses a shared server, wrong cgroup).
     assert "tmux -L sucoder-K-Aggregators new-session -A -d -s sucoder-K-Aggregators " in s
     assert "tmux -L sucoder-K-Aggregators has-session -t sucoder-K-Aggregators" in s
     assert "sleep 15" in s
     assert "claude --system-prompt" in s          # agent command embedded
+    # new-session failure must be caught + marked, not silently exit-0.
+    assert "SUCODER: tmux new-session failed" in s
+    assert "exit 1" in s
+
+
+@_bash_only
+def test_new_session_failure_marks_and_exits_nonzero(tmp_path):
+    # If new-session fails, the script must emit a SUCODER marker to stderr
+    # and exit non-zero -- NOT fall through to the keeper loop and COMPLETE
+    # with exit 0 (which would mask an agent-never-started failure).
+    s = MirrorManager._build_batch_script(
+        tmux_session="t", socket="t", mirror_path=str(tmp_path),
+        agent_cmd_str="true",
+    )
+    # Stub tmux so new-session fails (rc=3); has-session would say "yes" if
+    # reached, which would prove the guard did NOT stop the fall-through.
+    stub = (
+        "tmux() {\n"
+        '  for w in "$@"; do [ "$w" = new-session ] && return 3; done\n'
+        "  return 0\n"
+        "}\n"
+    )
+    r = subprocess.run(
+        ["bash", "-c", stub + s], capture_output=True, text=True,
+    )
+    assert r.returncode == 1
+    assert "SUCODER: tmux new-session failed (rc=3)" in r.stderr
 
 
 @_bash_only
