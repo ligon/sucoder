@@ -355,20 +355,31 @@ def _build_executor(
         # 4. If SLURM is configured, allocate a compute node and
         #    establish a ControlMaster through the login node to it.
         #    The login node becomes a pure TCP proxy — no shell, no load.
+        #
+        #    Exception: a ``confined`` target fuses allocate+launch into a
+        #    single ``sbatch`` submitted later (its batch body runs in the
+        #    job cgroup).  No compute node exists at build time, so we skip
+        #    salloc and return a *login-node* executor; the confined
+        #    collaborate flow submits the job and resolves the node itself.
+        confined = remote.slurm is not None and remote.slurm.confined
         target_node = session.login_node
         target_control = ln_control
         prev_compute_node = session.compute_node
-        if remote.slurm is not None:
+        if remote.slurm is not None and not confined:
             target_node, target_control = _ensure_slurm_node(
                 remote, session, ln_control, gw_control, logger,
                 debug_ssh=debug_ssh,
             )
 
         # Resolve local-disk setting: CLI flag overrides config.
+        # Confined targets stage the prelude + batch script to NFS and have
+        # no compute-node-local disk at build time, so local disk never
+        # applies to them (the saved compute-node root, if any, is also
+        # unreachable from the login node).
         use_local_disk = False
         local_disk_root = ""
-        cfg_local_disk = remote.slurm.local_disk if remote.slurm else None
-        if remote.slurm is not None:
+        cfg_local_disk = remote.slurm.local_disk if (remote.slurm and not confined) else None
+        if remote.slurm is not None and not confined:
             if local_disk_override is True:
                 use_local_disk = True
                 local_disk_root = cfg_local_disk or "/local"
@@ -400,7 +411,11 @@ def _build_executor(
             and session.compute_node is not None
             and prev_compute_node != session.compute_node
         )
-        if use_local_disk:
+        if confined:
+            # NFS only: the batch script and prelude are staged to the
+            # shared FS; there is no compute-node local disk at build time.
+            remote_mirror_root = str(remote.mirror_root)
+        elif use_local_disk:
             remote_mirror_root = f"{local_disk_root.rstrip('/')}/mirrors"
         elif local_disk_override is None and not cfg_local_disk and session.remote_mirror_root:
             saved_root = session.remote_mirror_root
@@ -439,7 +454,7 @@ def _build_executor(
             local_mirror_root=str(config.mirror_root),
             ssh_options=remote.ssh_options,
             control_socket_path=str(target_control.socket_path),
-            is_compute_node=(remote.slurm is not None),
+            is_compute_node=(remote.slurm is not None and not confined),
             slurm_job_id=session.slurm_job_id,
             debug_ssh=debug_ssh,
         )
@@ -461,8 +476,10 @@ def _build_executor(
             executor_kwargs["scaffolding_node"] = str(dtn_control.gateway)
             executor_kwargs["scaffolding_socket_path"] = str(dtn_control.socket_path)
         # For compute-node targets, the proxy fields are still needed
-        # for the SSH ProxyCommand fallback to the login node.
-        if remote.slurm is not None:
+        # for the SSH ProxyCommand fallback to the login node.  A confined
+        # target's executor already targets the login node, so there is no
+        # compute-node socket to fall back from.
+        if remote.slurm is not None and not confined:
             executor_kwargs["proxy_node"] = session.login_node
             executor_kwargs["proxy_socket_path"] = str(ln_control.socket_path)
 

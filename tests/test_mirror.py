@@ -918,6 +918,115 @@ def test_launch_agent_remote_wraps_without_scancel(tmp_path: Path, monkeypatch: 
     )
 
 
+def test_build_remote_agent_cmd_str_joins_and_appends_exec_bash(tmp_path: Path) -> None:
+    """The extracted helper joins the command and appends ``; exec bash -l``.
+
+    With no prelude to externalize it must not touch the executor and must
+    produce exactly the string that tmux runs as its window command -- the
+    contract the confined (sbatch) path also depends on.
+    """
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+
+    out = manager._build_remote_agent_cmd_str(
+        ctx,
+        ["claude", "--foo", "a b"],
+        remote_prelude_text=None,
+        prelude_sentinel="__UNUSED__",
+    )
+
+    assert out == "claude --foo 'a b'; exec bash -l"
+
+
+def test_build_remote_agent_cmd_str_externalizes_prelude(tmp_path: Path) -> None:
+    """When a prelude is supplied the helper routes it through
+    ``_externalize_prelude`` (file write + ``$(cat ...)`` substitution)."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+
+    recorded: dict = {}
+
+    def spy(args, *, input=None, **kwargs):
+        recorded["args"] = list(args)
+        recorded["input"] = input
+
+    manager.executor.run_agent = spy  # type: ignore[assignment]
+
+    sentinel = "__SUCODER_PRELUDE_FROM_FILE__"
+    out = manager._build_remote_agent_cmd_str(
+        ctx,
+        ["claude", "--system-prompt", sentinel],
+        remote_prelude_text="SYSTEM PROMPT\n" + ("x" * 4000),
+        prelude_sentinel=sentinel,
+    )
+
+    # Prelude moved off the command line; cat-ref substituted; still wrapped.
+    assert sentinel not in out
+    assert "SYSTEM PROMPT" not in out
+    assert "$(cat " in out
+    assert out.rstrip().endswith("exec bash -l")
+    # The prelude went over stdin, never into argv.
+    assert recorded["input"].startswith("SYSTEM PROMPT")
+
+
+def test_launch_agent_confined_refuses_login_node_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``confined`` target must NOT launch tmux directly via the executor.
+
+    Confined launch belongs to the sbatch path (the agent runs in the job
+    cgroup).  Running tmux here would put the agent on the *login* node,
+    unconfined.  Until that wiring lands, launch_agent must refuse rather
+    than launch unconfined -- and must not invoke the executor at all.
+    """
+    from sucoder.config import RemoteConfig, SlurmConfig
+
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    ctx.settings.remote = RemoteConfig(
+        gateway="brc.berkeley.edu",
+        transfer_host="dtn.brc.berkeley.edu",
+        slurm=SlurmConfig(
+            partition="savio4_htc", account="co_carleton", confined=True,
+        ),
+    )
+    assert ctx.confined is True
+
+    # Remote launch_agent legitimately runs a few executor commands up
+    # front (resolve $HOME, mirror existence).  Let those succeed, but
+    # record every call so we can assert the *agent launch* (the tmux
+    # ``new-session`` command) is never sent for a confined target.
+    calls: list = []
+
+    def fake_run_agent(args, **kwargs):
+        calls.append(list(args))
+        return CommandResult(
+            requested_args=list(args),
+            executed_args=list(args),
+            stdout="",
+            stderr="",
+            returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+    monkeypatch.setattr(
+        MirrorManager,
+        "_default_system_prompt_path",
+        staticmethod(lambda: Path("/nonexistent-system-prompt")),
+    )
+    manager.config.system_prompt = None
+
+    with pytest.raises(MirrorError, match="confined collaborate"):
+        manager.launch_agent(ctx, sync=False)
+
+    assert not any(args and args[0] == "tmux" for args in calls), (
+        "Confined launch must refuse before the tmux launch; a tmux "
+        f"new-session was sent to the executor: {calls!r}"
+    )
+
+
 def test_launch_agent_raises_on_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     manager = build_manager(tmp_path)
     ctx = manager.context_for("sample")

@@ -927,6 +927,143 @@ def test_ensure_slurm_node_persists_job_id_before_node_query(tmp_path, monkeypat
     assert reloaded.compute_node is None
 
 
+class _FakeSshControl:
+    """Stand-in for ``SshControl`` in ``_build_executor`` tests.
+
+    Accepts the full constructor kwarg surface (gateway, persistence
+    knobs, jump host/control, extra_options, debug) and provides the few
+    attributes/methods ``_build_executor`` reaches for: ``ensure``,
+    ``ssh_options``, ``gateway``, and ``socket_path``.
+    """
+
+    def __init__(self, *, gateway=None, **kwargs):
+        self.gateway = gateway
+        self._kwargs = kwargs
+
+    def ensure(self, logger):
+        return None
+
+    def ssh_options(self, **kwargs):
+        return []
+
+    @property
+    def socket_path(self):
+        return f"/tmp/sucoder-sock-{self.gateway}"
+
+
+def _install_build_executor_fakes(monkeypatch, tmp_path, *, login_node="ln001.brc"):
+    """Stub the SSH/session/executor layer for a ``_build_executor`` test.
+
+    Pre-seeds a session with ``login_node`` set (so the login-node pin
+    subprocess is skipped), fakes ``SshControl`` and ``_ensure_ssh_visible``,
+    captures the ``RemoteExecutor`` kwargs, and spies on
+    ``_ensure_slurm_node``.  Returns ``(captured, slurm_calls)`` where
+    ``captured["kwargs"]`` is the RemoteExecutor kwarg dict.
+    """
+    from sucoder import session as session_mod
+    import sucoder.tunnel as tunnel_mod
+    import sucoder.executor as executor_mod
+
+    sessions = tmp_path / "sessions"
+    monkeypatch.setattr(session_mod, "_session_dir", lambda: sessions)
+
+    monkeypatch.setattr(tunnel_mod, "SshControl", _FakeSshControl)
+    monkeypatch.setattr(cli, "_ensure_ssh_visible", lambda *a, **k: None)
+
+    slurm_calls: list = []
+
+    def spy_ensure_slurm_node(remote, session, ln_control, gw_control, logger, **kw):
+        slurm_calls.append(True)
+        # A non-confined allocation resolves a compute node and its control.
+        session.slurm_job_id = 999
+        session.compute_node = "n0001.savio4"
+        session.save()
+        return "n0001.savio4", _FakeSshControl(gateway="n0001.savio4")
+
+    monkeypatch.setattr(cli, "_ensure_slurm_node", spy_ensure_slurm_node)
+
+    captured: dict = {}
+
+    class _FakeRemoteExecutor:
+        def __init__(self, **kwargs):
+            captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(executor_mod, "RemoteExecutor", _FakeRemoteExecutor)
+
+    # Seed the session so the login node is already pinned.
+    sess = session_mod.RemoteSession(
+        mirror_name="sample", target_name=None, login_node=login_node,
+    )
+    sess.save()
+
+    return captured, slurm_calls
+
+
+def _confined_mirror_settings(tmp_path, *, confined: bool):
+    from sucoder.config import RemoteConfig, SlurmConfig
+
+    return MirrorSettings(
+        name="sample",
+        canonical_repo=tmp_path / "canonical",
+        mirror_name="sample",
+        branch_prefixes=BranchPrefixes(human="ligon", agent="coder"),
+        remote=RemoteConfig(
+            gateway="brc.berkeley.edu",
+            transfer_host="dtn.brc.berkeley.edu",
+            slurm=SlurmConfig(
+                partition="savio4_htc", account="co_carleton", confined=confined,
+            ),
+        ),
+    )
+
+
+def test_build_executor_confined_skips_salloc(tmp_path, monkeypatch):
+    """A ``confined`` target fuses allocate+launch into a later ``sbatch``.
+
+    ``_build_executor`` must therefore NOT call ``_ensure_slurm_node``
+    (salloc) and must return a *login-node* executor: ``is_compute_node``
+    False, ``login_node`` pointing at the login node (not a compute node).
+    """
+    import logging
+
+    captured, slurm_calls = _install_build_executor_fakes(monkeypatch, tmp_path)
+    config = Config(human_user="coder", mirror_root=tmp_path / "mirrors")
+    settings = _confined_mirror_settings(tmp_path, confined=True)
+
+    cli._build_executor(
+        config, logging.getLogger("t"), dry_run=False, mirror_settings=settings,
+    )
+
+    assert slurm_calls == [], "confined launch must not salloc a compute node"
+    kwargs = captured["kwargs"]
+    assert kwargs["is_compute_node"] is False
+    assert kwargs["login_node"] == "ln001.brc"
+    # No compute-node ProxyCommand fallback for a login-node executor.
+    assert "proxy_node" not in kwargs
+    # Confined runs on NFS, never a compute-node-local mirror root.
+    assert kwargs["remote_mirror_root"] == str(settings.remote.mirror_root)
+
+
+def test_build_executor_unconfined_slurm_allocates(tmp_path, monkeypatch):
+    """Control: an unconfined SLURM target still allocates a compute node
+    and returns a compute-node executor (the salloc path is unchanged)."""
+    import logging
+
+    captured, slurm_calls = _install_build_executor_fakes(monkeypatch, tmp_path)
+    config = Config(human_user="coder", mirror_root=tmp_path / "mirrors")
+    settings = _confined_mirror_settings(tmp_path, confined=False)
+
+    cli._build_executor(
+        config, logging.getLogger("t"), dry_run=False, mirror_settings=settings,
+    )
+
+    assert slurm_calls == [True], "unconfined SLURM target must salloc"
+    kwargs = captured["kwargs"]
+    assert kwargs["is_compute_node"] is True
+    assert kwargs["login_node"] == "n0001.savio4"
+    assert kwargs["proxy_node"] == "ln001.brc"
+
+
 # ----------------------------------------------------------------------
 # `sucoder nodes` — read-only SLURM node-availability query
 # ----------------------------------------------------------------------

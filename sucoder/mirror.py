@@ -125,6 +125,21 @@ class MirrorContext:
         return self.settings.is_remote
 
     @property
+    def confined(self) -> bool:
+        """Whether this target launches the agent inside its SLURM job
+        cgroup via ``sbatch`` (shared partitions) instead of ``salloc`` +
+        direct SSH.
+
+        False for local targets and for unconfined SLURM targets.  A
+        confined target fuses allocation and launch into one ``sbatch``
+        whose batch body runs in the job cgroup, so there is no compute
+        node to reach before launch.
+        """
+        remote = self.settings.remote
+        slurm = remote.slurm if remote is not None else None
+        return bool(slurm is not None and slurm.confined)
+
+    @property
     def remote_mirror_path(self) -> Optional[str]:
         """Path to the mirror on the remote host (as a string, not local Path)."""
         remote = self.settings.remote
@@ -1607,6 +1622,49 @@ class MirrorManager:
             "done\n"
         )
 
+    def _build_remote_agent_cmd_str(
+        self,
+        ctx: MirrorContext,
+        command: Sequence[str],
+        *,
+        remote_prelude_text: Optional[str],
+        prelude_sentinel: str,
+    ) -> str:
+        """Build the in-tmux command string for a remote agent launch.
+
+        Returns ``"<joined command>; exec bash -l"`` with any large prelude
+        moved off the command line: it is written to a per-mirror file via
+        the current executor and referenced as ``"$(cat <file>)"`` (avoids
+        the remote shell's "command too long" limit; see
+        :meth:`_externalize_prelude`).
+
+        We deliberately do NOT append ``; scancel $JOB``.  Any agent exit
+        (clean ``/exit``, crash, or a shell-out that closes the process)
+        would otherwise cancel the SLURM allocation and tear down the whole
+        reattach chain -- turning a transient agent failure into a
+        catastrophic session teardown.  SLURM lifecycle is the user's
+        responsibility (``sucoder release <mirror>``).
+
+        We append ``; exec bash -l`` so the tmux window stays alive after
+        the agent exits: the user can ``sucoder attach`` later, land in a
+        login shell inside the same tmux session, and decide what to do
+        (re-run ``claude --continue``, inspect state, detach, etc.).
+
+        Extracted from :meth:`launch_agent` so the confined (sbatch) flow
+        can reuse it: that flow feeds the returned string into
+        :meth:`_build_batch_script` (the job cgroup runs tmux) instead of
+        :meth:`_build_tmux_launch_command`.  Because a confined target's
+        executor targets the *login* node, the prelude file is written
+        there (NFS) -- not on a compute node that does not exist until the
+        batch job starts.
+        """
+        agent_cmd_str = f"{shlex.join(command)}; exec bash -l"
+        if remote_prelude_text is not None:
+            agent_cmd_str = self._externalize_prelude(
+                agent_cmd_str, prelude_sentinel, remote_prelude_text, ctx,
+            )
+        return agent_cmd_str
+
     def launch_agent(
         self,
         ctx: MirrorContext,
@@ -1711,34 +1769,30 @@ class MirrorManager:
         effective_mode = self._get_effective_launch_mode(command, launcher)
 
         if ctx.is_remote:
-            # Wrap in tmux so the session survives SSH disconnects.
-            #
-            # We deliberately do NOT append `; scancel $JOB` here.  Any
-            # agent exit (clean /exit, crash, or shell-out that closes
-            # the process) would otherwise cancel the SLURM allocation
-            # and tear down the whole reattach chain — turning a
-            # transient agent failure into a catastrophic session
-            # teardown.  SLURM lifecycle is now the user's
-            # responsibility; see ``sucoder release <mirror>`` for
-            # explicit cancellation.
-            #
-            # We also append ``; exec bash -l`` so the tmux window
-            # stays alive after the agent exits.  The user can then
-            # ``sucoder attach`` later, land in a bash shell on the
-            # compute node inside the same tmux session, and decide
-            # what to do (re-run ``claude --continue``, inspect state,
-            # detach with Ctrl-b d, etc.).
-            tmux_name = f"sucoder-{ctx.settings.name}"
-            agent_cmd_str = f"{shlex.join(command)}; exec bash -l"
-
-            # Move a large prelude off the command line (avoids the remote
-            # shell's "command too long" limit): write it to a remote file
-            # and reference it as "$(cat <file>)".
-            if remote_prelude_text is not None:
-                agent_cmd_str = self._externalize_prelude(
-                    agent_cmd_str, prelude_sentinel, remote_prelude_text, ctx,
+            if ctx.confined:
+                # A confined target must launch via ``sbatch`` so the agent
+                # runs inside the job cgroup (confined to the reserved
+                # cores).  Running tmux directly here would put the agent on
+                # the *login* node, unconfined -- the very thing confinement
+                # avoids.  That wiring lives in the confined collaborate
+                # flow; until it lands, refuse rather than launch unconfined.
+                raise MirrorError(
+                    f"Confined launch for mirror {ctx.settings.name} is not "
+                    "wired through launch_agent yet; it must go through the "
+                    "confined collaborate (sbatch) path."
                 )
 
+            # Wrap in tmux so the session survives SSH disconnects, with the
+            # large prelude externalized to a file.  See
+            # ``_build_remote_agent_cmd_str`` for the scancel / exec-bash
+            # rationale.
+            tmux_name = f"sucoder-{ctx.settings.name}"
+            agent_cmd_str = self._build_remote_agent_cmd_str(
+                ctx,
+                command,
+                remote_prelude_text=remote_prelude_text,
+                prelude_sentinel=prelude_sentinel,
+            )
             command = self._build_tmux_launch_command(
                 tmux_name, agent_cmd_str, detached=detached,
             )

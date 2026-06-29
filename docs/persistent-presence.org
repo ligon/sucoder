@@ -20,11 +20,24 @@ targets byte-identical): =config.py= =confined= flag;
 
 *Remaining: the allocation/launch restructure* (this section + "Red-team
 outcome" + "Must-keep fixes" below are the spec):
-1. =_build_executor=/=_ensure_slurm_node=: skip salloc for =confined=
-   (the =sbatch= fuses allocate+launch).
-2. Extract =agent_cmd_str= from =mirror.py:launch_agent= (~1731) and
-   write the prelude via the *login* node, not the not-yet-existent
-   compute node (=_externalize_prelude= uses the compute-node executor).
+1. *[DONE]* =_build_executor=: skip salloc for =confined= (the =sbatch=
+   fuses allocate+launch).  Confined now returns a *login-node* executor
+   (=is_compute_node=False=, no compute-node proxy fields, NFS mirror
+   root -- never compute-node-local disk).  Gated on
+   =remote.slurm.confined=; non-confined targets byte-identical.
+2. *[DONE]* Extracted =mirror.py:MirrorManager._build_remote_agent_cmd_str=
+   from =launch_agent= (the ~=; exec bash -l~ + prelude-externalize
+   block) so the confined flow can reuse it.  Because step 1 makes the
+   confined executor a *login-node* executor, =_externalize_prelude= now
+   writes the prelude over the login node (NFS), not a not-yet-existent
+   compute node.  Added a =MirrorContext.confined= property and a guard:
+   =launch_agent= *refuses* a confined target (=MirrorError=) rather than
+   silently running tmux on the login node -- step 3 replaces the guard
+   with the real submit+attach branch.  Tests:
+   =test_mirror.py= (=_build_remote_agent_cmd_str=, confined-guard),
+   =test_cli.py= (=_build_executor= confined-skips-salloc + control).
+   *Ordering invariant:* keep step 5 (flip =confined: true=) LAST -- until
+   step 3 lands, a confined target hits the guard, not a launch.
 3. Confined =collaborate=: write prelude+script to NFS via login/DTN ->
    =sbatch= (=_build_sbatch_command=) -> poll RUNNING+node (bounded;
    surface PENDING, don't orphan) -> persist node -> attach via
