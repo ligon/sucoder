@@ -1528,6 +1528,38 @@ class MirrorManager:
             "-s", tmux_name, agent_cmd_str,
         ]
 
+    def _externalize_prelude(
+        self,
+        agent_cmd_str: str,
+        sentinel: str,
+        prelude: str,
+        ctx: MirrorContext,
+    ) -> str:
+        """Move a large prelude off the launch command line.
+
+        Writes *prelude* to a per-mirror file on the remote over SSH
+        stdin (so it never appears on a command line), then replaces
+        *sentinel* in *agent_cmd_str* with a ``"$(cat <file>)"`` reference
+        that the agent's own shell expands at launch.  Returns the
+        rewritten command string.
+
+        ``shlex.join`` rendered the metachar-free sentinel as a bare word,
+        so a plain ``str.replace`` swaps it for an *unquoted* command
+        substitution that the remote shell evaluates.
+        """
+        safe = re.sub(r"[^A-Za-z0-9._-]", "_", ctx.settings.name)
+        remote_path = f'"$HOME/.cache/sucoder/prelude-{safe}.txt"'
+        self.executor.run_agent(
+            [
+                "sh", "-c",
+                f'umask 077 && mkdir -p "$HOME/.cache/sucoder" && cat > {remote_path}',
+            ],
+            input=prelude,
+            check=True,
+            capture_output=True,
+        )
+        return agent_cmd_str.replace(sentinel, f'"$(cat {remote_path})"')
+
     def launch_agent(
         self,
         ctx: MirrorContext,
@@ -1590,7 +1622,20 @@ class MirrorManager:
         templates = self._get_merged_templates(command, launcher)
         command = self._apply_agent_flag_templates(command, ctx, launcher, templates)
 
-        # Inject system prompt via native flag if available, otherwise trailing text
+        # Inject system prompt via native flag if available, otherwise
+        # trailing text.
+        #
+        # On a remote target the prelude (system prompt + target prompt +
+        # skills catalog) can be many KB; inlined into the launch command
+        # it overruns the remote shell's command-length limit ("command
+        # too long").  So for remote we inject a short sentinel here and,
+        # in the remote branch below, write the real prelude to a file
+        # over SSH stdin and substitute a ``"$(cat <file>)"`` reference
+        # (see ``_externalize_prelude``).
+        prelude_sentinel = "__SUCODER_PRELUDE_FROM_FILE__"
+        externalize_prelude = bool(prelude) and ctx.is_remote
+        injected_prelude = prelude_sentinel if externalize_prelude else prelude
+        remote_prelude_text: Optional[str] = None
         if prelude:
             if templates.system_prompt:
                 # Use CLI-native system prompt flag (e.g., --system-prompt for Claude)
@@ -1598,10 +1643,14 @@ class MirrorManager:
                 flag_tokens = shlex.split(templates.system_prompt)
                 if flag_tokens:
                     # Add flag and content as separate args to preserve content with spaces
-                    command = self._insert_after_executable(command, flag_tokens + [prelude])
+                    command = self._insert_after_executable(command, flag_tokens + [injected_prelude])
+                    if externalize_prelude:
+                        remote_prelude_text = prelude
             elif inline_prompt_supported:
                 # Fallback: append as trailing text
-                command = list(command) + [prelude]
+                command = list(command) + [injected_prelude]
+                if externalize_prelude:
+                    remote_prelude_text = prelude
             else:
                 self.logger.warning(
                     "Context prelude available but not injected because command %s "
@@ -1634,6 +1683,14 @@ class MirrorManager:
             # detach with Ctrl-b d, etc.).
             tmux_name = f"sucoder-{ctx.settings.name}"
             agent_cmd_str = f"{shlex.join(command)}; exec bash -l"
+
+            # Move a large prelude off the command line (avoids the remote
+            # shell's "command too long" limit): write it to a remote file
+            # and reference it as "$(cat <file>)".
+            if remote_prelude_text is not None:
+                agent_cmd_str = self._externalize_prelude(
+                    agent_cmd_str, prelude_sentinel, remote_prelude_text, ctx,
+                )
 
             command = self._build_tmux_launch_command(
                 tmux_name, agent_cmd_str, detached=detached,
@@ -2485,6 +2542,18 @@ class MirrorManager:
 
     def _auto_commit_agent_skills(self, ctx: MirrorContext) -> None:
         """Commit any changes the agent made to ``~/.claude/skills/``."""
+        if ctx.is_remote:
+            # The skills repo lives in the *agent user's local* home
+            # (``_agent_skills_dir`` resolves ``~coder``).  In remote mode
+            # the executor runs on the compute node as a different user,
+            # so that path doesn't exist there and the git command fails.
+            # Skip rather than break teardown; remote skills snapshotting
+            # would need the remote user's home and is out of scope here.
+            self.logger.debug(
+                "Skipping agent-skills auto-commit for remote mirror %s.",
+                ctx.settings.name,
+            )
+            return
         skills_dir = self._ensure_skills_repo()
         if skills_dir is None:
             return

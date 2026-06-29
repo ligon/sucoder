@@ -104,6 +104,7 @@ class CommandExecutor:
         umask: Optional[int] = None,
         capture_output: bool = True,
         timeout: Optional[int] = None,
+        input: Optional[str] = None,
     ) -> CommandResult:
         requested_args = list(args)
         executed_args = (
@@ -139,13 +140,18 @@ class CommandExecutor:
         }
         if capture_output:
             run_kwargs["capture_output"] = True
-            # Prevent subprocesses (especially SSH) from inheriting and
-            # consuming the parent's stdin.  Without this, SSH may read
-            # from stdin for password/host-key prompts, corrupting it
-            # before interactive helpers like _prompt_choice() call
-            # input().  Commands that genuinely need stdin use
-            # capture_output=False.
-            run_kwargs["stdin"] = subprocess.DEVNULL
+            if input is None:
+                # Prevent subprocesses (especially SSH) from inheriting and
+                # consuming the parent's stdin.  Without this, SSH may read
+                # from stdin for password/host-key prompts, corrupting it
+                # before interactive helpers like _prompt_choice() call
+                # input().  Commands that genuinely need stdin use
+                # capture_output=False, or pipe content via ``input``.
+                run_kwargs["stdin"] = subprocess.DEVNULL
+        if input is not None:
+            # Feed content over stdin (e.g. writing a remote file via
+            # ``cat >``) without it ever appearing on a command line.
+            run_kwargs["input"] = input
         if timeout is not None:
             run_kwargs["timeout"] = timeout
         try:
@@ -295,8 +301,14 @@ class RemoteExecutor(CommandExecutor):
         umask: Optional[int] = None,
         capture_output: bool = True,
         timeout: Optional[int] = None,
+        input: Optional[str] = None,
     ) -> CommandResult:
-        """Run a command on the remote login node via SSH."""
+        """Run a command on the remote login node via SSH.
+
+        ``input``, when set, is piped to the remote command over stdin
+        (e.g. ``cat > file``) so large content never appears on a command
+        line.
+        """
         remote_cwd = self._translate_path(cwd) if cwd else None
         # Allocate a TTY when output isn't captured (interactive agents).
         needs_tty = not capture_output
@@ -317,6 +329,7 @@ class RemoteExecutor(CommandExecutor):
                 as_agent=False,     # no sudo wrapping
                 capture_output=capture_output,
                 timeout=effective_timeout,
+                input=input,
             )
             if self.debug_ssh and result.stderr:
                 self.logger.debug(
