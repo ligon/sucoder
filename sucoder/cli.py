@@ -122,6 +122,48 @@ def _ensure_ssh_visible(control, label: str, logger) -> None:
     typer.echo(f"✓ Connected to {label}", err=True)
 
 
+def _connect_with_retry(
+    control,
+    label: str,
+    logger,
+    *,
+    max_wait: int = 60,
+    initial_delay: int = 3,
+    sleep=time.sleep,
+) -> None:
+    """Bring up an SSH ControlMaster, retrying a freshly-allocated node.
+
+    A just-allocated SLURM compute node may refuse SSH for a few seconds
+    while ``sshd`` / ``pam_slurm_adopt`` register the job -- which shows
+    up as ``kex_exchange_identification: Connection closed by remote
+    host``.  Retry with capped exponential backoff for up to *max_wait*
+    seconds before surfacing the failure, rather than failing the whole
+    launch on a transient post-allocation race.  ``sleep`` is injectable
+    for tests.
+    """
+    from .tunnel import TunnelError
+
+    waited = 0
+    delay = initial_delay
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            _ensure_ssh_visible(control, label, logger)
+            return
+        except TunnelError:
+            if waited >= max_wait:
+                raise
+            logger.info(
+                "%s not reachable yet (attempt %d); a freshly-allocated "
+                "node can need a moment -- retrying in %ds",
+                label, attempt, delay,
+            )
+            sleep(delay)
+            waited += delay
+            delay = min(delay * 2, 15)
+
+
 def _default_config_path() -> Path:
     return Path("~/.sucoder/config.yaml").expanduser()
 
@@ -701,7 +743,9 @@ def _ensure_slurm_node(
     # gw_control, either of which can trigger a re-auth prompt.  A
     # spinner would obscure the prompt and look like a hang.
     try:
-        _ensure_ssh_visible(
+        # Retry: a node can refuse SSH for a few seconds right after
+        # allocation (sshd / pam_slurm_adopt still registering the job).
+        _connect_with_retry(
             cn_control, f"compute node {session.compute_node}", logger,
         )
     except TunnelError as exc:
