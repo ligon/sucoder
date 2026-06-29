@@ -40,6 +40,12 @@ the confined batch script via the tunnel and observe -- the restructure
 is testable in pieces against the live cluster from the operator box,
 not only via a full =collaborate=.
 
+*Tunnel/auth for next session:* the warm tunnels this session were
+*ligon's*; we want *coder's*.  Savio auth uses *one-time tokens, no
+stored SSH credentials*, so there is nothing to pre-provision -- next
+session just brings the tunnel up under =coder= and *prompts for a
+token* (PIN+OTP) when sucoder establishes the ControlMaster.
+
 * Confined launch on shared partitions (sbatch)
 ** The problem (confirmed on n0052.savio4, 2026-06-29)
 On a *shared* partition the agent must run inside its SLURM job cgroup
