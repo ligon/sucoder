@@ -527,6 +527,35 @@ def _adopt_existing_allocation(node, ln_control, login_node, logger):
     return None
 
 
+def _build_sbatch_command(slurm, *, job_name, log_path, script_path, nodelist=None):
+    """Build the ``sbatch`` argv for a ``confined`` launch.
+
+    Mirrors the ``salloc`` construction in :func:`_ensure_slurm_node` but
+    submits a batch script (whose body runs in the job cgroup) instead of
+    reserving a node to SSH into.  ``--parsable`` makes sbatch print just
+    the job id; ``--no-requeue`` keeps a node failure from silently
+    requeuing a job whose tmux is gone (a confusing zombie).
+    """
+    parts = [
+        "sbatch", "--parsable", "--no-requeue",
+        f"--job-name={job_name}",
+        f"--output={log_path}",
+        f"--partition={slurm.partition}",
+        f"--account={slurm.account}",
+        f"--time={slurm.time}",
+    ]
+    if slurm.qos:
+        parts.append(f"--qos={slurm.qos}")
+    if slurm.cpus_per_task:
+        parts.append(f"--cpus-per-task={slurm.cpus_per_task}")
+    if slurm.mem:
+        parts.append(f"--mem={slurm.mem}")
+    if nodelist:
+        parts.append(f"--nodelist={nodelist}")
+    parts.append(script_path)
+    return parts
+
+
 def _ensure_slurm_node(
     remote,
     session,
