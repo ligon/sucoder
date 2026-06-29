@@ -265,6 +265,24 @@ on contact -- the v1/v2 spike failure.  Folded into
 ** Cluster validation
 On =carleton-htc=: =collaborate=, then in the agent =nproc= (expect 4)
 and =cat /proc/self/cgroup= (expect a job cgroup, not =user.slice/...=).
+Verify the memory cap too -- but *not* with =cat /sys/fs/cgroup/memory.max=.
+Slurm here gives the job no cgroup *namespace*, so =/proc/self/cgroup= shows
+the full host path (=/system.slice/.../job_<id>/...=) and =/sys/fs/cgroup/= is
+the host *root* cgroup, which in v2 has no =memory.max= -- a healthy 16G slice
+reads =max= (or unreadable) and looks like a *failed* cap.  Instead derive the
+leaf from =/proc/self/cgroup= and walk up to the first enforced (non-=max=)
+=memory.max= (here the =job_<id>/= level = 16 GiB).  This works whether or not
+a namespace is present (with one, the leaf is =/= and the walk reads the root
+directly):
+#+begin_src shell
+rel=$(awk -F: '$1=="0"{print $3}' /proc/self/cgroup)   # leaf cgroup path
+while :; do
+  v=$(cat "/sys/fs/cgroup${rel%/}/memory.max" 2>/dev/null)
+  [ -n "$v" ] && [ "$v" != max ] && { echo "cap=$v at $rel"; break; }
+  [ "$rel" = / ] && { echo "no enforced cap (unconfined?)"; break; }
+  rel=$(dirname "$rel")
+done
+#+end_src
 Detach and re-=attach=; confirm survival + confinement.  =release= tears
 down.  Let the ControlMaster lapse / drop the laptop and confirm the job
 + agent survive (the persistence win over host-step).
