@@ -2,9 +2,29 @@
 #+description: Design note + config for a free, long-lived sucoder presence on savio4_htc under co_carleton, with an auto-renew/respawn loop across forced turnover.
 
 * Status & handoff (2026-06-29)
-*Branch* =feat/confined-sbatch-launch= off =main= (=main= unchanged at
-=e2bc338=, pulled by the human).  Commits: =9abed14= (foundation),
-=563eab5= (sbatch arg builder).  Not pushed.  ~431 tests pass.
+*Branch* =feat/confined-sbatch-launch= off =main=.  *Steps 1-4 of the
+restructure are DONE, committed, and green (454 tests).*  Not pushed.
+Two adversarial-review rounds (3 reviewers each) were run and folded: a
+*design* red-team before writing step 3/4, then a *code* red-team on the
+implemented diff (see the per-step notes below for the survivors).
+*Remaining:* step 5 (flip =confined: true=) + the live-cluster validation
+pass -- both HUMAN-GATED (need the =coder= tunnel + OTP).
+
+*Code red-team survivors folded* (=af0627f= scope, fixed in a follow-up):
+reuse-probe now keys on =_confined_job_state= (ANY non-empty squeue state
+= live, so a SUSPENDED/PREEMPTED job is not resubmitted-over) and refuses
+to =srun=-attach a still-PENDING job (it would block); =sbatch= runs
+=check=False= and raises a =MirrorError= with a =scancel= hint on a
+post-submit transport drop (was an uncaught =CommandError= masking a
+leak); =RemoteSession.save= is now *atomic* (temp + =os.replace= +
+=fsync=) so a mid-write failure can't truncate the file holding the job
+id (which would load blank -> resubmit -> leak); confined =attach --node=
+prints a note instead of silently dropping it; =release='s sibling-detach
+is confined-aware (defensive; unreachable today).  Test hardening:
+unconfined attach pinned to *byte-identity* (catches a dropped =srun=
+prefix on the =|| new-session= fallback), plus new tests for
+save-failure, reuse-detached / reuse-PENDING / reuse-not-ready,
+=_resolve_remote_home=, and env-threading.
 
 *Mechanism: cluster-validated.*  Spike on n0055.savio4 confirmed an
 =sbatch= batch task runs in the job cgroup, =nproc=4= in the tmux pane,

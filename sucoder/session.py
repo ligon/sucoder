@@ -72,7 +72,15 @@ class RemoteSession:
         )
 
     def save(self) -> None:
-        """Write session state to disk."""
+        """Write session state to disk *atomically*.
+
+        Writes to a temp file in the same directory and ``os.replace``s it
+        into place, so a mid-write failure (disk full, crash) can never leave
+        a truncated session file.  This matters because a half-written file
+        loads as a blank session (``load`` swallows parse errors), which for
+        a SLURM target would drop the recorded ``slurm_job_id`` and make the
+        next ``collaborate`` resubmit -- leaking the running job.
+        """
         directory = _session_dir()
         directory.mkdir(parents=True, exist_ok=True)
         if not self.created:
@@ -87,8 +95,16 @@ class RemoteSession:
             "compute_node": self.compute_node,
             "remote_mirror_root": self.remote_mirror_root,
         }
-        with path.open("w", encoding="utf-8") as fh:
-            yaml.safe_dump(data, fh, default_flow_style=False)
+        tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+        try:
+            with tmp.open("w", encoding="utf-8") as fh:
+                yaml.safe_dump(data, fh, default_flow_style=False)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, path)
+        finally:
+            if tmp.exists():
+                tmp.unlink()
 
     @classmethod
     def holders_of_job(cls, job_id, exclude_key: Optional[str] = None) -> list:

@@ -1035,8 +1035,12 @@ def test_launch_agent_confined_delegates_to_launch_confined(
     assert "prelude_sentinel" in captured["kwargs"]
     assert "remote_prelude_text" in captured["kwargs"]
     assert "env" in captured["kwargs"]
-    # The agent command (not a tmux wrapper) is what gets handed to the
-    # sbatch builder; no bare login-node tmux launch was sent.
+    # The *agent* command (not a tmux wrapper) is what reaches the sbatch
+    # builder -- a regression that pre-wraps it in tmux before delegating
+    # would be caught here.
+    assert captured["command"], "no command threaded to _launch_confined"
+    assert captured["command"][0] != "tmux", captured["command"]
+    # No bare login-node tmux launch was sent to the executor.
     assert not any(args and args[0] == "tmux" for args in calls), (
         f"Confined launch must not run tmux on the login node: {calls!r}"
     )
@@ -1113,14 +1117,20 @@ def _confined_responder(calls, *, sbatch_out="12345", live_state="",
         if a[0] == "sbatch":
             return res(sbatch_out)
         if a[0] == "squeue":
-            if a[-1] == "%T %N":
+            # Dispatch on the actual -o format value (not position), and
+            # assert the argv shape, so a drift in the squeue command fails
+            # LOUDLY here instead of silently mis-routing to a green pass.
+            assert a[1] == "--job" and "--noheader" in a, f"squeue argv: {a}"
+            fmt = a[a.index("-o") + 1] if "-o" in a else None
+            if fmt == "%T %N":            # node-poll
                 nxt = next(poll_iter)
                 return res(nxt) if isinstance(nxt, str) else nxt(res)
-            # live-probe (-o %T)
-            if isinstance(live_state, tuple):
-                stdout, stderr, rc = live_state
-                return res(stdout, stderr, rc)
-            return res(live_state)
+            if fmt == "%T":               # live/state probe
+                if isinstance(live_state, tuple):
+                    stdout, stderr, rc = live_state
+                    return res(stdout, stderr, rc)
+                return res(live_state)
+            raise AssertionError(f"unexpected squeue -o {fmt!r}: {a}")
         if a[0] == "srun":
             if "has-session" in a:
                 return res("", rc=ready_rc)
@@ -1148,18 +1158,22 @@ def test_parse_sbatch_job_id_defensive():
         p("sbatch: error: nonsense", ["sbatch"])
 
 
-def test_confined_job_live_distinguishes_failure_from_gone(tmp_path, monkeypatch):
+def test_confined_job_state_distinguishes_failure_from_gone(tmp_path, monkeypatch):
     manager, _ = _confined_manager(tmp_path, monkeypatch)
 
     def stub(state):
         calls = []
         manager.executor.run_agent = _confined_responder(calls, live_state=state)
-        return manager._confined_job_live(999)
+        return manager._confined_job_state(999)
 
-    assert stub("RUNNING") is True
-    assert stub("PENDING") is True
-    assert stub("") is False                       # ok + empty = gone
-    assert stub(("", "Invalid job id specified", 1)) is False  # gone
+    # squeue lists ONLY active jobs, so ANY non-empty state is live -- the
+    # method returns the raw state word (not a hard-coded allow-list, which
+    # would miss SUSPENDED/PREEMPTED and resubmit over a live job).
+    assert stub("RUNNING") == "RUNNING"
+    assert stub("PENDING") == "PENDING"
+    assert stub("SUSPENDED") == "SUSPENDED"
+    assert stub("") is None                        # ok + empty = gone
+    assert stub(("", "Invalid job id specified", 1)) is None  # gone
     # A genuine probe failure must RAISE (never silently "gone" -> resubmit).
     with pytest.raises(MirrorError, match="Could not verify"):
         stub(("", "ssh: connect timeout", 255))
@@ -1175,11 +1189,15 @@ def test_poll_confined_node_three_way(tmp_path, monkeypatch):
     )
     assert manager._poll_confined_node(42, attempts=5, delay=0) == "n0007.savio4"
 
-    # Empty squeue output == job left the queue == terminal -> raise.
+    # Empty squeue output == job left the queue == terminal -> raise, with
+    # the sacct state surfaced (not mislabeled PENDING).
     calls = []
-    manager.executor.run_agent = _confined_responder(calls, poll_states=[""])
-    with pytest.raises(MirrorError, match="ended before"):
+    manager.executor.run_agent = _confined_responder(
+        calls, poll_states=[""], sacct_state="FAILED",
+    )
+    with pytest.raises(MirrorError, match="ended before") as exc:
         manager._poll_confined_node(42, attempts=5, delay=0)
+    assert "FAILED" in str(exc.value)
 
     # Never persists the literal state word as a node: PENDING forever -> raise
     # tagged PENDING, not a bogus node.
@@ -1258,6 +1276,11 @@ def test_launch_confined_persists_job_id_before_poll(tmp_path, monkeypatch):
 
     sess = RemoteSession.load("sample", target_name=None)
     assert sess.slurm_job_id == 6789, "job id must be persisted before the poll"
+    # ...and the failure path leaves it RECORDED, never scancelled (recoverable).
+    assert sess.compute_node is None
+    assert not any(c["args"][0] == "scancel" for c in calls), (
+        "the launch path must never scancel on a poll failure"
+    )
 
 
 def test_launch_confined_reuse_probe_skips_resubmit(tmp_path, monkeypatch):
@@ -1310,22 +1333,159 @@ def test_launch_confined_probe_failure_does_not_resubmit(tmp_path, monkeypatch):
     )
 
 
+def test_launch_confined_reuse_detached_returns_without_attach(tmp_path, monkeypatch):
+    """A detached (renew) relaunch that finds a live job returns 0 WITHOUT
+    resubmitting or attaching."""
+    from sucoder.session import RemoteSession
+
+    manager, ctx = _confined_manager(tmp_path, monkeypatch)
+    sess = RemoteSession.load("sample", target_name=None)
+    sess.slurm_job_id = 4242
+    sess.save()
+
+    calls = []
+    manager.executor.run_agent = _confined_responder(calls, live_state="RUNNING")
+
+    rc = manager._launch_confined(
+        ctx, ["claude"], remote_prelude_text=None, prelude_sentinel="__X__",
+        env=None, detached=True,
+    )
+    assert rc == 0
+    assert not any(c["args"][0] == "sbatch" for c in calls)
+    assert not any(
+        c["args"][0] == "srun" and "attach-session" in c["args"] for c in calls
+    )
+
+
+def test_launch_confined_reuse_pending_does_not_attach(tmp_path, monkeypatch):
+    """Reusing a still-PENDING job interactively must NOT srun-attach (which
+    would block until it starts) -- surface and bail instead."""
+    from sucoder.session import RemoteSession
+
+    manager, ctx = _confined_manager(tmp_path, monkeypatch)
+    sess = RemoteSession.load("sample", target_name=None)
+    sess.slurm_job_id = 4242
+    sess.save()
+
+    calls = []
+    manager.executor.run_agent = _confined_responder(calls, live_state="PENDING")
+
+    with pytest.raises(MirrorError, match="queued, not yet running"):
+        manager._launch_confined(
+            ctx, ["claude"], remote_prelude_text=None,
+            prelude_sentinel="__X__", env=None, detached=False,
+        )
+    assert not any(c["args"][0] == "sbatch" for c in calls)
+    assert not any(
+        c["args"][0] == "srun" and "attach-session" in c["args"] for c in calls
+    )
+
+
+def test_launch_confined_reuse_session_not_ready_still_attaches(tmp_path, monkeypatch):
+    """Reusing a RUNNING job whose tmux session isn't up warns but still
+    attaches (unlike a fresh launch, which raises) -- the agent may simply
+    have exited, leaving the keeper's login shell."""
+    from sucoder.session import RemoteSession
+
+    manager, ctx = _confined_manager(tmp_path, monkeypatch)
+    sess = RemoteSession.load("sample", target_name=None)
+    sess.slurm_job_id = 4242
+    sess.save()
+
+    calls = []
+    manager.executor.run_agent = _confined_responder(
+        calls, live_state="RUNNING", ready_rc=1, attach_rc=0,
+    )
+
+    rc = manager._launch_confined(
+        ctx, ["claude"], remote_prelude_text=None, prelude_sentinel="__X__",
+        env=None, detached=False,
+    )
+    assert rc == 0
+    attach = [c for c in calls if c["args"][0] == "srun" and "attach-session" in c["args"]]
+    assert attach and "--jobid=4242" in attach[0]["args"]
+
+
+def test_launch_confined_save_failure_surfaces_scancel_hint(tmp_path, monkeypatch, caplog):
+    """If persisting the just-submitted job id fails, the error log must name
+    the job and the `scancel` recovery command (a job submitted but never
+    recorded is a leak), and the error must propagate."""
+    import logging
+    from sucoder.session import RemoteSession
+
+    manager, ctx = _confined_manager(tmp_path, monkeypatch)
+    calls = []
+    manager.executor.run_agent = _confined_responder(calls, sbatch_out="8899")
+
+    def boom(self):
+        raise OSError("disk full")
+    monkeypatch.setattr(RemoteSession, "save", boom)
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(OSError):
+            manager._launch_confined(
+                ctx, ["claude"], remote_prelude_text=None,
+                prelude_sentinel="__X__", env=None, detached=False,
+            )
+    blob = "\n".join(r.getMessage() for r in caplog.records)
+    assert "8899" in blob and "scancel 8899" in blob
+
+
+def test_resolve_remote_home_resolves_and_caches(tmp_path):
+    """`_resolve_remote_home` resolves $HOME via the executor, caches it, and
+    raises on an empty result (a bad absolute path would be worse silent)."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+
+    calls = []
+
+    def stub(args, **kw):
+        calls.append(list(args))
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="/global/home/users/coder\n", stderr="", returncode=0,
+        )
+    manager.executor.run_agent = stub
+
+    assert manager._resolve_remote_home(ctx) == "/global/home/users/coder"
+    # Cached: a second call does not re-probe.
+    assert manager._resolve_remote_home(ctx) == "/global/home/users/coder"
+    assert len(calls) == 1
+
+    # Empty $HOME must raise rather than yield a bogus `None/.cache/...` path.
+    (tmp_path / "m2").mkdir()
+    manager2 = build_manager(tmp_path / "m2")
+    ctx2 = manager2.context_for("sample")
+    manager2.executor.run_agent = lambda args, **kw: CommandResult(
+        requested_args=list(args), executed_args=list(args),
+        stdout="\n", stderr="", returncode=0,
+    )
+    with pytest.raises(MirrorError, match="resolve the remote"):
+        manager2._resolve_remote_home(ctx2)
+
+
 def test_launch_confined_wraps_agent_in_bash_lc(tmp_path, monkeypatch):
     """sbatch drops the login env, so the agent is wrapped in `bash -lc` to
-    resolve PATH/nvm; the staged batch script must contain it."""
+    resolve PATH/nvm; the staged batch script must contain it, and the
+    agent_launcher.env must be threaded through (sbatch drops env too)."""
     manager, ctx = _confined_manager(tmp_path, monkeypatch)
     calls = []
     manager.executor.run_agent = _confined_responder(calls, sbatch_out="9")
 
     manager._launch_confined(
         ctx, ["claude", "--foo"], remote_prelude_text=None,
-        prelude_sentinel="__X__", env=None, detached=True,
+        prelude_sentinel="__X__", env={"SUCODER_TOK": "abc 123"}, detached=True,
     )
     writes = [c for c in calls if c["args"][0] == "sh" and c["input"]]
     assert writes, "batch script must be staged to NFS via the executor"
     script = writes[0]["input"]
     assert "bash -lc " in script
     assert "claude --foo" in script
+    # env=env is actually threaded into _build_batch_script (a dropped
+    # `env=env` would silently regress env-carry to nothing).  The export is
+    # inside the shlex-quoted window command, so assert the threaded var name
+    # + value text appear (execution is covered by test_batch_script.py).
+    assert "export SUCODER_TOK=" in script and "abc 123" in script
     # Dedicated socket + sanitized session name in the staged script.
     assert "tmux -L sucoder-sample new-session -A -d -s sucoder-sample" in script
 
@@ -1338,11 +1498,16 @@ def test_launch_confined_session_not_ready_surfaces_log(tmp_path, monkeypatch):
     manager.executor.run_agent = _confined_responder(
         calls, sbatch_out="13", poll_states=["RUNNING n0001.savio4"], ready_rc=1,
     )
-    with pytest.raises(MirrorError, match="did not come up"):
+    with pytest.raises(MirrorError, match="did not come up") as exc:
         manager._launch_confined(
             ctx, ["claude"], remote_prelude_text=None,
             prelude_sentinel="__X__", env=None, detached=False,
         )
+    msg = str(exc.value)
+    # The agent's pane (its stderr lives there, not on the batch stdout) and
+    # the job-log pointer are surfaced for diagnosis.
+    assert "agent pane output" in msg
+    assert "job-sample-13.out" in msg
     # No attach attempted when the session is not ready.
     assert not any(
         c["args"][0] == "srun" and "attach-session" in c["args"] for c in calls

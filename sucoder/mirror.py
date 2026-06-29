@@ -1828,15 +1828,19 @@ class MirrorManager:
                 "`squeue --me` and `scancel` it to avoid a leak."
             ) from exc
 
-    def _confined_job_live(self, job_id: int) -> bool:
-        """Return True iff *job_id* is confidently still alive (queued/running).
+    def _confined_job_state(self, job_id: int) -> Optional[str]:
+        """Return the SLURM state of *job_id* (RUNNING/PENDING/...), or None
+        if the job is gone (terminal / absent).
 
-        The reuse-probe must NEVER resubmit over a live job, so it
-        distinguishes three squeue outcomes:
+        ``squeue`` lists ONLY active (non-terminal) jobs, so the reuse-probe
+        treats *any* non-empty state as live -- RUNNING, PENDING,
+        CONFIGURING, *SUSPENDED*, COMPLETING, ... -- and must not resubmit
+        over it (an allow-list would miss SUSPENDED/PREEMPTED and orphan the
+        suspended allocation).  Distinguishes three outcomes:
 
-        - exit 0 + a queued/running state -> live (True).
+        - exit 0 + non-empty state -> that state (live).
         - exit 0 + empty, or a non-zero exit whose stderr says "invalid job
-          id" -> gone (False); safe to submit a fresh job.
+          id" -> None (gone); safe to submit a fresh job.
         - any other failure (SSH blip, slurmctld down) -> raise; the caller
           must NOT resubmit (it could orphan a job that is actually alive).
         """
@@ -1846,13 +1850,9 @@ class MirrorManager:
         )
         state = result.stdout.strip()
         if result.returncode == 0:
-            if not state:
-                return False
-            return state in (
-                "RUNNING", "PENDING", "CONFIGURING", "COMPLETING", "RESIZING",
-            )
+            return state or None
         if "invalid job id" in result.stderr.lower():
-            return False
+            return None
         raise MirrorError(
             f"Could not verify SLURM job {job_id} (squeue exit "
             f"{result.returncode}): {result.stderr.strip()}.  Retry, or "
@@ -2022,24 +2022,35 @@ class MirrorManager:
 
         # Reuse-probe: never submit a second job while one is live.
         sess = RemoteSession.load(ctx.settings.name, target_name=self.target_name)
-        if sess.slurm_job_id and self._confined_job_live(sess.slurm_job_id):
-            self.logger.info(
-                "Reusing live confined SLURM job %s for mirror %s.",
-                sess.slurm_job_id, ctx.settings.name,
-            )
-            if detached:
-                return 0
-            # The agent may already have exited (the keeper holds the job
-            # after a clean /exit), so this attach can land in a bare login
-            # shell rather than a running agent.
-            if not self._confined_session_ready(
-                sess.slurm_job_id, session_name, socket
-            ):
-                self.logger.warning(
-                    "Confined job %s is live but its tmux session is not up; "
-                    "attach may fail.", sess.slurm_job_id,
+        if sess.slurm_job_id:
+            state = self._confined_job_state(sess.slurm_job_id)
+            if state is not None:
+                self.logger.info(
+                    "Reusing live confined SLURM job %s (%s) for mirror %s.",
+                    sess.slurm_job_id, state, ctx.settings.name,
                 )
-            return self._attach_confined(sess.slurm_job_id, session_name, socket)
+                if detached:
+                    return 0
+                if state != "RUNNING":
+                    # Queued but no node yet: an `srun --overlap` attach would
+                    # block until it starts.  Surface and let the operator
+                    # attach once it is up.
+                    raise MirrorError(
+                        f"Confined SLURM job {sess.slurm_job_id} is {state} "
+                        "(queued, not yet running).  Attach once it starts "
+                        "with `sucoder attach`."
+                    )
+                # The agent may already have exited (the keeper holds the job
+                # after a clean /exit), so this attach can land in a bare
+                # login shell rather than a running agent.
+                if not self._confined_session_ready(
+                    sess.slurm_job_id, session_name, socket
+                ):
+                    self.logger.warning(
+                        "Confined job %s is live but its tmux session is not "
+                        "up; attach may fail.", sess.slurm_job_id,
+                    )
+                return self._attach_confined(sess.slurm_job_id, session_name, socket)
 
         # Build the in-tmux command and wrap in `bash -lc` so the agent
         # resolves the login env (PATH/nvm); sbatch runs the batch body with
@@ -2074,14 +2085,24 @@ class MirrorManager:
             input=script, check=True, capture_output=True,
         )
 
-        # Submit.  check=True so a *failed* sbatch raises before we parse.
+        # Submit.  check=False so a transport drop AFTER the remote sbatch
+        # created the job (rc 255) is reported as a MirrorError with a
+        # recovery hint rather than an uncaught CommandError traceback that
+        # hides a possible leak.
         sbatch_argv = _build_sbatch_command(
             slurm, job_name=session_name, log_path=log_path,
             script_path=script_path,
         )
         result = self.executor.run_agent(
-            sbatch_argv, check=True, capture_output=True,
+            sbatch_argv, check=False, capture_output=True,
         )
+        if result.returncode != 0:
+            raise MirrorError(
+                f"sbatch failed (exit {result.returncode}): "
+                f"{result.stderr.strip()}.  A job MAY have been submitted -- "
+                "check `squeue --me` and `scancel` any stray job to avoid a "
+                "leak."
+            )
         job_id = self._parse_sbatch_job_id(result.stdout, sbatch_argv)
 
         # Persist the id IMMEDIATELY (before the poll): any later exception

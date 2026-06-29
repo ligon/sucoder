@@ -797,9 +797,16 @@ def test_attach_unconfined_keeps_new_session_fallback(tmp_path, monkeypatch):
     )
     assert result.exit_code == 0, (result.stdout, result.exception)
     remote_cmd = captured["argv"][-1]
-    # Unchanged unconfined form: default socket (no -L), with the fallback.
-    assert "tmux attach-session -t sucoder-sample" in remote_cmd, remote_cmd
-    assert "|| " in remote_cmd and "tmux new-session -s sucoder-sample" in remote_cmd, remote_cmd
+    # Pin the EXACT unconfined command (byte-identity): the srun --overlap
+    # prefix must be applied to BOTH the attach AND the new-session fallback
+    # (so the fallback runs inside the allocation, not as a login-node
+    # orphan -- the field bug this form fixes).  A substring check would miss
+    # a dropped prefix on the fallback.
+    expected = (
+        "srun --jobid=1234567 --overlap --pty tmux attach-session -t sucoder-sample "
+        "|| srun --jobid=1234567 --overlap --pty tmux new-session -s sucoder-sample"
+    )
+    assert remote_cmd == expected, remote_cmd
     assert "-L sucoder-sample" not in remote_cmd, remote_cmd
 
 

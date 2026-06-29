@@ -2052,6 +2052,15 @@ def attach(
         # compute node would land OUTSIDE it (the very escape confinement
         # exists to prevent).  So always join via `srun --overlap`, even
         # though compute_node is recorded.
+        if node:
+            # `--node` is meaningless once we route by jobid; the early
+            # incoherence guard didn't fire (the user didn't pass
+            # --via-srun), so say so rather than silently dropping it.
+            typer.echo(
+                "note: --node is ignored for a confined target "
+                "(attach joins the job by id via srun --overlap).",
+                err=True,
+            )
         via_srun = True
     if remote.slurm is not None:
         # SLURM target: NEVER silently fall through to a login-node shell.
@@ -2291,12 +2300,26 @@ def release(
                 ],
                 debug=debug_ssh,
             )
-            tmux_name = f"sucoder-{mirror}"
+            # Defensive: this sibling-detach branch is unreachable for a
+            # confined target (each sbatch is its own job, so `siblings` is
+            # always empty and the scancel branch runs instead).  But if it
+            # were ever reached (shared-confined mode, hand-edited session),
+            # a confined session lives on a dedicated `-L` socket under a
+            # sanitized name -- the unconfined `sucoder-<mirror>` on the
+            # default socket would target the wrong server and no-op.
+            if remote.slurm is not None and remote.slurm.confined:
+                session_name, socket = confined_tmux_target(mirror)
+                tmux_kill = (
+                    f"tmux -L {shlex.quote(socket)} kill-session "
+                    f"-t {shlex.quote(session_name)}"
+                )
+            else:
+                tmux_name = f"sucoder-{mirror}"
+                tmux_kill = f"tmux kill-session -t {shlex.quote(tmux_name)}"
             kill_cmd = [
                 "ssh", *cn_control.ssh_options(with_fallback=True),
                 session.compute_node,
-                f"tmux kill-session -t {shlex.quote(tmux_name)} "
-                "2>/dev/null || true",
+                f"{tmux_kill} 2>/dev/null || true",
             ]
             logger.debug("detach tmux command: %s", kill_cmd)
             _sp.run(kill_cmd, capture_output=True, text=True, check=False)
