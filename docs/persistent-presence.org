@@ -263,11 +263,25 @@ on contact -- the v1/v2 spike failure.  Folded into
 =cd= all confirmed via =bash -n= + the spike).
 
 ** Cluster validation
-On =carleton-htc=: =collaborate=, then in the agent =nproc= (expect 4)
-and =cat /proc/self/cgroup= (expect a job cgroup, not =user.slice/...=).
-Detach and re-=attach=; confirm survival + confinement.  =release= tears
-down.  Let the ControlMaster lapse / drop the laptop and confirm the job
-+ agent survive (the persistence win over host-step).
+*[DONE 2026-06-29] End-to-end on the real confined =collaborate= path
+(job 35275011, =JobName=sucoder-SuCoder=, =savio4_htc=).*  The live agent
+(not the spike harness) reported, from inside its own session:
+=nproc=4=; cgroup =.../job_35275011/step_batch/user/task_0= (a job cgroup,
+NOT =user.slice=); =cpuset.cpus.effective=39,41,43,45= (pinned to its 4
+reserved CPUs on a shared node); =memory.max= at the *job* cgroup =
+=17179869184= (16 GiB, inherited hierarchically -- the leaf reads =max=);
+=Account=co_carleton=, =QOS=carleton_htc4_normal=, =AllocTRES=cpu=4,mem=16G=
+(our =_build_sbatch_command= args); =claude= + =node v20.20.2= on PATH (the
+=bash -lc= login-env wrap works); attached inside =$TMUX= on the dedicated
+=sucoder-SuCoder= socket.  *Caveat surfaced:* =free= (and other
+non-cgroup-aware tools) report the *host's* 251 GiB, not the 16 GiB
+ceiling -- a memory-heavy step hits a silent cgroup OOM-kill, so the agent
+must treat 16 GiB as the cap (or bump =mem:= for hungry mirrors).
+=nproc=, by contrast, IS cpuset-aware (reported 4).
+
+*Still to confirm live (needs a human at a terminal):* detach + re-=attach=
+survival; =release= teardown; and the persistence win -- let the
+ControlMaster lapse / drop the laptop and confirm the job + agent survive.
 
 * Motivation
 The default Savio flow (=-T savio-node=) parks an *exclusive*, *billed*
@@ -282,7 +296,14 @@ calculus:
 
 - *No wall-clock cap.*  =MaxWall= is empty; the partition =MaxTime= is
   =UNLIMITED=.  A job is not killed for running long.  (An FCA QOS like
-  =savio_normal= caps at 72h.)
+  =savio_normal= caps at 72h.)  *Confirmed 2026-06-29:* the partition's
+  =DefaultTime=NONE=, so Slurm falls back to =MaxTime=UNLIMITED= -- even
+  *omitting* =--time= yields an unlimited job, so there is no silent
+  default cap to fear.  The =3-00:00:00= we set is therefore pure courtesy
+  cadence, not a necessity; this is also why the "self-renewing job"
+  idea was dropped (it pre-empts a walltime that is never enforced, and
+  an in-job renewer dies with its node at the only real ceiling -- a
+  maintenance reboot, which only an *external* watcher can recover from).
 - *Normal, non-preemptible priority.*  Unlike a =co_*= lowprio job on
   the general pool, a normal-QOS slice here is not evicted, so it can
   *host* a persistent presence, not just run batch.
