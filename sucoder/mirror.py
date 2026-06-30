@@ -27,7 +27,7 @@ from .config import (
     MirrorSettings,
     RemoteConfig,
 )
-from .executor import CommandError, CommandExecutor, RemoteExecutor
+from .executor import CommandError, CommandExecutor, CommandResult, RemoteExecutor
 from .permissions import (
     apply_agent_repo_permissions,
     check_parent_traversable,
@@ -518,7 +518,9 @@ class MirrorManager:
 
         return raw.replace("~", cached, 1)
 
-    def _remote_git_env(self, ctx: MirrorContext) -> tuple:
+    def _remote_git_env(
+        self, ctx: MirrorContext, *, use_scaffolding: bool = True,
+    ) -> tuple:
         """Return ``(url, env)`` for git operations against the remote mirror.
 
         Builds the SSH transport command using the ControlMaster sockets
@@ -527,6 +529,12 @@ class MirrorManager:
         When a scaffolding node (DTN) is configured, git transport is
         routed through it — fat pipes, spare CPU, and the mirror lives
         on shared Lustre visible from any cluster node.
+
+        Pass ``use_scaffolding=False`` to deliberately skip the DTN and
+        build transport against the target/login node instead.  That is
+        the failover path when the DTN's ControlMaster refuses a session
+        (a common limit on transfer nodes): the login node is already
+        authenticated, session-capable, and sees the same Lustre.
         """
         remote = ctx.settings.remote
         assert remote is not None
@@ -573,7 +581,7 @@ class MirrorManager:
         # load on login nodes (or the fragile compute-node chain).
         scaffolding_node = getattr(self.executor, "scaffolding_node", "")
         scaffolding_sock = getattr(self.executor, "scaffolding_socket_path", "")
-        if scaffolding_node and scaffolding_sock:
+        if use_scaffolding and scaffolding_node and scaffolding_sock:
             ssh_cmd_parts = ["ssh"]
             if debug_ssh:
                 ssh_cmd_parts.append("-vvv")
@@ -644,6 +652,76 @@ class MirrorManager:
         env["GIT_SSH_COMMAND"] = git_ssh_cmd
         return url, env
 
+    def _git_transports(
+        self, ctx: MirrorContext,
+    ) -> List[Tuple[str, str, Mapping[str, str]]]:
+        """Ordered ``(label, url, env)`` git transports to try.
+
+        Primary is the DTN (scaffolding node) when one is configured;
+        the fallback is the target/login node.  The DTN has fat pipes
+        and spare CPU, but transfer nodes commonly cap concurrent SSH
+        sessions, so a refused master session must not be fatal — the
+        login node sees the same shared filesystem and can carry the
+        push/fetch instead.  Without a scaffolding node the two collapse
+        to one transport (no pointless retry).
+        """
+        transports: List[Tuple[str, str, Mapping[str, str]]] = []
+        scaffolding_node = getattr(self.executor, "scaffolding_node", "")
+        scaffolding_sock = getattr(self.executor, "scaffolding_socket_path", "")
+        if scaffolding_node and scaffolding_sock:
+            url, env = self._remote_git_env(ctx, use_scaffolding=True)
+            transports.append(("DTN", url, env))
+
+        fallback_label = (
+            "compute node"
+            if getattr(self.executor, "is_compute_node", False)
+            else "login node"
+        )
+        url, env = self._remote_git_env(ctx, use_scaffolding=False)
+        # Skip a duplicate when there is no distinct fallback (e.g. no
+        # scaffolding node, or both resolve to the same host).
+        if not transports or transports[0][1] != url:
+            transports.append((fallback_label, url, env))
+        return transports
+
+    @staticmethod
+    def _is_transport_failure(result: "CommandResult") -> bool:
+        """True if a git result looks like an SSH transport fault.
+
+        Distinguishes "the connection broke" (worth failing over to
+        another node) from "the remote answered, but…" (e.g. an empty
+        mirror's ``couldn't find remote ref`` — a real answer that would
+        repeat identically on any transport, so not worth a retry).
+        """
+        # -1 is our timeout sentinel; 255 is SSH's own connection error.
+        if result.returncode in (-1, 255):
+            return True
+        stderr = (result.stderr or "").lower()
+        markers = (
+            "session open refused",          # DTN master refused the session
+            "the remote end hung up",        # receive/upload-pack died mid-stream
+            "connection closed",
+            "connection refused",
+            "connection timed out",
+            "connection reset",
+            "broken pipe",
+            "could not resolve hostname",
+            "no route to host",
+            "kex_exchange_identification",   # sshd dropped us before banner
+        )
+        return any(m in stderr for m in markers)
+
+    @staticmethod
+    def _short_git_error(result: "CommandResult") -> str:
+        """A one-line summary of a git/ssh failure for log messages."""
+        skip = ("mux_client", "controlsocket", "warning:")
+        last = ""
+        for line in (result.stderr or "").splitlines():
+            stripped = line.strip()
+            if stripped and not stripped.lower().startswith(skip):
+                last = stripped
+        return last or f"rc={result.returncode}"
+
     # -- Interactive helpers ---------------------------------------------
 
     @staticmethod
@@ -679,11 +757,9 @@ class MirrorManager:
 
     def _pull_from_remote(self, ctx: MirrorContext) -> None:
         """Fetch agent commits from the remote mirror into canonical."""
-        url, env = self._remote_git_env(ctx)
         self._pull_from_url(
             ctx,
-            url,
-            env=env,
+            self._git_transports(ctx),
             source_label="remote mirror",
             timeout=self._GIT_REMOTE_TIMEOUT,
         )
@@ -706,26 +782,31 @@ class MirrorManager:
             )
         self._pull_from_url(
             ctx,
-            str(mirror_path),
-            env=None,
+            [("local mirror", str(mirror_path), None)],
             source_label=f"local mirror at {mirror_path}",
         )
 
     def _pull_from_url(
         self,
         ctx: MirrorContext,
-        url: str,
+        transports: Sequence[Tuple[str, str, Optional[Mapping[str, str]]]],
         *,
-        env: Optional[Mapping[str, str]] = None,
         source_label: str = "mirror",
         timeout: Optional[int] = None,
     ) -> None:
-        """Fetch agent commits from *url* into canonical and reconcile.
+        """Fetch agent commits into canonical and reconcile.
 
-        Shared by ``_pull_from_remote`` (SSH/tunnel URL) and
-        ``_pull_from_local`` (filesystem path). Must run *before*
-        ``_sync_remote`` so that work the agent committed on the mirror
-        is not lost when the canonical repo force-pushes over it.
+        Shared by ``_pull_from_remote`` (SSH transports, DTN→login-node
+        failover) and ``_pull_from_local`` (a single filesystem path).
+        Must run *before* ``_sync_remote`` so that work the agent
+        committed on the mirror is not lost when the canonical repo
+        force-pushes over it.
+
+        *transports* is an ordered list of ``(label, url, env)``; each is
+        tried until one connects.  This matters for correctness, not just
+        convenience: if the DTN transport silently fails we would skip
+        the pull and the next push could force-overwrite agent commits,
+        so we fail over to the login node before giving up.
 
         Strategy:
         1. Fetch the mirror's branch into a temporary ref — always safe.
@@ -742,20 +823,38 @@ class MirrorManager:
         tmp_ref = "refs/sucoder/mirror-head"
 
         self.logger.info("Fetching agent commits from %s", source_label)
-        result = self.executor.run_human(
-            ["git", "fetch", url, f"{base}:{tmp_ref}"],
-            check=False,
-            cwd=str(ctx.canonical_path),
-            env=env,
-            timeout=timeout,
-        )
-        if result.returncode != 0:
+
+        # Try each transport until one connects.  A non-transport failure
+        # (e.g. an empty mirror's "couldn't find remote ref") is a real
+        # answer that would repeat on every node, so it stops the
+        # failover; only a broken connection rolls to the next transport.
+        result: Optional[CommandResult] = None
+        url = transports[0][1] if transports else ""
+        for idx, (label, t_url, t_env) in enumerate(transports):
+            url = t_url
+            result = self.executor.run_human(
+                ["git", "fetch", t_url, f"{base}:{tmp_ref}"],
+                check=False,
+                cwd=str(ctx.canonical_path),
+                env=t_env,
+                timeout=timeout,
+            )
+            if result.returncode == 0 or not self._is_transport_failure(result):
+                break
+            if idx + 1 < len(transports):
+                self.logger.warning(
+                    "Fetch from %s via %s failed (%s); retrying via %s",
+                    source_label, label, self._short_git_error(result),
+                    transports[idx + 1][0],
+                )
+
+        if result is None or result.returncode != 0:
             # Mirror may be empty (first run) or unreachable.
             self.logger.warning(
                 "Could not fetch from %s (rc=%d): %s",
                 source_label,
-                result.returncode,
-                (result.stderr or "").strip(),
+                result.returncode if result is not None else -1,
+                (result.stderr or "").strip() if result is not None else "",
             )
             return
 
@@ -1114,19 +1213,37 @@ class MirrorManager:
     def _sync_remote(self, ctx: MirrorContext) -> None:
         """Push local canonical commits to the remote mirror.
 
-        Uses the login node ControlMaster for git transport — no
-        tunnel needed when the login node has internet access.
+        Prefers the DTN ControlMaster for git transport, but fails over
+        to the login node if the DTN refuses the session (transfer nodes
+        commonly cap concurrent SSH sessions).  A genuine git error
+        (e.g. a rejected ref) is *not* retried — it would fail the same
+        way on the login node and the original message is clearer.
         """
-        url, env = self._remote_git_env(ctx)
-
-        self.logger.info("Pushing to remote mirror %s", url)
-        self.executor.run_human(
-            ["git", "push", url, "--all", "--force"],
-            check=True,
-            cwd=str(ctx.canonical_path),
-            env=env,
-            timeout=self._GIT_REMOTE_TIMEOUT,
-        )
+        transports = self._git_transports(ctx)
+        for idx, (label, url, env) in enumerate(transports):
+            is_last = idx + 1 >= len(transports)
+            self.logger.info(
+                "Pushing to remote mirror %s (via %s)", url, label,
+            )
+            try:
+                self.executor.run_human(
+                    ["git", "push", url, "--all", "--force"],
+                    check=True,
+                    cwd=str(ctx.canonical_path),
+                    env=env,
+                    timeout=self._GIT_REMOTE_TIMEOUT,
+                )
+                return
+            except CommandError as exc:
+                # Only fail over when the connection itself broke; a real
+                # git rejection should surface immediately.
+                if is_last or not self._is_transport_failure(exc.result):
+                    raise
+                self.logger.warning(
+                    "Push via %s failed (%s); retrying via %s",
+                    label, self._short_git_error(exc.result),
+                    transports[idx + 1][0],
+                )
 
     def _remote_repo_has_content(
         self,

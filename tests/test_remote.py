@@ -1438,6 +1438,187 @@ def test_ensure_remote_clone_rebuilds_empty_mirror(
     assert sync_called
 
 
+def test_git_transports_dtn_then_login(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With a DTN, transports are [DTN, login node] with distinct urls."""
+    manager = _build_remote_manager(tmp_path)
+    ctx = manager.context_for("rproj")
+    manager.executor = _remote_exec_with_scaffolding(tmp_path)
+    monkeypatch.setattr(
+        manager, "_resolve_remote_path",
+        lambda ctx: "/home/ligon/mirrors/rproj",
+    )
+
+    transports = manager._git_transports(ctx)
+
+    assert [t[0] for t in transports] == ["DTN", "login node"]
+    dtn_url, login_url = transports[0][1], transports[1][1]
+    assert dtn_url.startswith("dtn.example.com:")
+    assert login_url.startswith("ln001:")
+    # DTN rides the scaffolding socket; login node rides its own.
+    assert "ControlPath=/tmp/dtn.sock" in transports[0][2]["GIT_SSH_COMMAND"]
+    assert "ControlPath=/tmp/test.sock" in transports[1][2]["GIT_SSH_COMMAND"]
+
+
+def test_git_transports_single_without_scaffolding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without a DTN there is one transport — no pointless failover."""
+    from sucoder.executor import RemoteExecutor
+
+    manager = _build_remote_manager(tmp_path)
+    ctx = manager.context_for("rproj")
+    import logging
+    manager.executor = RemoteExecutor(
+        human_user="ligon", agent_user="ligon", agent_group="ligon",
+        logger=logging.getLogger("test.remote.single"),
+        dry_run=False, use_sudo_for_agent=False,
+        gateway="gw.example.com", login_node="ln001",
+        remote_mirror_root="~/mirrors",
+        local_mirror_root=str(tmp_path / "mirrors"),
+        control_socket_path="/tmp/test.sock",
+    )
+    monkeypatch.setattr(
+        manager, "_resolve_remote_path",
+        lambda ctx: "/home/ligon/mirrors/rproj",
+    )
+
+    transports = manager._git_transports(ctx)
+    assert len(transports) == 1
+    assert transports[0][0] == "login node"
+
+
+def _transport_result(args, returncode, stderr=""):
+    from sucoder.executor import CommandResult
+    return CommandResult(list(args), list(args), "", stderr, returncode)
+
+
+def test_sync_remote_fails_over_to_login_node(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A DTN push that hits a transport fault retries on the login node."""
+    from sucoder.executor import CommandError
+
+    manager = _build_remote_manager(tmp_path)
+    ctx = manager.context_for("rproj")
+    manager.executor = _remote_exec_with_scaffolding(tmp_path)
+    monkeypatch.setattr(
+        manager, "_resolve_remote_path",
+        lambda ctx: "/home/ligon/mirrors/rproj",
+    )
+
+    pushes: list = []
+
+    def fake_run_human(args, **kwargs):
+        url = args[2]
+        pushes.append(url)
+        if url.startswith("dtn"):
+            res = _transport_result(
+                args, 1, "fatal: the remote end hung up unexpectedly")
+            raise CommandError("boom", res)
+        return _transport_result(args, 0)
+
+    monkeypatch.setattr(manager.executor, "run_human", fake_run_human)
+
+    manager._sync_remote(ctx)  # must not raise
+
+    assert len(pushes) == 2
+    assert pushes[0].startswith("dtn.example.com:")
+    assert pushes[1].startswith("ln001:")
+
+
+def test_sync_remote_no_failover_on_real_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A genuine git rejection surfaces immediately — no login-node retry."""
+    from sucoder.executor import CommandError
+
+    manager = _build_remote_manager(tmp_path)
+    ctx = manager.context_for("rproj")
+    manager.executor = _remote_exec_with_scaffolding(tmp_path)
+    monkeypatch.setattr(
+        manager, "_resolve_remote_path",
+        lambda ctx: "/home/ligon/mirrors/rproj",
+    )
+
+    pushes: list = []
+
+    def fake_run_human(args, **kwargs):
+        pushes.append(args[2])
+        res = _transport_result(
+            args, 1, "! [rejected] main -> main (non-fast-forward)")
+        raise CommandError("rejected", res)
+
+    monkeypatch.setattr(manager.executor, "run_human", fake_run_human)
+
+    with pytest.raises(CommandError):
+        manager._sync_remote(ctx)
+
+    # Failed on the DTN and did NOT retry on the login node.
+    assert len(pushes) == 1
+    assert pushes[0].startswith("dtn.example.com:")
+
+
+def test_pull_fails_over_to_login_node(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A DTN fetch transport fault retries on the login node before giving up."""
+    manager = _build_remote_manager(tmp_path)
+    ctx = manager.context_for("rproj")
+    manager.executor = _remote_exec_with_scaffolding(tmp_path)
+    monkeypatch.setattr(
+        manager, "_resolve_remote_path",
+        lambda ctx: "/home/ligon/mirrors/rproj",
+    )
+
+    fetches: list = []
+
+    def fake_run_human(args, **kwargs):
+        url = args[2]
+        fetches.append(url)
+        if url.startswith("dtn"):
+            return _transport_result(
+                args, 128, "fatal: the remote end hung up unexpectedly")
+        return _transport_result(args, 0)  # login node connects
+
+    monkeypatch.setattr(manager.executor, "run_human", fake_run_human)
+
+    manager._pull_from_remote(ctx)  # reconciliation no-ops (tmp ref absent)
+
+    assert len(fetches) == 2
+    assert fetches[0].startswith("dtn.example.com:")
+    assert fetches[1].startswith("ln001:")
+
+
+def test_pull_no_failover_on_empty_mirror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty remote ('couldn't find remote ref') is a real answer, no retry."""
+    manager = _build_remote_manager(tmp_path)
+    ctx = manager.context_for("rproj")
+    manager.executor = _remote_exec_with_scaffolding(tmp_path)
+    monkeypatch.setattr(
+        manager, "_resolve_remote_path",
+        lambda ctx: "/home/ligon/mirrors/rproj",
+    )
+
+    fetches: list = []
+
+    def fake_run_human(args, **kwargs):
+        fetches.append(args[2])
+        return _transport_result(
+            args, 128, "fatal: couldn't find remote ref main")
+
+    monkeypatch.setattr(manager.executor, "run_human", fake_run_human)
+
+    manager._pull_from_remote(ctx)  # swallowed as a warning
+
+    # Connected fine (just an empty mirror) → no login-node retry.
+    assert len(fetches) == 1
+    assert fetches[0].startswith("dtn.example.com:")
+
+
 def test_ensure_remote_mirror_exists_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
