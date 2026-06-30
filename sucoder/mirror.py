@@ -535,6 +535,39 @@ class MirrorManager:
         gateway = remote.gateway
         debug_ssh = getattr(self.executor, "debug_ssh", False)
 
+        # Harden the git transport the same way the rest of the executor
+        # hardens its one-shot SSH calls (see _build_ssh_command /
+        # _build_login_node_command).  Without this, a git push/fetch
+        # whose ControlMaster session is refused ("Session open refused
+        # by peer") silently falls back to a fresh, full SSH dial that
+        # re-runs the remote login shell.  On clusters with a broken
+        # shared login script (e.g. an el8 bashrc sourced on a non-el8
+        # DTN) that noise kills git-receive-pack and the push wedges with
+        # a cryptic "remote end hung up".  BatchMode makes a
+        # credential-less fallback fail fast instead of hanging on a
+        # prompt that DEVNULL stdin can never answer; ConnectTimeout and
+        # ServerAlive* bound a dead/wedged link; LogLevel=ERROR silences
+        # the confusing mux warnings.
+        ex = self.executor
+        connect_timeout = getattr(ex, "CONNECT_TIMEOUT", 10)
+        keepalive_interval = getattr(ex, "KEEPALIVE_INTERVAL", 15)
+        keepalive_count = getattr(ex, "KEEPALIVE_COUNT_MAX", 3)
+        hardening = [
+            "-o", "BatchMode=yes",
+            "-o", f"ConnectTimeout={connect_timeout}",
+            "-o", f"ServerAliveInterval={keepalive_interval}",
+            "-o", f"ServerAliveCountMax={keepalive_count}",
+        ]
+        if not debug_ssh:
+            # -vvv (debug) sets its own LogLevel; don't override it.
+            hardening.extend(["-o", "LogLevel=ERROR"])
+        # Same guards for the inner ProxyCommand ssh (embedded as one -o
+        # arg, so spelled out as a string rather than a parts list).
+        proxy_quiet = "" if debug_ssh else "-o LogLevel=ERROR "
+        proxy_hardening = (
+            f"-o BatchMode=yes {proxy_quiet}-o ConnectTimeout={connect_timeout} "
+        )
+
         # Prefer the scaffolding node (DTN) for git transport when
         # available.  It sees the same Lustre filesystem and avoids
         # load on login nodes (or the fragile compute-node chain).
@@ -544,6 +577,7 @@ class MirrorManager:
             ssh_cmd_parts = ["ssh"]
             if debug_ssh:
                 ssh_cmd_parts.append("-vvv")
+            ssh_cmd_parts.extend(hardening)
             ssh_cmd_parts.extend([
                 "-o", "ControlMaster=auto",
                 "-o", f"ControlPath={scaffolding_sock}",
@@ -553,7 +587,7 @@ class MirrorManager:
                 gw_socket = _gw_sock(gateway)
                 ssh_cmd_parts.extend([
                     "-o",
-                    f"ProxyCommand=ssh -o ControlMaster=auto "
+                    f"ProxyCommand=ssh {proxy_hardening}-o ControlMaster=auto "
                     f"-o ControlPath={gw_socket} "
                     f"-W %h:%p {gateway}",
                 ])
@@ -570,6 +604,7 @@ class MirrorManager:
         ssh_cmd_parts = ["ssh"]
         if debug_ssh:
             ssh_cmd_parts.append("-vvv")
+        ssh_cmd_parts.extend(hardening)
         if control_path:
             ssh_cmd_parts.extend([
                 "-o", "ControlMaster=auto",
@@ -587,7 +622,7 @@ class MirrorManager:
                 if proxy_node and proxy_sock:
                     ssh_cmd_parts.extend([
                         "-o",
-                        f"ProxyCommand=ssh -o ControlMaster=auto "
+                        f"ProxyCommand=ssh {proxy_hardening}-o ControlMaster=auto "
                         f"-o ControlPath={proxy_sock} "
                         f"-W %h:%p {proxy_node}",
                     ])
@@ -596,7 +631,7 @@ class MirrorManager:
                 gw_socket = _gw_sock(gateway)
                 ssh_cmd_parts.extend([
                     "-o",
-                    f"ProxyCommand=ssh -o ControlMaster=auto "
+                    f"ProxyCommand=ssh {proxy_hardening}-o ControlMaster=auto "
                     f"-o ControlPath={gw_socket} "
                     f"-W %h:%p {gateway}",
                 ])
@@ -1093,6 +1128,37 @@ class MirrorManager:
             timeout=self._GIT_REMOTE_TIMEOUT,
         )
 
+    def _remote_repo_has_content(
+        self,
+        run: Callable,
+        remote_path: str,
+        base: str,
+    ) -> bool:
+        """Return ``True`` if the remote git repo has real content.
+
+        A mirror that exists on disk but has neither a HEAD commit nor
+        the *base* branch is a husk left by a previously failed bootstrap
+        (``git init`` ran, but no push ever landed).  Fetching from such
+        a repo fails with "couldn't find remote ref <base>" and pushing
+        into it is fragile, so callers rebuild it from scratch rather
+        than sync into it.
+        """
+        has_head = run(
+            ["git", "rev-parse", "--verify", "--quiet", "HEAD"],
+            check=False,
+            cwd=remote_path,
+        ).returncode == 0
+        if has_head:
+            return True
+        # HEAD may be an unborn symbolic ref pointing at a branch that
+        # does exist (e.g. a non-default checkout); verify the base
+        # branch directly before declaring the repo empty.
+        return run(
+            ["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{base}"],
+            check=False,
+            cwd=remote_path,
+        ).returncode == 0
+
     def ensure_remote_clone(self, ctx: MirrorContext) -> bool:
         """Ensure the mirror exists on the remote host.
 
@@ -1125,16 +1191,37 @@ class MirrorManager:
         # Use the login node for filesystem scaffolding when available.
         run = getattr(self.executor, "run_on_login_node", self.executor.run_agent)
 
+        base = ctx.settings.default_base_branch or "main"
+
         # Check if remote mirror is a valid git repo.
         check = run(
             ["git", "rev-parse", "--git-dir"],
             check=False,
             cwd=abs_remote_path,
         )
-        if check.returncode == 0:
+        repo_exists = check.returncode == 0
+        # A repo can exist on disk yet be a husk from a previously failed
+        # bootstrap: `git init` ran but no push ever landed, so there are
+        # no commits and no base branch.  That is exactly the state that
+        # produced the "couldn't find remote ref main" fetch failure
+        # followed by a wedged push.  Treat such a husk as broken and
+        # rebuild it rather than syncing into it.
+        repo_usable = repo_exists and self._remote_repo_has_content(
+            run, abs_remote_path, base,
+        )
+        if repo_exists and not repo_usable:
+            self.logger.warning(
+                "Remote mirror at %s exists but is empty/half-initialised "
+                "(no commits, no '%s' branch) — rebuilding it from scratch",
+                remote_path, base,
+            )
+
+        if repo_usable:
             self.logger.info("Remote mirror already exists at %s", remote_path)
         else:
-            # Clean up broken directory from a previously failed init.
+            # Clean up a missing/broken/half-initialised directory before
+            # a fresh init.  Safe even when the repo merely existed-but-
+            # empty: a husk has no commits, so there is nothing to lose.
             run(
                 ["rm", "-rf", abs_remote_path],
                 check=False,
@@ -1155,7 +1242,6 @@ class MirrorManager:
                     ["chmod", "700", mirrors_parent],
                     check=False,  # may not own the parent
                 )
-            base = ctx.settings.default_base_branch or "main"
             run(
                 ["git", "init", "-b", base],
                 check=True,
@@ -1190,8 +1276,8 @@ class MirrorManager:
         self._sync_remote(ctx)
 
         # Ensure HEAD points to the correct branch so that
-        # updateInstead keeps the working tree in sync.
-        base = ctx.settings.default_base_branch or "main"
+        # updateInstead keeps the working tree in sync.  (`base` was
+        # resolved at the top of this method.)
         run(
             ["git", "symbolic-ref", "HEAD", f"refs/heads/{base}"],
             check=True,

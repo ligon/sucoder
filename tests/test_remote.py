@@ -1308,6 +1308,136 @@ def test_ensure_remote_clone_mirror_not_exists_inits_and_syncs(
     assert sync_called
 
 
+def _remote_exec_with_scaffolding(tmp_path: Path):
+    """A RemoteExecutor configured with a DTN scaffolding node + sockets."""
+    import logging
+
+    from sucoder.executor import RemoteExecutor
+
+    logger = logging.getLogger("test.remote.hardening")
+    return RemoteExecutor(
+        human_user="ligon",
+        agent_user="ligon",
+        agent_group="ligon",
+        logger=logger,
+        dry_run=False,
+        use_sudo_for_agent=False,
+        gateway="gw.example.com",
+        login_node="ln001",
+        remote_mirror_root="~/mirrors",
+        local_mirror_root=str(tmp_path / "mirrors"),
+        control_socket_path="/tmp/test.sock",
+        scaffolding_node="dtn.example.com",
+        scaffolding_socket_path="/tmp/dtn.sock",
+    )
+
+
+def test_remote_git_env_hardens_transport(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GIT_SSH_COMMAND carries fail-fast / quiet guards on both hops.
+
+    Regression guard: a refused ControlMaster session must fall back
+    fast and silently instead of dialing a fresh, login-shell-polluted
+    connection that wedges git-receive-pack.
+    """
+    manager = _build_remote_manager(tmp_path)
+    ctx = manager.context_for("rproj")
+    manager.executor = _remote_exec_with_scaffolding(tmp_path)
+    # Avoid a real SSH round-trip to resolve ~.
+    monkeypatch.setattr(
+        manager, "_resolve_remote_path",
+        lambda ctx: "/home/ligon/mirrors/rproj",
+    )
+
+    url, env = manager._remote_git_env(ctx)
+
+    assert url == "dtn.example.com:/home/ligon/mirrors/rproj"
+    cmd = env["GIT_SSH_COMMAND"]
+    # Outer ssh hardening (matches the rest of the executor).
+    assert "BatchMode=yes" in cmd
+    assert "ConnectTimeout=10" in cmd
+    assert "ServerAliveInterval=15" in cmd
+    assert "ServerAliveCountMax=3" in cmd
+    assert "LogLevel=ERROR" in cmd
+    # Rides the DTN ControlMaster socket.
+    assert "ControlPath=/tmp/dtn.sock" in cmd
+    # The inner ProxyCommand ssh is hardened too — BatchMode + LogLevel
+    # appear a second time inside the quoted ProxyCommand string.
+    assert "ProxyCommand=ssh -o BatchMode=yes" in cmd
+    assert cmd.count("BatchMode=yes") >= 2
+    assert cmd.count("LogLevel=ERROR") >= 2
+
+
+def test_remote_git_env_debug_preserves_verbosity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With debug_ssh, -vvv is kept and LogLevel=ERROR is not forced."""
+    manager = _build_remote_manager(tmp_path)
+    ctx = manager.context_for("rproj")
+    executor = _remote_exec_with_scaffolding(tmp_path)
+    executor.debug_ssh = True
+    manager.executor = executor
+    monkeypatch.setattr(
+        manager, "_resolve_remote_path",
+        lambda ctx: "/home/ligon/mirrors/rproj",
+    )
+
+    _url, env = manager._remote_git_env(ctx)
+    cmd = env["GIT_SSH_COMMAND"]
+
+    assert "-vvv" in cmd
+    assert "LogLevel=ERROR" not in cmd
+    # Fail-fast guards still apply in debug mode.
+    assert "BatchMode=yes" in cmd
+    assert "ConnectTimeout=10" in cmd
+
+
+def test_ensure_remote_clone_rebuilds_empty_mirror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A husk repo (exists, but no commits/base branch) is rebuilt.
+
+    Regression guard for the PlayPen/DTN failure: a remote mirror that
+    was `git init`'d by a prior failed bootstrap but never received a
+    push has no `main` ref.  ensure_remote_clone must rebuild it rather
+    than sync into the half-dead repo.
+    """
+    from sucoder.executor import CommandResult
+
+    manager = _build_remote_manager(tmp_path)
+    ctx = manager.context_for("rproj")
+
+    agent_calls: list = []
+
+    def fake_run_agent(args, **kwargs):
+        agent_calls.append(list(args))
+        s = " ".join(str(a) for a in args)
+        if "echo" in s:
+            return CommandResult(list(args), list(args), "/home/ligon\n", "", 0)
+        if "rev-parse" in s and "--git-dir" in s:
+            # Repo exists on disk.
+            return CommandResult(list(args), list(args), ".git\n", "", 0)
+        if "rev-parse" in s and ("HEAD" in s or "refs/heads/" in s):
+            # No commits, no base branch → husk.
+            return CommandResult(list(args), list(args), "", "fatal", 1)
+        return CommandResult(list(args), list(args), "", "", 0)
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+    # Isolate the rebuild decision: don't touch the network.
+    monkeypatch.setattr(manager, "_pull_from_remote", lambda ctx: None)
+    sync_called: list = []
+    monkeypatch.setattr(manager, "_sync_remote", lambda ctx: sync_called.append(True))
+
+    manager.ensure_remote_clone(ctx)
+
+    cmds = [" ".join(str(a) for a in c) for c in agent_calls]
+    # Husk detected → wiped and re-initialised before syncing.
+    assert any("rm -rf" in c for c in cmds)
+    assert any("git init" in c for c in cmds)
+    assert sync_called
+
+
 def test_ensure_remote_mirror_exists_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
