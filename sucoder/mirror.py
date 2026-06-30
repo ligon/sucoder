@@ -702,22 +702,16 @@ class MirrorManager:
         mirror's ``couldn't find remote ref`` — a real answer that would
         repeat identically on any transport, so not worth a retry).
         """
+        from .tunnel import TRANSIENT_SSH_MARKERS
+
         # -1 is our timeout sentinel; 255 is SSH's own connection error.
         if result.returncode in (-1, 255):
             return True
         stderr = (result.stderr or "").lower()
-        markers = (
-            "session open refused",          # DTN master refused the session
-            "the remote end hung up",        # receive/upload-pack died mid-stream
-            "connection closed",
-            "connection refused",
-            "connection timed out",
-            "connection reset",
-            "broken pipe",
-            "could not resolve hostname",
-            "no route to host",
-            "kex_exchange_identification",   # sshd dropped us before banner
-        )
+        # The shared transient set, plus ``could not resolve hostname``:
+        # for git transport a DNS miss is worth failing over to another
+        # node (unlike a ControlMaster bring-up, where it won't self-heal).
+        markers = TRANSIENT_SSH_MARKERS + ("could not resolve hostname",)
         return any(m in stderr for m in markers)
 
     @staticmethod

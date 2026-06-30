@@ -131,17 +131,23 @@ def _connect_with_retry(
     initial_delay: int = 3,
     sleep=time.sleep,
 ) -> None:
-    """Bring up an SSH ControlMaster, retrying a freshly-allocated node.
+    """Bring up an SSH ControlMaster, retrying *transient* SSH failures.
 
-    A just-allocated SLURM compute node may refuse SSH for a few seconds
-    while ``sshd`` / ``pam_slurm_adopt`` register the job -- which shows
-    up as ``kex_exchange_identification: Connection closed by remote
-    host``.  Retry with capped exponential backoff for up to *max_wait*
-    seconds before surfacing the failure, rather than failing the whole
-    launch on a transient post-allocation race.  ``sleep`` is injectable
-    for tests.
+    Some SSH closures clear on their own within seconds:
+
+    * a just-allocated SLURM compute node refuses SSH while ``sshd`` /
+      ``pam_slurm_adopt`` register the job, and
+    * a busy HPC login node sheds connections during the protocol-banner
+      exchange (``MaxStartups`` / fail2ban),
+
+    both surfacing as ``kex_exchange_identification: Connection closed by
+    remote host``.  Retry with capped exponential backoff for up to
+    *max_wait* seconds -- but *only* for failures that look transient
+    (see :func:`sucoder.tunnel.is_transient_ssh_error`).  A genuine auth
+    or host error is re-raised immediately rather than making the user
+    wait out the full backoff.  ``sleep`` is injectable for tests.
     """
-    from .tunnel import TunnelError
+    from .tunnel import TunnelError, is_transient_ssh_error
 
     waited = 0
     delay = initial_delay
@@ -151,17 +157,33 @@ def _connect_with_retry(
         try:
             _ensure_ssh_visible(control, label, logger)
             return
-        except TunnelError:
-            if waited >= max_wait:
+        except TunnelError as exc:
+            # Classify against both the message and the captured ssh
+            # stderr: real establish() failures carry the reason on
+            # ``exc.stderr``; the message is a generic wrapper.
+            reason = f"{exc}\n{getattr(exc, 'stderr', '') or ''}"
+            if not is_transient_ssh_error(reason) or waited >= max_wait:
                 raise
             logger.info(
-                "%s not reachable yet (attempt %d); a freshly-allocated "
-                "node can need a moment -- retrying in %ds",
+                "%s not reachable yet (attempt %d): transient SSH closure "
+                "-- retrying in %ds",
                 label, attempt, delay,
             )
             sleep(delay)
             waited += delay
             delay = min(delay * 2, 15)
+
+
+def _ssh_debug_hint(debug_ssh: bool) -> str:
+    """A suffix nudging toward ``--debug-ssh``, unless it is already on.
+
+    Appended to user-facing SSH failure messages so a transient
+    ``kex_exchange_identification`` closure (which prints no remote
+    reason) has an obvious next diagnostic step.
+    """
+    if debug_ssh:
+        return ""
+    return "  (re-run with --debug-ssh for a full SSH trace)"
 
 
 def _default_config_path() -> Path:
@@ -278,9 +300,12 @@ def _build_executor(
             debug=debug_ssh,
         )
         try:
-            gw_control.ensure(logger)
+            # Retry transient banner-phase closures (a busy login/gateway
+            # can shed connections under MaxStartups); a real auth failure
+            # still surfaces immediately.
+            _connect_with_retry(gw_control, remote.gateway, logger)
         except TunnelError as exc:
-            typer.echo(str(exc), err=True)
+            typer.echo(str(exc) + _ssh_debug_hint(debug_ssh), err=True)
             raise typer.Exit(code=1) from exc
 
         # 2. Pin a login node through the authenticated connection.
@@ -325,9 +350,13 @@ def _build_executor(
             debug=debug_ssh,
         )
         try:
-            _ensure_ssh_visible(ln_control, session.login_node, logger)
+            # Retry transient closures: a hammered login node frequently
+            # drops us during the banner exchange
+            # (``kex_exchange_identification``).  This is the failure that
+            # used to abort the whole launch on the first attempt.
+            _connect_with_retry(ln_control, session.login_node, logger)
         except TunnelError as exc:
-            typer.echo(str(exc), err=True)
+            typer.echo(str(exc) + _ssh_debug_hint(debug_ssh), err=True)
             raise typer.Exit(code=1) from exc
 
         # 3b. Establish ControlMaster to the data transfer node (DTN).
@@ -342,7 +371,12 @@ def _build_executor(
             debug=debug_ssh,
         )
         try:
-            _ensure_ssh_visible(dtn_control, remote.transfer_host, logger)
+            # DTN is optional and already falls back to the login node, so
+            # ride out only a *brief* transient blip rather than the full
+            # 60s window before falling back.
+            _connect_with_retry(
+                dtn_control, remote.transfer_host, logger, max_wait=6,
+            )
         except TunnelError as exc:
             # DTN is optional — fall back to the login node if
             # the DTN is unreachable.
@@ -1996,7 +2030,9 @@ def attach(
         debug=debug_ssh,
     )
     try:
-        control.ensure(logger)
+        # Retry transient banner-phase closures; a real failure is
+        # swallowed (best-effort) and ssh will prompt directly if needed.
+        _connect_with_retry(control, remote.gateway, logger)
     except Exception:
         pass  # Best-effort; ssh will prompt directly if needed
     control_opts = control.ssh_options() if control.is_active() else []
@@ -2191,9 +2227,9 @@ def release(
         debug=debug_ssh,
     )
     try:
-        _ensure_ssh_visible(gw_control, remote.gateway, logger)
+        _connect_with_retry(gw_control, remote.gateway, logger)
     except Exception as exc:  # noqa: BLE001  -- want broad fallback here
-        typer.echo(f"Failed to reach gateway: {exc}", err=True)
+        typer.echo(f"Failed to reach gateway: {exc}" + _ssh_debug_hint(debug_ssh), err=True)
         raise typer.Exit(code=1) from exc
 
     if not session.login_node:
@@ -2212,9 +2248,9 @@ def release(
         debug=debug_ssh,
     )
     try:
-        _ensure_ssh_visible(ln_control, session.login_node, logger)
+        _connect_with_retry(ln_control, session.login_node, logger)
     except Exception as exc:  # noqa: BLE001
-        typer.echo(f"Failed to reach login node: {exc}", err=True)
+        typer.echo(f"Failed to reach login node: {exc}" + _ssh_debug_hint(debug_ssh), err=True)
         raise typer.Exit(code=1) from exc
 
     import subprocess as _sp
@@ -2446,10 +2482,10 @@ def renew(
         jump_host=remote.gateway, jump_control=gw_control, debug=debug_ssh,
     )
     try:
-        _ensure_ssh_visible(gw_control, remote.gateway, logger)
-        _ensure_ssh_visible(ln_control, login_node, logger)
+        _connect_with_retry(gw_control, remote.gateway, logger)
+        _connect_with_retry(ln_control, login_node, logger)
     except TunnelError as exc:
-        typer.echo(f"Failed to reach the cluster: {exc}", err=True)
+        typer.echo(f"Failed to reach the cluster: {exc}" + _ssh_debug_hint(debug_ssh), err=True)
         raise typer.Exit(code=1) from exc
 
     def probe(job_id):
@@ -2603,9 +2639,9 @@ def nodes(
         debug=debug_ssh,
     )
     try:
-        _ensure_ssh_visible(gw_control, remote.gateway, logger)
+        _connect_with_retry(gw_control, remote.gateway, logger)
     except Exception as exc:  # noqa: BLE001 -- surface any setup failure
-        typer.echo(f"Failed to reach gateway {remote.gateway}: {exc}", err=True)
+        typer.echo(f"Failed to reach gateway {remote.gateway}: {exc}" + _ssh_debug_hint(debug_ssh), err=True)
         raise typer.Exit(code=1) from exc
 
     q = shlex.quote(part)
@@ -2708,7 +2744,7 @@ def _warm_free_tunnels(remote, session, logger, *, debug_ssh: bool):
         **remote.ssh_control_kwargs(),
         debug=debug_ssh,
     )
-    _ensure_ssh_visible(gw_control, remote.gateway, logger)
+    _connect_with_retry(gw_control, remote.gateway, logger)
 
     # Pin a login node through the (now warm) gateway if we don't have one.
     if not session.login_node:
@@ -2733,7 +2769,7 @@ def _warm_free_tunnels(remote, session, logger, *, debug_ssh: bool):
             debug=debug_ssh,
         )
         try:
-            _ensure_ssh_visible(ln_control, session.login_node, logger)
+            _connect_with_retry(ln_control, session.login_node, logger)
         except TunnelError as exc:
             logger.warning("Login node %s unreachable: %s", session.login_node, exc)
             ln_control = None
@@ -2746,7 +2782,8 @@ def _warm_free_tunnels(remote, session, logger, *, debug_ssh: bool):
         debug=debug_ssh,
     )
     try:
-        _ensure_ssh_visible(dtn_control, remote.transfer_host, logger)
+        # DTN is optional; ride out only a brief transient blip.
+        _connect_with_retry(dtn_control, remote.transfer_host, logger, max_wait=6)
     except TunnelError as exc:
         logger.warning("DTN %s unreachable: %s", remote.transfer_host, exc)
         dtn_control = None
@@ -2785,7 +2822,7 @@ def tunnel_up(
     try:
         gw, ln, dtn = _warm_free_tunnels(remote, session, logger, debug_ssh=debug_ssh)
     except TunnelError as exc:
-        typer.echo(str(exc), err=True)
+        typer.echo(str(exc) + _ssh_debug_hint(debug_ssh), err=True)
         raise typer.Exit(code=1) from exc
 
     typer.echo(f"Warm tunnels for target {target_name} (ControlPersist {remote.control_persist}):")
