@@ -11,13 +11,63 @@ import logging
 import os
 import socket
 import subprocess
+import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
 
 class TunnelError(RuntimeError):
-    """Raised when SSH connection or tunnel operations fail."""
+    """Raised when SSH connection or tunnel operations fail.
+
+    ``stderr`` carries the captured ssh stderr (when available) so that
+    callers can *classify* the failure --- e.g. distinguish a transient
+    ``kex_exchange_identification`` closure worth retrying from a hard
+    authentication or host error that should surface immediately.  See
+    :func:`is_transient_ssh_error`.
+    """
+
+    def __init__(self, *args, stderr: str = "") -> None:
+        super().__init__(*args)
+        self.stderr = stderr
+
+
+# Substrings that mark a *transient* SSH transport fault --- one that
+# typically clears on its own within seconds and is therefore worth a
+# bounded retry.  Two common sources on an HPC cluster:
+#   * a just-allocated SLURM compute node refusing SSH while ``sshd`` /
+#     ``pam_slurm_adopt`` register the job, and
+#   * a busy login node shedding connections during the protocol-banner
+#     exchange (``MaxStartups`` / fail2ban),
+# both of which surface as ``kex_exchange_identification: Connection
+# closed by remote host``.
+#
+# Deliberately excludes ``could not resolve hostname``: that does not
+# self-heal by waiting, and for a jump-only login node it signals the
+# *wrong* (local) resolution path rather than a transient blip.
+TRANSIENT_SSH_MARKERS = (
+    "session open refused",          # mux refused a new session
+    "the remote end hung up",        # peer died mid-stream
+    "connection closed",
+    "connection refused",
+    "connection timed out",
+    "connection reset",
+    "broken pipe",
+    "no route to host",
+    "kex_exchange_identification",   # sshd dropped us before the banner
+)
+
+
+def is_transient_ssh_error(text: str) -> bool:
+    """True if *text* (ssh/git stderr or an error message) looks transient.
+
+    Matches against :data:`TRANSIENT_SSH_MARKERS` case-insensitively.
+    Used to decide whether a failed ControlMaster bring-up is worth a
+    bounded retry rather than failing the launch outright.
+    """
+    low = (text or "").lower()
+    return any(marker in low for marker in TRANSIENT_SSH_MARKERS)
 
 
 def _find_free_port() -> int:
@@ -208,14 +258,43 @@ class SshControl:
         cmd.extend(["-fN", self.gateway])
         logger.debug("ControlMaster command: %s", cmd)
 
-        try:
-            # Not capturing output --- the auth prompt needs the terminal.
-            # When debug is on, stderr shows the SSH negotiation trace.
-            subprocess.run(cmd, check=True)
-        except subprocess.CalledProcessError as exc:
-            raise TunnelError(
-                f"Failed to establish SSH connection to {self.gateway}"
-            ) from exc
+        # Capture stderr to a temp file (NOT subprocess.PIPE) so callers
+        # can classify the failure --- e.g. a transient
+        # ``kex_exchange_identification`` worth retrying --- without
+        # breaking two things:
+        #   1. The interactive auth prompt: ssh reads passwords/OTP from
+        #      ``/dev/tty``, not stderr, so redirecting stderr does not
+        #      suppress the prompt (stdin/stdout stay inherited too).
+        #   2. ``-fN`` backgrounding: the master forks and holds its
+        #      stderr open for the life of the connection.  A PIPE would
+        #      never see EOF and ``run`` would hang on success; a regular
+        #      file has no such dependency --- ``run`` returns as soon as
+        #      the foreground process exits.
+        with tempfile.TemporaryFile() as errfile:
+            try:
+                subprocess.run(cmd, check=True, stderr=errfile)
+            except subprocess.CalledProcessError as exc:
+                errfile.seek(0)
+                stderr = errfile.read().decode("utf-8", "replace")
+                # Keep the failure reason visible exactly as before: the
+                # bare ``kex_exchange_identification`` / ``Connection
+                # closed`` line in plain mode, or the full ``-vvv`` trace
+                # under --debug-ssh.
+                if stderr:
+                    sys.stderr.write(
+                        stderr if stderr.endswith("\n") else stderr + "\n"
+                    )
+                raise TunnelError(
+                    f"Failed to establish SSH connection to {self.gateway}",
+                    stderr=stderr,
+                ) from exc
+            # Under --debug-ssh the negotiation trace lands on the captured
+            # stderr even on success; re-emit it so the trace stays visible.
+            if self.debug:
+                errfile.seek(0)
+                trace = errfile.read().decode("utf-8", "replace")
+                if trace:
+                    sys.stderr.write(trace)
 
         self._record_debug_mode()
 
@@ -424,7 +503,8 @@ class SshTunnel:
             )
         except subprocess.CalledProcessError as exc:
             raise TunnelError(
-                f"Failed to open SSH tunnel: {exc.stderr.strip()}"
+                f"Failed to open SSH tunnel: {exc.stderr.strip()}",
+                stderr=exc.stderr or "",
             ) from exc
 
         # ssh -f backgrounds itself; find the PID by scanning for our port.
