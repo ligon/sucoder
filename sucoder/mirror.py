@@ -657,31 +657,40 @@ class MirrorManager:
     ) -> List[Tuple[str, str, Mapping[str, str]]]:
         """Ordered ``(label, url, env)`` git transports to try.
 
-        Primary is the DTN (scaffolding node) when one is configured;
-        the fallback is the target/login node.  The DTN has fat pipes
-        and spare CPU, but transfer nodes commonly cap concurrent SSH
-        sessions, so a refused master session must not be fatal — the
-        login node sees the same shared filesystem and can carry the
-        push/fetch instead.  Without a scaffolding node the two collapse
-        to one transport (no pointless retry).
+        Primary is the **target/login node** — it is session-capable and
+        reliable.  A scaffolding node (DTN), if configured, is kept only
+        as a *secondary* fallback: transfer nodes have fat pipes but
+        commonly cap concurrent SSH sessions to ~1 (Savio's DTN refuses
+        the 2nd of 12 concurrent sessions), so routing git through them
+        is fragile under any overlap.  Filesystem scaffolding still uses
+        the DTN directly (see ``run_on_login_node``); only git push/fetch
+        prefer the login node here.  Keeping the DTN last preserves a
+        route home if the login-node master is ever down, at no cost in
+        the common path.  Without a scaffolding node only one transport
+        is returned (no pointless retry).
+
+        Note: for a SLURM compute-node target the "primary" is the
+        compute node (where the agent runs and the executor is pinned),
+        which is likewise session-capable and sees the same Lustre.
         """
         transports: List[Tuple[str, str, Mapping[str, str]]] = []
-        scaffolding_node = getattr(self.executor, "scaffolding_node", "")
-        scaffolding_sock = getattr(self.executor, "scaffolding_socket_path", "")
-        if scaffolding_node and scaffolding_sock:
-            url, env = self._remote_git_env(ctx, use_scaffolding=True)
-            transports.append(("DTN", url, env))
 
-        fallback_label = (
+        primary_label = (
             "compute node"
             if getattr(self.executor, "is_compute_node", False)
             else "login node"
         )
         url, env = self._remote_git_env(ctx, use_scaffolding=False)
-        # Skip a duplicate when there is no distinct fallback (e.g. no
-        # scaffolding node, or both resolve to the same host).
-        if not transports or transports[0][1] != url:
-            transports.append((fallback_label, url, env))
+        transports.append((primary_label, url, env))
+
+        scaffolding_node = getattr(self.executor, "scaffolding_node", "")
+        scaffolding_sock = getattr(self.executor, "scaffolding_socket_path", "")
+        if scaffolding_node and scaffolding_sock:
+            dtn_url, dtn_env = self._remote_git_env(ctx, use_scaffolding=True)
+            # Skip the DTN when it resolves to the same host as the
+            # primary (no distinct fallback).
+            if dtn_url != url:
+                transports.append(("DTN", dtn_url, dtn_env))
         return transports
 
     @staticmethod
@@ -804,9 +813,9 @@ class MirrorManager:
 
         *transports* is an ordered list of ``(label, url, env)``; each is
         tried until one connects.  This matters for correctness, not just
-        convenience: if the DTN transport silently fails we would skip
-        the pull and the next push could force-overwrite agent commits,
-        so we fail over to the login node before giving up.
+        convenience: if the primary transport silently fails we would
+        skip the pull and the next push could force-overwrite agent
+        commits, so we fall over to the next transport before giving up.
 
         Strategy:
         1. Fetch the mirror's branch into a temporary ref — always safe.
@@ -1213,11 +1222,12 @@ class MirrorManager:
     def _sync_remote(self, ctx: MirrorContext) -> None:
         """Push local canonical commits to the remote mirror.
 
-        Prefers the DTN ControlMaster for git transport, but fails over
-        to the login node if the DTN refuses the session (transfer nodes
-        commonly cap concurrent SSH sessions).  A genuine git error
-        (e.g. a rejected ref) is *not* retried — it would fail the same
-        way on the login node and the original message is clearer.
+        Pushes over the login node (the reliable, session-capable
+        transport); if a configured DTN is present it is tried only as a
+        fallback should the login-node transport break.  A genuine git
+        error (e.g. a rejected ref) is *not* retried — it would fail the
+        same way on the other transport and the original message is
+        clearer.  See ``_git_transports`` for the ordering rationale.
         """
         transports = self._git_transports(ctx)
         for idx, (label, url, env) in enumerate(transports):
