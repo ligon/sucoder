@@ -132,7 +132,9 @@ common culprit:
    do not.)
 
 Either way, because the gateway requires PIN + OTP, the only way back is
-to re-authenticate once.
+to re-authenticate once --- unless you hold a still-valid SSH certificate,
+which re-warms the chain with no prompt (see *Can I avoid the OTP for a
+while?* below).
 
 =sucoder= detects the dead-but-zombie sockets correctly: =tunnel status=
 does an end-to-end probe (not just a local mux check), so it reports
@@ -149,6 +151,44 @@ zombie sockets automatically on resume so nothing trips on them --- see
 [[*Appendix: clearing stale tunnels automatically][the appendix]] for
 ready-to-use Linux and macOS examples.  (A hook can only *clean up*; it
 can't re-authenticate for you --- that OTP is yours to type.)
+
+** Can I avoid the OTP for a while? (SSH certificates)
+Yes --- for up to *12 hours*.  The free gateway accepts a short-lived SSH
+*certificate* in place of an interactive PIN + OTP.  Mint one once and
+every later =ssh=, =tunnel up=, and =collaborate= rides it with no prompt
+--- even across a suspend or a network change --- until it expires.  This
+is the one way to make a dropped tunnel re-warm *without* typing an OTP.
+
+The MSM CA hard-caps a cert's lifetime at 12h (confirmed against the
+server: it rejects anything longer), so one OTP buys at most a 12-hour
+passwordless window; after that you authenticate once more to mint a fresh
+cert.
+
+Acquire one from *your own* terminal --- so the OTP never lands in an agent
+transcript and there is no chat round-trip to blow the ~30s TOTP window:
+#+begin_src shell
+scripts/brc-connect.sh
+#+end_src
+It prompts for your PIN (hidden) and a *fresh* OTP, then consumes them
+immediately: it requests the cert, prints the granted validity, and runs a
+passwordless login test.  On =SUCCESS= the cert sits at
+=~/.ssh/ssh_certs/brc_cert= and the gateway ControlMaster is already warm.
+
+For a scripted path (PIN already in hand, e.g. from a secrets manager):
+#+begin_src shell
+scripts/brc-cert.sh <PIN> <OTP>            # or:  BRC_PIN=.. scripts/brc-cert.sh <OTP>
+#+end_src
+Env overrides: =BRC_USER= (default =ligon=), =BRC_LIFETIME= (default =12h=,
+the ceiling), =LRC_SCRIPTS= (default =~/lrc-scripts=, auto-cloned from
+=lbnl-science-it/lrc-scripts= on first run).
+
+Prerequisite: a =brc-login= stanza in =~/.ssh/config= that points
+=IdentityFile= at the cert and enables =ControlMaster=, so the passwordless
+test --- and every later connection --- actually uses it.  Check how much
+of the window is left at any time:
+#+begin_src shell
+ssh-keygen -L -f ~/.ssh/ssh_certs/brc_cert-cert.pub | grep -i valid
+#+end_src
 
 * Editing remote files from Emacs / TRAMP
 
@@ -330,6 +370,7 @@ pre-flight check.
 | Task                                    | Command                                                       |
 |-----------------------------------------+---------------------------------------------------------------|
 | Warm the free tunnels (auth once)       | =sucoder -T savio-node tunnel up=                             |
+| Mint a 12h passwordless cert (no OTP)   | =scripts/brc-connect.sh=                                      |
 | Check tunnel liveness                   | =sucoder -T savio-node tunnel status=                        |
 | Diagnose ssh_config / pin issues        | =sucoder -T savio-node tunnel doctor=                        |
 | Close the tunnels                       | =sucoder -T savio-node tunnel down [--prune]=                |
