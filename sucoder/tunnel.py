@@ -13,9 +13,23 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
+
+_LOG = logging.getLogger(__name__)
+
+# Tuning for SshControl.is_active()'s end-to-end liveness probe.  The probe
+# execs a remote command, which spawns a login shell on the far side; on a
+# hammered HPC login node that spawn can be slow enough to blow a single
+# tight timeout and make a live master read as dead --- a spurious re-auth.
+# Retrying with a generous per-attempt budget lets a merely-slow master
+# answer, while a genuine zombie (mux alive, TCP dead) still fails fast on
+# every attempt and so can never be masked by the retry.
+_LIVENESS_PROBE_ATTEMPTS = 3
+_LIVENESS_PROBE_TIMEOUT = 12    # seconds, wall-clock per attempt
+_LIVENESS_PROBE_BACKOFF = 1.0   # seconds between attempts
 
 
 class TunnelError(RuntimeError):
@@ -120,30 +134,65 @@ class SshControl:
     jump_control: Optional["SshControl"] = field(default=None, repr=False)
     extra_options: List[str] = field(default_factory=list)
     debug: bool = False
+    # Set True by establish() when *this* process authenticated the master.
+    # A master we just brought up cannot be a post-suspend zombie, so
+    # is_active() can trust the cheap structural check and skip the remote
+    # shell round-trip for it (see is_active()).
+    _established_this_session: bool = field(default=False, init=False, repr=False)
 
     @property
     def socket_path(self) -> Path:
         return _control_socket_path(self.gateway)
 
-    def is_active(self) -> bool:
-        """Return True if the ControlMaster connection actually works.
+    def is_active(self, *, deep: Optional[bool] = None, sleep=time.sleep) -> bool:
+        """Return True if the ControlMaster connection is usable.
 
-        ``ssh -O check`` only verifies the local mux daemon is alive.
-        A zombie socket (mux running, TCP dead) passes that check but
-        fails when a real session is requested.  We follow up with a
-        lightweight ``true`` command to confirm end-to-end connectivity.
+        Two layers:
 
-        Both probes use ``BatchMode=yes`` and a wall-clock timeout so
-        that a stale or wedged mux can never fall through to interactive
-        ``/dev/tty`` auth (which would hang silently inside a spinner
-        block); if the socket is bad the probe fails fast and
-        :meth:`ensure` will surface a visible re-auth prompt instead.
+        * a **structural** ``ssh -O check`` that asks the local mux daemon
+          whether the master process is alive.  Cheap, and involves no
+          remote shell.
+        * an **end-to-end** probe (``ssh ... true``) that opens a real
+          session through the mux.  This is what catches a *zombie* socket
+          --- mux process alive but the underlying TCP dead after a suspend
+          or network change --- which ``-O check`` alone reports as a
+          misleading ``ACTIVE``.
+
+        The end-to-end probe execs a remote command, so it pays for a login
+        shell on the far side; on a hammered HPC login node that spawn is
+        slow and occasionally exceeds a single timeout, which used to make a
+        perfectly live master read as dead and trigger a spurious re-auth
+        (the "re-authenticate on every hop" bug).  Two guards fix that:
+
+        * **skip** the probe entirely for a master *this* process just
+          established (:attr:`_established_this_session`): it cannot have
+          become a zombie in the sub-second reuse window, so the structural
+          check suffices and no remote shell is spawned on the hot path.
+        * **retry** the probe otherwise (:data:`_LIVENESS_PROBE_ATTEMPTS`)
+          with a generous per-attempt budget; a true zombie fails fast on
+          every attempt, so the retry cannot hide it, but a merely-slow
+          master gets to answer.
+
+        ``deep`` forces the choice (``True`` = always probe end-to-end,
+        ``False`` = structural only); the default auto-selects per the rule
+        above.  ``sleep`` is injectable for tests.  All probes use
+        ``BatchMode=yes`` + a wall-clock timeout so a wedged mux can never
+        fall through to interactive ``/dev/tty`` auth (an invisible hang
+        inside a spinner block).
         """
         if not self.socket_path.exists():
             return False
-        # Quick structural check --- is the mux daemon running?
-        # Timeout guards against a wedged mux daemon; BatchMode keeps
-        # ssh from prompting if -O check is somehow misrouted.
+        if not self._mux_alive():
+            _LOG.debug("is_active(%s): structural -O check failed", self.gateway)
+            return False
+        if deep is None:
+            deep = not self._established_this_session
+        if not deep:
+            return True
+        return self._probe_end_to_end(sleep=sleep)
+
+    def _mux_alive(self) -> bool:
+        """Structural liveness: is the local mux daemon running? (no remote shell)."""
         try:
             result = subprocess.run(
                 [
@@ -161,32 +210,65 @@ class SshControl:
             )
         except subprocess.TimeoutExpired:
             return False
-        if result.returncode != 0:
-            return False
-        # End-to-end check --- can we actually open a session?
-        # BatchMode=yes is critical: without it, an unattachable mux
-        # causes ssh to fall back to interactive auth on /dev/tty,
-        # which bypasses stdin=DEVNULL and capture_output.
-        try:
-            result = subprocess.run(
-                [
-                    "ssh",
-                    "-o", "BatchMode=yes",
-                    "-o", "ControlMaster=auto",
-                    "-o", f"ControlPath={self.socket_path}",
-                    "-o", "ConnectTimeout=5",
-                    self.gateway,
-                    "true",
-                ],
-                capture_output=True,
-                stdin=subprocess.DEVNULL,
-                text=True,
-                check=False,
-                timeout=10,
-            )
-        except subprocess.TimeoutExpired:
-            return False
         return result.returncode == 0
+
+    def _probe_end_to_end(self, *, sleep=time.sleep) -> bool:
+        """End-to-end liveness: open a real session through the mux.
+
+        Retried to tell a *slow* master (busy login node, high shell-spawn
+        latency) apart from a *dead* one (zombie mux).  Logs the reason on
+        every failure so a wild recurrence is diagnosable without
+        ``--debug-ssh`` --- which perturbs the socket state and masks the
+        bug.  ``BatchMode=yes`` keeps a bad mux from falling through to
+        interactive ``/dev/tty`` auth.
+        """
+        last_rc: Optional[int] = None
+        last_err = ""
+        for attempt in range(1, _LIVENESS_PROBE_ATTEMPTS + 1):
+            try:
+                result = subprocess.run(
+                    [
+                        "ssh",
+                        "-o", "BatchMode=yes",
+                        "-o", "ControlMaster=auto",
+                        "-o", f"ControlPath={self.socket_path}",
+                        "-o", "ConnectTimeout=5",
+                        self.gateway,
+                        "true",
+                    ],
+                    capture_output=True,
+                    stdin=subprocess.DEVNULL,
+                    text=True,
+                    check=False,
+                    timeout=_LIVENESS_PROBE_TIMEOUT,
+                )
+            except subprocess.TimeoutExpired:
+                last_rc, last_err = None, "timeout"
+                _LOG.debug(
+                    "is_active(%s): probe %d/%d timed out after %ss",
+                    self.gateway, attempt, _LIVENESS_PROBE_ATTEMPTS,
+                    _LIVENESS_PROBE_TIMEOUT,
+                )
+            else:
+                if result.returncode == 0:
+                    return True
+                last_rc = result.returncode
+                err = (result.stderr or "").strip()
+                last_err = err.splitlines()[-1] if err else ""
+                _LOG.debug(
+                    "is_active(%s): probe %d/%d rc=%s%s",
+                    self.gateway, attempt, _LIVENESS_PROBE_ATTEMPTS, last_rc,
+                    f": {last_err}" if last_err else "",
+                )
+            if attempt < _LIVENESS_PROBE_ATTEMPTS:
+                sleep(_LIVENESS_PROBE_BACKOFF)
+        _LOG.info(
+            "is_active(%s): end-to-end probe failed after %d attempts "
+            "(last rc=%s%s); treating connection as expired",
+            self.gateway, _LIVENESS_PROBE_ATTEMPTS, last_rc,
+            f": {last_err}" if last_err else "",
+        )
+        return False
 
     def establish(self, logger: logging.Logger) -> None:
         """Open a ControlMaster connection (may prompt for credentials).
@@ -297,6 +379,10 @@ class SshControl:
                     sys.stderr.write(trace)
 
         self._record_debug_mode()
+        # We authenticated this master ourselves this run, so is_active()
+        # may trust the cheap structural check for it (no remote shell) and
+        # not re-authenticate a connection it just brought up.
+        self._established_this_session = True
 
     @property
     def _debug_marker(self) -> Path:
@@ -378,6 +464,9 @@ class SshControl:
 
     def close(self, logger: logging.Logger) -> None:
         """Request a clean shutdown of the ControlMaster."""
+        # We no longer own a live master; future is_active() calls must run
+        # the full end-to-end probe rather than trusting the structural check.
+        self._established_this_session = False
         if not self.socket_path.exists():
             return
         subprocess.run(
