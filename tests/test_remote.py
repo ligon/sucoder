@@ -857,6 +857,182 @@ def test_ssh_control_is_active_uses_batchmode(monkeypatch, tmp_path) -> None:
             )
 
 
+def test_is_active_self_established_skips_remote_shell(monkeypatch, tmp_path) -> None:
+    """#3: a master this process established is trusted via the structural
+    ``-O check`` alone --- no ``true`` round-trip, so no remote login-shell
+    spawn on the hot reuse path (the spawn latency that made the probe slow
+    and flaky on a hammered BRC login node, and re-authed the gateway on
+    every hop)."""
+    from sucoder.tunnel import SshControl
+
+    socket_file = tmp_path / "gw.sock"
+    socket_file.touch()
+    monkeypatch.setattr(
+        SshControl, "socket_path", property(lambda self: socket_file)
+    )
+    control = SshControl(gateway="gw")
+    control._established_this_session = True
+
+    calls: list[list] = []
+
+    class _Ok:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def _fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        return _Ok()
+
+    monkeypatch.setattr("sucoder.tunnel.subprocess.run", _fake_run)
+    assert control.is_active() is True
+    # Exactly one probe, and it is the structural -O check (no remote command).
+    assert len(calls) == 1, f"expected only the structural check, got {calls!r}"
+    assert "check" in calls[0]
+    assert not any("true" in c for c in calls), (
+        "self-established master must not spawn a remote shell probe"
+    )
+
+
+def test_is_active_deep_probe_retries_slow_master(monkeypatch, tmp_path) -> None:
+    """#1: a live-but-slow master that fails one end-to-end probe then
+    answers is reported ACTIVE (no spurious re-auth), thanks to the retry."""
+    from sucoder.tunnel import SshControl
+
+    socket_file = tmp_path / "gw.sock"
+    socket_file.touch()
+    monkeypatch.setattr(
+        SshControl, "socket_path", property(lambda self: socket_file)
+    )
+    control = SshControl(gateway="gw")  # not self-established -> deep probe
+
+    probes = {"true": 0}
+
+    class _R:
+        def __init__(self, rc):
+            self.returncode = rc
+            self.stdout = ""
+            self.stderr = ""
+
+    def _fake_run(cmd, **kwargs):
+        if "true" in cmd:
+            probes["true"] += 1
+            return _R(0 if probes["true"] >= 2 else 255)  # slow: fail once
+        return _R(0)  # -O check ok
+
+    monkeypatch.setattr("sucoder.tunnel.subprocess.run", _fake_run)
+    assert control.is_active(sleep=lambda *_: None) is True
+    assert probes["true"] == 2, "should retry the end-to-end probe once, then pass"
+
+
+def test_is_active_deep_probe_dead_after_retries(monkeypatch, tmp_path) -> None:
+    """#1 boundary: a genuine zombie (``-O check`` passes, end-to-end always
+    fails) is declared dead only after exhausting retries, so ensure() still
+    re-authenticates it --- the retry cannot mask a real failure."""
+    from sucoder.tunnel import SshControl, _LIVENESS_PROBE_ATTEMPTS
+
+    socket_file = tmp_path / "gw.sock"
+    socket_file.touch()
+    monkeypatch.setattr(
+        SshControl, "socket_path", property(lambda self: socket_file)
+    )
+    control = SshControl(gateway="gw")
+
+    probes = {"true": 0}
+
+    class _R:
+        def __init__(self, rc):
+            self.returncode = rc
+            self.stdout = ""
+            self.stderr = "mux_client_request_session: session open failed"
+
+    def _fake_run(cmd, **kwargs):
+        if "true" in cmd:
+            probes["true"] += 1
+            return _R(255)
+        return _R(0)
+
+    monkeypatch.setattr("sucoder.tunnel.subprocess.run", _fake_run)
+    assert control.is_active(sleep=lambda *_: None) is False
+    assert probes["true"] == _LIVENESS_PROBE_ATTEMPTS, (
+        "must exhaust all attempts before declaring the mux dead"
+    )
+
+
+def test_is_active_logs_probe_failure(monkeypatch, tmp_path, caplog) -> None:
+    """#2: a probe failure is logged at INFO with a diagnosable reason, so a
+    wild recurrence needs no ``--debug-ssh`` (which rebuilds the socket and
+    masks the very bug)."""
+    import logging
+    from sucoder.tunnel import SshControl
+
+    socket_file = tmp_path / "gw.sock"
+    socket_file.touch()
+    monkeypatch.setattr(
+        SshControl, "socket_path", property(lambda self: socket_file)
+    )
+    control = SshControl(gateway="gw")
+
+    class _R:
+        def __init__(self, rc, err=""):
+            self.returncode = rc
+            self.stdout = ""
+            self.stderr = err
+
+    def _fake_run(cmd, **kwargs):
+        if "true" in cmd:
+            return _R(255, "kex_exchange_identification: Connection closed")
+        return _R(0)
+
+    monkeypatch.setattr("sucoder.tunnel.subprocess.run", _fake_run)
+    with caplog.at_level(logging.INFO, logger="sucoder.tunnel"):
+        assert control.is_active(sleep=lambda *_: None) is False
+    assert "treating connection as expired" in caplog.text, (
+        f"expected an INFO diagnosis line, got: {caplog.text!r}"
+    )
+
+
+def test_establish_marks_session_established(monkeypatch, tmp_path) -> None:
+    """establish() records that this process owns the master, so a later
+    is_active() may take the cheap structural path (#3)."""
+    import logging as _logging
+    from sucoder.tunnel import SshControl
+
+    socket_file = tmp_path / "gw.sock"
+    monkeypatch.setattr(
+        SshControl, "socket_path", property(lambda self: socket_file)
+    )
+    control = SshControl(gateway="gw")
+    # Force the "not yet active" branch so establish() runs the ssh command.
+    monkeypatch.setattr(control, "is_active", lambda *a, **k: False)
+
+    class _Ok:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr("sucoder.tunnel.subprocess.run", lambda *a, **k: _Ok())
+    assert control._established_this_session is False
+    control.establish(_logging.getLogger("t"))
+    assert control._established_this_session is True
+
+
+def test_close_clears_session_established(tmp_path, monkeypatch) -> None:
+    """close() drops ownership so a later stale socket is re-probed
+    end-to-end rather than trusted (#3)."""
+    import logging as _logging
+    from sucoder.tunnel import SshControl
+
+    socket_file = tmp_path / "gw.sock"  # intentionally absent
+    monkeypatch.setattr(
+        SshControl, "socket_path", property(lambda self: socket_file)
+    )
+    control = SshControl(gateway="gw")
+    control._established_this_session = True
+    control.close(_logging.getLogger("t"))  # early-returns, but must clear the flag
+    assert control._established_this_session is False
+
+
 def test_ensure_ssh_visible_runs_outside_spinner(monkeypatch) -> None:
     """Regression: _ensure_ssh_visible must NOT wrap ensure() in
     _spinner.
