@@ -113,7 +113,20 @@ def test_remote_config_ssh_control_kwargs() -> None:
         "control_persist": "2d",
         "keepalive_interval": 45,
         "keepalive_count_max": 80,
+        "cert_file": None,
     }
+
+
+def test_remote_config_ssh_control_kwargs_cert_file() -> None:
+    """A configured cert is threaded as a plain string path (not a Path)."""
+    from pathlib import Path
+
+    rc = RemoteConfig(
+        gateway="gw",
+        transfer_host="dtn",
+        cert_file=Path("/home/u/.ssh/ssh_certs/brc_cert"),
+    )
+    assert rc.ssh_control_kwargs()["cert_file"] == "/home/u/.ssh/ssh_certs/brc_cert"
 
 
 def test_ssh_control_kwargs_match_sshcontrol_fields() -> None:

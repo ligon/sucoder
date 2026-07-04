@@ -75,21 +75,25 @@ class RemoteConfig:
     keepalive_count_max: int = 120                  # ServerAliveCountMax (probes before teardown)
     slurm: Optional[SlurmConfig] = None             # Compute-node allocation params
     system_prompt_extra: Optional[Path] = None      # Target-specific prompt snippet
+    cert_file: Optional[Path] = None                # Local SSH cert (private key) presented to the gateway
 
     def ssh_control_kwargs(self) -> Dict[str, Any]:
-        """Persistence/keepalive kwargs shared by SshControl, SshTunnel,
-        and ``sshconfig.render_block``.
+        """Shared SSH kwargs threaded to SshControl and
+        ``sshconfig.render_block``.
 
-        Keeping these in one place means the three SSH knobs
-        (``control_persist`` + the two ``keepalive_*`` values) are
-        threaded identically everywhere a connection is built, so a
-        target's config is honoured at every hop instead of silently
-        falling back to the dataclass defaults at some call sites.
+        Keeping these in one place means the persistence/keepalive knobs
+        (``control_persist`` + the two ``keepalive_*`` values) and the
+        optional gateway ``cert_file`` are applied identically everywhere a
+        connection is built, so a target's config is honoured at every hop
+        instead of silently falling back to the dataclass defaults at some
+        call sites.  ``cert_file`` is a string path (or ``None``); consumers
+        that only care about the gateway hop use it, others ignore it.
         """
         return {
             "control_persist": self.control_persist,
             "keepalive_interval": self.keepalive_interval,
             "keepalive_count_max": self.keepalive_count_max,
+            "cert_file": str(self.cert_file) if self.cert_file else None,
         }
 
 
@@ -287,7 +291,7 @@ _VALID_SLURM_KEYS = frozenset({
 _TARGET_LEVEL_KEYS = frozenset({
     "gateway", "transfer_host", "mirror_root", "ssh_options",
     "control_persist", "keepalive_interval", "keepalive_count_max",
-    "system_prompt_extra",
+    "system_prompt_extra", "cert_file",
 })
 
 
@@ -797,6 +801,14 @@ def _parse_remote_config(raw: Any) -> Optional[RemoteConfig]:
     # shared config but only some machines carry the prompt snippet.
     # The mirror module logs a warning at injection time instead.
 
+    cert_file_raw = raw.get("cert_file")
+    if cert_file_raw is not None and not isinstance(cert_file_raw, str):
+        raise ConfigError("`remote.cert_file` must be a string path when provided.")
+    # Expanded locally: the cert lives on the operator's machine.  Not an
+    # error if absent — the operator may not have minted one yet; ssh then
+    # falls back to the interactive prompt (and `tunnel doctor` flags it).
+    cert_file = _expand_path(cert_file_raw)
+
     return RemoteConfig(
         gateway=gateway,
         transfer_host=transfer_host,
@@ -807,6 +819,7 @@ def _parse_remote_config(raw: Any) -> Optional[RemoteConfig]:
         keepalive_count_max=keepalive_count_max,
         slurm=slurm,
         system_prompt_extra=prompt_extra,
+        cert_file=cert_file,
     )
 
 

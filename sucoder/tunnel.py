@@ -134,6 +134,12 @@ class SshControl:
     jump_control: Optional["SshControl"] = field(default=None, repr=False)
     extra_options: List[str] = field(default_factory=list)
     debug: bool = False
+    # Local SSH certificate (private-key path) to present when authenticating
+    # *directly* to the gateway.  Its ``<cert_file>-cert.pub`` sibling is
+    # offered as the CertificateFile.  Applied ONLY on the direct/gateway hop
+    # (``jump_host is None``); login/DTN/compute authenticate by publickey
+    # through the gateway mux and must not be forced onto the gateway cert.
+    cert_file: Optional[str] = None
     # Set True by establish() when *this* process authenticated the master.
     # A master we just brought up cannot be a post-suspend zombie, so
     # is_active() can trust the cheap structural check and skip the remote
@@ -334,6 +340,17 @@ class SshControl:
             else:
                 cmd.extend(["-J", self.jump_host])
 
+        # Present a gateway SSH certificate on the *direct* hop only.  The
+        # login/DTN/compute hops ride the gateway mux and authenticate by
+        # publickey, so forcing IdentitiesOnly + the gateway cert on them
+        # would break their auth.  A missing/expired cert degrades cleanly:
+        # ssh offers no identity and falls back to the interactive prompt.
+        if self.jump_host is None and self.cert_file:
+            cmd += [
+                "-o", f"IdentityFile={self.cert_file}",
+                "-o", f"CertificateFile={self.cert_file}-cert.pub",
+                "-o", "IdentitiesOnly=yes",
+            ]
         cmd.extend(self.extra_options)
         if self.debug:
             cmd.append("-vvv")

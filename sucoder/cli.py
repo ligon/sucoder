@@ -2993,6 +2993,60 @@ def tunnel_status(
     typer.echo(f"  ssh_config block: {'present' if cfg_present else 'absent'}")
 
 
+def _parse_cert_time(raw: str):
+    """Parse an ssh-keygen ``Valid: ... to <ts>`` timestamp; None if unknown.
+
+    ssh-keygen prints local-time stamps whose exact format varies by
+    OpenSSH version, so try the common ones and give up gracefully.
+    """
+    import datetime
+
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M:%S"):
+        try:
+            return datetime.datetime.strptime(raw, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _cert_status(cert_file: str):
+    """Best-effort status of a gateway SSH cert for ``tunnel doctor``.
+
+    Returns ``(glyph, message)`` and never raises.  ``glyph`` is ``✓``
+    (present/valid), ``•`` (configured but not minted / unreadable), or
+    ``⚠`` (expired or expiring soon).
+    """
+    import datetime
+    import os
+    import subprocess as _sp
+
+    key = os.path.expanduser(cert_file)
+    pub = key + "-cert.pub"
+    if not os.path.exists(pub):
+        return ("•", f"cert configured but not minted ({pub} absent) — "
+                     "mint one with scripts/brc-connect.sh")
+    try:
+        out = _sp.run(
+            ["ssh-keygen", "-L", "-f", pub],
+            capture_output=True, text=True, timeout=5, check=False,
+        ).stdout
+    except (OSError, _sp.SubprocessError):
+        return ("•", f"cert present ({pub}); ssh-keygen unavailable to read validity")
+    valid_line = next(
+        (ln.strip() for ln in out.splitlines() if "Valid:" in ln), ""
+    )
+    to_raw = valid_line.split(" to ", 1)[-1].strip() if " to " in valid_line else ""
+    expires = _parse_cert_time(to_raw)
+    if expires is None:
+        return ("✓", f"cert present ({valid_line or pub})")
+    now = datetime.datetime.now()
+    if expires <= now:
+        return ("⚠", f"cert EXPIRED ({to_raw}) — re-mint: scripts/brc-connect.sh")
+    if expires - now <= datetime.timedelta(hours=2):
+        return ("⚠", f"cert expires soon ({to_raw}) — re-mint before it lapses")
+    return ("✓", f"cert valid to {to_raw}")
+
+
 @tunnel_app.command("doctor")
 def tunnel_doctor(ctx: typer.Context) -> None:
     """Diagnose ssh_config / session issues that silently break tunnel reuse.
@@ -3061,6 +3115,13 @@ def tunnel_doctor(ctx: typer.Context) -> None:
             f"  • login node not pinned yet — run "
             f"`sucoder -T {target_name} tunnel up`"
         )
+
+    # 4. Gateway SSH certificate (optional; enables passwordless gateway auth).
+    #    Informational only — a missing/expired cert just means a password
+    #    prompt, it doesn't break tunnel reuse, so it never fails the exit code.
+    if remote.cert_file:
+        glyph, msg = _cert_status(str(remote.cert_file))
+        typer.echo(f"  {glyph} {msg}")
 
     typer.echo("  (run `tunnel status` to check whether the sockets are live)")
     if problems:

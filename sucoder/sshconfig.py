@@ -77,6 +77,7 @@ def render_block(
     control_persist: str = "7d",
     keepalive_interval: int = 30,
     keepalive_count_max: int = 120,
+    cert_file: Optional[str] = None,
 ) -> str:
     """Render the managed ssh_config block for *target*.
 
@@ -88,6 +89,13 @@ def render_block(
     mirror the values used to build the :class:`~sucoder.tunnel.SshControl`
     for the same hops, so plain ``ssh`` and TRAMP riding these aliases get
     the same idle lifetime and keepalive tolerance as SuCoder itself.
+
+    ``cert_file`` (a local SSH cert private-key path), when given, is
+    emitted on the *gateway* alias only as ``IdentityFile`` +
+    ``CertificateFile <cert_file>-cert.pub`` + ``IdentitiesOnly yes``, so a
+    plain ``ssh <target>-gw`` / TRAMP presents the cert exactly as SuCoder's
+    own gateway connection does.  The login/DTN aliases are left untouched
+    because they authenticate by publickey through the gateway mux.
     """
     aliases = alias_names(target)
     hops = [
@@ -115,6 +123,13 @@ def render_block(
         lines.append(f"    ControlPersist {control_persist}")
         lines.append(f"    ServerAliveInterval {keepalive_interval}")
         lines.append(f"    ServerAliveCountMax {keepalive_count_max}")
+        # Gateway cert (direct hop only): present it so a plain `ssh
+        # <target>-gw` / TRAMP authenticates passwordlessly like SuCoder.
+        # The proxied hops keep their publickey-through-the-mux auth.
+        if cert_file and hop.proxy_jump is None:
+            lines.append(f"    IdentityFile {cert_file}")
+            lines.append(f"    CertificateFile {cert_file}-cert.pub")
+            lines.append("    IdentitiesOnly yes")
         # Login/DTN are reached only through the gateway; their host keys
         # are stable but may be absent on a fresh client.
         if hop.proxy_jump:
