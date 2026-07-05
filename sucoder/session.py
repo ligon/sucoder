@@ -28,6 +28,10 @@ class RemoteSession:
     slurm_job_id: Optional[int] = None
     compute_node: Optional[str] = None
     remote_mirror_root: Optional[str] = None  # e.g. "/local/mirrors" or "~/mirrors"
+    # Port forwards created by `tunnel forward` (kept on the target's
+    # ``tunnel-<target>`` session).  Each entry is a dict:
+    # ``{"local_port": int, "node": str, "remote_port": int}``.
+    forwards: list = field(default_factory=list)
 
     # ------------------------------------------------------------------
     # Persistence
@@ -69,6 +73,7 @@ class RemoteSession:
             slurm_job_id=data.get("slurm_job_id"),
             compute_node=data.get("compute_node"),
             remote_mirror_root=data.get("remote_mirror_root"),
+            forwards=list(data.get("forwards") or []),
         )
 
     def save(self) -> None:
@@ -94,6 +99,7 @@ class RemoteSession:
             "slurm_job_id": self.slurm_job_id,
             "compute_node": self.compute_node,
             "remote_mirror_root": self.remote_mirror_root,
+            "forwards": self.forwards,
         }
         tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
         try:
@@ -134,6 +140,32 @@ class RemoteSession:
             if isinstance(data, dict) and data.get("slurm_job_id") == job_id:
                 holders.append(stem)
         return holders
+
+    @classmethod
+    def compute_nodes_for_target(cls, target_name: str) -> dict:
+        """Map session key -> compute node for sessions on *target_name*.
+
+        Scans ``~/.sucoder/sessions/<mirror>--<target>.yaml`` (collaborate
+        sessions; the target's own ``tunnel-<target>.yaml`` has no ``--``
+        and is naturally excluded) and returns the entries that record a
+        compute node.  Used by ``tunnel forward`` to default the target
+        node to "the node my session is on" without a ``--node`` flag.
+        Entries may be stale if a job ended without ``release``; callers
+        surface connection errors rather than pre-validating here.
+        """
+        nodes: dict = {}
+        directory = _session_dir()
+        if not directory.is_dir():
+            return nodes
+        for path in sorted(directory.glob(f"*--{target_name}.yaml")):
+            try:
+                with path.open("r", encoding="utf-8") as fh:
+                    data = yaml.safe_load(fh) or {}
+            except (yaml.YAMLError, OSError):
+                continue
+            if isinstance(data, dict) and data.get("compute_node"):
+                nodes[path.stem] = data["compute_node"]
+        return nodes
 
     def clear(self) -> None:
         """Remove the session file."""
