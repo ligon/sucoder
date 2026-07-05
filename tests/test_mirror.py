@@ -4557,3 +4557,107 @@ class TestEnsureRemoteWorktreeClean:
 
         captured = capsys.readouterr().out
         assert "… and 5 more files" in captured
+
+
+# -- _resolve_base_branch -------------------------------------------------
+
+
+def test_resolve_base_branch_configured_wins(tmp_path: Path) -> None:
+    """An explicit default_base_branch bypasses the probe entirely."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    ctx.settings.default_base_branch = "release"
+    assert manager._resolve_base_branch(ctx) == "release"
+
+
+def test_resolve_base_branch_ignores_feature_checkout(tmp_path: Path) -> None:
+    """Auto-detect must not follow a transient feature-branch checkout."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    ctx.settings.default_base_branch = None
+    run_git(["checkout", "-b", "feat/wip"], ctx.canonical_path)
+    assert manager._resolve_base_branch(ctx) == "main"
+
+
+def test_resolve_base_branch_master_repo(tmp_path: Path) -> None:
+    """A master-based canonical (no main) auto-detects master.
+
+    Regression: the old hardcoded "main" fallback made the pre-push
+    safety fetch a silent no-op for master-based repos (defeating the
+    agent-commit rescue) and broke the post-push `reset --hard main`
+    on the remote mirror.
+    """
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    ctx.settings.default_base_branch = None
+    run_git(["branch", "-m", "main", "master"], ctx.canonical_path)
+    assert manager._resolve_base_branch(ctx) == "master"
+
+
+def test_resolve_base_branch_prefers_origin_head(tmp_path: Path) -> None:
+    """origin/HEAD (the upstream's default) outranks a local main."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    ctx.settings.default_base_branch = None
+    run_git(
+        ["symbolic-ref", "refs/remotes/origin/HEAD",
+         "refs/remotes/origin/trunk"],
+        ctx.canonical_path,
+    )
+    assert manager._resolve_base_branch(ctx) == "trunk"
+
+
+def test_resolve_base_branch_probe_is_cached(tmp_path: Path) -> None:
+    """The probe runs once per mirror per manager instance."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    ctx.settings.default_base_branch = None
+    assert manager._resolve_base_branch(ctx) == "main"
+
+    def boom(*args, **kwargs):  # pragma: no cover - fails the test if hit
+        raise AssertionError("second resolve should be served from cache")
+
+    manager.executor.run_human = boom  # type: ignore[method-assign]
+    assert manager._resolve_base_branch(ctx) == "main"
+
+
+# -- _sync_remote error wrapping ------------------------------------------
+
+
+def test_sync_remote_unpacker_error_mentions_disk(tmp_path: Path) -> None:
+    """The BRC field failure: remote index-pack dies with EIO.
+
+    The raised MirrorError must keep the git detail and hint at
+    checking disk space/quota on the remote host, so the CLI prints
+    an actionable message instead of a traceback.
+    """
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+
+    manager._git_transports = (  # type: ignore[method-assign]
+        lambda _ctx: [("login node", "ln000:/global/home/u/mirrors/sample", None)]
+    )
+
+    stderr = (
+        "remote: fatal: write error: Input/output error\n"
+        "error: remote unpack failed: index-pack abnormal exit\n"
+        " ! [remote rejected] master -> master (unpacker error)\n"
+        "error: failed to push some refs to "
+        "'ln000:/global/home/u/mirrors/sample'\n"
+    )
+
+    def fail_push(args, **kwargs):
+        raise CommandError(
+            "Command failed with exit code 1: git push …",
+            CommandResult(list(args), list(args), "", stderr, 1),
+        )
+
+    manager.executor.run_human = fail_push  # type: ignore[method-assign]
+
+    with pytest.raises(MirrorError) as excinfo:
+        manager._sync_remote(ctx)
+
+    msg = str(excinfo.value)
+    assert "failed to push some refs" in msg
+    assert "quota" in msg
+    assert isinstance(excinfo.value.__cause__, CommandError)

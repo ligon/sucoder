@@ -764,3 +764,37 @@ mirror_root: ./mirrors
     )
     with pytest.raises(ConfigError, match=message):
         load_config(config_path)
+
+
+def test_default_base_branch_optional(tmp_path: Path) -> None:
+    """Omitted default_base_branch parses as None — the auto-detect marker.
+
+    The old parser filled in a literal "main", which broke master-based
+    canonical repos (fetch/reset targeted a branch that didn't exist).
+    An explicit value must still be honored verbatim.
+    """
+    config_path = write_config(
+        tmp_path,
+        """
+human_user: ligon
+agent_user: coder
+agent_group: coder
+mirror_root: ./mirrors
+mirrors:
+  auto:
+    canonical_repo: ./canonical
+    branch_prefixes:
+      human: ligon
+      agent: coder
+  fixed:
+    canonical_repo: ./canonical
+    default_base_branch: develop
+    branch_prefixes:
+      human: ligon
+      agent: coder
+""",
+    )
+    cfg = load_config(config_path)
+
+    assert cfg.mirrors["auto"].default_base_branch is None
+    assert cfg.mirrors["fixed"].default_base_branch == "develop"

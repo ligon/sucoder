@@ -35,7 +35,7 @@ from .config import (
     build_default_config,
     load_config,
 )
-from .executor import CommandExecutor
+from .executor import CommandError, CommandExecutor
 from .logging_utils import setup_logger
 from .mirror import (
     MirrorError,
@@ -1850,6 +1850,16 @@ def collaborate(
     except MirrorError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
+    except CommandError as exc:
+        # Belt and braces: a subprocess failure that escaped bootstrap
+        # without being converted to a MirrorError should still print as
+        # a clean error (plus the tail of the failing command's stderr),
+        # not a Python traceback.
+        typer.echo(str(exc), err=True)
+        detail = (exc.result.stderr or "").strip()
+        if detail:
+            typer.echo("\n".join(detail.splitlines()[-5:]), err=True)
+        raise typer.Exit(code=1) from exc
 
 
 @app.command("audit")
@@ -3107,7 +3117,10 @@ def mirrors_list(ctx: typer.Context) -> None:
         return
 
     name_width = max(len("Mirror"), *(len(name) for name, _ in entries))
-    branch_width = max(len("Base"), *(len(settings.default_base_branch) for _, settings in entries))
+    branch_width = max(
+        len("Base"),
+        *(len(settings.default_base_branch or "(auto)") for _, settings in entries),
+    )
 
     header = f"{'Mirror':<{name_width}}  {'Base':<{branch_width}}  Canonical Repo  Mirror Path"
     typer.echo(header)
@@ -3116,7 +3129,7 @@ def mirrors_list(ctx: typer.Context) -> None:
     for name, settings in entries:
         canonical = str(settings.canonical_repo)
         mirror_path = str(config.mirror_root / settings.mirror_dirname)
-        base = settings.default_base_branch
+        base = settings.default_base_branch or "(auto)"
         typer.echo(f"{name:<{name_width}}  {base:<{branch_width}}  {canonical}  {mirror_path}")
 
 
