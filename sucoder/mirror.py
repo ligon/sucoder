@@ -260,6 +260,10 @@ class MirrorManager:
         # renew read -- an invisible, leaked job.  Appended last so existing
         # positional constructions keep working.
         self.target_name = target_name
+        # Per-mirror cache for _resolve_base_branch: the canonical repo's
+        # default branch cannot change out from under a single invocation,
+        # and the probe costs a few subprocess calls.
+        self._base_branch_cache: Dict[str, str] = {}
 
     def context_for(self, mirror_name: str) -> MirrorContext:
         try:
@@ -869,6 +873,66 @@ class MirrorManager:
             branch = f"{candidate}-{suffix}"
         return branch
 
+    def _resolve_base_branch(self, ctx: MirrorContext) -> str:
+        """Return the base branch for *ctx*, auto-detecting when unset.
+
+        An explicit ``default_base_branch`` in the mirror's config always
+        wins.  Otherwise probe the canonical repository for its default
+        branch, in decreasing order of authority:
+
+        1. the branch ``origin/HEAD`` points at (what the upstream calls
+           its default branch);
+        2. a local ``main``, then ``master``;
+        3. the branch currently checked out (``HEAD``).
+
+        The current checkout is deliberately the *last* resort: canonical
+        is routinely checked out mid-feature, and silently basing the
+        collaboration on a transient feature branch — or resetting the
+        remote mirror's working tree to it — would surprise.  Before this
+        probe existed the fallback was a hardcoded ``main``, which broke
+        (and defeated the pre-push safety fetch of) master-based repos.
+        """
+        configured = ctx.settings.default_base_branch
+        if configured:
+            return configured
+        cached = self._base_branch_cache.get(ctx.settings.name)
+        if cached:
+            return cached
+
+        canon = str(ctx.canonical_path)
+
+        def _probe(args: List[str]) -> CommandResult:
+            return self.executor.run_human(args, check=False, cwd=canon)
+
+        branch = ""
+        origin_head = _probe(
+            ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        )
+        if origin_head.returncode == 0:
+            # "origin/main" → "main" (keeps slashes in branch names).
+            branch = (origin_head.stdout or "").strip().split("/", 1)[-1]
+        if not branch:
+            for candidate in ("main", "master"):
+                verify = _probe(
+                    ["git", "rev-parse", "--verify", "--quiet",
+                     f"refs/heads/{candidate}"],
+                )
+                if verify.returncode == 0:
+                    branch = candidate
+                    break
+        if not branch:
+            head = _probe(["git", "symbolic-ref", "--short", "HEAD"])
+            branch = (head.stdout or "").strip()
+        if not branch:
+            branch = "main"  # detached HEAD, nothing to probe — old default
+        self.logger.info(
+            "Auto-detected base branch '%s' for mirror %s "
+            "(set default_base_branch in the mirror config to override)",
+            branch, ctx.settings.name,
+        )
+        self._base_branch_cache[ctx.settings.name] = branch
+        return branch
+
     # -- Remote sync -----------------------------------------------------
 
     def _pull_from_remote(self, ctx: MirrorContext) -> None:
@@ -935,7 +999,7 @@ class MirrorManager:
         """
         import subprocess
 
-        base = ctx.settings.default_base_branch or "main"
+        base = self._resolve_base_branch(ctx)
         tmp_ref = "refs/sucoder/mirror-head"
 
         self.logger.info("Fetching agent commits from %s", source_label)
@@ -1353,9 +1417,20 @@ class MirrorManager:
                 return
             except CommandError as exc:
                 # Only fail over when the connection itself broke; a real
-                # git rejection should surface immediately.
+                # git rejection would fail the same way on the other
+                # transport, so surface it immediately — as a MirrorError,
+                # which CLI entry points render as a clean message instead
+                # of a traceback.
                 if is_last or not self._is_transport_failure(exc.result):
-                    raise
+                    raise MirrorError(
+                        f"Failed to push canonical to the remote mirror at "
+                        f"{url}: {self._short_git_error(exc.result)}\n"
+                        "The remote side did not accept the push.  If the "
+                        "error mentions a write error or 'unpacker error', "
+                        "the remote git could not write objects to disk — "
+                        "check free space, quota, and filesystem health on "
+                        "the remote host before retrying."
+                    ) from exc
                 self.logger.warning(
                     "Push via %s failed (%s); retrying via %s",
                     label, self._short_git_error(exc.result),
@@ -1425,7 +1500,7 @@ class MirrorManager:
         # Use the login node for filesystem scaffolding when available.
         run = getattr(self.executor, "run_on_login_node", self.executor.run_agent)
 
-        base = ctx.settings.default_base_branch or "main"
+        base = self._resolve_base_branch(ctx)
 
         # Check if remote mirror is a valid git repo.
         check = run(
@@ -1540,7 +1615,7 @@ class MirrorManager:
         mirror_path = self._ensure_mirror_exists(ctx)
         self.sync(ctx)
 
-        base = base_branch or ctx.settings.default_base_branch
+        base = base_branch or self._resolve_base_branch(ctx)
         remote_ref = f"refs/remotes/{ctx.remote_name}/{base}"
         human_branch = f"{ctx.remote_name}/{base}"
 
@@ -1637,7 +1712,7 @@ class MirrorManager:
         For remote mirrors, commands run via SSH through the executor.
         """
         mirror_path = self._ensure_mirror_exists(ctx)
-        base = base_branch or ctx.settings.default_base_branch
+        base = base_branch or self._resolve_base_branch(ctx)
 
         result = self._run_query(
             ctx,
@@ -1701,7 +1776,7 @@ class MirrorManager:
     ) -> str:
         """Return a human-readable summary of worktrees in the mirror."""
         infos = self.list_worktrees(ctx, include_diff=include_diff, base_branch=base_branch)
-        base = base_branch or ctx.settings.default_base_branch
+        base = base_branch or self._resolve_base_branch(ctx)
         display_path = ctx.remote_mirror_path if ctx.is_remote else str(ctx.mirror_path)
         mirror_path = ctx.mirror_path
 

@@ -622,7 +622,9 @@ mirrors:
   project:
     canonical_repo: ~/src/project.git
     mirror_name: project
-    default_base_branch: main
+    # Optional; omit to auto-detect the canonical repo's default branch
+    # (origin/HEAD, then a local main, then master, then current HEAD).
+    # default_base_branch: main
     task_branch_prefix: task
     branch_prefixes:
       human: ligon

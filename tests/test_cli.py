@@ -1521,3 +1521,72 @@ def test_run_remote_capture_timeout_returns_124(monkeypatch):
 
     assert out.returncode == 124
     assert "timed out" in out.stderr
+
+
+def test_collaborate_command_error_prints_clean_message(tmp_path, monkeypatch):
+    """A CommandError escaping bootstrap exits 1 with a clean message.
+
+    Field failure: a remote `git push` died with `remote unpack failed`
+    and the raw CommandError surfaced as a full Python traceback.  The
+    collaborate command must render it as an error message (including
+    the tail of the failing command's stderr) instead.
+    """
+    from sucoder.executor import CommandError, CommandResult
+
+    runner = CliRunner()
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+
+    human = os.environ.get("USER", "coder")
+    mirror_root = tmp_path / "mirrors"
+    mirror_root.mkdir(exist_ok=True)
+    canonical_repo = tmp_path / "canonical"
+    canonical_repo.mkdir(exist_ok=True)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"""
+human_user: {human}
+agent_user: {human}
+agent_group: {human}
+mirror_root: {mirror_root}
+mirrors:
+  sample:
+    canonical_repo: {canonical_repo}
+    mirror_name: sample
+    branch_prefixes:
+      human: {human}
+      agent: {human}
+""",
+        encoding="utf-8",
+    )
+
+    class StubManager:
+        def context_for(self, name):
+            return SimpleNamespace(name=name)
+
+        def bootstrap(self, *args, **kwargs):
+            raise CommandError(
+                "Command failed with exit code 1: git push ln000:… --all --force",
+                CommandResult(
+                    ["git", "push"], ["git", "push"], "",
+                    "remote: fatal: write error: Input/output error\n"
+                    "error: remote unpack failed: index-pack abnormal exit\n",
+                    1,
+                ),
+            )
+
+    monkeypatch.setattr(
+        cli, "_build_manager_for_mirror", lambda *a, **kw: StubManager(),
+    )
+
+    result = runner.invoke(
+        cli.app,
+        ["--config", str(config_path), "collaborate", "sample"],
+    )
+
+    assert result.exit_code == 1, (result.output, result.exception)
+    # The handler converted the CommandError into a clean exit — the
+    # exception reaching the runner is SystemExit, not CommandError.
+    assert not isinstance(result.exception, CommandError), result.exception
+    combined = result.stdout + (result.output or "")
+    assert "Command failed with exit code 1" in combined
+    assert "Input/output error" in combined

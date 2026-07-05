@@ -196,7 +196,10 @@ class MirrorSettings:
     canonical_repo: Path
     mirror_name: str
     branch_prefixes: BranchPrefixes
-    default_base_branch: str = "main"
+    # None means "auto-detect from the canonical repo" (origin/HEAD, then a
+    # local main, then master, then the current checkout) — see
+    # MirrorManager._resolve_base_branch.
+    default_base_branch: Optional[str] = None
     task_branch_prefix: str = "task"
     agent_launcher: AgentLauncher = field(default_factory=AgentLauncher)
     skills: List[Path] = field(default_factory=list)
@@ -591,7 +594,7 @@ def _parse_mirrors(
             canonical_repo=canonical_repo,
             mirror_name=mirror_name,
             branch_prefixes=prefixes,
-            default_base_branch=value.get("default_base_branch", "main"),
+            default_base_branch=value.get("default_base_branch"),
             task_branch_prefix=value.get("task_branch_prefix", "task"),
             agent_launcher=launcher,
             skills=skills,

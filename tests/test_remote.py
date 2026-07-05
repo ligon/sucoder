@@ -1733,8 +1733,14 @@ def test_sync_remote_fails_over_to_dtn(
 def test_sync_remote_no_failover_on_real_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A genuine git rejection surfaces immediately — no login-node retry."""
+    """A genuine git rejection surfaces immediately — no login-node retry.
+
+    It surfaces as a MirrorError (not the raw CommandError) so CLI
+    entry points print a clean message instead of a traceback, with the
+    git detail preserved in the message.
+    """
     from sucoder.executor import CommandError
+    from sucoder.mirror import MirrorError
 
     manager = _build_remote_manager(tmp_path)
     ctx = manager.context_for("rproj")
@@ -1754,12 +1760,15 @@ def test_sync_remote_no_failover_on_real_error(
 
     monkeypatch.setattr(manager.executor, "run_human", fake_run_human)
 
-    with pytest.raises(CommandError):
+    with pytest.raises(MirrorError) as excinfo:
         manager._sync_remote(ctx)
 
     # Failed on the login node and did NOT fall over to the DTN.
     assert len(pushes) == 1
     assert pushes[0].startswith("ln001:")
+    # The wrapped message keeps the git detail and points at the remote.
+    assert "non-fast-forward" in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, CommandError)
 
 
 def test_pull_fails_over_to_dtn(
