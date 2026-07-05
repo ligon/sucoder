@@ -3168,6 +3168,236 @@ def tunnel_down(
         typer.echo(f"Removed ~/.ssh/config block for {target_name}.")
 
 
+def _forward_spec(local_port: int, remote_port: int) -> str:
+    """The ssh ``-L`` spec used for compute-node service forwards.
+
+    The connection terminates *on the node* (``localhost`` is resolved
+    there), so services bound to 127.0.0.1 — the common default for
+    Jupyter-style token URLs — are reachable.
+    """
+    return f"{local_port}:localhost:{remote_port}"
+
+
+def _mux_forward(action: str, spec: str, socket_path: str, node: str):
+    """Run ``ssh -O forward|cancel -L <spec>`` against *node*'s mux socket.
+
+    Returns ``(returncode, stderr)``.  ``-O`` requests are mux *control*
+    operations: they open no remote session, so they succeed even when
+    the master is session-saturated (sshd ``MaxSessions`` — the
+    "Session open refused by peer" state), unlike spawning a shell.
+    """
+    import subprocess as _sp
+
+    try:
+        result = _sp.run(
+            ["ssh", "-O", action, "-L", spec,
+             "-o", f"ControlPath={socket_path}", node],
+            capture_output=True,
+            stdin=_sp.DEVNULL,
+            text=True,
+            check=False,
+            timeout=15,
+        )
+    except _sp.TimeoutExpired:
+        return -1, "mux request timed out"
+    return result.returncode, (result.stderr or "").strip()
+
+
+def _resolve_forward_node(target_name: str, explicit: Optional[str]):
+    """Pick the compute node for a forward; raise typer.Exit if ambiguous."""
+    from .session import RemoteSession
+
+    if explicit:
+        return explicit
+    nodes = RemoteSession.compute_nodes_for_target(target_name)
+    distinct = sorted({n for n in nodes.values() if n})
+    if len(distinct) == 1:
+        return distinct[0]
+    if not distinct:
+        typer.echo(
+            f"No collaborate session records a compute node for target "
+            f"{target_name} — pass --node (e.g. from `squeue --me`).",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    typer.echo("Multiple compute nodes in play — pick one with --node:", err=True)
+    for key, n in sorted(nodes.items()):
+        typer.echo(f"  {n}  (session {key})", err=True)
+    raise typer.Exit(code=2)
+
+
+@tunnel_app.command("forward")
+def tunnel_forward(
+    ctx: typer.Context,
+    port: int = typer.Argument(
+        ..., min=1, max=65535,
+        help="Port the service listens on, on the compute node.",
+    ),
+    node: Optional[str] = typer.Option(
+        None, "--node",
+        help="Compute node running the service (default: the node recorded "
+             "by this target's collaborate session).",
+    ),
+    local_port: Optional[int] = typer.Option(
+        None, "--local-port", min=1, max=65535,
+        help="Local listen port (default: same as PORT).",
+    ),
+    cancel: bool = typer.Option(
+        False, "--cancel", help="Tear down a previously created forward.",
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
+) -> None:
+    """Forward localhost:PORT to a compute node's localhost:PORT.
+
+    Rides the warm ControlMasters: if a collaborate session already
+    holds a mux to the node, the forward is added to it with **zero new
+    authentication**; otherwise a node master is established through the
+    gateway/login sockets (no OTP).  The forward terminates on the node,
+    so loopback-bound services (Jupyter, claude-science, …) work.  After
+    this, open the service's printed URL with the host replaced by
+    ``localhost``.
+    """
+    from .session import RemoteSession
+    from .tunnel import SshControl, TunnelError
+
+    config = _get_config(ctx)
+    remote, target_name = _resolve_tunnel_target(ctx)
+    logger = setup_logger("sucoder.tunnel", config.log_dir, verbose)
+    debug_ssh = _get_debug_ssh(ctx)
+    session = RemoteSession.load(_tunnel_session_name(target_name))
+    local = local_port or port
+
+    if cancel:
+        record = next(
+            (f for f in session.forwards
+             if f.get("local_port") == local
+             and (node is None or f.get("node") == node)),
+            None,
+        )
+        if record is None:
+            typer.echo(
+                f"No recorded forward on localhost:{local} for target "
+                f"{target_name} (see `tunnel forwards`).",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        spec = _forward_spec(record["local_port"], record["remote_port"])
+        sock = SshControl(
+            gateway=record["node"], **remote.ssh_control_kwargs(),
+        ).socket_path
+        rc, err = _mux_forward("cancel", spec, str(sock), record["node"])
+        session.forwards = [f for f in session.forwards if f is not record]
+        session.save()
+        if rc == 0:
+            typer.echo(
+                f"✓ cancelled localhost:{record['local_port']} → "
+                f"{record['node']}:{record['remote_port']}"
+            )
+        else:
+            # A dead master already dropped its listeners; removing the
+            # record is all that's left to do.
+            typer.echo(
+                f"Removed the record; mux cancel failed ({err or f'rc={rc}'}) "
+                "— the node master is probably gone, so the listener is too."
+            )
+        return
+
+    node = _resolve_forward_node(target_name, node)
+
+    existing = next(
+        (f for f in session.forwards if f.get("local_port") == local), None,
+    )
+    if existing:
+        typer.echo(
+            f"localhost:{local} already forwards to {existing.get('node')}:"
+            f"{existing.get('remote_port')} — cancel it first:\n"
+            f"  sucoder -T {target_name} tunnel forward {local} --cancel",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    # Reuse a live node master (e.g. a running collaborate session's)
+    # outright; only when there is none do we walk the gw -> ln -> node
+    # chain, and the warm gw/ln sockets make that OTP-free.
+    gw_control = SshControl(
+        gateway=remote.gateway, **remote.ssh_control_kwargs(), debug=debug_ssh,
+    )
+    ln_control = SshControl(
+        gateway=session.login_node, **remote.ssh_control_kwargs(),
+        jump_host=remote.gateway, jump_control=gw_control, debug=debug_ssh,
+    ) if session.login_node else None
+    node_control = SshControl(
+        gateway=node, **remote.ssh_control_kwargs(),
+        jump_host=session.login_node,
+        jump_control=ln_control, debug=debug_ssh,
+    )
+    try:
+        if not node_control.is_active():
+            if not session.login_node:
+                typer.echo(
+                    f"Login node not pinned — run `sucoder -T {target_name} "
+                    "tunnel up` first.",
+                    err=True,
+                )
+                raise typer.Exit(code=1)
+            _connect_with_retry(gw_control, remote.gateway, logger)
+            _connect_with_retry(ln_control, session.login_node, logger)
+            _connect_with_retry(node_control, node, logger)
+    except TunnelError as exc:
+        typer.echo(str(exc) + _ssh_debug_hint(debug_ssh), err=True)
+        raise typer.Exit(code=1) from exc
+
+    spec = _forward_spec(local, port)
+    rc, err = _mux_forward("forward", spec, str(node_control.socket_path), node)
+    if rc != 0:
+        hint = ""
+        if "address already in use" in err.lower():
+            hint = (
+                f"\nlocalhost:{local} is taken on this machine — pick "
+                "another with --local-port."
+            )
+        typer.echo(f"Could not add forward ({err or f'rc={rc}'}).{hint}", err=True)
+        raise typer.Exit(code=1)
+
+    session.forwards.append(
+        {"local_port": local, "node": node, "remote_port": port},
+    )
+    session.save()
+    typer.echo(f"✓ forwarding localhost:{local} → {node}:{port}")
+    typer.echo(f"  open:    http://localhost:{local}/")
+    typer.echo(
+        f"  cancel:  sucoder -T {target_name} tunnel forward {local} --cancel"
+    )
+
+
+@tunnel_app.command("forwards")
+def tunnel_forwards(ctx: typer.Context) -> None:
+    """List this target's recorded port forwards and probe their masters."""
+    from .session import RemoteSession
+    from .tunnel import SshControl
+
+    remote, target_name = _resolve_tunnel_target(ctx)
+    session = RemoteSession.load(_tunnel_session_name(target_name))
+    if not session.forwards:
+        typer.echo(f"No forwards recorded for target {target_name}.")
+        return
+    typer.echo(f"Forwards for target {target_name}:")
+    for f in session.forwards:
+        node_name = f.get("node", "?")
+        live = SshControl(
+            gateway=node_name, **remote.ssh_control_kwargs(),
+        ).is_active(deep=False)
+        glyph = "✓" if live else "✗"
+        status = (
+            "mux live" if live
+            else "mux DOWN — re-run `tunnel forward` to re-establish"
+        )
+        typer.echo(
+            f"  {glyph} localhost:{f.get('local_port')} → "
+            f"{node_name}:{f.get('remote_port')}  ({status})"
+        )
+
+
 @app.command("mirrors-list")
 def mirrors_list(ctx: typer.Context) -> None:
     """Display configured mirrors with their canonical repositories."""
