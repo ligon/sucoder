@@ -100,6 +100,7 @@ The canonical repository remains unwritable by the agent throughout.
 - worktrees :: List active git worktrees in a mirror with per-worktree status (branch, commits ahead, dirty state).  Supports =--watch= for live monitoring and =--diff= for file-level changes.
 - attach :: Reconnect to a remote agent session via tmux after an SSH disconnect.
 - nodes :: Show compute-node availability for a SLURM partition (read-only =sinfo= query over the warm gateway tunnel; see [[*Inspecting node availability][Inspecting node availability]]).
+- tunnel :: Keep the free SSH hops to a target warm (=up= / =status= / =doctor= / =down=), and forward a compute-node service port to localhost (=forward= / =forwards=) so a web app served on a node (Jupyter, claude-science, ...) is reachable in a local browser without new authentication.
 - audit :: Run a compliance review of agent-written skills and/or mirror code changes (see [[*Auditing][Auditing]]).
 - --target/-T :: Select a named remote execution target (e.g., =--target savio=) to run the agent on a remote host.
 - --version/-V :: Print the installed sucoder version (CalVer, derived from git tags).
@@ -356,7 +357,17 @@ Use =--target= (=-T=) as a global option before the subcommand:
 sucoder -T savio collaborate               # launch agent on cluster
 sucoder -T savio worktrees --watch 30      # monitor from local
 sucoder -T savio attach                    # reconnect via tmux
+sucoder -T savio tunnel forward 8888       # compute-node web app -> http://localhost:8888/
+sucoder -T savio tunnel forwards           # list forwards + master liveness
+sucoder -T savio tunnel forward 8888 --cancel
 #+end_src
+
+=tunnel forward= defaults the node to the one your collaborate session
+is on (override with =--node n0030.savio4=) and terminates the forward
+*on the node*, so services bound to =127.0.0.1= work.  Open the app's
+printed URL with the host replaced by =localhost=; keep the port and any
+=?token=...= query intact (use =--local-port= only if the local port is
+already taken).
 
 *** What happens under the hood
 
