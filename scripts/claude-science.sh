@@ -19,8 +19,10 @@
 #   scripts/claude-science.sh down   release the slice: cancel the SLURM job,
 #                                    kill its tmux, and remove the forward.
 #
-# up/url are idempotent: re-running reuses the warm sockets, the slice, the
-# running server, and the existing forward.
+# up/url are idempotent: re-running reuses the warm sockets, the slice
+# (running, or still queued — re-running attaches rather than resubmitting,
+# so the job keeps its place in line), the running server, and the existing
+# forward.
 #
 # The URL is opened with garcon-url-handler (ChromeOS / Crostini); set
 # OPENER to something else (xdg-open, firefox, ...) or OPENER=- to only
@@ -33,6 +35,9 @@
 #   SERVE_ARGS  args for `serve`          (default: --dangerously-no-sandbox)
 #   OPENER      local URL opener, or "-"  (default: garcon-url-handler)
 #   WAIT_SECS   serve readiness timeout   (default: 120s, wall-clock)
+#   CS_SCHED_WAIT  slice scheduling ceiling  (default: 300s, wall-clock).  On
+#               timeout a QUEUED slice stays queued (priority keeps accruing);
+#               re-run `up` later to attach to it.
 #   CS_PARTITION/CS_ACCOUNT/CS_QOS/CS_CPUS/CS_MEM/CS_TIME
 #               override the slice's SLURM params (default: from sucoder config)
 #
@@ -67,18 +72,24 @@ sucoder -T "$TARGET" tunnel up
 # the target's `slurm:` block in ~/.sucoder/config.yaml; CS_* env vars override.
 SLICE_JOB="csci-${TARGET}"
 SLICE_TMUX="csci-${TARGET}"        # login-node tmux that holds the srun client
+SLICE_ERR=".csci-${TARGET}.srun.err"  # login-node file: the srun client's stderr
+SCHED_WAIT=${CS_SCHED_WAIT:-300}   # wall-clock ceiling for the slice to schedule
 
 slice_node() {  # node of my RUNNING dedicated slice, or empty
   ssh "$LN_ALIAS" "squeue --me -n '$SLICE_JOB' -h -t RUNNING -o %N" 2>/dev/null \
     | grep -vE '^[[:space:]]*$' | sort -u | head -1
 }
 
-ensure_slice() {  # echo the slice node; reuse if running, else allocate one
-  local node; node=$(slice_node || true)
-  if [ -n "$node" ]; then
-    say "Reusing dedicated slice '$SLICE_JOB' on $node."
-    printf '%s\n' "$node"; return 0
-  fi
+slice_status() {  # "STATE (Reason)" of my slice in ANY queue state, or empty
+  ssh "$LN_ALIAS" "squeue --me -n '$SLICE_JOB' -h -o '%T (%r)'" 2>/dev/null \
+    | grep -vE '^[[:space:]]*$' | head -1
+}
+
+client_alive() {  # is the login-node tmux holding the srun client still up?
+  ssh "$LN_ALIAS" "tmux has-session -t '$SLICE_TMUX'" >/dev/null 2>&1
+}
+
+launch_slice() {  # submit the slice srun inside a detached login-node tmux
   # SLURM params from the sucoder config (env overrides win); PyYAML ships with
   # the sucoder venv, so this parse mirrors whatever `collaborate` would use.
   local cfg P A Q C M T
@@ -111,16 +122,61 @@ PY
   local srun="srun --job-name=$SLICE_JOB --partition=$P${A:+ --account=$A}${Q:+ --qos=$Q} --cpus-per-task=$C --mem=$M --time=$T${excl:+ --exclude=$excl} --pty bash"
   say "Allocating dedicated slice '$SLICE_JOB' on $P (${C} cpu / ${M})${excl:+, off $excl} ..."
   # Held open in a detached login-node tmux so the allocation survives our
-  # disconnects.  Clear any stale same-named session first.
-  ssh "$LN_ALIAS" "tmux kill-session -t '$SLICE_TMUX' 2>/dev/null; tmux new-session -d -s '$SLICE_TMUX' '$srun'" \
+  # disconnects.  The srun client's stderr is captured in ~/$SLICE_ERR so a
+  # REJECTED submission (bad partition/mem/account/...) leaves a message we
+  # can show, instead of dying unseen with the tmux (blind spot found
+  # 2026-07-06: a savio2,savio3 submission was rejected and the error just
+  # vanished).  Clear any stale same-named session first.
+  ssh "$LN_ALIAS" "tmux kill-session -t '$SLICE_TMUX' 2>/dev/null; tmux new-session -d -s '$SLICE_TMUX' '$srun 2>\$HOME/$SLICE_ERR'" \
     || die "could not launch the allocation tmux on $LN_ALIAS"
-  local i
-  for i in $(seq 1 40); do
+}
+
+wait_for_slice() {  # echo the slice node once its job is RUNNING
+  local node st last=""
+  local deadline=$((SECONDS + SCHED_WAIT))
+  while [ "$SECONDS" -lt "$deadline" ]; do
     node=$(slice_node || true)
     [ -n "$node" ] && { say "Slice scheduled on $node."; printf '%s\n' "$node"; return 0; }
-    sleep 3
+    st=$(slice_status || true)
+    if [ -n "$st" ]; then
+      # Queued but not running yet: narrate state changes, keep waiting.
+      if [ "$st" != "$last" ]; then
+        say "Slice '$SLICE_JOB' is $st — waiting up to ${SCHED_WAIT}s (CS_SCHED_WAIT= raises) ..."
+        last=$st
+      fi
+    elif ! client_alive; then
+      # No job in the queue AND the srun client is gone: the submission was
+      # rejected outright.  Surface the stderr we captured for it.
+      local err
+      err=$(ssh "$LN_ALIAS" "cat \$HOME/$SLICE_ERR 2>/dev/null" | sed 's/^/  /' || true)
+      die "slice submission was rejected — srun said:
+${err:-  (nothing captured in ~/$SLICE_ERR)}"
+    fi  # else: client alive, job not visible yet — srun is still submitting
+    sleep 5
   done
-  die "dedicated slice '$SLICE_JOB' did not schedule within ~120s — check \`squeue --me\` on $LN_ALIAS"
+  st=$(slice_status || true)
+  if [ -n "$st" ]; then
+    die "slice '$SLICE_JOB' is still $st after ${SCHED_WAIT}s — it STAYS QUEUED (priority keeps accruing); re-run \`$0 up\` later to attach, or \`$0 down\` to give up the spot."
+  fi
+  die "slice '$SLICE_JOB' neither scheduled nor errored within ${SCHED_WAIT}s — check \`squeue --me\` and \`tmux ls\` on $LN_ALIAS"
+}
+
+ensure_slice() {  # echo the slice node; reuse running/queued, else allocate
+  local node st
+  node=$(slice_node || true)
+  if [ -n "$node" ]; then
+    say "Reusing dedicated slice '$SLICE_JOB' on $node."
+    printf '%s\n' "$node"; return 0
+  fi
+  st=$(slice_status || true)
+  if [ -n "$st" ]; then
+    # A previous run left the slice queued.  Waiting keeps its place in line;
+    # killing and resubmitting would reset its queue position every retry.
+    say "Slice '$SLICE_JOB' is already queued ($st) — attaching to it."
+  else
+    launch_slice
+  fi
+  wait_for_slice
 }
 
 # ------------------------------------------------------------------- down

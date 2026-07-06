@@ -377,9 +377,15 @@ jobs.  =up= warms the tunnels, reuses-or-allocates that slice (held open
 in a detached login-node =tmux=), starts the app on it, forwards its
 port, and opens the URL locally; =url= re-fetches a fresh URL from the
 *running* app, repairs the forward, and reopens it; =down= releases the
-slice (cancels the job, kills its tmux, removes the forward).  =up= /
-=url= are idempotent; see the header comment for the =TARGET= / =NODE= /
-=APP_BIN= / =OPENER= / =WAIT_SECS= and =CS_*= slice overrides.
+slice (cancels the job --- queued or running --- kills its tmux, removes
+the forward).  =up= / =url= are idempotent, and that includes the queue:
+a slice still PENDING when the scheduling ceiling (=CS_SCHED_WAIT=,
+default 300s) expires *stays queued*, and a later =up= attaches to it
+instead of resubmitting, so the job keeps its accrued priority.  A
+submission SLURM rejects outright is reported with the =srun= client's
+captured stderr rather than a blind timeout.  See the header comment for
+the =TARGET= / =NODE= / =APP_BIN= / =OPENER= / =WAIT_SECS= and =CS_*=
+slice overrides.
 
 =scripts/savio-run= generalizes the *dispatch-and-collect* half of that
 pattern for one-off compute: from your laptop it warms the tunnels and
