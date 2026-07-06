@@ -75,32 +75,57 @@ esac
 say "Compute node: $NODE"
 
 rnode() {  # run a command on the compute node via the warm login-node hop
-  ssh -o StrictHostKeyChecking=accept-new -J "$LN_ALIAS" "$NODE" "$1"
+  ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 -J "$LN_ALIAS" "$NODE" "$1"
 }
 
 # ------------------------------------------------------------------- app
-app_url() {
-  rnode "timeout 10 $APP_BIN url" 2>/dev/null \
+LAST_ERR=$(mktemp 2>/dev/null || printf '/tmp/claude-science.%s.err' "$$")
+trap 'rm -f "$LAST_ERR"' EXIT
+
+app_url() {  # echo the service URL if any; keep this try's stderr in $LAST_ERR
+  rnode "timeout 10 $APP_BIN url" 2>"$LAST_ERR" \
     | grep -Eo 'https?://[^[:space:]]+' | head -n 1
+}
+
+# The remote log is append-only, so a naive tail shows a *previous* run's
+# errors too.  Print only the lines from this launch's marker onward.
+log_since_marker() {
+  rnode "awk '/^===== launch /{b=\"\"} {b=b \$0 ORS} END{printf \"%s\", b}' \$HOME/$REMOTE_LOG 2>/dev/null"
 }
 
 URL=$(app_url || true)
 if [ -z "$URL" ]; then
   if [ "$MODE" = url ]; then
-    die "claude-science on $NODE is not answering \`url\` — run \`$0 up\` to start it"
+    [ -s "$LAST_ERR" ] && { say "last url/ssh error:"; sed 's/^/  /' "$LAST_ERR" >&2; }
+    die "claude-science on $NODE is not answering \`url\` — run \`$0 up\` to start it (or the node may be overloaded)"
   fi
+  # Stamp the log so its tail is never confused with an earlier run.
+  rnode "printf '\n===== launch %s =====\n' \"\$(date '+%F %T')\" >>\$HOME/$REMOTE_LOG" || true
   say "Starting claude-science serve on $NODE (log: ~/$REMOTE_LOG) ..."
   rnode "nohup $APP_BIN serve $SERVE_ARGS >>\$HOME/$REMOTE_LOG 2>&1 </dev/null &"
+  say "Waiting for the URL (up to ~${WAIT_SECS} tries; raise WAIT_SECS= if the node is busy):"
   for _ in $(seq "$WAIT_SECS"); do
     sleep 1
+    printf '.' >&2                       # heartbeat: a slow node is not a freeze
     URL=$(app_url || true)
     [ -n "$URL" ] && break
   done
+  printf '\n' >&2
 fi
 if [ -z "$URL" ]; then
-  say "---- tail of ~/$REMOTE_LOG on $NODE ----"
-  rnode "tail -n 20 \$HOME/$REMOTE_LOG" >&2 || true
-  die "claude-science reported no URL within ${WAIT_SECS}s (log tail above)"
+  say "---- ~/$REMOTE_LOG on $NODE (this launch) ----"
+  launchlog=$(log_since_marker 2>/dev/null || true)
+  printf '%s\n' "$launchlog" >&2
+  load=$(rnode "timeout 8 uptime" 2>/dev/null \
+         | sed -En 's/.*load average: *([0-9.]+).*/\1/p' || true)
+  if printf '%s' "$launchlog" | grep -qiE 'daemon already running|listening on|https?://'; then
+    # The daemon exists; it just couldn't answer `url` in time — almost always
+    # node load, not a startup failure.
+    die "daemon on $NODE is up but returned no URL within ~${WAIT_SECS} tries${load:+ (node load ${load})} — the node is likely overloaded; let load drop and retry, or raise WAIT_SECS=."
+  else
+    [ -s "$LAST_ERR" ] && { say "last url/ssh error:"; sed 's/^/  /' "$LAST_ERR" >&2; }
+    die "claude-science did not start on $NODE within ~${WAIT_SECS} tries${load:+ (node load ${load})} (log above)."
+  fi
 fi
 say "Service URL on node: $URL"
 
