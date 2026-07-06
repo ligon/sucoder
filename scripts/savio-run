@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+#
+# savio-run -- dispatch a command to a Savio compute node from your laptop and
+# get its output back, over SuCoder's warm tunnels.  No OTP once the tunnel is
+# warm.  SLURM resources default to the target's `slurm:` block in
+# ~/.sucoder/config.yaml (partition/account/qos/cpus/mem/time); flags override.
+#
+# Usage:
+#   savio-run [opts] [--] CMD...       run CMD on a compute node via `srun`,
+#                                      streaming stdout/stderr back; blocks
+#                                      until it finishes, then releases the node.
+#   savio-run --batch [opts] [--] CMD  submit CMD with `sbatch`; prints the
+#                                      JOBID and returns immediately.
+#   savio-run --fetch JOBID            show the job's state; if it has finished,
+#                                      print its stdout (and stderr, if any).
+#   savio-run --status [JOBID]         squeue/sacct status (all my jobs if none).
+#
+# CMD is run as `bash -lc` on the node (login shell, so modules/conda resolve).
+# It is reconstructed faithfully, so `savio-run -- python -c 'print(1)'` works;
+# for pipes/&&/redirects just include them, e.g. -- 'sort a | uniq -c'.
+#
+# Options:
+#   -T TARGET   sucoder target       (default: $TARGET or carleton-htc)
+#   -p PART  -A ACCOUNT  -q QOS  -c CPUS  --mem MEM  -t TIME
+#   -d DIR      remote working dir   (default: remote $HOME)
+#   -J NAME     job name             (default: savio-run)
+#
+# Examples:
+#   savio-run -- python3 -c 'print(2**10)'
+#   savio-run -c 8 --mem 32G -- ./crunch.sh
+#   id=$(savio-run --batch -t 2:00:00 -- ./long.sh); savio-run --fetch "$id"
+#
+set -euo pipefail
+
+MODE=run
+JOBID=""
+o_part=""; o_acct=""; o_qos=""; o_cpus=""; o_mem=""; o_time=""; o_chdir=""; o_name="savio-run"
+TARGET="${TARGET:-carleton-htc}"
+CMD=()
+
+say(){ printf '%s\n' "$*" >&2; }
+die(){ say "ERROR: $*"; exit 1; }
+show_help(){ sed -n '2,32p' "$0" | sed 's/^#\{0,1\} \{0,1\}//'; }
+
+# ---------------------------------------------------------------- parse args
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --batch)        MODE=batch ;;
+    --fetch)        MODE=fetch;  shift; JOBID="${1:?--fetch needs a JOBID}" ;;
+    --status)       MODE=status; if [[ "${2:-}" =~ ^[0-9] ]]; then shift; JOBID="$1"; fi ;;
+    -T|--target)    shift; TARGET="${1:?}" ;;
+    -p|--partition) shift; o_part="${1:?}" ;;
+    -A|--account)   shift; o_acct="${1:?}" ;;
+    -q|--qos)       shift; o_qos="${1:?}" ;;
+    -c|--cpus)      shift; o_cpus="${1:?}" ;;
+    --mem)          shift; o_mem="${1:?}" ;;
+    -t|--time)      shift; o_time="${1:?}" ;;
+    -d|--chdir)     shift; o_chdir="${1:?}" ;;
+    -J|--job-name)  shift; o_name="${1:?}" ;;
+    -h|--help)      show_help; exit 0 ;;
+    --)             shift; CMD=("$@"); break ;;
+    -*)             die "unknown option: $1 (use -- before the command)" ;;
+    *)              CMD=("$@"); break ;;
+  esac
+  shift
+done
+
+LN="${TARGET}-ln"
+SSH=(ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20)
+
+warm_tunnel(){ sucoder -T "$TARGET" tunnel up 1>&2 || die "tunnel up failed for $TARGET"; }
+
+# faithful argv -> single shell-safe string (re-quotes what the local shell ate)
+cmd_str(){ local a out=(); for a in "${CMD[@]}"; do out+=("$(printf '%q' "$a")"); done; printf '%s' "${out[*]}"; }
+
+# what actually runs under `bash -lc`: a lone arg is taken as a shell string so
+# pipes/&&/redirects work verbatim; multiple args are treated as argv (re-quoted).
+payload(){ if [ ${#CMD[@]} -eq 1 ]; then printf '%s' "${CMD[0]}"; else cmd_str; fi; }
+
+read_cfg(){
+  local cfg P A Q C M T
+  cfg=$(python3 - "$TARGET" <<'PY' 2>/dev/null || true
+import yaml, sys, os
+t = sys.argv[1]; p = os.path.expanduser("~/.sucoder/config.yaml")
+s = ((yaml.safe_load(open(p)) or {}).get("targets", {}).get(t, {}) or {}).get("slurm", {}) or {}
+def g(k, d=""):
+    v = s.get(k, d); return "" if v is None else str(v)
+print("P=" + g("partition")); print("A=" + g("account")); print("Q=" + g("qos"))
+print("C=" + g("cpus_per_task", "1")); print("M=" + g("mem", "4G")); print("T=" + g("time", "1:00:00"))
+PY
+)
+  while IFS='=' read -r k v; do case "$k" in
+    P) P=$v ;; A) A=$v ;; Q) Q=$v ;; C) C=$v ;; M) M=$v ;; T) T=$v ;;
+  esac; done <<<"$cfg"
+  PART=${o_part:-${P:-}}; ACCT=${o_acct:-${A:-}}; QOS=${o_qos:-${Q:-}}
+  CPUS=${o_cpus:-${C:-1}}; MEM=${o_mem:-${M:-4G}}; TIME=${o_time:-${T:-1:00:00}}
+  [ -n "$PART" ] || die "no SLURM partition for target '$TARGET' (use -p or fix ~/.sucoder/config.yaml)"
+  RES=(--job-name="$o_name" --partition="$PART" --cpus-per-task="$CPUS" --mem="$MEM" --time="$TIME")
+  if [ -n "$ACCT" ];    then RES+=(--account="$ACCT"); fi
+  if [ -n "$QOS" ];     then RES+=(--qos="$QOS"); fi
+  if [ -n "$o_chdir" ]; then RES+=(--chdir="$o_chdir"); fi
+  return 0
+}
+
+case "$MODE" in
+  run)
+    [ ${#CMD[@]} -gt 0 ] || die "no command given (savio-run [opts] -- CMD ...)"
+    read_cfg; warm_tunnel
+    b64=$(payload | base64 | tr -d '\n')
+    say "srun on $TARGET  (${CPUS} cpu / ${MEM}, ${PART}) ..."
+    "${SSH[@]}" "$LN" "srun --unbuffered ${RES[*]} bash -lc \"\$(printf %s $b64 | base64 -d)\"" || exit $?
+    ;;
+  batch)
+    [ ${#CMD[@]} -gt 0 ] || die "no command given (savio-run --batch [opts] -- CMD ...)"
+    read_cfg; warm_tunnel
+    b64=$(payload | base64 | tr -d '\n')
+    say "sbatch on $TARGET  (${CPUS} cpu / ${MEM}, ${PART}, t=${TIME}) ..."
+    jid=$("${SSH[@]}" "$LN" "mkdir -p \$HOME/.savio-run; sbatch --parsable ${RES[*]} --output=\$HOME/.savio-run/%j.out --error=\$HOME/.savio-run/%j.err --wrap 'bash -lc \"\$(printf %s $b64 | base64 -d)\"'") \
+      || die "sbatch failed"
+    jid="${jid%%;*}"
+    say "submitted batch job $jid   (fetch: savio-run --fetch $jid)"
+    printf '%s\n' "$jid"
+    ;;
+  fetch)
+    warm_tunnel
+    st=$("${SSH[@]}" "$LN" "squeue -j $JOBID -h -o %T 2>/dev/null" || true)
+    if [ -n "$st" ]; then
+      say "job $JOBID is $st — not finished. Partial stdout so far:"
+      "${SSH[@]}" "$LN" "tail -n +1 \$HOME/.savio-run/$JOBID.out 2>/dev/null" || true
+      exit 0
+    fi
+    final=$("${SSH[@]}" "$LN" "sacct -j $JOBID -n -o State -X 2>/dev/null | head -1 | tr -d ' '" || true)
+    say "job $JOBID final state: ${final:-unknown}"
+    say "---- stdout (~/.savio-run/$JOBID.out) ----"
+    "${SSH[@]}" "$LN" "cat \$HOME/.savio-run/$JOBID.out 2>/dev/null" || say "(no stdout file)"
+    errsz=$("${SSH[@]}" "$LN" "wc -c < \$HOME/.savio-run/$JOBID.err 2>/dev/null || echo 0" | tr -d ' ')
+    if [ "${errsz:-0}" -gt 0 ]; then
+      say "---- stderr (~/.savio-run/$JOBID.err) ----"
+      "${SSH[@]}" "$LN" "cat \$HOME/.savio-run/$JOBID.err 2>/dev/null" || true
+    fi
+    ;;
+  status)
+    warm_tunnel
+    if [ -n "$JOBID" ]; then
+      "${SSH[@]}" "$LN" "squeue -j $JOBID 2>/dev/null; sacct -j $JOBID -o JobID,JobName,State,Elapsed,ExitCode -X 2>/dev/null | head"
+    else
+      "${SSH[@]}" "$LN" "squeue --me -o '%.12i %.16j %.9T %.10M %.5C %R'"
+    fi
+    ;;
+esac

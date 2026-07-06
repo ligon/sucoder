@@ -381,6 +381,23 @@ slice (cancels the job, kills its tmux, removes the forward).  =up= /
 =url= are idempotent; see the header comment for the =TARGET= / =NODE= /
 =APP_BIN= / =OPENER= / =WAIT_SECS= and =CS_*= slice overrides.
 
+=scripts/savio-run= generalizes the *dispatch-and-collect* half of that
+pattern for one-off compute: from your laptop it warms the tunnels and
+runs a command on a compute node, streaming the output back.  SLURM
+resources default to the target's =slurm:= block (flags override).
+
+#+begin_src shell
+savio-run -- python3 -c 'print(2**10)'     # srun: blocks, streams stdout back
+savio-run -c 8 --mem 32G -- ./crunch.sh    # override resources
+id=$(savio-run --batch -t 2:00:00 -- ./long.sh)   # sbatch: prints JOBID, returns
+savio-run --fetch "$id"                    # state + stdout/stderr when done
+savio-run --status                         # squeue/sacct for your jobs
+#+end_src
+
+Batch jobs write to =~/.savio-run/<jobid>.{out,err}= on the target; a lone
+quoted argument is run as a shell string (pipes/=&&= work), multiple args
+are treated as argv.
+
 *** What happens under the hood
 
 1. *Authenticate once* --- =sucoder= establishes an SSH ControlMaster
