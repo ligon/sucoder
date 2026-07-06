@@ -24,6 +24,9 @@
 #   -p PART  -A ACCOUNT  -q QOS  -c CPUS  --mem MEM  -t TIME
 #   -d DIR      remote working dir   (default: remote $HOME)
 #   -J NAME     job name             (default: savio-run)
+#   -n          dry run: print the dispatch plan; don't warm/ssh/submit
+#
+# Env: TARGET (default target); SUCODER_CONFIG (config path override).
 #
 # Examples:
 #   savio-run -- python3 -c 'print(2**10)'
@@ -34,6 +37,7 @@ set -euo pipefail
 
 MODE=run
 JOBID=""
+DRYRUN=""
 o_part=""; o_acct=""; o_qos=""; o_cpus=""; o_mem=""; o_time=""; o_chdir=""; o_name="savio-run"
 TARGET="${TARGET:-carleton-htc}"
 CMD=()
@@ -48,6 +52,7 @@ while [ $# -gt 0 ]; do
     --batch)        MODE=batch ;;
     --fetch)        MODE=fetch;  shift; JOBID="${1:?--fetch needs a JOBID}" ;;
     --status)       MODE=status; if [[ "${2:-}" =~ ^[0-9] ]]; then shift; JOBID="$1"; fi ;;
+    -n|--dry-run)   DRYRUN=1 ;;
     -T|--target)    shift; TARGET="${1:?}" ;;
     -p|--partition) shift; o_part="${1:?}" ;;
     -A|--account)   shift; o_acct="${1:?}" ;;
@@ -70,6 +75,17 @@ SSH=(ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20)
 
 warm_tunnel(){ sucoder -T "$TARGET" tunnel up 1>&2 || die "tunnel up failed for $TARGET"; }
 
+# --dry-run: print the dispatch plan (key=value) and exit, before any ssh.
+dryrun_out(){
+  [ -n "$DRYRUN" ] || return 0
+  printf 'target=%s\nln=%s\nmode=%s\n' "$TARGET" "$LN" "$MODE"
+  case "$MODE" in
+    run|batch)    printf 'slurm=%s\npayload=%s\n' "${RES[*]}" "$(payload)" ;;
+    fetch|status) printf 'jobid=%s\n' "$JOBID" ;;
+  esac
+  exit 0
+}
+
 # faithful argv -> single shell-safe string (re-quotes what the local shell ate)
 cmd_str(){ local a out=(); for a in "${CMD[@]}"; do out+=("$(printf '%q' "$a")"); done; printf '%s' "${out[*]}"; }
 
@@ -81,7 +97,7 @@ read_cfg(){
   local cfg P A Q C M T
   cfg=$(python3 - "$TARGET" <<'PY' 2>/dev/null || true
 import yaml, sys, os
-t = sys.argv[1]; p = os.path.expanduser("~/.sucoder/config.yaml")
+t = sys.argv[1]; p = os.path.expanduser(os.environ.get("SUCODER_CONFIG", "~/.sucoder/config.yaml"))
 s = ((yaml.safe_load(open(p)) or {}).get("targets", {}).get(t, {}) or {}).get("slurm", {}) or {}
 def g(k, d=""):
     v = s.get(k, d); return "" if v is None else str(v)
@@ -105,14 +121,14 @@ PY
 case "$MODE" in
   run)
     [ ${#CMD[@]} -gt 0 ] || die "no command given (savio-run [opts] -- CMD ...)"
-    read_cfg; warm_tunnel
+    read_cfg; dryrun_out; warm_tunnel
     b64=$(payload | base64 | tr -d '\n')
     say "srun on $TARGET  (${CPUS} cpu / ${MEM}, ${PART}) ..."
     "${SSH[@]}" "$LN" "srun --unbuffered ${RES[*]} bash -lc \"\$(printf %s $b64 | base64 -d)\"" || exit $?
     ;;
   batch)
     [ ${#CMD[@]} -gt 0 ] || die "no command given (savio-run --batch [opts] -- CMD ...)"
-    read_cfg; warm_tunnel
+    read_cfg; dryrun_out; warm_tunnel
     b64=$(payload | base64 | tr -d '\n')
     say "sbatch on $TARGET  (${CPUS} cpu / ${MEM}, ${PART}, t=${TIME}) ..."
     jid=$("${SSH[@]}" "$LN" "mkdir -p \$HOME/.savio-run; sbatch --parsable ${RES[*]} --output=\$HOME/.savio-run/%j.out --error=\$HOME/.savio-run/%j.err --wrap 'bash -lc \"\$(printf %s $b64 | base64 -d)\"'") \
@@ -122,7 +138,7 @@ case "$MODE" in
     printf '%s\n' "$jid"
     ;;
   fetch)
-    warm_tunnel
+    dryrun_out; warm_tunnel
     st=$("${SSH[@]}" "$LN" "squeue -j $JOBID -h -o %T 2>/dev/null" || true)
     if [ -n "$st" ]; then
       say "job $JOBID is $st — not finished. Partial stdout so far:"
@@ -140,7 +156,7 @@ case "$MODE" in
     fi
     ;;
   status)
-    warm_tunnel
+    dryrun_out; warm_tunnel
     if [ -n "$JOBID" ]; then
       "${SSH[@]}" "$LN" "squeue -j $JOBID 2>/dev/null; sacct -j $JOBID -o JobID,JobName,State,Elapsed,ExitCode -X 2>/dev/null | head"
     else
