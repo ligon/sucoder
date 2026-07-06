@@ -369,6 +369,14 @@ printed URL with the host replaced by =localhost=; keep the port and any
 =?token=...= query intact (use =--local-port= only if the local port is
 already taken).
 
+=scripts/claude-science.sh= is a worked end-to-end example of the whole
+pattern: =up= warms the tunnels, starts a web app on the target's
+compute node (if it isn't already running), forwards its port, and
+opens the URL in the local browser; =url= re-fetches a fresh URL from
+the *running* app, repairs the forward, and reopens it.  Both modes are
+idempotent; see the header comment for the =TARGET= / =NODE= /
+=APP_BIN= / =OPENER= overrides.
+
 *** What happens under the hood
 
 1. *Authenticate once* --- =sucoder= establishes an SSH ControlMaster
