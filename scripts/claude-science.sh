@@ -3,17 +3,23 @@
 # claude-science.sh -- serve claude-science on a compute node and open it
 # in the local browser, over SuCoder's warm tunnels.
 #
+# claude-science runs on its OWN dedicated thin SLURM slice (job csci-<target>)
+# so it never shares — and fights — a compute node with heavy jobs.  The slice
+# is allocated on demand and held open in a detached login-node tmux.
+#
 # Usage:
-#   scripts/claude-science.sh [up]   warm the tunnels, start `claude-science
-#                                    serve` on the compute node if it is not
-#                                    already running, forward its port, and
-#                                    open the URL locally.
+#   scripts/claude-science.sh [up]   warm the tunnels, reuse-or-allocate the
+#                                    dedicated slice, start `claude-science
+#                                    serve` on it, forward its port, and open
+#                                    the URL locally.
 #   scripts/claude-science.sh url    fetch a (possibly new) URL from the
 #                                    RUNNING claude-science, reuse/repair the
 #                                    port forward, and open it.  Fails if the
 #                                    service is down (run `up` instead).
+#   scripts/claude-science.sh down   release the slice: cancel the SLURM job,
+#                                    kill its tmux, and remove the forward.
 #
-# Both modes are idempotent: re-running them reuses the warm sockets, the
+# up/url are idempotent: re-running reuses the warm sockets, the slice, the
 # running server, and the existing forward.
 #
 # The URL is opened with garcon-url-handler (ChromeOS / Crostini); set
@@ -22,25 +28,27 @@
 #
 # Env overrides:
 #   TARGET      sucoder target            (default: carleton-htc)
-#   NODE        compute node              (default: session file, then squeue)
-#   APP_BIN     app path on the node      (default: ~/bin/claude-science)
+#   NODE        pin a node, skip the slice (default: reuse/allocate the slice)
+#   APP_BIN     app path on the node      (default: $HOME/bin/claude-science)
 #   SERVE_ARGS  args for `serve`          (default: --dangerously-no-sandbox)
 #   OPENER      local URL opener, or "-"  (default: garcon-url-handler)
-#   WAIT_SECS   serve readiness timeout   (default: 30)
+#   WAIT_SECS   serve readiness timeout   (default: 120s, wall-clock)
+#   CS_PARTITION/CS_ACCOUNT/CS_QOS/CS_CPUS/CS_MEM/CS_TIME
+#               override the slice's SLURM params (default: from sucoder config)
 #
 set -euo pipefail
 
 MODE=${1:-up}
 case "$MODE" in
-  up|url) : ;;
-  *) echo "usage: $0 [up|url]" >&2; exit 2 ;;
+  up|url|down) : ;;
+  *) echo "usage: $0 [up|url|down]" >&2; exit 2 ;;
 esac
 
 TARGET=${TARGET:-carleton-htc}
 APP_BIN=${APP_BIN:-'$HOME/bin/claude-science'}  # literal $HOME; expands REMOTE-side
 SERVE_ARGS=${SERVE_ARGS:---dangerously-no-sandbox}
 OPENER=${OPENER:-garcon-url-handler}
-WAIT_SECS=${WAIT_SECS:-30}
+WAIT_SECS=${WAIT_SECS:-120}   # wall-clock; cold NFS DB-open can take >60s
 LN_ALIAS="${TARGET}-ln"
 REMOTE_LOG=".claude-science.serve.log"        # in the remote $HOME
 
@@ -52,26 +60,91 @@ die() { say "ERROR: $*"; exit 1; }
 # cold.  Also (re)writes the ${TARGET}-ln ssh alias we ride below.
 sucoder -T "$TARGET" tunnel up
 
+# ----------------------------------------------------------- dedicated slice
+# claude-science runs on its OWN thin SLURM slice (a job named csci-<target>)
+# so it never has to share — and fight — a compute node with heavy jobs (that
+# is exactly how it got starved before).  The slice's SLURM params come from
+# the target's `slurm:` block in ~/.sucoder/config.yaml; CS_* env vars override.
+SLICE_JOB="csci-${TARGET}"
+SLICE_TMUX="csci-${TARGET}"        # login-node tmux that holds the srun client
+
+slice_node() {  # node of my RUNNING dedicated slice, or empty
+  ssh "$LN_ALIAS" "squeue --me -n '$SLICE_JOB' -h -t RUNNING -o %N" 2>/dev/null \
+    | grep -vE '^[[:space:]]*$' | sort -u | head -1
+}
+
+ensure_slice() {  # echo the slice node; reuse if running, else allocate one
+  local node; node=$(slice_node || true)
+  if [ -n "$node" ]; then
+    say "Reusing dedicated slice '$SLICE_JOB' on $node."
+    printf '%s\n' "$node"; return 0
+  fi
+  # SLURM params from the sucoder config (env overrides win); PyYAML ships with
+  # the sucoder venv, so this parse mirrors whatever `collaborate` would use.
+  local cfg P A Q C M T
+  cfg=$(python3 - "$TARGET" <<'PY' 2>/dev/null || true
+import yaml, sys, os
+t = sys.argv[1]
+p = os.path.expanduser("~/.sucoder/config.yaml")
+s = ((yaml.safe_load(open(p)) or {}).get("targets", {}).get(t, {}) or {}).get("slurm", {}) or {}
+def g(k, d=""):
+    v = s.get(k, d)
+    return "" if v is None else str(v)
+print("P=" + g("partition"))
+print("A=" + g("account"))
+print("Q=" + g("qos"))
+print("C=" + g("cpus_per_task", "4"))
+print("M=" + g("mem", "24G"))
+print("T=" + g("time", "7-00:00:00"))
+PY
+)
+  while IFS='=' read -r k v; do case "$k" in
+    P) P=$v ;; A) A=$v ;; Q) Q=$v ;; C) C=$v ;; M) M=$v ;; T) T=$v ;;
+  esac; done <<<"$cfg"
+  P=${CS_PARTITION:-${P:-}}; A=${CS_ACCOUNT:-${A:-}}; Q=${CS_QOS:-${Q:-}}
+  C=${CS_CPUS:-${C:-4}};     M=${CS_MEM:-${M:-24G}};  T=${CS_TIME:-${T:-7-00:00:00}}
+  [ -n "$P" ] || die "no SLURM partition for target '$TARGET' — set CS_PARTITION= or fix ~/.sucoder/config.yaml"
+  # Keep the slice off any node already running my jobs — never co-locate with
+  # heavy compute again.
+  local excl; excl=$(ssh "$LN_ALIAS" 'squeue --me -h -o %N' 2>/dev/null \
+                     | grep -vE '^[[:space:]]*$' | sort -u | paste -sd, -)
+  local srun="srun --job-name=$SLICE_JOB --partition=$P${A:+ --account=$A}${Q:+ --qos=$Q} --cpus-per-task=$C --mem=$M --time=$T${excl:+ --exclude=$excl} --pty bash"
+  say "Allocating dedicated slice '$SLICE_JOB' on $P (${C} cpu / ${M})${excl:+, off $excl} ..."
+  # Held open in a detached login-node tmux so the allocation survives our
+  # disconnects.  Clear any stale same-named session first.
+  ssh "$LN_ALIAS" "tmux kill-session -t '$SLICE_TMUX' 2>/dev/null; tmux new-session -d -s '$SLICE_TMUX' '$srun'" \
+    || die "could not launch the allocation tmux on $LN_ALIAS"
+  local i
+  for i in $(seq 1 40); do
+    node=$(slice_node || true)
+    [ -n "$node" ] && { say "Slice scheduled on $node."; printf '%s\n' "$node"; return 0; }
+    sleep 3
+  done
+  die "dedicated slice '$SLICE_JOB' did not schedule within ~120s — check \`squeue --me\` on $LN_ALIAS"
+}
+
+# ------------------------------------------------------------------- down
+# Tear down what `up` created: the port forward, the SLURM slice, its tmux.
+if [ "$MODE" = down ]; then
+  node=$(slice_node || true)
+  if [ -n "$node" ]; then
+    sucoder -T "$TARGET" tunnel forwards 2>/dev/null \
+      | sed -nE "s#.*localhost:([0-9]+) .*${node}:.*#\1#p" \
+      | while read -r p; do
+          [ -n "$p" ] && sucoder -T "$TARGET" tunnel forward "$p" --cancel >/dev/null 2>&1
+        done
+  fi
+  ssh "$LN_ALIAS" "scancel --me -n '$SLICE_JOB' 2>/dev/null; tmux kill-session -t '$SLICE_TMUX' 2>/dev/null" || true
+  say "Released dedicated slice '$SLICE_JOB'${node:+ (was on $node)} — job cancelled, tmux killed, forward removed."
+  exit 0
+fi
+
 # ------------------------------------------------------------------ node
-# Resolution order: $NODE override > live `squeue` > recorded sessions.
-# squeue is authoritative for what is *actually* allocated right now;
-# collaborate session files can still name nodes from jobs that have since
-# ended, and a stale record used to trip the ambiguity guard below — so we
-# consult the session files only when squeue can't answer.
+# $NODE overrides entirely (use that node, skip the slice); otherwise reuse or
+# allocate the dedicated slice.
 if [ -z "${NODE:-}" ]; then
-  NODE=$(ssh "$LN_ALIAS" 'squeue --me --noheader -o %N' 2>/dev/null \
-         | grep -vE '^[[:space:]]*$' | sort -u || true)
+  NODE=$(ensure_slice)
 fi
-if [ -z "${NODE:-}" ]; then
-  say "squeue named no nodes; falling back to recorded sessions ..."
-  NODE=$(grep -hs '^compute_node:' ~/.sucoder/sessions/*--"$TARGET".yaml \
-         | awk '{print $2}' | grep -v '^null$' | sort -u || true)
-fi
-case $(printf '%s' "$NODE" | grep -c .) in
-  0) die "no compute node found — allocate one first, or set NODE=..." ;;
-  1) ;;
-  *) die "multiple compute nodes allocated ($(printf '%s' "$NODE" | tr '\n' ' ')) — pick one with NODE=..." ;;
-esac
 say "Compute node: $NODE"
 
 rnode() {  # run a command on the compute node via the warm login-node hop
@@ -103,12 +176,13 @@ if [ -z "$URL" ]; then
   rnode "printf '\n===== launch %s =====\n' \"\$(date '+%F %T')\" >>\$HOME/$REMOTE_LOG" || true
   say "Starting claude-science serve on $NODE (log: ~/$REMOTE_LOG) ..."
   rnode "nohup $APP_BIN serve $SERVE_ARGS >>\$HOME/$REMOTE_LOG 2>&1 </dev/null &"
-  say "Waiting for the URL (up to ~${WAIT_SECS} tries; raise WAIT_SECS= if the node is busy):"
-  for _ in $(seq "$WAIT_SECS"); do
-    sleep 1
+  say "Waiting up to ${WAIT_SECS}s for the URL (cold DB-open on NFS is slow; raise WAIT_SECS= if needed):"
+  deadline=$((SECONDS + WAIT_SECS))
+  while [ "$SECONDS" -lt "$deadline" ]; do
     printf '.' >&2                       # heartbeat: a slow node is not a freeze
     URL=$(app_url || true)
     [ -n "$URL" ] && break
+    sleep 3
   done
   printf '\n' >&2
 fi
@@ -121,10 +195,10 @@ if [ -z "$URL" ]; then
   if printf '%s' "$launchlog" | grep -qiE 'daemon already running|listening on|https?://'; then
     # The daemon exists; it just couldn't answer `url` in time — almost always
     # node load, not a startup failure.
-    die "daemon on $NODE is up but returned no URL within ~${WAIT_SECS} tries${load:+ (node load ${load})} — the node is likely overloaded; let load drop and retry, or raise WAIT_SECS=."
+    die "daemon on $NODE is up but returned no URL within ${WAIT_SECS}s${load:+ (node load ${load})} — the node is likely overloaded; let load drop and retry, or raise WAIT_SECS=."
   else
     [ -s "$LAST_ERR" ] && { say "last url/ssh error:"; sed 's/^/  /' "$LAST_ERR" >&2; }
-    die "claude-science did not start on $NODE within ~${WAIT_SECS} tries${load:+ (node load ${load})} (log above)."
+    die "claude-science did not start on $NODE within ${WAIT_SECS}s${load:+ (node load ${load})} (log above)."
   fi
 fi
 say "Service URL on node: $URL"
