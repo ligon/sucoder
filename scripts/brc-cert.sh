@@ -15,8 +15,10 @@
 # Env overrides: BRC_USER (default ligon), BRC_LIFETIME (default 12h),
 #                LRC_SCRIPTS (default ~/lrc-scripts).
 #
-# Requires the ~/.ssh/config "brc-login" stanza (cert IdentityFile + ControlMaster)
-# for the passwordless test to use the cert.
+# The verify step tests the freshly-written cert DIRECTLY (ssh -i "$CERT"),
+# so it needs no ~/.ssh/config stanza.  sucoder presents the same cert to
+# `tunnel up` via a target's `cert_file:` option, so a green test here means
+# `sucoder -T <target> tunnel up` (with cert_file set) is OTP-free too.
 #
 set -euo pipefail
 
@@ -49,10 +51,18 @@ fi
 echo
 echo ">> granted validity (CA caps at 12h):"
 ssh-keygen -L -f "$CERT-cert.pub" | grep -iE "Valid|Principals|Key ID" | sed 's/^/   /'
-echo ">> passwordless login test:"
-if ssh -o BatchMode=yes -o ConnectTimeout=25 "$GATEWAY" 'echo "   OK -- host=$(hostname) user=$(whoami)"'; then
-  echo ">> SUCCESS: cert in place + ControlMaster warm; sucoder reaches Savio with no OTP until 'Valid to'."
+echo ">> passwordless login test (cert presented directly -- no ssh_config needed):"
+# Present the cert we just wrote exactly the way sucoder's establish() does:
+# IdentityFile + CertificateFile + IdentitiesOnly, so this verifies the cert
+# itself rather than whatever the default ssh_config happens to offer.
+# BatchMode=yes: a rejected cert must fail loudly, never fall back to a prompt.
+if ssh -i "$CERT" -o "CertificateFile=$CERT-cert.pub" -o IdentitiesOnly=yes \
+       -o BatchMode=yes -o ConnectTimeout=25 -l "$BRC_USER" "$GATEWAY" \
+       'echo "   OK -- host=$(hostname) user=$(whoami)"'; then
+  echo ">> SUCCESS: ${GATEWAY} accepted the cert.  Point sucoder at it with"
+  echo "   cert_file: ${CERT}   (under the target) so \`tunnel up\` is OTP-free until 'Valid to'."
 else
-  echo "!! cert issued but passwordless login failed -- check the ~/.ssh/config brc-login stanza." >&2
+  echo "!! cert issued but the gateway REJECTED it (tested: ssh -i \"$CERT\")." >&2
+  echo "   Check the cert's principals / that your login maps to it; re-mint if stale." >&2
   exit 1
 fi
