@@ -37,7 +37,7 @@ case "$MODE" in
 esac
 
 TARGET=${TARGET:-carleton-htc}
-APP_BIN=${APP_BIN:-~/bin/claude-science}     # expanded on the REMOTE side
+APP_BIN=${APP_BIN:-'$HOME/bin/claude-science'}  # literal $HOME; expands REMOTE-side
 SERVE_ARGS=${SERVE_ARGS:---dangerously-no-sandbox}
 OPENER=${OPENER:-garcon-url-handler}
 WAIT_SECS=${WAIT_SECS:-30}
@@ -53,19 +53,24 @@ die() { say "ERROR: $*"; exit 1; }
 sucoder -T "$TARGET" tunnel up
 
 # ------------------------------------------------------------------ node
-# Resolution order: $NODE override > collaborate session files > squeue.
+# Resolution order: $NODE override > live `squeue` > recorded sessions.
+# squeue is authoritative for what is *actually* allocated right now;
+# collaborate session files can still name nodes from jobs that have since
+# ended, and a stale record used to trip the ambiguity guard below — so we
+# consult the session files only when squeue can't answer.
 if [ -z "${NODE:-}" ]; then
-  NODE=$(grep -hs '^compute_node:' ~/.sucoder/sessions/*--"$TARGET".yaml \
-         | awk '{print $2}' | grep -v '^null$' | sort -u || true)
+  NODE=$(ssh "$LN_ALIAS" 'squeue --me --noheader -o %N' 2>/dev/null \
+         | grep -vE '^[[:space:]]*$' | sort -u || true)
 fi
 if [ -z "${NODE:-}" ]; then
-  say "No session records a compute node; asking squeue ..."
-  NODE=$(ssh "$LN_ALIAS" 'squeue --me --noheader -o %N' | sort -u || true)
+  say "squeue named no nodes; falling back to recorded sessions ..."
+  NODE=$(grep -hs '^compute_node:' ~/.sucoder/sessions/*--"$TARGET".yaml \
+         | awk '{print $2}' | grep -v '^null$' | sort -u || true)
 fi
 case $(printf '%s' "$NODE" | grep -c .) in
   0) die "no compute node found — allocate one first, or set NODE=..." ;;
   1) ;;
-  *) die "multiple compute nodes in play ($(printf '%s' "$NODE" | tr '\n' ' ')) — pick one with NODE=..." ;;
+  *) die "multiple compute nodes allocated ($(printf '%s' "$NODE" | tr '\n' ' ')) — pick one with NODE=..." ;;
 esac
 say "Compute node: $NODE"
 
@@ -103,20 +108,54 @@ say "Service URL on node: $URL"
 PORT=$(printf '%s' "$URL" | sed -En 's#^https?://[^/:]+:([0-9]+).*#\1#p')
 [ -n "$PORT" ] || die "could not parse a port from: $URL"
 
+# The localhost URL we ultimately hand to the browser — computed early so we
+# can probe an existing forward before deciding whether to add our own.
+LOCAL_URL=$(printf '%s' "$URL" \
+  | sed -E "s#^(https?://)[^/:]+:[0-9]+#\1localhost:$PORT#")
+
+port_bound() {  # is anything already listening on localhost:$PORT here?
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltn 2>/dev/null | grep -qE ":$PORT([[:space:]]|$)"
+  else
+    (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null \
+      && { exec 3>&- 3<&-; return 0; } || return 1
+  fi
+}
+
+serves_app() {  # does localhost:$PORT reach the very server we fetched $URL from?
+  command -v curl >/dev/null 2>&1 || return 0   # no curl: trust the listener
+  local code
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 "$LOCAL_URL" \
+         2>/dev/null || echo 000)
+  # 2xx means our nonce was accepted — proof the port reaches this same server.
+  # (401/403 would be *a* claude-science but possibly a different node, so it
+  # is not a safe reuse target; a refused connection gives 000.)
+  case "$code" in 2??) return 0 ;; *) return 1 ;; esac
+}
+
 FORWARDS=$(sucoder -T "$TARGET" tunnel forwards)
 if printf '%s' "$FORWARDS" | grep -q "localhost:$PORT → $NODE:$PORT"; then
-  say "Forward localhost:$PORT already in place."
-else
-  if printf '%s' "$FORWARDS" | grep -q "localhost:$PORT →"; then
-    # Same local port, stale destination (old node or old port) — replace.
-    sucoder -T "$TARGET" tunnel forward "$PORT" --cancel
+  say "Forward localhost:$PORT → $NODE already in place (sucoder-managed)."
+elif printf '%s' "$FORWARDS" | grep -q "localhost:$PORT →"; then
+  # sucoder tracks a forward on this local port to a *different* destination
+  # (old node or old port) — replace it.
+  sucoder -T "$TARGET" tunnel forward "$PORT" --cancel
+  sucoder -T "$TARGET" tunnel forward "$PORT" --node "$NODE"
+elif port_bound; then
+  # localhost:$PORT is occupied by something sucoder does NOT track — usually a
+  # hand-rolled `ssh -L`.  Adding another forward would just fail with an opaque
+  # mux error, so reuse the existing one if it reaches our server, else stop
+  # with a clear message instead of clobbering the user's process.
+  if serves_app; then
+    say "localhost:$PORT already forwards to this claude-science (untracked) — reusing it."
+  else
+    die "localhost:$PORT is in use but does not reach $NODE's claude-science — free it (or set NODE/port) and retry."
   fi
+else
   sucoder -T "$TARGET" tunnel forward "$PORT" --node "$NODE"
 fi
 
 # ------------------------------------------------------------------ open
-LOCAL_URL=$(printf '%s' "$URL" \
-  | sed -E "s#^(https?://)[^/:]+:[0-9]+#\1localhost:$PORT#")
 printf '%s\n' "$LOCAL_URL"
 if [ "$OPENER" = "-" ]; then
   exit 0
