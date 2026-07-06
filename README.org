@@ -383,7 +383,12 @@ a slice still PENDING when the scheduling ceiling (=CS_SCHED_WAIT=,
 default 300s) expires *stays queued*, and a later =up= attaches to it
 instead of resubmitting, so the job keeps its accrued priority.  A
 submission SLURM rejects outright is reported with the =srun= client's
-captured stderr rather than a blind timeout.  See the header comment for
+captured stderr rather than a blind timeout.  The same discipline covers
+the app itself: a =serve= process that exists but has not yet answered
+(e.g. a slow cold start over NFS) is waited on, never double-started ---
+two servers would mean two writers on one SQLite DB --- and the timeout
+diagnostics say whether the process is still alive (raise =WAIT_SECS=)
+or died (with a foreground repro command).  See the header comment for
 the =TARGET= / =NODE= / =APP_BIN= / =OPENER= / =WAIT_SECS= and =CS_*=
 slice overrides.
 

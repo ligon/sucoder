@@ -21,8 +21,10 @@
 #
 # up/url are idempotent: re-running reuses the warm sockets, the slice
 # (running, or still queued — re-running attaches rather than resubmitting,
-# so the job keeps its place in line), the running server, and the existing
-# forward.
+# so the job keeps its place in line), the server (one that exists but has
+# not answered yet — e.g. a slow cold start — is waited on, NEVER
+# double-started: two servers would mean two writers on one SQLite DB), and
+# the existing forward.
 #
 # The URL is opened with garcon-url-handler (ChromeOS / Crostini); set
 # OPENER to something else (xdg-open, firefox, ...) or OPENER=- to only
@@ -216,6 +218,14 @@ app_url() {  # echo the service URL if any; keep this try's stderr in $LAST_ERR
     | grep -Eo 'https?://[^[:space:]]+' | head -n 1
 }
 
+APP_NAME=${APP_BIN##*/}   # basename, for matching the serve process
+
+serve_alive() {  # is a `... serve` process alive on the node?
+  # [s]erve keeps pgrep -f from matching the ssh-spawned remote shell, whose
+  # own cmdline contains this very pattern.
+  rnode "pgrep -u \$USER -f '$APP_NAME [s]erve' >/dev/null 2>&1"
+}
+
 # The remote log is append-only, so a naive tail shows a *previous* run's
 # errors too.  Print only the lines from this launch's marker onward.
 log_since_marker() {
@@ -226,18 +236,29 @@ URL=$(app_url || true)
 if [ -z "$URL" ]; then
   if [ "$MODE" = url ]; then
     [ -s "$LAST_ERR" ] && { say "last url/ssh error:"; sed 's/^/  /' "$LAST_ERR" >&2; }
-    die "claude-science on $NODE is not answering \`url\` — run \`$0 up\` to start it (or the node may be overloaded)"
+    if serve_alive; then
+      die "serve on $NODE is ALIVE but not answering \`url\` — still starting (cold NFS DB-open) or overloaded; retry in a minute"
+    fi
+    die "no serve process on $NODE — run \`$0 up\` to start it"
   fi
-  # Stamp the log so its tail is never confused with an earlier run.
-  rnode "printf '\n===== launch %s =====\n' \"\$(date '+%F %T')\" >>\$HOME/$REMOTE_LOG" || true
-  say "Starting claude-science serve on $NODE (log: ~/$REMOTE_LOG) ..."
-  rnode "nohup $APP_BIN serve $SERVE_ARGS >>\$HOME/$REMOTE_LOG 2>&1 </dev/null &"
+  if serve_alive; then
+    # A serve process exists but has not answered `url` yet — almost always a
+    # slow cold start (NFS DB-open, WAL recovery).  Starting a second one
+    # would put two writers on the same SQLite DB, so wait on the one we have.
+    say "A $APP_NAME serve process already exists on $NODE — waiting for it (NOT starting a second one) ..."
+  else
+    # Stamp the log so its tail is never confused with an earlier run.
+    rnode "printf '\n===== launch %s =====\n' \"\$(date '+%F %T')\" >>\$HOME/$REMOTE_LOG" || true
+    say "Starting claude-science serve on $NODE (log: ~/$REMOTE_LOG) ..."
+    rnode "nohup $APP_BIN serve $SERVE_ARGS >>\$HOME/$REMOTE_LOG 2>&1 </dev/null &"
+  fi
   say "Waiting up to ${WAIT_SECS}s for the URL (cold DB-open on NFS is slow; raise WAIT_SECS= if needed):"
   deadline=$((SECONDS + WAIT_SECS))
   while [ "$SECONDS" -lt "$deadline" ]; do
     printf '.' >&2                       # heartbeat: a slow node is not a freeze
     URL=$(app_url || true)
     [ -n "$URL" ] && break
+    serve_alive || break                 # process died — stop waiting on a corpse
     sleep 3
   done
   printf '\n' >&2
@@ -248,13 +269,14 @@ if [ -z "$URL" ]; then
   printf '%s\n' "$launchlog" >&2
   load=$(rnode "timeout 8 uptime" 2>/dev/null \
          | sed -En 's/.*load average: *([0-9.]+).*/\1/p' || true)
-  if printf '%s' "$launchlog" | grep -qiE 'daemon already running|listening on|https?://'; then
-    # The daemon exists; it just couldn't answer `url` in time — almost always
-    # node load, not a startup failure.
-    die "daemon on $NODE is up but returned no URL within ${WAIT_SECS}s${load:+ (node load ${load})} — the node is likely overloaded; let load drop and retry, or raise WAIT_SECS=."
+  if serve_alive; then
+    # The process is alive; it just couldn't answer `url` in time — a slow
+    # cold start (NFS DB-open, WAL recovery) or node load, not a failure.
+    die "serve on $NODE is ALIVE but answered no \`url\` within ${WAIT_SECS}s${load:+ (node load ${load})} — re-run \`$0 up\` with a larger WAIT_SECS=; it will wait on this process, not double-start it."
   else
     [ -s "$LAST_ERR" ] && { say "last url/ssh error:"; sed 's/^/  /' "$LAST_ERR" >&2; }
-    die "claude-science did not start on $NODE within ${WAIT_SECS}s${load:+ (node load ${load})} (log above)."
+    die "the serve process on $NODE is GONE — it died without answering \`url\`${load:+ (node load ${load})}.  A clean log usually means an OOM kill or a stale lock in the app's data dir; watch it fail in the foreground:
+  ssh -J $LN_ALIAS $NODE '$APP_BIN serve $SERVE_ARGS'"
   fi
 fi
 say "Service URL on node: $URL"
