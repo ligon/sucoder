@@ -354,6 +354,45 @@ values shown above; tune them per target:
   reports the cert's validity.  (=scripts/brc-cert.sh= still works as a
   standalone minter if you prefer.)
 
+*** Using a target from Emacs / TRAMP
+
+=sucoder -T <target> tunnel up= writes three =Host= aliases into your
+=~/.ssh/config= --- =<target>-gw= (gateway), =<target>-ln= (login node),
+and =<target>-dtn= (DTN) --- each carrying =HostName=, =ProxyJump=, =User=,
+and a =ControlPath= that points at sucoder's warm socket.  TRAMP can ride
+those directly, so opening a remote file re-uses the warm =ControlMaster=
+with no fresh PIN/OTP (and with a minted =cert_file=, the first hop is
+OTP-free too).
+
+One Emacs setting is required, because TRAMP otherwise injects its *own*
+=ControlMaster= options that override the alias's =ControlPath= and open a
+separate, un-warmed connection:
+
+#+begin_src emacs-lisp
+(setq tramp-use-ssh-controlmaster-options nil)   ; defer to ~/.ssh/config
+#+end_src
+
+Then warm the tunnel and open files against the =-ln= alias (your NFS
+=$HOME= / =~/mirrors= live on the login node, shared with every compute
+node):
+
+#+begin_src shell
+sucoder -T savio-node tunnel up                  # warms sockets + writes aliases
+ssh savio-node-ln hostname                        # sanity check: silent == TRAMP will be too
+#+end_src
+
+#+begin_example
+C-x C-f /ssh:savio-node-ln:~/mirrors/MyProject/
+#+end_example
+
+Notes:
+- No alias is written for a *compute* node; multi-hop through the login
+  node if you need one: =/ssh:savio-node-ln|ssh:n0032.savio2:~/...=.  But
+  since =$HOME=/=~/mirrors= is shared NFS, editing via =-ln= already reaches
+  the files a compute job sees.
+- If the login-node pin drifted (the alias's =HostName= no longer matches
+  the warm node), re-run =tunnel up= before pointing TRAMP at =-ln=.
+
 *** Usage
 
 Use =--target= (=-T=) as a global option before the subcommand:
