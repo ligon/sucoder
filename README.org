@@ -417,7 +417,12 @@ are treated as argv.
    multiplex through the socket.
 2. *Pin a login node* --- SSH to the gateway, run =hostname=, store
    the result (e.g., =ln002.brc=) in =~/.sucoder/sessions/<mirror>.yaml=.
-   Subsequent connections jump to the same node via =-J=.
+   Subsequent connections jump to the same node via =-J=.  For SLURM
+   targets --- where the login node is only a routing hop, not where the
+   agent lives --- a later command first reconciles this pin with the node
+   =tunnel up= keeps warm, and re-pins to a healthy node off the gateway
+   if the recorded one is wedged, so a stale pin can't strand you on a dead
+   login node while a live tunnel sits idle.
 3. *Open a tunnel* --- A local port forward to the data transfer node
    for fast git transport.
 4. *Push canonical state* --- =git push= through the tunnel to the

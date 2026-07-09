@@ -648,6 +648,87 @@ def test_release_reports_gateway_scancel_failure(tmp_path, monkeypatch):
     assert reloaded.slurm_job_id == 7654321
 
 
+def test_reconcile_login_node_adopts_warm_tunnel(tmp_path, monkeypatch):
+    """A SLURM mirror session stuck on a stale login node adopts the warm
+    tunnel session's node -- and persists it for the next command."""
+    from sucoder import session as session_mod
+
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir()
+    monkeypatch.setattr(session_mod, "_session_dir", lambda: sessions_dir)
+
+    # Warm tunnel session pinned to ln003; mirror session stuck on ln002.
+    (sessions_dir / "tunnel-fake-slurm.yaml").write_text(
+        "login_node: ln003\n", encoding="utf-8",
+    )
+    session = session_mod.RemoteSession(
+        mirror_name="sample", target_name="fake-slurm", login_node="ln002",
+    )
+    remote = SimpleNamespace(slurm=SimpleNamespace())  # SLURM-backed
+    logger = SimpleNamespace(info=lambda *a, **k: None)
+
+    changed = cli._reconcile_login_node(remote, session, "fake-slurm", logger)
+    assert changed is True
+    assert session.login_node == "ln003"
+    reloaded = session_mod.RemoteSession.load("sample", target_name="fake-slurm")
+    assert reloaded.login_node == "ln003"
+
+
+def test_reconcile_login_node_noop_for_non_slurm(tmp_path, monkeypatch):
+    """Non-SLURM sessions keep their pin -- the agent tmux lives ON the
+    login node, so it is not a swappable routing hop."""
+    from sucoder import session as session_mod
+
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir()
+    monkeypatch.setattr(session_mod, "_session_dir", lambda: sessions_dir)
+    (sessions_dir / "tunnel-fake-slurm.yaml").write_text(
+        "login_node: ln003\n", encoding="utf-8",
+    )
+    session = session_mod.RemoteSession(
+        mirror_name="sample", target_name="fake-slurm", login_node="ln002",
+    )
+    remote = SimpleNamespace(slurm=None)
+    logger = SimpleNamespace(info=lambda *a, **k: None)
+
+    changed = cli._reconcile_login_node(remote, session, "fake-slurm", logger)
+    assert changed is False
+    assert session.login_node == "ln002"
+
+
+def test_reconcile_login_node_noop_without_tunnel_pin(tmp_path, monkeypatch):
+    """No warm tunnel node recorded -> nothing to adopt, pin unchanged."""
+    from sucoder import session as session_mod
+
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir()
+    monkeypatch.setattr(session_mod, "_session_dir", lambda: sessions_dir)
+    session = session_mod.RemoteSession(
+        mirror_name="sample", target_name="fake-slurm", login_node="ln002",
+    )
+    remote = SimpleNamespace(slurm=SimpleNamespace())
+    logger = SimpleNamespace(info=lambda *a, **k: None)
+
+    changed = cli._reconcile_login_node(remote, session, "fake-slurm", logger)
+    assert changed is False
+    assert session.login_node == "ln002"
+
+
+def test_login_node_via_gateway(monkeypatch):
+    """Probe returns the gateway mux's backend node, or '' on failure."""
+    gw = SimpleNamespace(ssh_options=lambda **kw: [])
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda *a, **k: SimpleNamespace(returncode=0, stdout="ln005.brc\n", stderr=""),
+    )
+    assert cli._login_node_via_gateway(gw, "gw.example.org") == "ln005.brc"
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda *a, **k: SimpleNamespace(returncode=255, stdout="", stderr="boom"),
+    )
+    assert cli._login_node_via_gateway(gw, "gw.example.org") == ""
+
+
 def test_attach_refuses_silent_login_node_fallback(tmp_path, monkeypatch):
     """Regression: `sucoder attach` on a SLURM target without a
     recorded SLURM job must NOT silently drop the user onto the login

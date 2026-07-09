@@ -268,6 +268,56 @@ def _mirror_completion(
     return items
 
 
+def _reconcile_login_node(remote, session, target_name, logger) -> bool:
+    """Adopt the warm tunnel session's login node into a SLURM mirror session.
+
+    sucoder keeps two independent login-node pins: the *mirror* session
+    (dialed by collaborate/attach/release/renew) and the *tunnel* session
+    (kept warm by ``tunnel up``, and what the ssh_config ``-ln`` block points
+    at).  They are set by separate round-robin ``ssh <gateway> hostname``
+    calls and can drift, leaving a mirror command dialing a stale, wedged
+    node while a live tunnel to a different node sits warm and neglected.
+
+    For a SLURM-backed session the login node is only a routing hop -- the
+    allocation lives on ``compute_node`` + job id, so any healthy login node
+    works -- so prefer the node the tunnel infra keeps warm.  No-op for a
+    non-SLURM session, where the agent tmux lives ON the login node and the
+    pin is not a swappable hop.  Returns True if the pin changed.
+    """
+    if remote.slurm is None or not target_name:
+        return False
+    from .session import RemoteSession
+    warm = RemoteSession.load(_tunnel_session_name(target_name)).login_node
+    if not warm or warm == session.login_node:
+        return False
+    old = session.login_node
+    session.login_node = warm
+    session.save()
+    logger.info(
+        "Using warm tunnel login node %s (mirror session had %s) for %s.",
+        warm, old or "no pin", session.mirror_name,
+    )
+    return True
+
+
+def _login_node_via_gateway(gw_control, gateway, *, debug_ssh: bool = False) -> str:
+    """Ask the warm gateway ControlMaster which login node it landed on.
+
+    The gateway mux is, by construction, connected to a *reachable* login
+    node (it authenticated), so ``hostname`` over it names a node we can
+    actually reach right now -- unlike a possibly-stale saved pin.  Returns
+    the empty string if the probe fails.
+    """
+    cmd = ["ssh", *gw_control.ssh_options(), "-o", "BatchMode=yes", gateway, "hostname"]
+    if debug_ssh:
+        cmd.insert(1, "-v")
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+    except subprocess.TimeoutExpired:
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
 def _build_executor(
     config: Config,
     logger,
@@ -300,6 +350,11 @@ def _build_executor(
                 cli_ctx = None
         _target_name = ((cli_ctx.obj or {}).get("target_name") if cli_ctx else None)
         session = RemoteSession.load(mirror_settings.name, target_name=_target_name)
+
+        # 0. Reconcile the mirror pin with the warm tunnel node so we ride a
+        #    live login node instead of a stale one that drifted apart from
+        #    the tunnel infra (no-op for non-SLURM targets).
+        _reconcile_login_node(remote, session, _target_name, logger)
 
         # 1. Establish ControlMaster to the gateway (authenticates
         #    once; may prompt for pin + OTP).
@@ -365,8 +420,36 @@ def _build_executor(
             # used to abort the whole launch on the first attempt.
             _connect_with_retry(ln_control, session.login_node, logger)
         except TunnelError as exc:
-            typer.echo(str(exc) + _ssh_debug_hint(debug_ssh), err=True)
-            raise typer.Exit(code=1) from exc
+            # The pinned login node is wedged (not merely transient -- retries
+            # are exhausted).  The warm gateway mux is on a *healthy* login
+            # node (it authenticated above), so re-pin to whatever it landed
+            # on and retry once, rather than dying on a dead pin.  Guarded to
+            # SLURM targets, where the login node is just a routing hop.
+            fresh = (
+                _login_node_via_gateway(gw_control, remote.gateway, debug_ssh=debug_ssh)
+                if remote.slurm is not None else ""
+            )
+            if not fresh or fresh == session.login_node:
+                typer.echo(str(exc) + _ssh_debug_hint(debug_ssh), err=True)
+                raise typer.Exit(code=1) from exc
+            logger.info(
+                "Login node %s unreachable; re-pinning to %s (off the warm "
+                "gateway mux) and retrying.", session.login_node, fresh,
+            )
+            session.login_node = fresh
+            session.save()
+            ln_control = SshControl(
+                gateway=session.login_node,
+                **remote.ssh_control_kwargs(),
+                jump_host=remote.gateway,
+                jump_control=gw_control,
+                debug=debug_ssh,
+            )
+            try:
+                _connect_with_retry(ln_control, session.login_node, logger)
+            except TunnelError as exc2:
+                typer.echo(str(exc2) + _ssh_debug_hint(debug_ssh), err=True)
+                raise typer.Exit(code=1) from exc2
 
         # 3b. Establish ControlMaster to the data transfer node (DTN).
         #     The DTN has fat pipes and spare CPU compared with the
@@ -2071,6 +2154,9 @@ def attach(
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     debug_ssh = _get_debug_ssh(ctx)
 
+    # Ride the warm tunnel node rather than a stale mirror pin (SLURM only).
+    _reconcile_login_node(remote, session, _tgt_name, logger)
+
     # Reuse ControlMaster if active; re-establish if expired.
     control = SshControl(
         gateway=remote.gateway,
@@ -2575,6 +2661,8 @@ def renew(
     confined = remote.slurm is not None and remote.slurm.confined
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     debug_ssh = _get_debug_ssh(ctx)
+    # Ride the warm tunnel node rather than a stale mirror pin.
+    _reconcile_login_node(remote, session, _tgt_name, logger)
     login_node = session.login_node
 
     # Establish (or reuse) the gateway + login-node ControlMasters once;
