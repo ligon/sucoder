@@ -26,7 +26,9 @@
 #   -J NAME     job name             (default: savio-run)
 #   -n          dry run: print the dispatch plan; don't warm/ssh/submit
 #
-# Env: TARGET (default target); SUCODER_CONFIG (config path override).
+# Env: TARGET (default target); SUCODER_CONFIG (config path override);
+#      SUCODER_PYTHON (interpreter for the config parse; must have PyYAML --
+#      default python3, e.g. point it at sucoder's venv python if yours lacks it).
 #
 # Examples:
 #   savio-run -- python3 -c 'print(2**10)'
@@ -95,7 +97,7 @@ payload(){ if [ ${#CMD[@]} -eq 1 ]; then printf '%s' "${CMD[0]}"; else cmd_str; 
 
 read_cfg(){
   local cfg P A Q C M T
-  cfg=$(python3 - "$TARGET" <<'PY' 2>/dev/null || true
+  cfg=$("${SUCODER_PYTHON:-python3}" - "$TARGET" <<'PY' 2>/dev/null || true
 import yaml, sys, os
 t = sys.argv[1]; p = os.path.expanduser(os.environ.get("SUCODER_CONFIG", "~/.sucoder/config.yaml"))
 s = ((yaml.safe_load(open(p)) or {}).get("targets", {}).get(t, {}) or {}).get("slurm", {}) or {}

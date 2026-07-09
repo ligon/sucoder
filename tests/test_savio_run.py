@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -45,6 +46,10 @@ def cfg(tmp_path: Path) -> Path:
 def run(cfg: Path, *args: str, expect_rc: int = 0, extra_env=None) -> subprocess.CompletedProcess:
     env = {**os.environ, "SUCODER_CONFIG": str(cfg)}
     env.pop("TARGET", None)  # keep tests hermetic regardless of the caller's env
+    # The script's config parse needs PyYAML; the ambient `python3` may lack it
+    # (this repo's system python does), so point it at the interpreter running
+    # the tests, which has the project's deps.
+    env.setdefault("SUCODER_PYTHON", sys.executable)
     if extra_env:
         env.update(extra_env)
     proc = subprocess.run(

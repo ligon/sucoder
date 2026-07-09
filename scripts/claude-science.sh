@@ -42,6 +42,7 @@
 #               re-run `up` later to attach to it.
 #   CS_PARTITION/CS_ACCOUNT/CS_QOS/CS_CPUS/CS_MEM/CS_TIME
 #               override the slice's SLURM params (default: from sucoder config)
+#   SUCODER_PYTHON  interpreter for the config parse (needs PyYAML; default python3)
 #
 set -euo pipefail
 
@@ -95,7 +96,7 @@ launch_slice() {  # submit the slice srun inside a detached login-node tmux
   # SLURM params from the sucoder config (env overrides win); PyYAML ships with
   # the sucoder venv, so this parse mirrors whatever `collaborate` would use.
   local cfg P A Q C M T
-  cfg=$(python3 - "$TARGET" <<'PY' 2>/dev/null || true
+  cfg=$("${SUCODER_PYTHON:-python3}" - "$TARGET" <<'PY' 2>/dev/null || true
 import yaml, sys, os
 t = sys.argv[1]
 p = os.path.expanduser("~/.sucoder/config.yaml")
