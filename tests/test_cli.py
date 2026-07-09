@@ -554,6 +554,100 @@ def test_release_command_no_recorded_job(tmp_path, monkeypatch):
     assert "nothing to release" in combined.lower()
 
 
+def test_release_scancels_via_gateway(tmp_path, monkeypatch):
+    """`release` cancels the job over the GATEWAY control (round-robin ->
+    a healthy login node), never dialing the mirror's pinned login node --
+    so a single wedged login node can't block a release."""
+    from sucoder import session as session_mod
+
+    runner = CliRunner()
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+
+    config_path = _slurm_config(tmp_path)
+
+    sessions_dir = fake_home / ".sucoder" / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    # login_node pinned to a node we must NOT dial for the scancel.
+    (sessions_dir / "sample--fake-slurm.yaml").write_text(
+        "login_node: ln002\nslurm_job_id: 7654321\ncompute_node: n0032\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(session_mod, "_session_dir", lambda: sessions_dir)
+
+    # The gateway ControlMaster "connects" without real ssh.
+    monkeypatch.setattr(cli, "_connect_with_retry", lambda *a, **kw: None)
+
+    # Capture where scancel is routed.
+    captured: dict = {}
+    def _fake_capture(control, host, command, **kw):
+        captured["host"] = host
+        captured["command"] = command
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+    monkeypatch.setattr(cli, "_run_remote_capture", _fake_capture)
+
+    result = runner.invoke(
+        cli.app,
+        ["--config", str(config_path), "-T", "fake-slurm", "release", "sample", "-f"],
+    )
+    assert result.exit_code == 0, (result.stdout, result.exception)
+    # Routed to the gateway, NOT the pinned login node.
+    assert captured["host"] == "gw.example.org", captured
+    assert "ln002" not in captured["host"]
+    assert "scancel 7654321" in captured["command"], captured
+    assert "Released SLURM job 7654321" in result.stdout
+
+    # SLURM fields cleared; login_node retained for future attaches.
+    reloaded = session_mod.RemoteSession.load("sample", target_name="fake-slurm")
+    assert reloaded.slurm_job_id is None
+    assert reloaded.login_node == "ln002"
+
+
+def test_release_reports_gateway_scancel_failure(tmp_path, monkeypatch):
+    """A non-zero scancel (SSH/auth/timeout, not 'no such job') is surfaced,
+    exits non-zero, and does NOT clear the session (job may still be alive)."""
+    from sucoder import session as session_mod
+
+    runner = CliRunner()
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+
+    config_path = _slurm_config(tmp_path)
+
+    sessions_dir = fake_home / ".sucoder" / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    (sessions_dir / "sample--fake-slurm.yaml").write_text(
+        "login_node: ln002\nslurm_job_id: 7654321\ncompute_node: n0032\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(session_mod, "_session_dir", lambda: sessions_dir)
+    monkeypatch.setattr(cli, "_connect_with_retry", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        cli, "_run_remote_capture",
+        lambda *a, **kw: SimpleNamespace(
+            returncode=255, stdout="",
+            stderr="kex_exchange_identification: Connection closed",
+        ),
+    )
+
+    result = runner.invoke(
+        cli.app,
+        ["--config", str(config_path), "-T", "fake-slurm", "release", "sample", "-f"],
+    )
+    assert result.exit_code != 0
+    combined = (
+        result.stdout + (result.output or "") + str(result.stderr_bytes or b"")
+    )
+    assert "scancel returned 255" in combined
+    # Session NOT cleared on failure.
+    reloaded = session_mod.RemoteSession.load("sample", target_name="fake-slurm")
+    assert reloaded.slurm_job_id == 7654321
+
+
 def test_attach_refuses_silent_login_node_fallback(tmp_path, monkeypatch):
     """Regression: `sucoder attach` on a SLURM target without a
     recorded SLURM job must NOT silently drop the user onto the login

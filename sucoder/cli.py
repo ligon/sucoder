@@ -2294,8 +2294,9 @@ def release(
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     debug_ssh = _get_debug_ssh(ctx)
 
-    # Reuse / re-establish the gateway and login-node ControlMasters
-    # so scancel reaches the cluster.
+    # Reuse / re-establish the gateway ControlMaster so scancel reaches the
+    # cluster.  The round-robin gateway lands on a healthy login node, which
+    # is all a cluster-wide scancel needs.
     gw_control = SshControl(
         gateway=remote.gateway,
         **remote.ssh_control_kwargs(),
@@ -2307,39 +2308,57 @@ def release(
         typer.echo(f"Failed to reach gateway: {exc}" + _ssh_debug_hint(debug_ssh), err=True)
         raise typer.Exit(code=1) from exc
 
-    if not session.login_node:
-        typer.echo(
-            "No login node recorded in session; cannot reach SLURM. "
-            f"Run `scancel {job_id}` manually from a login node.",
-            err=True,
-        )
-        raise typer.Exit(code=1)
-
-    ln_control = SshControl(
-        gateway=session.login_node,
-        **remote.ssh_control_kwargs(),
-        jump_host=remote.gateway,
-        jump_control=gw_control,
-        debug=debug_ssh,
-    )
-    try:
-        _connect_with_retry(ln_control, session.login_node, logger)
-    except Exception as exc:  # noqa: BLE001
-        typer.echo(f"Failed to reach login node: {exc}" + _ssh_debug_hint(debug_ssh), err=True)
-        raise typer.Exit(code=1) from exc
-
+    # `scancel` is cluster-wide, so releasing does NOT need the mirror's
+    # pinned login node (which may be wedged) -- we run it over the gateway
+    # ControlMaster below.  A login-node hop is only needed to reach a
+    # *compute* node's tmux in the sibling-detach branch, where it is
+    # established best-effort.
     import subprocess as _sp
+
+    def _forget_allocation():
+        # Clear the SLURM-specific session fields so future commands don't
+        # think a stale allocation is still ours.  Keep login_node so
+        # subsequent attaches can still resolve the gateway path.
+        session.slurm_job_id = None
+        session.compute_node = None
+        # The mirror root may have been on the now-released local disk;
+        # forget it so the next collaborate picks a fresh root.
+        if session.remote_mirror_root and session.remote_mirror_root.startswith("/local"):
+            session.remote_mirror_root = None
+        session.save()
+
     if siblings:
         # Another session still holds this job; detach this mirror rather
         # than cancelling the shared allocation.  Kill this mirror's tmux
         # session on the node (best effort) so its agent stops, but leave
         # the SLURM job running for the co-resident sessions.
         if session.compute_node:
+            # Prefer the pinned login node as the jump to the compute node,
+            # but fall back to the gateway (itself a login node) if that pin
+            # is unreachable -- a wedged login node must not strand the
+            # tmux-kill.  Best-effort throughout.
+            jump_host, jump_control = remote.gateway, gw_control
+            if session.login_node:
+                ln_control = SshControl(
+                    gateway=session.login_node,
+                    **remote.ssh_control_kwargs(),
+                    jump_host=remote.gateway,
+                    jump_control=gw_control,
+                    debug=debug_ssh,
+                )
+                try:
+                    _connect_with_retry(ln_control, session.login_node, logger)
+                    jump_host, jump_control = session.login_node, ln_control
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "login node %s unreachable (%s); routing the tmux-kill "
+                        "through the gateway instead.", session.login_node, exc,
+                    )
             cn_control = SshControl(
                 gateway=session.compute_node,
                 **remote.ssh_control_kwargs(),
-                jump_host=session.login_node,
-                jump_control=ln_control,
+                jump_host=jump_host,
+                jump_control=jump_control,
                 extra_options=[
                     "-o", "StrictHostKeyChecking=no",
                     "-o", "UserKnownHostsFile=/dev/null",
@@ -2369,38 +2388,34 @@ def release(
             ]
             logger.debug("detach tmux command: %s", kill_cmd)
             _sp.run(kill_cmd, capture_output=True, text=True, check=False)
+        _forget_allocation()
         typer.echo(
             f"Detached mirror {mirror} from SLURM job {job_id}; the "
             f"allocation stays alive for: {', '.join(siblings)}."
         )
-    else:
-        scancel_cmd = [
-            "ssh", *ln_control.ssh_options(with_fallback=True), session.login_node,
-            f"scancel {shlex.quote(str(job_id))}",
-        ]
-        logger.debug("scancel command: %s", scancel_cmd)
-        result = _sp.run(scancel_cmd, capture_output=True, text=True, check=False)
-        if result.returncode != 0:
-            # scancel exits 0 even for nonexistent jobs (just prints a
-            # warning to stderr), so a real failure usually means an SSH
-            # or auth problem.
-            typer.echo(
-                f"scancel returned {result.returncode}: {result.stderr.strip()}",
-                err=True,
-            )
-            raise typer.Exit(code=1)
+        return
 
-    # Clear the SLURM-specific session fields so future commands don't
-    # think a stale allocation is still ours.  Keep login_node so
-    # subsequent attaches can still resolve the gateway path.
-    session.slurm_job_id = None
-    session.compute_node = None
-    # The mirror root may have been on the now-released local disk;
-    # forget it so the next collaborate picks a fresh root.
-    if session.remote_mirror_root and session.remote_mirror_root.startswith("/local"):
-        session.remote_mirror_root = None
-    session.save()
+    # No siblings: cancel the job.  Run `scancel` over the gateway
+    # ControlMaster (round-robin -> a *healthy* login node) rather than the
+    # mirror's pinned login node, which may be wedged.  This mirrors the
+    # `nodes` command, which runs `sinfo` on the gateway the same way;
+    # `_run_remote_capture` adds BatchMode + a wall-clock timeout so a dead
+    # mux fails fast instead of hanging.
+    result = _run_remote_capture(
+        gw_control, remote.gateway,
+        f"scancel {shlex.quote(str(job_id))}", debug=debug_ssh,
+    )
+    if result.returncode != 0:
+        # scancel exits 0 even for a nonexistent job (just warns to stderr),
+        # so a real non-zero here is an SSH/auth/timeout problem, not "no
+        # such job".
+        typer.echo(
+            f"scancel returned {result.returncode}: {result.stderr.strip()}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
 
+    _forget_allocation()
     typer.echo(f"Released SLURM job {job_id} on {compute_node}.")
     if result.stderr.strip():
         typer.echo(result.stderr.strip(), err=True)
