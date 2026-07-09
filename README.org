@@ -343,11 +343,16 @@ values shown above; tune them per target:
 - =cert_file= --- path to a local SSH *certificate* private key, presented on
   the gateway hop so =tunnel up= (and a plain =ssh <target>-gw= / TRAMP)
   authenticate with *no* PIN/OTP for the cert's lifetime.  Mint one with
-  =scripts/brc-connect.sh= (the BRC/Savio MSM CA caps a cert at 12h).  It is
-  applied only to the gateway --- the login/DTN hops keep their publickey
-  auth through the mux.  A missing or expired cert degrades cleanly to the
-  interactive prompt; =sucoder -T <target> tunnel doctor= reports the cert's
-  validity.
+  =sucoder -T <target> cert=, which prompts for your BRC PIN + one-time code,
+  POSTs them to the MSM CA, and writes the cert here (the CA caps a cert at
+  12h).  You rarely need to run it explicitly: when the cert is missing or
+  expired, an *interactive* =sucoder= command offers to mint a fresh one
+  before it connects (so one OTP buys a 12h window instead of an OTP per
+  connection); a non-interactive/agent run just falls back to ssh's own
+  prompt.  The cert is applied only to the gateway --- the login/DTN hops keep
+  their publickey auth through the mux.  =sucoder -T <target> tunnel doctor=
+  reports the cert's validity.  (=scripts/brc-cert.sh= still works as a
+  standalone minter if you prefer.)
 
 *** Usage
 

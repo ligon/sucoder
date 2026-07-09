@@ -729,6 +729,163 @@ def test_login_node_via_gateway(monkeypatch):
     assert cli._login_node_via_gateway(gw, "gw.example.org") == ""
 
 
+def _cert_config(tmp_path: Path, cert_path: Path) -> Path:
+    """A SLURM config whose target carries a ``cert_file``."""
+    human = os.environ.get("USER", "coder")
+    mirror_root = tmp_path / "mirrors"
+    mirror_root.mkdir(exist_ok=True)
+    canonical = tmp_path / "canonical"
+    canonical.mkdir(exist_ok=True)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"""
+human_user: {human}
+agent_user: {human}
+agent_group: {human}
+mirror_root: {mirror_root}
+mirrors:
+  sample:
+    canonical_repo: {canonical}
+    mirror_name: sample
+    branch_prefixes:
+      human: {human}
+      agent: {human}
+targets:
+  fake-slurm:
+    gateway: gw.example.org
+    transfer_host: dtn.example.org
+    cert_file: {cert_path}
+    slurm:
+      partition: test
+      account: test_acct
+""",
+        encoding="utf-8",
+    )
+    return config_path
+
+
+def test_cert_command_mints(tmp_path, monkeypatch):
+    """`sucoder -T <t> cert` POSTs to the CA (mocked) and writes the cert."""
+    from sucoder import cert as cert_mod
+
+    runner = CliRunner()
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("BRC_USER", "ligon")
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+
+    cert_path = fake_home / ".ssh" / "ssh_certs" / "brc_cert"
+    config_path = _cert_config(tmp_path, cert_path)
+
+    # Fake the CA call (write_cert still runs for real); avoid ssh-keygen and
+    # the interactive prompts.
+    monkeypatch.setattr(
+        cert_mod, "request_cert",
+        lambda *a, **k: {
+            "key_id": "kid123", "private_key": "PRIV", "public_key": "PUB",
+            "signed_public_key": "SIGNED", "expires_at": "2026",
+        },
+    )
+    monkeypatch.setattr(cli, "_cert_status", lambda cf: ("✓", "cert valid to 2026"))
+    answers = iter(["1234", "567890"])
+    monkeypatch.setattr(cli.typer, "prompt", lambda *a, **k: next(answers))
+
+    result = runner.invoke(
+        cli.app, ["--config", str(config_path), "-T", "fake-slurm", "cert"],
+    )
+    assert result.exit_code == 0, (result.stdout, result.exception)
+    assert "Minted for ligon" in result.stdout
+    assert "kid123" in result.stdout
+    assert list(tmp_path.rglob("brc_cert-cert.pub")), "signed cert not written"
+
+
+def test_cert_command_requires_cert_file(tmp_path, monkeypatch):
+    """No `cert_file` on the target -> clear error, exit 2, no prompt."""
+    runner = CliRunner()
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+
+    config_path = _slurm_config(tmp_path)  # fake-slurm, no cert_file
+    result = runner.invoke(
+        cli.app, ["--config", str(config_path), "-T", "fake-slurm", "cert"],
+    )
+    assert result.exit_code == 2
+    combined = (
+        result.stdout + (result.output or "") + str(result.stderr_bytes or b"")
+    )
+    assert "cert_file" in combined
+
+
+def _fake_control(**kw):
+    kw.setdefault("jump_host", None)
+    kw.setdefault("cert_file", "/x/brc_cert")
+    kw.setdefault("is_active", lambda: False)
+    return SimpleNamespace(**kw)
+
+
+def _tty(is_tty):
+    return SimpleNamespace(
+        stdin=SimpleNamespace(isatty=lambda: is_tty),
+        stdout=SimpleNamespace(isatty=lambda: is_tty),
+    )
+
+
+def test_maybe_offer_cert_mint_mints_when_stale(monkeypatch):
+    """Gateway hop + cold mux + TTY + stale cert + confirm -> mint fires."""
+    from sucoder import cert as cert_mod
+
+    monkeypatch.setenv("BRC_USER", "ligon")
+    monkeypatch.setattr(cli, "sys", _tty(True))
+    monkeypatch.setattr(cli, "_cert_status", lambda cf: ("⚠", "cert EXPIRED (x)"))
+    monkeypatch.setattr(cli.typer, "confirm", lambda *a, **k: True)
+    answers = iter(["1234", "567890"])
+    monkeypatch.setattr(cli.typer, "prompt", lambda *a, **k: next(answers))
+    monkeypatch.setattr(cli.typer, "echo", lambda *a, **k: None)
+
+    minted = {}
+    def fake_mint(cert_file, ca_url, username, pin, otp, lifetime):
+        minted.update(
+            cert_file=cert_file, username=username, pin=pin, otp=otp, lifetime=lifetime,
+        )
+        return {"key_id": "k"}
+    monkeypatch.setattr(cert_mod, "mint", fake_mint)
+
+    cli._maybe_offer_cert_mint(_fake_control(), logger=SimpleNamespace(info=lambda *a, **k: None))
+    assert minted == {
+        "cert_file": "/x/brc_cert", "username": "ligon",
+        "pin": "1234", "otp": "567890", "lifetime": cert_mod.DEFAULT_LIFETIME,
+    }
+
+
+@pytest.mark.parametrize("control_kw, tty, status, confirm", [
+    ({"jump_host": "gw.example.org"}, True, ("⚠", "x"), True),   # not the gateway hop
+    ({"cert_file": None}, True, ("⚠", "x"), True),               # no cert configured
+    ({}, False, ("⚠", "x"), True),                               # not a TTY
+    ({}, True, ("✓", "valid"), True),                            # cert still valid
+    ({}, True, ("⚠", "x"), False),                               # user declines
+    ({"is_active": lambda: True}, True, ("⚠", "x"), True),       # warm mux
+])
+def test_maybe_offer_cert_mint_skips(monkeypatch, control_kw, tty, status, confirm):
+    from sucoder import cert as cert_mod
+
+    monkeypatch.setattr(cli, "sys", _tty(tty))
+    monkeypatch.setattr(cli, "_cert_status", lambda cf: status)
+    monkeypatch.setattr(cli.typer, "confirm", lambda *a, **k: confirm)
+    monkeypatch.setattr(cli.typer, "prompt", lambda *a, **k: "x")
+    monkeypatch.setattr(cli.typer, "echo", lambda *a, **k: None)
+
+    called = {"mint": False}
+    monkeypatch.setattr(
+        cert_mod, "mint",
+        lambda *a, **k: called.__setitem__("mint", True) or {"key_id": "k"},
+    )
+    cli._maybe_offer_cert_mint(_fake_control(**control_kw), logger=SimpleNamespace(info=lambda *a, **k: None))
+    assert called["mint"] is False
+
+
 def test_attach_refuses_silent_login_node_fallback(tmp_path, monkeypatch):
     """Regression: `sucoder attach` on a SLURM target without a
     recorded SLURM job must NOT silently drop the user onto the login

@@ -46,9 +46,10 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #     system_prompt_extra: ~/.sucoder/prompts/savio-node.org
 #     # Local SSH cert (private-key path) presented on the gateway hop, so
 #     # `tunnel up` (and a plain `ssh savio-node-gw`/TRAMP) authenticate with
-#     # no PIN/OTP for the cert's lifetime.  Mint it with scripts/brc-connect.sh
-#     # (the BRC/Savio MSM CA caps a cert at 12h).  Missing/expired -> falls
-#     # back to the interactive prompt; `tunnel doctor` reports its validity.
+#     # no PIN/OTP for the cert's lifetime.  Mint it with `sucoder -T <target>
+#     # cert` (the BRC/Savio MSM CA caps a cert at 12h); an interactive sucoder
+#     # command also offers to mint one before connecting when it's stale.
+#     # `tunnel doctor` reports its validity.
 #     cert_file: ~/.ssh/ssh_certs/brc_cert
 #     slurm:
 #       partition: savio3

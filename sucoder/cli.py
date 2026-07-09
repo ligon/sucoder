@@ -131,6 +131,53 @@ def _ensure_ssh_visible(control, label: str, logger) -> None:
     typer.echo(f"✓ Connected to {label}", err=True)
 
 
+def _maybe_offer_cert_mint(control, logger) -> None:
+    """Offer to mint a fresh gateway cert before a cold connect, if it's stale.
+
+    A missing/expired ``cert_file`` otherwise degrades to a per-connection
+    PIN+OTP prompt from ssh; minting once buys a ~12h OTP-free window instead.
+    Strictly opt-in and interactive -- it fires only on the *gateway* hop (the
+    only one that presents the cert, tunnel.py:348), when the mux is cold, at a
+    real TTY, and when the cert actually reads stale -- so agents, cron, and
+    warm reuse are untouched.  Any failure is non-fatal: we fall through to
+    ssh's own prompt.  ``getattr`` guards keep it inert for the fake controls
+    used in tests.
+    """
+    cert_file = getattr(control, "cert_file", None)
+    if getattr(control, "jump_host", None) is not None or not cert_file:
+        return
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return
+    try:
+        if control.is_active():
+            return
+    except Exception:  # noqa: BLE001 -- a probe failure shouldn't block connect
+        pass
+    glyph, msg = _cert_status(str(cert_file))
+    if glyph == "✓":  # valid -- nothing to do
+        return
+    if not typer.confirm(f"Gateway cert: {msg}. Mint a fresh one now?", default=True):
+        return
+    import getpass as _gp
+    from . import cert as cert_mod
+
+    username = os.environ.get("BRC_USER") or _gp.getuser()
+    pin = typer.prompt("BRC PIN", hide_input=True)
+    otp = typer.prompt("BRC OTP")
+    try:
+        cert_mod.mint(
+            cert_file, cert_mod.DEFAULT_CA_URL, username, pin, otp,
+            cert_mod.DEFAULT_LIFETIME,
+        )
+    except cert_mod.CertError as exc:
+        typer.echo(
+            f"Cert minting failed ({exc}); continuing -- ssh will prompt.", err=True
+        )
+        return
+    g2, m2 = _cert_status(str(cert_file))
+    typer.echo(f"  {g2} {m2}")
+
+
 def _connect_with_retry(
     control,
     label: str,
@@ -157,6 +204,11 @@ def _connect_with_retry(
     wait out the full backoff.  ``sleep`` is injectable for tests.
     """
     from .tunnel import TunnelError, is_transient_ssh_error
+
+    # Before a cold gateway connect, offer to mint a fresh cert if the
+    # configured one is stale -- so one OTP buys a 12h window instead of an
+    # OTP per connection (no-op unless interactive + gateway hop + stale cert).
+    _maybe_offer_cert_mint(control, logger)
 
     waited = 0
     delay = initial_delay
@@ -2922,6 +2974,55 @@ def _resolve_tunnel_target(ctx: typer.Context):
     return remote, target_name
 
 
+@app.command("cert")
+def cert(
+    ctx: typer.Context,
+    user: Optional[str] = typer.Option(
+        None, "--user",
+        help="BRC username (default: $BRC_USER or your local login name).",
+    ),
+    lifetime: str = typer.Option(
+        "12h", "--lifetime",
+        help="Requested cert lifetime (the MSM CA caps this at 12h).",
+    ),
+) -> None:
+    """Mint a short-lived BRC SSH certificate for this target's gateway.
+
+    Prompts for your BRC PIN + one-time code, POSTs them to the MSM CA, and
+    writes the cert to the target's ``cert_file`` so subsequent connections
+    (and `tunnel up`) are OTP-free until it expires.  Requires ``-T <target>``.
+    """
+    import getpass as _gp
+    from . import cert as cert_mod
+
+    remote, target_name = _resolve_tunnel_target(ctx)
+    if not remote.cert_file:
+        typer.echo(
+            f"Target {target_name} has no `cert_file`; nothing to mint into. "
+            "Add e.g. `cert_file: ~/.ssh/ssh_certs/brc_cert` under the target.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    username = user or os.environ.get("BRC_USER") or _gp.getuser()
+    typer.echo(f"Minting a {lifetime} BRC cert for {username} @ {remote.gateway} ...")
+    pin = typer.prompt("BRC PIN", hide_input=True)
+    otp = typer.prompt("BRC OTP")
+    try:
+        data = cert_mod.mint(
+            remote.cert_file, cert_mod.DEFAULT_CA_URL, username, pin, otp, lifetime,
+        )
+    except cert_mod.CertError as exc:
+        typer.echo(f"Cert request failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    glyph, msg = _cert_status(str(remote.cert_file))
+    typer.echo(f"  {glyph} {msg}")
+    key_id = data.get("key_id")
+    typer.echo(
+        f"Minted for {username}{f' (key id {key_id})' if key_id else ''}. "
+        f"`sucoder -T {target_name} tunnel up` is OTP-free until it expires."
+    )
+
+
 def _tunnel_session_name(target_name: str) -> str:
     """Session key for a target's warm-tunnel state (login-node pin)."""
     return f"tunnel-{target_name}"
@@ -3137,7 +3238,7 @@ def _cert_status(cert_file: str):
     pub = key + "-cert.pub"
     if not os.path.exists(pub):
         return ("•", f"cert configured but not minted ({pub} absent) — "
-                     "mint one with scripts/brc-connect.sh")
+                     "mint one with `sucoder -T <target> cert`")
     try:
         out = _sp.run(
             ["ssh-keygen", "-L", "-f", pub],
@@ -3154,7 +3255,7 @@ def _cert_status(cert_file: str):
         return ("✓", f"cert present ({valid_line or pub})")
     now = datetime.datetime.now()
     if expires <= now:
-        return ("⚠", f"cert EXPIRED ({to_raw}) — re-mint: scripts/brc-connect.sh")
+        return ("⚠", f"cert EXPIRED ({to_raw}) — re-mint: `sucoder -T <target> cert`")
     if expires - now <= datetime.timedelta(hours=2):
         return ("⚠", f"cert expires soon ({to_raw}) — re-mint before it lapses")
     return ("✓", f"cert valid to {to_raw}")
