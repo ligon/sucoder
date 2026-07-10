@@ -3330,6 +3330,26 @@ def tunnel_doctor(ctx: typer.Context) -> None:
             f"`sucoder -T {target_name} tunnel up`"
         )
 
+    # 3b. Mirror-vs-tunnel login-node drift.  collaborate/attach/renew dial the
+    #     *mirror* session's login node, pinned independently of this tunnel
+    #     session, so it can drift onto a stale node.  Informational only: it
+    #     self-heals (each mirror command adopts the warm tunnel node), so it
+    #     doesn't fail the exit code -- but surfacing it explains a transient
+    #     wedge and the auto-repin.
+    if session.login_node:
+        mirror_pins = RemoteSession.login_nodes_for_target(target_name)
+        drifted = {k: n for k, n in mirror_pins.items() if n != session.login_node}
+        if drifted:
+            typer.echo(
+                f"  • mirror session pin(s) differ from the warm login node "
+                f"({session.login_node}) — they auto-reconcile on the next "
+                "collaborate/attach/renew:"
+            )
+            for key, node in sorted(drifted.items()):
+                typer.echo(f"      {key}: {node}")
+        elif mirror_pins:
+            typer.echo("  ✓ mirror sessions agree with the warm login node")
+
     # 4. Gateway SSH certificate (optional; enables passwordless gateway auth).
     #    Informational only — a missing/expired cert just means a password
     #    prompt, it doesn't break tunnel reuse, so it never fails the exit code.

@@ -167,6 +167,29 @@ class RemoteSession:
                 nodes[path.stem] = data["compute_node"]
         return nodes
 
+    @classmethod
+    def login_nodes_for_target(cls, target_name: str) -> dict:
+        """Map session key -> login node for mirror sessions on *target_name*.
+
+        Scans ``<mirror>--<target>.yaml`` (the ``tunnel-<target>.yaml`` has no
+        ``--`` and is excluded) and returns entries that record a login node.
+        Used by ``tunnel doctor`` to flag a mirror pin that has drifted from
+        the warm tunnel node.
+        """
+        nodes: dict = {}
+        directory = _session_dir()
+        if not directory.is_dir():
+            return nodes
+        for path in sorted(directory.glob(f"*--{target_name}.yaml")):
+            try:
+                with path.open("r", encoding="utf-8") as fh:
+                    data = yaml.safe_load(fh) or {}
+            except (yaml.YAMLError, OSError):
+                continue
+            if isinstance(data, dict) and data.get("login_node"):
+                nodes[path.stem] = data["login_node"]
+        return nodes
+
     def clear(self) -> None:
         """Remove the session file."""
         path = _session_dir() / f"{self._session_key}.yaml"

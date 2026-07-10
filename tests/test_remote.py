@@ -229,6 +229,22 @@ def test_session_clear(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert not (tmp_path / "test.yaml").exists()
 
 
+def test_login_nodes_for_target(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sucoder.session._session_dir", lambda: tmp_path)
+    # Two mirror sessions on savio-node (one drifted), the tunnel session
+    # (no `--`, must be excluded), and a mirror on another target.
+    RemoteSession(mirror_name="proj", target_name="savio-node", login_node="ln002").save()
+    RemoteSession(mirror_name="other", target_name="savio-node", login_node="ln003").save()
+    RemoteSession(mirror_name="tunnel-savio-node", login_node="ln003").save()
+    RemoteSession(mirror_name="proj", target_name="carleton-htc", login_node="ln000").save()
+
+    assert RemoteSession.login_nodes_for_target("savio-node") == {
+        "proj--savio-node": "ln002",
+        "other--savio-node": "ln003",
+    }
+    assert RemoteSession.login_nodes_for_target("no-such-target") == {}
+
+
 def test_session_remote_mirror_root_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("sucoder.session._session_dir", lambda: tmp_path)
 
