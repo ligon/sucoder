@@ -679,6 +679,78 @@ def _build_executor(
     )
 
 
+def _resolve_recorded_node(
+    job_id, ln_control, login_node, logger,
+    *, attempts: int = 5, delay: int = 3, sleep=time.sleep,
+):
+    """Resolve the node of an already-recorded SLURM *job_id*.
+
+    Returns ``(state, node)``:
+
+    * ``("RUNNING", "n0123.savio3")`` -- the job holds a node; adopt it.
+    * ``(state, None)`` -- the job is alive but not yet placed
+      (PENDING/CONFIGURING), or the probe failed.  Caller must NOT
+      reallocate: the id is live and reallocating leaks it.
+    * ``(None, None)`` -- the job has LEFT the queue (terminal/invalid id).
+      Safe to clear the id and allocate fresh.
+
+    This is the read-side counterpart to the persist-before-query write in
+    :func:`_ensure_slurm_node`: ``salloc`` bills from the moment it grants,
+    so the job id is written to the session *before* the node is queried.
+    An interrupt or a squeue failure in that window leaves ``slurm_job_id``
+    set with ``compute_node`` still None -- a state the allocation state
+    machine could not previously act on (it fell through reuse, adopt and
+    salloc alike, straight into ``SshControl(gateway=None)``).
+
+    Distinguishing "not placed yet" from "gone" is the whole job here, and
+    both mistakes are expensive: calling a live job dead leaks a 24h
+    allocation, calling a dead job live wedges the session forever.  So an
+    empty ``%N`` with a state word means *wait*, never *gone* -- and the
+    state word is never itself persisted as a node name.  (Same three-way
+    contract as ``MirrorManager._poll_confined_node``, which does this over
+    the executor for confined sbatch jobs; here we only have an ssh hop.)
+    """
+    import subprocess as _sp
+
+    if not login_node:
+        return None, None
+    cmd = [
+        "ssh", *ln_control.ssh_options(with_fallback=True), login_node,
+        f"squeue --job {int(job_id)} --noheader -o '%T %N'",
+    ]
+    last_state = None
+    for attempt in range(1, max(1, attempts) + 1):
+        result = _sp.run(cmd, capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            if "invalid job id" in stderr.lower():
+                return None, None  # squeue is certain: the job is gone.
+            # An ssh/squeue failure is NOT evidence the job is dead.  Say
+            # "unknown, still alive" so the caller refuses to reallocate.
+            logger.debug(
+                "node-query for job %s failed (%s); not assuming it is gone",
+                job_id, stderr,
+            )
+            return "UNKNOWN", None
+        parts = result.stdout.split()
+        if not parts:
+            # Empty output from a successful squeue == the job left the
+            # queue.  Terminal, and the only signal we accept as "gone".
+            return None, None
+        last_state = parts[0]
+        if len(parts) >= 2 and parts[1]:
+            return last_state, parts[1]
+        # State word but no node: PENDING / CONFIGURING.  Brief wait --
+        # salloc has already granted, so placement lands in seconds.
+        if attempt < attempts:
+            logger.debug(
+                "job %s is %s with no node yet; re-querying in %ds",
+                job_id, last_state, delay,
+            )
+            sleep(delay)
+    return last_state, None
+
+
 def _adopt_existing_allocation(node, ln_control, login_node, logger):
     """Find a live SLURM job the current user already holds on *node*.
 
@@ -746,6 +818,55 @@ def _ensure_slurm_node(
     from .tunnel import SshControl, TunnelError
 
     slurm = remote.slurm
+
+    # A job id recorded WITHOUT a node is the persist-before-query window
+    # below (salloc grants -> id saved -> squeue resolves the node): an
+    # interrupt or a failed node-query between those two saves leaves
+    # exactly this state on disk, on purpose, so the allocation stays
+    # recoverable instead of leaking.  Nothing ever taught the read side to
+    # act on it, so all three gates below skipped it (reuse wants a node;
+    # adopt and salloc both want NO job id) and the fall-through handed
+    # ``SshControl(gateway=None)`` a None host -- a TypeError from inside
+    # Popen, on every subsequent run.  Sticky, because nothing cleared it.
+    #
+    # Resolve it before the gates: adopt the node if the job still holds
+    # one, clear the id only when squeue positively says the job is gone,
+    # and refuse to do either while its fate is unknown -- reallocating on
+    # a live id leaks a 24h job that `release` can no longer find.
+    if session.slurm_job_id and not session.compute_node:
+        state, node = _resolve_recorded_node(
+            session.slurm_job_id, ln_control, session.login_node, logger,
+        )
+        if node:
+            session.compute_node = node
+            session.save()
+            typer.echo(
+                f"Recovered compute node {node} for recorded SLURM job "
+                f"{session.slurm_job_id}."
+            )
+            logger.info(
+                "Recovered node %s for job %s (session had no node)",
+                node, session.slurm_job_id,
+            )
+        elif state is None:
+            logger.info(
+                "Recorded SLURM job %s has left the queue; allocating fresh",
+                session.slurm_job_id,
+            )
+            session.slurm_job_id = None
+            session.save()
+        else:
+            # Alive but unplaced (PENDING/CONFIGURING) or unreachable.
+            # Bail rather than guess; the id stays on disk, so the operator
+            # can retry or `release` it.
+            typer.echo(
+                f"SLURM job {session.slurm_job_id} is recorded for this "
+                f"mirror but holds no node yet (state: {state}).  It is "
+                "still queued -- retry shortly, or run `sucoder release` to "
+                "give it up.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
 
     # Check whether a previous allocation is still running.
     if session.slurm_job_id and session.compute_node:

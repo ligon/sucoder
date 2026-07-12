@@ -82,3 +82,24 @@ def test_establish_does_not_hang_when_master_backgrounds(tmp_path, monkeypatch):
     # On the correct (temp-file) implementation this returns in well under
     # a second; a PIPE-based capture would block ~30s on the held stderr.
     assert done.wait(timeout=5), "establish() hung capturing a backgrounded master's stderr"
+
+
+def test_sshcontrol_rejects_a_none_host():
+    """A None host must fail at construction, naming the real problem.
+
+    ``gateway`` is typed non-Optional but is fed from session state that can
+    be None (``session.compute_node`` when a SLURM job was recorded before
+    its node resolved).  Unchecked, the None rode all the way into
+    ``subprocess.run(["ssh", ..., None])`` and surfaced as ``TypeError:
+    expected str, bytes or os.PathLike object, not NoneType`` from inside
+    Popen -- a traceback that names neither the host nor the caller, and
+    which reads as a Python bug rather than unresolved session state.
+    """
+    from sucoder.tunnel import SshControl, TunnelError
+
+    with pytest.raises(TunnelError) as excinfo:
+        SshControl(gateway=None)
+    assert "no host" in str(excinfo.value).lower()
+
+    with pytest.raises(TunnelError):
+        SshControl(gateway="")

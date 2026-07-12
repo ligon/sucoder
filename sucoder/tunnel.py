@@ -146,6 +146,23 @@ class SshControl:
     # shell round-trip for it (see is_active()).
     _established_this_session: bool = field(default=False, init=False, repr=False)
 
+    def __post_init__(self) -> None:
+        # ``gateway`` is typed non-Optional, but it is routinely fed from
+        # session state (``session.compute_node``, ``session.login_node``)
+        # that CAN be None.  Left unchecked, the None survives all the way
+        # into ``subprocess.run(["ssh", ..., None])`` and surfaces as a
+        # 40-line ``TypeError: expected str, bytes or os.PathLike object,
+        # not NoneType`` from deep inside Popen -- naming neither the host
+        # nor the caller.  Fail here instead, where we still know which hop
+        # is unresolved.
+        if not self.gateway:
+            raise TunnelError(
+                "SshControl was given no host to connect to "
+                f"(gateway={self.gateway!r}).  This means the caller's "
+                "session state is missing a node name; it is a bug in the "
+                "caller, not a network failure."
+            )
+
     @property
     def socket_path(self) -> Path:
         return _control_socket_path(self.gateway)

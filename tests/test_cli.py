@@ -1399,6 +1399,197 @@ def test_ensure_slurm_node_persists_job_id_before_node_query(tmp_path, monkeypat
     assert reloaded.compute_node is None
 
 
+def _slurm_recovery_fixture(tmp_path, monkeypatch, *, squeue_lines):
+    """Build a session stuck in the persist-before-query state.
+
+    ``slurm_job_id`` set, ``compute_node`` None -- exactly what
+    ``test_ensure_slurm_node_persists_job_id_before_node_query`` pins as
+    the on-disk outcome of an interrupted allocation.  *squeue_lines* is a
+    list of ``CompletedProcess``-shaped responses for successive ``squeue
+    --job`` calls.  Returns ``(remote, session, run_calls)``.
+    """
+    from sucoder import session as session_mod
+    from sucoder.config import RemoteConfig, SlurmConfig
+
+    sessions = tmp_path / "sessions"
+    monkeypatch.setattr(session_mod, "_session_dir", lambda: sessions)
+
+    remote = RemoteConfig(
+        gateway="gw",
+        transfer_host="dtn",
+        slurm=SlurmConfig(partition="savio3", account="acct", time="24:00:00"),
+    )
+    sess = session_mod.RemoteSession(
+        mirror_name="LSMS_Library", target_name="savio-node",
+        login_node="ln003.brc", slurm_job_id=35141648,
+    )
+    sess.save()
+    assert sess.compute_node is None
+
+    run_calls: list = []
+    pending = list(squeue_lines)
+
+    def fake_run(cmd, *a, **kw):
+        joined = " ".join(cmd) if isinstance(cmd, (list, tuple)) else str(cmd)
+        run_calls.append(joined)
+        if "squeue --job" in joined:
+            return pending.pop(0)
+        if "salloc" in joined:
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="",
+                stderr="salloc: Granted job allocation 99999999\n",
+            )
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    # Neither the SSH connect nor the on-node deadline timer is under test.
+    monkeypatch.setattr(cli, "_connect_with_retry", lambda *a, **kw: None)
+    monkeypatch.setattr(cli, "_start_slurm_timer", lambda *a, **kw: None)
+    return remote, sess, run_calls
+
+
+def _ok(stdout):
+    return subprocess.CompletedProcess([], 0, stdout=stdout, stderr="")
+
+
+class _StubControl:
+    def ssh_options(self, **kw):
+        return []
+
+
+def test_ensure_slurm_node_recovers_node_for_recorded_job(tmp_path, monkeypatch):
+    """Regression: a job recorded WITHOUT a node must resolve, not crash.
+
+    ``salloc`` bills on grant, so the job id is persisted before the node
+    is queried; an interrupt in that window leaves ``slurm_job_id`` set and
+    ``compute_node`` None.  That state used to satisfy none of the three
+    gates in ``_ensure_slurm_node`` -- reuse needs a node, adopt and salloc
+    need no job id -- so it fell through to ``SshControl(gateway=None)`` and
+    died with ``TypeError: expected str, bytes or os.PathLike object, not
+    NoneType`` from inside Popen.  Sticky: nothing cleared it, so every
+    later run of that mirror crashed identically.
+    """
+    import logging
+
+    remote, sess, run_calls = _slurm_recovery_fixture(
+        tmp_path, monkeypatch,
+        squeue_lines=[_ok("RUNNING n0123.savio3\n"), _ok("RUNNING\n")],
+    )
+
+    node, _control = cli._ensure_slurm_node(
+        remote, sess, _StubControl(), _StubControl(), logging.getLogger("t"),
+    )
+
+    assert node == "n0123.savio3"
+    assert not any("salloc" in c for c in run_calls), (
+        "The recorded job is alive -- reallocating would LEAK it (a 24h job "
+        f"`release` can no longer find).  Calls: {run_calls}"
+    )
+
+    from sucoder import session as session_mod
+    reloaded = session_mod.RemoteSession.load(
+        "LSMS_Library", target_name="savio-node",
+    )
+    assert reloaded.slurm_job_id == 35141648
+    assert reloaded.compute_node == "n0123.savio3"
+
+
+def test_ensure_slurm_node_reallocates_when_recorded_job_is_gone(
+    tmp_path, monkeypatch,
+):
+    """A recorded job that has LEFT the queue is cleared, then reallocated.
+
+    Empty output from a successful ``squeue --job`` is the one signal we
+    accept as "gone" -- so the stale id is dropped and a fresh node
+    allocated, rather than wedging the mirror forever.
+    """
+    import logging
+
+    remote, sess, run_calls = _slurm_recovery_fixture(
+        tmp_path, monkeypatch,
+        squeue_lines=[
+            _ok(""),                      # recovery probe: job is gone
+            _ok("n0456.savio3\n"),        # post-salloc node query
+        ],
+    )
+
+    node, _control = cli._ensure_slurm_node(
+        remote, sess, _StubControl(), _StubControl(), logging.getLogger("t"),
+    )
+
+    assert node == "n0456.savio3"
+    assert any("salloc" in c for c in run_calls)
+
+    from sucoder import session as session_mod
+    reloaded = session_mod.RemoteSession.load(
+        "LSMS_Library", target_name="savio-node",
+    )
+    assert reloaded.slurm_job_id == 99999999
+    assert reloaded.compute_node == "n0456.savio3"
+
+
+def test_ensure_slurm_node_refuses_to_reallocate_over_a_pending_job(
+    tmp_path, monkeypatch,
+):
+    """PENDING (state word, empty %N) must never be read as "gone".
+
+    A pending job is LIVE.  Clearing its id to allocate a replacement would
+    leak it.  Bail instead, leaving the id on disk for retry/`release`.
+    """
+    import logging
+
+    import typer
+
+    monkeypatch.setattr(cli.time, "sleep", lambda *_a: None)
+    remote, sess, run_calls = _slurm_recovery_fixture(
+        tmp_path, monkeypatch,
+        squeue_lines=[_ok("PENDING\n")] * 5,
+    )
+
+    with pytest.raises(typer.Exit):
+        cli._ensure_slurm_node(
+            remote, sess, _StubControl(), _StubControl(), logging.getLogger("t"),
+        )
+
+    assert not any("salloc" in c for c in run_calls), (
+        f"Reallocated over a live PENDING job -- that leaks it.  {run_calls}"
+    )
+    from sucoder import session as session_mod
+    reloaded = session_mod.RemoteSession.load(
+        "LSMS_Library", target_name="savio-node",
+    )
+    assert reloaded.slurm_job_id == 35141648, "The live job id must stay recoverable."
+
+
+def test_ensure_slurm_node_keeps_job_when_node_query_errors(tmp_path, monkeypatch):
+    """An ssh/squeue *failure* is not evidence the job is dead."""
+    import logging
+
+    import typer
+
+    monkeypatch.setattr(cli.time, "sleep", lambda *_a: None)
+    remote, sess, run_calls = _slurm_recovery_fixture(
+        tmp_path, monkeypatch,
+        squeue_lines=[
+            subprocess.CompletedProcess(
+                [], 255, stdout="", stderr="Session open refused by peer",
+            ),
+        ],
+    )
+
+    with pytest.raises(typer.Exit):
+        cli._ensure_slurm_node(
+            remote, sess, _StubControl(), _StubControl(), logging.getLogger("t"),
+        )
+
+    assert not any("salloc" in c for c in run_calls)
+    from sucoder import session as session_mod
+    reloaded = session_mod.RemoteSession.load(
+        "LSMS_Library", target_name="savio-node",
+    )
+    assert reloaded.slurm_job_id == 35141648
+
+
 class _FakeSshControl:
     """Stand-in for ``SshControl`` in ``_build_executor`` tests.
 
