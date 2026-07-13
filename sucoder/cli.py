@@ -158,10 +158,10 @@ def _maybe_offer_cert_mint(control, logger) -> None:
         return
     if not typer.confirm(f"Gateway cert: {msg}. Mint a fresh one now?", default=True):
         return
-    import getpass as _gp
     from . import cert as cert_mod
 
-    username = os.environ.get("BRC_USER") or _gp.getuser()
+    config = _get_config(typer.get_current_context())
+    username = os.environ.get("BRC_USER") or config.human_user
     pin = typer.prompt("BRC PIN", hide_input=True)
     otp = typer.prompt("BRC OTP")
     try:
@@ -3113,7 +3113,6 @@ def cert(
     writes the cert to the target's ``cert_file`` so subsequent connections
     (and `tunnel up`) are OTP-free until it expires.  Requires ``-T <target>``.
     """
-    import getpass as _gp
     from . import cert as cert_mod
 
     remote, target_name = _resolve_tunnel_target(ctx)
@@ -3124,7 +3123,8 @@ def cert(
             err=True,
         )
         raise typer.Exit(code=2)
-    username = user or os.environ.get("BRC_USER") or _gp.getuser()
+    config = _get_config(ctx)
+    username = user or os.environ.get("BRC_USER") or config.human_user
     typer.echo(f"Minting a {lifetime} BRC cert for {username} @ {remote.gateway} ...")
     pin = typer.prompt("BRC PIN", hide_input=True)
     otp = typer.prompt("BRC OTP")
