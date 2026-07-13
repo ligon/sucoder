@@ -315,6 +315,7 @@ targets:
     gateway: brc.berkeley.edu
     transfer_host: dtn.brc.berkeley.edu
     mirror_root: ~/mirrors
+    remote_user: ligon        # optional; remote SSH username (defaults to local $USER)
     control_persist: 7d          # warm-tunnel idle lifetime (optional)
     keepalive_interval: 30       # ServerAliveInterval, seconds (optional)
     keepalive_count_max: 120     # ServerAliveCountMax (optional)
@@ -1158,4 +1159,3 @@ Run the automated tests with pytest.
 #+begin_src shell
 pytest
 #+end_src
-

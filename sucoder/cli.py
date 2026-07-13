@@ -131,7 +131,7 @@ def _ensure_ssh_visible(control, label: str, logger) -> None:
     typer.echo(f"✓ Connected to {label}", err=True)
 
 
-def _maybe_offer_cert_mint(control, logger) -> None:
+def _maybe_offer_cert_mint(control, logger, *, username: Optional[str] = None) -> None:
     """Offer to mint a fresh gateway cert before a cold connect, if it's stale.
 
     A missing/expired ``cert_file`` otherwise degrades to a per-connection
@@ -160,8 +160,9 @@ def _maybe_offer_cert_mint(control, logger) -> None:
         return
     from . import cert as cert_mod
 
-    config = _get_config(typer.get_current_context())
-    username = os.environ.get("BRC_USER") or config.human_user
+    if not username:
+        config = _get_config(typer.get_current_context())
+        username = os.environ.get("BRC_USER") or config.human_user
     pin = typer.prompt("BRC PIN", hide_input=True)
     otp = typer.prompt("BRC OTP")
     try:
@@ -208,7 +209,7 @@ def _connect_with_retry(
     # Before a cold gateway connect, offer to mint a fresh cert if the
     # configured one is stale -- so one OTP buys a 12h window instead of an
     # OTP per connection (no-op unless interactive + gateway hop + stale cert).
-    _maybe_offer_cert_mint(control, logger)
+    _maybe_offer_cert_mint(control, logger, username=getattr(control, "user", None))
 
     waited = 0
     delay = initial_delay
@@ -3124,7 +3125,7 @@ def cert(
         )
         raise typer.Exit(code=2)
     config = _get_config(ctx)
-    username = user or os.environ.get("BRC_USER") or config.human_user
+    username = user or os.environ.get("BRC_USER") or remote.remote_user or config.human_user
     typer.echo(f"Minting a {lifetime} BRC cert for {username} @ {remote.gateway} ...")
     pin = typer.prompt("BRC PIN", hide_input=True)
     otp = typer.prompt("BRC OTP")
@@ -3262,7 +3263,7 @@ def tunnel_up(
         remote.gateway,
         remote.transfer_host,
         login_node=session.login_node,
-        user=getpass.getuser(),
+        user=remote.remote_user or config.human_user,
         **remote.ssh_control_kwargs(),
     )
     path = sshconfig.write_block(block, target_name)

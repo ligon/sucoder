@@ -68,6 +68,7 @@ class RemoteConfig:
 
     gateway: str                                    # Jump host, e.g. "brc.berkeley.edu"
     transfer_host: str                              # DTN for git transport
+    remote_user: Optional[str] = None               # SSH username on the remote host
     mirror_root: Path = field(default_factory=lambda: Path("~/mirrors"))
     ssh_options: Dict[str, str] = field(default_factory=dict)
     control_persist: str = "7d"                     # ControlMaster idle lifetime (ssh time fmt)
@@ -94,6 +95,7 @@ class RemoteConfig:
             "keepalive_interval": self.keepalive_interval,
             "keepalive_count_max": self.keepalive_count_max,
             "cert_file": str(self.cert_file) if self.cert_file else None,
+            "user": self.remote_user,
         }
 
 
@@ -781,6 +783,10 @@ def _parse_remote_config(raw: Any) -> Optional[RemoteConfig]:
     mirror_root_raw = raw.get("mirror_root", "~/mirrors")
     mirror_root = Path(mirror_root_raw)  # Keep unexpanded; expanded on remote
 
+    remote_user = raw.get("remote_user")
+    if remote_user is not None and not isinstance(remote_user, str):
+        raise ConfigError("`remote.remote_user` must be a string when provided.")
+
     ssh_options = raw.get("ssh_options", {})
     if not isinstance(ssh_options, dict):
         raise ConfigError("`remote.ssh_options` must be a mapping when provided.")
@@ -815,6 +821,7 @@ def _parse_remote_config(raw: Any) -> Optional[RemoteConfig]:
     return RemoteConfig(
         gateway=gateway,
         transfer_host=transfer_host,
+        remote_user=remote_user,
         mirror_root=mirror_root,
         ssh_options={str(k): str(v) for k, v in ssh_options.items()},
         control_persist=control_persist,

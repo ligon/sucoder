@@ -25,6 +25,7 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #     gateway: hpc.brc.berkeley.edu
 #     transfer_host: dtn.brc.berkeley.edu
 #     mirror_root: ~/mirrors
+#     remote_user: <remote-username>  # optional; defaults to local $USER
 #     # SSH connection-sharing knobs (all optional; defaults shown).
 #     control_persist: 7d        # how long a warm ControlMaster lingers idle
 #                                # (ssh time fmt: 7d, 12h, 90m...).  This is the
@@ -41,6 +42,7 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #     gateway: hpc.brc.berkeley.edu
 #     transfer_host: dtn.brc.berkeley.edu
 #     mirror_root: ~/mirrors
+#     remote_user: <remote-username>
 #     control_persist: 7d
 #     # Platform-specific prompt snippet appended to the base system prompt.
 #     system_prompt_extra: ~/.sucoder/prompts/savio-node.org
@@ -64,6 +66,7 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #     gateway: hpc.brc.berkeley.edu
 #     transfer_host: dtn.brc.berkeley.edu
 #     mirror_root: ~/mirrors
+#     remote_user: <remote-username>
 #     control_persist: 24h
 #     system_prompt_extra: ~/.sucoder/prompts/savio-node.org
 #     slurm:

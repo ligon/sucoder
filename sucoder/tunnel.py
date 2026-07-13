@@ -134,6 +134,7 @@ class SshControl:
     jump_control: Optional["SshControl"] = field(default=None, repr=False)
     extra_options: List[str] = field(default_factory=list)
     debug: bool = False
+    user: Optional[str] = None
     # Local SSH certificate (private-key path) to present when authenticating
     # *directly* to the gateway.  Its ``<cert_file>-cert.pub`` sibling is
     # offered as the CertificateFile.  Applied ONLY on the direct/gateway hop
@@ -166,6 +167,11 @@ class SshControl:
     @property
     def socket_path(self) -> Path:
         return _control_socket_path(self.gateway)
+
+    def _format_host(self, host: str) -> str:
+        if self.user:
+            return f"{self.user}@{host}"
+        return host
 
     def is_active(self, *, deep: Optional[bool] = None, sleep=time.sleep) -> bool:
         """Return True if the ControlMaster connection is usable.
@@ -223,7 +229,7 @@ class SshControl:
                     "-o", "BatchMode=yes",
                     "-o", f"ControlPath={self.socket_path}",
                     "-O", "check",
-                    self.gateway,
+                    self._format_host(self.gateway),
                 ],
                 capture_output=True,
                 stdin=subprocess.DEVNULL,
@@ -256,7 +262,7 @@ class SshControl:
                         "-o", "ControlMaster=auto",
                         "-o", f"ControlPath={self.socket_path}",
                         "-o", "ConnectTimeout=5",
-                        self.gateway,
+                        self._format_host(self.gateway),
                         "true",
                     ],
                     capture_output=True,
@@ -329,12 +335,14 @@ class SshControl:
             "-o", f"ServerAliveInterval={self.keepalive_interval}",
             "-o", f"ServerAliveCountMax={self.keepalive_count_max}",
         ]
+        if self.user:
+            cmd.extend(["-o", f"User={self.user}"])
         # Route through jump host's ControlMaster if available.
         if self.jump_host:
             if self.jump_control and self.jump_control.is_active():
                 cmd.extend([
-                    "-J", self.jump_host,
-                    "-o", f"ProxyJump={self.jump_host}",
+                    "-J", self._format_host(self.jump_host),
+                    "-o", f"ProxyJump={self._format_host(self.jump_host)}",
                 ])
                 # Make the ProxyJump itself use the gateway ControlMaster.
                 # SSH respects ControlPath for ProxyJump targets.
@@ -352,10 +360,10 @@ class SshControl:
                     "-o", "StrictHostKeyChecking=accept-new",
                     "-o", f"ProxyCommand=ssh -o ControlMaster=auto "
                           f"-o ControlPath={self.jump_control.socket_path} "
-                          f"-W %h:%p {self.jump_host}",
+                          f"-W %h:%p {self._format_host(self.jump_host)}",
                 ]
             else:
-                cmd.extend(["-J", self.jump_host])
+                cmd.extend(["-J", self._format_host(self.jump_host)])
 
         # Present a gateway SSH certificate on the *direct* hop only.  The
         # login/DTN/compute hops ride the gateway mux and authenticate by
@@ -371,7 +379,7 @@ class SshControl:
         cmd.extend(self.extra_options)
         if self.debug:
             cmd.append("-vvv")
-        cmd.extend(["-fN", self.gateway])
+        cmd.extend(["-fN", self._format_host(self.gateway)])
         logger.debug("ControlMaster command: %s", cmd)
 
         # Capture stderr to a temp file (NOT subprocess.PIPE) so callers
@@ -457,7 +465,7 @@ class SshControl:
                         "-o", "ControlMaster=auto",
                         "-o", f"ControlPath={self.socket_path}",
                         "-o", "ConnectTimeout=5",
-                        self.gateway,
+                        self._format_host(self.gateway),
                         "true",
                     ],
                     capture_output=True,
@@ -508,7 +516,7 @@ class SshControl:
                 "ssh",
                 "-o", f"ControlPath={self.socket_path}",
                 "-O", "exit",
-                self.gateway,
+                self._format_host(self.gateway),
             ],
             capture_output=True,
             stdin=subprocess.DEVNULL,
@@ -544,16 +552,18 @@ class SshControl:
             "-o", "ControlMaster=auto",
             "-o", f"ControlPath={self.socket_path}",
         ]
+        if self.user:
+            opts.extend(["-o", f"User={self.user}"])
         if with_fallback and self.jump_host:
             if self.jump_control is not None:
                 opts.extend([
                     "-o",
                     "ProxyCommand=ssh -o ControlMaster=auto "
                     f"-o ControlPath={self.jump_control.socket_path} "
-                    f"-W %h:%p {self.jump_host}",
+                    f"-W %h:%p {self._format_host(self.jump_host)}",
                 ])
             else:
-                opts.extend(["-o", f"ProxyJump={self.jump_host}"])
+                opts.extend(["-o", f"ProxyJump={self._format_host(self.jump_host)}"])
         return opts
 
 
@@ -605,7 +615,10 @@ class SshTunnel:
         if self.control is not None:
             cmd.extend(self.control.ssh_options())
 
-        cmd.append(self.gateway)
+        gateway = self.gateway
+        if self.control and self.control.user:
+            gateway = f"{self.control.user}@{self.gateway}"
+        cmd.append(gateway)
 
         logger.info(
             "Opening SSH tunnel localhost:%d -> %s:%d via %s",
