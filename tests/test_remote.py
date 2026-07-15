@@ -114,6 +114,7 @@ def test_remote_config_ssh_control_kwargs() -> None:
         "keepalive_interval": 45,
         "keepalive_count_max": 80,
         "cert_file": None,
+        "user": None,  # remote_user is threaded through too (unset -> None)
     }
 
 

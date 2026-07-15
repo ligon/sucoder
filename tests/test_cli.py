@@ -886,6 +886,57 @@ def test_maybe_offer_cert_mint_skips(monkeypatch, control_kw, tty, status, confi
     assert called["mint"] is False
 
 
+def test_resolve_cert_username_precedence(monkeypatch):
+    """username -> $BRC_USER -> config.human_user -> getpass.getuser()."""
+    cfg = SimpleNamespace(human_user="hu")
+
+    # An explicit control user wins over everything else.
+    monkeypatch.setenv("BRC_USER", "envu")
+    assert cli._resolve_cert_username("ctlu", cfg) == "ctlu"
+
+    # $BRC_USER wins over the configured human_user.
+    assert cli._resolve_cert_username(None, cfg) == "envu"
+
+    # With no control user and no env, fall back to the configured human_user.
+    monkeypatch.delenv("BRC_USER", raising=False)
+    assert cli._resolve_cert_username(None, cfg) == "hu"
+
+    # No config threaded at all -> local OS user, never a crash.
+    monkeypatch.setattr(cli.getpass, "getuser", lambda: "localu", raising=False)
+    assert cli._resolve_cert_username(None, None) == "localu"
+
+
+def test_maybe_offer_cert_mint_defaults_to_human_user(monkeypatch):
+    """No control user and no $BRC_USER -> mint with config.human_user.
+
+    Regression guard: the fallback used to call ``typer.get_current_context``
+    (which does not exist -- it is a ``click`` function) and crashed with
+    ``AttributeError`` before the cert could be minted.
+    """
+    from sucoder import cert as cert_mod
+
+    monkeypatch.delenv("BRC_USER", raising=False)
+    monkeypatch.setattr(cli, "sys", _tty(True))
+    monkeypatch.setattr(cli, "_cert_status", lambda cf: ("⚠", "cert EXPIRED (x)"))
+    monkeypatch.setattr(cli.typer, "confirm", lambda *a, **k: True)
+    answers = iter(["1234", "567890"])
+    monkeypatch.setattr(cli.typer, "prompt", lambda *a, **k: next(answers))
+    monkeypatch.setattr(cli.typer, "echo", lambda *a, **k: None)
+
+    minted = {}
+    def fake_mint(cert_file, ca_url, username, pin, otp, lifetime):
+        minted.update(username=username)
+        return {"key_id": "k"}
+    monkeypatch.setattr(cert_mod, "mint", fake_mint)
+
+    cli._maybe_offer_cert_mint(
+        _fake_control(),
+        logger=SimpleNamespace(info=lambda *a, **k: None),
+        config=SimpleNamespace(human_user="ligon"),
+    )
+    assert minted == {"username": "ligon"}
+
+
 def test_attach_refuses_silent_login_node_fallback(tmp_path, monkeypatch):
     """Regression: `sucoder attach` on a SLURM target without a
     recorded SLURM job must NOT silently drop the user onto the login

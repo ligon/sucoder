@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import getpass
 import os
 import re
 import shlex
@@ -131,7 +132,38 @@ def _ensure_ssh_visible(control, label: str, logger) -> None:
     typer.echo(f"✓ Connected to {label}", err=True)
 
 
-def _maybe_offer_cert_mint(control, logger, *, username: Optional[str] = None) -> None:
+def _resolve_cert_username(
+    username: Optional[str], config: Optional[Config]
+) -> str:
+    """Resolve the BRC username for an auto-mint, never raising.
+
+    Precedence: an explicit *username* (the gateway control's SSH
+    ``User``, i.e. a target's ``remote_user``) -> ``$BRC_USER`` -> the
+    configured ``human_user`` -> the local OS user.  *config* may be
+    ``None`` at call sites that cannot thread it -- typer >=0.21 no longer
+    exposes the Click context via ``click.get_current_context`` during a
+    command (verified: it raises ``RuntimeError``), so there is no global
+    fallback -- in which case we drop to ``getpass.getuser()`` rather than
+    crash.  The gateway hop is interactive-only, so the local user is a
+    sane last resort.
+    """
+    if username:
+        return username
+    env_user = os.environ.get("BRC_USER")
+    if env_user:
+        return env_user
+    if config is not None and getattr(config, "human_user", None):
+        return config.human_user
+    return getpass.getuser()
+
+
+def _maybe_offer_cert_mint(
+    control,
+    logger,
+    *,
+    username: Optional[str] = None,
+    config: Optional[Config] = None,
+) -> None:
     """Offer to mint a fresh gateway cert before a cold connect, if it's stale.
 
     A missing/expired ``cert_file`` otherwise degrades to a per-connection
@@ -141,7 +173,10 @@ def _maybe_offer_cert_mint(control, logger, *, username: Optional[str] = None) -
     real TTY, and when the cert actually reads stale -- so agents, cron, and
     warm reuse are untouched.  Any failure is non-fatal: we fall through to
     ssh's own prompt.  ``getattr`` guards keep it inert for the fake controls
-    used in tests.
+    used in tests.  *config* is threaded from the calling command so the
+    default mint username can be the configured ``human_user`` (see
+    :func:`_resolve_cert_username`); it is optional and degrades gracefully
+    when a call site cannot supply it.
     """
     cert_file = getattr(control, "cert_file", None)
     if getattr(control, "jump_host", None) is not None or not cert_file:
@@ -160,9 +195,7 @@ def _maybe_offer_cert_mint(control, logger, *, username: Optional[str] = None) -
         return
     from . import cert as cert_mod
 
-    if not username:
-        config = _get_config(typer.get_current_context())
-        username = os.environ.get("BRC_USER") or config.human_user
+    username = _resolve_cert_username(username, config)
     pin = typer.prompt("BRC PIN", hide_input=True)
     otp = typer.prompt("BRC OTP")
     try:
@@ -187,6 +220,7 @@ def _connect_with_retry(
     max_wait: int = 60,
     initial_delay: int = 3,
     sleep=time.sleep,
+    config: Optional[Config] = None,
 ) -> None:
     """Bring up an SSH ControlMaster, retrying *transient* SSH failures.
 
@@ -209,7 +243,9 @@ def _connect_with_retry(
     # Before a cold gateway connect, offer to mint a fresh cert if the
     # configured one is stale -- so one OTP buys a 12h window instead of an
     # OTP per connection (no-op unless interactive + gateway hop + stale cert).
-    _maybe_offer_cert_mint(control, logger, username=getattr(control, "user", None))
+    _maybe_offer_cert_mint(
+        control, logger, username=getattr(control, "user", None), config=config,
+    )
 
     waited = 0
     delay = initial_delay
@@ -420,7 +456,7 @@ def _build_executor(
             # Retry transient banner-phase closures (a busy login/gateway
             # can shed connections under MaxStartups); a real auth failure
             # still surfaces immediately.
-            _connect_with_retry(gw_control, remote.gateway, logger)
+            _connect_with_retry(gw_control, remote.gateway, logger, config=config)
         except TunnelError as exc:
             typer.echo(str(exc) + _ssh_debug_hint(debug_ssh), err=True)
             raise typer.Exit(code=1) from exc
@@ -2340,7 +2376,7 @@ def attach(
     try:
         # Retry transient banner-phase closures; a real failure is
         # swallowed (best-effort) and ssh will prompt directly if needed.
-        _connect_with_retry(control, remote.gateway, logger)
+        _connect_with_retry(control, remote.gateway, logger, config=config)
     except Exception:
         pass  # Best-effort; ssh will prompt directly if needed
     control_opts = control.ssh_options() if control.is_active() else []
@@ -2563,7 +2599,7 @@ def release(
         debug=debug_ssh,
     )
     try:
-        _connect_with_retry(gw_control, remote.gateway, logger)
+        _connect_with_retry(gw_control, remote.gateway, logger, config=config)
     except Exception as exc:  # noqa: BLE001  -- want broad fallback here
         typer.echo(f"Failed to reach gateway: {exc}" + _ssh_debug_hint(debug_ssh), err=True)
         raise typer.Exit(code=1) from exc
@@ -2849,7 +2885,7 @@ def renew(
         jump_host=remote.gateway, jump_control=gw_control, debug=debug_ssh,
     )
     try:
-        _connect_with_retry(gw_control, remote.gateway, logger)
+        _connect_with_retry(gw_control, remote.gateway, logger, config=config)
         _connect_with_retry(ln_control, login_node, logger)
     except TunnelError as exc:
         typer.echo(f"Failed to reach the cluster: {exc}" + _ssh_debug_hint(debug_ssh), err=True)
@@ -3012,7 +3048,7 @@ def nodes(
         debug=debug_ssh,
     )
     try:
-        _connect_with_retry(gw_control, remote.gateway, logger)
+        _connect_with_retry(gw_control, remote.gateway, logger, config=config)
     except Exception as exc:  # noqa: BLE001 -- surface any setup failure
         typer.echo(f"Failed to reach gateway {remote.gateway}: {exc}" + _ssh_debug_hint(debug_ssh), err=True)
         raise typer.Exit(code=1) from exc
@@ -3150,7 +3186,7 @@ def _tunnel_session_name(target_name: str) -> str:
     return f"tunnel-{target_name}"
 
 
-def _warm_free_tunnels(remote, session, logger, *, debug_ssh: bool):
+def _warm_free_tunnels(remote, session, logger, *, debug_ssh: bool, config=None):
     """Bring the gateway, login-node, and DTN ControlMasters online.
 
     Returns ``(gw_control, ln_control, dtn_control)``.  ``ln_control``
@@ -3166,7 +3202,7 @@ def _warm_free_tunnels(remote, session, logger, *, debug_ssh: bool):
         **remote.ssh_control_kwargs(),
         debug=debug_ssh,
     )
-    _connect_with_retry(gw_control, remote.gateway, logger)
+    _connect_with_retry(gw_control, remote.gateway, logger, config=config)
 
     # Pin a login node through the (now warm) gateway if we don't have one.
     if not session.login_node:
@@ -3242,7 +3278,9 @@ def tunnel_up(
     session = RemoteSession.load(_tunnel_session_name(target_name))
 
     try:
-        gw, ln, dtn = _warm_free_tunnels(remote, session, logger, debug_ssh=debug_ssh)
+        gw, ln, dtn = _warm_free_tunnels(
+            remote, session, logger, debug_ssh=debug_ssh, config=config,
+        )
     except TunnelError as exc:
         typer.echo(str(exc) + _ssh_debug_hint(debug_ssh), err=True)
         raise typer.Exit(code=1) from exc
@@ -3686,7 +3724,7 @@ def tunnel_forward(
                     err=True,
                 )
                 raise typer.Exit(code=1)
-            _connect_with_retry(gw_control, remote.gateway, logger)
+            _connect_with_retry(gw_control, remote.gateway, logger, config=config)
             _connect_with_retry(ln_control, session.login_node, logger)
             _connect_with_retry(node_control, node, logger)
     except TunnelError as exc:
