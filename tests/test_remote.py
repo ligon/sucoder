@@ -144,6 +144,34 @@ def test_ssh_control_kwargs_match_sshcontrol_fields() -> None:
     assert control.keepalive_count_max == 120
 
 
+def test_ssh_control_kwargs_render_block_user_override() -> None:
+    """Regression guard for the ``tunnel up`` render_block call: the helper
+    now carries a ``user`` key, so splatting it while *also* overriding the
+    user (with the human_user fallback) must not collide -- previously this
+    raised ``TypeError: render_block() got multiple values for keyword
+    argument 'user'`` (see cli.py:tunnel_up)."""
+    from sucoder import sshconfig
+
+    # remote_user set -> the target's own user wins.
+    rc = RemoteConfig(gateway="gw", transfer_host="dtn", remote_user="alice")
+    kwargs = rc.ssh_control_kwargs()
+    kwargs["user"] = rc.remote_user or "humanuser"
+    block = sshconfig.render_block(
+        "savio-node", "gw", "dtn", login_node="ln1", **kwargs
+    )
+    assert "User alice" in block
+
+    # remote_user unset -> the config block still emits a User line, falling
+    # back to the human_user (so plain ``ssh <target>-gw`` / TRAMP works).
+    rc = RemoteConfig(gateway="gw", transfer_host="dtn")
+    kwargs = rc.ssh_control_kwargs()
+    kwargs["user"] = rc.remote_user or "humanuser"
+    block = sshconfig.render_block(
+        "savio-node", "gw", "dtn", login_node="ln1", **kwargs
+    )
+    assert "User humanuser" in block
+
+
 def test_mirror_settings_is_remote() -> None:
     from sucoder.config import BranchPrefixes
 

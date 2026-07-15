@@ -3296,13 +3296,20 @@ def tunnel_up(
     if no_config_edit:
         return
 
+    # ssh_control_kwargs() already carries a ``user`` (the target's bare
+    # ``remote_user``, possibly None) so SshControl gets it too; override it
+    # here with the human_user fallback so the written ssh_config block still
+    # emits a ``User`` line for plain ``ssh <target>-gw`` / TRAMP even when
+    # ``remote_user`` is unset.  Passing ``user=`` alongside the splat would
+    # collide (TypeError: multiple values for keyword argument 'user').
+    ssh_kwargs = remote.ssh_control_kwargs()
+    ssh_kwargs["user"] = remote.remote_user or config.human_user
     block = sshconfig.render_block(
         target_name,
         remote.gateway,
         remote.transfer_host,
         login_node=session.login_node,
-        user=remote.remote_user or config.human_user,
-        **remote.ssh_control_kwargs(),
+        **ssh_kwargs,
     )
     path = sshconfig.write_block(block, target_name)
     aliases = sshconfig.alias_names(target_name)
