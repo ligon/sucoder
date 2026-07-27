@@ -1,0 +1,24 @@
+{
+  "upload_type": "software",
+  "title": "sucoder: unix-account isolation for LLM coding agents",
+  "creators": [
+    {
+      "name": "Ligon, Ethan",
+      "affiliation": "University of California, Berkeley",
+      "orcid": "0000-0003-4928-0616"
+    }
+  ],
+  "description": "<p><code>sucoder</code> treats an LLM coding agent (Claude, Codex, Gemini) as a collaborator with its own unix account, relying on fifty years of battle-tested unix user and group permissions rather than bespoke container runtimes or sandboxing daemons. The human's canonical repository is group-readable but not group-writable; the agent works in a sandboxed mirror clone where it has full write access. The isolation boundary is enforced by <code>chown</code>, <code>chmod</code>, and <code>git</code>.</p><p>The tool detects a git repository, mirrors it, and launches the chosen agent against the mirror, optionally on a dedicated task branch.</p>",
+  "license": "apache-2.0",
+  "access_right": "open",
+  "keywords": [
+    "software engineering",
+    "LLM agents",
+    "sandboxing",
+    "unix permissions",
+    "git",
+    "developer tools",
+    "reproducible research",
+    "Python"
+  ]
+}

@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "sucoder: unix-account isolation for LLM coding agents"
+abstract: >-
+  sucoder treats an LLM coding agent (Claude, Codex, Gemini) as a collaborator
+  with its own unix account, relying on unix user and group permissions rather
+  than bespoke container runtimes or sandboxing daemons.  The human's canonical
+  repository is group-readable but not group-writable; the agent works in a
+  sandboxed mirror clone where it has full write access.  The isolation boundary
+  is enforced by chown, chmod, and git.
+authors:
+  - family-names: Ligon
+    given-names: Ethan
+    email: ligon@berkeley.edu
+    affiliation: "University of California, Berkeley"
+    orcid: "https://orcid.org/0000-0003-4928-0616"
+repository-code: "https://github.com/ligon/sucoder"
+url: "https://github.com/ligon/sucoder"
+license: Apache-2.0
+keywords:
+  - software engineering
+  - LLM agents
+  - sandboxing
+  - unix permissions
+  - git
+  - developer tools
+  - reproducible research
