@@ -1,5 +1,7 @@
 #+title: sucoder
 
+[[https://doi.org/10.5281/zenodo.21629611][https://img.shields.io/badge/DOI-10.5281%2Fzenodo.21629611-blue.svg]]
+
 * Project Overview
 Unix user and group permissions have been battle-tested for over fifty years.  When you bring on a new collaborator you give them their own account, set group read on shared files, and let the filesystem enforce the boundaries.  Why should an AI coding agent be any different?
 

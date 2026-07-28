@@ -18,6 +18,7 @@ authors:
 repository-code: "https://github.com/ligon/sucoder"
 url: "https://github.com/ligon/sucoder"
 license: Apache-2.0
+doi: 10.5281/zenodo.21629611
 keywords:
   - software engineering
   - LLM agents
