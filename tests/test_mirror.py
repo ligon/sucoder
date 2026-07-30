@@ -3327,6 +3327,69 @@ def test_pull_from_local_fast_forwards_canonical(tmp_path: Path) -> None:
     assert (canonical / "AGENT_NOTE.md").exists()
 
 
+def test_pull_from_local_refetches_after_mirror_rewrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rewritten mirror branch still reaches divergence handling.
+
+    Regression: the scratch ref refs/sucoder/mirror-head survives from the
+    previous pull, so a non-forced fetch of a rewritten mirror branch is
+    rejected "non-fast-forward" and the pull bails out with only a warning
+    -- silently skipping the reconciliation it exists to perform.
+    """
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+
+    manager.ensure_clone(ctx)
+    mirror_path = ctx.mirror_path
+    canonical = ctx.canonical_path
+    canonical.chmod(canonical.stat().st_mode | 0o200)
+
+    run_git(["checkout", "main"], mirror_path)
+    run_git(["config", "user.email", "agent@example.com"], mirror_path)
+    run_git(["config", "user.name", "Agent"], mirror_path)
+
+    def agent_commit(name: str) -> str:
+        (mirror_path / name).write_text(f"from the agent: {name}\n", encoding="utf-8")
+        run_git(["add", name], mirror_path)
+        run_git(["commit", "-m", f"agent note: {name}"], mirror_path)
+        return run_git(["rev-parse", "HEAD"], mirror_path).stdout.strip()
+
+    # First pull populates the scratch ref and fast-forwards canonical.
+    agent_commit("AGENT_NOTE.md")
+    manager._pull_from_local(ctx)
+
+    # The agent then *rewrites* that commit on the mirror, so the mirror
+    # branch no longer fast-forwards onto the stale scratch ref.  Touch a
+    # different path so the divergence is real but conflict-free.
+    run_git(["reset", "--hard", "HEAD~1"], mirror_path)
+    rewritten = agent_commit("AGENT_NOTE2.md")
+
+    # Canonical still holds the pre-rewrite commit, so this is a genuine
+    # divergence.  The bug returned early at the fetch, so the prompt was
+    # never reached and canonical was left untouched.
+    prompted: list = []
+
+    def fake_prompt(*a, **k):
+        prompted.append(a)
+        return "m"
+
+    monkeypatch.setattr(manager, "_prompt_choice", fake_prompt)
+    manager._pull_from_local(ctx)
+
+    assert prompted, "divergence handling was never reached"
+
+    scratch = run_git(
+        ["rev-parse", "refs/sucoder/mirror-head"], canonical
+    ).stdout.strip()
+    assert scratch == rewritten, "scratch ref was not force-updated"
+    merged = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", rewritten, "HEAD"],
+        cwd=canonical, capture_output=True,
+    )
+    assert merged.returncode == 0, "rewritten mirror commit never reached canonical"
+
+
 def test_pull_from_local_raises_when_mirror_missing(tmp_path: Path) -> None:
     """_pull_from_local raises a clear MirrorError when no mirror exists yet."""
     manager = build_manager(tmp_path)

@@ -989,7 +989,15 @@ class MirrorManager:
         commits, so we fall over to the next transport before giving up.
 
         Strategy:
-        1. Fetch the mirror's branch into a temporary ref — always safe.
+        1. Force-fetch the mirror's branch into a temporary ref — always
+           safe.  The ``+`` is load-bearing: ``tmp_ref`` is a scratch ref
+           left over from the *previous* pull, so when the mirror's branch
+           has been rewritten since (rebase, amend, reset) a non-forced
+           fetch is rejected "non-fast-forward" and we bail out at step 1
+           with only a warning — never reaching the divergence handling
+           below that exists precisely to resolve that case.  Forcing the
+           scratch ref discards nothing: divergence is detected by the
+           merge-base checks further down, not by the fetch.
         2. If canonical is already up-to-date, nothing to do.
         3. If the mirror is strictly ahead (fast-forward), update
            canonical automatically.
@@ -1013,7 +1021,7 @@ class MirrorManager:
         for idx, (label, t_url, t_env) in enumerate(transports):
             url = t_url
             result = self.executor.run_human(
-                ["git", "fetch", t_url, f"{base}:{tmp_ref}"],
+                ["git", "fetch", t_url, f"+{base}:{tmp_ref}"],
                 check=False,
                 cwd=str(ctx.canonical_path),
                 env=t_env,
