@@ -1682,6 +1682,12 @@ def agents_clone(
         "--lfs/--no-lfs",
         help="Download Git LFS objects during clone (default: skip LFS to avoid failures).",
     ),
+    allow_unverified_mirror: bool = typer.Option(
+        False,
+        "--allow-unverified-mirror",
+        help="Push even if the mirror could not be read first "
+             "(discards any unpulled mirror commits).",
+    ),
 ) -> None:
     """Clone the canonical repository into an agent-controlled mirror."""
     mirror = _resolve_mirror_name(ctx, mirror)
@@ -1691,7 +1697,10 @@ def agents_clone(
     mirror_ctx = manager.context_for(mirror)
     try:
         if mirror_ctx.is_remote:
-            manager.ensure_remote_clone(mirror_ctx)
+            manager.ensure_remote_clone(
+                mirror_ctx,
+                allow_unverified_mirror=allow_unverified_mirror,
+            )
         else:
             manager.ensure_clone(mirror_ctx, skip_lfs=not lfs)
     except MirrorError as exc:
@@ -1738,6 +1747,12 @@ def sync(
     mirror: Optional[str] = typer.Argument(None, help="Mirror name defined in configuration.", shell_complete=_mirror_completion),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print commands without executing."),
+    allow_unverified_mirror: bool = typer.Option(
+        False,
+        "--allow-unverified-mirror",
+        help="Push even if the mirror could not be read first "
+             "(discards any unpulled mirror commits).",
+    ),
 ) -> None:
     """Fetch updates from the canonical repository."""
     mirror = _resolve_mirror_name(ctx, mirror)
@@ -1745,7 +1760,10 @@ def sync(
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     manager = _build_manager_for_mirror(config, logger, dry_run, mirror, cli_ctx=ctx)
     try:
-        manager.sync(manager.context_for(mirror))
+        manager.sync(
+            manager.context_for(mirror),
+            allow_unverified_mirror=allow_unverified_mirror,
+        )
     except MirrorError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
@@ -1760,6 +1778,11 @@ def pull(
         None,
         "--node",
         help="Pull from a specific compute node (e.g. --node n0047.savio3).",
+    ),
+    allow_unverified_mirror: bool = typer.Option(
+        False,
+        "--allow-unverified-mirror",
+        help="Exit 0 even if the mirror could not be read.",
     ),
 ) -> None:
     """Fetch agent commits from the mirror into canonical.
@@ -1804,11 +1827,11 @@ def pull(
                 err=True,
             )
         try:
-            manager._pull_from_local(mirror_ctx)
+            ok = manager._pull_from_local(mirror_ctx)
         except MirrorError as exc:
             typer.echo(str(exc), err=True)
             raise typer.Exit(code=1) from exc
-        typer.echo("Pull complete.")
+        _finish_pull(ok, allow_unverified_mirror)
         return
 
     _obj = (ctx.obj if ctx.obj else {}) or {}
@@ -1832,12 +1855,31 @@ def pull(
         raise typer.Exit(code=1)
 
     try:
-        manager._pull_from_remote(mirror_ctx)
+        ok = manager._pull_from_remote(mirror_ctx)
     except MirrorError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
 
-    typer.echo("Pull complete.")
+    _finish_pull(ok, allow_unverified_mirror)
+
+
+def _finish_pull(ok: bool, allow_unverified: bool) -> None:
+    """Report the outcome of a pull, honouring the mirror-read verdict.
+
+    A pull that could not read the mirror must not claim success: that is
+    how unpulled agent commits get silently overwritten by a later sync.
+    """
+    if ok:
+        typer.echo("Pull complete.")
+        return
+    typer.echo(
+        "Pull incomplete: the mirror could not be read and may hold "
+        "commits that are not in canonical.  Canonical was left "
+        "unchanged; see the warning above for the cause.",
+        err=True,
+    )
+    if not allow_unverified:
+        raise typer.Exit(code=1)
 
 
 @app.command("start-task")

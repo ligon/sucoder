@@ -121,6 +121,23 @@ sucoder start-task project rewrite-parser --base main
 sucoder status project
 #+end_src
 
+** Mirror safety: the pull must succeed before the push
+=sync= and =agents-clone= push to the mirror with =git push --all
+--force=, so they first pull whatever the agent committed there.  If that
+pull cannot read the mirror --- host unreachable, allocation gone, the
+agent's work sitting on a branch other than the configured base --- the
+push is refused rather than allowed to overwrite unretrieved commits.
+
+An empty or half-initialised mirror is *not* treated as unreadable, so
+first-time bootstrap is unaffected: sucoder asks the mirror whether it
+holds any commits instead of guessing from the error text.
+
+- --allow-unverified-mirror :: Push anyway, discarding any unpulled
+  mirror commits.  Use when the mirror is known to be expendable.
+
+Likewise =pull= exits non-zero when it could not read the mirror,
+instead of reporting =Pull complete.= after pulling nothing.
+
 * Configuration
 Skip this section if zero-config mode works for you.
 

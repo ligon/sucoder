@@ -3390,6 +3390,89 @@ def test_pull_from_local_refetches_after_mirror_rewrite(
     assert merged.returncode == 0, "rewritten mirror commit never reached canonical"
 
 
+def _no_such_ref(args, **kwargs) -> CommandResult:
+    """A fetch failure of the kind an empty *or* misbranched mirror gives."""
+    return CommandResult(
+        requested_args=list(args),
+        executed_args=list(args),
+        stdout="",
+        stderr="fatal: couldn't find remote ref master",
+        returncode=128,
+    )
+
+
+def test_pull_verdict_false_when_mirror_has_content_but_fetch_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unreadable mirror that holds commits must not clear the push."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+    ctx.canonical_path.chmod(ctx.canonical_path.stat().st_mode | 0o200)
+
+    # Fetch fails the way a misresolved base branch does: the remote
+    # answered, but the ref we asked for isn't there.
+    monkeypatch.setattr(manager.executor, "run_human", _no_such_ref)
+
+    # The mirror is a real clone with commits, so the probe says "content".
+    assert manager._pull_from_local(ctx) is False
+
+
+def test_pull_verdict_true_when_mirror_verifiably_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fetch failure against a genuinely empty mirror still clears the push."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    monkeypatch.setattr(manager.executor, "run_human", _no_such_ref)
+    # Probe reports no commits -> nothing to lose -> push is cleared.
+    monkeypatch.setattr(manager, "_local_repo_has_content", lambda *a: False)
+
+    assert manager._pull_from_local(ctx) is True
+
+
+def test_pull_verdict_false_when_content_probe_itself_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unusable probe fails closed rather than assuming the mirror is empty."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    def exploding_probe(*a, **k):
+        raise OSError("ssh died")
+
+    monkeypatch.setattr(manager.executor, "run_human", _no_such_ref)
+    monkeypatch.setattr(manager, "_local_repo_has_content", exploding_probe)
+
+    assert manager._pull_from_local(ctx) is False
+
+
+def test_sync_refuses_to_push_over_unverified_mirror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """sync() raises instead of force-pushing when the pull came back False."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    monkeypatch.setattr(type(ctx), "is_remote", property(lambda self: True))
+    monkeypatch.setattr(manager, "_pull_from_remote", lambda ctx: False)
+    monkeypatch.setattr(
+        manager, "_resolve_base_branch", lambda ctx: "master")
+
+    pushed: list = []
+    monkeypatch.setattr(manager, "_sync_remote", lambda ctx: pushed.append(ctx))
+
+    with pytest.raises(MirrorError, match="Refusing to push"):
+        manager.sync(ctx)
+    assert not pushed, "force-push ran despite an unverified mirror"
+
+    # The flag is the documented escape hatch.
+    manager.sync(ctx, allow_unverified_mirror=True)
+    assert len(pushed) == 1
+
+
 def test_pull_from_local_raises_when_mirror_missing(tmp_path: Path) -> None:
     """_pull_from_local raises a clear MirrorError when no mirror exists yet."""
     manager = build_manager(tmp_path)

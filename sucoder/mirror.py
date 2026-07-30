@@ -576,14 +576,25 @@ class MirrorManager:
             chunk = paths[i : i + batch_size]
             self.executor.run_human(wrap(base + list(chunk)), check=True)
 
-    def sync(self, ctx: MirrorContext) -> None:
+    def sync(
+        self,
+        ctx: MirrorContext,
+        *,
+        allow_unverified_mirror: bool = False,
+    ) -> None:
         """Fetch updates from the canonical repository.
 
         For remote mirrors, pushes from the local canonical to the
         remote mirror via SSH tunnel to the data transfer node.
+
+        The pull must succeed before the push: ``_sync_remote`` force-
+        pushes every branch, so syncing on top of an unread mirror can
+        destroy agent commits.  *allow_unverified_mirror* overrides that
+        refusal for the case where the mirror is known to be expendable.
         """
         if ctx.is_remote:
-            self._pull_from_remote(ctx)
+            if not self._pull_from_remote(ctx) and not allow_unverified_mirror:
+                raise MirrorError(self._unverified_mirror_message(ctx))
             self._sync_remote(ctx)
             return
 
@@ -935,16 +946,57 @@ class MirrorManager:
 
     # -- Remote sync -----------------------------------------------------
 
-    def _pull_from_remote(self, ctx: MirrorContext) -> None:
-        """Fetch agent commits from the remote mirror into canonical."""
-        self._pull_from_url(
+    def _unverified_mirror_message(self, ctx: MirrorContext) -> str:
+        """Explain why a push was refused after an unreadable pull."""
+        return (
+            "Refusing to push: the mirror could not be read, and it has "
+            "commits (or its state could not be determined).\n"
+            "The push would be `--all --force`, so it would overwrite "
+            "whatever the agent committed there.\n\n"
+            "Check the fetch warning above.  Common causes:\n"
+            "  * the mirror host or SLURM allocation is unreachable — "
+            "retry when it is back;\n"
+            f"  * the agent's work is on a branch other than "
+            f"'{self._resolve_base_branch(ctx)}' — set default_base_branch "
+            f"in the mirror config to match;\n"
+            "  * the mirror repository is damaged — inspect it directly.\n\n"
+            "Re-run with --allow-unverified-mirror to push anyway and "
+            "discard any unpulled mirror commits."
+        )
+
+    def _pull_from_remote(self, ctx: MirrorContext) -> bool:
+        """Fetch agent commits from the remote mirror into canonical.
+
+        Returns whether the mirror's state was successfully accounted
+        for — see ``_pull_from_url`` for what the verdict means and why
+        callers must honour it before force-pushing.
+        """
+        return self._pull_from_url(
             ctx,
             self._git_transports(ctx),
             source_label="remote mirror",
             timeout=self._GIT_REMOTE_TIMEOUT,
+            content_probe=lambda: self._remote_repo_has_content(
+                getattr(self.executor, "run_on_login_node",
+                        self.executor.run_agent),
+                self._resolve_remote_path(ctx),
+                self._resolve_base_branch(ctx),
+            ),
         )
 
-    def _pull_from_local(self, ctx: MirrorContext) -> None:
+    def _local_repo_has_content(self, mirror_path: Path, base: str) -> bool:
+        """``_remote_repo_has_content`` for a mirror on the local filesystem."""
+        import subprocess
+
+        for ref in ("HEAD", f"refs/heads/{base}"):
+            if subprocess.run(
+                ["git", "rev-parse", "--verify", "--quiet", ref],
+                capture_output=True, cwd=str(mirror_path),
+            ).returncode == 0:
+                return True
+        return False
+
+    def _pull_from_local(self, ctx: MirrorContext) -> bool:
         """Fetch agent commits from a local-disk mirror into canonical.
 
         Counterpart to ``_pull_from_remote`` for mirrors that live on
@@ -960,10 +1012,13 @@ class MirrorManager:
                 f"run `sucoder collaborate {ctx.settings.name}` once to "
                 f"create it before pulling."
             )
-        self._pull_from_url(
+        return self._pull_from_url(
             ctx,
             [("local mirror", str(mirror_path), None)],
             source_label=f"local mirror at {mirror_path}",
+            content_probe=lambda: self._local_repo_has_content(
+                mirror_path, self._resolve_base_branch(ctx),
+            ),
         )
 
     def _pull_from_url(
@@ -973,8 +1028,27 @@ class MirrorManager:
         *,
         source_label: str = "mirror",
         timeout: Optional[int] = None,
-    ) -> None:
+        content_probe: Optional[Callable[[], bool]] = None,
+    ) -> bool:
         """Fetch agent commits into canonical and reconcile.
+
+        Returns ``True`` when the mirror's state has been accounted for
+        and it is therefore safe for the caller to force-push over it;
+        ``False`` when we could not read a mirror that may hold commits.
+        Callers that go on to call ``_sync_remote`` **must** honour a
+        ``False`` verdict: that push is ``--all --force`` and would
+        destroy exactly the work this method failed to retrieve.
+
+        *content_probe*, when supplied, answers "does the mirror have any
+        commits?" and is consulted only if the fetch failed.  It is what
+        separates the benign case (an empty or half-initialised mirror on
+        first run — nothing to lose, push away) from the dangerous one,
+        and it asks the mirror directly rather than pattern-matching
+        git's stderr.  That distinction cannot be made from the error
+        text: a mirror whose work sits on a branch other than *base*
+        fails the fetch with the same "couldn't find remote ref" as a
+        genuinely empty one, because ``_resolve_base_branch`` probes only
+        canonical and never asks the mirror what it actually has.
 
         Shared by ``_pull_from_remote`` (SSH transports, DTN→login-node
         failover) and ``_pull_from_local`` (a single filesystem path).
@@ -1037,14 +1111,38 @@ class MirrorManager:
                 )
 
         if result is None or result.returncode != 0:
-            # Mirror may be empty (first run) or unreachable.
             self.logger.warning(
                 "Could not fetch from %s (rc=%d): %s",
                 source_label,
                 result.returncode if result is not None else -1,
                 (result.stderr or "").strip() if result is not None else "",
             )
-            return
+            # Ask the mirror whether it holds any commits.  Only a
+            # definitive "no" clears the caller to force-push; a probe
+            # that itself fails leaves us unable to rule out losing work,
+            # so it fails closed.
+            if content_probe is None:
+                return False
+            try:
+                has_content = content_probe()
+            except Exception as exc:  # noqa: BLE001 - probe is best-effort
+                self.logger.warning(
+                    "Could not determine whether %s holds commits (%s) — "
+                    "treating it as unverified",
+                    source_label, exc,
+                )
+                return False
+            if has_content:
+                self.logger.warning(
+                    "%s has commits but could not be fetched — its state is "
+                    "unverified", source_label,
+                )
+                return False
+            self.logger.info(
+                "%s is empty or half-initialised — nothing to pull",
+                source_label,
+            )
+            return True
 
         canon = str(ctx.canonical_path)
 
@@ -1060,10 +1158,10 @@ class MirrorManager:
         mirror_head = _rev(tmp_ref)
 
         if not mirror_head:
-            return  # nothing fetched
+            return True  # fetch succeeded; mirror simply had nothing
         if mirror_head == local_head:
             self.logger.info("Canonical and mirror are in sync")
-            return
+            return True
 
         # Check if local is ancestor of mirror (fast-forward possible).
         is_ancestor = subprocess.run(
@@ -1090,7 +1188,7 @@ class MirrorManager:
                 ["git", "reset", "--hard", base],
                 check=True, cwd=canon,
             )
-            return
+            return True
 
         # Check reverse: canonical is ahead of the mirror (mirror is
         # an ancestor of canonical).  Nothing to pull — the upcoming
@@ -1104,7 +1202,7 @@ class MirrorManager:
             self.logger.info(
                 "Canonical is ahead of mirror — nothing to pull"
             )
-            return
+            return True
 
         # Histories have genuinely diverged — need user input.
         only_on_mirror = subprocess.run(
@@ -1146,6 +1244,11 @@ class MirrorManager:
                 "manual reconciliation.  The mirror branch is available "
                 f"locally at {tmp_ref} for inspection."
             )
+
+        # Reached only via merge/stash/discard: the mirror's commits are
+        # now either in canonical or deliberately abandoned, so the push
+        # is cleared.
+        return True
 
     def _merge_mirror_commits(
         self,
@@ -1476,7 +1579,12 @@ class MirrorManager:
             cwd=remote_path,
         ).returncode == 0
 
-    def ensure_remote_clone(self, ctx: MirrorContext) -> bool:
+    def ensure_remote_clone(
+        self,
+        ctx: MirrorContext,
+        *,
+        allow_unverified_mirror: bool = False,
+    ) -> bool:
         """Ensure the mirror exists on the remote host.
 
         Initialises a bare-ish clone on the remote if it does not
@@ -1573,8 +1681,12 @@ class MirrorManager:
             cwd=abs_remote_path,
         )
 
-        # Pull any agent commits before overwriting the mirror.
-        self._pull_from_remote(ctx)
+        # Pull any agent commits before overwriting the mirror.  A mirror
+        # we just re-initialised above probes as empty, so bootstrap is
+        # unaffected; this only bites when a mirror with commits could not
+        # be read, which is precisely when the push below must not run.
+        if not self._pull_from_remote(ctx) and not allow_unverified_mirror:
+            raise MirrorError(self._unverified_mirror_message(ctx))
 
         # The remote mirror uses receive.denyCurrentBranch=updateInstead,
         # which requires a clean working tree.  If the agent (or a
