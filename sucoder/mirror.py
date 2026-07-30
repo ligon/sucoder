@@ -607,6 +607,15 @@ class MirrorManager:
             check=True,
             cwd=str(mirror_path),
         )
+        # Say what actually happened.  Unlike the remote path above, this
+        # does not move the mirror's branches — it only makes canonical's
+        # commits visible — and callers reading "sync" or "push" would
+        # otherwise reasonably assume the mirror now matches canonical.
+        self.logger.info(
+            "Canonical's commits are now visible in the mirror as "
+            "%s/<branch>; the mirror's own branches were not moved",
+            ctx.remote_name,
+        )
 
     def _resolve_remote_path(self, ctx: MirrorContext) -> str:
         """Return the absolute remote mirror path, resolving ~ via SSH.

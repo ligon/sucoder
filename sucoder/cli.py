@@ -1741,6 +1741,54 @@ def prepare_canonical(
         raise typer.Exit(code=1) from exc
 
 
+def _push_to_mirror(
+    ctx: typer.Context,
+    mirror: Optional[str],
+    verbose: bool,
+    dry_run: bool,
+    allow_unverified_mirror: bool,
+) -> None:
+    """Shared body of the ``push``/``sync`` pair."""
+    mirror = _resolve_mirror_name(ctx, mirror)
+    config = _get_config(ctx)
+    logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
+    manager = _build_manager_for_mirror(config, logger, dry_run, mirror, cli_ctx=ctx)
+    try:
+        manager.sync(
+            manager.context_for(mirror),
+            allow_unverified_mirror=allow_unverified_mirror,
+        )
+    except MirrorError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+
+@app.command("push")
+def push(
+    ctx: typer.Context,
+    mirror: Optional[str] = typer.Argument(None, help="Mirror name defined in configuration.", shell_complete=_mirror_completion),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print commands without executing."),
+    allow_unverified_mirror: bool = typer.Option(
+        False,
+        "--allow-unverified-mirror",
+        help="Push even if the mirror could not be read first "
+             "(discards any unpulled mirror commits).",
+    ),
+) -> None:
+    """Send canonical's commits to the mirror (the inverse of `pull`).
+
+    Agent commits on the mirror are pulled back first, so this cannot
+    overwrite work that has not been retrieved.
+
+    For remote mirrors the mirror's branches are overwritten to match
+    canonical.  For local mirrors canonical's commits are made *visible*
+    in the mirror (as remote-tracking refs); the mirror's own branches
+    are left where the agent put them.
+    """
+    _push_to_mirror(ctx, mirror, verbose, dry_run, allow_unverified_mirror)
+
+
 @app.command("sync")
 def sync(
     ctx: typer.Context,
@@ -1754,19 +1802,8 @@ def sync(
              "(discards any unpulled mirror commits).",
     ),
 ) -> None:
-    """Fetch updates from the canonical repository."""
-    mirror = _resolve_mirror_name(ctx, mirror)
-    config = _get_config(ctx)
-    logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
-    manager = _build_manager_for_mirror(config, logger, dry_run, mirror, cli_ctx=ctx)
-    try:
-        manager.sync(
-            manager.context_for(mirror),
-            allow_unverified_mirror=allow_unverified_mirror,
-        )
-    except MirrorError as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(code=1) from exc
+    """Alias for `push`, kept for compatibility."""
+    _push_to_mirror(ctx, mirror, verbose, dry_run, allow_unverified_mirror)
 
 
 @app.command("pull")

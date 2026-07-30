@@ -84,7 +84,7 @@ The canonical repository remains unwritable by the agent throughout.
 |----------------------+----------------------------------------------|
 | =prepare-canonical=  | Set permissions and add agent remote (step 2)|
 | =agents-clone=       | Clone the mirror (step 3)                    |
-| =sync=               | Fetch latest into the mirror (step 4)        |
+| =push=               | Send canonical commits to the mirror (step 4)|
 | =start-task=         | Create a task branch (step 4)                |
 | =agents-run=         | Launch the agent (steps 5--6)                |
 | =worktrees=          | List active worktrees with status             |
@@ -93,7 +93,7 @@ The canonical repository remains unwritable by the agent throughout.
 
 * Key Features
 - agents-clone :: Clone a canonical repository into an agent-owned mirror with strict permissions.
-- sync :: Fetch updates from the canonical repository into the mirror without granting write access.
+- push :: Send the canonical repository's commits to the mirror without granting write access.  Pulls the agent's commits back first, and refuses rather than force-push over a mirror it could not read.  Available as =sync= too.
 - start-task :: Create a new agent task branch based on a human branch while preserving branch naming conventions.
 - status :: Summarize the state of a mirror, including permissions and git remotes.
 - collaborate :: Prepare canonical, ensure mirror, and launch agent in one step.
@@ -111,8 +111,8 @@ The canonical repository remains unwritable by the agent throughout.
 # Clone the canonical repository into the configured mirror.
 sucoder agents-clone project
 
-# Refresh the mirror with the latest human commits.
-sucoder sync project
+# Send canonical's commits to the mirror (inverse of `pull`).
+sucoder push project
 
 # Create a task branch for the agent starting from ligon/main.
 sucoder start-task project rewrite-parser --base main
@@ -121,8 +121,21 @@ sucoder start-task project rewrite-parser --base main
 sucoder status project
 #+end_src
 
+** Moving commits between canonical and the mirror
+- push :: canonical --> mirror.  For remote mirrors the mirror's branches
+  are overwritten to match canonical.  For local mirrors canonical's
+  commits become *visible* in the mirror as =<remote>/<branch>=; the
+  mirror's own branches are left where the agent put them.
+- pull :: mirror --> canonical.  Brings the agent's commits back, with a
+  prompt when the two histories have diverged.
+- sync :: an alias for =push=, kept for compatibility.
+
+=agents-clone= is for creating the mirror, not for routine pushing: on a
+remote mirror it will rebuild the repository from scratch if it decides
+the remote copy is a half-initialised husk.
+
 ** Mirror safety: the pull must succeed before the push
-=sync= and =agents-clone= push to the mirror with =git push --all
+=push= (and =agents-clone=) send to the mirror with =git push --all
 --force=, so they first pull whatever the agent committed there.  If that
 pull cannot read the mirror --- host unreachable, allocation gone, the
 agent's work sitting on a branch other than the configured base --- the
