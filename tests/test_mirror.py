@@ -5,7 +5,7 @@ import pwd
 import subprocess
 import types
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Dict, Optional
 
 import pytest
 
@@ -79,6 +79,7 @@ def build_manager(
     *,
     prompt_handler: Optional[Callable[[str], bool]] = None,
     executor: Optional[CommandExecutor] = None,
+    report_agent_binary: bool = False,
 ) -> MirrorManager:
     canonical = tmp_path / "canonical"
     canonical.mkdir()
@@ -138,6 +139,13 @@ def build_manager(
     # Point skills dir at a nonexistent path so auto-commit doesn't
     # interfere with tests that don't care about skills tracking.
     type(manager)._agent_skills_dir = property(lambda self, p=tmp_path / "_no_skills": p)
+    # The binary-resolution diagnostic spawns `--version` subprocesses against
+    # whatever real agent binaries sit on the developer's PATH and walks the
+    # real filesystem.  Left live it would make every launch_agent test
+    # host-dependent (and slow, by the probe timeout, whenever a local agent
+    # binary is sluggish).  Tests that exercise it opt back in explicitly.
+    if not report_agent_binary:
+        manager._report_agent_binary = lambda *a, **kw: None  # type: ignore[method-assign]
     return manager
 
 
@@ -4725,7 +4733,7 @@ def test_report_agent_binary_logs_resolved_path_and_version(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    manager = build_manager(tmp_path)
+    manager = build_manager(tmp_path, report_agent_binary=True)
     ctx = manager.context_for("sample")
 
     bin_dir = tmp_path / "path-bin"
@@ -4752,7 +4760,7 @@ def test_report_agent_binary_warns_when_newer_install_is_shadowed(
     the current 0.147.0 sits in the agent user's nvm tree, invisible because
     ~/.bashrc's nvm block short-circuits in non-interactive shells.
     """
-    manager = build_manager(tmp_path)
+    manager = build_manager(tmp_path, report_agent_binary=True)
     ctx = manager.context_for("sample")
 
     stale_dir = tmp_path / "usr-bin"
@@ -4779,7 +4787,7 @@ def test_report_agent_binary_ignores_older_and_identical_installs(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    manager = build_manager(tmp_path)
+    manager = build_manager(tmp_path, report_agent_binary=True)
     ctx = manager.context_for("sample")
 
     bin_dir = tmp_path / "path-bin"
@@ -4806,7 +4814,7 @@ def test_report_agent_binary_ignores_symlink_to_same_target(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A symlink chain to one install must not look like two competing ones."""
-    manager = build_manager(tmp_path)
+    manager = build_manager(tmp_path, report_agent_binary=True)
     ctx = manager.context_for("sample")
 
     real = _write_fake_binary(tmp_path / "real" / "codex", "codex-cli 0.147.0")
@@ -4833,7 +4841,7 @@ def test_report_agent_binary_warns_when_command_not_on_path(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    manager = build_manager(tmp_path)
+    manager = build_manager(tmp_path, report_agent_binary=True)
     ctx = manager.context_for("sample")
 
     empty = tmp_path / "empty-bin"
@@ -4852,7 +4860,7 @@ def test_report_agent_binary_skips_when_nvm_is_pinned(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """An explicit nvm pin resolves inside the nvm shell, so our lookup would lie."""
-    manager = build_manager(tmp_path)
+    manager = build_manager(tmp_path, report_agent_binary=True)
     ctx = manager.context_for("sample")
 
     stale_dir = tmp_path / "usr-bin"
@@ -4875,7 +4883,7 @@ def test_report_agent_binary_reports_explicit_path_without_shadow_check(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    manager = build_manager(tmp_path)
+    manager = build_manager(tmp_path, report_agent_binary=True)
     ctx = manager.context_for("sample")
 
     explicit = _write_fake_binary(tmp_path / "opt" / "codex", "codex-cli 0.147.0")
@@ -4887,44 +4895,130 @@ def test_report_agent_binary_reports_explicit_path_without_shadow_check(
     assert "shadowing" not in caplog.text
 
 
-def test_report_agent_binary_flags_sudo_reresolution(
+def test_report_agent_binary_resolves_via_login_shell_not_our_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """When the launch escalates, sudo's secure_path -- not ours -- decides."""
-    manager = build_manager(tmp_path)
+    """The launch resolves in a profile-sourcing shell, so the report must too.
+
+    Stock Debian ``~/.profile`` prepends ``$HOME/.local/bin``, so the agent's
+    login PATH can name a different binary than this process's PATH.  Resolving
+    with ``shutil.which`` reports the wrong one -- and then calls the binary
+    that actually runs a "shadowed" rival, which is backwards.
+    """
+    manager = build_manager(tmp_path, report_agent_binary=True)
+    ctx = manager.context_for("sample")
+
+    ours = tmp_path / "our-path" / "codex"
+    _write_fake_binary(ours, "codex-cli 0.77.0")
+    theirs = tmp_path / "login-path" / "codex"
+    _write_fake_binary(theirs, "codex-cli 0.147.0")
+
+    # This process sees only the stale one; the login shell prefers the new one.
+    monkeypatch.setenv("PATH", str(ours.parent))
+    monkeypatch.setattr(manager, "_agent_home_directory", lambda: None)
+
+    def fake_run_agent(args, **kwargs):
+        assert args[0] == "bash" and args[1] == "-lc"
+        assert "command -v codex" in args[2]
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout=f"{theirs}\n", stderr="", returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+
+    with caplog.at_level(logging.INFO):
+        manager._report_agent_binary(ctx, ["codex"], AgentLauncher(command=["codex"], env={}))
+
+    assert str(theirs) in caplog.text
+    assert "0.147.0" in caplog.text
+    # The one that actually launches is the newest, so nothing is shadowed.
+    assert "shadowing" not in caplog.text
+
+
+def test_report_agent_binary_falls_back_to_which_when_shell_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A shell we cannot run degrades the diagnostic; it does not remove it."""
+    manager = build_manager(tmp_path, report_agent_binary=True)
     ctx = manager.context_for("sample")
 
     bin_dir = tmp_path / "path-bin"
     _write_fake_binary(bin_dir / "codex", "codex-cli 0.147.0")
     monkeypatch.setenv("PATH", str(bin_dir))
     monkeypatch.setattr(manager, "_agent_home_directory", lambda: None)
-    monkeypatch.setattr(manager.executor, "use_sudo_for_agent", True)
-    monkeypatch.setattr(manager.executor, "agent_user", "somebody-else")
+
+    def boom(args, **kwargs):
+        raise OSError("no shell here")
+
+    monkeypatch.setattr(manager.executor, "run_agent", boom)
 
     with caplog.at_level(logging.INFO):
         manager._report_agent_binary(ctx, ["codex"], AgentLauncher(command=["codex"], env={}))
 
-    assert "secure_path" in caplog.text
+    assert str(bin_dir / "codex") in caplog.text
 
 
-def test_report_agent_binary_omits_sudo_note_without_escalation(
+def test_report_agent_binary_ignores_shell_builtin_answer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """`command -v` echoes a bare word for builtins; only a path is probeable."""
     manager = build_manager(tmp_path)
-    ctx = manager.context_for("sample")
 
     bin_dir = tmp_path / "path-bin"
     _write_fake_binary(bin_dir / "codex", "codex-cli 0.147.0")
     monkeypatch.setenv("PATH", str(bin_dir))
-    monkeypatch.setattr(manager, "_agent_home_directory", lambda: None)
-    monkeypatch.setattr(manager.executor, "use_sudo_for_agent", False)
+    monkeypatch.setattr(
+        manager.executor,
+        "run_agent",
+        lambda args, **kw: CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="codex\n", stderr="", returncode=0,
+        ),
+    )
 
-    with caplog.at_level(logging.INFO):
-        manager._report_agent_binary(ctx, ["codex"], AgentLauncher(command=["codex"], env={}))
+    assert manager._resolve_agent_binary("codex") == str(bin_dir / "codex")
 
-    assert "Agent binary" in caplog.text
-    assert "secure_path" not in caplog.text
+
+def test_probe_binary_version_survives_non_utf8_output(tmp_path: Path) -> None:
+    """Strict decoding raises UnicodeDecodeError -- neither OSError nor
+    SubprocessError -- so it must not escape a best-effort diagnostic."""
+    path = tmp_path / "codex"
+    path.write_bytes(b'#!/bin/sh\nprintf "agent \\377\\376 1.2.3\\n"\n')
+    path.chmod(0o755)
+
+    assert "1.2.3" in (_probe_binary_version(str(path)) or "")
+
+
+def test_launch_agent_survives_a_failing_binary_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A broken diagnostic must never be the reason a launch fails."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("diagnostic blew up")
+
+    monkeypatch.setattr(manager, "_report_agent_binary", explode)
+
+    recorded: Dict[str, object] = {}
+
+    def fake_run_agent(args, **kwargs):
+        recorded["args"] = list(args)
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="", stderr="", returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+
+    assert manager.launch_agent(ctx, sync=False) == 0
+    assert recorded.get("args"), "the agent should still have been launched"

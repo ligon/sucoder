@@ -881,25 +881,35 @@ When adding a new agent, implement its profile in =AGENT_PROFILES= in
 
 ** Which agent binary actually launches
 =sucoder= hands the agent name to =execvp= (or to =sudo -u <agent_user>=), so the
-binary is chosen by a plain PATH lookup.  The launch does use =bash -lc=, but the
-stock =~/.bashrc= returns early when non-interactive, so version managers wired up
-there---nvm and friends---never load.  A shell you type =codex= into and a shell
-=sucoder= launches can therefore resolve to different installs, and the stale one
-wins silently.
+binary is chosen by a PATH lookup---but the PATH that decides is the *agent user's
+login* PATH, not yours.  Both launch paths resolve inside a shell that has sourced
+the agent's login profile, and a stock Debian =~/.profile= prepends
+=$HOME/.local/bin=.  What such a shell does /not/ pick up is =~/.bashrc=, which
+returns early when non-interactive, so version managers wired up there---nvm and
+friends---never load.  A shell you type =codex= into and a shell =sucoder= launches
+can therefore resolve to different installs, and the stale one wins silently.
 
-Before each local launch, =sucoder= logs the absolute path and =--version= of the
-binary it resolved:
+Before each local launch, =sucoder= asks that same shell (=bash -lc 'command -v
+<agent>'=, through the same =sudo= escalation the launch uses) and logs the path
+and =--version= it gets back:
 
 #+begin_example
 INFO Agent binary: codex -> /usr/local/bin/codex (codex-cli 0.147.0)
 #+end_example
 
+Resolving through the launch's own shell rather than =sucoder='s PATH is what makes
+the report trustworthy: it accounts for the agent user's login profile, and for
+=sudo='s =secure_path= when sudo is in play.
+
 If it finds a *newer* build of the same name elsewhere---anywhere on PATH, or under
 the agent user's =~/.local/bin= or =~/.nvm/versions/node/*/bin=---it warns that the
 resolved one is shadowing it.  The usual fix is a symlink from a directory that
-comes earlier on PATH.  Note that =sudo= consults its own =secure_path= rather than
-the caller's PATH, so a symlink under the agent user's home will not help a launch
-that escalates; use a system directory such as =/usr/local/bin=.
+comes earlier on the agent user's login PATH, or an =agent_launcher.nvm= block to
+pin resolution outright.
+
+The whole check is best-effort and contained: probes are bounded, and any failure
+inside it is logged at debug level and swallowed rather than allowed to abort a
+launch that would otherwise succeed.
 
 The check is skipped for remote launches (PATH belongs to the remote host), under
 =--dry-run= (it would spawn =--version= subprocesses), and when an

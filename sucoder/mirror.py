@@ -2524,8 +2524,14 @@ class MirrorManager:
                 )
 
         # Report which binary this bare command name actually resolves to,
-        # before nvm wrapping rewrites command[0] into ``bash``.
-        self._report_agent_binary(ctx, command, launcher)
+        # before nvm wrapping rewrites command[0] into ``bash``.  The whole
+        # subsystem is a diagnostic that shells out to third-party binaries and
+        # walks the filesystem, so it is contained here: a launch must never
+        # fail because the thing describing it did.
+        try:
+            self._report_agent_binary(ctx, command, launcher)
+        except Exception:  # pragma: no cover - defensive
+            self.logger.debug("Agent binary report failed.", exc_info=True)
 
         command = self._wrap_with_nvm(command, launcher)
 
@@ -3151,11 +3157,21 @@ class MirrorManager:
         """Log which binary a bare agent command resolves to, and flag shadowing.
 
         ``launch_agent`` hands the agent name to ``os.execvp`` (or to ``sudo``),
-        so resolution is a plain PATH lookup.  ``bash -lc`` does run a login
-        shell, but the stock ``~/.bashrc`` returns early when non-interactive,
-        so version managers wired up there (nvm and friends) never load.  A
-        stale install earlier on PATH therefore wins silently, which is exactly
-        how a months-old agent binary can keep launching unnoticed.
+        so resolution is a plain PATH lookup -- but *whose* PATH matters, and it
+        is not this process's.  Both launch paths resolve inside a shell that
+        has sourced the agent user's login profile (``_exec_agent`` uses ``bash
+        -lc``; ``CommandExecutor._wrap_agent_command`` sources ``/etc/profile``
+        and ``~/.profile`` explicitly), and the stock Debian ``~/.profile``
+        *prepends* ``$HOME/.local/bin``.  Asking ``shutil.which`` instead would
+        answer for the human's non-login PATH and could name a different binary
+        than the one that will actually run -- reporting a stale system install
+        as the winner while the launch quietly uses a newer one under the agent
+        user's home.  So resolve by asking that same shell.
+
+        What the login shell does *not* pick up is ``~/.bashrc``, which returns
+        early when non-interactive, so version managers wired up there (nvm and
+        friends) never load.  That is the gap this diagnostic exists to surface:
+        a stale install can win silently for months.
 
         Skipped for remote launches (PATH is the remote host's, not ours) and
         when an ``agent_launcher.nvm`` block is configured, since the operator
@@ -3173,7 +3189,7 @@ class MirrorManager:
             self.logger.info("Agent binary: %s", name)
             return
 
-        resolved = shutil.which(name)
+        resolved = self._resolve_agent_binary(name)
         if resolved is None:
             self.logger.warning(
                 "Agent command %r was not found on PATH; the launch will fail.",
@@ -3183,33 +3199,53 @@ class MirrorManager:
 
         version = _probe_binary_version(resolved)
         self.logger.info(
-            "Agent binary: %s -> %s%s%s",
+            "Agent binary: %s -> %s%s",
             name,
             resolved,
             f" ({version})" if version else "",
-            # Our lookup uses this process's PATH.  When the launch escalates,
-            # sudo re-resolves against its own secure_path, so say so rather
-            # than presenting a possibly-different path as settled fact.
-            " (resolved from this PATH; sudo re-resolves via secure_path)"
-            if self._agent_launch_escalates()
-            else "",
         )
 
         self._warn_if_agent_binary_shadowed(name, resolved, version)
 
-    def _agent_launch_escalates(self) -> bool:
-        """Whether launching the agent will go through ``sudo -u <agent_user>``.
+    def _resolve_agent_binary(self, name: str) -> Optional[str]:
+        """Resolve *name* the way the launch will, not the way we would.
 
-        Mirrors the condition in :meth:`_exec_agent`.
+        ``command -v`` is run under ``bash -lc`` through
+        :meth:`CommandExecutor.run_agent`, which reproduces the launch
+        environment on both paths: it applies the same ``sudo -u <agent_user>``
+        escalation when one is configured, and ``bash -lc`` is literally what
+        :meth:`_exec_agent` uses.  So the answer accounts for the agent user's
+        login profile -- including the ``$HOME/.local/bin`` that stock Debian
+        ``~/.profile`` prepends -- and for sudo's ``secure_path`` when sudo is
+        in play, neither of which ``shutil.which`` would see.
+
+        The explicit ``bash -lc`` matters: ``_wrap_agent_command`` returns argv
+        untouched when ``use_sudo_for_agent`` is false, so a bare ``command``
+        argv would be looked up as a binary and fail.
+
+        Falls back to ``shutil.which`` only if that shell cannot be run at all;
+        a PATH-shaped guess beats dropping the diagnostic entirely.
         """
 
-        if not self.executor.use_sudo_for_agent:
-            return False
         try:
-            current_user = pwd.getpwuid(os.getuid()).pw_name
-        except KeyError:
-            return True
-        return self.executor.agent_user != current_user
+            result = self.executor.run_agent(
+                ["bash", "-lc", f"command -v {shlex.quote(name)}"],
+                check=False,
+                capture_output=True,
+                timeout=int(_VERSION_PROBE_TIMEOUT),
+            )
+        except Exception:
+            result = None
+
+        if result is not None and result.returncode == 0:
+            for line in reversed((result.stdout or "").splitlines()):
+                candidate = line.strip()
+                # `command -v` echoes the bare word for builtins, functions and
+                # aliases; only an absolute path names something we can probe.
+                if candidate.startswith(os.sep):
+                    return candidate
+
+        return shutil.which(name)
 
     def _warn_if_agent_binary_shadowed(
         self,
@@ -3252,10 +3288,9 @@ class MirrorManager:
 
         self.logger.warning(
             "Agent binary %s (%s) is shadowing a newer install at %s (%s).  "
-            "sucoder launches the one earlier on PATH.  Point %s at the newer "
-            "build (a symlink from a directory earlier on PATH), or pin it with "
-            "an `agent_launcher.nvm` block -- note that sudo uses its own "
-            "secure_path, so a fix under the agent user's home may not apply.",
+            "That is the one this launch will use.  Point %s at the newer build "
+            "(a symlink from a directory earlier on the agent user's login "
+            "PATH), or pin it with an `agent_launcher.nvm` block.",
             resolved,
             version,
             best_path,
@@ -5461,6 +5496,15 @@ def _probe_binary_version(path: str) -> Optional[str]:
     Best-effort only: a binary that hangs, crashes, or does not understand
     ``--version`` simply yields no version, and callers degrade to reporting
     the path alone.
+
+    ``errors="replace"`` because the default strict decode raises
+    ``UnicodeDecodeError`` -- a ``ValueError``, so neither ``OSError`` nor
+    ``SubprocessError`` catches it -- on any binary whose ``--version`` emits
+    non-UTF-8 bytes.  The bare ``except Exception`` backs that up: this is a
+    diagnostic, and nothing it does is worth aborting a launch over.
+
+    ``stdin`` is ``DEVNULL`` so a probed binary cannot consume the human's
+    terminal input while we are about to hand that terminal to the agent.
     """
 
     try:
@@ -5468,10 +5512,12 @@ def _probe_binary_version(path: str) -> Optional[str]:
             [path, "--version"],
             capture_output=True,
             text=True,
+            errors="replace",
+            stdin=subprocess.DEVNULL,
             timeout=_VERSION_PROBE_TIMEOUT,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
+    except Exception:
         return None
     if result.returncode != 0:
         return None
