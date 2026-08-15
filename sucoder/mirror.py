@@ -2523,6 +2523,10 @@ class MirrorManager:
                     command[0],
                 )
 
+        # Report which binary this bare command name actually resolves to,
+        # before nvm wrapping rewrites command[0] into ``bash``.
+        self._report_agent_binary(ctx, command, launcher)
+
         command = self._wrap_with_nvm(command, launcher)
 
         # Determine launch mode: explicit config > agent profile default > subprocess
@@ -3137,6 +3141,166 @@ class MirrorManager:
 
         self.logger.info("Generated MCP config at %s with %d server(s)", mcp_path, len(servers))
         return mcp_path
+
+    def _report_agent_binary(
+        self,
+        ctx: MirrorContext,
+        command: Sequence[str],
+        launcher: AgentLauncher,
+    ) -> None:
+        """Log which binary a bare agent command resolves to, and flag shadowing.
+
+        ``launch_agent`` hands the agent name to ``os.execvp`` (or to ``sudo``),
+        so resolution is a plain PATH lookup.  ``bash -lc`` does run a login
+        shell, but the stock ``~/.bashrc`` returns early when non-interactive,
+        so version managers wired up there (nvm and friends) never load.  A
+        stale install earlier on PATH therefore wins silently, which is exactly
+        how a months-old agent binary can keep launching unnoticed.
+
+        Skipped for remote launches (PATH is the remote host's, not ours) and
+        when an ``agent_launcher.nvm`` block is configured, since the operator
+        has pinned resolution deliberately and it happens inside the nvm shell.
+        """
+
+        if self.executor.dry_run or ctx.is_remote or launcher.nvm is not None:
+            return
+        if not command:
+            return
+
+        name = command[0]
+        if os.sep in name:
+            # Already an explicit path; nothing to resolve or shadow.
+            self.logger.info("Agent binary: %s", name)
+            return
+
+        resolved = shutil.which(name)
+        if resolved is None:
+            self.logger.warning(
+                "Agent command %r was not found on PATH; the launch will fail.",
+                name,
+            )
+            return
+
+        version = _probe_binary_version(resolved)
+        self.logger.info(
+            "Agent binary: %s -> %s%s%s",
+            name,
+            resolved,
+            f" ({version})" if version else "",
+            # Our lookup uses this process's PATH.  When the launch escalates,
+            # sudo re-resolves against its own secure_path, so say so rather
+            # than presenting a possibly-different path as settled fact.
+            " (resolved from this PATH; sudo re-resolves via secure_path)"
+            if self._agent_launch_escalates()
+            else "",
+        )
+
+        self._warn_if_agent_binary_shadowed(name, resolved, version)
+
+    def _agent_launch_escalates(self) -> bool:
+        """Whether launching the agent will go through ``sudo -u <agent_user>``.
+
+        Mirrors the condition in :meth:`_exec_agent`.
+        """
+
+        if not self.executor.use_sudo_for_agent:
+            return False
+        try:
+            current_user = pwd.getpwuid(os.getuid()).pw_name
+        except KeyError:
+            return True
+        return self.executor.agent_user != current_user
+
+    def _warn_if_agent_binary_shadowed(
+        self,
+        name: str,
+        resolved: str,
+        version: Optional[str],
+    ) -> None:
+        """Warn when a newer install of ``name`` is shadowed by ``resolved``."""
+
+        current = _parse_version(version)
+        if current is None:
+            return
+
+        best_path: Optional[str] = None
+        best_version: Optional[str] = None
+        best_parsed: Optional[Tuple[int, ...]] = None
+
+        # A diagnostic must never become the reason a launch feels broken, so
+        # cap the whole survey rather than only each probe: several binaries
+        # that each hang until their own timeout would otherwise stall the
+        # launch for minutes.
+        deadline = time.monotonic() + _VERSION_SURVEY_BUDGET
+        for candidate in self._other_binaries_named(name, resolved):
+            if time.monotonic() >= deadline:
+                self.logger.debug(
+                    "Stopped surveying rival %s installs after %.0fs.",
+                    name,
+                    _VERSION_SURVEY_BUDGET,
+                )
+                break
+            candidate_version = _probe_binary_version(candidate)
+            parsed = _parse_version(candidate_version)
+            if parsed is None or parsed <= current:
+                continue
+            if best_parsed is None or parsed > best_parsed:
+                best_path, best_version, best_parsed = candidate, candidate_version, parsed
+
+        if best_path is None:
+            return
+
+        self.logger.warning(
+            "Agent binary %s (%s) is shadowing a newer install at %s (%s).  "
+            "sucoder launches the one earlier on PATH.  Point %s at the newer "
+            "build (a symlink from a directory earlier on PATH), or pin it with "
+            "an `agent_launcher.nvm` block -- note that sudo uses its own "
+            "secure_path, so a fix under the agent user's home may not apply.",
+            resolved,
+            version,
+            best_path,
+            best_version,
+            name,
+        )
+
+    def _other_binaries_named(self, name: str, resolved: str) -> List[str]:
+        """Find executables named ``name`` other than ``resolved``.
+
+        Searches every PATH entry plus the agent user's common per-user install
+        roots (nvm node versions, ``~/.local/bin``), which are where a current
+        build typically hides when PATH resolution lands on a system install.
+        Results are deduplicated by real path so symlink chains to the same
+        target do not look like competing installs.
+        """
+
+        bin_dirs: List[Path] = [Path(entry) for entry in os.get_exec_path() if entry]
+
+        home = self._agent_home_directory()
+        if home is not None:
+            bin_dirs.append(home / ".local" / "bin")
+            nvm_versions = home / ".nvm" / "versions" / "node"
+            try:
+                bin_dirs.extend(sorted(child / "bin" for child in nvm_versions.iterdir()))
+            except OSError:
+                pass
+
+        seen = {os.path.realpath(resolved)}
+        found: List[str] = []
+        for bin_dir in bin_dirs:
+            candidate = bin_dir / name
+            try:
+                if candidate.is_dir() or not os.access(candidate, os.X_OK):
+                    continue
+                real = os.path.realpath(candidate)
+            except OSError:
+                continue
+            if real in seen:
+                continue
+            seen.add(real)
+            found.append(str(candidate))
+            if len(found) >= _MAX_SHADOW_CANDIDATES:
+                break
+        return found
 
     def _wrap_with_nvm(self, command: Sequence[str], launcher: AgentLauncher) -> List[str]:
         """Wrap the agent command so it runs under a specific nvm-managed Node version.
@@ -5272,6 +5436,65 @@ def _read_skill_metadata(skill_file: Path) -> Optional[Tuple[str, str]]:
     if not title:
         return None
     return (title, org_description or "")
+
+
+# Lookarounds rather than \b so a leading "v" (node prints "v22.22.3") does not
+# block the match, while "1.2.3.4" is still taken whole rather than truncated.
+_VERSION_RE = re.compile(r"(?<![\d.])(\d+(?:\.\d+)+)(?![\d.])")
+
+# Cap on how many rival installs we probe, so a pathological PATH cannot turn
+# one launch into dozens of `--version` subprocesses.
+_MAX_SHADOW_CANDIDATES = 8
+
+# A `--version` that needs longer than this is broken; failing the probe costs
+# only the version string, so prefer a tight bound over a complete answer.
+_VERSION_PROBE_TIMEOUT = 5.0
+
+# Total wall-clock allowed for probing rival installs, so a launch is never
+# delayed by more than this regardless of how many candidates misbehave.
+_VERSION_SURVEY_BUDGET = 10.0
+
+
+def _probe_binary_version(path: str) -> Optional[str]:
+    """Return the first line of ``path --version``, or None if it fails.
+
+    Best-effort only: a binary that hangs, crashes, or does not understand
+    ``--version`` simply yields no version, and callers degrade to reporting
+    the path alone.
+    """
+
+    try:
+        result = subprocess.run(
+            [path, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=_VERSION_PROBE_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    output = (result.stdout or result.stderr or "").strip()
+    if not output:
+        return None
+    return output.splitlines()[0].strip() or None
+
+
+def _parse_version(text: Optional[str]) -> Optional[Tuple[int, ...]]:
+    """Extract a comparable dotted-numeric version from ``--version`` output.
+
+    Handles the shapes the supported agents actually emit -- ``codex-cli
+    0.77.0``, ``2.1.233 (Claude Code)``, bare ``0.50.0`` -- by taking the first
+    dotted-numeric run in the string.
+    """
+
+    if not text:
+        return None
+    match = _VERSION_RE.search(text)
+    if match is None:
+        return None
+    return tuple(int(part) for part in match.group(1).split("."))
 
 
 def _detect_agent_type(command: Sequence[str]) -> AgentType:

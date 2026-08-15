@@ -18,7 +18,9 @@ from sucoder.mirror import (
     WorktreeInfo,
     _detect_agent_type,
     _merge_flag_templates,
+    _parse_version,
     _parse_worktree_porcelain,
+    _probe_binary_version,
     _sanitize_task_name,
 )
 from sucoder.permissions import check_parent_traversable
@@ -4661,3 +4663,268 @@ def test_sync_remote_unpacker_error_mentions_disk(tmp_path: Path) -> None:
     assert "failed to push some refs" in msg
     assert "quota" in msg
     assert isinstance(excinfo.value.__cause__, CommandError)
+
+
+# ---------------------------------------------------------------------------
+# Agent binary resolution reporting
+# ---------------------------------------------------------------------------
+
+
+def _write_fake_binary(path: Path, version_output: str, *, returncode: int = 0) -> Path:
+    """Create an executable that prints ``version_output`` for --version."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"#!/bin/sh\nprintf '%s\\n' {version_output!r}\nexit {returncode}\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+    return path
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("codex-cli 0.77.0", (0, 77, 0)),
+        ("2.1.233 (Claude Code)", (2, 1, 233)),
+        ("0.50.0", (0, 50, 0)),
+        ("v1.2", (1, 2)),
+        ("v22.22.3", (22, 22, 3)),
+        ("codex-cli 1.2.3.4", (1, 2, 3, 4)),
+        ("no digits here", None),
+        ("build 20260815", None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_parse_version_handles_agent_version_shapes(text, expected) -> None:
+    assert _parse_version(text) == expected
+
+
+def test_parse_version_orders_numerically_not_lexically() -> None:
+    # The bug this guard exists for: 0.77.0 shadowing 0.147.0, where a string
+    # comparison would wrongly call the stale one newer.
+    assert _parse_version("codex-cli 0.77.0") < _parse_version("codex-cli 0.147.0")
+
+
+def test_probe_binary_version_reads_first_line(tmp_path: Path) -> None:
+    binary = _write_fake_binary(tmp_path / "codex", "codex-cli 0.147.0")
+    assert _probe_binary_version(str(binary)) == "codex-cli 0.147.0"
+
+
+def test_probe_binary_version_returns_none_on_nonzero_exit(tmp_path: Path) -> None:
+    binary = _write_fake_binary(tmp_path / "codex", "nope", returncode=1)
+    assert _probe_binary_version(str(binary)) is None
+
+
+def test_probe_binary_version_returns_none_for_missing_binary(tmp_path: Path) -> None:
+    assert _probe_binary_version(str(tmp_path / "absent")) is None
+
+
+def test_report_agent_binary_logs_resolved_path_and_version(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+
+    bin_dir = tmp_path / "path-bin"
+    _write_fake_binary(bin_dir / "codex", "codex-cli 0.147.0")
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.setattr(manager, "_agent_home_directory", lambda: None)
+
+    with caplog.at_level(logging.INFO):
+        manager._report_agent_binary(ctx, ["codex"], AgentLauncher(command=["codex"], env={}))
+
+    assert f"{bin_dir / 'codex'}" in caplog.text
+    assert "codex-cli 0.147.0" in caplog.text
+    assert "shadowing" not in caplog.text
+
+
+def test_report_agent_binary_warns_when_newer_install_is_shadowed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The real failure: a stale system install wins the PATH lookup.
+
+    Mirrors the observed host state -- /usr/bin/codex at 0.77.0 on PATH while
+    the current 0.147.0 sits in the agent user's nvm tree, invisible because
+    ~/.bashrc's nvm block short-circuits in non-interactive shells.
+    """
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+
+    stale_dir = tmp_path / "usr-bin"
+    _write_fake_binary(stale_dir / "codex", "codex-cli 0.77.0")
+    monkeypatch.setenv("PATH", str(stale_dir))
+
+    agent_home = tmp_path / "agent-home"
+    current = _write_fake_binary(
+        agent_home / ".nvm" / "versions" / "node" / "v22.22.3" / "bin" / "codex",
+        "codex-cli 0.147.0",
+    )
+    monkeypatch.setattr(manager, "_agent_home_directory", lambda: agent_home)
+
+    with caplog.at_level(logging.WARNING):
+        manager._report_agent_binary(ctx, ["codex"], AgentLauncher(command=["codex"], env={}))
+
+    assert "shadowing a newer install" in caplog.text
+    assert str(current) in caplog.text
+    assert "0.147.0" in caplog.text
+
+
+def test_report_agent_binary_ignores_older_and_identical_installs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+
+    bin_dir = tmp_path / "path-bin"
+    _write_fake_binary(bin_dir / "codex", "codex-cli 0.147.0")
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+    agent_home = tmp_path / "agent-home"
+    _write_fake_binary(
+        agent_home / ".nvm" / "versions" / "node" / "v20.0.0" / "bin" / "codex",
+        "codex-cli 0.77.0",
+    )
+    _write_fake_binary(agent_home / ".local" / "bin" / "codex", "codex-cli 0.147.0")
+    monkeypatch.setattr(manager, "_agent_home_directory", lambda: agent_home)
+
+    with caplog.at_level(logging.WARNING):
+        manager._report_agent_binary(ctx, ["codex"], AgentLauncher(command=["codex"], env={}))
+
+    assert "shadowing" not in caplog.text
+
+
+def test_report_agent_binary_ignores_symlink_to_same_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A symlink chain to one install must not look like two competing ones."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+
+    real = _write_fake_binary(tmp_path / "real" / "codex", "codex-cli 0.147.0")
+
+    bin_dir = tmp_path / "path-bin"
+    bin_dir.mkdir()
+    (bin_dir / "codex").symlink_to(real)
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+    agent_home = tmp_path / "agent-home"
+    link_dir = agent_home / ".local" / "bin"
+    link_dir.mkdir(parents=True)
+    (link_dir / "codex").symlink_to(real)
+    monkeypatch.setattr(manager, "_agent_home_directory", lambda: agent_home)
+
+    with caplog.at_level(logging.WARNING):
+        manager._report_agent_binary(ctx, ["codex"], AgentLauncher(command=["codex"], env={}))
+
+    assert "shadowing" not in caplog.text
+
+
+def test_report_agent_binary_warns_when_command_not_on_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+
+    empty = tmp_path / "empty-bin"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
+
+    with caplog.at_level(logging.WARNING):
+        manager._report_agent_binary(ctx, ["codex"], AgentLauncher(command=["codex"], env={}))
+
+    assert "was not found on PATH" in caplog.text
+
+
+def test_report_agent_binary_skips_when_nvm_is_pinned(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An explicit nvm pin resolves inside the nvm shell, so our lookup would lie."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+
+    stale_dir = tmp_path / "usr-bin"
+    _write_fake_binary(stale_dir / "codex", "codex-cli 0.77.0")
+    monkeypatch.setenv("PATH", str(stale_dir))
+
+    launcher = AgentLauncher(
+        command=["codex"],
+        env={},
+        nvm=NvmConfig(version="22.11.0", dir=tmp_path / "nvm"),
+    )
+
+    with caplog.at_level(logging.INFO):
+        manager._report_agent_binary(ctx, ["codex"], launcher)
+
+    assert "Agent binary" not in caplog.text
+
+
+def test_report_agent_binary_reports_explicit_path_without_shadow_check(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+
+    explicit = _write_fake_binary(tmp_path / "opt" / "codex", "codex-cli 0.147.0")
+
+    with caplog.at_level(logging.INFO):
+        manager._report_agent_binary(ctx, [str(explicit)], AgentLauncher(command=[str(explicit)], env={}))
+
+    assert str(explicit) in caplog.text
+    assert "shadowing" not in caplog.text
+
+
+def test_report_agent_binary_flags_sudo_reresolution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When the launch escalates, sudo's secure_path -- not ours -- decides."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+
+    bin_dir = tmp_path / "path-bin"
+    _write_fake_binary(bin_dir / "codex", "codex-cli 0.147.0")
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.setattr(manager, "_agent_home_directory", lambda: None)
+    monkeypatch.setattr(manager.executor, "use_sudo_for_agent", True)
+    monkeypatch.setattr(manager.executor, "agent_user", "somebody-else")
+
+    with caplog.at_level(logging.INFO):
+        manager._report_agent_binary(ctx, ["codex"], AgentLauncher(command=["codex"], env={}))
+
+    assert "secure_path" in caplog.text
+
+
+def test_report_agent_binary_omits_sudo_note_without_escalation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+
+    bin_dir = tmp_path / "path-bin"
+    _write_fake_binary(bin_dir / "codex", "codex-cli 0.147.0")
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.setattr(manager, "_agent_home_directory", lambda: None)
+    monkeypatch.setattr(manager.executor, "use_sudo_for_agent", False)
+
+    with caplog.at_level(logging.INFO):
+        manager._report_agent_binary(ctx, ["codex"], AgentLauncher(command=["codex"], env={}))
+
+    assert "Agent binary" in caplog.text
+    assert "secure_path" not in caplog.text
