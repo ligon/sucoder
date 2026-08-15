@@ -994,14 +994,24 @@ class MirrorManager:
         )
 
     def _local_repo_has_content(self, mirror_path: Path, base: str) -> bool:
-        """``_remote_repo_has_content`` for a mirror on the local filesystem."""
-        import subprocess
+        """``_remote_repo_has_content`` for a mirror on the local filesystem.
+
+        Goes through ``executor.run_agent`` rather than a bare ``subprocess``
+        so the probe obeys dry-run and lands in the command log like every
+        other git call here, and carries ``-c safe.directory=`` because the
+        mirror is owned by the agent user: without it git answers "dubious
+        ownership" with exit 128, which must read as *indeterminate* and not
+        as "this mirror is empty, go ahead and overwrite it".
+        """
+
+        safe_dir_args = self._safe_directory_args(mirror_path)
+
+        def run(args: Sequence[str], **kwargs) -> CommandResult:
+            head, *rest = list(args)
+            return self.executor.run_agent([head, *safe_dir_args, *rest], **kwargs)
 
         for ref in ("HEAD", f"refs/heads/{base}"):
-            if subprocess.run(
-                ["git", "rev-parse", "--verify", "--quiet", ref],
-                capture_output=True, cwd=str(mirror_path),
-            ).returncode == 0:
+            if self._rev_exists(run, str(mirror_path), ref):
                 return True
         return False
 
@@ -1571,22 +1581,45 @@ class MirrorManager:
         a repo fails with "couldn't find remote ref <base>" and pushing
         into it is fragile, so callers rebuild it from scratch rather
         than sync into it.
+
+        Raises ``MirrorError`` when the question cannot be answered, which
+        is not the same as answering "no" -- see :meth:`_rev_exists`.
         """
-        has_head = run(
-            ["git", "rev-parse", "--verify", "--quiet", "HEAD"],
-            check=False,
-            cwd=remote_path,
-        ).returncode == 0
-        if has_head:
+        if self._rev_exists(run, remote_path, "HEAD"):
             return True
         # HEAD may be an unborn symbolic ref pointing at a branch that
         # does exist (e.g. a non-default checkout); verify the base
         # branch directly before declaring the repo empty.
-        return run(
-            ["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{base}"],
+        return self._rev_exists(run, remote_path, f"refs/heads/{base}")
+
+    @staticmethod
+    def _rev_exists(run: Callable, repo_path: str, ref: str) -> bool:
+        """Whether *ref* resolves in the repo at *repo_path*.
+
+        ``git rev-parse --verify --quiet`` exits 1 for "no such ref" and
+        reserves other codes for genuine failures: 128 for "not a git
+        repository" or unreadable objects, 255 when the ssh hop itself dies.
+        Collapsing those into "no commits" is precisely how a probe meant to
+        prevent data loss would cause it -- callers read a False here as
+        clearance to force-push over the mirror, or to ``rm -rf`` and re-init
+        it.  So an indeterminate answer raises instead, and the callers'
+        existing handlers turn that into a refusal.
+        """
+
+        result = run(
+            ["git", "rev-parse", "--verify", "--quiet", ref],
             check=False,
-            cwd=remote_path,
-        ).returncode == 0
+            cwd=repo_path,
+        )
+        if result.returncode == 0:
+            return True
+        if result.returncode == 1:
+            return False
+        raise MirrorError(
+            f"Could not determine whether {repo_path} holds {ref} "
+            f"(git rev-parse exited {result.returncode}): "
+            f"{(result.stderr or '').strip()}"
+        )
 
     def ensure_remote_clone(
         self,

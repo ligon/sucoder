@@ -3450,6 +3450,60 @@ def test_pull_verdict_false_when_content_probe_itself_fails(
     assert manager._pull_from_local(ctx) is False
 
 
+@pytest.mark.parametrize("returncode", [128, 255])
+def test_content_probe_treats_git_failure_as_indeterminate(returncode: int) -> None:
+    """The real probe fails by *exit code*, not by raising.
+
+    `git rev-parse --verify --quiet` exits 1 for "no such ref"; 128 means the
+    repo is unreadable (dubious ownership, corruption) and 255 that the ssh
+    hop died.  Reading those as "no commits" clears a force-push over a mirror
+    whose contents were never established -- the exact loss the verdict exists
+    to prevent.
+    """
+
+    def run(args, **kwargs):
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="", stderr="fatal: detected dubious ownership", returncode=returncode,
+        )
+
+    with pytest.raises(MirrorError, match="Could not determine"):
+        MirrorManager._rev_exists(run, "/srv/mirror", "HEAD")
+
+
+def test_content_probe_reports_absent_ref_as_empty() -> None:
+    """Exit 1 is a clean negative and must stay distinguishable from failure."""
+
+    def run(args, **kwargs):
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="", stderr="", returncode=1,
+        )
+
+    assert MirrorManager._rev_exists(run, "/srv/mirror", "HEAD") is False
+
+
+def test_pull_verdict_false_when_probe_cannot_read_the_mirror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end: an unreadable mirror must not clear the push."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    monkeypatch.setattr(manager.executor, "run_human", _no_such_ref)
+
+    def unreadable(args, **kwargs):
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="", stderr="fatal: detected dubious ownership", returncode=128,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", unreadable)
+
+    assert manager._pull_from_local(ctx) is False
+
+
 def test_sync_refuses_to_push_over_unverified_mirror(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
