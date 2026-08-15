@@ -1490,6 +1490,9 @@ def test_ensure_remote_clone_mirror_exists_skips_init(
         return CommandResult(list(args), list(args), "", "", 0)
 
     monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+    # The mirror exists and reads fine; the pull verdict is not what
+    # this test is about, and the real one would hit the network.
+    monkeypatch.setattr(manager, "_pull_from_remote", lambda ctx: True)
 
     # Mock _sync_remote since we don't want actual sync
     sync_called = []
@@ -1503,6 +1506,77 @@ def test_ensure_remote_clone_mirror_exists_skips_init(
     assert not any("git init" in cmd for cmd in all_cmds)
     # Sync should still be called
     assert sync_called
+
+
+def test_ensure_remote_clone_pushes_to_genuinely_empty_mirror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """First-time bootstrap is not blocked by the unverified-mirror veto.
+
+    Runs the *real* _pull_from_remote against a remote that has no repo
+    at all: the fetch fails, but the content probe confirms there are no
+    commits, so the push must proceed without --allow-unverified-mirror.
+    Guards the false positive that would break every fresh setup.
+    """
+    from sucoder.executor import CommandResult
+    from sucoder.mirror import MirrorError
+
+    manager = _build_remote_manager(tmp_path)
+    ctx = manager.context_for("rproj")
+
+    def fake_remote(args, **kwargs):
+        s = " ".join(str(a) for a in args)
+        if "echo" in s:
+            return CommandResult(list(args), list(args), "/home/ligon\n", "", 0)
+        # No repo, hence no HEAD and no base branch: an empty mirror.
+        if "rev-parse" in s:
+            return CommandResult(list(args), list(args), "", "fatal", 1)
+        return CommandResult(list(args), list(args), "", "", 0)
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_remote)
+    if hasattr(manager.executor, "run_on_login_node"):
+        monkeypatch.setattr(manager.executor, "run_on_login_node", fake_remote)
+    # The fetch fails the way an empty remote's does.
+    monkeypatch.setattr(
+        manager.executor, "run_human",
+        lambda args, **kw: _transport_result(
+            args, 128, "fatal: couldn't find remote ref main"),
+    )
+
+    pushed: list = []
+    monkeypatch.setattr(manager, "_sync_remote", lambda ctx: pushed.append(True))
+
+    manager.ensure_remote_clone(ctx)  # must NOT raise
+
+    assert pushed == [True], "bootstrap over an empty mirror was blocked"
+
+
+def test_ensure_remote_clone_refuses_push_over_unverified_mirror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bootstrap honours the pull veto; the flag is the escape hatch."""
+    from sucoder.executor import CommandResult
+    from sucoder.mirror import MirrorError
+
+    manager = _build_remote_manager(tmp_path)
+    ctx = manager.context_for("rproj")
+
+    monkeypatch.setattr(
+        manager.executor, "run_agent",
+        lambda args, **kw: CommandResult(list(args), list(args), "", "", 0),
+    )
+    # The mirror could not be read and may hold commits.
+    monkeypatch.setattr(manager, "_pull_from_remote", lambda ctx: False)
+
+    pushed: list = []
+    monkeypatch.setattr(manager, "_sync_remote", lambda ctx: pushed.append(True))
+
+    with pytest.raises(MirrorError, match="Refusing to push"):
+        manager.ensure_remote_clone(ctx)
+    assert not pushed, "bootstrap force-pushed over an unverified mirror"
+
+    manager.ensure_remote_clone(ctx, allow_unverified_mirror=True)
+    assert pushed == [True]
 
 
 def test_ensure_remote_clone_mirror_not_exists_inits_and_syncs(
@@ -1529,6 +1603,8 @@ def test_ensure_remote_clone_mirror_not_exists_inits_and_syncs(
         return CommandResult(list(args), list(args), "", "", 0)
 
     monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+    # Freshly re-inited mirror; see sibling test for the pull verdict.
+    monkeypatch.setattr(manager, "_pull_from_remote", lambda ctx: True)
 
     sync_called = []
     monkeypatch.setattr(manager, "_sync_remote", lambda ctx: sync_called.append(True))
@@ -1658,8 +1734,10 @@ def test_ensure_remote_clone_rebuilds_empty_mirror(
         return CommandResult(list(args), list(args), "", "", 0)
 
     monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
-    # Isolate the rebuild decision: don't touch the network.
-    monkeypatch.setattr(manager, "_pull_from_remote", lambda ctx: None)
+    # Isolate the rebuild decision: don't touch the network.  True =
+    # "mirror read successfully"; the verdict itself is covered by
+    # test_ensure_remote_clone_refuses_push_over_unverified_mirror.
+    monkeypatch.setattr(manager, "_pull_from_remote", lambda ctx: True)
     sync_called: list = []
     monkeypatch.setattr(manager, "_sync_remote", lambda ctx: sync_called.append(True))
 

@@ -2164,3 +2164,65 @@ mirrors:
     combined = result.stdout + (result.output or "")
     assert "Command failed with exit code 1" in combined
     assert "Input/output error" in combined
+
+
+def test_push_and_sync_are_the_same_operation(tmp_path, monkeypatch):
+    """`push` is the documented name; `sync` stays as a compatible alias.
+
+    Guards against the two commands drifting apart: they must accept the
+    same options and reach MirrorManager.sync with identical arguments.
+    """
+    import typer.main
+
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+
+    command = typer.main.get_command(cli.app)
+    push_opts = {o for p in command.commands["push"].params for o in p.opts}
+    sync_opts = {o for p in command.commands["sync"].params for o in p.opts}
+    assert push_opts == sync_opts, (push_opts ^ sync_opts)
+
+    calls: list = []
+
+    class StubManager:
+        def context_for(self, name):
+            return SimpleNamespace(name=name)
+
+        def sync(self, ctx, *, allow_unverified_mirror=False):
+            calls.append((ctx.name, allow_unverified_mirror))
+
+    monkeypatch.setattr(
+        cli, "_build_manager_for_mirror", lambda *a, **kw: StubManager(),
+    )
+
+    for name in ("push", "sync"):
+        result = runner.invoke(
+            cli.app,
+            ["--config", str(config_path), name, "sample",
+             "--allow-unverified-mirror"],
+        )
+        assert result.exit_code == 0, (name, result.output, result.exception)
+
+    assert calls == [("sample", True), ("sample", True)]
+
+
+def test_push_reports_local_mirror_branches_were_not_moved(tmp_path, caplog):
+    """The local path must not imply the mirror now matches canonical."""
+    import logging
+
+    from tests.test_mirror import build_manager
+
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    with caplog.at_level(logging.INFO):
+        manager.sync(ctx)
+
+    assert any(
+        "own branches were not moved" in r.getMessage()
+        for r in caplog.records
+    ), [r.getMessage() for r in caplog.records]

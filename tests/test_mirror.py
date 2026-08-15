@@ -3337,6 +3337,206 @@ def test_pull_from_local_fast_forwards_canonical(tmp_path: Path) -> None:
     assert (canonical / "AGENT_NOTE.md").exists()
 
 
+def test_pull_from_local_refetches_after_mirror_rewrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rewritten mirror branch still reaches divergence handling.
+
+    Regression: the scratch ref refs/sucoder/mirror-head survives from the
+    previous pull, so a non-forced fetch of a rewritten mirror branch is
+    rejected "non-fast-forward" and the pull bails out with only a warning
+    -- silently skipping the reconciliation it exists to perform.
+    """
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+
+    manager.ensure_clone(ctx)
+    mirror_path = ctx.mirror_path
+    canonical = ctx.canonical_path
+    canonical.chmod(canonical.stat().st_mode | 0o200)
+
+    run_git(["checkout", "main"], mirror_path)
+    run_git(["config", "user.email", "agent@example.com"], mirror_path)
+    run_git(["config", "user.name", "Agent"], mirror_path)
+
+    def agent_commit(name: str) -> str:
+        (mirror_path / name).write_text(f"from the agent: {name}\n", encoding="utf-8")
+        run_git(["add", name], mirror_path)
+        run_git(["commit", "-m", f"agent note: {name}"], mirror_path)
+        return run_git(["rev-parse", "HEAD"], mirror_path).stdout.strip()
+
+    # First pull populates the scratch ref and fast-forwards canonical.
+    agent_commit("AGENT_NOTE.md")
+    manager._pull_from_local(ctx)
+
+    # The agent then *rewrites* that commit on the mirror, so the mirror
+    # branch no longer fast-forwards onto the stale scratch ref.  Touch a
+    # different path so the divergence is real but conflict-free.
+    run_git(["reset", "--hard", "HEAD~1"], mirror_path)
+    rewritten = agent_commit("AGENT_NOTE2.md")
+
+    # Canonical still holds the pre-rewrite commit, so this is a genuine
+    # divergence.  The bug returned early at the fetch, so the prompt was
+    # never reached and canonical was left untouched.
+    prompted: list = []
+
+    def fake_prompt(*a, **k):
+        prompted.append(a)
+        return "m"
+
+    monkeypatch.setattr(manager, "_prompt_choice", fake_prompt)
+    manager._pull_from_local(ctx)
+
+    assert prompted, "divergence handling was never reached"
+
+    scratch = run_git(
+        ["rev-parse", "refs/sucoder/mirror-head"], canonical
+    ).stdout.strip()
+    assert scratch == rewritten, "scratch ref was not force-updated"
+    merged = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", rewritten, "HEAD"],
+        cwd=canonical, capture_output=True,
+    )
+    assert merged.returncode == 0, "rewritten mirror commit never reached canonical"
+
+
+def _no_such_ref(args, **kwargs) -> CommandResult:
+    """A fetch failure of the kind an empty *or* misbranched mirror gives."""
+    return CommandResult(
+        requested_args=list(args),
+        executed_args=list(args),
+        stdout="",
+        stderr="fatal: couldn't find remote ref master",
+        returncode=128,
+    )
+
+
+def test_pull_verdict_false_when_mirror_has_content_but_fetch_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unreadable mirror that holds commits must not clear the push."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+    ctx.canonical_path.chmod(ctx.canonical_path.stat().st_mode | 0o200)
+
+    # Fetch fails the way a misresolved base branch does: the remote
+    # answered, but the ref we asked for isn't there.
+    monkeypatch.setattr(manager.executor, "run_human", _no_such_ref)
+
+    # The mirror is a real clone with commits, so the probe says "content".
+    assert manager._pull_from_local(ctx) is False
+
+
+def test_pull_verdict_true_when_mirror_verifiably_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fetch failure against a genuinely empty mirror still clears the push."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    monkeypatch.setattr(manager.executor, "run_human", _no_such_ref)
+    # Probe reports no commits -> nothing to lose -> push is cleared.
+    monkeypatch.setattr(manager, "_local_repo_has_content", lambda *a: False)
+
+    assert manager._pull_from_local(ctx) is True
+
+
+def test_pull_verdict_false_when_content_probe_itself_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unusable probe fails closed rather than assuming the mirror is empty."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    def exploding_probe(*a, **k):
+        raise OSError("ssh died")
+
+    monkeypatch.setattr(manager.executor, "run_human", _no_such_ref)
+    monkeypatch.setattr(manager, "_local_repo_has_content", exploding_probe)
+
+    assert manager._pull_from_local(ctx) is False
+
+
+@pytest.mark.parametrize("returncode", [128, 255])
+def test_content_probe_treats_git_failure_as_indeterminate(returncode: int) -> None:
+    """The real probe fails by *exit code*, not by raising.
+
+    `git rev-parse --verify --quiet` exits 1 for "no such ref"; 128 means the
+    repo is unreadable (dubious ownership, corruption) and 255 that the ssh
+    hop died.  Reading those as "no commits" clears a force-push over a mirror
+    whose contents were never established -- the exact loss the verdict exists
+    to prevent.
+    """
+
+    def run(args, **kwargs):
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="", stderr="fatal: detected dubious ownership", returncode=returncode,
+        )
+
+    with pytest.raises(MirrorError, match="Could not determine"):
+        MirrorManager._rev_exists(run, "/srv/mirror", "HEAD")
+
+
+def test_content_probe_reports_absent_ref_as_empty() -> None:
+    """Exit 1 is a clean negative and must stay distinguishable from failure."""
+
+    def run(args, **kwargs):
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="", stderr="", returncode=1,
+        )
+
+    assert MirrorManager._rev_exists(run, "/srv/mirror", "HEAD") is False
+
+
+def test_pull_verdict_false_when_probe_cannot_read_the_mirror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end: an unreadable mirror must not clear the push."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    monkeypatch.setattr(manager.executor, "run_human", _no_such_ref)
+
+    def unreadable(args, **kwargs):
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="", stderr="fatal: detected dubious ownership", returncode=128,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", unreadable)
+
+    assert manager._pull_from_local(ctx) is False
+
+
+def test_sync_refuses_to_push_over_unverified_mirror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """sync() raises instead of force-pushing when the pull came back False."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    monkeypatch.setattr(type(ctx), "is_remote", property(lambda self: True))
+    monkeypatch.setattr(manager, "_pull_from_remote", lambda ctx: False)
+    monkeypatch.setattr(
+        manager, "_resolve_base_branch", lambda ctx: "master")
+
+    pushed: list = []
+    monkeypatch.setattr(manager, "_sync_remote", lambda ctx: pushed.append(ctx))
+
+    with pytest.raises(MirrorError, match="Refusing to push"):
+        manager.sync(ctx)
+    assert not pushed, "force-push ran despite an unverified mirror"
+
+    # The flag is the documented escape hatch.
+    manager.sync(ctx, allow_unverified_mirror=True)
+    assert len(pushed) == 1
+
+
 def test_pull_from_local_raises_when_mirror_missing(tmp_path: Path) -> None:
     """_pull_from_local raises a clear MirrorError when no mirror exists yet."""
     manager = build_manager(tmp_path)
