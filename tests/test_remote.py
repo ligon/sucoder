@@ -2321,3 +2321,104 @@ def test_run_query_dispatch_remote(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     manager._run_query(ctx, ["echo", "hi"])
     assert called["agent"] is True
     assert called["human"] is False
+
+
+# ------------------------------------------------------------------
+# X11 forwarding (targets: x11 / --x11)
+# ------------------------------------------------------------------
+
+
+def test_parse_remote_config_x11_default_off() -> None:
+    rc = _parse_remote_config({"gateway": "gw", "transfer_host": "dtn"})
+    assert rc is not None
+    assert rc.x11 is False
+
+
+def test_parse_remote_config_x11_true() -> None:
+    rc = _parse_remote_config(
+        {"gateway": "gw", "transfer_host": "dtn", "x11": True}
+    )
+    assert rc is not None
+    assert rc.x11 is True
+
+
+@pytest.mark.parametrize("bad_value", ["yes", 1, {}, []])
+def test_parse_remote_config_x11_rejects_non_bool(bad_value: object) -> None:
+    raw = {"gateway": "gw", "transfer_host": "dtn", "x11": bad_value}
+    with pytest.raises(ConfigError, match="x11"):
+        _parse_remote_config(raw)
+
+
+def test_build_ssh_command_x11_on_interactive_hop() -> None:
+    executor = _make_remote_executor(forward_x11=True)
+    cmd = executor._build_ssh_command(["bash"], allocate_tty=True)
+    assert "ForwardX11=yes" in cmd
+    assert "ForwardX11Trusted=yes" in cmd
+
+
+def test_build_ssh_command_x11_not_on_oneshot() -> None:
+    """One-shot (captured) commands never request an X11 forward."""
+    executor = _make_remote_executor(forward_x11=True)
+    cmd = executor._build_ssh_command(["git", "status"])
+    assert "ForwardX11=yes" not in cmd
+
+
+def test_build_ssh_command_x11_off_by_default() -> None:
+    executor = _make_remote_executor()
+    cmd = executor._build_ssh_command(["bash"], allocate_tty=True)
+    assert "ForwardX11=yes" not in cmd
+
+
+def test_confined_attach_command_x11_flag() -> None:
+    from sucoder.mirror import confined_attach_command
+
+    plain = confined_attach_command(42, "sess", "sock")
+    assert "--x11" not in plain
+    with_x11 = confined_attach_command(42, "sess", "sock", x11=True)
+    assert "--x11" in with_x11
+    # srun options must precede the launched command.
+    assert with_x11.index("--x11") < with_x11.index("tmux")
+
+
+def _x11_remote(**kwargs) -> RemoteConfig:
+    defaults: Dict[str, Any] = dict(gateway="gw", transfer_host="dtn")
+    defaults.update(kwargs)
+    return RemoteConfig(**defaults)
+
+
+def test_resolve_x11_config_on_with_display(monkeypatch: pytest.MonkeyPatch) -> None:
+    from sucoder.cli import _resolve_x11
+    import logging
+
+    monkeypatch.setenv("DISPLAY", ":0")
+    assert _resolve_x11(_x11_remote(x11=True), None, logging.getLogger("t")) is True
+
+
+def test_resolve_x11_skipped_without_local_display(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sucoder.cli import _resolve_x11
+    import logging
+
+    monkeypatch.delenv("DISPLAY", raising=False)
+    assert _resolve_x11(_x11_remote(x11=True), None, logging.getLogger("t")) is False
+
+
+def test_resolve_x11_cli_override_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+    from sucoder.cli import _resolve_x11
+    import logging
+
+    logger = logging.getLogger("t")
+    monkeypatch.setenv("DISPLAY", ":0")
+    # --no-x11 beats a config-enabled target.
+    assert _resolve_x11(_x11_remote(x11=True), False, logger) is False
+    # --x11 beats a config-disabled target.
+    assert _resolve_x11(_x11_remote(x11=False), True, logger) is True
+
+
+def test_resolve_x11_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    from sucoder.cli import _resolve_x11
+    import logging
+
+    monkeypatch.setenv("DISPLAY", ":0")
+    assert _resolve_x11(_x11_remote(), None, logging.getLogger("t")) is False

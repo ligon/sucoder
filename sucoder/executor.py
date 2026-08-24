@@ -269,6 +269,8 @@ class RemoteExecutor(CommandExecutor):
     scaffolding_node: str = ""                   # DTN (or login node) for filesystem ops
     scaffolding_socket_path: Optional[str] = None  # DTN ControlMaster socket
     debug_ssh: bool = False                      # Emit -vvv SSH tracing
+    forward_x11: bool = False                    # Request X11 forwarding on
+                                                 # interactive (TTY) hops only
 
     # Default timeout (seconds) for remote SSH commands.  Long enough
     # for normal Lustre latency, short enough to surface hangs.
@@ -544,6 +546,16 @@ class RemoteExecutor(CommandExecutor):
             ssh_cmd.append("-vvv")
         if allocate_tty:
             ssh_cmd.append("-t")
+            if self.forward_x11:
+                # Interactive hops only: one-shot commands never open X
+                # clients, and requesting a forward would just make sshd
+                # mint an xauth cookie per command.  Trusted forwarding
+                # (-Y semantics) is deliberate -- untrusted X11 breaks
+                # many clients and expires after ssh's 20-minute window.
+                ssh_cmd.extend([
+                    "-o", "ForwardX11=yes",
+                    "-o", "ForwardX11Trusted=yes",
+                ])
         else:
             # Non-interactive: fail immediately instead of opening
             # /dev/tty for a password prompt that would look like a hang.

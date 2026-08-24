@@ -183,7 +183,7 @@ def confined_tmux_target(mirror_name: str) -> Tuple[str, str]:
 
 
 def confined_attach_command(
-    job_id: int, session_name: str, socket: str
+    job_id: int, session_name: str, socket: str, *, x11: bool = False
 ) -> List[str]:
     """Argv that joins a confined job's tmux session *inside its cgroup*.
 
@@ -193,12 +193,18 @@ def confined_attach_command(
     literally-named command.  cli callers that embed this as an ``ssh``
     remote-command string should ``shlex.join`` the tokens themselves.
 
+    ``x11`` adds srun's native ``--x11`` flag: a confined attach reaches
+    the login node over ssh (where an ssh-level X11 forward terminates)
+    and srun relays that DISPLAY into the job step on the compute node.
+    Requires the cluster's Slurm X11 support; opt-in only.
+
     Deliberately OMITS the ``|| tmux new-session`` fallback the unconfined
     attach uses, so a confined attach never spawns an unconfined orphan on
     the login node.
     """
+    srun_flags = ["--overlap", "--x11", "--pty"] if x11 else ["--overlap", "--pty"]
     return [
-        "srun", f"--jobid={job_id}", "--overlap", "--pty",
+        "srun", f"--jobid={job_id}", *srun_flags,
         "tmux", "-L", socket, "attach-session", "-t", session_name,
     ]
 
@@ -2432,7 +2438,8 @@ class MirrorManager:
         ``check=False`` so a clean detach (Ctrl-b d -> srun exits 0) or a
         gone job returns its rc rather than raising.
         """
-        argv = confined_attach_command(job_id, session_name, socket)
+        x11 = bool(getattr(self.executor, "forward_x11", False))
+        argv = confined_attach_command(job_id, session_name, socket, x11=x11)
         result = self.executor.run_agent(argv, check=False, capture_output=False)
         return result.returncode
 

@@ -71,6 +71,9 @@ class RemoteConfig:
     remote_user: Optional[str] = None               # SSH username on the remote host
     mirror_root: Path = field(default_factory=lambda: Path("~/mirrors"))
     ssh_options: Dict[str, str] = field(default_factory=dict)
+    x11: bool = False                               # Forward X11 on interactive hops
+                                                    # (collaborate/attach) so remote
+                                                    # sessions can open X windows
     control_persist: str = "7d"                     # ControlMaster idle lifetime (ssh time fmt)
     keepalive_interval: int = 30                    # ServerAliveInterval (seconds)
     keepalive_count_max: int = 120                  # ServerAliveCountMax (probes before teardown)
@@ -296,7 +299,7 @@ _VALID_SLURM_KEYS = frozenset({
 _TARGET_LEVEL_KEYS = frozenset({
     "gateway", "transfer_host", "mirror_root", "ssh_options",
     "control_persist", "keepalive_interval", "keepalive_count_max",
-    "system_prompt_extra", "cert_file",
+    "system_prompt_extra", "cert_file", "x11",
 })
 
 
@@ -791,6 +794,10 @@ def _parse_remote_config(raw: Any) -> Optional[RemoteConfig]:
     if not isinstance(ssh_options, dict):
         raise ConfigError("`remote.ssh_options` must be a mapping when provided.")
 
+    x11 = raw.get("x11", False)
+    if not isinstance(x11, bool):
+        raise ConfigError("`remote.x11` must be a boolean when provided.")
+
     control_persist = raw.get("control_persist", "7d")
     if not isinstance(control_persist, str):
         raise ConfigError("`remote.control_persist` must be a string (e.g. '7d', '12h', '1d').")
@@ -824,6 +831,7 @@ def _parse_remote_config(raw: Any) -> Optional[RemoteConfig]:
         remote_user=remote_user,
         mirror_root=mirror_root,
         ssh_options={str(k): str(v) for k, v in ssh_options.items()},
+        x11=x11,
         control_persist=control_persist,
         keepalive_interval=keepalive_interval,
         keepalive_count_max=keepalive_count_max,

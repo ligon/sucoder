@@ -352,6 +352,7 @@ targets:
     keepalive_interval: 30       # ServerAliveInterval, seconds (optional)
     keepalive_count_max: 120     # ServerAliveCountMax (optional)
     cert_file: ~/.ssh/ssh_certs/brc_cert  # gateway SSH cert (optional)
+    x11: true                    # forward X11 on interactive sessions (optional)
 #+end_src
 
 No =mirrors:= entry is needed---zero-config repo detection works with
@@ -386,6 +387,22 @@ values shown above; tune them per target:
   their publickey auth through the mux.  =sucoder -T <target> tunnel doctor=
   reports the cert's validity.  (=scripts/brc-cert.sh= still works as a
   standalone minter if you prefer.)
+- =x11= --- request trusted X11 forwarding (=ssh -Y= semantics) on the
+  *interactive* hops (=collaborate= launch, =attach=), so programs started
+  inside the remote session can open X windows on your local display.
+  Off by default; override per invocation with =sucoder --x11 / --no-x11=.
+  Requires a local X server (=DISPLAY= set --- XQuartz on macOS) and
+  =xauth= plus =X11Forwarding yes= in =sshd= on the remote node; when
+  =DISPLAY= is unset locally, sucoder skips the forward with a warning
+  rather than launching a session with a broken =DISPLAY=.  On a confined
+  (sbatch) target, attach reaches the login node over ssh and steps into
+  the job with =srun --x11=, which needs the cluster's Slurm X11 support.
+  Caveat: the forward lives and dies with the attaching ssh connection.
+  The tmux session created at launch inherits a working =DISPLAY=; after a
+  detach/re-attach, *new* tmux windows pick up the fresh =DISPLAY=
+  automatically (tmux's default =update-environment= includes it), but
+  processes already running keep the stale one --- refresh a shell with
+  =eval "$(tmux show-environment -s DISPLAY)"=.
 
 *** Using a target from Emacs / TRAMP
 

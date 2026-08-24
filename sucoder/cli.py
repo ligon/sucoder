@@ -672,6 +672,7 @@ def _build_executor(
             is_compute_node=(remote.slurm is not None and not confined),
             slurm_job_id=session.slurm_job_id,
             debug_ssh=debug_ssh,
+            forward_x11=_resolve_x11(remote, _get_x11_override(cli_ctx), logger),
         )
         # Detect whether the resolved mirror root is on local disk
         # (either from --local-disk flag, config, or session fallback).
@@ -1358,6 +1359,34 @@ def _get_local_disk_override(ctx: Optional[click.Context]) -> Optional[bool]:
     return obj.get("local_disk")
 
 
+def _get_x11_override(ctx: Optional[click.Context]) -> Optional[bool]:
+    """Return the --x11 CLI override, or None to use the target's config."""
+    obj = (ctx.obj if ctx and ctx.obj else {}) or {}
+    return obj.get("x11")
+
+
+def _resolve_x11(
+    remote: "RemoteConfig", cli_override: Optional[bool], logger,
+) -> bool:
+    """Decide whether interactive hops should request X11 forwarding.
+
+    CLI ``--x11/--no-x11`` wins over the target's ``x11:`` setting.  Even
+    when requested, forwarding is skipped (with a warning) if the local
+    side has no ``DISPLAY`` -- ssh would silently not forward and the
+    remote session would look broken rather than declined.
+    """
+    enabled = cli_override if cli_override is not None else remote.x11
+    if not enabled:
+        return False
+    if not os.environ.get("DISPLAY"):
+        logger.warning(
+            "X11 forwarding requested but DISPLAY is not set locally; "
+            "skipping ForwardX11 (no local X server to forward to)."
+        )
+        return False
+    return True
+
+
 def _build_manager_for_mirror(
     config: Config, logger, dry_run: bool, mirror_name: str,
     *,
@@ -1605,6 +1634,12 @@ def main(
         help="Use compute-node local disk instead of shared filesystem. "
              "Overrides the slurm.local_disk config setting.",
     ),
+    x11: Optional[bool] = typer.Option(
+        None,
+        "--x11/--no-x11",
+        help="Forward X11 on interactive remote sessions so they can open "
+             "X windows locally. Overrides the target's x11 config setting.",
+    ),
 ) -> None:
     """Load configuration once and store it on the Typer context."""
     config_explicitly_set = config is not None
@@ -1668,6 +1703,7 @@ def main(
         "target_name": target,
         "debug_ssh": debug_ssh,
         "local_disk": local_disk,
+        "x11": x11,
     }
 
 
@@ -2442,6 +2478,7 @@ def attach(
     remote = settings.remote
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     debug_ssh = _get_debug_ssh(ctx)
+    x11_on = _resolve_x11(remote, _get_x11_override(ctx), logger)
 
     # Ride the warm tunnel node rather than a stale mirror pin (SLURM only).
     _reconcile_login_node(remote, session, _tgt_name, logger)
@@ -2536,9 +2573,13 @@ def attach(
                 # block direct SSH to compute nodes.
                 attach_target = session.login_node
                 jump_chain = remote.gateway
+                # With X11 on, the ssh forward terminates on the login
+                # node; srun's native --x11 relays that DISPLAY into the
+                # job step on the compute node.
+                srun_x11 = "--x11 " if x11_on else ""
                 srun_prefix = (
                     f"srun --jobid={shlex.quote(str(session.slurm_job_id))} "
-                    "--overlap --pty "
+                    f"--overlap {srun_x11}--pty "
                 )
             else:
                 attach_target = compute
@@ -2566,7 +2607,9 @@ def attach(
         # `srun_prefix` is unused here.
         session_name, socket = confined_tmux_target(mirror)
         attach_cmd = shlex.join(
-            confined_attach_command(session.slurm_job_id, session_name, socket)
+            confined_attach_command(
+                session.slurm_job_id, session_name, socket, x11=x11_on,
+            )
         )
     else:
         tmux_name = f"sucoder-{mirror}"
@@ -2577,8 +2620,15 @@ def attach(
             f"{srun_prefix}tmux attach-session -t {shlex.quote(tmux_name)} "
             f"|| {srun_prefix}tmux new-session -s {shlex.quote(tmux_name)}"
         )
+    # Trusted forwarding (-Y semantics): untrusted X11 breaks many
+    # clients and expires after ssh's 20-minute window.
+    x11_opts = (
+        ["-o", "ForwardX11=yes", "-o", "ForwardX11Trusted=yes"]
+        if x11_on else []
+    )
     os.execvp("ssh", [
         "ssh", "-t",
+        *x11_opts,
         *control_opts,
         "-J", jump_chain,
         attach_target,
