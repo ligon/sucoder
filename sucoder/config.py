@@ -71,9 +71,12 @@ class RemoteConfig:
     remote_user: Optional[str] = None               # SSH username on the remote host
     mirror_root: Path = field(default_factory=lambda: Path("~/mirrors"))
     ssh_options: Dict[str, str] = field(default_factory=dict)
-    x11: bool = False                               # Forward X11 on interactive hops
+    x11: Optional[bool] = None                      # Forward X11 on interactive hops
                                                     # (collaborate/attach) so remote
-                                                    # sessions can open X windows
+                                                    # sessions can open X windows.
+                                                    # None = unset: defaults to ON
+                                                    # when the local session has a
+                                                    # DISPLAY (see cli._resolve_x11)
     control_persist: str = "7d"                     # ControlMaster idle lifetime (ssh time fmt)
     keepalive_interval: int = 30                    # ServerAliveInterval (seconds)
     keepalive_count_max: int = 120                  # ServerAliveCountMax (probes before teardown)
@@ -794,8 +797,8 @@ def _parse_remote_config(raw: Any) -> Optional[RemoteConfig]:
     if not isinstance(ssh_options, dict):
         raise ConfigError("`remote.ssh_options` must be a mapping when provided.")
 
-    x11 = raw.get("x11", False)
-    if not isinstance(x11, bool):
+    x11 = raw.get("x11")
+    if x11 is not None and not isinstance(x11, bool):
         raise ConfigError("`remote.x11` must be a boolean when provided.")
 
     control_persist = raw.get("control_persist", "7d")

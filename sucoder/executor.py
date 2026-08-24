@@ -271,6 +271,10 @@ class RemoteExecutor(CommandExecutor):
     debug_ssh: bool = False                      # Emit -vvv SSH tracing
     forward_x11: bool = False                    # Request X11 forwarding on
                                                  # interactive (TTY) hops only
+    forward_x11_explicit: bool = False           # X11 was explicitly requested
+                                                 # (config/CLI) rather than the
+                                                 # DISPLAY-present default; gates
+                                                 # the speculative srun --x11
 
     # Default timeout (seconds) for remote SSH commands.  Long enough
     # for normal Lustre latency, short enough to surface hangs.

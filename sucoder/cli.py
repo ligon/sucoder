@@ -14,7 +14,7 @@ import time
 from collections import defaultdict
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import click
 
@@ -672,8 +672,12 @@ def _build_executor(
             is_compute_node=(remote.slurm is not None and not confined),
             slurm_job_id=session.slurm_job_id,
             debug_ssh=debug_ssh,
-            forward_x11=_resolve_x11(remote, _get_x11_override(cli_ctx), logger),
         )
+        x11_on, x11_explicit = _resolve_x11(
+            remote, _get_x11_override(cli_ctx), logger,
+        )
+        executor_kwargs["forward_x11"] = x11_on
+        executor_kwargs["forward_x11_explicit"] = x11_explicit
         # Detect whether the resolved mirror root is on local disk
         # (either from --local-disk flag, config, or session fallback).
         is_local_disk = (
@@ -1367,24 +1371,41 @@ def _get_x11_override(ctx: Optional[click.Context]) -> Optional[bool]:
 
 def _resolve_x11(
     remote: "RemoteConfig", cli_override: Optional[bool], logger,
-) -> bool:
+) -> Tuple[bool, bool]:
     """Decide whether interactive hops should request X11 forwarding.
 
-    CLI ``--x11/--no-x11`` wins over the target's ``x11:`` setting.  Even
-    when requested, forwarding is skipped (with a warning) if the local
-    side has no ``DISPLAY`` -- ssh would silently not forward and the
-    remote session would look broken rather than declined.
+    Returns ``(enabled, explicit)``.  CLI ``--x11/--no-x11`` wins over the
+    target's ``x11:`` setting; with neither given, forwarding defaults to
+    ON whenever the local session has a ``DISPLAY`` (and silently to off
+    when it doesn't, so headless/cron runs stay quiet).
+
+    ``explicit`` records whether the answer came from an operator choice
+    (CLI flag or config key) rather than the default.  Callers use it two
+    ways: an *explicit* request with no local ``DISPLAY`` earns a warning
+    (ssh would silently not forward and the session would look broken
+    rather than declined), and the speculative ``srun --x11`` relay on
+    confined targets is added only for explicit requests, so the default
+    cannot break ``attach`` on clusters without Slurm X11 support.
     """
-    enabled = cli_override if cli_override is not None else remote.x11
+    if cli_override is not None:
+        enabled, explicit = cli_override, True
+    elif remote.x11 is not None:
+        enabled, explicit = remote.x11, True
+    else:
+        enabled, explicit = True, False
     if not enabled:
-        return False
+        return False, explicit
     if not os.environ.get("DISPLAY"):
-        logger.warning(
+        message = (
             "X11 forwarding requested but DISPLAY is not set locally; "
             "skipping ForwardX11 (no local X server to forward to)."
         )
-        return False
-    return True
+        if explicit:
+            logger.warning(message)
+        else:
+            logger.debug(message)
+        return False, explicit
+    return True, explicit
 
 
 def _build_manager_for_mirror(
@@ -1638,7 +1659,8 @@ def main(
         None,
         "--x11/--no-x11",
         help="Forward X11 on interactive remote sessions so they can open "
-             "X windows locally. Overrides the target's x11 config setting.",
+             "X windows locally (default: on when the local session has a "
+             "DISPLAY). Overrides the target's x11 config setting.",
     ),
 ) -> None:
     """Load configuration once and store it on the Typer context."""
@@ -2478,7 +2500,7 @@ def attach(
     remote = settings.remote
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     debug_ssh = _get_debug_ssh(ctx)
-    x11_on = _resolve_x11(remote, _get_x11_override(ctx), logger)
+    x11_on, x11_explicit = _resolve_x11(remote, _get_x11_override(ctx), logger)
 
     # Ride the warm tunnel node rather than a stale mirror pin (SLURM only).
     _reconcile_login_node(remote, session, _tgt_name, logger)
@@ -2575,8 +2597,11 @@ def attach(
                 jump_chain = remote.gateway
                 # With X11 on, the ssh forward terminates on the login
                 # node; srun's native --x11 relays that DISPLAY into the
-                # job step on the compute node.
-                srun_x11 = "--x11 " if x11_on else ""
+                # job step on the compute node.  Explicit requests only:
+                # --x11 needs the cluster's Slurm X11 support, and the
+                # default-on forwarding must not break attach where that
+                # support is missing.
+                srun_x11 = "--x11 " if (x11_on and x11_explicit) else ""
                 srun_prefix = (
                     f"srun --jobid={shlex.quote(str(session.slurm_job_id))} "
                     f"--overlap {srun_x11}--pty "
@@ -2608,7 +2633,9 @@ def attach(
         session_name, socket = confined_tmux_target(mirror)
         attach_cmd = shlex.join(
             confined_attach_command(
-                session.slurm_job_id, session_name, socket, x11=x11_on,
+                session.slurm_job_id, session_name, socket,
+                # srun --x11 only on explicit request (see srun_x11 above).
+                x11=x11_on and x11_explicit,
             )
         )
     else:

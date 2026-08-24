@@ -36,11 +36,13 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #     keepalive_count_max: 120   # ServerAliveCountMax.  interval x count = the grace
 #                                # budget before a stalled link is torn down
 #                                # (30s x 120 = 1h; rides out a laptop nap).
-#     # x11: true                # forward X11 on interactive sessions (collaborate/
-#                                # attach) so the remote session can open X windows
-#                                # locally.  Needs a local X server (DISPLAY set) and
-#                                # xauth + X11Forwarding on the remote node.  Override
-#                                # per run with `sucoder --x11 / --no-x11`.
+#     # x11: false               # X11 forwarding on interactive sessions (collaborate/
+#                                # attach) is ON by default when the local session has
+#                                # a DISPLAY; set false to disable.  Needs xauth +
+#                                # X11Forwarding on the remote node.  Override per run
+#                                # with `sucoder --x11 / --no-x11`; an explicit `true`
+#                                # (or --x11) also adds `srun --x11` on confined
+#                                # attaches (needs the cluster's Slurm X11 support).
 #   # Compute-node target: allocates a SLURM node and tunnels through
 #   # the login node (which only proxies TCP — no shell, no load).
 #   savio-node:

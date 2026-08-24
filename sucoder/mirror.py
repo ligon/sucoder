@@ -2438,7 +2438,12 @@ class MirrorManager:
         ``check=False`` so a clean detach (Ctrl-b d -> srun exits 0) or a
         gone job returns its rc rather than raising.
         """
-        x11 = bool(getattr(self.executor, "forward_x11", False))
+        # srun --x11 only on an *explicit* x11 request: it needs the
+        # cluster's Slurm X11 support, and the default-on ssh forwarding
+        # must not break a confined attach where that support is missing.
+        x11 = bool(getattr(self.executor, "forward_x11", False)) and bool(
+            getattr(self.executor, "forward_x11_explicit", False)
+        )
         argv = confined_attach_command(job_id, session_name, socket, x11=x11)
         result = self.executor.run_agent(argv, check=False, capture_output=False)
         return result.returncode

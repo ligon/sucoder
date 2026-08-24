@@ -2328,18 +2328,20 @@ def test_run_query_dispatch_remote(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 # ------------------------------------------------------------------
 
 
-def test_parse_remote_config_x11_default_off() -> None:
+def test_parse_remote_config_x11_default_unset() -> None:
+    """Unset stays None so _resolve_x11 can tell 'default' from 'explicit'."""
     rc = _parse_remote_config({"gateway": "gw", "transfer_host": "dtn"})
     assert rc is not None
-    assert rc.x11 is False
+    assert rc.x11 is None
 
 
-def test_parse_remote_config_x11_true() -> None:
+@pytest.mark.parametrize("value", [True, False])
+def test_parse_remote_config_x11_explicit(value: bool) -> None:
     rc = _parse_remote_config(
-        {"gateway": "gw", "transfer_host": "dtn", "x11": True}
+        {"gateway": "gw", "transfer_host": "dtn", "x11": value}
     )
     assert rc is not None
-    assert rc.x11 is True
+    assert rc.x11 is value
 
 
 @pytest.mark.parametrize("bad_value", ["yes", 1, {}, []])
@@ -2391,7 +2393,9 @@ def test_resolve_x11_config_on_with_display(monkeypatch: pytest.MonkeyPatch) -> 
     import logging
 
     monkeypatch.setenv("DISPLAY", ":0")
-    assert _resolve_x11(_x11_remote(x11=True), None, logging.getLogger("t")) is True
+    assert _resolve_x11(
+        _x11_remote(x11=True), None, logging.getLogger("t")
+    ) == (True, True)
 
 
 def test_resolve_x11_skipped_without_local_display(
@@ -2401,7 +2405,11 @@ def test_resolve_x11_skipped_without_local_display(
     import logging
 
     monkeypatch.delenv("DISPLAY", raising=False)
-    assert _resolve_x11(_x11_remote(x11=True), None, logging.getLogger("t")) is False
+    # Explicit request with no display: declined, but still explicit
+    # (this is the case that warrants the warning).
+    assert _resolve_x11(
+        _x11_remote(x11=True), None, logging.getLogger("t")
+    ) == (False, True)
 
 
 def test_resolve_x11_cli_override_wins(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2411,14 +2419,58 @@ def test_resolve_x11_cli_override_wins(monkeypatch: pytest.MonkeyPatch) -> None:
     logger = logging.getLogger("t")
     monkeypatch.setenv("DISPLAY", ":0")
     # --no-x11 beats a config-enabled target.
-    assert _resolve_x11(_x11_remote(x11=True), False, logger) is False
+    assert _resolve_x11(_x11_remote(x11=True), False, logger) == (False, True)
     # --x11 beats a config-disabled target.
-    assert _resolve_x11(_x11_remote(x11=False), True, logger) is True
+    assert _resolve_x11(_x11_remote(x11=False), True, logger) == (True, True)
 
 
-def test_resolve_x11_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_x11_default_on_with_display(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Neither flag nor config: forwarding defaults on when DISPLAY exists,
+    and is marked non-explicit (so srun --x11 stays off)."""
     from sucoder.cli import _resolve_x11
     import logging
 
     monkeypatch.setenv("DISPLAY", ":0")
-    assert _resolve_x11(_x11_remote(), None, logging.getLogger("t")) is False
+    assert _resolve_x11(_x11_remote(), None, logging.getLogger("t")) == (True, False)
+
+
+def test_resolve_x11_default_silent_without_display(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Defaulted-on but headless: skipped without a warning (debug only)."""
+    from sucoder.cli import _resolve_x11
+    import logging
+
+    logger = logging.getLogger("test.x11.silent")
+    records: list = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    handler = _Capture(level=logging.WARNING)
+    logger.addHandler(handler)
+    monkeypatch.delenv("DISPLAY", raising=False)
+    try:
+        assert _resolve_x11(_x11_remote(), None, logger) == (False, False)
+    finally:
+        logger.removeHandler(handler)
+    assert records == []
+
+
+def test_resolve_x11_config_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    from sucoder.cli import _resolve_x11
+    import logging
+
+    monkeypatch.setenv("DISPLAY", ":0")
+    assert _resolve_x11(
+        _x11_remote(x11=False), None, logging.getLogger("t")
+    ) == (False, True)
+
+
+def test_forward_x11_explicit_defaults_off() -> None:
+    """The explicit marker is independent of forward_x11 itself."""
+    executor = _make_remote_executor(forward_x11=True)
+    assert executor.forward_x11_explicit is False
