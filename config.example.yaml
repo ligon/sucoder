@@ -5,6 +5,22 @@ mirror_root: /var/tmp/coder-mirrors
 log_dir: /home/<your-username>/.sucoder/logs
 system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 
+# Provider credentials (optional). Values stay in the human user's `pass`
+# store; only the pass entry name belongs in this file. The first line of
+# the entry is used as the API key. OpenRouter metadata is built in.
+# credentials:
+#   openrouter:
+#     pass: openrouter.ai/apikey
+
+# Custom OpenAI-compatible providers can be described once and selected by
+# the prefix of --model (for example laboratory/my-model).
+# providers:
+#   laboratory:
+#     credential: laboratory
+#     protocol: openai          # openai | anthropic | kimi
+#     base_url: https://models.example.edu/v1
+#     env_var: LABORATORY_API_KEY
+
 # Compliance audits (optional; defaults to off).
 # When `auto_after_session: true`, sucoder runs the configured audit
 # scope after every agent session and saves the report to
@@ -97,12 +113,20 @@ mirrors:
       human: <your-username>
       agent: coder
     agent_launcher:
-      # Default agent is claude; override with command: [codex] or command: [gemini].
+      # Harness and model are independent. The default harness is claude.
+      # command: [opencode]
+      # Goose's interactive entry point is: [goose, run, --interactive]
+      # Native Kimi Code CLI: [kimi]
+      # Kimi + OpenRouter example model: openrouter/moonshotai/kimi-k3
+      # model: openrouter/deepseek/deepseek-chat
       needs_yolo: true
       writable_dirs:
         - "~"
       flags:
         skills: "--skills {path}"
+        # Custom harnesses can define model/context-file syntax explicitly:
+        # model: "--model {model}"
+        # system_prompt_file: "--read {path}"
     # MCP servers available to the agent in this mirror (optional).
     # These are written to .sucoder-mcp.json and passed via --mcp-config.
     # Repos can also ship their own .mcp.json which Claude discovers natively.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import getpass
+import json
 import os
 import re
 import shlex
@@ -11,6 +12,9 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from collections import defaultdict
 from contextlib import contextmanager
 from pathlib import Path
@@ -27,7 +31,10 @@ import typer
 
 from . import __version__
 from .config import (
+    AGENT_PROFILES,
     AgentLauncher,
+    AgentType,
+    HARNESS_CAPABILITIES,
     BranchPrefixes,
     Config,
     ConfigError,
@@ -58,6 +65,8 @@ def _version_callback(value: bool) -> None:
 
 
 app = typer.Typer(help="sucoder – Unix-sandboxed agent collaboration toolkit for managing agent mirrors.")
+list_app = typer.Typer(help="Discover configured resources and supported choices.")
+app.add_typer(list_app, name="list")
 
 _SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
@@ -1568,7 +1577,9 @@ def _resolve_mirror_name(ctx: typer.Context, mirror: Optional[str]) -> str:
 
 
 def _agent_shorthand(name: str) -> List[str]:
-    """Turn a short agent name into a command list."""
+    """Turn a legacy agent/harness name into a command list."""
+    if name == "goose":
+        return ["goose", "run", "--interactive"]
     return [name]
 
 
@@ -1577,6 +1588,29 @@ def _parse_agent_command(command: Optional[str]) -> Optional[List[str]]:
         return None
     parts = shlex.split(command)
     return parts or None
+
+
+def _resolve_harness_command(
+    *,
+    harness: Optional[str],
+    agent: Optional[str],
+    agent_command: Optional[str],
+) -> Optional[List[str]]:
+    """Resolve the CLI harness selectors while preserving ``--agent``.
+
+    ``--agent`` historically selected the executable harness.  It remains a
+    compatibility alias, but callers must not supply both names for the same
+    concept.  The full command escape hatch retains highest precedence.
+    """
+    if harness and agent:
+        raise typer.BadParameter(
+            "Use either --harness or the legacy --agent option, not both.",
+            param_hint="--harness",
+        )
+    selected = harness if harness is not None else agent
+    return _parse_agent_command(agent_command) or (
+        _agent_shorthand(selected) if selected is not None else None
+    )
 
 
 def _parse_optional_bool(value: Optional[str], *, option_name: str) -> Optional[bool]:
@@ -1610,8 +1644,10 @@ def _parse_agent_env(entries: Optional[List[str]]) -> Optional[Dict[str, str]]:
                 f"Environment override must be KEY=VALUE, received `{entry}`."
             )
         key, value = entry.split("=", 1)
-        if not key:
-            raise typer.BadParameter("Environment variable name cannot be empty.")
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            raise typer.BadParameter(
+                f"Invalid environment variable name: `{key}`."
+            )
         env[key] = value
     return env
 
@@ -2109,7 +2145,19 @@ def agents_run(
         None,
         "--agent",
         "-a",
-        help="Agent to use (e.g. claude, codex, gemini).",
+        help="Legacy alias for --harness.",
+    ),
+    harness: Optional[str] = typer.Option(
+        None,
+        "--harness",
+        "-H",
+        help="Agent harness to use (e.g. claude, codex, gemini, aider, opencode, goose, kimi).",
+    ),
+    model: Optional[str] = typer.Option(
+        None,
+        "--model",
+        "-m",
+        help="LLM model to use, independently of the selected harness.",
     ),
     agent_command: Optional[str] = typer.Option(
         None,
@@ -2119,7 +2167,10 @@ def agents_run(
     agent_env: Optional[List[str]] = typer.Option(
         None,
         "--agent-env",
-        help="Override or add agent environment variables (repeat as KEY=VALUE).",
+        help=(
+            "Override or add agent environment variables (repeat as KEY=VALUE); "
+            "prefer pass-backed credentials for secrets."
+        ),
         metavar="KEY=VALUE",
     ),
     inline_prompt: Optional[str] = typer.Option(
@@ -2144,7 +2195,9 @@ def agents_run(
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     manager = _build_manager_for_mirror(config, logger, dry_run, mirror, cli_ctx=ctx)
-    command_override = _parse_agent_command(agent_command) or (_agent_shorthand(agent) if agent else None)
+    command_override = _resolve_harness_command(
+        harness=harness, agent=agent, agent_command=agent_command,
+    )
     env_override = _parse_agent_env(agent_env)
     inline_prompt_flag = _parse_optional_bool(inline_prompt, option_name="--inline-prompt")
     try:
@@ -2155,6 +2208,7 @@ def agents_run(
             base_branch=base,
             extra_args=extra_args,
             command_override=command_override,
+            model_override=model,
             env_override=env_override,
             supports_inline_prompt=inline_prompt_flag,
         )
@@ -2200,7 +2254,19 @@ def collaborate(
         None,
         "--agent",
         "-a",
-        help="Agent to use (e.g. claude, codex, gemini).",
+        help="Legacy alias for --harness.",
+    ),
+    harness: Optional[str] = typer.Option(
+        None,
+        "--harness",
+        "-H",
+        help="Agent harness to use (e.g. claude, codex, gemini, aider, opencode, goose, kimi).",
+    ),
+    model: Optional[str] = typer.Option(
+        None,
+        "--model",
+        "-m",
+        help="LLM model to use, independently of the selected harness.",
     ),
     agent_command: Optional[str] = typer.Option(
         None,
@@ -2210,7 +2276,10 @@ def collaborate(
     agent_env: Optional[List[str]] = typer.Option(
         None,
         "--agent-env",
-        help="Override or add agent environment variables (repeat as KEY=VALUE).",
+        help=(
+            "Override or add agent environment variables (repeat as KEY=VALUE); "
+            "prefer pass-backed credentials for secrets."
+        ),
         metavar="KEY=VALUE",
     ),
     inline_prompt: Optional[str] = typer.Option(
@@ -2260,7 +2329,9 @@ def collaborate(
         logger.info("Requesting specific node %s", node)
 
     manager = _build_manager_for_mirror(config, logger, dry_run, mirror, cli_ctx=ctx)
-    command_override = _parse_agent_command(agent_command) or (_agent_shorthand(agent) if agent else None)
+    command_override = _resolve_harness_command(
+        harness=harness, agent=agent, agent_command=agent_command,
+    )
     env_override = _parse_agent_env(agent_env)
     inline_prompt_flag = _parse_optional_bool(inline_prompt, option_name="--inline-prompt")
     try:
@@ -2273,6 +2344,7 @@ def collaborate(
             base_branch=base,
             extra_args=extra_args,
             command_override=command_override,
+            model_override=model,
             env_override=env_override,
             supports_inline_prompt=inline_prompt_flag,
             skip_lfs=not lfs,
@@ -3971,6 +4043,360 @@ def mirrors_list(ctx: typer.Context) -> None:
         typer.echo(f"{name:<{name_width}}  {base:<{branch_width}}  {canonical}  {mirror_path}")
 
 
+@list_app.command("mirrors")
+def list_mirrors(ctx: typer.Context) -> None:
+    """Display configured mirrors (nested spelling of ``mirrors-list``)."""
+    mirrors_list(ctx)
+
+
+@list_app.command("harnesses")
+def list_harnesses(ctx: typer.Context) -> None:
+    """List built-in harness profiles and configured custom harnesses."""
+    config = _get_config(ctx)
+    configured: Dict[str, Set[str]] = defaultdict(set)
+    configured_models: Dict[str, Set[str]] = defaultdict(set)
+
+    if config.agent_launcher is not None and config.agent_launcher.command:
+        name = Path(config.agent_launcher.command[0]).name
+        configured[name].add("global")
+        if config.agent_launcher.model:
+            configured_models[name].add(config.agent_launcher.model)
+
+    for mirror_name, settings in config.mirrors.items():
+        launcher = settings.agent_launcher
+        if not launcher.command:
+            continue
+        name = Path(launcher.command[0]).name
+        configured[name].add(mirror_name)
+        if launcher.model:
+            configured_models[name].add(launcher.model)
+
+    builtin_types = {
+        agent_type.name.lower(): agent_type
+        for agent_type in AGENT_PROFILES
+        if agent_type is not AgentType.UNKNOWN
+    }
+    names = sorted(set(builtin_types) | set(configured))
+    rows = []
+    for name in names:
+        agent_type = builtin_types.get(name, AgentType.UNKNOWN)
+        capabilities = HARNESS_CAPABILITIES[agent_type]
+        rows.append((
+            name,
+            "built-in" if name in builtin_types else "custom",
+            capabilities.shell,
+            capabilities.files,
+            capabilities.skills,
+            capabilities.mcp,
+            capabilities.subagents,
+            capabilities.providers,
+            capabilities.approval,
+            ", ".join(sorted(configured.get(name, set()))) or "-",
+            ", ".join(sorted(configured_models.get(name, set()))) or "-",
+        ))
+
+    headers = (
+        "Harness", "Profile", "Shell", "Files", "Skills", "MCP",
+        "Subagents", "Providers", "Approval", "Configured for",
+    )
+    widths = [
+        max(len(header), *(len(row[index]) for row in rows))
+        for index, header in enumerate(headers)
+    ]
+    header = "  ".join(
+        f"{label:<{widths[index]}}" for index, label in enumerate(headers)
+    ) + "  Default model(s)"
+    typer.echo(header)
+    typer.echo("-" * len(header))
+    for row in rows:
+        typer.echo("  ".join(
+            f"{value:<{widths[index]}}" for index, value in enumerate(row[:-1])
+        ) + f"  {row[-1]}")
+
+
+@list_app.command("models")
+def list_models(
+    ctx: typer.Context,
+    pattern: Optional[str] = typer.Argument(
+        None,
+        help="Optional model-name pattern for provider or harness discovery.",
+    ),
+    harness: Optional[str] = typer.Option(
+        None,
+        "--harness",
+        "-H",
+        help="Ask a harness for available models (supported for aider, opencode, and kimi).",
+    ),
+    provider: Optional[str] = typer.Option(
+        None,
+        "--provider",
+        "-P",
+        help="Ask a configured provider for available models.",
+    ),
+) -> None:
+    """List available models from a provider or harness catalog."""
+    config = _get_config(ctx)
+    if harness is not None and provider is not None:
+        typer.echo("Choose either --harness or --provider, not both.", err=True)
+        raise typer.Exit(code=2)
+
+    configured_providers = sorted(
+        name
+        for name, settings in config.providers.items()
+        if settings.credential in config.credentials
+    )
+    if harness is None and provider is None:
+        if len(configured_providers) == 1:
+            provider = configured_providers[0]
+        elif len(configured_providers) > 1:
+            typer.echo(
+                "More than one model provider is configured: "
+                + ", ".join(configured_providers),
+                err=True,
+            )
+            typer.echo(
+                "Select one with: sucoder list models --provider NAME [PATTERN]",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+
+    if provider is not None:
+        settings = config.providers.get(provider)
+        if settings is None:
+            typer.echo(f"Unknown provider: {provider}", err=True)
+            raise typer.Exit(code=2)
+        if settings.credential not in config.credentials:
+            typer.echo(
+                f"Provider {provider!r} has no configured credential. "
+                "See `sucoder list providers`.",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        if provider != "openrouter":
+            typer.echo(
+                f"Provider {provider!r} does not have a SuCoder "
+                "model-discovery adapter yet.",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+
+        logger = setup_logger("sucoder.models", config.log_dir, False)
+        executor = _build_executor(
+            config,
+            logger,
+            dry_run=False,
+            use_sudo_for_agent=_get_use_sudo_for_agent(ctx, config),
+            cli_ctx=ctx,
+        )
+        credential = config.credentials[settings.credential]
+        try:
+            result = executor.run_human(
+                ["pass", "show", credential.pass_entry],
+                check=False,
+                capture_output=True,
+            )
+        except FileNotFoundError:
+            typer.echo(
+                "Could not resolve provider credentials because `pass` is "
+                "not installed or not on PATH.",
+                err=True,
+            )
+            raise typer.Exit(code=1) from None
+        if result.returncode != 0:
+            typer.echo(
+                f"Could not read credential {settings.credential!r} from pass "
+                f"entry {credential.pass_entry!r} (exit {result.returncode}).",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        secret_lines = result.stdout.splitlines()
+        if not secret_lines or not secret_lines[0]:
+            typer.echo(
+                f"Pass entry {credential.pass_entry!r} has an empty first line.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        query = urllib.parse.urlencode({"q": pattern}) if pattern else ""
+        url = settings.base_url.rstrip("/") + "/models"
+        if query:
+            url += "?" + query
+        request = urllib.request.Request(
+            url,
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {secret_lines[0]}",
+                "User-Agent": f"sucoder/{__version__}",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            typer.echo(
+                f"{provider} model discovery failed with HTTP {exc.code}.",
+                err=True,
+            )
+            raise typer.Exit(code=1) from None
+        except urllib.error.URLError as exc:
+            typer.echo(
+                f"Could not reach {provider} for model discovery: {exc.reason}",
+                err=True,
+            )
+            raise typer.Exit(code=1) from None
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            typer.echo(
+                f"Could not parse {provider}'s model catalog: {exc}",
+                err=True,
+            )
+            raise typer.Exit(code=1) from None
+
+        records = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(records, list):
+            typer.echo(
+                f"Could not parse {provider}'s model catalog: `data` is not a list.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        needle = pattern.casefold() if pattern else None
+        models: Set[str] = set()
+        for record in records:
+            if not isinstance(record, dict) or not isinstance(record.get("id"), str):
+                continue
+            model_id = record["id"]
+            model_name = record.get("name", "")
+            if needle and needle not in model_id.casefold() and (
+                not isinstance(model_name, str) or needle not in model_name.casefold()
+            ):
+                continue
+            prefix = f"{provider}/"
+            models.add(model_id if model_id.startswith(prefix) else prefix + model_id)
+        if models:
+            typer.echo("\n".join(sorted(models)))
+        else:
+            message = (
+                f"No {provider} models matched {pattern!r}."
+                if pattern
+                else f"No {provider} models found."
+            )
+            typer.echo(message)
+        return
+
+    if harness is None:
+        rows: List[Tuple[str, str, str]] = []
+        if config.agent_launcher is not None and config.agent_launcher.model:
+            command = config.agent_launcher.command
+            name = Path(command[0]).name if command else "(unknown)"
+            rows.append(("global", name, config.agent_launcher.model))
+        for mirror_name, settings in sorted(config.mirrors.items()):
+            launcher = settings.agent_launcher
+            if launcher.model:
+                name = Path(launcher.command[0]).name if launcher.command else "(unknown)"
+                rows.append((mirror_name, name, launcher.model))
+        if not rows:
+            typer.echo("No default models configured.")
+            typer.echo(
+                "Configure a provider credential, or use: "
+                "sucoder list models --harness aider|opencode|kimi [PATTERN]"
+            )
+            return
+        context_width = max(len("Context"), *(len(row[0]) for row in rows))
+        harness_width = max(len("Harness"), *(len(row[1]) for row in rows))
+        header = f"{'Context':<{context_width}}  {'Harness':<{harness_width}}  Model"
+        typer.echo(header)
+        typer.echo("-" * len(header))
+        for context, name, model in rows:
+            typer.echo(f"{context:<{context_width}}  {name:<{harness_width}}  {model}")
+        return
+
+    normalized = Path(harness).name
+    if normalized not in {"aider", "opencode", "kimi"}:
+        typer.echo(
+            f"Harness {harness!r} does not have a SuCoder model-discovery adapter yet.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    logger = setup_logger("sucoder.models", config.log_dir, False)
+    executor = _build_executor(
+        config,
+        logger,
+        dry_run=False,
+        use_sudo_for_agent=_get_use_sudo_for_agent(ctx, config),
+        cli_ctx=ctx,
+    )
+    if normalized == "aider":
+        command = [harness, "--list-models", pattern or ""]
+    elif normalized == "opencode":
+        command = [harness, "models"]
+    else:
+        command = [harness, "provider", "list", "--json"]
+    try:
+        result = executor.run_agent(command, check=False, capture_output=True)
+    except FileNotFoundError:
+        typer.echo(f"Harness executable not found: {harness}", err=True)
+        raise typer.Exit(code=1) from None
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        typer.echo(detail or f"{harness} model discovery failed.", err=True)
+        raise typer.Exit(code=result.returncode)
+    output = result.stdout.rstrip()
+    if normalized == "opencode" and pattern:
+        needle = pattern.casefold()
+        output = "\n".join(
+            line for line in output.splitlines() if needle in line.casefold()
+        )
+    elif normalized == "kimi":
+        try:
+            data = json.loads(output)
+            models = data.get("models", {})
+            if not isinstance(models, dict):
+                raise ValueError("the models field is not an object")
+        except (json.JSONDecodeError, AttributeError, ValueError) as exc:
+            typer.echo(f"Could not parse Kimi's model catalog: {exc}", err=True)
+            raise typer.Exit(code=1) from None
+        aliases = sorted(str(alias) for alias in models)
+        if pattern:
+            needle = pattern.casefold()
+            aliases = [alias for alias in aliases if needle in alias.casefold()]
+        output = "\n".join(aliases)
+        if not output:
+            output = "No Kimi model aliases configured. Run `kimi login` or `kimi provider`."
+    typer.echo(output)
+
+
+@list_app.command("providers")
+def list_providers(ctx: typer.Context) -> None:
+    """List provider metadata and credential references without resolving secrets."""
+    config = _get_config(ctx)
+    rows = []
+    for name, provider in sorted(config.providers.items()):
+        credential = config.credentials.get(provider.credential)
+        source = (
+            f"pass:{credential.pass_entry}"
+            if credential is not None
+            else "not configured"
+        )
+        rows.append((
+            name, provider.protocol, provider.base_url,
+            provider.credential, source,
+        ))
+
+    headers = ("Provider", "Protocol", "Base URL", "Credential", "Source")
+    widths = [
+        max(len(header), *(len(row[index]) for row in rows))
+        for index, header in enumerate(headers)
+    ]
+    typer.echo("  ".join(
+        f"{header:<{widths[index]}}" for index, header in enumerate(headers)
+    ))
+    typer.echo("  ".join("-" * width for width in widths))
+    for row in rows:
+        typer.echo("  ".join(
+            f"{value:<{widths[index]}}" for index, value in enumerate(row)
+        ))
+
+
 @app.command("skills-list")
 def skills_list(
     ctx: typer.Context,
@@ -4049,6 +4475,15 @@ def skills_list(
             exit_code = 1
 
     raise typer.Exit(code=exit_code)
+
+
+@list_app.command("skills")
+def list_skills(
+    ctx: typer.Context,
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
+) -> None:
+    """List configured skill paths (nested spelling of ``skills-list``)."""
+    skills_list(ctx, verbose=verbose)
 
 
 def _agent_can_read_file(path: Path, executor: CommandExecutor) -> bool:

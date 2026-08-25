@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import warnings
@@ -20,6 +21,10 @@ class AgentType(Enum):
     CLAUDE = auto()
     CODEX = auto()
     GEMINI = auto()
+    AIDER = auto()
+    OPENCODE = auto()
+    GOOSE = auto()
+    KIMI = auto()
     UNKNOWN = auto()
 
 
@@ -122,11 +127,29 @@ class McpServerConfig:
     env: Dict[str, str] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class CredentialConfig:
+    """Reference to a secret stored outside SuCoder configuration."""
+
+    pass_entry: str
+
+
+@dataclass(frozen=True)
+class ProviderConfig:
+    """Provider metadata used to adapt a model name to a harness launch."""
+
+    credential: str
+    protocol: str
+    base_url: str
+    env_var: str
+
+
 @dataclass
 class AgentLauncher:
     """Configuration for launching the agent process."""
 
     command: List[str] = field(default_factory=lambda: ["claude"])
+    model: Optional[str] = None
     env: Dict[str, str] = field(default_factory=dict)
     nvm: Optional[NvmConfig] = None
     accepts_inline_prompt: Optional[bool] = None
@@ -153,6 +176,21 @@ class AgentFlagTemplates:
     skills: Optional[str] = None
     system_prompt: Optional[str] = None
     mcp_config: Optional[str] = None
+    model: Optional[str] = None
+    system_prompt_file: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class HarnessCapabilities:
+    """Concise capability labels shown by ``sucoder list harnesses``."""
+
+    shell: str
+    files: str
+    skills: str
+    mcp: str
+    subagents: str
+    providers: str
+    approval: str
 
 
 # Agent profiles provide CLI-specific default flag templates.
@@ -165,6 +203,8 @@ AGENT_PROFILES: Dict[AgentType, AgentFlagTemplates] = {
         system_prompt=None,
         skills=None,
         mcp_config=None,
+        model=None,
+        system_prompt_file=None,
     ),
     AgentType.CLAUDE: AgentFlagTemplates(
         yolo="--dangerously-skip-permissions",
@@ -172,6 +212,7 @@ AGENT_PROFILES: Dict[AgentType, AgentFlagTemplates] = {
         system_prompt="--system-prompt",  # Flag only; content added as separate arg
         skills=None,  # Claude doesn't have a direct skills flag
         mcp_config="--mcp-config {path}",
+        model="--model {model}",
     ),
     AgentType.CODEX: AgentFlagTemplates(
         yolo="--sandbox danger-full-access --ask-for-approval never",
@@ -179,6 +220,7 @@ AGENT_PROFILES: Dict[AgentType, AgentFlagTemplates] = {
         system_prompt=None,  # codex uses trailing text
         skills=None,
         mcp_config=None,
+        model="--model {model}",
     ),
     AgentType.GEMINI: AgentFlagTemplates(
         yolo="--yolo",
@@ -186,6 +228,76 @@ AGENT_PROFILES: Dict[AgentType, AgentFlagTemplates] = {
         system_prompt="--prompt-interactive",  # stays interactive after prompt
         skills=None,
         mcp_config=None,
+        model="--model {model}",
+    ),
+    AgentType.AIDER: AgentFlagTemplates(
+        yolo="--yes-always",
+        writable_dir=None,
+        system_prompt=None,
+        system_prompt_file="--read {path}",
+        skills=None,
+        mcp_config=None,
+        model="--model {model}",
+    ),
+    AgentType.OPENCODE: AgentFlagTemplates(
+        yolo="--auto",
+        writable_dir=None,
+        system_prompt="--prompt",
+        skills=None,  # OpenCode discovers .agents/skills natively
+        mcp_config=None,
+        model="--model {model}",
+    ),
+    AgentType.GOOSE: AgentFlagTemplates(
+        yolo=None,
+        writable_dir=None,
+        # ``goose run --interactive --text`` processes the injected context,
+        # then leaves the user in an interactive session.
+        system_prompt="--text",
+        skills=None,  # Goose discovers Agent Skills natively
+        mcp_config=None,
+        model="--model {model}",
+    ),
+    AgentType.KIMI: AgentFlagTemplates(
+        yolo="--auto",
+        writable_dir="--add-dir {path}",
+        system_prompt=None,
+        # Kimi custom-agent files preserve the native agent when their body
+        # includes ${base_prompt}; MirrorManager supplies that wrapper.
+        system_prompt_file="--agent-file {path}",
+        skills=None,  # Kimi discovers Agent Skills natively
+        mcp_config=None,  # Kimi uses its native configuration
+        model="--model {model}",
+    ),
+}
+
+
+# These labels describe native harness facilities, not model quality.  In
+# particular, Aider may suggest shell commands but does not expose a shell tool
+# in its model loop.
+HARNESS_CAPABILITIES: Dict[AgentType, HarnessCapabilities] = {
+    AgentType.CLAUDE: HarnessCapabilities(
+        "yes", "yes", "yes", "yes", "yes", "Claude", "bypass",
+    ),
+    AgentType.CODEX: HarnessCapabilities(
+        "yes", "yes", "yes", "yes", "yes", "custom", "policy",
+    ),
+    AgentType.GEMINI: HarnessCapabilities(
+        "yes", "yes", "yes", "yes", "yes", "Gemini", "yolo",
+    ),
+    AgentType.AIDER: HarnessCapabilities(
+        "suggest", "edit", "no", "no", "no", "multi", "explicit",
+    ),
+    AgentType.OPENCODE: HarnessCapabilities(
+        "yes", "yes", "yes", "yes", "yes", "multi", "auto",
+    ),
+    AgentType.GOOSE: HarnessCapabilities(
+        "yes", "yes", "yes", "yes", "yes", "multi", "policy",
+    ),
+    AgentType.KIMI: HarnessCapabilities(
+        "yes", "yes", "yes", "yes", "yes", "multi", "auto",
+    ),
+    AgentType.UNKNOWN: HarnessCapabilities(
+        "?", "?", "?", "?", "?", "?", "?",
     ),
 }
 
@@ -196,6 +308,10 @@ DEFAULT_LAUNCH_MODES: Dict[AgentType, Literal["subprocess", "exec"]] = {
     AgentType.CLAUDE: "subprocess",   # Works fine with subprocess
     AgentType.CODEX: "subprocess",    # Works fine with subprocess
     AgentType.GEMINI: "exec",         # Needs TTY passthrough
+    AgentType.AIDER: "subprocess",
+    AgentType.OPENCODE: "subprocess",
+    AgentType.GOOSE: "subprocess",
+    AgentType.KIMI: "subprocess",
     AgentType.UNKNOWN: "subprocess",  # Safe default
 }
 
@@ -258,6 +374,10 @@ class Config:
     mirror_root: Path = field(default_factory=Path)
     skills: List[Path] = field(default_factory=list)
     mcp_servers: Dict[str, McpServerConfig] = field(default_factory=dict)
+    credentials: Dict[str, CredentialConfig] = field(default_factory=dict)
+    providers: Dict[str, ProviderConfig] = field(
+        default_factory=lambda: dict(BUILTIN_PROVIDERS)
+    )
     system_prompt: Optional[Path] = None
     log_dir: Optional[Path] = None
     agent_launcher: Optional[AgentLauncher] = None  # Global defaults for all mirrors
@@ -279,6 +399,16 @@ class Config:
     @property
     def mirrors_dir(self) -> Path:
         return self.mirror_root
+
+
+BUILTIN_PROVIDERS: Dict[str, ProviderConfig] = {
+    "openrouter": ProviderConfig(
+        credential="openrouter",
+        protocol="openai",
+        base_url="https://openrouter.ai/api/v1",
+        env_var="OPENROUTER_API_KEY",
+    ),
+}
 
 
 class ConfigError(RuntimeError):
@@ -344,7 +474,7 @@ def _detect_git_toplevel() -> Path:
     return Path(result.stdout.strip())
 
 
-KNOWN_AGENTS = ["claude", "codex", "gemini"]
+KNOWN_AGENTS = ["claude", "codex", "gemini", "aider", "opencode", "goose", "kimi"]
 AGENT_PREFERENCE_FILE = Path("~/.sucoder/agent")
 
 
@@ -362,7 +492,7 @@ def detect_agent_command() -> List[str]:
     env_agent = os.environ.get("SUCODER_AGENT", "").strip()
     if env_agent:
         if shutil.which(env_agent):
-            return [env_agent]
+            return _default_agent_command(env_agent)
         raise ConfigError(
             f"$SUCODER_AGENT is set to {env_agent!r} but it was not found on PATH."
         )
@@ -373,7 +503,7 @@ def detect_agent_command() -> List[str]:
         saved = pref_path.read_text(encoding="utf-8").strip()
         if saved:
             if shutil.which(saved):
-                return [saved]
+                return _default_agent_command(saved)
             raise ConfigError(
                 f"Agent {saved!r} (from {pref_path}) was not found on PATH."
             )
@@ -382,7 +512,7 @@ def detect_agent_command() -> List[str]:
     found = [name for name in KNOWN_AGENTS if shutil.which(name)]
 
     if len(found) == 1:
-        return [found[0]]
+        return _default_agent_command(found[0])
 
     if len(found) == 0:
         raise ConfigError(
@@ -393,6 +523,13 @@ def detect_agent_command() -> List[str]:
 
     # 4. Multiple found — interactive prompt
     return _prompt_agent_choice(found)
+
+
+def _default_agent_command(name: str) -> List[str]:
+    """Return the interactive command for a known harness executable."""
+    if name == "goose":
+        return ["goose", "run", "--interactive"]
+    return [name]
 
 
 def _prompt_agent_choice(agents: List[str]) -> List[str]:
@@ -416,7 +553,7 @@ def _prompt_agent_choice(agents: List[str]) -> List[str]:
     pref_path.parent.mkdir(parents=True, exist_ok=True)
     pref_path.write_text(choice + "\n", encoding="utf-8")
 
-    return [choice]
+    return _default_agent_command(choice)
 
 
 def build_default_config() -> Config:
@@ -477,6 +614,8 @@ def _build_config(data: Dict[str, Any], *, path: Path) -> Config:
 
     global_skills = _parse_skills(data.get("skills"))
     global_mcp_servers = _parse_mcp_servers(data.get("mcp_servers"))
+    credentials = _parse_credentials(data.get("credentials"))
+    providers = _parse_providers(data.get("providers"))
 
     # Parse global agent_launcher defaults (applies to all mirrors unless overridden)
     global_agent_launcher = None
@@ -501,6 +640,8 @@ def _build_config(data: Dict[str, Any], *, path: Path) -> Config:
         mirror_root=mirror_root,
         skills=global_skills,
         mcp_servers=global_mcp_servers,
+        credentials=credentials,
+        providers=providers,
         system_prompt=system_prompt,
         log_dir=log_dir,
         agent_launcher=global_agent_launcher,
@@ -508,6 +649,97 @@ def _build_config(data: Dict[str, Any], *, path: Path) -> Config:
         targets=targets,
         audit=audit,
     )
+
+
+_ENVIRONMENT_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_PROVIDER_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+_PROVIDER_PROTOCOLS = frozenset({"openai", "anthropic", "kimi"})
+
+
+def _parse_credentials(raw: Any) -> Dict[str, CredentialConfig]:
+    """Parse named references to entries in the human user's password store."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ConfigError("`credentials` must be a mapping of names to settings.")
+
+    credentials: Dict[str, CredentialConfig] = {}
+    for name, value in raw.items():
+        if not isinstance(name, str) or not _PROVIDER_NAME_RE.fullmatch(name):
+            raise ConfigError(
+                f"Credential name {name!r} must contain only lowercase letters, "
+                "digits, '.', '_', or '-'."
+            )
+        if not isinstance(value, dict):
+            raise ConfigError(f"Credential `{name}` must be a mapping.")
+        unknown = set(value) - {"pass"}
+        if unknown:
+            raise ConfigError(
+                f"Credential `{name}` has unsupported settings: "
+                f"{', '.join(sorted(str(key) for key in unknown))}."
+            )
+        entry = value.get("pass")
+        if (
+            not isinstance(entry, str)
+            or not entry.strip()
+            or entry.startswith("-")
+            or "\n" in entry
+            or "\r" in entry
+        ):
+            raise ConfigError(
+                f"`credentials.{name}.pass` must be a non-empty pass entry name."
+            )
+        credentials[name] = CredentialConfig(pass_entry=entry)
+    return credentials
+
+
+def _parse_providers(raw: Any) -> Dict[str, ProviderConfig]:
+    """Merge custom provider metadata over SuCoder's built-in providers."""
+    providers = dict(BUILTIN_PROVIDERS)
+    if raw is None:
+        return providers
+    if not isinstance(raw, dict):
+        raise ConfigError("`providers` must be a mapping of names to settings.")
+
+    for name, value in raw.items():
+        if not isinstance(name, str) or not _PROVIDER_NAME_RE.fullmatch(name):
+            raise ConfigError(
+                f"Provider name {name!r} must contain only lowercase letters, "
+                "digits, '.', '_', or '-'."
+            )
+        if not isinstance(value, dict):
+            raise ConfigError(f"Provider `{name}` must be a mapping.")
+        unknown = set(value) - {"credential", "protocol", "base_url", "env_var"}
+        if unknown:
+            raise ConfigError(
+                f"Provider `{name}` has unsupported settings: "
+                f"{', '.join(sorted(str(key) for key in unknown))}."
+            )
+        existing = providers.get(name)
+        credential = value.get("credential", existing.credential if existing else name)
+        protocol = value.get("protocol", existing.protocol if existing else None)
+        base_url = value.get("base_url", existing.base_url if existing else None)
+        env_var = value.get("env_var", existing.env_var if existing else None)
+        if not isinstance(credential, str) or not credential.strip():
+            raise ConfigError(f"`providers.{name}.credential` must be a non-empty string.")
+        if protocol not in _PROVIDER_PROTOCOLS:
+            raise ConfigError(
+                f"`providers.{name}.protocol` must be one of "
+                f"{', '.join(sorted(_PROVIDER_PROTOCOLS))}."
+            )
+        if not isinstance(base_url, str) or not base_url.strip():
+            raise ConfigError(f"`providers.{name}.base_url` must be a non-empty string.")
+        if not isinstance(env_var, str) or not _ENVIRONMENT_NAME_RE.fullmatch(env_var):
+            raise ConfigError(
+                f"`providers.{name}.env_var` must be a valid environment variable name."
+            )
+        providers[name] = ProviderConfig(
+            credential=credential.strip(),
+            protocol=protocol,
+            base_url=base_url.strip(),
+            env_var=env_var,
+        )
+    return providers
 
 
 def _parse_audit_config(raw: Any, *, path: Path) -> AuditConfig:
@@ -633,8 +865,17 @@ def _parse_agent_launcher(raw: Any) -> AgentLauncher:
         raise ConfigError("`agent_launcher.command` must be a string or list of strings.")
 
     env_raw = raw.get("env", {}) or {}
-    if not isinstance(env_raw, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in env_raw.items()):
+    if not isinstance(env_raw, dict) or any(
+        not isinstance(k, str)
+        or not _ENVIRONMENT_NAME_RE.fullmatch(k)
+        or not isinstance(v, str)
+        for k, v in env_raw.items()
+    ):
         raise ConfigError("`agent_launcher.env` must be a mapping of string keys to string values.")
+
+    model = raw.get("model")
+    if model is not None and (not isinstance(model, str) or not model.strip()):
+        raise ConfigError("`agent_launcher.model` must be a non-empty string when provided.")
 
     nvm_settings = _parse_nvm_settings(raw.get("nvm"))
 
@@ -680,6 +921,7 @@ def _parse_agent_launcher(raw: Any) -> AgentLauncher:
 
     return AgentLauncher(
         command=command,
+        model=model.strip() if model is not None else None,
         env=dict(env_raw),
         nvm=nvm_settings,
         accepts_inline_prompt=accepts_inline_prompt,
@@ -736,6 +978,8 @@ def _parse_flag_templates(raw: Any) -> AgentFlagTemplates:
         skills=_template("skills"),
         system_prompt=_template("system_prompt"),
         mcp_config=_template("mcp_config"),
+        model=_template("model"),
+        system_prompt_file=_template("system_prompt_file"),
     )
 
 

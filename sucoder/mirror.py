@@ -8,6 +8,7 @@ import logging
 import os
 import pwd
 import re
+import secrets
 import shlex
 import shutil
 import subprocess
@@ -2123,6 +2124,167 @@ class MirrorManager:
         )
         return agent_cmd_str.replace(sentinel, f'"$(cat {remote_path})"')
 
+    def _write_context_prelude_file(self, ctx: MirrorContext, prelude: str) -> str:
+        """Write interactive harness instructions to a private agent-side file.
+
+        Some harnesses, notably Aider, accept durable instructions as a
+        read-only file but treat a positional prompt as a one-shot request.
+        Writing through the executor works for local, SSH, and SLURM-backed
+        launches while keeping the file out of the mirrored git worktree.
+        """
+        safe = re.sub(r"[^A-Za-z0-9._-]", "_", ctx.settings.name)
+        if ctx.is_remote:
+            home = self._resolve_remote_home(ctx)
+        else:
+            home_path = self._agent_home_directory()
+            if home_path is None:
+                raise MirrorError(
+                    f"Could not resolve the home directory for agent user "
+                    f"{self.executor.agent_user!r}."
+                )
+            home = str(home_path)
+        agent_type = getattr(self, "_detected_agent_type", AgentType.UNKNOWN)
+        if agent_type == AgentType.KIMI:
+            # A Kimi custom agent owns the system prompt.  Retain Kimi's native
+            # coding tools, skills, and environment context, then append the
+            # SuCoder collaboration instructions.
+            prelude = (
+                "---\n"
+                "name: sucoder\n"
+                "description: SuCoder collaborative coding agent\n"
+                "---\n\n"
+                "${base_prompt}\n\n"
+                f"{prelude}"
+            )
+            suffix = "md"
+        else:
+            suffix = "txt"
+        path = f"{home}/.cache/sucoder/prelude-{safe}.{suffix}"
+        self.executor.run_agent(
+            [
+                "sh", "-c",
+                'umask 077 && mkdir -p "$(dirname "$1")" && cat > "$1"',
+                "sucoder-context", path,
+            ],
+            input=prelude,
+            check=True,
+            capture_output=True,
+        )
+        return path
+
+    def _read_pass_credential(self, name: str) -> str:
+        """Resolve one named credential from the human user's password store."""
+        credential = self.config.credentials[name]
+        try:
+            result = self.executor.run_human(
+                ["pass", "show", credential.pass_entry],
+                check=False,
+                capture_output=True,
+            )
+        except FileNotFoundError as exc:
+            raise MirrorError(
+                "Could not resolve pass-backed credentials because the `pass` "
+                "command is not installed or not on PATH."
+            ) from exc
+        if result.returncode != 0:
+            raise MirrorError(
+                f"Could not read credential `{name}` from pass entry "
+                f"{credential.pass_entry!r} (exit {result.returncode})."
+            )
+        lines = result.stdout.splitlines()
+        if not lines or not lines[0]:
+            raise MirrorError(
+                f"Pass entry {credential.pass_entry!r} for credential `{name}` "
+                "has an empty first line."
+            )
+        return lines[0]
+
+    def _provider_launch_environment(
+        self,
+        model: Optional[str],
+        agent_type: AgentType,
+    ) -> Tuple[Optional[str], Dict[str, str]]:
+        """Resolve a model-prefix provider and adapt it to one harness.
+
+        A configured credential activates provider injection.  Without one,
+        the existing harness-native authentication behavior is untouched.
+        The returned model is the value to pass through the harness's model
+        flag; Kimi's temporary-provider channel consumes the model through
+        environment variables instead, so its returned flag value is None.
+        """
+        if not model or "/" not in model:
+            return model, {}
+        provider_name, provider_model = model.split("/", 1)
+        provider = self.config.providers.get(provider_name)
+        if provider is None or provider.credential not in self.config.credentials:
+            return model, {}
+
+        secret = (
+            "<redacted-dry-run>"
+            if self.executor.dry_run
+            else self._read_pass_credential(provider.credential)
+        )
+        self.logger.info(
+            "Loading %s credential from pass for provider %s.",
+            provider.credential,
+            provider_name,
+        )
+        if agent_type == AgentType.KIMI:
+            return None, {
+                "KIMI_MODEL_NAME": provider_model,
+                "KIMI_MODEL_API_KEY": secret,
+                "KIMI_MODEL_PROVIDER_TYPE": provider.protocol,
+                "KIMI_MODEL_BASE_URL": provider.base_url,
+            }
+        return model, {provider.env_var: secret}
+
+    def _write_agent_environment_file(
+        self,
+        ctx: MirrorContext,
+        env: Mapping[str, str],
+    ) -> str:
+        """Stage launch environment through stdin, never argv or a log line."""
+        safe = re.sub(r"[^A-Za-z0-9._-]", "_", ctx.settings.name)
+        if ctx.is_remote:
+            home = self._resolve_remote_home(ctx)
+        else:
+            home_path = self._agent_home_directory()
+            if home_path is None:
+                raise MirrorError(
+                    f"Could not resolve the home directory for agent user "
+                    f"{self.executor.agent_user!r}."
+                )
+            home = str(home_path)
+        nonce = secrets.token_hex(12)
+        path = f"{home}/.cache/sucoder/env-{safe}-{nonce}.sh"
+        payload = "".join(
+            f"export {key}={shlex.quote(str(value))}\n"
+            for key, value in sorted(env.items())
+        )
+        self.executor.run_agent(
+            [
+                "sh", "-c",
+                'umask 077 && mkdir -p "$(dirname "$1")" && cat > "$1"',
+                "sucoder-environment", path,
+            ],
+            input=payload,
+            check=True,
+            capture_output=True,
+        )
+        return path
+
+    @staticmethod
+    def _wrap_with_environment_file(command: Sequence[str], path: str) -> List[str]:
+        """Source and unlink a private environment file, then exec command."""
+        script = (
+            'env_file=$1; shift; '
+            'trap \'rm -f -- "$env_file"\' EXIT HUP INT TERM; '
+            'set -a; . "$env_file"; set +a; '
+            'rm -f -- "$env_file"; trap - EXIT HUP INT TERM; '
+            'exec "$@"'
+        )
+        return ["bash", "-c", script, "sucoder-environment", path, *command]
+
     @staticmethod
     def _build_batch_script(
         *,
@@ -2608,6 +2770,7 @@ class MirrorManager:
         base_branch: Optional[str] = None,
         extra_args: Optional[Sequence[str]] = None,
         command_override: Optional[Sequence[str]] = None,
+        model_override: Optional[str] = None,
         env_override: Optional[Mapping[str, str]] = None,
         supports_inline_prompt: Optional[bool] = None,
         detached: bool = False,
@@ -2639,8 +2802,18 @@ class MirrorManager:
         command = list(base_command)
         if extra_args:
             command.extend(extra_args)
+        effective_model = model_override if model_override is not None else launcher.model
 
-        env: Dict[str, str] = dict(launcher.env) if launcher.env else {}
+        model_for_flag, provider_env = self._provider_launch_environment(
+            effective_model, self._detected_agent_type,
+        )
+        if provider_env and self._detected_agent_type == AgentType.KIMI:
+            command = self._without_value_options(command, {"--model", "-m"})
+
+        # Provider-derived values are defaults. Explicit launcher/CLI
+        # environment settings retain their established override precedence.
+        env: Dict[str, str] = dict(provider_env)
+        env.update(launcher.env or {})
         if env_override:
             env.update(env_override)
         env_to_use = env or None
@@ -2659,7 +2832,9 @@ class MirrorManager:
 
         # Get merged templates (per-mirror > global > agent profile)
         templates = self._get_merged_templates(command, launcher)
-        command = self._apply_agent_flag_templates(command, ctx, launcher, templates)
+        command = self._apply_agent_flag_templates(
+            command, ctx, launcher, templates, model=model_for_flag,
+        )
 
         # Inject system prompt via native flag if available, otherwise
         # trailing text.
@@ -2672,11 +2847,11 @@ class MirrorManager:
         # over SSH stdin and substitute a ``"$(cat <file>)"`` reference
         # (see ``_externalize_prelude``).
         prelude_sentinel = "__SUCODER_PRELUDE_FROM_FILE__"
-        externalize_prelude = bool(prelude) and ctx.is_remote
-        injected_prelude = prelude_sentinel if externalize_prelude else prelude
         remote_prelude_text: Optional[str] = None
         if prelude:
             if templates.system_prompt:
+                externalize_prelude = ctx.is_remote
+                injected_prelude = prelude_sentinel if externalize_prelude else prelude
                 # Use CLI-native system prompt flag (e.g., --system-prompt for Claude)
                 # Template is just the flag; content is added as a separate argument
                 flag_tokens = shlex.split(templates.system_prompt)
@@ -2685,7 +2860,19 @@ class MirrorManager:
                     command = self._insert_after_executable(command, flag_tokens + [injected_prelude])
                     if externalize_prelude:
                         remote_prelude_text = prelude
+            elif templates.system_prompt_file:
+                prelude_path = self._write_context_prelude_file(ctx, prelude)
+                flag_tokens = self._render_flag_template(
+                    templates.system_prompt_file, path=prelude_path,
+                )
+                if not flag_tokens:
+                    raise MirrorError(
+                        f"Could not render the context-file flags for {command[0]}."
+                    )
+                command = self._insert_after_executable(command, flag_tokens)
             elif inline_prompt_supported:
+                externalize_prelude = ctx.is_remote
+                injected_prelude = prelude_sentinel if externalize_prelude else prelude
                 # Fallback: append as trailing text
                 command = list(command) + [injected_prelude]
                 if externalize_prelude:
@@ -2712,6 +2899,15 @@ class MirrorManager:
         # Determine launch mode: explicit config > agent profile default > subprocess
         effective_mode = self._get_effective_launch_mode(command, launcher)
 
+        # Environment values may include API keys resolved from pass. Stage
+        # them over stdin in an agent-owned 0600 file, then source and unlink
+        # that file immediately before exec. Passing env=None below avoids the
+        # executor's legacy sudo/SSH argv transport.
+        if env_to_use:
+            environment_path = self._write_agent_environment_file(ctx, env_to_use)
+            command = self._wrap_with_environment_file(command, environment_path)
+            env_to_use = None
+
         if ctx.is_remote:
             if ctx.confined:
                 # A confined target launches via ``sbatch`` so the agent runs
@@ -2728,7 +2924,7 @@ class MirrorManager:
                     command,
                     remote_prelude_text=remote_prelude_text,
                     prelude_sentinel=prelude_sentinel,
-                    env=env_to_use,
+                    env=None,
                     detached=detached,
                 )
 
@@ -3064,6 +3260,7 @@ class MirrorManager:
         base_branch: Optional[str] = None,
         extra_args: Optional[Sequence[str]] = None,
         command_override: Optional[Sequence[str]] = None,
+        model_override: Optional[str] = None,
         env_override: Optional[Mapping[str, str]] = None,
         supports_inline_prompt: Optional[bool] = None,
         skip_lfs: bool = True,
@@ -3098,6 +3295,7 @@ class MirrorManager:
             base_branch=base_branch,
             extra_args=extra_args,
             command_override=command_override,
+            model_override=model_override,
             env_override=env_override,
             supports_inline_prompt=supports_inline_prompt,
         )
@@ -3120,12 +3318,37 @@ class MirrorManager:
         ctx: MirrorContext,
         launcher: AgentLauncher,
         templates: AgentFlagTemplates,
+        *,
+        model: Optional[str] = None,
     ) -> List[str]:
         """Translate generic intents into agent-specific flags."""
         if not command:
             return []
 
         command_list = list(command)
+
+        # model intent -- independent of the selected harness
+        if model:
+            if not templates.model:
+                raise MirrorError(
+                    f"Harness {command_list[0]!r} has no model flag template; "
+                    "configure agent_launcher.flags.model."
+                )
+            tokens = self._render_flag_template(templates.model, model=model)
+            if not tokens:
+                raise MirrorError(
+                    f"Could not render the model flag for harness {command_list[0]!r}."
+                )
+            # Replace an existing two-token option (normally ``--model OLD``)
+            # so an explicit --model override is deterministic.
+            if len(tokens) == 2 and tokens[0] in command_list:
+                index = command_list.index(tokens[0])
+                if index + 1 < len(command_list):
+                    command_list[index + 1] = tokens[1]
+                else:
+                    command_list.append(tokens[1])
+            elif not self._tokens_present(command_list, tokens):
+                command_list = self._insert_after_executable(command_list, tokens)
 
         # needs_yolo intent
         needs_yolo = launcher.needs_yolo
@@ -3259,6 +3482,23 @@ class MirrorManager:
         if not tokens:
             return False
         return any(token in command for token in tokens)
+
+    @staticmethod
+    def _without_value_options(
+        command: Sequence[str], options: set[str],
+    ) -> List[str]:
+        """Remove two-token options such as ``--model VALUE``."""
+        result: List[str] = []
+        skip_next = False
+        for token in command:
+            if skip_next:
+                skip_next = False
+                continue
+            if token in options:
+                skip_next = True
+                continue
+            result.append(token)
+        return result
 
     def _resolved_skill_paths_for_flags(self, ctx: MirrorContext) -> List[Path]:
         """Return skill paths to expose to agents, falling back to default skills."""
@@ -3397,8 +3637,10 @@ class MirrorManager:
         untouched when ``use_sudo_for_agent`` is false, so a bare ``command``
         argv would be looked up as a binary and fail.
 
-        Falls back to ``shutil.which`` only if that shell cannot be run at all;
-        a PATH-shaped guess beats dropping the diagnostic entirely.
+        Falls back to ``shutil.which`` only when the command will run as the
+        invoking user.  When sudo switches to a distinct agent account, the
+        invoking user's PATH is not evidence about what that account can run;
+        using it would produce a dangerously misleading diagnostic.
         """
 
         try:
@@ -3419,7 +3661,13 @@ class MirrorManager:
                 if candidate.startswith(os.sep):
                     return candidate
 
-        return shutil.which(name)
+        same_runtime_identity = (
+            not self.executor.use_sudo_for_agent
+            or self.executor.agent_user == self.executor.human_user
+        )
+        if same_runtime_identity:
+            return shutil.which(name)
+        return None
 
     def _warn_if_agent_binary_shadowed(
         self,
@@ -5728,6 +5976,14 @@ def _detect_agent_type(command: Sequence[str]) -> AgentType:
         return AgentType.CODEX
     if executable == "gemini":
         return AgentType.GEMINI
+    if executable == "aider":
+        return AgentType.AIDER
+    if executable == "opencode":
+        return AgentType.OPENCODE
+    if executable == "goose":
+        return AgentType.GOOSE
+    if executable == "kimi":
+        return AgentType.KIMI
     return AgentType.UNKNOWN
 
 
@@ -5762,4 +6018,6 @@ def _merge_flag_templates(
         skills=_pick("skills"),
         system_prompt=_pick("system_prompt"),
         mcp_config=_pick("mcp_config"),
+        model=_pick("model"),
+        system_prompt_file=_pick("system_prompt_file"),
     )

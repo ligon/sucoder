@@ -10,7 +10,7 @@ from typing import Callable, Dict, Optional
 import pytest
 
 import sucoder.mirror as mirror
-from sucoder.config import AgentLauncher, AuditConfig, BranchPrefixes, Config, McpServerConfig, MirrorSettings, NvmConfig
+from sucoder.config import AgentLauncher, AuditConfig, BranchPrefixes, Config, CredentialConfig, McpServerConfig, MirrorSettings, NvmConfig
 from sucoder.executor import CommandError, CommandExecutor, CommandResult
 from sucoder.mirror import (
     MirrorError,
@@ -780,11 +780,10 @@ def test_launch_agent_uses_configured_command(tmp_path: Path, monkeypatch: pytes
     launcher.command = ["echo", "hello"]
     launcher.env = {"FOO": "BAR"}
 
-    recorded = {}
+    calls = []
 
     def fake_run_agent(args, **kwargs):
-        recorded["args"] = list(args)
-        recorded["kwargs"] = kwargs
+        calls.append((list(args), kwargs))
         return CommandResult(
             requested_args=list(args),
             executed_args=list(args),
@@ -803,11 +802,22 @@ def test_launch_agent_uses_configured_command(tmp_path: Path, monkeypatch: pytes
 
     manager.launch_agent(ctx, sync=False, extra_args=["--flag"])
 
-    assert recorded["args"] == ["echo", "hello", "--flag"]
-    assert recorded["kwargs"]["cwd"] == str(ctx.mirror_path)
-    assert recorded["kwargs"]["env"] == {"FOO": "BAR"}
-    assert recorded["kwargs"]["capture_output"] is False
-    assert recorded["kwargs"]["check"] is False
+    writer_args, writer_kwargs = next(
+        (args, kwargs)
+        for args, kwargs in calls
+        if args[:2] == ["sh", "-c"] and args[3] == "sucoder-environment"
+    )
+    assert "export FOO=BAR" in writer_kwargs["input"]
+    assert "BAR" not in writer_args
+
+    launched, launch_kwargs = calls[-1]
+    assert launched[0:2] == ["bash", "-c"]
+    assert launched[-3:] == ["echo", "hello", "--flag"]
+    assert "BAR" not in launched
+    assert launch_kwargs["cwd"] == str(ctx.mirror_path)
+    assert launch_kwargs["env"] is None
+    assert launch_kwargs["capture_output"] is False
+    assert launch_kwargs["check"] is False
 
 
 def test_launch_agent_supports_overrides(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -818,11 +828,10 @@ def test_launch_agent_supports_overrides(tmp_path: Path, monkeypatch: pytest.Mon
     launcher = manager.config.mirrors["sample"].agent_launcher
     launcher.env = {"FROM_CONFIG": "1"}
 
-    recorded = {}
+    calls = []
 
     def fake_run_agent(args, **kwargs):
-        recorded["args"] = list(args)
-        recorded["kwargs"] = kwargs
+        calls.append((list(args), kwargs))
         return CommandResult(
             requested_args=list(args),
             executed_args=list(args),
@@ -846,11 +855,19 @@ def test_launch_agent_supports_overrides(tmp_path: Path, monkeypatch: pytest.Mon
         supports_inline_prompt=False,
     )
 
-    assert recorded["args"] == ["foo", "--flag"]
-    assert recorded["kwargs"]["env"] == {"FROM_CONFIG": "1", "EXTRA": "yes"}
+    writer_args, writer_kwargs = next(
+        (args, kwargs)
+        for args, kwargs in calls
+        if args[:2] == ["sh", "-c"] and args[3] == "sucoder-environment"
+    )
+    assert "export EXTRA=yes" in writer_kwargs["input"]
+    assert "export FROM_CONFIG=1" in writer_kwargs["input"]
+    launched, launch_kwargs = calls[-1]
+    assert launched[-2:] == ["foo", "--flag"]
+    assert launch_kwargs["env"] is None
 
     # Precede ensures inline prompt not appended when explicitly disabled.
-    assert "INLINE CONTEXT" not in recorded["args"]
+    assert "INLINE CONTEXT" not in launched
 
 
 def test_launch_agent_remote_wraps_without_scancel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3584,7 +3601,8 @@ def test_bootstrap_invokes_steps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         "clone",
         (
             "launch:{'sync': False, 'task_name': 'demo', 'base_branch': 'dev', "
-            "'extra_args': ['--flag'], 'command_override': None, 'env_override': None, "
+            "'extra_args': ['--flag'], 'command_override': None, 'model_override': None, "
+            "'env_override': None, "
             "'supports_inline_prompt': None}"
         ),
     ]
@@ -3621,6 +3639,42 @@ def test_detect_agent_type_gemini() -> None:
 
     assert _detect_agent_type(["gemini"]) == AgentType.GEMINI
     assert _detect_agent_type(["/opt/gemini"]) == AgentType.GEMINI
+
+
+def test_detect_agent_type_aider() -> None:
+    """Test that Aider is treated as an independent harness."""
+    from sucoder.config import AgentType
+    from sucoder.mirror import _detect_agent_type
+
+    assert _detect_agent_type(["aider"]) == AgentType.AIDER
+    assert _detect_agent_type(["/home/coder/.local/bin/aider"]) == AgentType.AIDER
+
+
+def test_detect_agent_type_opencode() -> None:
+    """Test that OpenCode is treated as an independent harness."""
+    from sucoder.config import AgentType
+    from sucoder.mirror import _detect_agent_type
+
+    assert _detect_agent_type(["opencode"]) == AgentType.OPENCODE
+    assert _detect_agent_type(["/usr/local/bin/opencode"]) == AgentType.OPENCODE
+
+
+def test_detect_agent_type_goose() -> None:
+    """Test that Goose subcommands retain the Goose harness profile."""
+    from sucoder.config import AgentType
+    from sucoder.mirror import _detect_agent_type
+
+    assert _detect_agent_type(["goose", "run", "--interactive"]) == AgentType.GOOSE
+    assert _detect_agent_type(["/usr/local/bin/goose"]) == AgentType.GOOSE
+
+
+def test_detect_agent_type_kimi() -> None:
+    """Test that the native Kimi Code CLI gets its own harness profile."""
+    from sucoder.config import AgentType
+    from sucoder.mirror import _detect_agent_type
+
+    assert _detect_agent_type(["kimi"]) == AgentType.KIMI
+    assert _detect_agent_type(["/usr/local/bin/kimi", "--auto"]) == AgentType.KIMI
 
 
 def test_detect_agent_type_unknown() -> None:
@@ -3710,6 +3764,274 @@ def test_launch_agent_claude_uses_system_prompt_flag(tmp_path: Path, monkeypatch
     assert "Test system prompt content" in prompt_content
     # Should NOT have prompt as trailing text (since --system-prompt is used)
     assert cmd[-1] != prompt_content  # Last arg should be something else or same as prompt via flag
+
+
+def test_launch_agent_aider_uses_model_and_read_only_context_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+    ctx.settings.agent_launcher = AgentLauncher(command=["aider"])
+
+    prompt_file = tmp_path / "prompt.org"
+    prompt_file.write_text("Aider system guidance", encoding="utf-8")
+    manager.config.system_prompt = prompt_file
+
+    calls = []
+
+    def fake_run_agent(args, **kwargs):
+        calls.append((list(args), kwargs))
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="", stderr="", returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+
+    manager.launch_agent(
+        ctx, sync=False, model_override="openrouter/deepseek/deepseek-chat",
+    )
+
+    writer_args, writer_kwargs = next(
+        (args, kwargs) for args, kwargs in calls if args[:2] == ["sh", "-c"]
+    )
+    assert writer_args[-1].endswith("/.cache/sucoder/prelude-sample.txt")
+    assert "Aider system guidance" in writer_kwargs["input"]
+
+    command, _ = next((args, kwargs) for args, kwargs in calls if args[0] == "aider")
+    assert command[command.index("--model") + 1] == "openrouter/deepseek/deepseek-chat"
+    assert "--yes-always" in command
+    context_path = command[command.index("--read") + 1]
+    assert context_path.endswith("/.cache/sucoder/prelude-sample.txt")
+    assert "Aider system guidance" not in command
+
+
+def test_launch_agent_kimi_preserves_native_agent_in_context_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+    ctx.settings.agent_launcher = AgentLauncher(command=["kimi"])
+
+    prompt_file = tmp_path / "prompt.org"
+    prompt_file.write_text("Kimi system guidance", encoding="utf-8")
+    manager.config.system_prompt = prompt_file
+
+    calls = []
+
+    def fake_run_agent(args, **kwargs):
+        calls.append((list(args), kwargs))
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="", stderr="", returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+
+    manager.launch_agent(
+        ctx, sync=False, model_override="openrouter/moonshotai/kimi-k3",
+    )
+
+    writer_args, writer_kwargs = next(
+        (args, kwargs) for args, kwargs in calls if args[:2] == ["sh", "-c"]
+    )
+    assert writer_args[-1].endswith("/.cache/sucoder/prelude-sample.md")
+    agent_file = writer_kwargs["input"]
+    assert agent_file.startswith("---\nname: sucoder\n")
+    assert "description: SuCoder collaborative coding agent" in agent_file
+    assert "${base_prompt}" in agent_file
+    assert "Kimi system guidance" in agent_file
+
+    command, _ = next((args, kwargs) for args, kwargs in calls if args[0] == "kimi")
+    assert command[command.index("--model") + 1] == "openrouter/moonshotai/kimi-k3"
+    assert "--auto" in command
+    context_path = command[command.index("--agent-file") + 1]
+    assert context_path.endswith("/.cache/sucoder/prelude-sample.md")
+    assert "Kimi system guidance" not in command
+
+
+@pytest.mark.parametrize("harness", ["aider", "kimi"])
+def test_openrouter_pass_credential_is_staged_without_argv_leak(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    harness: str,
+) -> None:
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+    ctx.settings.agent_launcher = AgentLauncher(command=[harness])
+    manager.config.credentials["openrouter"] = CredentialConfig(
+        pass_entry="openrouter.ai/apikey",
+    )
+    monkeypatch.setattr(manager, "_compose_context_prelude", lambda _ctx: "")
+
+    secret = "sk-or-v1-secret-never-log"
+    human_calls = []
+    agent_calls = []
+
+    def fake_run_human(args, **kwargs):
+        human_calls.append((list(args), kwargs))
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout=f"{secret}\nmetadata: ignored\n", stderr="", returncode=0,
+        )
+
+    def fake_run_agent(args, **kwargs):
+        agent_calls.append((list(args), kwargs))
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="", stderr="", returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_human", fake_run_human)
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+
+    with caplog.at_level(logging.DEBUG):
+        manager.launch_agent(
+            ctx, sync=False, model_override="openrouter/moonshotai/kimi-k3",
+        )
+
+    assert human_calls == [
+        (["pass", "show", "openrouter.ai/apikey"], {
+            "check": False, "capture_output": True,
+        })
+    ]
+    env_args, env_kwargs = next(
+        (args, kwargs)
+        for args, kwargs in agent_calls
+        if args[:2] == ["sh", "-c"] and args[3] == "sucoder-environment"
+    )
+    assert secret in env_kwargs["input"]
+    assert secret not in " ".join(env_args)
+
+    launched, launch_kwargs = agent_calls[-1]
+    assert launched[:2] == ["bash", "-c"]
+    assert secret not in " ".join(launched)
+    assert launch_kwargs["env"] is None
+    assert secret not in caplog.text
+
+    if harness == "aider":
+        assert "export OPENROUTER_API_KEY=" in env_kwargs["input"]
+        assert launched[launched.index("--model") + 1] == (
+            "openrouter/moonshotai/kimi-k3"
+        )
+    else:
+        assert "export KIMI_MODEL_NAME=moonshotai/kimi-k3" in env_kwargs["input"]
+        assert "export KIMI_MODEL_PROVIDER_TYPE=openai" in env_kwargs["input"]
+        assert "export KIMI_MODEL_BASE_URL=https://openrouter.ai/api/v1" in env_kwargs["input"]
+        assert "export KIMI_MODEL_API_KEY=" in env_kwargs["input"]
+        assert "--model" not in launched
+
+
+def test_environment_file_wrapper_sources_and_unlinks(tmp_path: Path) -> None:
+    env_file = tmp_path / "launch-env.sh"
+    env_file.write_text("export PRIVATE_VALUE='space value'\n", encoding="utf-8")
+    env_file.chmod(0o600)
+    command = MirrorManager._wrap_with_environment_file(
+        ["sh", "-c", 'printf "%s" "$PRIVATE_VALUE"'], str(env_file),
+    )
+
+    result = subprocess.run(command, check=True, capture_output=True, text=True)
+
+    assert result.stdout == "space value"
+    assert not env_file.exists()
+
+
+@pytest.mark.parametrize(
+    ("command", "model", "prompt_flag", "approval_flag"),
+    [
+        (["opencode"], "openrouter/moonshotai/kimi-k3", "--prompt", "--auto"),
+        (["goose", "run", "--interactive"], "moonshotai/kimi-k3", "--text", None),
+    ],
+)
+def test_launch_agentic_multi_provider_harnesses(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: list[str],
+    model: str,
+    prompt_flag: str,
+    approval_flag: Optional[str],
+) -> None:
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+    ctx.settings.agent_launcher = AgentLauncher(command=command)
+
+    prompt_file = tmp_path / "prompt.org"
+    prompt_file.write_text("Agentic harness guidance", encoding="utf-8")
+    manager.config.system_prompt = prompt_file
+
+    calls = []
+
+    def fake_run_agent(args, **kwargs):
+        calls.append(list(args))
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="", stderr="", returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+
+    manager.launch_agent(ctx, sync=False, model_override=model)
+
+    launched = calls[-1]
+    assert launched[0] == command[0]
+    assert launched[launched.index("--model") + 1] == model
+    assert "Agentic harness guidance" in launched[launched.index(prompt_flag) + 1]
+    if approval_flag is None:
+        assert "--auto" not in launched
+    else:
+        assert approval_flag in launched
+
+
+def test_command_executor_can_pipe_agent_input() -> None:
+    user = pwd.getpwuid(os.getuid()).pw_name
+    group = grp.getgrgid(os.getgid()).gr_name
+    executor = CommandExecutor(
+        human_user=user,
+        agent_user=user,
+        agent_group=group,
+        logger=logging.getLogger("test.agent-input"),
+        use_sudo_for_agent=False,
+    )
+
+    result = executor.run_agent(
+        ["sh", "-c", "cat"], input="private context\n",
+    )
+
+    assert result.stdout == "private context\n"
+
+
+def test_launch_agent_model_override_replaces_existing_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+    ctx.settings.agent_launcher = AgentLauncher(
+        command=["codex", "--model", "old-model"], model="configured-model",
+    )
+    monkeypatch.setattr(manager, "_compose_context_prelude", lambda _ctx: "")
+
+    calls = []
+
+    def fake_run_agent(args, **kwargs):
+        calls.append(list(args))
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="", stderr="", returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+
+    manager.launch_agent(ctx, sync=False, model_override="new-model")
+
+    command = calls[-1]
+    assert command.count("--model") == 1
+    assert command[command.index("--model") + 1] == "new-model"
 
 
 
@@ -5161,6 +5483,44 @@ def test_report_agent_binary_falls_back_to_which_when_shell_fails(
         manager._report_agent_binary(ctx, ["codex"], AgentLauncher(command=["codex"], env={}))
 
     assert str(bin_dir / "codex") in caplog.text
+
+
+def test_report_agent_binary_does_not_fall_back_to_human_path_for_agent_user(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A human-only executable must never be reported as agent-visible."""
+    manager = build_manager(tmp_path, report_agent_binary=True)
+    ctx = manager.context_for("sample")
+
+    human_bin = tmp_path / "human-bin"
+    _write_fake_binary(human_bin / "aider", "aider 0.86.2")
+    monkeypatch.setenv("PATH", str(human_bin))
+    manager.executor.human_user = "ligon"
+    manager.executor.agent_user = "coder"
+    manager.executor.use_sudo_for_agent = True
+    monkeypatch.setattr(
+        manager.executor,
+        "run_agent",
+        lambda args, **kwargs: CommandResult(
+            requested_args=list(args),
+            executed_args=list(args),
+            stdout="",
+            stderr="",
+            returncode=1,
+        ),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        manager._report_agent_binary(
+            ctx,
+            ["aider"],
+            AgentLauncher(command=["aider"], env={}),
+        )
+
+    assert "was not found on PATH" in caplog.text
+    assert str(human_bin / "aider") not in caplog.text
 
 
 def test_report_agent_binary_ignores_shell_builtin_answer(

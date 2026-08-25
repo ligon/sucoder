@@ -67,6 +67,68 @@ mirrors:
     assert cfg.system_prompt is None
 
 
+def test_load_config_pass_credentials_and_provider_overrides(tmp_path: Path) -> None:
+    config_path = write_config(
+        tmp_path,
+        """
+human_user: ligon
+mirror_root: ./mirrors
+credentials:
+  openrouter:
+    pass: openrouter.ai/apikey
+  laboratory:
+    pass: research/lab-gateway
+providers:
+  laboratory:
+    credential: laboratory
+    protocol: openai
+    base_url: https://models.example.edu/v1
+    env_var: LABORATORY_API_KEY
+""",
+    )
+
+    cfg = load_config(config_path)
+
+    assert cfg.credentials["openrouter"].pass_entry == "openrouter.ai/apikey"
+    assert cfg.providers["openrouter"].credential == "openrouter"
+    assert cfg.providers["openrouter"].base_url == "https://openrouter.ai/api/v1"
+    assert cfg.providers["laboratory"].credential == "laboratory"
+    assert cfg.providers["laboratory"].protocol == "openai"
+    assert cfg.providers["laboratory"].env_var == "LABORATORY_API_KEY"
+
+
+@pytest.mark.parametrize(
+    ("block", "message"),
+    [
+        ("credentials: []", "`credentials` must be a mapping"),
+        (
+            "credentials:\n  openrouter:\n    pass: ''",
+            "`credentials.openrouter.pass` must be a non-empty pass entry name",
+        ),
+        (
+            "providers:\n  lab:\n    protocol: unsupported\n"
+            "    base_url: https://example.test\n    env_var: LAB_KEY",
+            "`providers.lab.protocol` must be one of",
+        ),
+        (
+            "providers:\n  lab:\n    protocol: openai\n"
+            "    base_url: https://example.test\n    env_var: bad-name",
+            "`providers.lab.env_var` must be a valid environment variable name",
+        ),
+    ],
+)
+def test_load_config_rejects_invalid_credentials_and_providers(
+    tmp_path: Path, block: str, message: str,
+) -> None:
+    config_path = write_config(
+        tmp_path,
+        f"human_user: ligon\nmirror_root: ./mirrors\n{block}\n",
+    )
+
+    with pytest.raises(ConfigError, match=message):
+        load_config(config_path)
+
+
 @pytest.mark.parametrize(
     "yaml_content, message",
     [
@@ -225,6 +287,7 @@ mirrors:
   sample:
     canonical_repo: ./canonical
     agent_launcher:
+      model: openai/gpt-5
       accepts_inline_prompt: false
       needs_yolo: false
       writable_dirs:
@@ -238,16 +301,21 @@ mirrors:
         workdir: "--here {{path}}"
         default_flag: "--add {{flag}}"
         skills: "--skills {{path}}"
+        model: "--model {{model}}"
+        system_prompt_file: "--read {{path}}"
 """,
     )
 
     cfg = load_config(config_path)
     launcher = cfg.mirrors["sample"].agent_launcher
+    assert launcher.model == "openai/gpt-5"
     assert launcher.accepts_inline_prompt is False
     assert launcher.needs_yolo is False
     assert launcher.writable_dirs == [writable_one.resolve()]
     assert launcher.workdir == workdir.resolve()
     assert launcher.default_flags == ["--quiet"]
+    assert launcher.flags.model == "--model {model}"
+    assert launcher.flags.system_prompt_file == "--read {path}"
     flags = launcher.flags
     assert flags.yolo == "--permit"
     assert flags.writable_dir == "--mount {path}:{path}:rw"
@@ -255,6 +323,24 @@ mirrors:
     assert flags.default_flag == "--add {flag}"
     assert flags.skills == "--skills {path}"
     assert flags.mcp_config is None
+
+
+def test_load_config_rejects_empty_agent_model(tmp_path: Path) -> None:
+    config_path = write_config(
+        tmp_path,
+        """
+human_user: ligon
+mirror_root: ./mirrors
+mirrors:
+  sample:
+    canonical_repo: ./canonical
+    agent_launcher:
+      model: ""
+""",
+    )
+
+    with pytest.raises(ConfigError, match="agent_launcher.model"):
+        load_config(config_path)
 
 
 def test_load_config_with_system_prompt(tmp_path: Path) -> None:
@@ -505,6 +591,26 @@ def test_detect_agent_autodetect_single(monkeypatch: pytest.MonkeyPatch, tmp_pat
     monkeypatch.setattr("sucoder.config.AGENT_PREFERENCE_FILE", tmp_path / "nonexistent")
     with mock.patch("sucoder.config.shutil.which", side_effect=lambda x: f"/usr/bin/{x}" if x == "gemini" else None):
         assert detect_agent_command() == ["gemini"]
+
+
+def test_detect_goose_uses_interactive_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("SUCODER_AGENT", raising=False)
+    monkeypatch.setattr("sucoder.config.AGENT_PREFERENCE_FILE", tmp_path / "nonexistent")
+    with mock.patch(
+        "sucoder.config.shutil.which",
+        side_effect=lambda name: "/usr/local/bin/goose" if name == "goose" else None,
+    ):
+        assert detect_agent_command() == ["goose", "run", "--interactive"]
+
+
+def test_detect_kimi_uses_native_cli(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("SUCODER_AGENT", raising=False)
+    monkeypatch.setattr("sucoder.config.AGENT_PREFERENCE_FILE", tmp_path / "nonexistent")
+    with mock.patch(
+        "sucoder.config.shutil.which",
+        side_effect=lambda name: "/usr/local/bin/kimi" if name == "kimi" else None,
+    ):
+        assert detect_agent_command() == ["kimi"]
 
 
 def test_detect_agent_none_on_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

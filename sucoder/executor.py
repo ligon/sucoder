@@ -81,6 +81,7 @@ class CommandExecutor:
         umask: Optional[int] = None,
         capture_output: bool = True,
         timeout: Optional[int] = None,
+        input: Optional[str] = None,
     ) -> CommandResult:
         return self._run(
             list(args),
@@ -91,6 +92,7 @@ class CommandExecutor:
             umask=umask or self.default_umask,
             capture_output=capture_output,
             timeout=timeout,
+            input=input,
         )
 
     def _run(

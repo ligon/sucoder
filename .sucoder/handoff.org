@@ -1,0 +1,191 @@
+#+title: Savio user-level harness bootstrap
+#+date: 2026-08-25
+#+status: READY
+
+* Mission
+
+Install and validate SuCoder's supported harnesses in the Savio account
+=ligon= without root access.  Work only in user-owned locations under
+=$HOME=, preserve existing configuration, and leave a reproducible report in
+this file.
+
+This is an empirical bootstrap pass.  Do not redesign SuCoder unless a real
+cluster-side incompatibility requires it; record such an incompatibility for a
+follow-up instead.
+
+* Important architecture
+
+- Remote SuCoder sessions intentionally run as the SSH user =ligon=.  There is
+  no remote =coder= account and no remote sudo boundary.  SSH/SLURM and the
+  remote mirror provide the isolation boundary.
+- SuCoder itself runs on the laptop.  It does not need to be installed on
+  Savio.  Only harness binaries and their non-secret user configuration belong
+  on the cluster.
+- Do *not* copy =~/.sucoder/config.yaml=, the password store, GPG keys, or an
+  OpenRouter API key to Savio.  The laptop-side SuCoder process reads the key
+  from =pass= and stages it transiently into the remote harness environment.
+- Never print an API key, inspect its value, put it in argv, or write it to a
+  cluster configuration file.
+- =$HOME= is shared across Savio login and compute nodes.  Install there, not
+  in a node-local directory.
+
+* Entry checks and stop conditions
+
+First read =AGENTS.md= and this entire handoff.  Then collect:
+
+#+begin_src sh
+date
+hostname -f
+printf 'SLURM_JOB_ID=%s\n' "${SLURM_JOB_ID:-}"
+nproc
+free -h
+squeue --me -o '%i %P %T %L %D %C %m'
+bash -lc 'printf "HOME=%s\nPATH=%s\n" "$HOME" "$PATH"'
+#+end_src
+
+If =SLURM_JOB_ID= is empty, this session is on a login node.  Do not run the
+installers there.  Report that the human should relaunch with =-T savio-htc=
+or =-T carleton-htc= and stop.
+
+Before changing anything, inventory the executable path and version of:
+=claude=, =codex=, =aider=, =opencode=, =goose=, =kimi=, =gitnexus=, =uv=,
+=node=, and =npm=.  Also record =npm config get prefix= and the effective uv
+tool directory.
+
+Known state from a login-shell probe on 2026-08-25:
+
+- =$HOME= is =/global/home/users/ligon=.
+- =claude= 2.1.245 is present at =~/.local/bin/claude= and is the only
+  installed harness.
+- =node= 20.20.2 and npm 10.8.2 are under =~/.nvm=; that npm prefix is
+  user-writable.
+- =uv= 0.11.29 is at =~/.local/bin/uv=.
+- =gitnexus= 1.6.3 is installed under the current nvm Node prefix.
+- =~/.sucoder/skills= exists and resolves to the shared skills checkout.
+- The current environment sets =UV_TOOL_DIR=/tmp/uv-tools-ligon=.  This is
+  unsuitable: =/tmp= may be node-local or disposable.  Do not install Aider
+  there.  Find where this setting comes from and propose the smallest safe
+  correction.  Until corrected, override it explicitly with a persistent
+  tool root under =$HOME=.
+
+* Installation policy
+
+- Install the latest *stable* releases from official upstream sources.  Do not
+  install beta/nightly builds.
+- Prefer isolated or native distributions.  Do not install Python tools into
+  system Python 3.6 or a project environment.
+- Keep executable shims in =~/.local/bin= or the existing user-owned nvm
+  prefix.  A fresh =bash -lc= must resolve every harness without manual setup.
+- Download installer scripts from official locations, inspect their relevant
+  install-path behavior before execution, and do not use sudo.
+- Preserve existing config files.  Before editing one, make a timestamped,
+  mode-preserving backup beside it.  Never commit home-directory config or
+  backups to this repository.
+- Do not delete stale installations during this pass.  Report shadowed or
+  duplicate copies and recommend cleanup separately.
+
+Install these harnesses:
+
+1. *Aider*: use uv's isolated tool installation with Python 3.12 and
+   =aider-chat@latest=.  Explicitly set a persistent =UV_TOOL_DIR= under
+   =~/.local/share/uv= and =UV_TOOL_BIN_DIR=$HOME/.local/bin= for the command.
+2. *Codex*: install the stable =@openai/codex= package using the existing
+   user-owned npm prefix, unless the current official standalone installer is
+   materially better on this host.
+3. *OpenCode*: install stable OpenCode 1 (=opencode-ai=, executable
+   =opencode=).  Do not substitute the OpenCode 2 beta executable
+   =opencode2=; SuCoder's current profile targets =opencode=.
+4. *Goose*: install the CLI, not the desktop application, using the official
+   =aaif-goose/goose= stable installer with configuration disabled during
+   install.  Its executable should land in =~/.local/bin=.
+5. *Kimi*: install current stable *Kimi Code CLI* from MoonshotAI's official
+   installer.  Prefer its current native/single-binary distribution rather
+   than adding a Node-version dependency merely for installation.  Confirm
+   that =kimi --help= still provides the flags SuCoder uses: =--agent-file=,
+   =--auto=, =--add-dir=, and model/provider support.
+
+Inspect the existing Claude and GitNexus installations.  Update them only via
+their native/official update path when a newer stable release is actually
+available.  Do not replace a working install merely to make all tools use the
+same package manager.
+
+Official starting points (verify them at execution time):
+
+- Aider: https://aider.chat/docs/install.html
+- Codex: https://github.com/openai/codex
+- OpenCode: https://opencode.ai/docs/
+- Goose: https://github.com/aaif-goose/goose
+- Kimi Code: https://github.com/MoonshotAI/kimi-code
+
+* Provider and harness configuration
+
+Configure only non-secret provider metadata on Savio.  The target model for
+smoke testing is =openrouter/moonshotai/kimi-k3=.
+
+- Aider and OpenCode should consume =OPENROUTER_API_KEY= from the launch
+  environment and accept the provider-prefixed model name.
+- Native Kimi is adapted by SuCoder through temporary =KIMI_MODEL_*= variables;
+  do not persist the key in Kimi's config.
+- Goose natively recognizes =OPENROUTER_API_KEY=, but it may also require
+  non-secret provider/model selection (=openrouter= and
+  =moonshotai/kimi-k3=).  Configure that metadata without a key.  If SuCoder's
+  generic =--model openrouter/...= spelling does not match Goose's CLI, record
+  the exact error as a local SuCoder adapter gap rather than storing a secret
+  to work around it.
+- Codex uses custom model-provider configuration for OpenAI-compatible
+  endpoints.  Add a key-free OpenRouter provider stanza only if current Codex
+  supports sourcing its key from =OPENROUTER_API_KEY=.  If SuCoder's model
+  prefix needs translation for Codex, record the exact required mapping rather
+  than embedding credentials.
+- Leave Claude's existing authentication and configuration intact.
+
+* Verification
+
+After installation, start a fresh login shell and record, for every harness:
+
+1. =command -v= result;
+2. version;
+3. whether the path is under =$HOME= and visible on both the allocated compute
+   node and a login shell;
+4. whether its SuCoder-required flags are present;
+5. whether native Agent Skills, shell execution, file editing, MCP, and
+   subagents are available as expected.
+
+Do not claim provider success from =--version=.  Perform a minimal live
+OpenRouter smoke test only when the launch environment already contains the
+transient key; do not ask the human to paste it into the cluster.  Keep API use
+small.  If this bootstrap Claude session has no OpenRouter environment, leave
+the live tests for the laptop-side relaunch commands below.
+
+The human will validate each completed harness from the laptop with commands
+of this form:
+
+#+begin_src sh
+sucoder -T savio-htc collaborate SuCoder --harness aider --model openrouter/moonshotai/kimi-k3
+sucoder -T savio-htc collaborate SuCoder --harness opencode --model openrouter/moonshotai/kimi-k3
+sucoder -T savio-htc collaborate SuCoder --harness goose --model openrouter/moonshotai/kimi-k3
+sucoder -T savio-htc collaborate SuCoder --harness kimi --model openrouter/moonshotai/kimi-k3
+#+end_src
+
+Test Codex separately after confirming its OpenRouter provider mapping.
+
+* Deliverable
+
+Replace the =Outcome= section below with:
+
+- a table of harness, exact version, resolved path, install/update method, and
+  smoke-test result;
+- any persistent shell/config changes, with backup paths;
+- unresolved SuCoder adapter gaps, including exact reproduction commands and
+  sanitized errors;
+- the exact idempotent commands that should become a future target-bootstrap
+  script;
+- a recommendation about the bad =UV_TOOL_DIR=/tmp/uv-tools-ligon= setting.
+
+Do not record secrets or secret-derived output.  Commit only repository files
+that document or implement the bootstrap; never commit files copied from
+=$HOME=.
+
+* Outcome
+
+Pending remote execution.

@@ -5,7 +5,7 @@
 * Project Overview
 Unix user and group permissions have been battle-tested for over fifty years.  When you bring on a new collaborator you give them their own account, set group read on shared files, and let the filesystem enforce the boundaries.  Why should an AI coding agent be any different?
 
-=sucoder= treats an LLM agent (Codex, Claude, Gemini) as a collaborator with its own unix account.  The human's canonical repository is group-readable but not group-writable; the agent works in a sandboxed mirror clone where it has full write access.  No custom container runtimes, no bespoke sandboxing daemons---just =chown=, =chmod=, and =git=.
+=sucoder= treats an LLM agent (running through a harness such as Codex, Claude, Gemini, Aider, OpenCode, Goose, or Kimi) as a collaborator with its own unix account.  The human's canonical repository is group-readable but not group-writable; the agent works in a sandboxed mirror clone where it has full write access.  No custom container runtimes, no bespoke sandboxing daemons---just =chown=, =chmod=, and =git=.
 
 * Quick Start
 
@@ -14,10 +14,84 @@ Unix user and group permissions have been battle-tested for over fifty years.  W
 git clone https://github.com/ligon/sucoder && cd sucoder
 make quick-start
 cd ~/Projects/my-project  # any git repo
-sucoder collaborate -a claude
+sucoder collaborate --harness claude
 #+end_src
 
-No config file needed.  =sucoder= detects the git repo, mirrors it under =/var/tmp/coder-mirrors/=, and launches Claude (the default agent).  Use =-a= to pick a different agent (=codex=, =gemini=); omit it and sucoder defaults to =claude= or auto-detects from PATH.  Add =--task fix-login= to start on a dedicated branch.
+No config file needed.  =sucoder= detects the git repo, mirrors it under =/var/tmp/coder-mirrors/=, and launches Claude (the default harness).  Use =--harness/-H= to pick a different harness (=codex=, =gemini=, =aider=, =opencode=, =goose=, or =kimi=), and =--model/-m= to choose its LLM independently.  The old =--agent/-a= spelling remains a compatibility alias for =--harness=.  Add =--task fix-login= to start on a dedicated branch.
+
+For example, the same Aider harness can run models from different providers:
+
+#+begin_src shell
+sucoder collaborate --harness aider --model openai/gpt-5
+sucoder collaborate --harness aider --model anthropic/claude-sonnet-4
+sucoder collaborate --harness kimi --model openrouter/moonshotai/kimi-k3
+#+end_src
+
+Provider credentials can remain in the human user's =pass= store and be selected by the model's provider prefix; see [[*Provider credentials from =pass=][Provider credentials from =pass=]].  Harnesses must be on the configured =agent_user='s login =PATH=.  On a multi-user host, prefer one root-owned uv tool installation so human and agent accounts cannot drift independently; for example, when =uv= itself is globally available:
+
+#+begin_src sh
+sudo env UV_TOOL_DIR=/opt/uv-tools \
+  UV_TOOL_BIN_DIR=/usr/local/bin \
+  UV_PYTHON_INSTALL_DIR=/opt/uv-python \
+  uv tool install --python python3.12 aider-chat
+
+# OpenCode, Codex, and Kimi share the system Node installation.
+sudo npm install -g opencode-ai @openai/codex @moonshot-ai/kimi-code
+
+# Goose is a native binary; its official installer accepts a shared target.
+curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh \
+  -o /tmp/goose-download-cli.sh
+sudo env GOOSE_BIN_DIR=/opt/goose/bin CONFIGURE=false \
+  bash /tmp/goose-download-cli.sh
+sudo ln -s /opt/goose/bin/goose /usr/local/bin/goose
+#+end_src
+
+The separate shared Python directory matters when uv downloads a managed interpreter: otherwise a root-run install can leave the tool pointing into root's private home directory.
+
+** Provider credentials from =pass=
+
+Keep API keys in the human user's password store and put only entry names in
+=~/.sucoder/config.yaml=.  The first line of each entry is the secret:
+
+#+begin_src yaml
+credentials:
+  openrouter:
+    pass: openrouter.ai/apikey
+#+end_src
+
+OpenRouter's protocol, endpoint, and conventional environment variable are
+built in.  A model such as =openrouter/moonshotai/kimi-k3= therefore selects
+both the provider credential and the upstream model.  Sucoder runs =pass show=
+as =human_user= at launch; the =coder= account receives neither password-store
+access nor the human's GPG keys.
+
+For Aider and other environment-aware harnesses, Sucoder supplies
+=OPENROUTER_API_KEY=.  For native Kimi it uses Kimi's temporary
+=KIMI_MODEL_*= provider channel, so the key is not copied into
+=~coder/.kimi-code/config.toml=.  Environment values are staged over stdin in
+a random agent-owned mode-0600 file, then sourced and unlinked immediately
+before the harness starts.  They do not appear in the launch command or
+Sucoder logs.  An agent with shell access can still inspect its own process
+environment; keeping the raw provider key beyond the agent's reach requires a
+separate rate-limited model gateway.
+
+Custom providers can be defined once:
+
+#+begin_src yaml
+credentials:
+  laboratory:
+    pass: research/lab-gateway
+providers:
+  laboratory:
+    credential: laboratory
+    protocol: openai
+    base_url: https://models.example.edu/v1
+    env_var: LABORATORY_API_KEY
+#+end_src
+
+Literal =agent_launcher.env= and =--agent-env= remain supported and use the
+same private-file transport, but command-line values may remain in shell
+history.  Prefer named =pass= credentials for secrets.
 
 For multi-repo setups, skills, and system prompts, see [[*Configuration][Configuration]] below.  =make env-setup= does the full host provisioning (=make help= for all targets).
 
@@ -30,7 +104,7 @@ For multi-repo setups, skills, and system prompts, see [[*Configuration][Configu
 - sudo
 - make (optional; you can run the setup commands by hand)
 - bash
-- At least one supported agent CLI on PATH: =claude=, =codex=, or =gemini=
+- At least one supported harness CLI on the agent user's PATH: =claude=, =codex=, =gemini=, =aider=, =opencode=, =goose=, or =kimi=
 
 * Why Org-mode?
 This README is =.org=, the default system prompt is =.org=, and the skills repo leans heavily on Org-mode.  Why not Markdown?
@@ -41,10 +115,10 @@ You do not need Emacs to read or edit these files.  Any text editor works; GitHu
 
 * What =sucoder collaborate= does
 
-Running =sucoder collaborate -a claude= (or with =--task=) triggers a multi-step workflow.  Steps marked *auto* happen without intervention; steps marked *human* need you at the keyboard.
+Running =sucoder collaborate --harness claude= (or with =--task=) triggers a multi-step workflow.  Steps marked *auto* happen without intervention; steps marked *human* need you at the keyboard.
 
 ** 1. Resolve configuration /auto/
-If =~/.sucoder/config.yaml= exists, load it.  Otherwise, derive everything from the environment: =$USER= becomes the human identity, the git repo root becomes the canonical repo, and =/var/tmp/coder-mirrors/= is the mirror root.  The agent CLI is resolved from =-a= flag > =$SUCODER_AGENT= > =~/.sucoder/agent= > PATH auto-detect > interactive prompt.
+If =~/.sucoder/config.yaml= exists, load it.  Otherwise, derive everything from the environment: =$USER= becomes the human identity, the git repo root becomes the canonical repo, and =/var/tmp/coder-mirrors/= is the mirror root.  The harness CLI is resolved from =--harness= (or legacy =--agent=) > =$SUCODER_AGENT= > =~/.sucoder/agent= > PATH auto-detect > interactive prompt.  =--model= is then applied independently through the selected harness profile.
 
 ** 2. Prepare the canonical repository /auto/
 Set group-read permissions on your repo so the =coder= user can traverse it.  Adds a =coder= git remote pointing at the mirror (for easy fetching later) and writes a helper script =scripts/fetch-agent-branches.sh=.  Your repo stays read-only to the agent—only the group bits and the remote config change.
@@ -57,7 +131,7 @@ If the mirror does not exist under =/var/tmp/coder-mirrors/<repo>/=, clone it fr
 - With =--task fix-login=: create a branch =coder/fix-login-<timestamp>= in the mirror, based on the default base branch (or =--base=).
 
 ** 5. Compose the agent launch command /auto/
-Detect the agent type (Claude, Codex, Gemini) from the command name and inject the appropriate flags: write-access (=--dangerously-skip-permissions=, =--sandbox danger-full-access=, =--yolo=), writable directories, skills paths, and system prompt.  If a system prompt file exists, it is passed via the agent's native flag or appended as trailing text.
+Detect the harness type (Claude, Codex, Gemini, Aider, OpenCode, Goose, Kimi) from the command name and inject the appropriate flags: model, write-access (=--dangerously-skip-permissions=, =--sandbox danger-full-access=, =--yolo=, =--yes-always=, =--auto=), writable directories, skills paths, and system prompt.  Aider receives the composed context through a private read-only file so it remains interactive.  Kimi receives a private custom-agent file which includes its native base prompt before the SuCoder context; other harnesses use their native prompt flag or trailing text.
 
 ** 6. Launch the agent /human/
 The agent process starts inside the mirror working tree.  From here, *you are talking to the agent*.  It has full write access to the mirror but cannot write to your canonical repo.  The agent commits its work to the task branch.
@@ -92,6 +166,7 @@ The canonical repository remains unwritable by the agent throughout.
 | =worktrees=          | List active worktrees with status             |
 | =attach=             | Reconnect to a remote tmux session            |
 | =audit=              | Run compliance review of skills and/or code  |
+| =list=               | Discover harnesses, models, mirrors, or skills|
 
 * Key Features
 - agents-clone :: Clone a canonical repository into an agent-owned mirror with strict permissions.
@@ -104,6 +179,28 @@ The canonical repository remains unwritable by the agent throughout.
 - nodes :: Show compute-node availability for a SLURM partition (read-only =sinfo= query over the warm gateway tunnel; see [[*Inspecting node availability][Inspecting node availability]]).
 - tunnel :: Keep the free SSH hops to a target warm (=up= / =status= / =doctor= / =down=), and forward a compute-node service port to localhost (=forward= / =forwards=) so a web app served on a node (Jupyter, claude-science, ...) is reachable in a local browser without new authentication.
 - audit :: Run a compliance review of agent-written skills and/or mirror code changes (see [[*Auditing][Auditing]]).
+- list :: Discover built-in and configured harnesses, their capabilities, configured model defaults, harness model catalogs, mirrors, and skills.
+
+** Discover harnesses and models
+
+The =list= command groups discovery by resource:
+
+#+begin_src shell
+sucoder list harnesses
+sucoder list models
+sucoder list models kimi
+sucoder list models --provider openrouter kimi
+sucoder list models --harness aider gpt
+sucoder list models --harness opencode kimi
+sucoder list models --harness kimi k3
+sucoder list providers
+sucoder list mirrors
+sucoder list skills
+#+end_src
+
+=list harnesses= shows every built-in profile plus custom harness commands found in configuration, where each is configured, its default model, and native shell, file-tool, Agent Skills, MCP, subagent, provider, and approval capabilities.  =suggest= means the harness can print a command but does not expose a model-driven shell tool; =?= means SuCoder has no built-in metadata for a custom harness.  =list models= queries the sole credentialed provider automatically; with several credentialed providers, select one using =--provider=.  The resulting names include the provider prefix and can be passed directly to =--model=.  If no provider is configured, the command falls back to configured model defaults.  =--harness aider=, =--harness opencode=, and =--harness kimi= instead query the selected harness under the configured agent user.  Kimi reports configured aliases.  =list providers= shows endpoints and credential references without invoking =pass= or displaying secrets.  The optional positional argument filters the selected model catalog.
+
+The older =mirrors-list= and =skills-list= spellings remain supported for compatibility.
 - --target/-T :: Select a named remote execution target (e.g., =--target savio=) to run the agent on a remote host.
 - --version/-V :: Print the installed sucoder version (CalVer, derived from git tags).
 - --dry-run :: Available on modifying commands to review logged operations without executing.
@@ -190,11 +287,11 @@ Configuration is stored in YAML (default =~/.sucoder/config.yaml=).  To set it u
 6. Warm up the shared skills catalog so launches confirm access before work starts.
    #+begin_src shell
    ls ~/.sucoder/skills
-   sucoder skills-list
-   sucoder mirrors-list
+   sucoder list skills
+   sucoder list mirrors
    #+end_src
    The listings should succeed without permission errors. The CLI helper highlights any unreadable
-   paths and =sucoder mirrors-list= prints the configured mirrors (with their canonical and mirror directories).
+   paths and =sucoder list mirrors= prints the configured mirrors (with their canonical and mirror directories).
    To preload the catalog into a session, use the agent's file-read command (e.g., =codex read ~/.sucoder/skills/SKILLS.md= for Codex).
 
 ** Shell Completion
@@ -252,9 +349,10 @@ sucoder --no-agent-sudo agents-clone project
   #+end_src
 #  Adjust flags such as =--no-agent-remote=, =--sudo=, or extra arguments just as you would with the individual commands.
 
-- To experiment with a different agent binary temporarily, supply =--agent-command= (and optional =--agent-env=):
+- To select a harness and model independently, or experiment with an arbitrary binary, use =--harness=/=--model= or =--agent-command= (and optional =--agent-env= for non-secret overrides):
   #+begin_src shell
-  sucoder agents-run project --agent-command "foo --flag" --agent-env TOKEN=abc123
+  sucoder agents-run project --harness aider --model openrouter/deepseek/deepseek-chat
+  sucoder agents-run project --agent-command "foo --flag" --agent-env DEBUG=1
   #+end_src
 
 - The CLI automatically injects the appropriate write-access flag for the detected agent (e.g., =--yolo= for Codex, =--dangerously-skip-permissions= for Claude Code; see the flag template table below).  When invoking an agent manually, include the equivalent flag to avoid read-only failures.  The helper will also warn if it detects a read-only sandbox and still attempts a launch.
@@ -795,6 +893,10 @@ mirrors:
       - ~/.sucoder/skills/org-style
       - ~/.sucoder/skills/document-skill
     agent_launcher:
+      # Harness executable and optional default model can be configured independently.
+      command: [aider]
+      model: openrouter/deepseek/deepseek-chat
+      # Alternatives: [opencode], [goose, run, --interactive], or [kimi].
       # Optional: map generic intents to agent-specific flags
       needs_yolo: true
       writable_dirs:
@@ -807,7 +909,7 @@ point to additional skill files or directories using =file:= links or bullet-lis
 catalog discovered this way is loaded automatically before launching the agent.
 
 The =agent_launcher.flags= mapping lets you translate generic intents (write access, writable
-directories, workdir, default flags, skills paths) into agent-specific switches. If a skills flag
+directories, workdir, default flags, skills paths, model, context file) into harness-specific switches. If a skills flag
 template is provided, sucoder will pass any configured skills plus the default
 =~/.sucoder/skills= directory when it exists.
 
@@ -816,15 +918,21 @@ The table below documents the current default flag templates used when the agent
 Templates can be overridden per-mirror or globally via =agent_launcher.flags=, with precedence:
 per-mirror > global > profile > UNKNOWN.
 
-| Template        | Intent                      | Codex default                                         | Claude default               | Gemini default                     | Notes |
-|----------------+-----------------------------+-------------------------------------------------------+------------------------------+------------------------------------+-------|
-| yolo           | Unsafe/full access mode     | --sandbox danger-full-access --ask-for-approval never | --dangerously-skip-permissions | --yolo                           | Injected when needs_yolo is true (or defaulted). |
-| writable_dir   | Allow extra writable paths  | (none)                                                | --add-dir {path}             | --include-directories {path}      | Codex uses sandbox policy instead of per-dir flags. |
-| workdir        | Set agent working directory | (none)                                                | (none)                       | (none)                             | Only applied if you set a template. |
-| default_flag   | Pass through default flags  | {flag}                                                | {flag}                       | {flag}                             | Each default flag is rendered through this template. |
-| skills         | Expose skills paths         | (none)                                                | (none)                       | (none)                             | Use "--skills {path}" or similar if your CLI supports it. |
-| system_prompt  | Inject system prompt        | (none)                                                | --system-prompt              | --prompt-interactive               | If unset, sucoder appends the prompt as trailing text when inline prompts are supported. |
-| mcp_config     | Pass MCP server config      | (none)                                                | --mcp-config {path}          | (none)                             | Only used for sucoder-config-level MCP servers; repo-shipped =.mcp.json= is discovered natively. |
+| Harness  | Model            | Write access                                         | Writable directory            | Prompt content       | Prompt file   | MCP config          |
+|----------+------------------+------------------------------------------------------+-------------------------------+----------------------+---------------+---------------------|
+| Claude   | --model {model}  | --dangerously-skip-permissions                       | --add-dir {path}              | --system-prompt      | (none)        | --mcp-config {path} |
+| Codex    | --model {model}  | --sandbox danger-full-access --ask-for-approval never| (none)                        | trailing text        | (none)        | (none)              |
+| Gemini   | --model {model}  | --yolo                                               | --include-directories {path}  | --prompt-interactive | (none)        | (none)              |
+| Aider    | --model {model}  | --yes-always                                         | (none)                        | (none)               | --read {path} | (none)              |
+| OpenCode | --model {model}  | --auto                                               | (none)                        | --prompt             | (none)        | native config       |
+| Goose    | --model {model}  | native policy                                        | (none)                        | --text               | (none)        | native config       |
+| Kimi     | --model {model}  | --auto                                               | --add-dir {path}              | (none)               | --agent-file {path} | native config    |
+
+The common =default_flag= template is ={flag}=.  Native Agent Skills discovery
+means OpenCode, Goose, and Kimi do not need a =skills= flag.  Goose launches as
+=goose run --interactive= so the injected =--text= context is processed before
+the interactive session begins.  Kimi's generated custom-agent file includes
+=${base_prompt}= so its native tools and skills remain available.
 
 If you change any defaults, update =AGENT_PROFILES= in =sucoder/config.py= alongside the
 README so the documentation stays in sync.
@@ -906,15 +1014,15 @@ The core =sucoder= workflow (mirror, sync, permissions, branch management) is
 fully agent-agnostic.  The table below summarises where agents differ in
 features that =sucoder= can exploit.
 
-| Capability                   | Claude                          | Codex                        | Gemini                        |
-|------------------------------+---------------------------------+------------------------------+-------------------------------|
-| Native =--worktree= flag    | Yes (=claude --worktree NAME=)  | No                           | No                            |
-| Subagent worktree isolation  | Yes (=isolation: worktree=)     | No                           | No                            |
-| Session resume               | Yes (=claude --resume=)         | No                           | No                            |
-| System prompt flag           | =--system-prompt FILE=          | Trailing text                | =--prompt-interactive=        |
-| Write-access flag            | =--dangerously-skip-permissions=| =--sandbox danger-full-access= | =--yolo=                   |
-| TTY requirement              | Works with subprocess           | Works with subprocess        | Requires =exec= (TTY)        |
-| Default agent                | *Yes* (=sucoder= default)       | Supported                    | Supported                     |
+| Capability                   | Claude                          | Codex                          | Gemini                  | Aider                 | OpenCode       | Goose                     | Kimi                   |
+|------------------------------+---------------------------------+--------------------------------+-------------------------+-----------------------+----------------+---------------------------+------------------------|
+| Native =--worktree= flag     | Yes (=claude --worktree NAME=) | No                             | No                      | No                    | No             | No                        | No                     |
+| Subagent worktree isolation  | Yes (=isolation: worktree=)    | No                             | No                      | No                    | No             | No                        | No                     |
+| Session resume               | Yes (=claude --resume=)        | Yes                            | Yes                     | Chat history support  | Yes            | Yes (=--resume=)          | Yes (=--session=)      |
+| System prompt mechanism      | =--system-prompt=               | Trailing text                  | =--prompt-interactive=  | Private =--read= file | =--prompt=     | =run --interactive --text= | Private =--agent-file=|
+| Write-access flag            | =--dangerously-skip-permissions=| =--sandbox danger-full-access= | =--yolo=                | =--yes-always=        | =--auto=       | Native policy             | =--auto=               |
+| TTY requirement              | Works with subprocess           | Works with subprocess          | Requires =exec= (TTY)   | Works with subprocess | Subprocess     | Subprocess                | Subprocess             |
+| Default harness              | *Yes*                           | Supported                      | Supported               | Supported             | Supported      | Supported                 | Supported              |
 
 Agents without native =--worktree= support can still use git worktrees
 manually.  The agent just needs to run =git worktree add= inside the mirror;
@@ -925,7 +1033,7 @@ Similarly, the remote execution support (=--target=, SSH tunnels,
 ControlMaster) is entirely agent-agnostic---any agent CLI can be launched
 over SSH.
 
-When adding a new agent, implement its profile in =AGENT_PROFILES= in
+When adding a new harness, implement its profile in =AGENT_PROFILES= in
 =sucoder/config.py= and add a row to these tables.
 
 ** Which agent binary actually launches

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -65,6 +66,355 @@ def test_mirrors_list_outputs_configured_entries(tmp_path, monkeypatch):
     assert "sample" in stdout
     assert str(tmp_path / "canonical") in stdout
     assert str(tmp_path / "mirrors" / "sample") in stdout
+
+
+def test_nested_list_mirrors_preserves_flat_command(tmp_path, monkeypatch):
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+
+    flat = runner.invoke(cli.app, ["--config", str(config_path), "mirrors-list"])
+    nested = runner.invoke(cli.app, ["--config", str(config_path), "list", "mirrors"])
+
+    assert flat.exit_code == nested.exit_code == 0
+    assert nested.stdout == flat.stdout
+
+
+def test_list_harnesses_shows_builtins_and_configured_default(tmp_path, monkeypatch):
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    with config_path.open("a", encoding="utf-8") as handle:
+        handle.write(
+            "    agent_launcher:\n"
+            "      command: [aider]\n"
+            "      model: openrouter/deepseek/deepseek-chat\n"
+        )
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+
+    result = runner.invoke(
+        cli.app, ["--config", str(config_path), "list", "harnesses"],
+    )
+
+    assert result.exit_code == 0, (result.output, result.exception)
+    for harness in ("aider", "claude", "codex", "gemini", "goose", "kimi", "opencode"):
+        assert harness in result.stdout
+    for capability in (
+        "Shell", "Files", "Skills", "MCP", "Subagents", "Providers", "Approval",
+    ):
+        assert capability in result.stdout
+    aider_row = next(line for line in result.stdout.splitlines() if line.startswith("aider"))
+    assert "suggest" in aider_row
+    assert "explicit" in aider_row
+    opencode_row = next(
+        line for line in result.stdout.splitlines() if line.startswith("opencode")
+    )
+    assert "multi" in opencode_row
+    assert "auto" in opencode_row
+    kimi_row = next(line for line in result.stdout.splitlines() if line.startswith("kimi"))
+    assert "yes" in kimi_row
+    assert "auto" in kimi_row
+    assert "sample" in result.stdout
+    assert "openrouter/deepseek/deepseek-chat" in result.stdout
+
+
+def test_list_models_shows_configured_defaults(tmp_path, monkeypatch):
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    with config_path.open("a", encoding="utf-8") as handle:
+        handle.write(
+            "    agent_launcher:\n"
+            "      command: [aider]\n"
+            "      model: anthropic/claude-sonnet-4\n"
+        )
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+
+    result = runner.invoke(
+        cli.app, ["--config", str(config_path), "list", "models"],
+    )
+
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert "sample" in result.stdout
+    assert "aider" in result.stdout
+    assert "anthropic/claude-sonnet-4" in result.stdout
+
+
+def test_list_models_queries_sole_configured_provider(tmp_path, monkeypatch):
+    from sucoder.executor import CommandResult
+
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    with config_path.open("a", encoding="utf-8") as handle:
+        handle.write(
+            "credentials:\n"
+            "  openrouter:\n"
+            "    pass: openrouter.ai/apikey\n"
+        )
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+    human_calls = []
+
+    class StubExecutor:
+        def run_human(self, args, **kwargs):
+            human_calls.append((list(args), kwargs))
+            return CommandResult(list(args), list(args), "test-secret\nmetadata\n", "", 0)
+
+    class StubResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return json.dumps({
+                "data": [
+                    {"id": "moonshotai/kimi-k3", "name": "Kimi K3"},
+                    {"id": "openai/gpt-5", "name": "GPT-5"},
+                ]
+            }).encode()
+
+    requests = []
+
+    def fake_urlopen(request, timeout):
+        requests.append((request, timeout))
+        return StubResponse()
+
+    monkeypatch.setattr(cli, "_build_executor", lambda *args, **kwargs: StubExecutor())
+    monkeypatch.setattr(cli.urllib.request, "urlopen", fake_urlopen)
+
+    result = runner.invoke(
+        cli.app,
+        ["--config", str(config_path), "list", "models", "kimi"],
+    )
+
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert human_calls == [
+        (
+            ["pass", "show", "openrouter.ai/apikey"],
+            {"check": False, "capture_output": True},
+        )
+    ]
+    assert requests[0][0].full_url.endswith("/models?q=kimi")
+    assert requests[0][0].get_header("Authorization") == "Bearer test-secret"
+    assert requests[0][1] == 30
+    assert result.stdout.strip() == "openrouter/moonshotai/kimi-k3"
+    assert "test-secret" not in result.stdout
+
+
+def test_list_models_rejects_harness_and_provider_together(tmp_path, monkeypatch):
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "--config", str(config_path), "list", "models",
+            "--harness", "aider", "--provider", "openrouter",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "either --harness or --provider" in result.output
+
+
+def test_list_models_delegates_available_catalog_to_aider(tmp_path, monkeypatch):
+    from sucoder.executor import CommandResult
+
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+    calls = []
+
+    class StubExecutor:
+        def run_agent(self, args, **kwargs):
+            calls.append((list(args), kwargs))
+            return CommandResult(list(args), list(args), "gpt-5\ngpt-5-mini\n", "", 0)
+
+    monkeypatch.setattr(cli, "_build_executor", lambda *args, **kwargs: StubExecutor())
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "--config", str(config_path), "list", "models",
+            "--harness", "aider", "gpt",
+        ],
+    )
+
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert calls == [(["aider", "--list-models", "gpt"], {"check": False, "capture_output": True})]
+    assert "gpt-5-mini" in result.stdout
+
+
+def test_list_models_filters_opencode_catalog(tmp_path, monkeypatch):
+    from sucoder.executor import CommandResult
+
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+    calls = []
+
+    class StubExecutor:
+        def run_agent(self, args, **kwargs):
+            calls.append((list(args), kwargs))
+            return CommandResult(
+                list(args), list(args),
+                "openrouter/moonshotai/kimi-k3\nopenai/gpt-5\n", "", 0,
+            )
+
+    monkeypatch.setattr(cli, "_build_executor", lambda *args, **kwargs: StubExecutor())
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "--config", str(config_path), "list", "models",
+            "--harness", "opencode", "kimi",
+        ],
+    )
+
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert calls == [(["opencode", "models"], {"check": False, "capture_output": True})]
+    assert "openrouter/moonshotai/kimi-k3" in result.stdout
+    assert "openai/gpt-5" not in result.stdout
+
+
+def test_list_models_filters_kimi_configured_aliases(tmp_path, monkeypatch):
+    from sucoder.executor import CommandResult
+
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+    calls = []
+
+    class StubExecutor:
+        def run_agent(self, args, **kwargs):
+            calls.append((list(args), kwargs))
+            return CommandResult(
+                list(args), list(args),
+                '{"providers": {}, "models": {'
+                '"kimi-code/k3": {"provider": "kimi-code"},'
+                '"anthropic/claude-opus": {"provider": "anthropic"}'
+                '}}\n',
+                "", 0,
+            )
+
+    monkeypatch.setattr(cli, "_build_executor", lambda *args, **kwargs: StubExecutor())
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "--config", str(config_path), "list", "models",
+            "--harness", "kimi", "kimi",
+        ],
+    )
+
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert calls == [
+        (["kimi", "provider", "list", "--json"], {"check": False, "capture_output": True})
+    ]
+    assert "kimi-code/k3" in result.stdout
+    assert "anthropic/claude-opus" not in result.stdout
+
+
+def test_list_providers_shows_pass_reference_without_resolving_it(tmp_path, monkeypatch):
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    with config_path.open("a", encoding="utf-8") as handle:
+        handle.write(
+            "credentials:\n"
+            "  openrouter:\n"
+            "    pass: openrouter.ai/apikey\n"
+        )
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+
+    result = runner.invoke(
+        cli.app, ["--config", str(config_path), "list", "providers"],
+    )
+
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert "openrouter" in result.stdout
+    assert "https://openrouter.ai/api/v1" in result.stdout
+    assert "pass:openrouter.ai/apikey" in result.stdout
+
+
+def test_goose_harness_shorthand_starts_interactive_run() -> None:
+    assert cli._resolve_harness_command(
+        harness="goose", agent=None, agent_command=None,
+    ) == ["goose", "run", "--interactive"]
+
+
+@pytest.mark.parametrize("subcommand, method", [("agents-run", "launch_agent"), ("collaborate", "bootstrap")])
+def test_launch_commands_forward_harness_and_model(
+    tmp_path, monkeypatch, subcommand, method,
+):
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+
+    calls = []
+
+    class StubManager:
+        def context_for(self, name):
+            return SimpleNamespace(name=name)
+
+        def launch_agent(self, ctx, **kwargs):
+            calls.append(("launch_agent", ctx.name, kwargs))
+
+        def bootstrap(self, ctx, **kwargs):
+            calls.append(("bootstrap", ctx.name, kwargs))
+
+    monkeypatch.setattr(cli, "_build_manager_for_mirror", lambda *args, **kwargs: StubManager())
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "--config", str(config_path), subcommand, "sample", "--no-sync",
+            "--harness", "aider", "--model", "openrouter/deepseek/deepseek-chat",
+        ],
+    )
+
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert calls[0][0] == method
+    assert calls[0][2]["command_override"] == ["aider"]
+    assert calls[0][2]["model_override"] == "openrouter/deepseek/deepseek-chat"
+
+
+def test_harness_and_legacy_agent_are_mutually_exclusive(tmp_path, monkeypatch):
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "--config", str(config_path), "agents-run", "sample",
+            "--harness", "aider", "--agent", "codex",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "either --harness or the legacy --agent" in result.output
 
 
 def test_skills_list_reports_accessible_paths(tmp_path, monkeypatch):
