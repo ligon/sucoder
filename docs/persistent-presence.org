@@ -279,6 +279,24 @@ ceiling -- a memory-heavy step hits a silent cgroup OOM-kill, so the agent
 must treat 16 GiB as the cap (or bump =mem:= for hungry mirrors).
 =nproc=, by contrast, IS cpuset-aware (reported 4).
 
+To validate the memory cap, do *not* rely on
+=cat /sys/fs/cgroup/memory.max=.  Slurm here gives the job no cgroup
+namespace, so =/proc/self/cgroup= shows the full host path
+(=/system.slice/.../job_<id>/...=) and =/sys/fs/cgroup/= is the host root
+cgroup, whose =memory.max= is =max= (or unreadable).  Instead derive the
+leaf from =/proc/self/cgroup= and walk upward to the first enforced
+(non-=max=) =memory.max=.  This also works when a namespace is present
+(then the leaf is =/= and the root is read directly):
+#+begin_src shell
+rel=$(awk -F: '$1=="0"{print $3}' /proc/self/cgroup)   # leaf cgroup path
+while :; do
+  v=$(cat "/sys/fs/cgroup${rel%/}/memory.max" 2>/dev/null)
+  [ -n "$v" ] && [ "$v" != max ] && { echo "cap=$v at $rel"; break; }
+  [ "$rel" = / ] && { echo "no enforced cap (unconfined?)"; break; }
+  rel=$(dirname "$rel")
+done
+#+end_src
+
 *Still to confirm live (needs a human at a terminal):* detach + re-=attach=
 survival; =release= teardown; and the persistence win -- let the
 ControlMaster lapse / drop the laptop and confirm the job + agent survive.
