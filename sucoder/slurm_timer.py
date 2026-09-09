@@ -147,7 +147,7 @@ done
 if [ "$TMUX_READY" -eq 0 ]; then
     # The user owns the SLURM lifecycle (see `sucoder release`): leave the
     # allocation alone even though the agent never appeared.
-    echo "Timed out waiting for tmux session $TMUX_SESSION; SLURM job $JOB kept alive. Run 'sucoder release' or 'scancel $JOB' to free the allocation." > "$WARN_FILE"
+    echo "Timed out waiting for tmux session $TMUX_SESSION; @LIFECYCLE@" > "$WARN_FILE"
     exit 1
 fi
 
@@ -156,16 +156,33 @@ fi
 "${TMUX_BIN[@]}" set-option -t "$TMUX_SESSION" display-time 15000 2>/dev/null || true
 
 elapsed=0
+missed=0
 while true; do
     left=$(squeue --job "$JOB" --noheader -o "%L" 2>/dev/null)
     if [ -z "$left" ]; then
-        warn "SLURM job $JOB is no longer queued -- allocation may have ended."
-        break
+        # Empty output means the job left the queue -- but squeue prints
+        # nothing on a scheduler RPC timeout too, which is routine on a
+        # busy controller and is NOT evidence the job is dead (the same
+        # distinction cli._slurm_job_state is careful about).  Breaking on
+        # the first empty read let one transient failure retire the
+        # watchdog on a job with hours left, silently removing the very
+        # warnings this script exists to give.  Believe it only after
+        # several consecutive misses; a job that really ended is noticed
+        # a few minutes later, which costs nothing.
+        missed=$((missed + 1))
+        if [ "$missed" -ge 3 ]; then
+            warn "SLURM job $JOB is no longer queued -- allocation may have ended."
+            break
+        fi
+        sleep 60
+        elapsed=$((elapsed + 1))
+        continue
     fi
+    missed=0
 
     # Agent gone: record it but do NOT scancel (see above).
     if ! "${TMUX_BIN[@]}" has-session -t "$TMUX_SESSION" 2>/dev/null; then
-        echo "Agent tmux session is gone; SLURM job $JOB kept alive. Run 'sucoder release' or 'scancel $JOB' to free the allocation." > "$WARN_FILE"
+        echo "Agent tmux session is gone; @LIFECYCLE@" > "$WARN_FILE"
         break
     fi
 
@@ -240,6 +257,22 @@ def build_timer_script(
     )
     tmux_cmd = "tmux" if tmux_socket is None else f"tmux -L {shlex.quote(tmux_socket)}"
     job_ref = '"${SLURM_JOB_ID:-}"' if job_id is None else shlex.quote(str(job_id))
+    # What happens to the allocation when the agent's session goes away is
+    # the opposite in the two modes, and telling a confined user to run
+    # `scancel` on a job that already completed is worse than saying
+    # nothing.  Under sbatch the batch body's keeper loop polls the same
+    # session, so the job ends with it; under salloc the user owns the
+    # allocation and it survives.
+    if job_id is None:
+        lifecycle = (
+            "SLURM job $JOB ends with it (the batch body exits when the "
+            "session does)."
+        )
+    else:
+        lifecycle = (
+            "SLURM job $JOB kept alive. Run 'sucoder release' or "
+            "'scancel $JOB' to free the allocation."
+        )
     return (
         _TEMPLATE
         .replace("@MIRROR_TOKEN@", shlex.quote(mirror_token))
@@ -248,6 +281,7 @@ def build_timer_script(
         .replace("@SNAPSHOT_DIR@", snapshot_word)
         .replace("@SNAPSHOT_MINUTES@", str(int(snapshot_minutes)))
         .replace("@JOB_REF@", job_ref)
+        .replace("@LIFECYCLE@", lifecycle)
         .replace("@LEFT_TO_MINS@", TIME_LEFT_TO_MINS_SH)
         .replace("@SNAPSHOT_WIP@", WIP_SNAPSHOT_SH)
     )

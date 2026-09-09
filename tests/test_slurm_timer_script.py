@@ -337,3 +337,51 @@ def test_skipped_poll_does_not_walk_back_down(tmp_path):
     assert len(deadline) == 2, deadline
     assert "Start wrapping up" in deadline[0]
     assert "Commit and save NOW" in deadline[1]
+
+
+@_bash
+def test_transient_squeue_failure_does_not_retire_the_watchdog(tmp_path):
+    """One empty squeue read must not end the loop.
+
+    squeue prints nothing both when the job is gone and when the
+    controller RPC times out, so breaking on the first empty read let a
+    single transient failure remove every remaining deadline warning
+    from a job with hours left -- the exact failure this script exists
+    to prevent.
+    """
+    # 10h left, one transient blank, then the countdown resumes and
+    # every threshold still fires.
+    msgs = _drive(tmp_path, ["10:00:00", "", "25:00", "12:00", "4:00"])
+    deadline = [m for m in msgs if "min left" in m]
+    assert len(deadline) == 3, deadline
+    assert "Commit and save NOW" in deadline[-1]
+
+
+@_bash
+def test_sustained_squeue_silence_still_reports_the_job_gone(tmp_path):
+    """Tolerating blips must not mean never noticing a finished job."""
+    msgs = _drive(tmp_path, ["10:00:00"])
+    assert any("no longer queued" in m for m in msgs), msgs
+
+
+def test_lifecycle_hint_matches_the_launch_mode():
+    """Under sbatch the batch body's keeper loop exits with the tmux
+    session, so the job ends with it; telling that user to `scancel` a
+    job that already completed sends them after a ghost.  Under salloc
+    the allocation really does survive."""
+    def hints(script):
+        # Only the two warning messages, not the surrounding comments.
+        return [l for l in script.splitlines()
+                if l.strip().startswith("echo ") and "$WARN_FILE" in l
+                and ("kept alive" in l or "ends with it" in l)]
+
+    confined = hints(_render(tmux_socket="s"))   # job id read at run time
+    unconfined = hints(_render(job_id=42))
+    # Both places say it: the startup timeout and the session-gone exit.
+    assert len(confined) == 2 and len(unconfined) == 2
+    for line in confined:
+        assert "ends with it" in line
+        assert "kept alive" not in line and "sucoder release" not in line
+    for line in unconfined:
+        assert "kept alive" in line and "sucoder release" in line
+        assert "ends with it" not in line
