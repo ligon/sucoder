@@ -2170,6 +2170,25 @@ def test_build_executor_confined_local_disk_is_tiering(tmp_path, monkeypatch):
     assert kwargs.get("scaffolding_node")
 
 
+def test_build_executor_confined_local_disk_flag_without_config(tmp_path, monkeypatch):
+    """``sucoder --local-disk -T <confined>`` turns tiering on with the
+    default root even when the target config says nothing about it."""
+    import logging
+
+    captured, _ = _install_build_executor_fakes(monkeypatch, tmp_path)
+    config = Config(human_user="coder", mirror_root=tmp_path / "mirrors")
+    settings = _confined_mirror_settings(tmp_path, confined=True)
+    assert settings.remote.slurm.local_disk is None
+
+    cli._build_executor(
+        config, logging.getLogger("t"), dry_run=False, mirror_settings=settings,
+        local_disk_override=True,
+    )
+    kwargs = captured["kwargs"]
+    assert kwargs["local_disk_root"] == "/local"
+    assert kwargs["remote_mirror_root"] == str(settings.remote.mirror_root)
+
+
 def test_build_executor_confined_no_local_disk_override_wins(tmp_path, monkeypatch):
     import logging
 
