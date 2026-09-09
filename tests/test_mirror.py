@@ -1720,11 +1720,19 @@ def test_launch_confined_stages_and_starts_deadline_timer(tmp_path, monkeypatch)
     writes = [c for c in calls if c["args"][0] == "sh" and c["input"]]
     assert len(writes) == 2, "batch script then timer script must both be staged"
     batch, timer = writes[0], writes[1]
-    timer_path = [t for t in timer["args"][2].split() if "slurm-timer-" in t][0]
+    # The destination is passed as an argv positional, and the staging
+    # script writes a temp file and renames it into place.  ``cat >``
+    # straight onto the live path would truncate a script a running
+    # job is still reading, silently killing that job's watchdog.
+    timer_path = timer["args"][4]
     assert timer_path.endswith("/.cache/sucoder/slurm-timer-sample.sh")
-    assert "chmod 700" in timer["args"][2]
+    stage = timer["args"][2]
+    assert "chmod 700" in stage
+    assert 'mv -f "$t" "$1"' in stage
+    assert "cat > \"$t\"" in stage
+    assert timer_path not in stage, "destination must not be interpolated"
     # The batch body starts exactly that file, after the session check.
-    assert f"nohup {timer_path} > /dev/null 2>&1 &" in batch["input"]
+    assert f"nohup {timer_path} > /dev/null &" in batch["input"]
     # Confined specifics threaded through: runtime job id, dedicated socket,
     # the mirror as snapshot dir, the configured cadence.
     assert 'JOB="${SLURM_JOB_ID:-}"' in timer["input"]

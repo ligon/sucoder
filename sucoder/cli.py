@@ -1195,12 +1195,19 @@ def _start_slurm_timer(
     node = session.compute_node
 
     q_script = shlex.quote(script_name)
+    # Temp file + atomic rename, never ``cat >`` onto the live path.  The
+    # pkill below retires the previous timer only *after* this write, so a
+    # relaunch would otherwise truncate a script the old timer's bash is
+    # still reading -- which does not restart it, it stops it at whatever
+    # byte offset it had reached.  ``mv -f`` swaps the directory entry,
+    # leaving the running process's open inode intact.
     write_result = _sp.run(
         ["ssh", *ssh_opts, node,
-         'mkdir -p "$HOME/.cache/sucoder" && '
-         'chmod 700 "$HOME/.cache/sucoder" 2>/dev/null || true; '
-         f'cat > "$HOME/.cache/sucoder/"{q_script} && '
-         f'chmod 700 "$HOME/.cache/sucoder/"{q_script}'],
+         'd="$HOME/.cache/sucoder"; '
+         'mkdir -p "$d" && chmod 700 "$d" 2>/dev/null || true; '
+         f't="$d/"{q_script}".tmp.$$"; '
+         'umask 077 && cat > "$t" && chmod 700 "$t" && '
+         f'mv -f "$t" "$d/"{q_script}'],
         input=timer_script, capture_output=True, text=True, check=False,
     )
     if write_result.returncode != 0:
@@ -1213,10 +1220,15 @@ def _start_slurm_timer(
     # they pile up, each snapshotting.  The [s] bracket keeps pkill from
     # matching the shell that runs it.
     q_pattern = shlex.quote(f"[s]lurm-timer-{token}.sh")
+    # ``nohup ... &`` returns 0 whether or not the script actually started,
+    # so the rc below only proves ssh worked; ``-x`` is what catches a
+    # missing or non-executable timer.
     run_result = _sp.run(
         ["ssh", *ssh_opts, node,
          f'pkill -u "$USER" -f {q_pattern} 2>/dev/null; '
-         f'nohup "$HOME/.cache/sucoder/"{q_script} > /dev/null 2>&1 &'],
+         f'p="$HOME/.cache/sucoder/"{q_script}; '
+         '[ -x "$p" ] || { echo "timer not startable: $p" >&2; exit 1; }; '
+         'nohup "$p" > /dev/null 2>&1 &'],
         capture_output=True, text=True, check=False,
     )
     if run_result.returncode == 0:

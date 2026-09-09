@@ -93,7 +93,12 @@ snapshot_wip() {
 # State files are per mirror: several confined mirrors share one $HOME,
 # and a second timer's startup ``rm -f`` must not clear the first's
 # markers.  The un-suffixed ``slurm-deadline.warn`` is still written for
-# prompts that poll the legacy path.
+# prompts that poll the legacy path; it is cleared at startup like the
+# rest, or a warning from a previous job ("allocation may have ended")
+# survives into a healthy new session.  It is deliberately NOT per
+# mirror -- that is what the legacy path means -- so with several
+# confined mirrors it is last-writer-wins; the suffixed file is the
+# one to poll.
 _TEMPLATE = r'''#!/bin/bash
 # sucoder SLURM deadline timer + WIP snapshotter (generated; do not edit).
 set -u
@@ -111,7 +116,7 @@ LEGACY_WARN_FILE="$STATE_DIR/slurm-deadline.warn"
 WARN5="$STATE_DIR/.slurm-warn-5-$MIRROR_TOKEN"
 WARN15="$STATE_DIR/.slurm-warn-15-$MIRROR_TOKEN"
 WARN30="$STATE_DIR/.slurm-warn-30-$MIRROR_TOKEN"
-rm -f "$WARN5" "$WARN15" "$WARN30" "$WARN_FILE"
+rm -f "$WARN5" "$WARN15" "$WARN30" "$WARN_FILE" "$LEGACY_WARN_FILE"
 
 if [ -z "$JOB" ]; then
     echo "sucoder timer: no SLURM job id (not inside a job?); exiting." > "$WARN_FILE"

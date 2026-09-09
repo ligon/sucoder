@@ -123,11 +123,18 @@ def test_timer_started_after_session_check_before_keeper():
     s = MirrorManager._build_batch_script(
         **_BASE, timer_path="/global/home/users/ligon/.cache/sucoder/slurm-timer-K-Aggregators.sh",
     )
-    nohup = "nohup /global/home/users/ligon/.cache/sucoder/slurm-timer-K-Aggregators.sh > /dev/null 2>&1 &\n"
+    nohup = "nohup /global/home/users/ligon/.cache/sucoder/slurm-timer-K-Aggregators.sh > /dev/null &\n"
     assert nohup in s
     rc_check = s.index("SUCODER: tmux new-session failed")
     keeper = s.index("while tmux -L sucoder-K-Aggregators has-session")
     assert rc_check < s.index(nohup) < keeper
+    # The start is guarded and reports failure: a timer that never runs
+    # is the bug this whole script exists to fix, so it must not be
+    # silent.  stderr stays on the job log (no ``2>&1``) so an exec
+    # failure on a noexec $HOME is visible.
+    assert f"if [ -x /global/home/users/ligon/.cache/sucoder/slurm-timer-K-Aggregators.sh ]; then" in s
+    assert "SUCODER: deadline timer not startable:" in s
+    assert "> /dev/null 2>&1 &" not in s
 
 
 def test_timer_omitted_when_no_path():
@@ -137,7 +144,11 @@ def test_timer_omitted_when_no_path():
 @_bash_only
 def test_timer_path_is_quoted_and_script_parses(tmp_path):
     s = MirrorManager._build_batch_script(**_BASE, timer_path="/p q/t.sh")
-    assert "nohup '/p q/t.sh' > /dev/null 2>&1 &" in s
+    assert "nohup '/p q/t.sh' > /dev/null &" in s
+    assert "if [ -x '/p q/t.sh' ]; then" in s
+    # The diagnostic carries the path quoted too, or a path with a
+    # space would split into two words in the message.
+    assert "not startable:\" '/p q/t.sh' >&2" in s
     assert _bash_n(s).returncode == 0
 
 

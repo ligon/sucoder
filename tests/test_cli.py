@@ -840,13 +840,56 @@ def test_slurm_timer_script_omits_scancel(monkeypatch):
     for raw in rendered[0].splitlines():
         stripped = raw.strip()
         # Strings may *mention* scancel ("Run `scancel N` to free ..."),
-        # but no line may execute it.
-        assert not stripped.startswith("scancel"), (
+        # but no line may execute it.  Stripping quoted strings and
+        # comments leaves only shell code; ``startswith`` missed every
+        # realistic reintroduction (``then scancel``, ``$(scancel ...)``).
+        code = re.sub(r"'[^']*'|\"[^\"]*\"", "", stripped).split("#", 1)[0]
+        assert "scancel" not in code, (
             "the deadline timer still emits a `scancel` shell command: "
             f"{stripped!r}.  The user owns the SLURM lifecycle; use "
             "`sucoder release` for explicit cancel."
         )
     assert "JOB=7\n" in rendered[0]
+
+
+def test_salloc_timer_is_per_mirror_and_staged_atomically(monkeypatch):
+    """The unconfined timer gets a per-mirror filename and an atomic
+    rename, matching the confined path.
+
+    A single shared ``slurm-timer.sh`` written with ``cat >`` had two
+    failure modes: two concurrent mirrors overwrote each other's script,
+    and a relaunch truncated a file the previous job's bash was still
+    reading -- which does not restart it, it silently stops it at
+    whatever byte offset it had reached.  ``mv -f`` swaps the directory
+    entry instead, leaving the running job's open inode intact.
+    """
+    calls = []
+
+    def record(argv, *a, **kw):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", record)
+    session = SimpleNamespace(slurm_job_id=7, mirror_name="K Agg", compute_node="n0")
+    control = SimpleNamespace(ssh_options=lambda **kw: [])
+    cli._start_slurm_timer(session, control, control, mock.Mock())
+
+    write, start = calls[0][-1], calls[1][-1]
+    # Sanitized, per mirror -- never the old shared name.
+    assert "slurm-timer-K_Agg.sh" in write
+    assert "slurm-timer-K_Agg.sh" in start
+    for cmd in (write, start):
+        assert '"$HOME/.cache/sucoder/slurm-timer.sh"' not in cmd
+    # Staged to a temp file, chmod'd, then renamed over the destination.
+    assert '.tmp.$$' in write
+    assert 'cat > "$t"' in write
+    assert 'chmod 700 "$t"' in write
+    assert 'mv -f "$t"' in write
+    assert write.index('cat > "$t"') < write.index('mv -f "$t"')
+    # Starting it is guarded: ``nohup ... &`` exits 0 even when the script
+    # is missing, so the ssh rc alone proves nothing.
+    assert '[ -x "$p" ]' in start
+    assert "timer not startable" in start
 
 
 def _slurm_config(tmp_path: Path, *, with_session_jobid: bool = False) -> Path:
@@ -2327,7 +2370,13 @@ def test_start_slurm_timer_snapshots_the_local_clone_and_retires_the_old_timer(m
     write_cmd, start_cmd = ssh_cmds[-2][-1], ssh_cmds[-1][-1]
     assert "slurm-timer-sample.sh" in write_cmd
     assert "pkill -u \"$USER\" -f '[s]lurm-timer-sample.sh'" in start_cmd
-    assert 'nohup "$HOME/.cache/sucoder/"slurm-timer-sample.sh' in start_cmd
+    # The path goes via $p so it can be guarded before starting: ``nohup
+    # ... &`` exits 0 even when the script is missing, so the ssh rc alone
+    # would not notice a timer that never ran.
+    assert 'p="$HOME/.cache/sucoder/"slurm-timer-sample.sh' in start_cmd
+    assert '[ -x "$p" ]' in start_cmd
+    assert 'nohup "$p" > /dev/null 2>&1 &' in start_cmd
+    assert start_cmd.index("pkill") < start_cmd.index("nohup")
 
 
 def test_build_executor_confined_no_local_disk_override_wins(tmp_path, monkeypatch):

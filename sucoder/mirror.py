@@ -2409,7 +2409,18 @@ class MirrorManager:
             "    exit 1\n"
             "fi\n"
             + (
-                f"nohup {shlex.quote(timer_path)} > /dev/null 2>&1 &\n"
+                # A timer that fails to start reintroduces exactly the
+                # bug it exists to fix -- a job with no deadline
+                # watchdog -- so this must never be silent.  ``-x``
+                # catches a missing or non-executable script, and
+                # nohup's stderr is left attached to the job log so an
+                # exec failure on a ``noexec`` $HOME is visible too.
+                f"if [ -x {shlex.quote(timer_path)} ]; then\n"
+                f"    nohup {shlex.quote(timer_path)} > /dev/null &\n"
+                "else\n"
+                "    echo \"SUCODER: deadline timer not startable:\" "
+                f"{shlex.quote(timer_path)} >&2\n"
+                "fi\n"
                 if timer_path else ""
             )
             + f"while tmux -L {q_sock} has-session -t {q_sess} 2>/dev/null; do\n"
@@ -2859,11 +2870,21 @@ class MirrorManager:
                 snapshot_dir=mirror_path,
                 snapshot_minutes=slurm.wip_snapshot_minutes,
             )
+        # Staged via a temp file and an atomic rename, never ``cat >``
+        # onto the live path.  A second launch computing the same
+        # timer_path (one mirror on two targets sharing $HOME -- the
+        # reuse-probe is keyed per target -- or two names that sanitize
+        # alike) would otherwise truncate a script the running job is
+        # still executing, and bash, reading from its open fd at a byte
+        # offset, silently stops: the first job loses its watchdog with
+        # no diagnostic anywhere.  ``mv -f`` swaps the directory entry,
+        # so that job keeps reading the intact inode it already holds.
         self.executor.run_agent(
             [
                 "sh", "-c",
-                f"umask 077 && cat > {shlex.quote(timer_path)} "
-                f"&& chmod 700 {shlex.quote(timer_path)}",
+                'umask 077 && t="$1.tmp.$$" && cat > "$t" '
+                '&& chmod 700 "$t" && mv -f "$t" "$1"',
+                "sucoder-slurm-timer", timer_path,
             ],
             input=timer_script, check=True, capture_output=True,
         )

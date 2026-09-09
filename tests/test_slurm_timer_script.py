@@ -8,6 +8,7 @@ on n0036.savio4, 2026-09-09).  Nothing here execs ``tmux`` or ``squeue``.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -35,7 +36,6 @@ def _bash_n(script: str, tmp_path: Path) -> subprocess.CompletedProcess:
 # -- rendering ----------------------------------------------------------------
 
 def test_no_unresolved_tokens_in_either_mode():
-    import re
     for script in (_render(job_id=123), _render(tmux_socket="s", snapshot_dir="/d")):
         assert not re.search(r"@[A-Z_]+@", script), script
 
@@ -64,6 +64,20 @@ def test_confined_mode_reads_job_id_at_runtime_and_threads_socket():
     assert s.count('"${TMUX_BIN[@]}"') >= 4
 
 
+def test_both_bash_helpers_reach_the_rendered_script():
+    """The one thing ``build_timer_script`` uniquely does is assemble the
+    two helpers into the script.  Tested elsewhere only as standalone
+    constants, so rendering them as empty strings left the suite green
+    while shipping a script that warns never and snapshots never --
+    ``bash -n`` does not flag a call to an undefined function."""
+    for script in (_render(job_id=1), _render(tmux_socket="s", snapshot_dir="/d")):
+        assert "left_to_mins() {" in script
+        assert "snapshot_wip() {" in script
+        # ...and they are defined before the loop that calls them.
+        assert script.index("left_to_mins() {") < script.index("mins=$(left_to_mins")
+        assert script.index("snapshot_wip() {") < script.index("        snapshot_wip\n")
+
+
 def test_state_files_are_per_mirror_and_legacy_warn_kept():
     s = _render(mirror_token="alpha")
     assert 'WARN_FILE="$STATE_DIR/slurm-deadline-$MIRROR_TOKEN.warn"' in s
@@ -71,6 +85,20 @@ def test_state_files_are_per_mirror_and_legacy_warn_kept():
     assert "MIRROR_TOKEN=alpha\n" in s
     for n in (5, 15, 30):
         assert f'WARN{n}="$STATE_DIR/.slurm-warn-{n}-$MIRROR_TOKEN"' in s
+
+
+def test_startup_clears_the_legacy_warn_file_too():
+    """Startup clears every warn file it may later write, the legacy one
+    included.  Clearing only the per-mirror file let a previous job's
+    \"allocation may have ended\" survive on the legacy path into a
+    healthy new session -- read by exactly the older prompts that path
+    is kept for."""
+    s = _render(mirror_token="alpha")
+    rm = next(ln for ln in s.splitlines() if ln.startswith("rm -f "))
+    for var in ("$WARN5", "$WARN15", "$WARN30", "$WARN_FILE", "$LEGACY_WARN_FILE"):
+        assert f'"{var}"' in rm, f"{var} not cleared at startup: {rm}"
+    # Cleared before any warning could be written.
+    assert s.index(rm) < s.index("warn() {")
 
 
 def test_user_values_are_shell_quoted():
@@ -94,12 +122,27 @@ def test_negative_snapshot_minutes_rejected():
         _render(snapshot_minutes=-1)
 
 
+def _runs_scancel(line: str) -> bool:
+    """True if ``line`` would *execute* scancel.
+
+    The timer legitimately names scancel inside warning messages ("Run
+    'scancel 7' to free the allocation"), so a guard cannot just look for
+    the word.  Stripping quoted strings and comments leaves only shell
+    code, and any scancel surviving that is a real command -- which
+    ``startswith("scancel")`` was not: it missed ``then scancel ...``,
+    ``&& /usr/bin/scancel ...``, ``$(scancel ...)`` and ``timeout 5
+    scancel ...``, i.e. every plausible way it would come back.
+    """
+    code = re.sub(r"'[^']*'|\"[^\"]*\"", "", line).split("#", 1)[0]
+    return "scancel" in code
+
+
 def test_never_emits_a_bare_scancel():
     """The user owns the SLURM lifecycle (``sucoder release``); the timer
     may *mention* scancel in a warning string but never run it."""
     for script in (_render(job_id=1), _render(tmux_socket="s")):
         for raw in script.splitlines():
-            assert not raw.strip().startswith("scancel"), raw
+            assert not _runs_scancel(raw), raw
 
 
 @_bash
