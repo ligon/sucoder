@@ -73,7 +73,7 @@ from .permissions import (
     ensure_directory_mode,
 )
 from .skills_version import validate_skills_version
-from .local_tier import build_prepare_script, cache_exports_sh, work_path_shell
+from .local_tier import build_prepare_script, cache_exports_sh, work_path, work_path_shell
 from .slurm_timer import build_timer_script
 from .workspace_prefs import WorkspacePrefs
 
@@ -665,9 +665,10 @@ class MirrorManager:
     def _resolve_remote_path(self, ctx: MirrorContext) -> str:
         """Return the absolute remote mirror path, resolving ~ via SSH.
 
-        When the executor overrides the mirror root (e.g. --local-disk
-        sets it to /local/mirrors), that takes precedence over the
-        config-derived ``ctx.remote_mirror_path``.
+        When the executor overrides the mirror root, that takes precedence
+        over the config-derived ``ctx.remote_mirror_path``.  (Local-disk
+        tiering does NOT override it: the mirror root stays shared and the
+        node-local clone is the launch cwd only.)
 
         Uses the login node when available (shared filesystem; avoids
         the fragile compute-node SSH chain).
@@ -1739,9 +1740,8 @@ class MirrorManager:
                 check=False,
             )
             self.logger.info("Initialising remote mirror at %s", remote_path)
-            # Create with restrictive permissions — especially important
-            # on compute-node local disk (/local/) which is shared and
-            # persistent across jobs.
+            # Create with restrictive permissions: mirror roots on shared
+            # filesystems are visible to every user on the cluster.
             run(
                 ["bash", "-c",
                  f"umask 077 && mkdir -p {shlex.quote(abs_remote_path)}"],
@@ -2460,6 +2460,56 @@ class MirrorManager:
             )
         return agent_cmd_str
 
+    def _prepare_local_tier(self, ctx: MirrorContext, local_disk_root: str) -> Tuple[Path, str]:
+        """Clone the shared mirror onto the compute node for an unconfined launch.
+
+        Stages ``local_tier.build_prepare_script`` to ``$HOME/.cache/sucoder``
+        and runs it on the node through the executor (which is pinned to
+        the compute node for an unconfined SLURM target).  Returns the
+        working clone's path (the agent's cwd) and the ``export`` line for
+        the caches, which the caller prepends to the tmux window command.
+        The confined path does the same from inside the batch body.
+        """
+        job_id = getattr(self.executor, "slurm_job_id", None)
+        if not job_id:
+            raise MirrorError(
+                "Local-disk tiering needs a SLURM job id on the executor; "
+                "none is recorded for this session."
+            )
+        token = _sanitize_session_token(ctx.settings.name)
+        mirror_path = self._resolve_remote_path(ctx)
+        home = self._resolve_remote_home(ctx)
+        prepare_path = f"{home}/.cache/sucoder/local-tier-{token}.sh"
+        script = build_prepare_script(
+            mirror_path=mirror_path, mirror_token=token,
+            local_disk_root=local_disk_root, job_id=int(job_id),
+        )
+        self.executor.run_agent(
+            [
+                "sh", "-c",
+                f"umask 077 && mkdir -p {shlex.quote(home + '/.cache/sucoder')} "
+                f"&& cat > {shlex.quote(prepare_path)} && chmod 700 {shlex.quote(prepare_path)}",
+            ],
+            input=script, check=True, capture_output=True,
+        )
+        result = self.executor.run_agent(
+            ["bash", prepare_path], check=False, capture_output=True,
+        )
+        for line in (result.stdout or "").splitlines():
+            if line.startswith("SUCODER:"):
+                self.logger.info("%s", line)
+        for line in (result.stderr or "").splitlines():
+            if line.startswith("SUCODER:"):
+                self.logger.warning("%s", line)
+        if result.returncode != 0:
+            raise MirrorError(
+                "Local-disk tiering: preparing the working clone on the "
+                f"compute node failed (exit {result.returncode}):\n"
+                f"{(result.stderr or '').strip()}"
+            )
+        cwd = Path(work_path(local_disk_root, token, int(job_id)))
+        return cwd, cache_exports_sh(local_disk_root, int(job_id))
+
     # ------------------------------------------------------------------
     # Confined (sbatch) launch.  A confined target fuses allocate+launch:
     # ``sbatch`` a script whose body runs IN the job cgroup and starts the
@@ -2921,6 +2971,9 @@ class MirrorManager:
         are skipped because the agent is still running.
         """
         mirror_path = self._ensure_mirror_exists(ctx)
+        # Where the agent process starts.  Same as the mirror unless
+        # local-disk tiering moves it to a node-local clone (remote only).
+        launch_cwd: Path = mirror_path
 
         if task_name:
             self.logger.info("Preparing task branch %s", task_name)
@@ -3077,6 +3130,14 @@ class MirrorManager:
                 remote_prelude_text=remote_prelude_text,
                 prelude_sentinel=prelude_sentinel,
             )
+            local_disk_root = getattr(self.executor, "local_disk_root", None) or None
+            if local_disk_root:
+                # Local-disk tiering: clone the (just synced) shared mirror
+                # onto the compute node and run the agent there.  The
+                # prepare script and cache exports are the same ones the
+                # confined batch body uses; here the job id is known.
+                launch_cwd, exports = self._prepare_local_tier(ctx, local_disk_root)
+                agent_cmd_str = f"{exports}; {agent_cmd_str}"
             command = self._build_tmux_launch_command(
                 tmux_name, agent_cmd_str, detached=detached,
             )
@@ -3087,7 +3148,7 @@ class MirrorManager:
             # Replace current process with agent (preserves TTY).  Never
             # taken for a detached relaunch -- exec would replace the
             # renew-loop process with tmux.
-            self._exec_agent(command, mirror_path, env_to_use)
+            self._exec_agent(command, launch_cwd, env_to_use)
             # _exec_agent never returns; this is unreachable but satisfies type checker
             return 0  # pragma: no cover
         else:
@@ -3095,7 +3156,7 @@ class MirrorManager:
             result = self.executor.run_agent(
                 command,
                 check=False,
-                cwd=str(mirror_path),
+                cwd=str(launch_cwd),
                 env=env_to_use,
                 capture_output=False,
             )

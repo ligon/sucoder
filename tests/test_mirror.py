@@ -945,6 +945,95 @@ def test_launch_agent_remote_wraps_without_scancel(tmp_path: Path, monkeypatch: 
     )
 
 
+def _remote_launch_manager(tmp_path, monkeypatch, *, local_disk_root):
+    from sucoder.config import RemoteConfig, SlurmConfig
+
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+    ctx.settings.remote = RemoteConfig(
+        gateway="brc.berkeley.edu",
+        transfer_host="dtn.brc.berkeley.edu",
+        slurm=SlurmConfig(partition="savio3", account="fc_jevons"),
+    )
+    manager.executor.slurm_job_id = 1234567  # type: ignore[attr-defined]
+    manager.executor.local_disk_root = local_disk_root  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        MirrorManager, "_resolve_remote_home", lambda self, ctx: "/global/home/users/coder",
+    )
+    monkeypatch.setattr(
+        MirrorManager, "_resolve_remote_path",
+        lambda self, ctx: "/global/home/users/coder/mirrors/sample",
+    )
+    monkeypatch.setattr(
+        MirrorManager, "_default_system_prompt_path",
+        staticmethod(lambda: Path("/nonexistent-system-prompt")),
+    )
+    manager.config.system_prompt = None
+    return manager, ctx
+
+
+def test_launch_agent_unconfined_local_tier_clones_then_launches_in_clone(tmp_path, monkeypatch):
+    """salloc target + local_disk_root: the prepare script is staged and run
+    on the compute node before tmux, the agent's cwd is the node-local
+    clone, and the window command carries the cache exports."""
+    manager, ctx = _remote_launch_manager(tmp_path, monkeypatch, local_disk_root="/local")
+    calls = []
+
+    def fake_run_agent(args, **kwargs):
+        calls.append({"args": list(args), "kwargs": kwargs})
+        return CommandResult(requested_args=list(args), executed_args=list(args),
+                             stdout="SUCODER: local-tier working clone ready\n", stderr="", returncode=0)
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+    manager.launch_agent(ctx, sync=False)
+
+    kinds = [c["args"][0] for c in calls]
+    stage = next(c for c in calls if c["args"][0] == "sh" and "local-tier-sample.sh" in c["args"][2])
+    assert "MIRROR=/global/home/users/coder/mirrors/sample\n" in stage["kwargs"]["input"]
+    assert "LOCAL_ROOT=/local/job1234567\n" in stage["kwargs"]["input"]
+    run = next(c for c in calls if c["args"][:1] == ["bash"])
+    assert run["args"] == ["bash", "/global/home/users/coder/.cache/sucoder/local-tier-sample.sh"]
+    tmux = calls[-1]
+    assert tmux["args"][0] == "tmux"
+    assert kinds.index("bash") < len(calls) - 1
+    assert tmux["kwargs"]["cwd"] == "/local/job1234567/mirrors/sample"
+    window = tmux["args"][-1]
+    assert window.startswith("export SUCODER_LOCAL_ROOT=/local/job1234567 ")
+    assert "UV_CACHE_DIR=/local/job1234567/cache/uv" in window
+    assert window.rstrip().endswith("exec bash -l")
+
+
+def test_launch_agent_unconfined_local_tier_prepare_failure_raises(tmp_path, monkeypatch):
+    manager, ctx = _remote_launch_manager(tmp_path, monkeypatch, local_disk_root="/local")
+
+    def fake_run_agent(args, **kwargs):
+        rc = 1 if list(args)[:1] == ["bash"] else 0
+        return CommandResult(requested_args=list(args), executed_args=list(args), stdout="",
+                             stderr="SUCODER: clone of x to y failed\n", returncode=rc)
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+    with pytest.raises(mirror.MirrorError, match="SUCODER: clone"):
+        manager.launch_agent(ctx, sync=False)
+
+
+def test_launch_agent_unconfined_without_local_tier_is_unchanged(tmp_path, monkeypatch):
+    manager, ctx = _remote_launch_manager(tmp_path, monkeypatch, local_disk_root=None)
+    calls = []
+
+    def fake_run_agent(args, **kwargs):
+        calls.append({"args": list(args), "kwargs": kwargs})
+        return CommandResult(requested_args=list(args), executed_args=list(args),
+                             stdout="", stderr="", returncode=0)
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+    manager.launch_agent(ctx, sync=False)
+    assert not any("local-tier" in " ".join(c["args"]) for c in calls)
+    assert calls[-1]["args"][0] == "tmux"
+    assert calls[-1]["kwargs"]["cwd"] == str(ctx.mirror_path)
+    assert not calls[-1]["args"][-1].startswith("export ")
+
+
 def test_build_remote_agent_cmd_str_joins_and_appends_exec_bash(tmp_path: Path) -> None:
     """The extracted helper joins the command and appends ``; exec bash -l``.
 

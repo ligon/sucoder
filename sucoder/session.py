@@ -27,7 +27,8 @@ class RemoteSession:
     created: Optional[str] = None
     slurm_job_id: Optional[int] = None
     compute_node: Optional[str] = None
-    remote_mirror_root: Optional[str] = None  # e.g. "/local/mirrors" or "~/mirrors"
+    remote_mirror_root: Optional[str] = None  # the shared mirror root, e.g. "~/mirrors"
+                                              # (older sessions may carry "/local/mirrors")
     # Port forwards created by `tunnel forward` (kept on the target's
     # ``tunnel-<target>`` session).  Each entry is a dict:
     # ``{"local_port": int, "node": str, "remote_port": int}``.

@@ -81,7 +81,8 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #       account: fc_jevons
 #       time: "02:00:00"
 #       # qos: savio_normal  # optional
-#       # local_disk: /local  # legacy on salloc targets: whole mirror on the node
+#       # local_disk: /local  # working clone + caches on the node's local disk,
+#       #                     # every commit published to the shared mirror
 #   # Shared-partition target: requests a fractional slice of an HTC node
 #   # instead of an entire compute node.  Useful when an agent session
 #   # only needs a few cores.
