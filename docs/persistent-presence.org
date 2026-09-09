@@ -466,9 +466,11 @@ and makes re-grab fast when turnover does happen.  Recommended:
 =time: "3-00:00:00"= with =max_idle= as the real courtesy guard.
 
 ** Handoff / rehydration
-- Before turnover the agent writes a structured note to a fixed NFS
-  path, e.g. =~/mirrors/<mirror>/.sucoder/handoff.org=: current task,
-  branch, last commit SHA, open questions, next action.
+- Before turnover the agent writes a structured note to
+  =.sucoder/handoff.org= in its working tree and commits it: current
+  task, branch, last commit SHA, open questions, next action.  Under
+  local-disk tiering the commit is what carries it to the shared mirror
+  (writing into =~/mirrors/<mirror>= by hand would block every publish).
 - On relaunch, =system_prompt_extra= instructs the agent to *first*
   read the handoff + =git log -5= + =git status=, summarize the
   resumed state back to the human, then continue.  This turns a cold

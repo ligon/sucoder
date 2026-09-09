@@ -1034,6 +1034,104 @@ def test_launch_agent_unconfined_without_local_tier_is_unchanged(tmp_path, monke
     assert not calls[-1]["args"][-1].startswith("export ")
 
 
+def _staged_prelude(calls):
+    """The prelude text externalized over SSH stdin for a remote launch."""
+    for c in calls:
+        a = c["args"]
+        if a[0] == "sh" and "prelude-" in a[2] and c["kwargs"].get("input"):
+            return c["kwargs"]["input"]
+    raise AssertionError("no prelude was staged")
+
+
+def test_prelude_workspace_block_unconfined_local_tier(tmp_path, monkeypatch):
+    """With tiering on, the prelude tells the agent where it works, where
+    commits go, what survives, and how to check the last snapshot; the
+    unconfined path knows the job id, so paths are literal."""
+    manager, ctx = _remote_launch_manager(tmp_path, monkeypatch, local_disk_root="/local")
+    manager.config.system_prompt = tmp_path / "sys.org"
+    manager.config.system_prompt.write_text("SYS\n")
+    calls = []
+
+    def fake_run_agent(args, **kwargs):
+        calls.append({"args": list(args), "kwargs": kwargs})
+        return CommandResult(requested_args=list(args), executed_args=list(args),
+                             stdout="", stderr="", returncode=0)
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+    manager.launch_agent(ctx, sync=False)
+
+    prelude = _staged_prelude(calls)
+    assert "WORKSPACE (local-disk tiering)" in prelude
+    assert "Working clone (your cwd): /local/job1234567/mirrors/sample" in prelude
+    assert "Shared mirror (origin; durable; the human's push/pull target): /global/home/users/coder/mirrors/sample" in prelude
+    assert "refs/sucoder/wip/sample" in prelude
+    assert "git -C /global/home/users/coder/mirrors/sample log -1 --format='%ci %s' refs/sucoder/wip/sample" in prelude
+    assert "slurm-deadline-sample.warn" in prelude
+    assert "every 10 minutes and at each deadline warning" in prelude
+    assert ".sucoder/handoff.org in this clone" in prelude
+    # Ordering: after the system prompt, before the skill catalog.
+    assert prelude.index("SYSTEM PROMPT") < prelude.index("WORKSPACE (local-disk tiering)")
+
+
+def test_prelude_workspace_block_absent_without_local_tier(tmp_path, monkeypatch):
+    manager, ctx = _remote_launch_manager(tmp_path, monkeypatch, local_disk_root=None)
+    manager.config.system_prompt = tmp_path / "sys.org"
+    manager.config.system_prompt.write_text("SYS\n")
+    calls = []
+
+    def fake_run_agent(args, **kwargs):
+        calls.append({"args": list(args), "kwargs": kwargs})
+        return CommandResult(requested_args=list(args), executed_args=list(args),
+                             stdout="", stderr="", returncode=0)
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+    manager.launch_agent(ctx, sync=False)
+    assert "WORKSPACE (local-disk tiering)" not in _staged_prelude(calls)
+
+
+def test_prelude_workspace_block_confined_uses_runtime_job_id(tmp_path, monkeypatch):
+    """A confined launch renders the prelude before sbatch assigns the job
+    id, so the clone path is spelled with $SLURM_JOB_ID."""
+    manager, ctx = _confined_manager(tmp_path, monkeypatch)
+    manager.executor.local_disk_root = "/local"
+    ctx.settings.remote.slurm.wip_snapshot_minutes = 0
+    calls = []
+    manager.executor.run_agent = _confined_responder(calls, sbatch_out="9")
+
+    manager._launch_confined(
+        ctx, ["claude"], remote_prelude_text=manager._compose_context_prelude(ctx),
+        prelude_sentinel="__X__", env=None, detached=True,
+    )
+    prelude = next(c["input"] for c in calls if c["args"][0] == "sh" and "prelude-" in c["args"][2])
+    assert "Working clone (your cwd): $SUCODER_LOCAL_ROOT/mirrors/sample" in prelude
+    assert "$SUCODER_LOCAL_ROOT is exported in your environment" in prelude
+    assert "at each deadline warning only" in prelude
+
+
+def test_launch_agent_confined_local_tier_prelude_reaches_batch(tmp_path, monkeypatch):
+    """End to end through launch_agent: a confined target with tiering gets
+    the WORKSPACE block (confined spelling) in the prelude that the batch
+    job's agent reads, even though the executor has no job id yet."""
+    manager, ctx = _confined_manager(tmp_path, monkeypatch)
+    manager.executor.local_disk_root = "/local"
+    manager.executor.slurm_job_id = None
+    manager.config.system_prompt = tmp_path / "sys.org"
+    manager.config.system_prompt.write_text("SYS\n")
+    monkeypatch.setattr(
+        MirrorManager, "_default_skills_catalog_path", lambda self: None,
+    )
+    calls = []
+    manager.executor.run_agent = _confined_responder(calls, sbatch_out="9")
+
+    manager.launch_agent(ctx, sync=False, detached=True)
+
+    assert ctx.confined is True
+    prelude = next(c["input"] for c in calls if c["args"][0] == "sh" and "prelude-" in c["args"][2])
+    assert "WORKSPACE (local-disk tiering)" in prelude
+    assert "Working clone (your cwd): $SUCODER_LOCAL_ROOT/mirrors/sample" in prelude
+    assert "/local/job" not in prelude.split("WORKSPACE (local-disk tiering)")[1].split("Shared mirror")[0]
+
+
 def test_build_remote_agent_cmd_str_joins_and_appends_exec_bash(tmp_path: Path) -> None:
     """The extracted helper joins the command and appends ``; exec bash -l``.
 
