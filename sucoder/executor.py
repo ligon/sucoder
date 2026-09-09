@@ -266,6 +266,8 @@ class RemoteExecutor(CommandExecutor):
     control_socket_path: Optional[str] = None  # Path to ControlMaster socket
     is_compute_node: bool = False                 # Target is a SLURM compute node
     slurm_job_id: Optional[int] = None          # Active SLURM allocation, if any
+    local_disk_root: Optional[str] = None       # Local-disk tiering root (e.g. /local);
+                                                # None = agent works on the shared mirror
     proxy_node: str = ""                         # Login node hostname (compute-node proxy)
     proxy_socket_path: Optional[str] = None      # Login node ControlMaster socket
     scaffolding_node: str = ""                   # DTN (or login node) for filesystem ops

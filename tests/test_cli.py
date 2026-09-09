@@ -2147,6 +2147,44 @@ def test_build_executor_confined_skips_salloc(tmp_path, monkeypatch):
     assert kwargs["remote_mirror_root"] == str(settings.remote.mirror_root)
 
 
+def test_build_executor_confined_local_disk_is_tiering(tmp_path, monkeypatch):
+    """``slurm.local_disk`` on a confined target keeps the *mirror root* on
+    the shared FS (it is the durable repo and the staging area) and hands
+    the local-disk root to the executor for ``_launch_confined``."""
+    import logging
+
+    captured, slurm_calls = _install_build_executor_fakes(monkeypatch, tmp_path)
+    config = Config(human_user="coder", mirror_root=tmp_path / "mirrors")
+    settings = _confined_mirror_settings(tmp_path, confined=True)
+    settings.remote.slurm.local_disk = "/local"
+
+    cli._build_executor(
+        config, logging.getLogger("t"), dry_run=False, mirror_settings=settings,
+    )
+
+    assert slurm_calls == []
+    kwargs = captured["kwargs"]
+    assert kwargs["remote_mirror_root"] == str(settings.remote.mirror_root)
+    assert kwargs["local_disk_root"] == "/local"
+    # Scaffolding still goes through the DTN: the shared mirror is reachable.
+    assert kwargs.get("scaffolding_node")
+
+
+def test_build_executor_confined_no_local_disk_override_wins(tmp_path, monkeypatch):
+    import logging
+
+    captured, _ = _install_build_executor_fakes(monkeypatch, tmp_path)
+    config = Config(human_user="coder", mirror_root=tmp_path / "mirrors")
+    settings = _confined_mirror_settings(tmp_path, confined=True)
+    settings.remote.slurm.local_disk = "/local"
+
+    cli._build_executor(
+        config, logging.getLogger("t"), dry_run=False, mirror_settings=settings,
+        local_disk_override=False,
+    )
+    assert "local_disk_root" not in captured["kwargs"]
+
+
 def test_build_executor_unconfined_slurm_allocates(tmp_path, monkeypatch):
     """Control: an unconfined SLURM target still allocates a compute node
     and returns a compute-node executor (the salloc path is unchanged)."""

@@ -82,6 +82,13 @@ def test_user_values_are_shell_quoted():
     assert "SNAPSHOT_DIR='/p q'\n" in s
 
 
+def test_snapshot_dir_shell_is_inserted_unquoted():
+    s = _render(tmux_socket="s", snapshot_dir_shell='/local/job"${SLURM_JOB_ID}"/mirrors/K')
+    assert 'SNAPSHOT_DIR=/local/job"${SLURM_JOB_ID}"/mirrors/K\n' in s
+    with pytest.raises(ValueError):
+        _render(snapshot_dir="/a", snapshot_dir_shell="/b")
+
+
 def test_negative_snapshot_minutes_rejected():
     with pytest.raises(ValueError):
         _render(snapshot_minutes=-1)

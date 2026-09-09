@@ -598,14 +598,20 @@ def _build_executor(
             )
 
         # Resolve local-disk setting: CLI flag overrides config.
-        # Confined targets stage the prelude + batch script to NFS and have
-        # no compute-node-local disk at build time, so local disk never
-        # applies to them (the saved compute-node root, if any, is also
-        # unreachable from the login node).
+        #
+        # Two layouts share the setting for now (docs/local-disk-tiering.org):
+        # - confined targets use *tiering*: the mirror root stays on the
+        #   shared FS (the laptop's push/pull target, staged prelude and
+        #   batch script) and the agent works in a clone under
+        #   <root>/job$SLURM_JOB_ID on the node, published by a post-commit
+        #   hook.  The resolved root travels on the executor.
+        # - unconfined targets still use the legacy all-on-local layout
+        #   (mirror root = <root>/mirrors, orphan-prone) until they move to
+        #   tiering as well.
         use_local_disk = False
         local_disk_root = ""
-        cfg_local_disk = remote.slurm.local_disk if (remote.slurm and not confined) else None
-        if remote.slurm is not None and not confined:
+        cfg_local_disk = remote.slurm.local_disk if remote.slurm else None
+        if remote.slurm is not None:
             if local_disk_override is True:
                 use_local_disk = True
                 local_disk_root = cfg_local_disk or "/local"
@@ -614,7 +620,13 @@ def _build_executor(
             elif cfg_local_disk:
                 use_local_disk = True
                 local_disk_root = cfg_local_disk
-            if use_local_disk:
+            if use_local_disk and confined:
+                logger.info(
+                    "Local-disk tiering: working clone under %s/job<id>, "
+                    "shared mirror stays at %s",
+                    local_disk_root, remote.mirror_root,
+                )
+            elif use_local_disk:
                 logger.info(
                     "Using local disk %s on compute node (bypassing shared FS)",
                     local_disk_root,
@@ -638,8 +650,9 @@ def _build_executor(
             and prev_compute_node != session.compute_node
         )
         if confined:
-            # NFS only: the batch script and prelude are staged to the
-            # shared FS; there is no compute-node local disk at build time.
+            # The mirror root is always the shared FS: the batch script and
+            # prelude are staged there, and under tiering it is the durable
+            # repo the node-local clone publishes to.
             remote_mirror_root = str(remote.mirror_root)
         elif use_local_disk:
             remote_mirror_root = f"{local_disk_root.rstrip('/')}/mirrors"
@@ -691,10 +704,12 @@ def _build_executor(
         executor_kwargs["forward_x11_explicit"] = x11_explicit
         # Detect whether the resolved mirror root is on local disk
         # (either from --local-disk flag, config, or session fallback).
-        is_local_disk = (
+        is_local_disk = not confined and (
             use_local_disk
             or remote_mirror_root != str(remote.mirror_root)
         )
+        if confined and use_local_disk:
+            executor_kwargs["local_disk_root"] = local_disk_root
         if is_local_disk:
             # Local disk is only on the compute node — scaffolding
             # and git transport must go through the compute node,
@@ -1564,7 +1579,9 @@ def main(
     local_disk: Optional[bool] = typer.Option(
         None,
         "--local-disk/--no-local-disk",
-        help="Use compute-node local disk instead of shared filesystem. "
+        help="Keep the agent's working tree and caches on compute-node "
+             "local disk (confined targets: a clone published to the shared "
+             "mirror on every commit; see docs/local-disk-tiering.org). "
              "Overrides the slurm.local_disk config setting.",
     ),
     x11: Optional[bool] = typer.Option(

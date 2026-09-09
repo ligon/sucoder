@@ -1550,6 +1550,47 @@ def test_launch_confined_stages_and_starts_deadline_timer(tmp_path, monkeypatch)
     assert all(calls.index(w) < sbatch_idx for w in writes)
 
 
+def test_launch_confined_local_tier_stages_prepare_script(tmp_path, monkeypatch):
+    """With a local-disk root on the executor the confined launch stages a
+    third file (the prepare script), the batch body runs it and cds into
+    the node-local clone, and the timer snapshots that clone at its
+    runtime path."""
+    manager, ctx = _confined_manager(tmp_path, monkeypatch)
+    manager.executor.local_disk_root = "/local"
+    calls = []
+    manager.executor.run_agent = _confined_responder(calls, sbatch_out="9")
+
+    manager._launch_confined(
+        ctx, ["claude"], remote_prelude_text=None,
+        prelude_sentinel="__X__", env=None, detached=True,
+    )
+    writes = [c for c in calls if c["args"][0] == "sh" and c["input"]]
+    assert len(writes) == 3, "batch, timer, then prepare script"
+    batch, timer, prepare = writes
+    assert "/.cache/sucoder/local-tier-sample.sh" in prepare["args"][2]
+    assert "MIRROR=/global/home/users/coder/mirrors/sample\n" in prepare["input"]
+    assert 'LOCAL_ROOT=/local/job"${SLURM_JOB_ID}"\n' in prepare["input"]
+    assert "bash /global/home/users/coder/.cache/sucoder/local-tier-sample.sh || " in batch["input"]
+    assert 'cd /local/job"${SLURM_JOB_ID}"/mirrors/sample || ' in batch["input"]
+    assert 'SNAPSHOT_DIR=/local/job"${SLURM_JOB_ID}"/mirrors/sample\n' in timer["input"]
+    sbatch_idx = next(i for i, c in enumerate(calls) if c["args"][0] == "sbatch")
+    assert all(calls.index(w) < sbatch_idx for w in writes)
+
+
+def test_launch_confined_without_local_tier_snapshots_shared_mirror(tmp_path, monkeypatch):
+    manager, ctx = _confined_manager(tmp_path, monkeypatch)
+    calls = []
+    manager.executor.run_agent = _confined_responder(calls, sbatch_out="9")
+    manager._launch_confined(
+        ctx, ["claude"], remote_prelude_text=None,
+        prelude_sentinel="__X__", env=None, detached=True,
+    )
+    writes = [c for c in calls if c["args"][0] == "sh" and c["input"]]
+    assert len(writes) == 2
+    assert "SNAPSHOT_DIR=/global/home/users/coder/mirrors/sample\n" in writes[1]["input"]
+    assert "local-tier" not in writes[0]["input"]
+
+
 def test_launch_confined_session_not_ready_surfaces_log(tmp_path, monkeypatch):
     """If the job is RUNNING but the tmux session never came up, fail loudly
     (with the job-log pointer) instead of attaching into nothing."""

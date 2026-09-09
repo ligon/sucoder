@@ -930,3 +930,19 @@ def test_slurm_wip_snapshot_minutes_rejects_bad_values(value):
     from sucoder.config import ConfigError, _parse_slurm_config
     with pytest.raises(ConfigError, match="wip_snapshot_minutes"):
         _parse_slurm_config(_slurm_raw(wip_snapshot_minutes=value))
+
+
+@pytest.mark.parametrize("value,expected", [(True, "/local"), (False, None), ("/scratch/x", "/scratch/x"), (None, None)])
+def test_slurm_local_disk_accepts_bool_or_path(value, expected):
+    from sucoder.config import _parse_slurm_config
+    raw = _slurm_raw()
+    if value is not None:
+        raw["local_disk"] = value
+    assert _parse_slurm_config(raw).local_disk == expected
+
+
+@pytest.mark.parametrize("value", ["", "   ", 3, ["/local"]])
+def test_slurm_local_disk_rejects_junk(value):
+    from sucoder.config import ConfigError, _parse_slurm_config
+    with pytest.raises(ConfigError, match="local_disk"):
+        _parse_slurm_config(_slurm_raw(local_disk=value))
