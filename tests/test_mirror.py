@@ -5582,3 +5582,135 @@ def test_launch_agent_survives_a_failing_binary_report(
 
     assert manager.launch_agent(ctx, sync=False) == 0
     assert recorded.get("args"), "the agent should still have been launched"
+
+
+# -- Skill frontmatter that does not parse (ligon/sucoder-skills#1) ---------
+
+_BROKEN_FRONTMATTER = """---
+name: workshop-problem
+description: Use this skill for a hard problem. Runs a gated lifecycle: scope, charter, implement.
+license: Apache-2.0
+---
+Body.
+"""
+
+
+def test_read_skill_metadata_reports_unparseable_frontmatter(tmp_path: Path) -> None:
+    from sucoder.mirror import _read_skill_metadata
+
+    skill_dir = tmp_path / "workshop-problem"
+    skill_dir.mkdir()
+    skill_file = skill_dir / "SKILL.md"
+    skill_file.write_text(_BROKEN_FRONTMATTER, encoding="utf-8")
+
+    metadata = _read_skill_metadata(skill_file)
+
+    assert metadata is not None
+    assert metadata.name == ""  # the reader does not invent a name
+    assert metadata.description == ""
+    assert metadata.error is not None
+    assert "mapping values are not allowed here" in metadata.error
+    # File coordinates: the description is line 3 of the file, and the
+    # offending ': ' follows "lifecycle" on that line.
+    assert "line 3" in metadata.error
+    assert "column" in metadata.error
+
+
+def test_read_skill_metadata_valid_frontmatter_unchanged(tmp_path: Path) -> None:
+    from sucoder.mirror import _read_skill_metadata
+
+    skill_file = tmp_path / "SKILL.md"
+    skill_file.write_text(
+        "---\nname: sample\ndescription: A sample skill.\n---\nBody.\n",
+        encoding="utf-8",
+    )
+
+    metadata = _read_skill_metadata(skill_file)
+
+    assert metadata is not None
+    assert (metadata.name, metadata.description) == ("sample", "A sample skill.")
+    assert metadata.error is None
+    assert tuple(metadata) == ("sample", "A sample skill.", None)
+
+
+def test_read_skill_metadata_non_mapping_frontmatter_does_not_raise(tmp_path: Path) -> None:
+    from sucoder.mirror import _read_skill_metadata
+
+    skill_file = tmp_path / "SKILL.md"
+    skill_file.write_text("---\n- just\n- a list\n---\nBody.\n", encoding="utf-8")
+
+    metadata = _read_skill_metadata(skill_file)
+
+    assert metadata is not None
+    assert metadata.name == ""
+    assert metadata.error is not None
+    assert "not a mapping" in metadata.error
+
+
+def test_readable_skill_name_falls_back_to_directory_for_skill_md(tmp_path: Path) -> None:
+    from sucoder.mirror import MirrorManager, SkillMetadata
+
+    skill_md = tmp_path / "workshop-problem" / "SKILL.md"
+    other = tmp_path / "notes" / "profiling.md"
+
+    assert MirrorManager._readable_skill_name(skill_md, None) == ("workshop-problem", "")
+    assert MirrorManager._readable_skill_name(other, None) == ("profiling", "")
+
+    broken = SkillMetadata("", "", error="mapping values are not allowed here at line 3, column 60")
+    name, description = MirrorManager._readable_skill_name(skill_md, broken)
+    assert name == "workshop-problem"
+    assert description.startswith("(frontmatter did not parse: mapping values")
+
+
+def test_skill_catalog_labels_unparseable_skill_by_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A skill whose frontmatter fails to parse must not render as a bare 'SKILL'."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+
+    catalog_dir = tmp_path / "skills_catalog"
+    catalog_dir.mkdir()
+    (catalog_dir / "SKILLS.md").write_text(
+        "#+TITLE: Catalog Skill\n- file:workshop-problem/SKILL.md\n- file:good/SKILL.md\n",
+        encoding="utf-8",
+    )
+    broken_dir = catalog_dir / "workshop-problem"
+    broken_dir.mkdir()
+    (broken_dir / "SKILL.md").write_text(_BROKEN_FRONTMATTER, encoding="utf-8")
+    good_dir = catalog_dir / "good"
+    good_dir.mkdir()
+    (good_dir / "SKILL.md").write_text(
+        "---\nname: good\ndescription: Parses fine.\n---\nBody.\n", encoding="utf-8"
+    )
+
+    ctx.settings.skills = [catalog_dir]
+
+    calls = []
+
+    def fake_run_agent(args, **kwargs):
+        calls.append({"args": list(args), "kwargs": kwargs})
+        return CommandResult(
+            requested_args=list(args),
+            executed_args=list(args),
+            stdout="",
+            stderr="",
+            returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+    monkeypatch.setattr(
+        manager, "_default_system_prompt_path", lambda: Path("/nonexistent-system-prompt")
+    )
+    monkeypatch.setattr(manager, "_default_skills_catalog_path", lambda: None)
+
+    manager.launch_agent(ctx, sync=False)
+
+    prelude = _extract_prelude(calls[0]["args"])
+    assert "SKILL CATALOG" in prelude
+    assert "- good — Parses fine." in prelude
+    assert "- workshop-problem — (frontmatter did not parse: mapping values are not allowed here" in prelude
+    # The old fallback: the file stem, i.e. a nameless entry.
+    for line in prelude.splitlines():
+        assert not line.startswith("- SKILL"), line

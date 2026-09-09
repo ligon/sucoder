@@ -15,9 +15,45 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Literal, Mapping, NoReturn, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Literal, Mapping, NamedTuple, NoReturn, Optional, Sequence, Tuple
 
 import yaml
+
+
+class SkillMetadata(NamedTuple):
+    """What a skill file's frontmatter yielded.
+
+    ``name`` / ``description`` come from the file.  ``error`` is set when a
+    frontmatter block was present but unusable (YAML that does not parse, or
+    that is not a mapping); ``name`` is then empty -- the reader does not
+    invent one -- and the caller decides how to label the skill.
+    """
+
+    name: str
+    description: str
+    error: Optional[str] = None
+
+
+def _skill_display_name(path: Path) -> str:
+    """Fallback label for a skill file with no usable ``name``.
+
+    Agent-Skills-style skills all live at ``<skill>/SKILL.md``, so the file
+    stem is the constant ``SKILL`` and says nothing; the directory is the
+    skill's identity.  Other files keep their stem.
+    """
+    if path.stem.lower() == "skill" and path.parent.name:
+        return path.parent.name
+    return path.stem
+
+
+_FRONTMATTER_PARSE_MARKER = "frontmatter did not parse"
+
+
+def _frontmatter_problem(metadata: Optional[SkillMetadata]) -> Optional[str]:
+    """One-line marker for a catalog entry whose frontmatter is unusable."""
+    if metadata and metadata.error:
+        return f"({_FRONTMATTER_PARSE_MARKER}: {metadata.error})"
+    return None
 
 from .config import (
     AGENT_PROFILES,
@@ -5295,12 +5331,16 @@ If you find issues, describe each one clearly with the filename and specific con
             return None
 
         metadata = _read_skill_metadata(resolved)
-        if metadata:
-            name, description = metadata
-            header = f"SKILL: {name}"
-            if description:
-                header += f" — {description}"
-            self.logger.info("Loaded skill %s (%s)", name, resolved)
+        if metadata and metadata.name:
+            header = f"SKILL: {metadata.name}"
+            if metadata.description:
+                header += f" — {metadata.description}"
+            self.logger.info("Loaded skill %s (%s)", metadata.name, resolved)
+        elif metadata and metadata.error:
+            header = f"SKILL: {_skill_display_name(resolved)} — {_frontmatter_problem(metadata)}"
+            self.logger.warning(
+                "Skill %s: %s: %s", resolved, _FRONTMATTER_PARSE_MARKER, metadata.error
+            )
         else:
             header = f"SKILL FILE: {resolved}"
             self.logger.info("Loaded skill file %s", resolved)
@@ -5328,11 +5368,16 @@ If you find issues, describe each one clearly with the filename and specific con
 
         header = "SKILL CATALOG"
         metadata = _read_skill_metadata(resolved)
-        if metadata:
-            name, description = metadata
-            header = f"SKILL CATALOG: {name}"
-            if description:
-                header += f" — {description}"
+        if metadata and metadata.name:
+            header = f"SKILL CATALOG: {metadata.name}"
+            if metadata.description:
+                header += f" — {metadata.description}"
+        elif metadata and metadata.error:
+            # A catalog with broken frontmatter keeps its generic header; the
+            # skills it lists are still rendered.
+            self.logger.warning(
+                "Skill catalog %s: %s: %s", resolved, _FRONTMATTER_PARSE_MARKER, metadata.error
+            )
 
         lines: List[str] = [header]
         references = self._parse_skill_catalog(resolved, content)
@@ -5386,11 +5431,13 @@ If you find issues, describe each one clearly with the filename and specific con
         return references
 
     @staticmethod
-    def _readable_skill_name(path: Path, metadata: Optional[Tuple[str, str]]) -> Tuple[str, str]:
-        if metadata:
-            name, description = metadata
-            return name, description
-        return path.stem, ""
+    def _readable_skill_name(path: Path, metadata: Optional[SkillMetadata]) -> Tuple[str, str]:
+        if metadata and metadata.name:
+            return metadata.name, metadata.description
+        # No usable name: label the skill from its path (the directory for a
+        # SKILL.md) and, if the frontmatter was present but broken, say so in
+        # the description slot so the catalog line carries the diagnosis.
+        return _skill_display_name(path), _frontmatter_problem(metadata) or ""
 
     def _render_target_home(self) -> Optional[str]:
         """Home directory of the host that will *consume* this prelude.
@@ -5572,6 +5619,10 @@ If you find issues, describe each one clearly with the filename and specific con
             or reference.expanduser()
         )
         metadata = _read_skill_metadata(normalized) if normalized.exists() else None
+        if metadata and metadata.error:
+            self.logger.warning(
+                "Skill %s: %s: %s", normalized, _FRONTMATTER_PARSE_MARKER, metadata.error
+            )
         name, description = self._readable_skill_name(normalized, metadata)
         line = f"- {name}"
         if description:
@@ -5853,8 +5904,32 @@ def _resolve_git_dir(canonical: Path) -> Path:
     return canonical
 
 
-def _read_skill_metadata(skill_file: Path) -> Optional[Tuple[str, str]]:
-    """Extract (title, description) metadata from an Org or Markdown skill file."""
+def _yaml_error_text(exc: yaml.YAMLError, first_body_line: int) -> str:
+    """Render a PyYAML error as one actionable line with FILE coordinates.
+
+    ``first_body_line`` is the 1-based file line of the first frontmatter body
+    line (2 when the file opens with ``---``), so the reported line matches
+    what an editor shows rather than the offset inside the YAML block.
+    """
+    problem = getattr(exc, "problem", None)
+    mark = getattr(exc, "problem_mark", None)
+    if problem and mark is not None:
+        return f"{problem} at line {mark.line + first_body_line}, column {mark.column + 1}"
+    text = str(exc).strip().splitlines()
+    return text[0] if text else exc.__class__.__name__
+
+
+def _read_skill_metadata(skill_file: Path) -> Optional[SkillMetadata]:
+    """Extract (name, description) metadata from an Org or Markdown skill file.
+
+    Returns ``None`` when the file carries no metadata at all.  Returns a
+    ``SkillMetadata`` with an empty ``name`` and ``error`` set when a YAML
+    frontmatter block is present but unusable -- the common cause is an
+    unquoted ``: `` inside a plain-scalar ``description``, which YAML reads as
+    a mapping indicator (ligon/sucoder-skills#1).  Callers label such a skill
+    from its path and surface the error, instead of rendering it as a bare
+    ``SKILL`` with no description.
+    """
     try:
         content = skill_file.read_text(encoding="utf-8")
     except OSError:
@@ -5872,12 +5947,16 @@ def _read_skill_metadata(skill_file: Path) -> Optional[Tuple[str, str]]:
         if yaml_lines:
             try:
                 data = yaml.safe_load("\n".join(yaml_lines)) or {}
-            except yaml.YAMLError:
-                data = {}
+            except yaml.YAMLError as exc:
+                return SkillMetadata("", "", error=_yaml_error_text(exc, first_body_line=2))
+            if not isinstance(data, dict):
+                return SkillMetadata(
+                    "", "", error=f"frontmatter is a {type(data).__name__}, not a mapping"
+                )
             name = data.get("name") or data.get("title")
             description = data.get("description") or data.get("summary")
             if name:
-                return (str(name), str(description or ""))
+                return SkillMetadata(str(name), str(description or ""))
 
     title: Optional[str] = None
     org_description: Optional[str] = None
@@ -5892,7 +5971,7 @@ def _read_skill_metadata(skill_file: Path) -> Optional[Tuple[str, str]]:
 
     if not title:
         return None
-    return (title, org_description or "")
+    return SkillMetadata(title, org_description or "")
 
 
 # Lookarounds rather than \b so a leading "v" (node prints "v22.22.3") does not
