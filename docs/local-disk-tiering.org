@@ -6,10 +6,9 @@
 
 Design note.  Written on a =carleton-htc= slice (job 38661192,
 n0036.savio4) against =main= at =80581c8=.  Status: step (1) landed
-(shared timer + snapshotter, PR #9); step (2) landed for /confined/
-targets (=sucoder/local_tier.py=, =slurm.local_disk= on a confined
-target); unconfined targets still use the legacy all-on-=/local=
-layout.
+(shared timer + snapshotter, PR #9); step (2) landed for confined
+targets (PR #10) and for =salloc= targets, retiring the all-on-=/local=
+layout (=sucoder/local_tier.py=, =slurm.local_disk= / =--local-disk=).
 
 * Punchline
 

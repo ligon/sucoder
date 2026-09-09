@@ -716,10 +716,11 @@ targets:
       local_disk: true        # or a path; true means /local
 #+end_src
 
-For a =confined= target this is /tiering/ (design and measurements in
-[[file:docs/local-disk-tiering.org][docs/local-disk-tiering.org]]):
+This is /tiering/ (design and measurements in
+[[file:docs/local-disk-tiering.org][docs/local-disk-tiering.org]]), and it works the same way
+on =confined= (=sbatch=) and =salloc= targets:
 
-- the batch job clones =~/mirrors/<name>= to
+- the launch clones =~/mirrors/<name>= to
   =/local/job<ID>/mirrors/<name>= and starts the agent there, with
   =UV_CACHE_DIR=, =PIP_CACHE_DIR=, =npm_config_cache=, and =TMPDIR=
   under =/local/job<ID>/=;
@@ -742,10 +743,10 @@ finds one).  Ignored files (=.venv=, =node_modules=) are rebuilt each
 job; committed work is durable instantly, dirty work to within
 =wip_snapshot_minutes=.
 
-Unconfined (=salloc=) targets still use the older layout, where the
-whole mirror lives at =/local/mirrors= on one node and is only
-reachable from that node (=--node= returns to it; a lost node orphans
-unpulled work).  They move to tiering in a later release.
+Earlier releases put the /whole/ mirror at =/local/mirrors= on one
+node.  That layout is retired: a session that still records it gets a
+warning naming the node, so any commits made there can be pushed by
+hand before =sucoder pull= is trusted.
 
 *** Shared partitions (fractional allocations)
 

@@ -40,6 +40,12 @@ def local_root_shell(local_disk_root: str, job_id: Optional[int] = None) -> str:
     return f'{shlex.quote(root)}/job"${{SLURM_JOB_ID}}"'
 
 
+def work_path(local_disk_root: str, mirror_token: str, job_id: int) -> str:
+    """The working clone's path as a plain string (job id known)."""
+    root = local_disk_root.rstrip("/") or "/"
+    return f"{root}/job{job_id}/mirrors/{mirror_token}"
+
+
 def work_path_shell(local_disk_root: str, mirror_token: str, job_id: Optional[int] = None) -> str:
     """The working clone's path as a shell word (see :func:`local_root_shell`)."""
     return f"{local_root_shell(local_disk_root, job_id)}/mirrors/{shlex.quote(mirror_token)}"

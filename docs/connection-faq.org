@@ -307,8 +307,7 @@ target) the working clone under =/local/job<ID>/= is gone with the job,
 but committed work is already on the shared mirror and uncommitted work
 is restored from the WIP snapshot on the next launch; the transcript
 key, however, is the clone's path, which changes with the job id, so
-=--resume= needs the old key's directory.  On an unconfined target a
-mirror on =/local= is gone with the node.  An in-flight background *workflow*
+=--resume= needs the old key's directory.  An in-flight background *workflow*
 cannot be auto-resumed after the host process dies --- but completed
 sub-results are saved under =~/.claude/projects/<key>/<session-id>/workflows/=,
 so the resumed agent can read them and re-dispatch only the unfinished

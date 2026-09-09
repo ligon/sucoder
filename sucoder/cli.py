@@ -45,6 +45,7 @@ from .config import (
 )
 from .executor import CommandError, CommandExecutor
 from .logging_utils import setup_logger
+from .local_tier import work_path
 from .slurm_timer import TIME_LEFT_TO_MINS_SH, build_timer_script
 from .mirror import (
     _sanitize_session_token,
@@ -597,24 +598,15 @@ def _build_executor(
         confined = remote.slurm is not None and remote.slurm.confined
         target_node = session.login_node
         target_control = ln_control
-        prev_compute_node = session.compute_node
-        if remote.slurm is not None and not confined:
-            target_node, target_control = _ensure_slurm_node(
-                remote, session, ln_control, gw_control, logger,
-                debug_ssh=debug_ssh,
-            )
+        # Remembered before the allocation step below may replace them.
+        saved_root = session.remote_mirror_root
+        saved_node = session.compute_node
 
-        # Resolve local-disk setting: CLI flag overrides config.
-        #
-        # Two layouts share the setting for now (docs/local-disk-tiering.org):
-        # - confined targets use *tiering*: the mirror root stays on the
-        #   shared FS (the laptop's push/pull target, staged prelude and
-        #   batch script) and the agent works in a clone under
-        #   <root>/job$SLURM_JOB_ID on the node, published by a post-commit
-        #   hook.  The resolved root travels on the executor.
-        # - unconfined targets still use the legacy all-on-local layout
-        #   (mirror root = <root>/mirrors, orphan-prone) until they move to
-        #   tiering as well.
+        # Resolve local-disk tiering (docs/local-disk-tiering.org): CLI flags
+        # override config.  When on, the agent works in a clone under
+        # <root>/job<ID> on the node, published to the shared mirror by a
+        # post-commit hook; the mirror root itself never moves.  Resolved
+        # before the allocation so the deadline timer knows what to snapshot.
         use_local_disk = False
         local_disk_root = ""
         cfg_local_disk = remote.slurm.local_disk if remote.slurm else None
@@ -633,60 +625,37 @@ def _build_executor(
             elif cfg_local_disk:
                 use_local_disk = True
                 local_disk_root = default_root
-            if use_local_disk and confined:
+            if use_local_disk:
                 logger.info(
                     "Local-disk tiering: working clone under %s/job<id>, "
                     "shared mirror stays at %s",
                     local_disk_root, remote.mirror_root,
                 )
-            elif use_local_disk:
-                logger.info(
-                    "Using local disk %s on compute node (bypassing shared FS)",
-                    local_disk_root,
-                )
 
-        # Compute the remote mirror root.  With local disk, the mirror
-        # lives on the compute node's local storage; otherwise on the
-        # shared filesystem (Lustre).
-        #
-        # When the user hasn't expressed a preference (no --local-disk
-        # flag AND no config setting), fall back to the session's saved
-        # value.  This lets `sucoder pull` find the mirror without
-        # re-specifying --local-disk.
-        #
-        # However, if the compute node changed (SLURM gave us a
-        # different node) and the saved root is a node-local path,
-        # that data is unreachable — fall back to shared FS instead.
-        node_changed = (
-            prev_compute_node is not None
-            and session.compute_node is not None
-            and prev_compute_node != session.compute_node
-        )
-        if confined:
-            # The mirror root is always the shared FS: the batch script and
-            # prelude are staged there, and under tiering it is the durable
-            # repo the node-local clone publishes to.
-            remote_mirror_root = str(remote.mirror_root)
-        elif use_local_disk:
-            remote_mirror_root = f"{local_disk_root.rstrip('/')}/mirrors"
-        elif local_disk_override is None and not cfg_local_disk and session.remote_mirror_root:
-            saved_root = session.remote_mirror_root
-            if node_changed and saved_root != str(remote.mirror_root):
-                # The saved mirror root was on a different node's local
-                # disk; that storage is unreachable from the new node.
-                remote_mirror_root = str(remote.mirror_root)
-                logger.warning(
-                    "Compute node changed (%s -> %s); discarding stale "
-                    "local-disk mirror root %s — using shared FS: %s",
-                    prev_compute_node, session.compute_node,
-                    saved_root, remote_mirror_root,
-                )
-            else:
-                remote_mirror_root = saved_root
-                if remote_mirror_root != str(remote.mirror_root):
-                    logger.info("Using saved mirror root from session: %s", remote_mirror_root)
-        else:
-            remote_mirror_root = str(remote.mirror_root)
+        if remote.slurm is not None and not confined:
+            target_node, target_control = _ensure_slurm_node(
+                remote, session, ln_control, gw_control, logger,
+                debug_ssh=debug_ssh,
+                local_disk_root=local_disk_root if use_local_disk else None,
+            )
+
+        # The mirror root is always the shared filesystem: it is the
+        # laptop's push/pull target and the staging area for the prelude
+        # and batch script, and under tiering the durable repo the
+        # node-local clone publishes to.  Older sessions may have saved a
+        # node-local root (the retired all-on-/local layout); warn once,
+        # because commits made there were never published anywhere else.
+        remote_mirror_root = str(remote.mirror_root)
+        if saved_root and saved_root != remote_mirror_root:
+            logger.warning(
+                "Session %s previously used mirror root %s on node %s (the "
+                "retired all-on-local-disk layout).  Commits made there were "
+                "not published to %s; push them from that node before "
+                "trusting `sucoder pull`.  Using the shared mirror root from "
+                "now on.",
+                session.mirror_name, saved_root,
+                saved_node or "<unknown>", remote_mirror_root,
+            )
 
         # The executor uses the target node ControlMaster directly —
         # no -J needed since the socket routes through the gateway.
@@ -715,25 +684,13 @@ def _build_executor(
         )
         executor_kwargs["forward_x11"] = x11_on
         executor_kwargs["forward_x11_explicit"] = x11_explicit
-        # Detect whether the resolved mirror root is on local disk
-        # (either from --local-disk flag, config, or session fallback).
-        is_local_disk = not confined and (
-            use_local_disk
-            or remote_mirror_root != str(remote.mirror_root)
-        )
-        if confined and use_local_disk:
+        if use_local_disk:
             executor_kwargs["local_disk_root"] = local_disk_root
-        if is_local_disk:
-            # Local disk is only on the compute node — scaffolding
-            # and git transport must go through the compute node,
-            # not the DTN.  Don't set scaffolding_node so that
-            # run_on_login_node falls through to run_agent.
-            pass
-        else:
-            # Route filesystem scaffolding and git transport through
-            # the DTN (or login node as fallback).
-            executor_kwargs["scaffolding_node"] = str(dtn_control.gateway)
-            executor_kwargs["scaffolding_socket_path"] = str(dtn_control.socket_path)
+        # Route filesystem scaffolding and git transport through the DTN
+        # (or login node as fallback): the shared mirror is reachable from
+        # anywhere, whichever node the agent works on.
+        executor_kwargs["scaffolding_node"] = str(dtn_control.gateway)
+        executor_kwargs["scaffolding_socket_path"] = str(dtn_control.socket_path)
         # For compute-node targets, the proxy fields are still needed
         # for the SSH ProxyCommand fallback to the login node.  A confined
         # target's executor already targets the login node, so there is no
@@ -742,9 +699,8 @@ def _build_executor(
             executor_kwargs["proxy_node"] = session.login_node
             executor_kwargs["proxy_socket_path"] = str(ln_control.socket_path)
 
-        # Persist the effective mirror root so that later commands
-        # (e.g. `sucoder pull`) know where the mirror lives without
-        # needing --local-disk.
+        # Persist the mirror root so that later commands (e.g. `sucoder
+        # pull`) know where the mirror lives.
         session.remote_mirror_root = remote_mirror_root
         session.save()
 
@@ -888,6 +844,7 @@ def _ensure_slurm_node(
     logger,
     *,
     debug_ssh: bool = False,
+    local_disk_root: Optional[str] = None,
 ):
     """Allocate a SLURM compute node and establish SSH through the login node.
 
@@ -968,18 +925,17 @@ def _ensure_slurm_node(
                 session.slurm_job_id, state or "gone",
             )
             session.slurm_job_id = None
-            # Keep compute_node for --nodelist affinity (local-disk data
-            # may still be on that node).
-            preferred_node = session.compute_node
+            # No node affinity for a dead job: with the shared mirror as the
+            # durable repo there is nothing on the old node worth returning
+            # for (the retired all-on-local-disk layout was the reason).
             session.compute_node = None
 
-    # Resolve the preferred node: either carried over from a dead job
-    # (local-disk affinity, set above) or explicitly requested via
-    # --node (collaborate stores it in session.compute_node with no job
-    # id).  Then, before reserving anything, see whether we already hold
-    # a live allocation on that node and adopt it instead.
+    # Resolve the preferred node: explicitly requested via --node
+    # (collaborate stores it in session.compute_node with no job id).
+    # Then, before reserving anything, see whether we already hold a live
+    # allocation on that node and adopt it instead.
     if not session.slurm_job_id:
-        preferred_node = locals().get("preferred_node") or session.compute_node
+        preferred_node = session.compute_node
         if preferred_node:
             adopted = _adopt_existing_allocation(
                 preferred_node, ln_control, session.login_node, logger,
@@ -1037,9 +993,7 @@ def _ensure_slurm_node(
                     # Preferred node busy — retry without --nodelist.
                     typer.echo(
                         f"⚠  Node {preferred_node} unavailable; "
-                        "allocating any node.  Unpulled agent work on "
-                        f"{preferred_node}:/local/ may be orphaned — "
-                        "run `sucoder pull` when that node is reachable.",
+                        "allocating any node instead.",
                         err=True,
                     )
                     fallback_parts = [
@@ -1159,6 +1113,7 @@ def _ensure_slurm_node(
     # get warnings before the SLURM allocation expires.
     _start_slurm_timer(
         session, ln_control, cn_control, logger,
+        local_disk_root=local_disk_root,
     )
 
     return session.compute_node, cn_control
@@ -1175,6 +1130,8 @@ def _start_slurm_timer(
     ln_control,
     cn_control,
     logger,
+    *,
+    local_disk_root: Optional[str] = None,
 ):
     """Launch a background timer on the compute node that warns before
     the SLURM allocation expires.
@@ -1198,6 +1155,7 @@ def _start_slurm_timer(
     (module constant ``_SLURM_TIME_LEFT_TO_MINS_SH``) so the
     ``D-HH:MM:SS`` day format is handled correctly and is unit-testable.
     """
+    import shlex
     import subprocess as _sp
 
     job_id = session.slurm_job_id
@@ -1214,11 +1172,19 @@ def _start_slurm_timer(
     # No snapshot directory: on this path the mirror root is not known
     # until after the node is up, and today's shared mirror has no
     # ``origin`` to snapshot to.
+    token = _sanitize_session_token(session.mirror_name)
+    # Under local-disk tiering the agent works in a clone whose path is
+    # fully known here (job id assigned); the timer snapshots that clone.
+    # It may not exist yet when the timer starts -- snapshot_wip skips a
+    # missing directory.
+    snapshot_dir = work_path(local_disk_root, token, job_id) if local_disk_root else None
     timer_script = build_timer_script(
-        mirror_token=_sanitize_session_token(session.mirror_name),
+        mirror_token=token,
         tmux_session=tmux_session,
         job_id=job_id,
+        snapshot_dir=snapshot_dir,
     )
+    script_name = f"slurm-timer-{token}.sh"
 
     # Write the script to the compute node via stdin, then run it.
     # The script lives in the user's runtime cache rather than /tmp for
@@ -1228,12 +1194,13 @@ def _start_slurm_timer(
     ssh_opts = cn_control.ssh_options(with_fallback=True)
     node = session.compute_node
 
+    q_script = shlex.quote(script_name)
     write_result = _sp.run(
         ["ssh", *ssh_opts, node,
          'mkdir -p "$HOME/.cache/sucoder" && '
          'chmod 700 "$HOME/.cache/sucoder" 2>/dev/null || true; '
-         'cat > "$HOME/.cache/sucoder/slurm-timer.sh" && '
-         'chmod 700 "$HOME/.cache/sucoder/slurm-timer.sh"'],
+         f'cat > "$HOME/.cache/sucoder/"{q_script} && '
+         f'chmod 700 "$HOME/.cache/sucoder/"{q_script}'],
         input=timer_script, capture_output=True, text=True, check=False,
     )
     if write_result.returncode != 0:
@@ -1241,9 +1208,15 @@ def _start_slurm_timer(
                         write_result.stderr.strip())
         return
 
+    # Every _build_executor for this target (attach, pull, status, ...)
+    # lands here, so retire the previous timer for this mirror first or
+    # they pile up, each snapshotting.  The [s] bracket keeps pkill from
+    # matching the shell that runs it.
+    q_pattern = shlex.quote(f"[s]lurm-timer-{token}.sh")
     run_result = _sp.run(
         ["ssh", *ssh_opts, node,
-         'nohup "$HOME/.cache/sucoder/slurm-timer.sh" > /dev/null 2>&1 &'],
+         f'pkill -u "$USER" -f {q_pattern} 2>/dev/null; '
+         f'nohup "$HOME/.cache/sucoder/"{q_script} > /dev/null 2>&1 &'],
         capture_output=True, text=True, check=False,
     )
     if run_result.returncode == 0:
@@ -1600,9 +1573,9 @@ def main(
         None,
         "--local-disk/--no-local-disk",
         help="Keep the agent's working tree and caches on compute-node "
-             "local disk (confined targets: a clone published to the shared "
-             "mirror on every commit; see docs/local-disk-tiering.org). "
-             "Overrides the slurm.local_disk config setting.",
+             "local disk: a clone of the shared mirror, published back on "
+             "every commit (see docs/local-disk-tiering.org).  Overrides "
+             "the slurm.local_disk config setting.",
     ),
     local_disk_root: Optional[str] = typer.Option(
         None,
@@ -2778,10 +2751,6 @@ def release(
         # subsequent attaches can still resolve the gateway path.
         session.slurm_job_id = None
         session.compute_node = None
-        # The mirror root may have been on the now-released local disk;
-        # forget it so the next collaborate picks a fresh root.
-        if session.remote_mirror_root and session.remote_mirror_root.startswith("/local"):
-            session.remote_mirror_root = None
         session.save()
 
     if siblings:

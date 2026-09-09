@@ -2078,6 +2078,7 @@ def _install_build_executor_fakes(monkeypatch, tmp_path, *, login_node="ln001.br
 
     def spy_ensure_slurm_node(remote, session, ln_control, gw_control, logger, **kw):
         slurm_calls.append(True)
+        captured["slurm_kwargs"] = dict(kw)
         # A non-confined allocation resolves a compute node and its control.
         session.slurm_job_id = 999
         session.compute_node = "n0001.savio4"
@@ -2252,6 +2253,81 @@ def test_local_disk_root_flag_reaches_build_executor(tmp_path, monkeypatch):
     assert obj["local_disk_root"] == "/scratch/l"
     assert obj["local_disk"] is None
     assert cli._get_local_disk_root_override(seen["cli_ctx"]) == "/scratch/l"
+
+
+def test_build_executor_unconfined_local_disk_is_tiering(tmp_path, monkeypatch):
+    """An unconfined (salloc) target with slurm.local_disk keeps the mirror
+    root shared, hands the root to the executor, tells the allocation step
+    (so the timer snapshots the clone), and still routes scaffolding via
+    the DTN."""
+    import logging
+
+    captured, slurm_calls = _install_build_executor_fakes(monkeypatch, tmp_path)
+    settings = _confined_mirror_settings(tmp_path, confined=False)
+    settings.remote.slurm.local_disk = "/local"
+    config = Config(human_user="coder", mirror_root=tmp_path / "mirrors")
+
+    cli._build_executor(
+        config, logging.getLogger("t"), dry_run=False, mirror_settings=settings,
+    )
+    assert slurm_calls and slurm_calls[-1] is True
+    kwargs = captured["kwargs"]
+    assert kwargs["remote_mirror_root"] == str(settings.remote.mirror_root)
+    assert kwargs["local_disk_root"] == "/local"
+    assert kwargs.get("scaffolding_node"), "shared mirror: scaffolding stays on the DTN"
+    assert captured.get("slurm_kwargs", {}).get("local_disk_root") == "/local"
+
+
+def test_build_executor_warns_once_about_retired_local_mirror_root(tmp_path, monkeypatch, caplog):
+    """A session saved by the retired all-on-/local layout names its node
+    in a warning: commits there were never published to the shared mirror."""
+    import logging
+    from sucoder.session import RemoteSession
+
+    captured, _ = _install_build_executor_fakes(monkeypatch, tmp_path)
+    settings = _confined_mirror_settings(tmp_path, confined=False)
+    config = Config(human_user="coder", mirror_root=tmp_path / "mirrors")
+    sess = RemoteSession.load(settings.name, target_name=None)
+    sess.remote_mirror_root = "/local/mirrors"
+    sess.compute_node = "n0099.savio3"
+    sess.save()
+
+    with caplog.at_level(logging.WARNING):
+        cli._build_executor(
+            config, logging.getLogger("t"), dry_run=False, mirror_settings=settings,
+        )
+    assert captured["kwargs"]["remote_mirror_root"] == str(settings.remote.mirror_root)
+    msgs = [r.getMessage() for r in caplog.records if "retired" in r.getMessage()]
+    assert len(msgs) == 1 and "/local/mirrors" in msgs[0] and "n0099.savio3" in msgs[0]
+    assert RemoteSession.load(settings.name, target_name=None).remote_mirror_root == str(settings.remote.mirror_root)
+
+
+def test_start_slurm_timer_snapshots_the_local_clone_and_retires_the_old_timer(monkeypatch):
+    from sucoder import slurm_timer
+    rendered, ssh_cmds = [], []
+    real_build = slurm_timer.build_timer_script
+
+    def capture(**kw):
+        script = real_build(**kw)
+        rendered.append(script)
+        return script
+
+    monkeypatch.setattr(cli, "build_timer_script", capture)
+
+    def fake_run(argv, *a, **k):
+        ssh_cmds.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    session = SimpleNamespace(slurm_job_id=7, mirror_name="sample", compute_node="n0")
+    control = SimpleNamespace(ssh_options=lambda **kw: [])
+    cli._start_slurm_timer(session, control, control, mock.Mock(), local_disk_root="/local")
+
+    assert "SNAPSHOT_DIR=/local/job7/mirrors/sample\n" in rendered[0]
+    write_cmd, start_cmd = ssh_cmds[-2][-1], ssh_cmds[-1][-1]
+    assert "slurm-timer-sample.sh" in write_cmd
+    assert "pkill -u \"$USER\" -f '[s]lurm-timer-sample.sh'" in start_cmd
+    assert 'nohup "$HOME/.cache/sucoder/"slurm-timer-sample.sh' in start_cmd
 
 
 def test_build_executor_confined_no_local_disk_override_wins(tmp_path, monkeypatch):
