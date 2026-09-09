@@ -105,6 +105,13 @@ if ! git -C "$MIRROR" diff --quiet || ! git -C "$MIRROR" diff --cached --quiet; 
 fi
 
 if [ ! -e "$WORK/.git" ]; then
+    # Invariant before the only destructive step: WORK is always
+    # <root>/job<ID>/mirrors/<token>.  set -u already aborts on an unset
+    # ${SLURM_JOB_ID}; this documents the shape and refuses anything else.
+    case "$WORK" in
+        */job*/mirrors/?*) ;;
+        *) echo "SUCODER: refusing to clear unexpected work path $WORK" >&2; exit 1 ;;
+    esac
     rm -rf "$WORK"
     if ! git clone --quiet --no-hardlinks "$MIRROR" "$WORK"; then
         echo "SUCODER: clone of $MIRROR to $WORK failed" >&2

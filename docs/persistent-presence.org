@@ -370,7 +370,7 @@ targets:
       time: "24:00:00"             # courtesy cadence; NOT a hard cap (QOS has none)
       local_disk: true             # working clone + caches on /local; every commit
                                    # lands on the shared mirror (docs/local-disk-tiering.org)
-      system_prompt_extra: ~/.sucoder/prompts/carleton-htc.org
+    system_prompt_extra: ~/.sucoder/prompts/carleton-htc.org
 #+end_src
 
 Knobs:

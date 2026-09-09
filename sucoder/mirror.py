@@ -2879,8 +2879,14 @@ class MirrorManager:
         self.logger.info("Confined SLURM job %s RUNNING on %s.", job_id, node)
 
         # Confirm the tmux session actually came up before declaring success
-        # (the confined attach has no `|| new-session` fallback).
-        if not self._confined_session_ready(job_id, session_name, socket):
+        # (the confined attach has no `|| new-session` fallback).  Under
+        # local-disk tiering the batch body clones the mirror before
+        # new-session (4.7s for a 4 MB .git on Lustre; a fat mirror can take
+        # minutes), so allow 5 minutes instead of the default 1.
+        ready_attempts = 100 if local_disk_root else 20
+        if not self._confined_session_ready(
+            job_id, session_name, socket, attempts=ready_attempts,
+        ):
             pane = self._confined_capture_pane(job_id, session_name, socket)
             raise MirrorError(
                 f"Confined SLURM job {job_id} is RUNNING on {node} but its "
