@@ -1103,8 +1103,33 @@ def test_prelude_workspace_block_confined_uses_runtime_job_id(tmp_path, monkeypa
         prelude_sentinel="__X__", env=None, detached=True,
     )
     prelude = next(c["input"] for c in calls if c["args"][0] == "sh" and "prelude-" in c["args"][2])
-    assert "Working clone (your cwd): /local/job$SLURM_JOB_ID/mirrors/sample" in prelude
+    assert "Working clone (your cwd): $SUCODER_LOCAL_ROOT/mirrors/sample" in prelude
+    assert "$SUCODER_LOCAL_ROOT is exported in your environment" in prelude
     assert "at each deadline warning only" in prelude
+
+
+def test_launch_agent_confined_local_tier_prelude_reaches_batch(tmp_path, monkeypatch):
+    """End to end through launch_agent: a confined target with tiering gets
+    the WORKSPACE block (confined spelling) in the prelude that the batch
+    job's agent reads, even though the executor has no job id yet."""
+    manager, ctx = _confined_manager(tmp_path, monkeypatch)
+    manager.executor.local_disk_root = "/local"
+    manager.executor.slurm_job_id = None
+    manager.config.system_prompt = tmp_path / "sys.org"
+    manager.config.system_prompt.write_text("SYS\n")
+    monkeypatch.setattr(
+        MirrorManager, "_default_skills_catalog_path", lambda self: None,
+    )
+    calls = []
+    manager.executor.run_agent = _confined_responder(calls, sbatch_out="9")
+
+    manager.launch_agent(ctx, sync=False, detached=True)
+
+    assert ctx.confined is True
+    prelude = next(c["input"] for c in calls if c["args"][0] == "sh" and "prelude-" in c["args"][2])
+    assert "WORKSPACE (local-disk tiering)" in prelude
+    assert "Working clone (your cwd): $SUCODER_LOCAL_ROOT/mirrors/sample" in prelude
+    assert "/local/job" not in prelude.split("WORKSPACE (local-disk tiering)")[1].split("Shared mirror")[0]
 
 
 def test_build_remote_agent_cmd_str_joins_and_appends_exec_bash(tmp_path: Path) -> None:

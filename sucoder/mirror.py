@@ -5329,7 +5329,8 @@ If you find issues, describe each one clearly with the filename and specific con
         Rendered on the laptop before launch, so it cannot carry runtime
         state (last snapshot time); it gives the command that answers that
         instead.  For a confined launch the job id is not known yet and the
-        path is spelled with ``$SLURM_JOB_ID``, which the batch body exports.
+        path is spelled with ``$SUCODER_LOCAL_ROOT``, which the batch body
+        exports before starting tmux (``local_tier.cache_exports_sh``).
         """
         if not ctx.is_remote:
             return None
@@ -5348,8 +5349,11 @@ If you find issues, describe each one clearly with the filename and specific con
             work = work_path(local_disk_root, token, int(job_id))
             local_root = f"{root}/job{job_id}"
         else:
-            work = f"{root}/job$SLURM_JOB_ID/mirrors/{token}"
-            local_root = f"{root}/job$SLURM_JOB_ID"
+            # Confined: the id is assigned by sbatch after this renders.
+            # $SUCODER_LOCAL_ROOT (= <root>/job<ID>) is exported by the
+            # batch body, so it expands in the agent's shell and tools.
+            work = f"$SUCODER_LOCAL_ROOT/mirrors/{token}"
+            local_root = f"{root}/job<ID>"
         slurm = ctx.settings.remote.slurm if ctx.settings.remote else None
         minutes = slurm.wip_snapshot_minutes if slurm else 10
         cadence = (
@@ -5359,7 +5363,8 @@ If you find issues, describe each one clearly with the filename and specific con
         lines = [
             "WORKSPACE (local-disk tiering)",
             "You are working in a node-local clone, not in the shared mirror the prompts above describe.",
-            f"- Working clone (your cwd): {work}",
+            f"- Working clone (your cwd): {work}"
+            + ("" if job_id else "  ($SUCODER_LOCAL_ROOT is exported in your environment; `pwd` shows it resolved)"),
             f"- Shared mirror (origin; durable; the human's push/pull target): {mirror_path}",
             "  Never edit its working tree by hand: an uncommitted tracked change there blocks every publish from this clone.",
             "- Every commit is published to the shared mirror by a post-commit hook the moment it exists; the commit output",
