@@ -45,6 +45,10 @@ jobs:
 
       - name: Install Emacs
         run: |
+          # The runner image ships a Google Chrome apt source that
+          # intermittently fails `apt-get update` with "Hash Sum
+          # mismatch"; we only need emacs-nox from Ubuntu's own repos.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*
           sudo apt-get update -qq
           sudo apt-get install -y -qq emacs-nox
 
