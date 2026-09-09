@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +16,24 @@ from typer.testing import CliRunner
 
 from sucoder import cli
 from sucoder.config import BranchPrefixes, Config, MirrorSettings
+
+
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+_BOX_DRAWING = re.compile(r"[\u2500-\u257f]")
+
+
+def _plain_output(result) -> str:
+    """CLI output with styling, panel borders, and line wraps removed.
+
+    typer renders ``BadParameter`` through a rich panel and forces terminal
+    mode when ``GITHUB_ACTIONS`` (or ``FORCE_COLOR``) is set, so under CI the
+    message is coloured and wrapped at 80 columns even though no terminal is
+    attached.  A substring assertion on the raw output therefore depends on
+    the console width; assert against this normalised text instead.
+    """
+    text = _ANSI_ESCAPE.sub("", result.output)
+    text = _BOX_DRAWING.sub(" ", text)
+    return " ".join(text.split())
 
 try:
     from click.shell_completion import CompletionItem as ClickCompletionItem
@@ -414,7 +433,7 @@ def test_harness_and_legacy_agent_are_mutually_exclusive(tmp_path, monkeypatch):
     )
 
     assert result.exit_code != 0
-    assert "either --harness or the legacy --agent" in result.output
+    assert "either --harness or the legacy --agent" in _plain_output(result)
 
 
 def test_skills_list_reports_accessible_paths(tmp_path, monkeypatch):
