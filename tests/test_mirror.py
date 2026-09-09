@@ -1290,6 +1290,10 @@ def _confined_manager(tmp_path, monkeypatch, *, target_name=None):
             partition="savio4_htc", account="co_carleton",
             qos="carleton_htc4_normal", cpus_per_task=4, mem="16G",
             confined=True,
+            # Deliberately NOT the dataclass default (10): with the
+            # default, asserting "SNAPSHOT_MINUTES=10" cannot tell a
+            # value read from config from one hardcoded in the builder.
+            wip_snapshot_minutes=7,
         ),
     )
     monkeypatch.setattr(
@@ -1738,8 +1742,10 @@ def test_launch_confined_stages_and_starts_deadline_timer(tmp_path, monkeypatch)
     assert 'JOB="${SLURM_JOB_ID:-}"' in timer["input"]
     assert "TMUX_BIN=(tmux -L sucoder-sample)" in timer["input"]
     assert "MIRROR_TOKEN=sample" in timer["input"]
-    assert "SNAPSHOT_MINUTES=10" in timer["input"]
-    assert "SNAPSHOT_DIR=" in timer["input"] and "SNAPSHOT_DIR=''" not in timer["input"]
+    assert "SNAPSHOT_MINUTES=7" in timer["input"], "cadence must come from config"
+    # The exact tree, not merely "non-empty": snapshotting the wrong
+    # directory would save none of the agent's work.
+    assert "SNAPSHOT_DIR=/global/home/users/coder/mirrors/sample\n" in timer["input"]
     # sbatch is submitted only after both files are staged.
     sbatch_idx = next(i for i, c in enumerate(calls) if c["args"][0] == "sbatch")
     assert all(calls.index(w) < sbatch_idx for w in writes)

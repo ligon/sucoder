@@ -385,3 +385,46 @@ def test_lifecycle_hint_matches_the_launch_mode():
     for line in unconfined:
         assert "kept alive" in line and "sucoder release" in line
         assert "ends with it" not in line
+
+
+@_bash
+@_git
+def test_snapshot_force_updates_a_diverged_wip_ref(repo_pair):
+    """The second snapshot of a tree whose HEAD has diverged must land.
+
+    Every other push here creates the ref for the first time, so
+    ``--force`` never does any work and dropping it left the suite
+    green.  It is load-bearing in reality: the WIP ref is built with
+    ``commit-tree -p HEAD``, so once the agent rebases, resets, or
+    switches branch, the new snapshot is not a descendant of the old one
+    and an unforced push is rejected -- silently, every step being
+    best-effort -- in exactly the scenario the snapshotter exists for.
+    """
+    origin, work = repo_pair
+    ref = "refs/sucoder/wip/mirror"
+    show = lambda: subprocess.run(
+        ["git", "show-ref", "-s", ref], cwd=origin,
+        capture_output=True, text=True).stdout.strip()
+
+    (work / "a.txt").write_text("first\n")
+    assert _snapshot(work).returncode == 0
+    first = show()
+    assert first, "first snapshot did not create the ref"
+
+    # Diverge: commit onto HEAD, so the next WIP commit's parent is no
+    # longer an ancestor of the ref just pushed.
+    _git_run(work, "add", "-A")
+    _git_run(work, "-c", "user.email=a@b", "-c", "user.name=a",
+             "commit", "-q", "-m", "work")
+    (work / "a.txt").write_text("second\n")
+
+    assert _snapshot(work).returncode == 0
+    second = show()
+    assert second and second != first, (
+        f"diverged snapshot did not update the ref ({first} -> {second}); "
+        "an unforced push would be rejected here"
+    )
+    # The new snapshot really is not a descendant of the old one.
+    assert subprocess.run(
+        ["git", "merge-base", "--is-ancestor", first, second],
+        cwd=origin).returncode != 0
