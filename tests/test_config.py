@@ -904,3 +904,29 @@ mirrors:
 
     assert cfg.mirrors["auto"].default_base_branch is None
     assert cfg.mirrors["fixed"].default_base_branch == "develop"
+
+
+# -- slurm.wip_snapshot_minutes ------------------------------------------------
+
+def _slurm_raw(**extra):
+    raw = {"partition": "savio4_htc", "account": "co_carleton"}
+    raw.update(extra)
+    return raw
+
+
+def test_slurm_wip_snapshot_minutes_defaults_to_ten():
+    from sucoder.config import _parse_slurm_config
+    assert _parse_slurm_config(_slurm_raw()).wip_snapshot_minutes == 10
+
+
+@pytest.mark.parametrize("value", [0, 5, 120])
+def test_slurm_wip_snapshot_minutes_accepts_non_negative_ints(value):
+    from sucoder.config import _parse_slurm_config
+    assert _parse_slurm_config(_slurm_raw(wip_snapshot_minutes=value)).wip_snapshot_minutes == value
+
+
+@pytest.mark.parametrize("value", [-1, True, "10", 2.5])
+def test_slurm_wip_snapshot_minutes_rejects_bad_values(value):
+    from sucoder.config import ConfigError, _parse_slurm_config
+    with pytest.raises(ConfigError, match="wip_snapshot_minutes"):
+        _parse_slurm_config(_slurm_raw(wip_snapshot_minutes=value))

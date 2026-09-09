@@ -422,7 +422,9 @@ login-node-daemon controller variant (v2).
    controller polls =squeue -o %L= / =sacct -o State=, parsing
    =D-HH:MM:SS= correctly.  It does not depend on the in-node
    =slurm-deadline.warn= warner regardless of the latter's health
-   (now fixed; see Appendix) -- the two channels stay independent.
+   (its day-format parsing is fixed, see Appendix; and as of the
+   shared =slurm_timer= script it actually runs for confined jobs,
+   which it never did before) -- the two channels stay independent.
 2. *Files survive, process does not.*  The repo on NFS =$HOME= plus a
    pushed mirror are durable; the agent's *conversation context* dies
    on turnover.  Every turnover is therefore bracketed by

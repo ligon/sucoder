@@ -112,3 +112,30 @@ def test_quoting_survives_metacharacters():
     )
     r = _bash_n(MirrorManager._build_batch_script(**nasty, env={"K": "v'1 `x`"}))
     assert r.returncode == 0, r.stderr
+
+
+# -- deadline timer / WIP snapshotter -----------------------------------------
+
+def test_timer_started_after_session_check_before_keeper():
+    """The watchdog runs inside the job cgroup: started by the batch body
+    once ``new-session`` succeeded (so its wait is trivially satisfied) and
+    before the keeper loop (so it dies with the job)."""
+    s = MirrorManager._build_batch_script(
+        **_BASE, timer_path="/global/home/users/ligon/.cache/sucoder/slurm-timer-K-Aggregators.sh",
+    )
+    nohup = "nohup /global/home/users/ligon/.cache/sucoder/slurm-timer-K-Aggregators.sh > /dev/null 2>&1 &\n"
+    assert nohup in s
+    rc_check = s.index("SUCODER: tmux new-session failed")
+    keeper = s.index("while tmux -L sucoder-K-Aggregators has-session")
+    assert rc_check < s.index(nohup) < keeper
+
+
+def test_timer_omitted_when_no_path():
+    assert "nohup" not in MirrorManager._build_batch_script(**_BASE)
+
+
+@_bash_only
+def test_timer_path_is_quoted_and_script_parses(tmp_path):
+    s = MirrorManager._build_batch_script(**_BASE, timer_path="/p q/t.sh")
+    assert "nohup '/p q/t.sh' > /dev/null 2>&1 &" in s
+    assert _bash_n(s).returncode == 0

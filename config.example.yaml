@@ -99,6 +99,9 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #       cpus_per_task: 4    # 4 cores out of the shared node
 #       mem: 16G            # per-job memory (required on shared partitions)
 #       time: "24:00:00"
+#       # confined: true    # sbatch launch inside the job cgroup (see README)
+#       # wip_snapshot_minutes: 10  # deadline timer snapshots the dirty tree to
+#       #                           # refs/sucoder/wip/<mirror> every N min; 0 = off
 
 # Mirrors are optional when using zero-config repo detection.
 mirrors:
