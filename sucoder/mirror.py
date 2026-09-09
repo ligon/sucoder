@@ -5254,6 +5254,13 @@ If you find issues, describe each one clearly with the filename and specific con
         if target_block:
             blocks.append(target_block)
 
+        # Under local-disk tiering the agent's cwd is a node-local clone,
+        # not the mirror the prompts talk about; say so, with the facts
+        # it needs (where commits go, what survives, where to look).
+        workspace_block = self._workspace_block(ctx)
+        if workspace_block:
+            blocks.append(workspace_block)
+
         agent_doc = self._agent_doc_block(ctx)
         if agent_doc:
             blocks.append(agent_doc)
@@ -5315,6 +5322,59 @@ If you find issues, describe each one clearly with the filename and specific con
 
         header = f"TARGET PROMPT ({self._collapse_home(prompt_path)})"
         return f"{header}\n{content}"
+
+    def _workspace_block(self, ctx: MirrorContext) -> Optional[str]:
+        """Describe the local-disk tiering layout to the agent, when it applies.
+
+        Rendered on the laptop before launch, so it cannot carry runtime
+        state (last snapshot time); it gives the command that answers that
+        instead.  For a confined launch the job id is not known yet and the
+        path is spelled with ``$SLURM_JOB_ID``, which the batch body exports.
+        """
+        if not ctx.is_remote:
+            return None
+        local_disk_root = getattr(self.executor, "local_disk_root", None) or None
+        if not local_disk_root:
+            return None
+        token = _sanitize_session_token(ctx.settings.name)
+        try:
+            mirror_path = self._resolve_remote_path(ctx)
+        except Exception as exc:  # noqa: BLE001 - informational block, never fatal
+            self.logger.debug("Workspace block: could not resolve mirror path: %s", exc)
+            mirror_path = ctx.remote_mirror_path or "~/mirrors/<mirror>"
+        job_id = None if ctx.confined else getattr(self.executor, "slurm_job_id", None)
+        root = local_disk_root.rstrip("/") or "/"
+        if job_id:
+            work = work_path(local_disk_root, token, int(job_id))
+            local_root = f"{root}/job{job_id}"
+        else:
+            work = f"{root}/job$SLURM_JOB_ID/mirrors/{token}"
+            local_root = f"{root}/job$SLURM_JOB_ID"
+        slurm = ctx.settings.remote.slurm if ctx.settings.remote else None
+        minutes = slurm.wip_snapshot_minutes if slurm else 10
+        cadence = (
+            f"every {minutes} minutes and at each deadline warning"
+            if minutes else "at each deadline warning only"
+        )
+        lines = [
+            "WORKSPACE (local-disk tiering)",
+            "You are working in a node-local clone, not in the shared mirror the prompts above describe.",
+            f"- Working clone (your cwd): {work}",
+            f"- Shared mirror (origin; durable; the human's push/pull target): {mirror_path}",
+            "  Never edit its working tree by hand: an uncommitted tracked change there blocks every publish from this clone.",
+            "- Every commit is published to the shared mirror by a post-commit hook the moment it exists; the commit output",
+            "  shows 'SUCODER: published'.  A 'REJECTED' line means the human pushed first: `git pull --ff-only`, then commit",
+            "  again.  Never force-push to origin.",
+            f"- Uncommitted work (tracked or untracked, not ignored) is snapshotted to refs/sucoder/wip/{token} on the shared",
+            f"  mirror {cadence}; the next launch restores it if no commit has landed since.",
+            f"  Last snapshot: git -C {mirror_path} log -1 --format='%ci %s' refs/sucoder/wip/{token}",
+            f"- Ignored files (.venv, node_modules, caches) are never durable.  Caches and $TMPDIR live under {local_root}",
+            "  ($SUCODER_LOCAL_ROOT) and are rebuilt each job.",
+            f"- Deadline warnings: $HOME/.cache/sucoder/slurm-deadline-{token}.warn (30/15/5 minutes before the job's --time).",
+            "- Handoff notes go to .sucoder/handoff.org in this clone, committed.",
+            "- A job you dispatch to another node cannot see this clone: give it the shared mirror or a branch you have committed.",
+        ]
+        return "\n".join(lines)
 
     def _agent_doc_block(self, ctx: MirrorContext) -> Optional[str]:
         """Inject ``AGENT.md`` / ``AGENT.org`` for non-Claude agents.

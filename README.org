@@ -741,7 +741,9 @@ hand (an uncommitted tracked change there makes =updateInstead= refuse
 every publish from the clone; the prepare step warns loudly if it
 finds one).  Ignored files (=.venv=, =node_modules=) are rebuilt each
 job; committed work is durable instantly, dirty work to within
-=wip_snapshot_minutes=.
+=wip_snapshot_minutes=.  The agent is told all of this in a
+=WORKSPACE (local-disk tiering)= block of its prelude, including the
+command that shows the last snapshot.
 
 Earlier releases put the /whole/ mirror at =/local/mirrors= on one
 node.  That layout is retired: a session that still records it gets a

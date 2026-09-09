@@ -8,7 +8,9 @@ Design note.  Written on a =carleton-htc= slice (job 38661192,
 n0036.savio4) against =main= at =80581c8=.  Status: step (1) landed
 (shared timer + snapshotter, PR #9); step (2) landed for confined
 targets (PR #10) and for =salloc= targets, retiring the all-on-=/local=
-layout (=sucoder/local_tier.py=, =slurm.local_disk= / =--local-disk=).
+layout (=sucoder/local_tier.py=, =slurm.local_disk= / =--local-disk=);
+step (3) landed: the prelude carries a =WORKSPACE (local-disk tiering)=
+block whenever tiering is on (=MirrorManager._workspace_block=).
 
 * Punchline
 
@@ -187,8 +189,10 @@ state the durability tiers:
   intervened.
 - Ignored :: never durable; rebuilt from scratch each job.
 
-The prelude can print the last snapshot time so the agent knows the
-loop is alive.
+The prelude is rendered before launch, so it cannot print the last
+snapshot time; it gives the one-line =git log= that answers it
+instead, plus the clone and mirror paths, the mailbox rule, and the
+warn-file path.
 
 * Config and docs
 
