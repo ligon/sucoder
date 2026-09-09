@@ -81,7 +81,7 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #       account: fc_jevons
 #       time: "02:00:00"
 #       # qos: savio_normal  # optional
-#       # local_disk: /local  # use compute-node local storage (bypasses Lustre)
+#       # local_disk: /local  # legacy on salloc targets: whole mirror on the node
 #   # Shared-partition target: requests a fractional slice of an HTC node
 #   # instead of an entire compute node.  Useful when an agent session
 #   # only needs a few cores.
@@ -100,6 +100,8 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #       mem: 16G            # per-job memory (required on shared partitions)
 #       time: "24:00:00"
 #       # confined: true    # sbatch launch inside the job cgroup (see README)
+#       # local_disk: true   # with confined: working clone + caches on /local,
+#       #                    # every commit published to the shared mirror
 #       # wip_snapshot_minutes: 10  # deadline timer snapshots the dirty tree to
 #       #                           # refs/sucoder/wip/<mirror> every N min; 0 = off
 

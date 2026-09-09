@@ -691,28 +691,61 @@ allocation alive.  Only the last holder's =release= runs =scancel=.
 
 *** Local disk
 
-By default, remote mirrors live on the shared filesystem.  On clusters
-where compute nodes have fast local scratch, use =--local-disk= to
-place the mirror there instead:
+By default the agent works directly in the remote mirror on the shared
+filesystem.  On clusters whose compute nodes have fast local scratch,
+=slurm.local_disk= (or =--local-disk= on the command line, with
+=--local-disk-root PATH= to pick a root other than =/local=) moves the
+agent's /working tree and caches/ there while the shared mirror stays
+the durable repository:
 
 #+begin_src shell
-sucoder --local-disk -T savio collaborate
+sucoder --local-disk -T carleton-htc collaborate SuCoder
+sucoder --local-disk-root /scratch/local -T carleton-htc collaborate SuCoder   # implies --local-disk
 #+end_src
-
-This is faster for I/O-heavy agent work but the mirror is only
-accessible from that specific node.  Use =--node= on subsequent
-commands to return to the same node.  The setting can also be made
-permanent in =config.yaml=:
 
 #+begin_src yaml
 targets:
-  savio:
-    gateway: brc.berkeley.edu
+  carleton-htc:
+    gateway: hpc.brc.berkeley.edu
     transfer_host: dtn.brc.berkeley.edu
     mirror_root: ~/mirrors
     slurm:
-      local_disk: true
+      partition: savio4_htc
+      account: co_carleton
+      confined: true
+      local_disk: true        # or a path; true means /local
 #+end_src
+
+For a =confined= target this is /tiering/ (design and measurements in
+[[file:docs/local-disk-tiering.org][docs/local-disk-tiering.org]]):
+
+- the batch job clones =~/mirrors/<name>= to
+  =/local/job<ID>/mirrors/<name>= and starts the agent there, with
+  =UV_CACHE_DIR=, =PIP_CACHE_DIR=, =npm_config_cache=, and =TMPDIR=
+  under =/local/job<ID>/=;
+- a =post-commit= hook publishes every commit to the shared mirror the
+  moment it exists, so =sucoder pull= and the login-node view see it
+  immediately; the hook never forces, and a push refused because the
+  laptop pushed first is reported for the agent to =git pull
+  --ff-only=;
+- the deadline watchdog snapshots uncommitted work to
+  =refs/sucoder/wip/<name>= on the shared mirror every
+  =wip_snapshot_minutes= and restores it on the next launch when the
+  branch tip has not moved;
+- SLURM wipes =/local/job<ID>/= when the job ends; nothing is orphaned
+  and =--node= pinning is unnecessary.
+
+The shared mirror becomes a mailbox: do not edit its working tree by
+hand (an uncommitted tracked change there makes =updateInstead= refuse
+every publish from the clone; the prepare step warns loudly if it
+finds one).  Ignored files (=.venv=, =node_modules=) are rebuilt each
+job; committed work is durable instantly, dirty work to within
+=wip_snapshot_minutes=.
+
+Unconfined (=salloc=) targets still use the older layout, where the
+whole mirror lives at =/local/mirrors= on one node and is only
+reachable from that node (=--node= returns to it; a lost node orphans
+unpulled work).  They move to tiering in a later release.
 
 *** Shared partitions (fractional allocations)
 

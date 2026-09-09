@@ -55,7 +55,8 @@ class SlurmConfig:
                                          # shared partitions (e.g. savio4_htc)
     mem: Optional[str] = None            # e.g. "16G"; required on shared
                                          # partitions where the default is tiny
-    local_disk: Optional[str] = None     # e.g. "/local" — bypass shared FS
+    local_disk: Optional[str] = None     # e.g. "/local": working clone + caches
+                                         # on node-local disk (docs/local-disk-tiering.org)
     confined: bool = False               # shared partitions: launch the agent
                                          # via `sbatch` so it runs inside the
                                          # job cgroup, confined to the reserved
@@ -1134,8 +1135,15 @@ def _parse_slurm_config(raw: Any) -> Optional[SlurmConfig]:
         )
 
     local_disk = raw.get("local_disk")
-    if local_disk is not None and not isinstance(local_disk, str):
-        raise ConfigError("`slurm.local_disk` must be a string path (e.g. '/local').")
+    if local_disk is True:
+        local_disk = "/local"
+    elif local_disk is False:
+        local_disk = None
+    elif local_disk is not None and (not isinstance(local_disk, str) or not local_disk.strip()):
+        raise ConfigError(
+            "`slurm.local_disk` must be a path (e.g. '/local'), `true` (= /local), "
+            "or `false`."
+        )
 
     confined = raw.get("confined", False)
     if not isinstance(confined, bool):

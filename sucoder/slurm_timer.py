@@ -195,6 +195,7 @@ def build_timer_script(
     job_id: Optional[int] = None,
     tmux_socket: Optional[str] = None,
     snapshot_dir: Optional[str] = None,
+    snapshot_dir_shell: Optional[str] = None,
     snapshot_minutes: int = 10,
 ) -> str:
     """Render the timer script.
@@ -209,11 +210,23 @@ def build_timer_script(
     ``0`` disables the periodic snapshot (the deadline snapshots still run
     when a directory is given).
 
+    ``snapshot_dir_shell`` is the *unquoted* alternative to
+    ``snapshot_dir``: a shell word the caller has already quoted piecewise
+    (``local_tier.work_path_shell``), so a runtime ``${SLURM_JOB_ID}`` in
+    it still expands.  Give at most one of the two.
+
     Every user-controlled value is shell-quoted.  The only unquoted
-    substitution is the ``$SLURM_JOB_ID`` reference itself.
+    substitutions are the ``$SLURM_JOB_ID`` reference itself and a
+    caller-quoted ``snapshot_dir_shell``.
     """
     if snapshot_minutes < 0:
         raise ValueError("snapshot_minutes must be >= 0")
+    if snapshot_dir is not None and snapshot_dir_shell is not None:
+        raise ValueError("give snapshot_dir or snapshot_dir_shell, not both")
+    snapshot_word = (
+        snapshot_dir_shell if snapshot_dir_shell is not None
+        else shlex.quote(snapshot_dir or "")
+    )
     tmux_cmd = "tmux" if tmux_socket is None else f"tmux -L {shlex.quote(tmux_socket)}"
     job_ref = '"${SLURM_JOB_ID:-}"' if job_id is None else shlex.quote(str(job_id))
     return (
@@ -221,7 +234,7 @@ def build_timer_script(
         .replace("@MIRROR_TOKEN@", shlex.quote(mirror_token))
         .replace("@TMUX_SESSION@", shlex.quote(tmux_session))
         .replace("@TMUX_CMD@", tmux_cmd)
-        .replace("@SNAPSHOT_DIR@", shlex.quote(snapshot_dir or ""))
+        .replace("@SNAPSHOT_DIR@", snapshot_word)
         .replace("@SNAPSHOT_MINUTES@", str(int(snapshot_minutes)))
         .replace("@JOB_REF@", job_ref)
         .replace("@LEFT_TO_MINS@", TIME_LEFT_TO_MINS_SH)

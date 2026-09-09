@@ -139,3 +139,35 @@ def test_timer_path_is_quoted_and_script_parses(tmp_path):
     s = MirrorManager._build_batch_script(**_BASE, timer_path="/p q/t.sh")
     assert "nohup '/p q/t.sh' > /dev/null 2>&1 &" in s
     assert _bash_n(s).returncode == 0
+
+
+# -- local-disk tiering ---------------------------------------------------------
+
+_TIER = dict(
+    prepare_path="/global/home/users/ligon/.cache/sucoder/local-tier-K-Aggregators.sh",
+    local_disk_root="/local", mirror_token="K-Aggregators",
+)
+
+
+def test_local_tier_prepare_then_exports_then_cd_before_new_session():
+    s = MirrorManager._build_batch_script(**_BASE, **_TIER)
+    prepare = "bash /global/home/users/ligon/.cache/sucoder/local-tier-K-Aggregators.sh || "
+    exports = 'export SUCODER_LOCAL_ROOT=/local/job"${SLURM_JOB_ID}"'
+    cd = 'cd /local/job"${SLURM_JOB_ID}"/mirrors/K-Aggregators || '
+    assert prepare in s and exports in s and cd in s
+    assert s.index(prepare) < s.index(exports) < s.index(cd) < s.index("new-session")
+    # The shared mirror is no longer the cwd.
+    assert "cd /global/home/users/ligon/mirrors/K-Aggregators" not in s
+    # Prepare failure must not fall through to the keeper loop.
+    assert "SUCODER: local-tier prepare failed" in s
+
+
+def test_local_tier_requires_root_and_token():
+    with pytest.raises(ValueError):
+        MirrorManager._build_batch_script(**_BASE, prepare_path="/p.sh")
+
+
+@_bash_only
+def test_local_tier_script_parses(tmp_path):
+    s = MirrorManager._build_batch_script(**_BASE, **_TIER, timer_path="/t.sh")
+    assert _bash_n(s).returncode == 0

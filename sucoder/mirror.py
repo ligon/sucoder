@@ -73,6 +73,7 @@ from .permissions import (
     ensure_directory_mode,
 )
 from .skills_version import validate_skills_version
+from .local_tier import build_prepare_script, cache_exports_sh, work_path_shell
 from .slurm_timer import build_timer_script
 from .workspace_prefs import WorkspacePrefs
 
@@ -2331,6 +2332,9 @@ class MirrorManager:
         agent_cmd_str: str,
         env: Optional[Mapping[str, str]] = None,
         timer_path: Optional[str] = None,
+        prepare_path: Optional[str] = None,
+        local_disk_root: Optional[str] = None,
+        mirror_token: Optional[str] = None,
     ) -> str:
         """sbatch script body for a ``confined`` launch (shared partitions).
 
@@ -2355,10 +2359,34 @@ class MirrorManager:
         before the keeper loop, so it runs inside the job cgroup and dies
         with the job.  Without it a confined job has no deadline watchdog
         at all: ``cli._start_slurm_timer`` only runs on the salloc path.
+
+        ``prepare_path`` (with ``local_disk_root`` and ``mirror_token``)
+        switches on local-disk tiering: the body *executes* the staged
+        ``local_tier.build_prepare_script`` output (a clone of the shared
+        mirror under ``<root>/job$SLURM_JOB_ID/mirrors/<token>``), exports
+        the cache variables so the new tmux server inherits them, and
+        ``cd``s into the clone instead of ``mirror_path``.  The paths are
+        recomputed here from the same inputs rather than sourced from the
+        script, so an early ``exit`` in the script cannot take the batch
+        body with it.
         """
         q_sess = shlex.quote(tmux_session)
         q_sock = shlex.quote(socket)
-        q_dir = shlex.quote(mirror_path)
+        if prepare_path:
+            if not (local_disk_root and mirror_token):
+                raise ValueError("prepare_path requires local_disk_root and mirror_token")
+            cd_lines = (
+                f"bash {shlex.quote(prepare_path)} || "
+                "{ echo \"SUCODER: local-tier prepare failed\" >&2; exit 1; }\n"
+                f"{cache_exports_sh(local_disk_root)}\n"
+                f"cd {work_path_shell(local_disk_root, mirror_token)} || "
+                "{ echo \"SUCODER: cd failed\" >&2; exit 1; }\n"
+            )
+        else:
+            cd_lines = (
+                f"cd {shlex.quote(mirror_path)} || "
+                "{ echo \"SUCODER: cd failed\" >&2; exit 1; }\n"
+            )
         exports = ""
         if env:
             exports = "".join(
@@ -2373,7 +2401,7 @@ class MirrorManager:
         return (
             "#!/bin/bash\n"
             "set -u\n"
-            f"cd {q_dir} || {{ echo \"SUCODER: cd failed\" >&2; exit 1; }}\n"
+            + cd_lines +
             f"tmux -L {q_sock} new-session -A -d -s {q_sess} {q_win}\n"
             "rc=$?\n"
             "if [ \"$rc\" -ne 0 ]; then\n"
@@ -2739,10 +2767,16 @@ class MirrorManager:
 
         mirror_path = self._resolve_remote_path(ctx)
         timer_path = f"{cache_dir}/slurm-timer-{safe}.sh"
+        # Local-disk tiering (docs/local-disk-tiering.org): the executor
+        # carries the resolved root (config + --local-disk override); the
+        # agent then works in a clone under <root>/job$SLURM_JOB_ID.
+        local_disk_root = getattr(self.executor, "local_disk_root", None) or None
+        prepare_path = f"{cache_dir}/local-tier-{safe}.sh" if local_disk_root else None
         script = self._build_batch_script(
             tmux_session=session_name, socket=socket,
             mirror_path=mirror_path, agent_cmd_str=windowed_cmd, env=env,
-            timer_path=timer_path,
+            timer_path=timer_path, prepare_path=prepare_path,
+            local_disk_root=local_disk_root, mirror_token=safe,
         )
         self.executor.run_agent(
             [
@@ -2757,13 +2791,24 @@ class MirrorManager:
         # run time (unknown until sbatch assigns it); every tmux call
         # carries the dedicated socket.  Staged AFTER the batch script so
         # the first staged file is still the batch script.
-        timer_script = build_timer_script(
-            mirror_token=safe,
-            tmux_session=session_name,
-            tmux_socket=socket,
-            snapshot_dir=mirror_path,
-            snapshot_minutes=slurm.wip_snapshot_minutes,
-        )
+        if local_disk_root:
+            # Snapshot the working clone (runtime path: the job id is not
+            # known yet), not the shared mirror.
+            timer_script = build_timer_script(
+                mirror_token=safe,
+                tmux_session=session_name,
+                tmux_socket=socket,
+                snapshot_dir_shell=work_path_shell(local_disk_root, safe),
+                snapshot_minutes=slurm.wip_snapshot_minutes,
+            )
+        else:
+            timer_script = build_timer_script(
+                mirror_token=safe,
+                tmux_session=session_name,
+                tmux_socket=socket,
+                snapshot_dir=mirror_path,
+                snapshot_minutes=slurm.wip_snapshot_minutes,
+            )
         self.executor.run_agent(
             [
                 "sh", "-c",
@@ -2772,6 +2817,23 @@ class MirrorManager:
             ],
             input=timer_script, check=True, capture_output=True,
         )
+        if local_disk_root and prepare_path:
+            prepare_script = build_prepare_script(
+                mirror_path=mirror_path, mirror_token=safe,
+                local_disk_root=local_disk_root,
+            )
+            self.executor.run_agent(
+                [
+                    "sh", "-c",
+                    f"umask 077 && cat > {shlex.quote(prepare_path)} "
+                    f"&& chmod 700 {shlex.quote(prepare_path)}",
+                ],
+                input=prepare_script, check=True, capture_output=True,
+            )
+            self.logger.info(
+                "Local-disk tiering: agent will work in a clone under %s/job<id>/mirrors/%s",
+                local_disk_root, safe,
+            )
 
         # Submit.  check=False so a transport drop AFTER the remote sbatch
         # created the job (rc 255) is reported as a MirrorError with a
@@ -2817,8 +2879,14 @@ class MirrorManager:
         self.logger.info("Confined SLURM job %s RUNNING on %s.", job_id, node)
 
         # Confirm the tmux session actually came up before declaring success
-        # (the confined attach has no `|| new-session` fallback).
-        if not self._confined_session_ready(job_id, session_name, socket):
+        # (the confined attach has no `|| new-session` fallback).  Under
+        # local-disk tiering the batch body clones the mirror before
+        # new-session (4.7s for a 4 MB .git on Lustre; a fat mirror can take
+        # minutes), so allow 5 minutes instead of the default 1.
+        ready_attempts = 100 if local_disk_root else 20
+        if not self._confined_session_ready(
+            job_id, session_name, socket, attempts=ready_attempts,
+        ):
             pane = self._confined_capture_pane(job_id, session_name, socket)
             raise MirrorError(
                 f"Confined SLURM job {job_id} is RUNNING on {node} but its "
