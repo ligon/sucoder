@@ -1,0 +1,277 @@
+#+TITLE: Local-disk tiering: a disposable working tree, git as the sync
+#+DATE: 2026-09-09
+#+AUTHOR: Sue
+#+OPTIONS: toc:2 num:nil
+#+HTML_HEAD: <link rel="stylesheet" type="text/css" href="style.css" />
+
+Design note.  Status: proposal, not implemented.  Written on a
+=carleton-htc= slice (job 38661192, n0036.savio4) against
+=main= at =80581c8=.
+
+* Punchline
+
+Put the agent's working tree, index, and every cache on the compute
+node's =/local/job$SLURM_JOB_ID/=, keep the existing shared-filesystem
+mirror as the durable repository and as the laptop's push/pull target,
+and let git do the copying: a =post-commit= hook pushes each commit to
+the shared mirror the instant it exists, and a periodic snapshot of
+the dirty tree lands on a scratch ref so uncommitted work is never
+more than a few minutes from durable.  Slurm's epilog wipes
+=/local/job$ID= for us, so there's nothing to clean up and nothing to
+orphan.
+
+This replaces the current =--local-disk= mode rather than sitting
+beside it.  That mode moves the /whole/ mirror to =/local/mirrors=,
+which is why it's orphan-prone (=cli.py:1011=), disabled for confined
+targets (=cli.py:605=), and needs =chmod 700= hygiene on a directory
+that outlives the job (=mirror.py:1741=).  Once commits reach the
+shared mirror by themselves, the all-on-=/local= layout has no
+remaining advantage.
+
+* What the filesystems actually do
+
+Three tiers are visible from a compute node, and it's worth being
+precise, because the folk description ("NFS doesn't lock, Lustre is
+slow, =/local= is fast but transient") is right but incomplete.
+
+| Path                         | FS     | flock | Shared | Survives job | Note                          |
+|------------------------------+--------+-------+--------+--------------+-------------------------------|
+| =$HOME= (=/global/home=)     | NFS    | no    | yes    | yes          | uv, npm, sqlite all break here |
+| =~/mirrors= -> =/global/scratch/...= | Lustre | yes   | yes    | yes          | slow metadata; locks fine     |
+| =/local/job$ID=              | ext4   | yes   | no     | no           | 1.7 TB, prolog-created, 700   |
+
+Measured 2026-09-09 with =fcntl.flock= on a temp file in each
+directory: =$HOME= fails with =ENOLCK= ("No locks available"), the
+other two succeed.  Two consequences follow.
+
+- The mirror is on Lustre, not NFS :: =~/mirrors= is a symlink into
+  =/global/scratch/fsa/fc_jevons/ligon/mirrors=.  So "the NFS mirror"
+  in the prompts and docs is really a Lustre mirror, and git's own
+  locking (=O_EXCL= lockfiles, never =flock=) would have been fine
+  either way.  What hurts on Lustre is working-tree I/O: test suites,
+  =node_modules=, virtualenvs, anything with many small files.
+- The lock failures are a =$HOME= problem, not a mirror problem :: uv
+  refused to build a venv in this session because
+  =~/.local/share/uv/.lock= is on NFS; =codex --version= prints the
+  same =os error 37=.  Whoever set =UV_TOOL_DIR=/local/job38661192/uv-tools=
+  was dodging exactly this, at the cost of making the tool
+  installation transient.  Tiering the mirror doesn't fix this; see
+  Open questions.
+
+* Layout
+
+- Shared mirror (unchanged) :: =~/mirrors/<name>=, a non-bare repo
+  with =receive.denyCurrentBranch=updateInstead= (set by the launcher
+  at =mirror.py:1764=).  The laptop pushes into it and pulls from it
+  exactly as today.  Nothing in =_sync_remote= or =_pull_from_remote=
+  changes.
+- Working clone (new) :: =/local/job$ID/mirrors/<name>=, a full
+  =git clone= of the shared mirror with =origin= pointing back at it
+  by path.  Objects, index, working tree, and hooks all on ext4.  Its
+  =$HOME=-independent caches (=UV_CACHE_DIR=, =npm_config_cache=,
+  =PIP_CACHE_DIR=, =.gitnexus=, pytest) go under =/local/job$ID/cache/=.
+- Rule :: once this mode is on, nobody edits the shared mirror's
+  working tree.  It is a mailbox, not a desk.  The README's invitation
+  to edit via the =-ln= TRAMP alias (=README.org:541=) has to change
+  accordingly; the shared tree stays clean, which is also what makes
+  the laptop's =updateInstead= push succeed unconditionally (today it
+  is refused whenever the agent's tree is dirty).
+
+A full clone rather than a =git worktree=: a worktree keeps its index
+and =HEAD= under =$GIT_DIR/worktrees/<name>/= on the shared
+filesystem, which puts the hot path back on Lustre.  Clone cost is a
+few seconds for repositories of the sizes we run.
+
+* Sync on commit
+
+A =post-commit= hook in the working clone runs
+
+#+begin_src shell
+branch=$(git symbolic-ref --short -q HEAD) || exit 0   # detached: nothing to publish
+git push --quiet origin HEAD:refs/heads/"$branch"
+#+end_src
+
+with no force.  Because the shared mirror uses =updateInstead=, its
+checkout advances too, so the committed state is visible from the
+login node and to TRAMP without any extra machinery.  That answers
+the "does it need to be visible between sessions" question for free.
+
+The one race is with the laptop.  =_sync_remote= force-pushes into
+the shared mirror after pulling the agent's commits; if the laptop
+lands new commits while the agent is mid-task, the agent's next hook
+push is rejected as non-fast-forward.  The hook must never force (it
+would clobber the laptop's push); it prints the rejection loudly, the
+agent runs =git pull --ff-only=, and commits again.  Today's
+divergence handling at the shared tier (=mirror.py:1115=) is
+untouched.
+
+Amends and rebases don't fire =post-commit= for every rewritten
+commit, and a rewritten branch would be rejected by the hook anyway.
+That's acceptable: the snapshot below covers the gap, and rewriting
+published history on the mirror was already the laptop's decision to
+make, not the agent's.
+
+* WIP snapshot
+
+Every =wip_snapshot_minutes= (default 10) and on every deadline
+warning, a snapshotter does, in the working clone,
+
+#+begin_src shell
+marker=$(git rev-parse --git-dir)/sucoder-last-wip-tree   # outside the tree, or add -A eats it
+export GIT_INDEX_FILE=$(mktemp)
+git read-tree HEAD
+git add -A                      # tracked + untracked; honours .gitignore
+tree=$(git write-tree)
+[ "$tree" = "$(cat "$marker" 2>/dev/null)" ] && exit 0
+wip=$(git commit-tree "$tree" -p HEAD -m "WIP snapshot $(date -Is) job $SLURM_JOB_ID")
+git update-ref refs/sucoder/wip/<mirror> "$wip"
+git push --quiet --force origin refs/sucoder/wip/<mirror>
+echo "$tree" > "$marker"
+#+end_src
+
+Points that matter:
+
+- It's a scratch ref, not a branch :: =_pull_from_remote= and
+  =sucoder pull= look only at the base branch, so their semantics are
+  untouched.  Forcing is safe for the same reason it's safe for
+  =refs/sucoder/mirror-head= (=mirror.py:1128=): the ref carries no
+  history anyone depends on.
+- Unchanged trees cost nothing :: comparing tree hashes makes the
+  idle case a =write-tree= and a string compare.
+- Restore on relaunch is conditional :: rebuild the working clone, and
+  if =refs/sucoder/wip/<mirror>= exists /and/ its parent equals the
+  branch tip, apply its tree to the working directory (=git read-tree
+  -m -u <wip>= followed by =git reset= to unstage) so the agent finds
+  the same dirty tree it left.  If commits have landed since the
+  snapshot, its parent no longer matches; leave it alone and name it
+  in the handoff.
+- What it doesn't cover :: ignored files (=.venv=, =node_modules=,
+  =.gitnexus=) are rebuilt, which is the point, since they're the
+  flock-hostile things.  The staged/unstaged distinction is lost on
+  restore.  Both are worth a sentence in the agent prompt.
+
+* Who runs it
+
+The snapshotter is a loop that already exists in spirit: the deadline
+timer (=cli.py:1230=) polls =squeue= every 60 s and writes warnings.
+Extend that script with the snapshot step, and start it from the
+right place for each launch mode:
+
+- Confined (sbatch) :: the batch body (=mirror.py:2368=) currently
+  does =cd <mirror>=, starts tmux, and keeps the job alive.  Add: clone
+  to =/local/job$ID/mirrors/<name>=, install the hook, restore any
+  snapshot, =cd= there instead, and background the timer/snapshotter
+  before the keeper loop.  It inherits the cgroup for free.
+- Unconfined (salloc) :: the same script replaces what
+  =_start_slurm_timer= writes today; the clone step goes into the
+  launch path that computes =remote_mirror_root= (=cli.py:605-640=).
+
+This also closes a gap I found while checking: no =slurm-timer.sh=
+is running for this confined job.  =_start_slurm_timer= is only
+reached from =_ensure_slurm_node= (=cli.py:1130=), which the confined
+path skips, so the watchdog that =prompts/carleton-htc.org= promises
+has never fired on this target.  One script for both modes fixes
+that as a side effect.
+
+* What the agent is told
+
+The prompt's "commit early and often" wants a concrete reason, so
+state the durability tiers:
+
+- Committed :: durable the moment =git commit= returns; visible from
+  the login node immediately.
+- Dirty, tracked or untracked :: durable to within
+  =wip_snapshot_minutes=; restored at relaunch if no commits
+  intervened.
+- Ignored :: never durable; rebuilt from scratch each job.
+
+The prelude can print the last snapshot time so the agent knows the
+loop is alive.
+
+* Config and docs
+
+- =slurm.local_disk= :: keep the key, change the meaning to this
+  mode.  =true= or a path selects the =/local= root; the old
+  all-on-local layout goes away.  Add =slurm.wip_snapshot_minutes=.
+  Per =CLAUDE.md=, that touches =README.org:695= and
+  =config.example.yaml:84=.
+- Session state :: =session.remote_mirror_root= (=session.py:30=) and
+  =_forget_allocation= (=cli.py:2850=) special-case a =/local= root
+  precisely because it could be orphaned.  With the shared mirror
+  always authoritative, both simplify: the saved root is only ever the
+  shared one, and =--node= pinning stops mattering.
+- Caveats to rewrite :: =persistent-presence.org:371= ("orphaned on
+  re-grab") and =connection-faq.org:306= ("gone with the node") both
+  describe the old layout.
+- The handoff note moves :: =prompts/carleton-htc.org= and
+  =persistent-presence.org:466= tell the agent to write
+  =~/mirrors/<mirror>/.sucoder/handoff.org=, i.e. into the shared
+  mirror's working tree.  Under the mailbox rule that dirties the
+  shared tree, and the next hook push is refused by =updateInstead=
+  ("Working directory has unstaged changes") at exactly the moment
+  you least want a confusing failure.  The handoff belongs in the
+  working clone, committed or caught by the snapshot; it reaches the
+  shared mirror like everything else.
+
+* Open questions
+
+1. Transcript resume :: Claude Code keys transcripts by the realpath
+   of the cwd (this session's key is
+   =-global-scratch-fsa-fc-jevons-ligon-mirrors-SuCoder=, the
+   resolved symlink target).  A cwd of =/local/job$ID/...= changes
+   every job, so =claude --resume= after turnover would need either a
+   stable bind path or a copy of the transcript directory.  Needs a
+   spike; a symlink alone won't do it.
+2. Tool installs on NFS :: caches belong on =/local=; tool /installs/
+   (=UV_TOOL_DIR=, the npm prefix) must persist and so belong on
+   Lustre or NFS, but uv's install-time =flock= fails on NFS.  Lustre
+   locks fine, so =UV_TOOL_DIR= under =/global/scratch= may be the
+   whole answer.  Separate from this design; noted so the transient
+   =/local= setting doesn't get cargo-culted.
+3. Snapshot retention :: last-only (force-updated ref) is simplest.
+   A reflog on the shared mirror would keep a few generations at no
+   cost; decide whether anyone would ever look.
+4. Several mirrors per job :: =/local/job$ID/mirrors/<name>= already
+   allows it; the snapshotter should iterate rather than assume one.
+
+* Spike results (2026-09-09, job 38661192, n0036.savio4)
+
+Run by hand against this mirror (=~/mirrors/SuCoder=, on Lustre)
+and a throwaway copy of it on =/local=; no sucoder code changed.
+Scripts: a 9-line =post-commit= hook and a 20-line snapshotter,
+both as sketched above.
+
+| Step                                          | Result                          | Time   |
+|-----------------------------------------------+---------------------------------+--------|
+| Full clone Lustre -> =/local= (4.1 MB =.git=) | ok                              | 3.5 s  |
+| Commit on =spike/local-tier=, hook push       | branch appeared on mirror       | 1.15 s |
+| Push to checked-out =main=, mirror tree clean | mirror HEAD + worktree advanced | --     |
+| Same, mirror tree has a tracked edit          | refused: "unstaged changes"     | --     |
+| Same, mirror tree has an untracked file       | accepted                        | --     |
+| Laptop commit lands first, agent pushes       | refused non-FF; =pull --ff-only= fails as diverged | -- |
+| Snapshot, clean tree                          | no-op                           | 0.05 s |
+| Snapshot, 1 tracked edit + 1 untracked + 1 ignored | ref pushed; 2 files in diff, ignored excluded | 1.27 s |
+| Snapshot again, unchanged                     | no-op via marker                | 0.05 s |
+| Restore into fresh clone                      | =git status= and tree identical | --     |
+| Restore when a commit followed the snapshot   | parent != tip, skipped          | --     |
+
+Three details the sketch got right only after review: the marker file
+must live under =.git/= or =add -A= sweeps it up and the unchanged
+check never fires; the hook must exit quietly on a detached =HEAD=;
+and the snapshotter needs a "tree equals =HEAD='s tree" check so a
+clean tree isn't snapshotted as an empty WIP commit.
+
+The mirror's checked-out =main= and working tree were never touched.
+Left in place on the shared mirror for inspection: branch
+=spike/local-tier= (one commit, this note) and
+=refs/sucoder/wip/SuCoder=; delete both when done with them.
+Everything under =/local/job38661192/= goes with the job.
+
+* Next step
+
+The spike is done; the mechanism works as designed.  Implementation
+order that keeps each step shippable on its own: (1) one timer/
+snapshot script started from the confined batch body, which also
+fixes the missing watchdog; (2) the =/local= clone and hook in the
+launch paths, behind =slurm.local_disk=; (3) docs and prompt updates,
+including moving the handoff into the working clone.
