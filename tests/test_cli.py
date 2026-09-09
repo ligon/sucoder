@@ -797,7 +797,7 @@ def test_attach_refuses_login_node_when_compute_unknown(tmp_path, monkeypatch):
 # ------------------------------------------------------------------
 
 
-def test_slurm_timer_script_omits_scancel():
+def test_slurm_timer_script_omits_scancel(monkeypatch):
     """Regression: the backstop timer must NOT auto-scancel.
 
     Previously the on-compute-node monitor script ran
@@ -813,19 +813,39 @@ def test_slurm_timer_script_omits_scancel():
     `scancel {q_job}` to free the allocation") — those are fine
     because they're inside an ``echo``/string, not a shell statement.
     """
-    import inspect
-    src = inspect.getsource(cli._start_slurm_timer)
-    for raw in src.splitlines():
+    # The script body now comes from ``slurm_timer.build_timer_script``;
+    # inspecting ``_start_slurm_timer``'s own source would check nothing.
+    # Capture what it actually ships to the node instead.
+    from sucoder import slurm_timer
+
+    rendered = []
+    real_build = slurm_timer.build_timer_script
+
+    def capture(**kw):
+        script = real_build(**kw)
+        rendered.append(script)
+        return script
+
+    monkeypatch.setattr(cli, "build_timer_script", capture)
+    # ``_start_slurm_timer`` imports subprocess locally as ``_sp``; patch
+    # the module so its ssh write/start calls are swallowed.
+    monkeypatch.setattr(subprocess, "run",
+                        lambda *a, **k: subprocess.CompletedProcess(a, 0, "", ""))
+    session = SimpleNamespace(slurm_job_id=7, mirror_name="sample", compute_node="n0")
+    control = SimpleNamespace(ssh_options=lambda **kw: [])
+    cli._start_slurm_timer(session, control, control, mock.Mock())
+
+    assert rendered, "the timer script was not rendered"
+    for raw in rendered[0].splitlines():
         stripped = raw.strip()
-        # Skip strings that mention scancel for documentation/warnings.
-        if not stripped.startswith("scancel"):
-            continue
-        # If we got here, a bare `scancel ...` shell command remains.
-        pytest.fail(
-            "_start_slurm_timer still emits a `scancel` shell "
-            f"command line: {stripped!r}.  User owns SLURM lifecycle "
-            "now; use `sucoder release` for explicit cancel."
+        # Strings may *mention* scancel ("Run `scancel N` to free ..."),
+        # but no line may execute it.
+        assert not stripped.startswith("scancel"), (
+            "the deadline timer still emits a `scancel` shell command: "
+            f"{stripped!r}.  The user owns the SLURM lifecycle; use "
+            "`sucoder release` for explicit cancel."
         )
+    assert "JOB=7\n" in rendered[0]
 
 
 def _slurm_config(tmp_path: Path, *, with_session_jobid: bool = False) -> Path:

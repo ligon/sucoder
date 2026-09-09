@@ -60,6 +60,9 @@ class SlurmConfig:
                                          # via `sbatch` so it runs inside the
                                          # job cgroup, confined to the reserved
                                          # cores instead of the whole node
+    wip_snapshot_minutes: int = 10       # deadline timer snapshots the dirty
+                                         # working tree to refs/sucoder/wip/
+                                         # every N minutes; 0 disables
 
 
 @dataclass
@@ -425,7 +428,7 @@ class ConfigWarning(UserWarning):
 # which the parser silently drops, so the option appears to do nothing.
 _VALID_SLURM_KEYS = frozenset({
     "partition", "account", "time", "qos",
-    "cpus_per_task", "mem", "local_disk", "confined",
+    "cpus_per_task", "mem", "local_disk", "confined", "wip_snapshot_minutes",
 })
 # Target-level options commonly misplaced under ``slurm:``; warned about
 # with a tailored "move it up a level" hint.
@@ -1138,6 +1141,17 @@ def _parse_slurm_config(raw: Any) -> Optional[SlurmConfig]:
     if not isinstance(confined, bool):
         raise ConfigError("`slurm.confined` must be a boolean when provided.")
 
+    wip_snapshot_minutes = raw.get("wip_snapshot_minutes", 10)
+    if (
+        isinstance(wip_snapshot_minutes, bool)
+        or not isinstance(wip_snapshot_minutes, int)
+        or wip_snapshot_minutes < 0
+    ):
+        raise ConfigError(
+            "`slurm.wip_snapshot_minutes` must be a non-negative integer "
+            "(0 disables periodic snapshots) when provided."
+        )
+
     # Surface keys that the parser will ignore.  The common case is a
     # target-level option (notably ``system_prompt_extra``) indented one
     # level too deep, under ``slurm:`` instead of beside it -- which
@@ -1169,6 +1183,7 @@ def _parse_slurm_config(raw: Any) -> Optional[SlurmConfig]:
         mem=mem,
         local_disk=local_disk,
         confined=confined,
+        wip_snapshot_minutes=wip_snapshot_minutes,
     )
 
 

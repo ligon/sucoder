@@ -73,6 +73,7 @@ from .permissions import (
     ensure_directory_mode,
 )
 from .skills_version import validate_skills_version
+from .slurm_timer import build_timer_script
 from .workspace_prefs import WorkspacePrefs
 
 
@@ -2329,6 +2330,7 @@ class MirrorManager:
         mirror_path: str,
         agent_cmd_str: str,
         env: Optional[Mapping[str, str]] = None,
+        timer_path: Optional[str] = None,
     ) -> str:
         """sbatch script body for a ``confined`` launch (shared partitions).
 
@@ -2347,6 +2349,12 @@ class MirrorManager:
         ``srun --overlap --pty tmux -L <socket> attach``.  The keeper loop
         holds the job while the session lives; when the agent exits, the
         session ends, the keeper exits, and the job frees.
+
+        ``timer_path`` (a staged ``slurm_timer.build_timer_script`` output)
+        is started with ``nohup`` *after* the session is confirmed and
+        before the keeper loop, so it runs inside the job cgroup and dies
+        with the job.  Without it a confined job has no deadline watchdog
+        at all: ``cli._start_slurm_timer`` only runs on the salloc path.
         """
         q_sess = shlex.quote(tmux_session)
         q_sock = shlex.quote(socket)
@@ -2372,7 +2380,11 @@ class MirrorManager:
             "    echo \"SUCODER: tmux new-session failed (rc=$rc)\" >&2\n"
             "    exit 1\n"
             "fi\n"
-            f"while tmux -L {q_sock} has-session -t {q_sess} 2>/dev/null; do\n"
+            + (
+                f"nohup {shlex.quote(timer_path)} > /dev/null 2>&1 &\n"
+                if timer_path else ""
+            )
+            + f"while tmux -L {q_sock} has-session -t {q_sess} 2>/dev/null; do\n"
             "    sleep 15\n"
             "done\n"
         )
@@ -2726,9 +2738,11 @@ class MirrorManager:
         log_path = f"{cache_dir}/job-{safe}-%j.out"
 
         mirror_path = self._resolve_remote_path(ctx)
+        timer_path = f"{cache_dir}/slurm-timer-{safe}.sh"
         script = self._build_batch_script(
             tmux_session=session_name, socket=socket,
             mirror_path=mirror_path, agent_cmd_str=windowed_cmd, env=env,
+            timer_path=timer_path,
         )
         self.executor.run_agent(
             [
@@ -2737,6 +2751,26 @@ class MirrorManager:
                 f"&& cat > {shlex.quote(script_path)}",
             ],
             input=script, check=True, capture_output=True,
+        )
+        # Deadline watchdog + WIP snapshotter, started by the batch body
+        # inside the job cgroup.  The job id is read from $SLURM_JOB_ID at
+        # run time (unknown until sbatch assigns it); every tmux call
+        # carries the dedicated socket.  Staged AFTER the batch script so
+        # the first staged file is still the batch script.
+        timer_script = build_timer_script(
+            mirror_token=safe,
+            tmux_session=session_name,
+            tmux_socket=socket,
+            snapshot_dir=mirror_path,
+            snapshot_minutes=slurm.wip_snapshot_minutes,
+        )
+        self.executor.run_agent(
+            [
+                "sh", "-c",
+                f"umask 077 && cat > {shlex.quote(timer_path)} "
+                f"&& chmod 700 {shlex.quote(timer_path)}",
+            ],
+            input=timer_script, check=True, capture_output=True,
         )
 
         # Submit.  check=False so a transport drop AFTER the remote sbatch

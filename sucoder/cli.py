@@ -45,7 +45,9 @@ from .config import (
 )
 from .executor import CommandError, CommandExecutor
 from .logging_utils import setup_logger
+from .slurm_timer import TIME_LEFT_TO_MINS_SH, build_timer_script
 from .mirror import (
+    _sanitize_session_token,
     MirrorError,
     MirrorManager,
     # Re-exported for backward-compatible imports (e.g. tests) and reuse;
@@ -1134,35 +1136,10 @@ def _ensure_slurm_node(
     return session.compute_node, cn_control
 
 
-# Bash helper embedded verbatim into the on-node deadline timer (see
-# ``_start_slurm_timer``).  Converts SLURM ``squeue -o %L`` time-left
-# (TIME_LEFT) into whole minutes remaining.  ``%L`` renders as
-# ``D-HH:MM:SS`` once a day or more remains, ``HH:MM:SS`` under a day,
-# and ``MM:SS`` under an hour; a job with no time limit prints
-# ``UNLIMITED``.  Splitting on ``:`` alone mis-handles the ``D-HH``
-# field (bash reads ``D-HH`` as the arithmetic ``D - HH``), so the day
-# component is split off on ``-`` first.  Leading zeros are forced to
-# base 10 to avoid octal errors (``08``/``09``).  Non-numeric values
-# (``UNLIMITED``/``INVALID``/empty) return a large sentinel so no
-# deadline warning ever fires.  Kept as a module constant (not inlined
-# in the f-string) so it is unit-testable under bash and free of
-# brace-escaping noise.
-_SLURM_TIME_LEFT_TO_MINS_SH = r'''
-left_to_mins() {
-    local s="$1" days=0 rest a b c
-    if [ -z "$s" ]; then echo 999999; return; fi
-    case "$s" in
-        *-*) days="${s%%-*}"; rest="${s#*-}" ;;
-        *)   rest="$s" ;;
-    esac
-    IFS=: read -r a b c <<< "$rest"
-    if [ -z "$c" ]; then b="$a"; a=0; fi
-    case "${days}${a}${b}" in
-        *[!0-9]*) echo 999999; return ;;
-    esac
-    echo $(( 10#${days:-0}*1440 + 10#${a:-0}*60 + 10#${b:-0} ))
-}
-'''.strip("\n")
+# ``left_to_mins`` now lives in ``slurm_timer`` (shared by the confined
+# and unconfined launch paths); re-exported here so existing imports and
+# tests keep working.
+_SLURM_TIME_LEFT_TO_MINS_SH = TIME_LEFT_TO_MINS_SH
 
 
 def _start_slurm_timer(
@@ -1193,9 +1170,7 @@ def _start_slurm_timer(
     (module constant ``_SLURM_TIME_LEFT_TO_MINS_SH``) so the
     ``D-HH:MM:SS`` day format is handled correctly and is unit-testable.
     """
-    import shlex
     import subprocess as _sp
-    import textwrap
 
     job_id = session.slurm_job_id
     if not job_id:
@@ -1203,117 +1178,18 @@ def _start_slurm_timer(
 
     tmux_session = f"sucoder-{session.mirror_name}"
 
-    # Defensive shell-quoting.  ``mirror_name`` and therefore
-    # ``tmux_session`` come from configuration the user controls; if a
-    # mirror were ever named with shell metacharacters the unquoted
-    # interpolation below would be a command-injection vector.
-    # ``job_id`` is an int from ``int(token)`` so it's already safe, but
-    # we quote it for symmetry and to insulate against future changes.
-    q_tmux = shlex.quote(tmux_session)
-    q_job = shlex.quote(str(job_id))
-
-    # Use a per-user runtime directory rather than world-writable /tmp.
-    # On a shared HPC compute node, predictable /tmp/slurm-*.warn paths
-    # are subject to symlink races: a co-resident user can pre-create
-    # the path as a symlink to a sensitive file and have the timer
-    # overwrite it.  ``$HOME/.cache/sucoder/`` is per-user (NFS-shared
-    # across nodes, owned by the same uid) and not writable by other
-    # local users on the compute node, which closes that vector.
-    #
-    # The agent reads ``slurm-deadline.warn`` from the same location
-    # (the agent runs as the same user inside tmux on the compute
-    # node), so the path remains discoverable to consumers.
-
-    # The script runs on the compute node, querying squeue via the
-    # login node is unnecessary — SLURM_JOB_ID is in the environment
-    # and squeue works locally on compute nodes too.
-    timer_script = textwrap.dedent(f"""\
-        #!/bin/bash
-        set -u
-        STATE_DIR="${{HOME}}/.cache/sucoder"
-        mkdir -p "$STATE_DIR"
-        chmod 700 "$STATE_DIR" 2>/dev/null || true
-        WARN_FILE="$STATE_DIR/slurm-deadline.warn"
-        WARN5="$STATE_DIR/.slurm-warn-5"
-        WARN15="$STATE_DIR/.slurm-warn-15"
-        WARN30="$STATE_DIR/.slurm-warn-30"
-        rm -f "$WARN5" "$WARN15" "$WARN30" "$WARN_FILE"
-
-        # Wait for the agent tmux session to appear before monitoring.
-        # The timer starts before the session is created, so we must
-        # not treat its absence as "agent exited".
-        TMUX_READY=0
-        for i in $(seq 1 120); do
-            if tmux has-session -t {q_tmux} 2>/dev/null; then
-                TMUX_READY=1
-                break
-            fi
-            sleep 5
-        done
-        if [ "$TMUX_READY" -eq 0 ]; then
-            # User owns SLURM lifecycle (see `sucoder release`); leave
-            # the allocation alone even if the agent's tmux session
-            # never appeared, since the user may want to debug or
-            # reuse the compute node manually.
-            echo "Timed out waiting for tmux session {q_tmux}; SLURM job {q_job} kept alive. Run 'sucoder release' or 'scancel {q_job}' to free the allocation." > "$WARN_FILE"
-            exit 1
-        fi
-
-        # Make each deadline warning linger on the status line so a
-        # full-screen agent TUI doesn't redraw over it before the human
-        # notices (scoped to our session via -t, not the global -g).
-        tmux set-option -t {q_tmux} display-time 15000 2>/dev/null || true
-
-        while true; do
-            left=$(squeue --job {q_job} --noheader -o "%L" 2>/dev/null)
-            if [ -z "$left" ]; then
-                msg="SLURM job {q_job} is no longer queued — allocation may have ended."
-                echo "$msg" > "$WARN_FILE"
-                tmux display-message "$msg" 2>/dev/null
-                break
-            fi
-
-            # If the agent tmux session is gone, write a warning but
-            # do NOT auto-cancel the SLURM allocation.  Users own the
-            # SLURM lifecycle (use `sucoder release <mirror>` for
-            # explicit cancel); an automatic scancel here would tear
-            # down the allocation on transient agent failures and
-            # destroy any chance of reattaching.
-            if ! tmux has-session -t {q_tmux} 2>/dev/null; then
-                echo "Agent tmux session is gone; SLURM job {q_job} kept alive. Run 'sucoder release' or 'scancel {q_job}' to free the allocation." > "$WARN_FILE"
-                break
-            fi
-
-            mins=$(left_to_mins "$left")
-            if [ "$mins" -le 5 ] && [ ! -f "$WARN5" ]; then
-                msg="SLURM: ~${{mins}} min left (job {q_job}). Commit and save NOW."
-                echo "$msg" > "$WARN_FILE"
-                tmux display-message -t {q_tmux} "$msg" 2>/dev/null
-                touch "$WARN5"
-            elif [ "$mins" -le 15 ] && [ ! -f "$WARN15" ]; then
-                msg="SLURM: ~${{mins}} min left (job {q_job}). Start wrapping up."
-                echo "$msg" > "$WARN_FILE"
-                tmux display-message -t {q_tmux} "$msg" 2>/dev/null
-                touch "$WARN15"
-            elif [ "$mins" -le 30 ] && [ ! -f "$WARN30" ]; then
-                msg="SLURM: ~${{mins}} min left (job {q_job})."
-                echo "$msg" > "$WARN_FILE"
-                tmux display-message -t {q_tmux} "$msg" 2>/dev/null
-                touch "$WARN30"
-            fi
-            sleep 60
-        done
-    """)
-
-    # Inject the time-left parser (kept as a module constant so it can
-    # be unit-tested under bash) ahead of the monitoring loop.  Done
-    # post-dedent so the helper's column-0 body doesn't flatten the
-    # common-indent prefix and push the ``#!`` off byte 0.
-    timer_script = timer_script.replace(
-        'rm -f "$WARN5" "$WARN15" "$WARN30" "$WARN_FILE"\n',
-        'rm -f "$WARN5" "$WARN15" "$WARN30" "$WARN_FILE"\n\n'
-        + _SLURM_TIME_LEFT_TO_MINS_SH + "\n",
-        1,
+    # The script is shared with the confined (sbatch) launch path; see
+    # ``slurm_timer.build_timer_script``.  It writes its warnings under
+    # ``$HOME/.cache/sucoder/`` (per-user, NFS-shared, not writable by
+    # other local users) rather than world-writable /tmp, where a
+    # predictable path is subject to symlink races on a shared node.
+    # No snapshot directory: on this path the mirror root is not known
+    # until after the node is up, and today's shared mirror has no
+    # ``origin`` to snapshot to.
+    timer_script = build_timer_script(
+        mirror_token=_sanitize_session_token(session.mirror_name),
+        tmux_session=tmux_session,
+        job_id=job_id,
     )
 
     # Write the script to the compute node via stdin, then run it.

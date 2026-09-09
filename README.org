@@ -742,6 +742,32 @@ targets:
 fields are optional --- omitting them keeps the partition default, which
 is the right behaviour for whole-node partitions.
 
+*** Deadline watchdog and WIP snapshots
+
+Every SLURM-backed session (=salloc= or =confined= =sbatch=) starts a
+small watchdog on the compute node.  It warns at 30, 15, and 5 minutes
+before the allocation's =--time= via =tmux display-message= and by
+writing =$HOME/.cache/sucoder/slurm-deadline-<mirror>.warn= (the
+un-suffixed =slurm-deadline.warn= is also written for prompts that
+poll the older path).  It never cancels the job; that stays with
+=sucoder release=.
+
+The same script snapshots the mirror's dirty working tree (tracked and
+untracked files, not ignored ones) to =refs/sucoder/wip/<mirror>= on
+the mirror's =origin= at each warning and every
+=wip_snapshot_minutes= (default 10; =0= disables the periodic run).  A
+mirror with no =origin= is never snapshotted, so on a shared-filesystem
+mirror this is a no-op today; it becomes live with the local-disk
+tiering described in [[file:docs/local-disk-tiering.org][docs/local-disk-tiering.org]].
+
+#+begin_src yaml
+    slurm:
+      partition: savio4_htc
+      account: co_carleton
+      confined: true
+      wip_snapshot_minutes: 10
+#+end_src
+
 *** Reconnecting
 
 If the SSH connection drops, the tmux session on the login node

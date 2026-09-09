@@ -1517,6 +1517,39 @@ def test_launch_confined_wraps_agent_in_bash_lc(tmp_path, monkeypatch):
     assert "tmux -L sucoder-sample new-session -A -d -s sucoder-sample" in script
 
 
+def test_launch_confined_stages_and_starts_deadline_timer(tmp_path, monkeypatch):
+    """A confined job gets its own deadline watchdog: the timer script is
+    staged next to the batch script and the batch body nohups it inside
+    the cgroup.  Before this, ``_start_slurm_timer`` (salloc path only)
+    meant confined jobs had no watchdog at all."""
+    manager, ctx = _confined_manager(tmp_path, monkeypatch)
+    calls = []
+    manager.executor.run_agent = _confined_responder(calls, sbatch_out="9")
+
+    manager._launch_confined(
+        ctx, ["claude"], remote_prelude_text=None,
+        prelude_sentinel="__X__", env=None, detached=True,
+    )
+    writes = [c for c in calls if c["args"][0] == "sh" and c["input"]]
+    assert len(writes) == 2, "batch script then timer script must both be staged"
+    batch, timer = writes[0], writes[1]
+    timer_path = [t for t in timer["args"][2].split() if "slurm-timer-" in t][0]
+    assert timer_path.endswith("/.cache/sucoder/slurm-timer-sample.sh")
+    assert "chmod 700" in timer["args"][2]
+    # The batch body starts exactly that file, after the session check.
+    assert f"nohup {timer_path} > /dev/null 2>&1 &" in batch["input"]
+    # Confined specifics threaded through: runtime job id, dedicated socket,
+    # the mirror as snapshot dir, the configured cadence.
+    assert 'JOB="${SLURM_JOB_ID:-}"' in timer["input"]
+    assert "TMUX_BIN=(tmux -L sucoder-sample)" in timer["input"]
+    assert "MIRROR_TOKEN=sample" in timer["input"]
+    assert "SNAPSHOT_MINUTES=10" in timer["input"]
+    assert "SNAPSHOT_DIR=" in timer["input"] and "SNAPSHOT_DIR=''" not in timer["input"]
+    # sbatch is submitted only after both files are staged.
+    sbatch_idx = next(i for i, c in enumerate(calls) if c["args"][0] == "sbatch")
+    assert all(calls.index(w) < sbatch_idx for w in writes)
+
+
 def test_launch_confined_session_not_ready_surfaces_log(tmp_path, monkeypatch):
     """If the job is RUNNING but the tmux session never came up, fail loudly
     (with the job-log pointer) instead of attaching into nothing."""
