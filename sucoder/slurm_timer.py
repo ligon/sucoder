@@ -169,14 +169,20 @@ while true; do
         break
     fi
 
+    # A threshold that fires also marks every COARSER one spent.  Marking
+    # only the one that fired let the chain fall through to a less urgent
+    # branch on the next poll, so a job that started with 3 minutes left
+    # warned "Commit and save NOW", then "Start wrapping up", then the
+    # bare 30-minute notice -- urgency running backwards, one `git add -A`
+    # sweep per spurious warning.  Same for any skipped poll (31 -> 14).
     mins=$(left_to_mins "$left")
     if [ "$mins" -le 5 ] && [ ! -f "$WARN5" ]; then
         warn "SLURM: ~${mins} min left (job $JOB). Commit and save NOW."
-        touch "$WARN5"
+        touch "$WARN5" "$WARN15" "$WARN30"
         snapshot_wip
     elif [ "$mins" -le 15 ] && [ ! -f "$WARN15" ]; then
         warn "SLURM: ~${mins} min left (job $JOB). Start wrapping up."
-        touch "$WARN15"
+        touch "$WARN15" "$WARN30"
         snapshot_wip
     elif [ "$mins" -le 30 ] && [ ! -f "$WARN30" ]; then
         warn "SLURM: ~${mins} min left (job $JOB)."

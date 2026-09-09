@@ -247,3 +247,93 @@ def test_snapshot_without_origin_is_a_noop(tmp_path):
 def test_snapshot_missing_or_non_git_dir_is_a_noop(tmp_path):
     assert _snapshot(tmp_path / "nope").returncode == 0
     assert _snapshot(tmp_path).returncode == 0
+
+
+# -- the warning threshold chain, driven under bash ---------------------------
+
+def _drive(tmp_path: Path, time_left: list, **render) -> list:
+    """Run the rendered timer against stubbed squeue/tmux/sleep.
+
+    ``time_left`` is fed to successive ``squeue -o %L`` polls; once it is
+    exhausted the job reads as gone and the loop ends.  Returns the
+    messages the human would have seen, in order.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    counter, log = tmp_path / "n", tmp_path / "msgs"
+    (bin_dir / "squeue").write_text(
+        '#!/bin/bash\n'
+        f'n=$(cat {counter} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {counter}\n'
+        'vals=(' + " ".join(f'"{v}"' for v in time_left) + ')\n'
+        'if [ "$n" -le "${#vals[@]}" ]; then echo "${vals[$((n-1))]}"; fi\n'
+    )
+    # has-session always succeeds; only display-message is recorded.
+    (bin_dir / "tmux").write_text(
+        '#!/bin/bash\n'
+        'case "$1" in\n'
+        f'  display-message) echo "${{@: -1}}" >> {log} ;;\n'
+        '  has-session) exit 0 ;;\n'
+        'esac\n'
+        'exit 0\n'
+    )
+    (bin_dir / "sleep").write_text("#!/bin/bash\nexit 0\n")
+    for f in bin_dir.iterdir():
+        f.chmod(0o755)
+
+    script = tmp_path / "timer.sh"
+    script.write_text(_render(job_id=42, **render))
+    env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}",
+               HOME=str(tmp_path / "home"))
+    (tmp_path / "home").mkdir()
+    subprocess.run(["bash", str(script)], env=env, timeout=60,
+                   capture_output=True, text=True)
+    if not log.exists():
+        return []
+    return [ln for ln in log.read_text().splitlines() if ln.strip()]
+
+
+@_bash
+def test_warnings_escalate_and_never_repeat(tmp_path):
+    """Each threshold fires once, in increasing urgency, and a job that
+    starts inside a threshold does not walk back down the ladder.
+
+    The chain fires the highest *unfired* threshold, so marking only the
+    one that fired let later polls fall through to the *less* urgent
+    branches: a job with 3 minutes left warned "Commit and save NOW",
+    then "Start wrapping up" at 2 minutes, then the bare 30-minute
+    notice at 1 minute -- urgency running backwards as the deadline
+    approached, with a ``git add -A`` sweep behind each spurious
+    warning.  A threshold firing must therefore also mark every coarser
+    one as spent.
+    """
+    # A long job passes each threshold in turn: one warning each, escalating.
+    msgs = _drive(tmp_path, ["2:00:00", "40:00", "25:00", "12:00", "4:00"])
+    deadline = [m for m in msgs if "min left" in m]
+    assert len(deadline) == 3, deadline
+    assert "Start wrapping up" not in deadline[0]
+    assert "Commit and save NOW" not in deadline[0]
+    assert "Start wrapping up" in deadline[1]
+    assert "Commit and save NOW" in deadline[2]
+
+
+@_bash
+def test_short_job_warns_once_at_its_true_urgency(tmp_path):
+    """A job that starts with 3 minutes left gets the 5-minute warning and
+    nothing else -- not a de-escalating sequence down to the 30-minute
+    notice."""
+    msgs = _drive(tmp_path, ["3:00", "2:00", "1:00"])
+    deadline = [m for m in msgs if "min left" in m]
+    assert len(deadline) == 1, f"expected one warning, got {deadline}"
+    assert "Commit and save NOW" in deadline[0]
+
+
+@_bash
+def test_skipped_poll_does_not_walk_back_down(tmp_path):
+    """A poll gap that jumps 31 -> 14 minutes fires the 15-minute warning,
+    then escalates to the 5-minute one; it must not emit the 30-minute
+    notice afterwards."""
+    msgs = _drive(tmp_path, ["31:00", "14:00", "13:00", "4:00"])
+    deadline = [m for m in msgs if "min left" in m]
+    assert len(deadline) == 2, deadline
+    assert "Start wrapping up" in deadline[0]
+    assert "Commit and save NOW" in deadline[1]
