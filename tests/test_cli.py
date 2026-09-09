@@ -12,6 +12,7 @@ import pytest
 
 pytest.importorskip("typer")
 
+import typer
 from typer.testing import CliRunner
 
 from sucoder import cli
@@ -2187,6 +2188,70 @@ def test_build_executor_confined_local_disk_flag_without_config(tmp_path, monkey
     kwargs = captured["kwargs"]
     assert kwargs["local_disk_root"] == "/local"
     assert kwargs["remote_mirror_root"] == str(settings.remote.mirror_root)
+
+
+@pytest.mark.parametrize("cfg_root,override_root,expected", [
+    (None, "/scratch/x", "/scratch/x"),       # root alone implies --local-disk
+    ("/local", "/scratch/x", "/scratch/x"),   # CLI root beats config root
+])
+def test_build_executor_confined_local_disk_root_override(tmp_path, monkeypatch, cfg_root, override_root, expected):
+    import logging
+
+    captured, _ = _install_build_executor_fakes(monkeypatch, tmp_path)
+    config = Config(human_user="coder", mirror_root=tmp_path / "mirrors")
+    settings = _confined_mirror_settings(tmp_path, confined=True)
+    settings.remote.slurm.local_disk = cfg_root
+
+    cli._build_executor(
+        config, logging.getLogger("t"), dry_run=False, mirror_settings=settings,
+        local_disk_root_override=override_root,
+    )
+    kwargs = captured["kwargs"]
+    assert kwargs["local_disk_root"] == expected
+    assert kwargs["remote_mirror_root"] == str(settings.remote.mirror_root)
+
+
+def test_local_disk_root_flag_rejects_no_local_disk(tmp_path, monkeypatch):
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+
+    result = runner.invoke(
+        cli.app,
+        ["--config", str(config_path), "--no-local-disk", "--local-disk-root", "/x",
+         "list", "models"],
+    )
+    assert result.exit_code != 0
+    assert "implies --local-disk" in _plain_output(result)
+
+
+def test_local_disk_root_flag_reaches_build_executor(tmp_path, monkeypatch):
+    """The value is normalised (trailing slash stripped) and handed to
+    ``_build_executor`` as ``local_disk_root_override``; the bool flag
+    stays None so config keeps its say on everything but the root."""
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+    seen = {}
+
+    def fake_build_executor(*args, **kwargs):
+        seen.update(kwargs)
+        raise typer.Exit(code=0)      # captured what we need; skip the command body
+
+    monkeypatch.setattr(cli, "_build_executor", fake_build_executor)
+    result = runner.invoke(
+        cli.app,
+        ["--config", str(config_path), "--local-disk-root", "/scratch/l/", "list", "models", "--harness", "aider"],
+    )
+    assert seen, f"_build_executor was never reached: {_plain_output(result)}"
+    obj = seen["cli_ctx"].obj
+    assert obj["local_disk_root"] == "/scratch/l"
+    assert obj["local_disk"] is None
+    assert cli._get_local_disk_root_override(seen["cli_ctx"]) == "/scratch/l"
 
 
 def test_build_executor_confined_no_local_disk_override_wins(tmp_path, monkeypatch):

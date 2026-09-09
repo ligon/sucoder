@@ -693,9 +693,15 @@ allocation alive.  Only the last holder's =release= runs =scancel=.
 
 By default the agent works directly in the remote mirror on the shared
 filesystem.  On clusters whose compute nodes have fast local scratch,
-=slurm.local_disk= (or =--local-disk= on the command line) moves the
+=slurm.local_disk= (or =--local-disk= on the command line, with
+=--local-disk-root PATH= to pick a root other than =/local=) moves the
 agent's /working tree and caches/ there while the shared mirror stays
 the durable repository:
+
+#+begin_src shell
+sucoder --local-disk -T carleton-htc collaborate SuCoder
+sucoder --local-disk-root /scratch/local -T carleton-htc collaborate SuCoder   # implies --local-disk
+#+end_src
 
 #+begin_src yaml
 targets:
