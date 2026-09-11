@@ -229,9 +229,11 @@ sucoder status project
   prompt when the two histories have diverged.
 - sync :: an alias for =push=, kept for compatibility.
 
-=agents-clone= is for creating the mirror, not for routine pushing: on a
-remote mirror it will rebuild the repository from scratch if it decides
-the remote copy is a half-initialised husk.
+=agents-clone= creates the mirror. Remote startup initializes absent or
+empty directories and recovers valid repositories in place. It never deletes
+a directory because a probe failed or a repository has no default branch.
+Unreadable, invalid, symlinked, or non-repository nonempty paths stop startup
+with a diagnostic; inspect them before retrying.
 
 ** Mirror safety: the pull must succeed before the push
 =push= (and =agents-clone=) send to the mirror with =git push --all
@@ -243,6 +245,10 @@ push is refused rather than allowed to overwrite unretrieved commits.
 An empty or half-initialised mirror is *not* treated as unreadable, so
 first-time bootstrap is unaffected: sucoder asks the mirror whether it
 holds any commits instead of guessing from the error text.
+Any ref (including feature branches, tags, and WIP refs) counts as content,
+even with an unborn HEAD. A repository initialized by this invocation skips
+the initial fetch and receives a non-forcing first push. The
+=--allow-unverified-mirror= override does not bypass initialization checks.
 
 - --allow-unverified-mirror :: Push anyway, discarding any unpulled
   mirror commits.  Use when the mirror is known to be expendable.
@@ -783,10 +789,23 @@ is the right behaviour for whole-node partitions.
 Every SLURM-backed session (=salloc= or =confined= =sbatch=) starts a
 small watchdog on the compute node.  It warns at 30, 15, and 5 minutes
 before the allocation's =--time= via =tmux display-message= and by
-writing =$HOME/.cache/sucoder/slurm-deadline-<mirror>.warn= (the
-un-suffixed =slurm-deadline.warn= is also written for prompts that
-poll the older path).  It never cancels the job; that stays with
+writing a warning under
+=$HOME/.cache/sucoder/timers/<scope>/<node>-<job>/= (the
+un-suffixed =slurm-deadline.warn= and per-mirror
+=slurm-deadline-<mirror>.warn= are also written in the cache root for
+older prompts; these compatibility copies show the last writer).
+It never cancels the job; that stays with
 =sucoder release=.
+
+The scope is a digest of the mirror and target names. The timer uses Linux
+=/proc= and =flock= to verify/reuse a live watchdog for that allocation;
+repeated startup does not restart it or reset warning state. Startup reports
+whether it started or reused a timer. Failures explicitly report that
+deadline warnings and periodic snapshots are unavailable; diagnostics remain
+in =timer.log= beside its =owner= and =status= files. Timers from the older
+implementation are not killed by a broad process-name match; they exit with
+their old allocation. Shared-filesystem lock behavior should be verified
+when bringing up a new target.
 
 The same script snapshots the mirror's dirty working tree (tracked and
 untracked files, not ignored ones) to =refs/sucoder/wip/<mirror>= on

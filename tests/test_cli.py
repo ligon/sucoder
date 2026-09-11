@@ -2325,9 +2325,9 @@ def test_start_slurm_timer_snapshots_the_local_clone_and_retires_the_old_timer(m
 
     assert "SNAPSHOT_DIR=/local/job7/mirrors/sample\n" in rendered[0]
     write_cmd, start_cmd = ssh_cmds[-2][-1], ssh_cmds[-1][-1]
-    assert "slurm-timer-sample.sh" in write_cmd
-    assert "pkill -u \"$USER\" -f '[s]lurm-timer-sample.sh'" in start_cmd
-    assert 'nohup "$HOME/.cache/sucoder/"slurm-timer-sample.sh' in start_cmd
+    assert "mktemp" in write_cmd and "mv" in write_cmd
+    assert "slurm-timer-" in start_cmd and "--ensure" in start_cmd
+    assert "pkill" not in start_cmd
 
 
 def test_build_executor_confined_no_local_disk_override_wins(tmp_path, monkeypatch):

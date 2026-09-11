@@ -67,7 +67,7 @@ def test_confined_mode_reads_job_id_at_runtime_and_threads_socket():
 def test_state_files_are_per_mirror_and_legacy_warn_kept():
     s = _render(mirror_token="alpha")
     assert 'WARN_FILE="$STATE_DIR/slurm-deadline-$MIRROR_TOKEN.warn"' in s
-    assert 'LEGACY_WARN_FILE="$STATE_DIR/slurm-deadline.warn"' in s
+    assert 'LEGACY_WARN_FILE="$CACHE_DIR/slurm-deadline.warn"' in s
     assert "MIRROR_TOKEN=alpha\n" in s
     for n in (5, 15, 30):
         assert f'WARN{n}="$STATE_DIR/.slurm-warn-{n}-$MIRROR_TOKEN"' in s

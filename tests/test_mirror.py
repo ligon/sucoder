@@ -1721,10 +1721,10 @@ def test_launch_confined_stages_and_starts_deadline_timer(tmp_path, monkeypatch)
     assert len(writes) == 2, "batch script then timer script must both be staged"
     batch, timer = writes[0], writes[1]
     timer_path = [t for t in timer["args"][2].split() if "slurm-timer-" in t][0]
-    assert timer_path.endswith("/.cache/sucoder/slurm-timer-sample.sh")
+    assert "/.cache/sucoder/slurm-timer-sample-" in timer_path
     assert "chmod 700" in timer["args"][2]
     # The batch body starts exactly that file, after the session check.
-    assert f"nohup {timer_path} > /dev/null 2>&1 &" in batch["input"]
+    assert f"bash {timer_path} --ensure" in batch["input"]
     # Confined specifics threaded through: runtime job id, dedicated socket,
     # the mirror as snapshot dir, the configured cadence.
     assert 'JOB="${SLURM_JOB_ID:-}"' in timer["input"]

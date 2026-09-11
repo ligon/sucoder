@@ -27,7 +27,15 @@ f-string: it is dense with ``$`` and ``{}``.
 from __future__ import annotations
 
 import shlex
+import hashlib
 from typing import Optional
+
+from .timer_lifecycle import TIMER_LIFECYCLE_SH
+
+
+def timer_identity(mirror_name: str, target_name: Optional[str]) -> str:
+    """Avoid collisions between sanitized names and targets sharing HOME."""
+    return hashlib.sha256(repr((mirror_name, target_name)).encode()).hexdigest()[:24]
 
 # Converts SLURM ``squeue -o %L`` time-left into whole minutes.  ``%L``
 # renders as ``D-HH:MM:SS`` once a day or more remains, ``HH:MM:SS`` under
@@ -106,8 +114,11 @@ TMUX_BIN=(@TMUX_CMD@)
 SNAPSHOT_DIR=@SNAPSHOT_DIR@
 SNAPSHOT_MINUTES=@SNAPSHOT_MINUTES@
 JOB=@JOB_REF@
+TIMER_SCOPE=@TIMER_SCOPE@
+@TIMER_LIFECYCLE@
 WARN_FILE="$STATE_DIR/slurm-deadline-$MIRROR_TOKEN.warn"
-LEGACY_WARN_FILE="$STATE_DIR/slurm-deadline.warn"
+LEGACY_WARN_FILE="$CACHE_DIR/slurm-deadline.warn"
+MIRROR_WARN_FILE="$CACHE_DIR/slurm-deadline-$MIRROR_TOKEN.warn"
 WARN5="$STATE_DIR/.slurm-warn-5-$MIRROR_TOKEN"
 WARN15="$STATE_DIR/.slurm-warn-15-$MIRROR_TOKEN"
 WARN30="$STATE_DIR/.slurm-warn-30-$MIRROR_TOKEN"
@@ -125,6 +136,7 @@ fi
 warn() {
     echo "$1" > "$WARN_FILE"
     echo "$1" > "$LEGACY_WARN_FILE"
+    echo "$1" > "$MIRROR_WARN_FILE"
     "${TMUX_BIN[@]}" display-message -t "$TMUX_SESSION" "$1" 2>/dev/null
 }
 
@@ -149,6 +161,7 @@ fi
 # Make each warning linger on the status line so a full-screen agent TUI
 # does not redraw over it before the human notices.
 "${TMUX_BIN[@]}" set-option -t "$TMUX_SESSION" display-time 15000 2>/dev/null || true
+echo monitoring > "$STATE_DIR/status"
 
 elapsed=0
 while true; do
@@ -197,6 +210,7 @@ def build_timer_script(
     snapshot_dir: Optional[str] = None,
     snapshot_dir_shell: Optional[str] = None,
     snapshot_minutes: int = 10,
+    timer_scope: Optional[str] = None,
 ) -> str:
     """Render the timer script.
 
@@ -231,6 +245,8 @@ def build_timer_script(
     job_ref = '"${SLURM_JOB_ID:-}"' if job_id is None else shlex.quote(str(job_id))
     return (
         _TEMPLATE
+        .replace("@TIMER_SCOPE@", shlex.quote(timer_scope or timer_identity(mirror_token, None)))
+        .replace("@TIMER_LIFECYCLE@", TIMER_LIFECYCLE_SH)
         .replace("@MIRROR_TOKEN@", shlex.quote(mirror_token))
         .replace("@TMUX_SESSION@", shlex.quote(tmux_session))
         .replace("@TMUX_CMD@", tmux_cmd)
