@@ -27,7 +27,15 @@ f-string: it is dense with ``$`` and ``{}``.
 from __future__ import annotations
 
 import shlex
+import hashlib
 from typing import Optional
+
+from .timer_lifecycle import TIMER_LIFECYCLE_SH
+
+
+def timer_identity(mirror_name: str, target_name: Optional[str]) -> str:
+    """Avoid collisions between sanitized names and targets sharing HOME."""
+    return hashlib.sha256(repr((mirror_name, target_name)).encode()).hexdigest()[:24]
 
 # Converts SLURM ``squeue -o %L`` time-left into whole minutes.  ``%L``
 # renders as ``D-HH:MM:SS`` once a day or more remains, ``HH:MM:SS`` under
@@ -93,7 +101,12 @@ snapshot_wip() {
 # State files are per mirror: several confined mirrors share one $HOME,
 # and a second timer's startup ``rm -f`` must not clear the first's
 # markers.  The un-suffixed ``slurm-deadline.warn`` is still written for
-# prompts that poll the legacy path.
+# prompts that poll the legacy path; it is cleared at startup like the
+# rest, or a warning from a previous job ("allocation may have ended")
+# survives into a healthy new session.  It is deliberately NOT per
+# mirror -- that is what the legacy path means -- so with several
+# confined mirrors it is last-writer-wins; the suffixed file is the
+# one to poll.
 _TEMPLATE = r'''#!/bin/bash
 # sucoder SLURM deadline timer + WIP snapshotter (generated; do not edit).
 set -u
@@ -106,12 +119,15 @@ TMUX_BIN=(@TMUX_CMD@)
 SNAPSHOT_DIR=@SNAPSHOT_DIR@
 SNAPSHOT_MINUTES=@SNAPSHOT_MINUTES@
 JOB=@JOB_REF@
+TIMER_SCOPE=@TIMER_SCOPE@
+@TIMER_LIFECYCLE@
 WARN_FILE="$STATE_DIR/slurm-deadline-$MIRROR_TOKEN.warn"
-LEGACY_WARN_FILE="$STATE_DIR/slurm-deadline.warn"
+LEGACY_WARN_FILE="$CACHE_DIR/slurm-deadline.warn"
+MIRROR_WARN_FILE="$CACHE_DIR/slurm-deadline-$MIRROR_TOKEN.warn"
 WARN5="$STATE_DIR/.slurm-warn-5-$MIRROR_TOKEN"
 WARN15="$STATE_DIR/.slurm-warn-15-$MIRROR_TOKEN"
 WARN30="$STATE_DIR/.slurm-warn-30-$MIRROR_TOKEN"
-rm -f "$WARN5" "$WARN15" "$WARN30" "$WARN_FILE"
+rm -f "$WARN5" "$WARN15" "$WARN30" "$WARN_FILE" "$LEGACY_WARN_FILE" "$MIRROR_WARN_FILE"
 
 if [ -z "$JOB" ]; then
     echo "sucoder timer: no SLURM job id (not inside a job?); exiting." > "$WARN_FILE"
@@ -125,6 +141,7 @@ fi
 warn() {
     echo "$1" > "$WARN_FILE"
     echo "$1" > "$LEGACY_WARN_FILE"
+    echo "$1" > "$MIRROR_WARN_FILE"
     "${TMUX_BIN[@]}" display-message -t "$TMUX_SESSION" "$1" 2>/dev/null
 }
 
@@ -142,36 +159,58 @@ done
 if [ "$TMUX_READY" -eq 0 ]; then
     # The user owns the SLURM lifecycle (see `sucoder release`): leave the
     # allocation alone even though the agent never appeared.
-    echo "Timed out waiting for tmux session $TMUX_SESSION; SLURM job $JOB kept alive. Run 'sucoder release' or 'scancel $JOB' to free the allocation." > "$WARN_FILE"
+    echo "Timed out waiting for tmux session $TMUX_SESSION; @LIFECYCLE@" > "$WARN_FILE"
     exit 1
 fi
 
 # Make each warning linger on the status line so a full-screen agent TUI
 # does not redraw over it before the human notices.
 "${TMUX_BIN[@]}" set-option -t "$TMUX_SESSION" display-time 15000 2>/dev/null || true
+echo monitoring > "$STATE_DIR/status"
 
 elapsed=0
+missed=0
 while true; do
-    left=$(squeue --job "$JOB" --noheader -o "%L" 2>/dev/null)
-    if [ -z "$left" ]; then
-        warn "SLURM job $JOB is no longer queued -- allocation may have ended."
-        break
+    if ! left=$(squeue --job "$JOB" --noheader -o "%L" 2>/dev/null); then
+        # Failed queries are unknown state, not evidence the job ended
+        # (ledger 3). Discard partial output and interrupt the empty-query
+        # streak. Still check tmux and take periodic snapshots below.
+        left=""
+        missed=0
+    elif [ -z "$left" ]; then
+        # Only consecutive successful empty queries establish disappearance.
+        missed=$((missed + 1))
+        if [ "$missed" -ge 3 ]; then
+            warn "SLURM job $JOB is no longer queued -- allocation may have ended."
+            break
+        fi
+        sleep 60
+        elapsed=$((elapsed + 1))
+        continue
+    else
+        missed=0
     fi
 
     # Agent gone: record it but do NOT scancel (see above).
     if ! "${TMUX_BIN[@]}" has-session -t "$TMUX_SESSION" 2>/dev/null; then
-        echo "Agent tmux session is gone; SLURM job $JOB kept alive. Run 'sucoder release' or 'scancel $JOB' to free the allocation." > "$WARN_FILE"
+        echo "Agent tmux session is gone; @LIFECYCLE@" > "$WARN_FILE"
         break
     fi
 
+    # A threshold that fires also marks every COARSER one spent.  Marking
+    # only the one that fired let the chain fall through to a less urgent
+    # branch on the next poll, so a job that started with 3 minutes left
+    # warned "Commit and save NOW", then "Start wrapping up", then the
+    # bare 30-minute notice -- urgency running backwards, one `git add -A`
+    # sweep per spurious warning.  Same for any skipped poll (31 -> 14).
     mins=$(left_to_mins "$left")
     if [ "$mins" -le 5 ] && [ ! -f "$WARN5" ]; then
         warn "SLURM: ~${mins} min left (job $JOB). Commit and save NOW."
-        touch "$WARN5"
+        touch "$WARN5" "$WARN15" "$WARN30"
         snapshot_wip
     elif [ "$mins" -le 15 ] && [ ! -f "$WARN15" ]; then
         warn "SLURM: ~${mins} min left (job $JOB). Start wrapping up."
-        touch "$WARN15"
+        touch "$WARN15" "$WARN30"
         snapshot_wip
     elif [ "$mins" -le 30 ] && [ ! -f "$WARN30" ]; then
         warn "SLURM: ~${mins} min left (job $JOB)."
@@ -197,6 +236,7 @@ def build_timer_script(
     snapshot_dir: Optional[str] = None,
     snapshot_dir_shell: Optional[str] = None,
     snapshot_minutes: int = 10,
+    timer_scope: Optional[str] = None,
 ) -> str:
     """Render the timer script.
 
@@ -229,14 +269,33 @@ def build_timer_script(
     )
     tmux_cmd = "tmux" if tmux_socket is None else f"tmux -L {shlex.quote(tmux_socket)}"
     job_ref = '"${SLURM_JOB_ID:-}"' if job_id is None else shlex.quote(str(job_id))
+    # What happens to the allocation when the agent's session goes away is
+    # the opposite in the two modes, and telling a confined user to run
+    # `scancel` on a job that already completed is worse than saying
+    # nothing.  Under sbatch the batch body's keeper loop polls the same
+    # session, so the job ends with it; under salloc the user owns the
+    # allocation and it survives.
+    if job_id is None:
+        lifecycle = (
+            "SLURM job $JOB ends with it (the batch body exits when the "
+            "session does)."
+        )
+    else:
+        lifecycle = (
+            "SLURM job $JOB kept alive. Run 'sucoder release' or "
+            "'scancel $JOB' to free the allocation."
+        )
     return (
         _TEMPLATE
+        .replace("@TIMER_SCOPE@", shlex.quote(timer_scope or timer_identity(mirror_token, None)))
+        .replace("@TIMER_LIFECYCLE@", TIMER_LIFECYCLE_SH)
         .replace("@MIRROR_TOKEN@", shlex.quote(mirror_token))
         .replace("@TMUX_SESSION@", shlex.quote(tmux_session))
         .replace("@TMUX_CMD@", tmux_cmd)
         .replace("@SNAPSHOT_DIR@", snapshot_word)
         .replace("@SNAPSHOT_MINUTES@", str(int(snapshot_minutes)))
         .replace("@JOB_REF@", job_ref)
+        .replace("@LIFECYCLE@", lifecycle)
         .replace("@LEFT_TO_MINS@", TIME_LEFT_TO_MINS_SH)
         .replace("@SNAPSHOT_WIP@", WIP_SNAPSHOT_SH)
     )

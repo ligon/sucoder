@@ -123,11 +123,14 @@ def test_timer_started_after_session_check_before_keeper():
     s = MirrorManager._build_batch_script(
         **_BASE, timer_path="/global/home/users/ligon/.cache/sucoder/slurm-timer-K-Aggregators.sh",
     )
-    nohup = "nohup /global/home/users/ligon/.cache/sucoder/slurm-timer-K-Aggregators.sh > /dev/null 2>&1 &\n"
+    nohup = "bash /global/home/users/ligon/.cache/sucoder/slurm-timer-K-Aggregators.sh --ensure"
     assert nohup in s
     rc_check = s.index("SUCODER: tmux new-session failed")
     keeper = s.index("while tmux -L sucoder-K-Aggregators has-session")
     assert rc_check < s.index(nohup) < keeper
+    # The supervisor checks readiness; a failure remains visible in the job log.
+    assert "--ensure || echo 'SUCODER: timer failed;" in s
+    assert "> /dev/null 2>&1 &" not in s
 
 
 def test_timer_omitted_when_no_path():
@@ -137,7 +140,7 @@ def test_timer_omitted_when_no_path():
 @_bash_only
 def test_timer_path_is_quoted_and_script_parses(tmp_path):
     s = MirrorManager._build_batch_script(**_BASE, timer_path="/p q/t.sh")
-    assert "nohup '/p q/t.sh' > /dev/null 2>&1 &" in s
+    assert "bash '/p q/t.sh' --ensure" in s
     assert _bash_n(s).returncode == 0
 
 

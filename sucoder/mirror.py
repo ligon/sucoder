@@ -19,6 +19,8 @@ from typing import Callable, Dict, List, Literal, Mapping, NamedTuple, NoReturn,
 
 import yaml
 
+from .remote_bootstrap import INITIALIZE_MIRROR_SH
+
 
 class SkillMetadata(NamedTuple):
     """What a skill file's frontmatter yielded.
@@ -74,7 +76,7 @@ from .permissions import (
 )
 from .skills_version import validate_skills_version
 from .local_tier import build_prepare_script, cache_exports_sh, work_path, work_path_shell
-from .slurm_timer import build_timer_script
+from .slurm_timer import build_timer_script, timer_identity
 from .workspace_prefs import WorkspacePrefs
 
 
@@ -891,6 +893,11 @@ class MirrorManager:
         if result.returncode in (-1, 255):
             return True
         stderr = (result.stderr or "").lower()
+        # Git can append "remote end hung up" to a definitive missing-ref
+        # response. That is not a connection fault and won't improve on DTN.
+        if any(line.startswith("fatal: couldn't find remote ref ")
+               for line in stderr.splitlines()):
+            return False
         # The shared transient set, plus ``could not resolve hostname``:
         # for git transport a DNS miss is worth failing over to another
         # node (unlike a ControlMaster bring-up, where it won't self-heal).
@@ -904,6 +911,8 @@ class MirrorManager:
         last = ""
         for line in (result.stderr or "").splitlines():
             stripped = line.strip()
+            if stripped.lower().startswith("fatal: couldn't find remote ref "):
+                return stripped
             if stripped and not stripped.lower().startswith(skip):
                 last = stripped
         return last or f"rc={result.returncode}"
@@ -1443,6 +1452,12 @@ class MirrorManager:
             check=False,
             cwd=remote_path,
         )
+        if result.returncode != 0:
+            raise MirrorError(
+                f"Could not inspect remote working tree {remote_path} "
+                f"(exit {result.returncode}): {result.stderr.strip() or 'no stderr'}. "
+                "Refusing to push over unverified work."
+            )
         dirty = (result.stdout or "").strip()
         if not dirty:
             return True
@@ -1566,7 +1581,7 @@ class MirrorManager:
             cwd=remote_path,
         )
 
-    def _sync_remote(self, ctx: MirrorContext) -> None:
+    def _sync_remote(self, ctx: MirrorContext, *, force: bool = True) -> None:
         """Push local canonical commits to the remote mirror.
 
         Pushes over the login node (the reliable, session-capable
@@ -1584,7 +1599,7 @@ class MirrorManager:
             )
             try:
                 self.executor.run_human(
-                    ["git", "push", url, "--all", "--force"],
+                    ["git", "push", url, "--all"] + (["--force"] if force else []),
                     check=True,
                     cwd=str(ctx.canonical_path),
                     env=env,
@@ -1621,22 +1636,27 @@ class MirrorManager:
     ) -> bool:
         """Return ``True`` if the remote git repo has real content.
 
-        A mirror that exists on disk but has neither a HEAD commit nor
-        the *base* branch is a husk left by a previously failed bootstrap
-        (``git init`` ran, but no push ever landed).  Fetching from such
-        a repo fails with "couldn't find remote ref <base>" and pushing
-        into it is fragile, so callers rebuild it from scratch rather
-        than sync into it.
+        An unborn HEAD is not sufficient evidence of emptiness: feature
+        branches, tags and WIP refs also count. Empty repositories can be
+        populated in place; they are never deleted by this probe.
 
         Raises ``MirrorError`` when the question cannot be answered, which
         is not the same as answering "no" -- see :meth:`_rev_exists`.
         """
         if self._rev_exists(run, remote_path, "HEAD"):
             return True
-        # HEAD may be an unborn symbolic ref pointing at a branch that
-        # does exist (e.g. a non-default checkout); verify the base
-        # branch directly before declaring the repo empty.
-        return self._rev_exists(run, remote_path, f"refs/heads/{base}")
+        # An unborn HEAD can coexist with feature branches, tags, or WIP
+        # refs. None of these may be mistaken for a disposable empty repo.
+        refs = run(
+            ["git", "for-each-ref", "--format=%(refname)", "--count=1"],
+            check=False, cwd=remote_path,
+        )
+        if refs.returncode != 0:
+            raise MirrorError(
+                f"Could not enumerate refs in {remote_path} "
+                f"(exit {refs.returncode}): {refs.stderr.strip()}"
+            )
+        return bool(refs.stdout.strip())
 
     @staticmethod
     def _rev_exists(run: Callable, repo_path: str, ref: str) -> bool:
@@ -1706,59 +1726,28 @@ class MirrorManager:
 
         base = self._resolve_base_branch(ctx)
 
-        # Check if remote mirror is a valid git repo.
-        check = run(
-            ["git", "rev-parse", "--git-dir"],
+        # The remote script initializes only absent/empty directories. A
+        # failed probe never licenses deletion, even with the overwrite flag.
+        probe = run(
+            ["bash", "-c", INITIALIZE_MIRROR_SH, "sucoder-init", abs_remote_path, base],
             check=False,
-            cwd=abs_remote_path,
         )
-        repo_exists = check.returncode == 0
-        # A repo can exist on disk yet be a husk from a previously failed
-        # bootstrap: `git init` ran but no push ever landed, so there are
-        # no commits and no base branch.  That is exactly the state that
-        # produced the "couldn't find remote ref main" fetch failure
-        # followed by a wedged push.  Treat such a husk as broken and
-        # rebuild it rather than syncing into it.
-        repo_usable = repo_exists and self._remote_repo_has_content(
-            run, abs_remote_path, base,
+        marker = probe.stdout.strip().splitlines()[-1:] if probe.stdout else []
+        fresh = marker == ["SUCODER_MIRROR_CREATED"]
+        if not self.executor.dry_run and (
+            probe.returncode != 0 or marker not in (
+                ["SUCODER_MIRROR_CREATED"], ["SUCODER_MIRROR_EXISTING"],
+            )
+        ):
+            raise MirrorError(
+                f"Could not safely initialize remote mirror {abs_remote_path} "
+                f"(exit {probe.returncode}): {probe.stderr.strip() or 'invalid probe response'}. "
+                "Existing files left untouched."
+            )
+        self.logger.info(
+            "%s remote mirror at %s",
+            "Initialized" if fresh else "Using existing", remote_path,
         )
-        if repo_exists and not repo_usable:
-            self.logger.warning(
-                "Remote mirror at %s exists but is empty/half-initialised "
-                "(no commits, no '%s' branch) — rebuilding it from scratch",
-                remote_path, base,
-            )
-
-        if repo_usable:
-            self.logger.info("Remote mirror already exists at %s", remote_path)
-        else:
-            # Clean up a missing/broken/half-initialised directory before
-            # a fresh init.  Safe even when the repo merely existed-but-
-            # empty: a husk has no commits, so there is nothing to lose.
-            run(
-                ["rm", "-rf", abs_remote_path],
-                check=False,
-            )
-            self.logger.info("Initialising remote mirror at %s", remote_path)
-            # Create with restrictive permissions: mirror roots on shared
-            # filesystems are visible to every user on the cluster.
-            run(
-                ["bash", "-c",
-                 f"umask 077 && mkdir -p {shlex.quote(abs_remote_path)}"],
-                check=True,
-            )
-            # Lock down the parent mirrors/ directory too (if we created it).
-            mirrors_parent = abs_remote_path.rsplit("/", 1)[0]
-            if mirrors_parent:
-                run(
-                    ["chmod", "700", mirrors_parent],
-                    check=False,  # may not own the parent
-                )
-            run(
-                ["git", "init", "-b", base],
-                check=True,
-                cwd=abs_remote_path,
-            )
 
         # Always ensure the config is correct (may have been missed
         # by a failed earlier init).
@@ -1768,11 +1757,9 @@ class MirrorManager:
             cwd=abs_remote_path,
         )
 
-        # Pull any agent commits before overwriting the mirror.  A mirror
-        # we just re-initialised above probes as empty, so bootstrap is
-        # unaffected; this only bites when a mirror with commits could not
-        # be read, which is precisely when the push below must not run.
-        if not self._pull_from_remote(ctx) and not allow_unverified_mirror:
+        # Reconcile existing repositories before overwriting any branches.
+        # This invocation's fresh init has nothing to fetch yet.
+        if not fresh and not self._pull_from_remote(ctx) and not allow_unverified_mirror:
             raise MirrorError(self._unverified_mirror_message(ctx))
 
         # The remote mirror uses receive.denyCurrentBranch=updateInstead,
@@ -1788,7 +1775,11 @@ class MirrorManager:
             # is trying to preserve.
             return False
 
-        # Push canonical content to the remote via tunnel.
+        # Initial publication must not overwrite a concurrent writer. Git's
+        # updateInstead populates the unborn checked-out branch on receipt.
+        if fresh:
+            self._sync_remote(ctx, force=False)
+            return True
         self._sync_remote(ctx)
 
         # Ensure HEAD points to the correct branch so that
@@ -2355,7 +2346,7 @@ class MirrorManager:
         session ends, the keeper exits, and the job frees.
 
         ``timer_path`` (a staged ``slurm_timer.build_timer_script`` output)
-        is started with ``nohup`` *after* the session is confirmed and
+        is started/reused through its ``--ensure`` handshake after the session is confirmed and
         before the keeper loop, so it runs inside the job cgroup and dies
         with the job.  Without it a confined job has no deadline watchdog
         at all: ``cli._start_slurm_timer`` only runs on the salloc path.
@@ -2409,7 +2400,8 @@ class MirrorManager:
             "    exit 1\n"
             "fi\n"
             + (
-                f"nohup {shlex.quote(timer_path)} > /dev/null 2>&1 &\n"
+                f"bash {shlex.quote(timer_path)} --ensure || "
+                "echo 'SUCODER: timer failed; deadline warnings and periodic snapshots unavailable' >&2\n"
                 if timer_path else ""
             )
             + f"while tmux -L {q_sock} has-session -t {q_sess} 2>/dev/null; do\n"
@@ -2816,7 +2808,7 @@ class MirrorManager:
         log_path = f"{cache_dir}/job-{safe}-%j.out"
 
         mirror_path = self._resolve_remote_path(ctx)
-        timer_path = f"{cache_dir}/slurm-timer-{safe}.sh"
+        timer_path = f"{cache_dir}/slurm-timer-{safe}-{secrets.token_hex(8)}.sh"
         # Local-disk tiering (docs/local-disk-tiering.org): the executor
         # carries the resolved root (config + --local-disk override); the
         # agent then works in a clone under <root>/job$SLURM_JOB_ID.
@@ -2850,6 +2842,7 @@ class MirrorManager:
                 tmux_socket=socket,
                 snapshot_dir_shell=work_path_shell(local_disk_root, safe),
                 snapshot_minutes=slurm.wip_snapshot_minutes,
+                timer_scope=timer_identity(ctx.settings.name, self.target_name),
             )
         else:
             timer_script = build_timer_script(
@@ -2858,12 +2851,17 @@ class MirrorManager:
                 tmux_socket=socket,
                 snapshot_dir=mirror_path,
                 snapshot_minutes=slurm.wip_snapshot_minutes,
+                timer_scope=timer_identity(ctx.settings.name, self.target_name),
             )
+        # Publish a complete script without truncating an open inode, as on
+        # the SSH launch path (ledger 4). mktemp is unique across nodes that
+        # share HOME, where a PID suffix alone could collide.
         self.executor.run_agent(
             [
                 "sh", "-c",
-                f"umask 077 && cat > {shlex.quote(timer_path)} "
-                f"&& chmod 700 {shlex.quote(timer_path)}",
+                'umask 077 && t=$(mktemp "$1.tmp.XXXXXX") && cat > "$t" '
+                '&& chmod 700 "$t" && mv -f "$t" "$1"',
+                "sucoder-slurm-timer", timer_path,
             ],
             input=timer_script, check=True, capture_output=True,
         )

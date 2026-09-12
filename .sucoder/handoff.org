@@ -1,191 +1,191 @@
-#+title: Savio user-level harness bootstrap
-#+date: 2026-08-25
+#+title: PR 13 cluster validation and issue 15
+#+date: 2026-09-12
 #+status: READY
+#+author: Sue
+#+property: header-args :eval never-export :tangle no :results output :exports code
 
-* Mission
+* Mission and baseline
 
-Install and validate SuCoder's supported harnesses in the Savio account
-=ligon= without root access.  Work only in user-owned locations under
-=$HOME=, preserve existing configuration, and leave a reproducible report in
-this file.
+Validate [[https://github.com/ligon/sucoder/pull/13][PR 13]] on a real Slurm
+allocation and settle [[https://github.com/ligon/sucoder/issues/15][issue 15's]]
+batch-environment Git availability. This is validation, not harness
+installation. The earlier unfinished task is preserved at
+[[file:handoffs/2026-08-25-savio-harness-bootstrap.org][the archived bootstrap handoff]].
 
-This is an empirical bootstrap pass.  Do not redesign SuCoder unless a real
-cluster-side incompatibility requires it; record such an incompatibility for a
-follow-up instead.
+Code baseline: =fe3845f9bcdccc87c813444f534e92cc6c6f0983= on
+=fix/slurm-timer-hardening=. Fetch the current PR head, which also contains
+this handoff, and record its SHA. Do not assume GitHub main includes it.
+Read =AGENTS.md= and =.coder/ledger.md= before making changes.
 
-* Important architecture
+Both launch paths use =bash <timer> --ensure=, allocation-scoped locks, and
+readiness responses. Failed scheduler queries leave monitoring and periodic
+snapshots running. Three consecutive successful empty queries establish
+disappearance. Preserve =258accb='s supervision and startup safety.
 
-- Remote SuCoder sessions intentionally run as the SSH user =ligon=.  There is
-  no remote =coder= account and no remote sudo boundary.  SSH/SLURM and the
-  remote mirror provide the isolation boundary.
-- SuCoder itself runs on the laptop.  It does not need to be installed on
-  Savio.  Only harness binaries and their non-secret user configuration belong
-  on the cluster.
-- Do *not* copy =~/.sucoder/config.yaml=, the password store, GPG keys, or an
-  OpenRouter API key to Savio.  The laptop-side SuCoder process reads the key
-  from =pass= and stages it transiently into the remote harness environment.
-- Never print an API key, inspect its value, put it in argv, or write it to a
-  cluster configuration file.
-- =$HOME= is shared across Savio login and compute nodes.  Install there, not
-  in a node-local directory.
+* Already verified
 
-* Entry checks and stop conditions
+- All 759 tests passed locally on Python 3.12.
+- Python 3.9, Python 3.11, and docs CI passed at =fe3845f= (run =34684599185=).
+- Real bash/flock tests cover concurrent starters, owner reuse, startup
+  failure, snapshots, and preservation of the agent's Git index.
+- Scheduler stubs cover repeated errors, partial output on failure, recovery,
+  and snapshots during outages. No real controller outage was induced.
+- A real-file test checks atomic staging, existing readers, and quoted paths.
 
-First read =AGENTS.md= and this entire handoff.  Then collect:
+These do not establish Slurm cgroups, shared-filesystem locking, or executable
+availability in the actual batch environment.
+
+* Entry checks
+
+SuCoder runs on the launcher host; the remote session runs as the SSH user,
+normally =ligon=. Verify the launcher uses the PR's Python package before
+testing generated scripts. A PR checkout only on the cluster does not update
+the launcher. Record these facts without dumping credentials or environment:
 
 #+begin_src sh
-date
+git status --short --branch
+git rev-parse HEAD
+date -u
 hostname -f
+id -un
 printf 'SLURM_JOB_ID=%s\n' "${SLURM_JOB_ID:-}"
 nproc
-free -h
-squeue --me -o '%i %P %T %L %D %C %m'
-bash -lc 'printf "HOME=%s\nPATH=%s\n" "$HOME" "$PATH"'
+cat /proc/self/cgroup
 #+end_src
 
-If =SLURM_JOB_ID= is empty, this session is on a login node.  Do not run the
-installers there.  Report that the human should relaunch with =-T savio-htc=
-or =-T carleton-htc= and stop.
+Without an allocation, stop before tests/workloads and request a relaunch with
+=-T savio-htc= or =-T carleton-htc=. Use an installed harness. Do not install
+harnesses or copy launcher configuration, keys, or password stores for this task.
 
-Before changing anything, inventory the executable path and version of:
-=claude=, =codex=, =aider=, =opencode=, =goose=, =kimi=, =gitnexus=, =uv=,
-=node=, and =npm=.  Also record =npm config get prefix= and the effective uv
-tool directory.
+* Confined launch smoke test
 
-Known state from a login-shell probe on 2026-08-25:
+Use a disposable mirror and the normal launcher path with a short allocation
+on the configured shared partition. Record partition, account, QoS, CPU count,
+time limit, and local-disk setting. Do not snapshot an active research mirror
+as a test fixture.
 
-- =$HOME= is =/global/home/users/ligon=.
-- =claude= 2.1.245 is present at =~/.local/bin/claude= and is the only
-  installed harness.
-- =node= 20.20.2 and npm 10.8.2 are under =~/.nvm=; that npm prefix is
-  user-writable.
-- =uv= 0.11.29 is at =~/.local/bin/uv=.
-- =gitnexus= 1.6.3 is installed under the current nvm Node prefix.
-- =~/.sucoder/skills= exists and resolves to the shared skills checkout.
-- The current environment sets =UV_TOOL_DIR=/tmp/uv-tools-ligon=.  This is
-  unsuitable: =/tmp= may be node-local or disposable.  Do not install Aider
-  there.  Find where this setting comes from and propose the smallest safe
-  correction.  Until corrected, override it explicitly with a persistent
-  tool root under =$HOME=.
+1. Confirm the batch body runs =bash <timer> --ensure= before the keeper loop.
+   Record the staged timer path/digest. Check job output for
+   =SUCODER_TIMER_STARTED= and absence of startup failure diagnostics.
+2. Inspect the matching directory under
+   =/tmp/sucoder-<uid>/timers/<scope>/<node>-<job>/=. Record =owner=, =status=,
+   and sanitized =timer.log=. Status should reach =monitoring=.
+3. On that allocated node, in the same job environment, run
+   =bash <exact-staged-timer-path> --ensure= twice. Expect
+   =SUCODER_TIMER_REUSED= with the same owner PID/start-time pair.
+   From a login node, use the confined job's =srun --overlap= route.
+4. Compare =/proc/<owner-pid>/cgroup= with the job's cgroup. The watchdog must
+   belong to the allocation and survive detaching the client.
+5. Enable local-disk tiering for the disposable mirror. Verify the timer's
+   snapshot directory is its node-local clone and origin is the shared mirror.
+   Create small tracked and untracked text changes; record =git write-tree=
+   before and after a snapshot. Verify =refs/sucoder/wip/<mirror-token>= on
+   the shared origin contains both changes and the agent's index is unchanged.
+6. Let the short allocation enter a warning threshold. Check warning files
+   and WIP refs. Starting below five minutes should yield one urgent warning,
+   with no subsequent less urgent notices.
+7. End only the disposable tmux session. Under sbatch the keeper should exit
+   and the allocation complete. Exiting just the agent can leave a fallback
+   shell alive; that is not the same as ending tmux. Do not kill unrelated
+   sessions or use process-name matching for cleanup.
 
-* Installation policy
+If an unconfined target is already available, check SSH readiness and reuse
+there too. Otherwise mark it untested; do not reserve a whole node solely for
+this checklist.
 
-- Install the latest *stable* releases from official upstream sources.  Do not
-  install beta/nightly builds.
-- Prefer isolated or native distributions.  Do not install Python tools into
-  system Python 3.6 or a project environment.
-- Keep executable shims in =~/.local/bin= or the existing user-owned nvm
-  prefix.  A fresh =bash -lc= must resolve every harness without manual setup.
-- Download installer scripts from official locations, inspect their relevant
-  install-path behavior before execution, and do not use sudo.
-- Preserve existing config files.  Before editing one, make a timestamped,
-  mode-preserving backup beside it.  Never commit home-directory config or
-  backups to this repository.
-- Do not delete stale installations during this pass.  Report shadowed or
-  duplicate copies and recommend cleanup separately.
+* Issue 15: actual batch environment
 
-Install these harnesses:
-
-1. *Aider*: use uv's isolated tool installation with Python 3.12 and
-   =aider-chat@latest=.  Explicitly set a persistent =UV_TOOL_DIR= under
-   =~/.local/share/uv= and =UV_TOOL_BIN_DIR=$HOME/.local/bin= for the command.
-2. *Codex*: install the stable =@openai/codex= package using the existing
-   user-owned npm prefix, unless the current official standalone installer is
-   materially better on this host.
-3. *OpenCode*: install stable OpenCode 1 (=opencode-ai=, executable
-   =opencode=).  Do not substitute the OpenCode 2 beta executable
-   =opencode2=; SuCoder's current profile targets =opencode=.
-4. *Goose*: install the CLI, not the desktop application, using the official
-   =aaif-goose/goose= stable installer with configuration disabled during
-   install.  Its executable should land in =~/.local/bin=.
-5. *Kimi*: install current stable *Kimi Code CLI* from MoonshotAI's official
-   installer.  Prefer its current native/single-binary distribution rather
-   than adding a Node-version dependency merely for installation.  Confirm
-   that =kimi --help= still provides the flags SuCoder uses: =--agent-file=,
-   =--auto=, =--add-dir=, and model/provider support.
-
-Inspect the existing Claude and GitNexus installations.  Update them only via
-their native/official update path when a newer stable release is actually
-available.  Do not replace a working install merely to make all tools use the
-same package manager.
-
-Official starting points (verify them at execution time):
-
-- Aider: https://aider.chat/docs/install.html
-- Codex: https://github.com/openai/codex
-- OpenCode: https://opencode.ai/docs/
-- Goose: https://github.com/aaif-goose/goose
-- Kimi Code: https://github.com/MoonshotAI/kimi-code
-
-* Provider and harness configuration
-
-Configure only non-secret provider metadata on Savio.  The target model for
-smoke testing is =openrouter/moonshotai/kimi-k3=.
-
-- Aider and OpenCode should consume =OPENROUTER_API_KEY= from the launch
-  environment and accept the provider-prefixed model name.
-- Native Kimi is adapted by SuCoder through temporary =KIMI_MODEL_*= variables;
-  do not persist the key in Kimi's config.
-- Goose natively recognizes =OPENROUTER_API_KEY=, but it may also require
-  non-secret provider/model selection (=openrouter= and
-  =moonshotai/kimi-k3=).  Configure that metadata without a key.  If SuCoder's
-  generic =--model openrouter/...= spelling does not match Goose's CLI, record
-  the exact error as a local SuCoder adapter gap rather than storing a secret
-  to work around it.
-- Codex uses custom model-provider configuration for OpenAI-compatible
-  endpoints.  Add a key-free OpenRouter provider stanza only if current Codex
-  supports sourcing its key from =OPENROUTER_API_KEY=.  If SuCoder's model
-  prefix needs translation for Codex, record the exact required mapping rather
-  than embedding credentials.
-- Leave Claude's existing authentication and configuration intact.
-
-* Verification
-
-After installation, start a fresh login shell and record, for every harness:
-
-1. =command -v= result;
-2. version;
-3. whether the path is under =$HOME= and visible on both the allocated compute
-   node and a login shell;
-4. whether its SuCoder-required flags are present;
-5. whether native Agent Skills, shell execution, file editing, MCP, and
-   subagents are available as expected.
-
-Do not claim provider success from =--version=.  Perform a minimal live
-OpenRouter smoke test only when the launch environment already contains the
-transient key; do not ask the human to paste it into the cluster.  Keep API use
-small.  If this bootstrap Claude session has no OpenRouter environment, leave
-the live tests for the laptop-side relaunch commands below.
-
-The human will validate each completed harness from the laptop with commands
-of this form:
+An interactive =bash -lc= or =srun= inheriting an already repaired PATH does
+not settle this issue. Run this payload directly in a fresh sbatch body,
+before any login-shell wrapper or module setup. Use the normal launcher's
+submission environment/export policy and configured account/partition/QoS,
+one task, and a short time limit. Record the exact submission command.
+Do not use =env -i= to manufacture a failure.
 
 #+begin_src sh
-sucoder -T savio-htc collaborate SuCoder --harness aider --model openrouter/moonshotai/kimi-k3
-sucoder -T savio-htc collaborate SuCoder --harness opencode --model openrouter/moonshotai/kimi-k3
-sucoder -T savio-htc collaborate SuCoder --harness goose --model openrouter/moonshotai/kimi-k3
-sucoder -T savio-htc collaborate SuCoder --harness kimi --model openrouter/moonshotai/kimi-k3
+#!/bin/bash
+date -u
+hostname -f
+printf 'SLURM_JOB_ID=%s\n' "${SLURM_JOB_ID:-}"
+for executable in git bash flock nohup tmux squeue; do
+    if command -v "$executable"; then
+        printf 'FOUND %s\n' "$executable"
+    else
+        printf 'MISSING %s\n' "$executable"
+    fi
+done
+if command -v git >/dev/null 2>&1; then
+    git --version
+fi
 #+end_src
 
-Test Codex separately after confirming its OpenRouter provider mapping.
+If Git is missing, preserve the failed lookup and compare a separate
+login-shell probe. Identify the existing module/PATH setup supplying Git.
+Propose the smallest timer-environment fix and a once-per-watchdog diagnostic
+with targeted tests. Follow impact-analysis rules before implementation; do
+not silently edit shell startup files or persist secrets.
+
+If Git is present, record its path/version and a successful snapshot. This
+establishes this target's behavior, not every site's. The missing-Git diagnostic
+remains a separate hardening question in issue 15.
+
+* Regression checks and boundaries
+
+Run from the PR checkout root inside the allocation:
+
+#+begin_src sh
+pytest -q tests/test_slurm_timer_script.py tests/test_timer_lifecycle.py tests/test_batch_script.py
+#+end_src
+
+These tests stub scheduler responses; distinguish them from native validation.
+Never disrupt the scheduler or other jobs to simulate outages. Issues
+[[https://github.com/ligon/sucoder/issues/14][14]] (object retention) and
+[[https://github.com/ligon/sucoder/issues/16][16]] (compatibility warning/WIP-ref
+collisions) remain outside this task. Do not prune or change permissions.
 
 * Deliverable
 
-Replace the =Outcome= section below with:
+Replace Outcome with tested SHA, target, node, job ID, timestamp, submission
+options, exact commands, and pass/fail/untested results for each step. Include
+sanitized logs, Git path/version, snapshot ref/tree IDs, and environment
+failures with reproduction commands.
 
-- a table of harness, exact version, resolved path, install/update method, and
-  smoke-test result;
-- any persistent shell/config changes, with backup paths;
-- unresolved SuCoder adapter gaps, including exact reproduction commands and
-  sanitized errors;
-- the exact idempotent commands that should become a future target-bootstrap
-  script;
-- a recommendation about the bad =UV_TOOL_DIR=/tmp/uv-tools-ligon= setting.
-
-Do not record secrets or secret-derived output.  Commit only repository files
-that document or implement the bootstrap; never commit files copied from
-=$HOME=.
+Commit the report on the PR branch and summarize results on PR 13 and issue
+15. Mark this handoff COMPLETE when the report distinguishes all remaining
+untested items. Sign as Sue. No cluster execution is claimed yet.
 
 * Outcome
 
-Pending remote execution.
+Partial validation on 2026-09-12, via =ssh carleton-htc-ln= and
+=srun --jobid=38661192 --overlap --ntasks=1 --cpus-per-task=1 bash -s=.
+Node =n0036.savio4=, account =co_carleton=, QoS
+=carleton_htc4_normal=, partition =savio4_htc=; reused the existing allocation.
+
+PR baseline =81dd48d93ed47853d3a2d0907ca5b2efc2ff3966= failed startup:
+=flock: 8: No locks available=. Independent probes returned 71 on NFS
+HOME and 0 on node-local /tmp. The fix on =fix/pr13-node-local-locks=
+moves runtime state to a private, owner-checked mode-700 /tmp directory,
+without changing shared script staging or compatibility warning paths.
+
+With the fixed generated script, native startup and two reuse calls passed.
+The watchdog and test shell both belonged to
+=/system.slice/slurmstepd.scope/job_38661192/step_4/user/task_0=.
+Git =2.43.7= at =/usr/bin/git= pushed tracked and untracked changes from
+=/tmp/sucoder-pr13-native.Og6uY7/work= to the durable NFS fixture
+=/global/home/users/ligon/.cache/sucoder/pr13-snapshot.gLzDQe=.
+The real index was unchanged. After ending only the disposable tmux session,
+the watchdog exited and removed its owner/status records (WATCHDOG_EXIT_PASS).
+Snapshot ref
+=refs/sucoder/wip/pr13-review-smoke= resolved to
+=a923fb24baeb0d55797e617235aaafead715e7c1=, tree
+=95ee90e4f9f9225f47a84b6fa37499492e15409b=.
+
+Local validation: 763 tests pass on Python 3.11. The NFS-lock regression
+fails against the original PR template and passes with the fix. Additional
+cases reject symlink, public, and non-directory runtime roots without
+modifying them.
+
+Still untested: fresh sbatch environment (issue 15), end-to-end normal
+launcher submission, native threshold timing, /local clone preparation,
+and unconfined SSH launch. This srun probe does not settle issue 15.
+The existing allocation was not cancelled. Full handoff remains READY.
