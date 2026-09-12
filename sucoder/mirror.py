@@ -725,7 +725,7 @@ class MirrorManager:
         assert remote is not None
 
         remote_path = self._resolve_remote_path(ctx)
-        gateway = remote.gateway
+        gateway = "" if remote.host else remote.gateway
         debug_ssh = getattr(self.executor, "debug_ssh", False)
 
         # Harden the git transport the same way the rest of the executor
@@ -754,6 +754,8 @@ class MirrorManager:
         if not debug_ssh:
             # -vvv (debug) sets its own LogLevel; don't override it.
             hardening.extend(["-o", "LogLevel=ERROR"])
+        if remote.host:
+            hardening.extend(remote.direct_ssh_options())
         # Same guards for the inner ProxyCommand ssh (embedded as one -o
         # arg, so spelled out as a string rather than a parts list).
         proxy_quiet = "" if debug_ssh else "-o LogLevel=ERROR "
@@ -830,7 +832,7 @@ class MirrorManager:
                 ])
 
         git_ssh_cmd = " ".join(shlex.quote(p) for p in ssh_cmd_parts)
-        host = login_node or gateway
+        host = remote.host or login_node or gateway
         url = f"{host}:{remote_path}"
 
         env = dict(os.environ)
@@ -6044,8 +6046,20 @@ If you find issues, describe each one clearly with the filename and specific con
         except RuntimeError:
             pass
         target_name = obj.get("target_name") or remote.gateway.split(".")[0]
+        if remote.host and self.target_name:
+            target_name = self.target_name
 
         remote_url = f"{remote.gateway}:{ctx.remote_mirror_path}"
+        if remote.host:
+            host = f"{remote.remote_user}@{remote.host}" if remote.remote_user else remote.host
+            port = remote.ssh_options.get("Port")
+            if port:
+                path = str(ctx.remote_mirror_path)
+                if not path.startswith(("/", "~")):
+                    path = "~/" + path
+                remote_url = f"ssh://{host}:{port}/{path.lstrip('/')}"
+            else:
+                remote_url = f"{host}:{ctx.remote_mirror_path}"
 
         result = self.executor.run_human(
             ["git", "remote", "get-url", target_name],

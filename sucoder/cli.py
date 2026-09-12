@@ -420,6 +420,20 @@ def _login_node_via_gateway(gw_control, gateway, *, debug_ssh: bool = False) -> 
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
+def _direct_control(remote, session, logger, *, debug_ssh=False, config=None):
+    """Connect to the configured SSH destination without discovering cluster hops."""
+    from .tunnel import SshControl
+
+    control = SshControl(gateway=remote.host, **remote.ssh_control_kwargs(), debug=debug_ssh)
+    _connect_with_retry(control, remote.host, logger, config=config)
+    session.login_node = remote.host
+    session.compute_node = None
+    session.slurm_job_id = None
+    session.remote_mirror_root = str(remote.mirror_root)
+    session.save()
+    return control
+
+
 def _build_executor(
     config: Config,
     logger,
@@ -459,6 +473,24 @@ def _build_executor(
                 cli_ctx = None
         _target_name = ((cli_ctx.obj or {}).get("target_name") if cli_ctx else None)
         session = RemoteSession.load(mirror_settings.name, target_name=_target_name)
+
+        if remote.host:
+            try:
+                control = _direct_control(remote, session, logger, debug_ssh=debug_ssh, config=config)
+            except TunnelError as exc:
+                typer.echo(str(exc) + _ssh_debug_hint(debug_ssh), err=True)
+                raise typer.Exit(code=1) from exc
+            ssh_options = remote.direct_ssh_option_map()
+            x11_on, x11_explicit = _resolve_x11(remote, _get_x11_override(cli_ctx), logger)
+            return RemoteExecutor(
+                human_user=config.human_user, agent_user=config.human_user,
+                agent_group=config.human_user, logger=logger, dry_run=dry_run,
+                use_sudo_for_agent=False, gateway="", login_node=remote.host,
+                remote_mirror_root=str(remote.mirror_root),
+                local_mirror_root=str(config.mirror_root), ssh_options=ssh_options,
+                control_socket_path=str(control.socket_path), debug_ssh=debug_ssh,
+                forward_x11=x11_on, forward_x11_explicit=x11_explicit,
+            )
 
         # 0. Reconcile the mirror pin with the warm tunnel node so we ride a
         #    live login node instead of a stale one that drifted apart from
@@ -2236,6 +2268,18 @@ def collaborate(
     # _ensure_slurm_node uses --nodelist to request that node.
     if node:
         from .session import RemoteSession
+        # A direct SSH target has exactly one host and no scheduler, so
+        # there is no node to request.  Reject it here rather than
+        # silently dropping the flag: ``_direct_control`` clears
+        # ``compute_node`` on connect, so the pin below would vanish.
+        # ``attach`` and ``tunnel forward`` refuse --node the same way.
+        _direct = _get_active_target(ctx)
+        if _direct is None:
+            _ms = config.mirrors.get(mirror)
+            _direct = _ms.remote if _ms else None
+        if _direct is not None and _direct.host:
+            typer.echo("--node requires a cluster target.", err=True)
+            raise typer.Exit(code=1)
         # ``ctx`` is the typer.Context for this subcommand and carries
         # the callback's obj; don't go through click.get_current_context
         # (typer >=0.21 doesn't push onto Click's global stack).
@@ -2493,6 +2537,22 @@ def attach(
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     debug_ssh = _get_debug_ssh(ctx)
     x11_on, x11_explicit = _resolve_x11(remote, _get_x11_override(ctx), logger)
+
+    if remote.host:
+        from .executor import RemoteExecutor
+        from typing import cast
+
+        if node:
+            typer.echo("--node requires a cluster target.", err=True)
+            raise typer.Exit(code=1)
+        executor = _build_executor(config, logger, dry_run=False, mirror_settings=settings,
+                                   debug_ssh=debug_ssh, cli_ctx=cast(click.Context, ctx))
+        assert isinstance(executor, RemoteExecutor)
+        name = shlex.quote(f"sucoder-{mirror}")
+        command = f"tmux attach-session -t {name} || tmux new-session -s {name}"
+        argv = executor._build_ssh_command(["bash", "-c", command], allocate_tty=True)
+        os.execvp("ssh", argv)
+        return
 
     # Ride the warm tunnel node rather than a stale mirror pin (SLURM only).
     _reconcile_login_node(remote, session, _tgt_name, logger)
@@ -3341,6 +3401,10 @@ def _warm_free_tunnels(remote, session, logger, *, debug_ssh: bool, config=None)
     import subprocess as _sp
     from .tunnel import SshControl, TunnelError
 
+    if remote.host:
+        control = _direct_control(remote, session, logger, debug_ssh=debug_ssh, config=config)
+        return control, control, control
+
     gw_control = SshControl(
         gateway=remote.gateway,
         **remote.ssh_control_kwargs(),
@@ -3430,6 +3494,10 @@ def tunnel_up(
         raise typer.Exit(code=1) from exc
 
     typer.echo(f"Warm tunnels for target {target_name} (ControlPersist {remote.control_persist}):")
+    if remote.host:
+        typer.echo(f"  {'✓' if gw.is_active() else '✗'} host     {remote.host}")
+        typer.echo("Direct target: using the configured SSH host; no cluster aliases needed.")
+        return
     typer.echo(f"  {'✓' if gw and gw.is_active() else '✗'} gateway  {remote.gateway}")
     if session.login_node:
         typer.echo(f"  {'✓' if ln and ln.is_active() else '✗'} login    {session.login_node}")
@@ -3477,7 +3545,7 @@ def tunnel_status(
 
     gw = SshControl(gateway=remote.gateway, **remote.ssh_control_kwargs())
     hops = [("gateway", remote.gateway, gw)]
-    if session.login_node:
+    if session.login_node and not remote.host:
         hops.append((
             "login", session.login_node,
             SshControl(
@@ -3487,15 +3555,18 @@ def tunnel_status(
                 jump_control=gw,
             ),
         ))
-    hops.append((
-        "dtn", remote.transfer_host,
-        SshControl(
-            gateway=remote.transfer_host,
-            **remote.ssh_control_kwargs(),
-            jump_host=remote.gateway,
-            jump_control=gw,
-        ),
-    ))
+    if remote.host:
+        hops = [("host", remote.host, gw)]
+    else:
+        hops.append((
+            "dtn", remote.transfer_host,
+            SshControl(
+                gateway=remote.transfer_host,
+                **remote.ssh_control_kwargs(),
+                jump_host=remote.gateway,
+                jump_control=gw,
+            ),
+        ))
 
     results = [
         {"hop": name, "host": host, "active": ctrl.is_active()}
@@ -3587,6 +3658,11 @@ def tunnel_doctor(ctx: typer.Context) -> None:
     from .session import RemoteSession
 
     remote, target_name = _resolve_tunnel_target(ctx)
+    if remote.host:
+        typer.echo(f"Direct SSH target {target_name}: {remote.host}")
+        typer.echo("Uses the configured host/SSH alias; no cluster aliases or login-node pin required.")
+        typer.echo("Run `tunnel status` to check the connection.")
+        return
     session = RemoteSession.load(_tunnel_session_name(target_name))
     aliases = sshconfig.alias_names(target_name)
     problems = 0
@@ -3695,6 +3771,8 @@ def tunnel_down(
 
     # Close children before the gateway they ride on.
     hosts = [h for h in (session.login_node, remote.transfer_host, remote.gateway) if h]
+    if remote.host:
+        hosts = [remote.host]
     for host in hosts:
         SshControl(gateway=host, **remote.ssh_control_kwargs()).close(logger)
         typer.echo(f"  closed {host}")
@@ -3837,7 +3915,10 @@ def tunnel_forward(
             )
         return
 
-    node = _resolve_forward_node(target_name, node)
+    if remote.host and node and node != remote.host:
+        typer.echo("--node cannot override a direct SSH target.", err=True)
+        raise typer.Exit(code=1)
+    node = remote.host or _resolve_forward_node(target_name, node)
 
     existing = next(
         (f for f in session.forwards if f.get("local_port") == local), None,
@@ -3851,36 +3932,43 @@ def tunnel_forward(
         )
         raise typer.Exit(code=1)
 
-    # Reuse a live node master (e.g. a running collaborate session's)
-    # outright; only when there is none do we walk the gw -> ln -> node
-    # chain, and the warm gw/ln sockets make that OTP-free.
-    gw_control = SshControl(
-        gateway=remote.gateway, **remote.ssh_control_kwargs(), debug=debug_ssh,
-    )
-    ln_control = SshControl(
-        gateway=session.login_node, **remote.ssh_control_kwargs(),
-        jump_host=remote.gateway, jump_control=gw_control, debug=debug_ssh,
-    ) if session.login_node else None
-    node_control = SshControl(
-        gateway=node, **remote.ssh_control_kwargs(),
-        jump_host=session.login_node,
-        jump_control=ln_control, debug=debug_ssh,
-    )
-    try:
-        if not node_control.is_active():
-            if not session.login_node:
-                typer.echo(
-                    f"Login node not pinned — run `sucoder -T {target_name} "
-                    "tunnel up` first.",
-                    err=True,
-                )
-                raise typer.Exit(code=1)
-            _connect_with_retry(gw_control, remote.gateway, logger, config=config)
-            _connect_with_retry(ln_control, session.login_node, logger)
-            _connect_with_retry(node_control, node, logger)
-    except TunnelError as exc:
-        typer.echo(str(exc) + _ssh_debug_hint(debug_ssh), err=True)
-        raise typer.Exit(code=1) from exc
+    if remote.host:
+        try:
+            node_control = _direct_control(remote, session, logger, debug_ssh=debug_ssh, config=config)
+        except TunnelError as exc:
+            typer.echo(str(exc) + _ssh_debug_hint(debug_ssh), err=True)
+            raise typer.Exit(code=1) from exc
+    else:
+        # Reuse a live node master (e.g. a running collaborate session's)
+        # outright; only when there is none do we walk the gw -> ln -> node
+        # chain, and the warm gw/ln sockets make that OTP-free.
+        gw_control = SshControl(
+            gateway=remote.gateway, **remote.ssh_control_kwargs(), debug=debug_ssh,
+        )
+        ln_control = SshControl(
+            gateway=session.login_node, **remote.ssh_control_kwargs(),
+            jump_host=remote.gateway, jump_control=gw_control, debug=debug_ssh,
+        ) if session.login_node else None
+        node_control = SshControl(
+            gateway=node, **remote.ssh_control_kwargs(),
+            jump_host=session.login_node,
+            jump_control=ln_control, debug=debug_ssh,
+        )
+        try:
+            if not node_control.is_active():
+                if not session.login_node:
+                    typer.echo(
+                        f"Login node not pinned — run `sucoder -T {target_name} "
+                        "tunnel up` first.",
+                        err=True,
+                    )
+                    raise typer.Exit(code=1)
+                _connect_with_retry(gw_control, remote.gateway, logger, config=config)
+                _connect_with_retry(ln_control, session.login_node, logger)
+                _connect_with_retry(node_control, node, logger)
+        except TunnelError as exc:
+            typer.echo(str(exc) + _ssh_debug_hint(debug_ssh), err=True)
+            raise typer.Exit(code=1) from exc
 
     spec = _forward_spec(local, port)
     rc, err = _mux_forward("forward", spec, str(node_control.socket_path), node)

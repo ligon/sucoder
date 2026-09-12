@@ -37,6 +37,15 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 # Named execution targets for remote hosts (optional).
 # Use --target/-T on the CLI to select one.
 # targets:
+#   workstation:
+#     host: workstation.example.org  # or an existing ~/.ssh/config alias
+#     remote_user: <remote-username>  # optional; otherwise use SSH's configured user
+#     mirror_root: ~/mirrors
+#     # ssh_options:
+#     #   Port: 2222
+#     #   IdentityFile: ~/.ssh/workstation
+#     # host excludes gateway, transfer_host, slurm, and BRC cert_file.
+#     # No scheduler or watchdog; Git, bash, tmux, and the harness run as this user.
 #   savio:
 #     gateway: hpc.brc.berkeley.edu
 #     transfer_host: dtn.brc.berkeley.edu

@@ -628,7 +628,7 @@ class RemoteExecutor(CommandExecutor):
                 ])
         for key, val in self.ssh_options.items():
             ssh_cmd.extend(["-o", f"{key}={val}"])
-        if self.control_socket_path:
+        if self.control_socket_path or not self.gateway:
             ssh_cmd.append(self.login_node)
         else:
             ssh_cmd.extend(["-J", self.gateway, self.login_node])
