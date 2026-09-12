@@ -68,7 +68,7 @@ as a test fixture.
    Record the staged timer path/digest. Check job output for
    =SUCODER_TIMER_STARTED= and absence of startup failure diagnostics.
 2. Inspect the matching directory under
-   =~/.cache/sucoder/timers/<scope>/<node>-<job>/=. Record =owner=, =status=,
+   =/tmp/sucoder-<uid>/timers/<scope>/<node>-<job>/=. Record =owner=, =status=,
    and sanitized =timer.log=. Status should reach =monitoring=.
 3. On that allocated node, in the same job environment, run
    =bash <exact-staged-timer-path> --ensure= twice. Expect
@@ -156,4 +156,36 @@ untested items. Sign as Sue. No cluster execution is claimed yet.
 
 * Outcome
 
-Pending an agent with cluster access. Prepared by Sue, 2026-09-12.
+Partial validation on 2026-09-12, via =ssh carleton-htc-ln= and
+=srun --jobid=38661192 --overlap --ntasks=1 --cpus-per-task=1 bash -s=.
+Node =n0036.savio4=, account =co_carleton=, QoS
+=carleton_htc4_normal=, partition =savio4_htc=; reused the existing allocation.
+
+PR baseline =81dd48d93ed47853d3a2d0907ca5b2efc2ff3966= failed startup:
+=flock: 8: No locks available=. Independent probes returned 71 on NFS
+HOME and 0 on node-local /tmp. The fix on =fix/pr13-node-local-locks=
+moves runtime state to a private, owner-checked mode-700 /tmp directory,
+without changing shared script staging or compatibility warning paths.
+
+With the fixed generated script, native startup and two reuse calls passed.
+The watchdog and test shell both belonged to
+=/system.slice/slurmstepd.scope/job_38661192/step_4/user/task_0=.
+Git =2.43.7= at =/usr/bin/git= pushed tracked and untracked changes from
+=/tmp/sucoder-pr13-native.Og6uY7/work= to the durable NFS fixture
+=/global/home/users/ligon/.cache/sucoder/pr13-snapshot.gLzDQe=.
+The real index was unchanged. After ending only the disposable tmux session,
+the watchdog exited and removed its owner/status records (WATCHDOG_EXIT_PASS).
+Snapshot ref
+=refs/sucoder/wip/pr13-review-smoke= resolved to
+=a923fb24baeb0d55797e617235aaafead715e7c1=, tree
+=95ee90e4f9f9225f47a84b6fa37499492e15409b=.
+
+Local validation: 763 tests pass on Python 3.11. The NFS-lock regression
+fails against the original PR template and passes with the fix. Additional
+cases reject symlink, public, and non-directory runtime roots without
+modifying them.
+
+Still untested: fresh sbatch environment (issue 15), end-to-end normal
+launcher submission, native threshold timing, /local clone preparation,
+and unconfined SSH launch. This srun probe does not settle issue 15.
+The existing allocation was not cancelled. Full handoff remains READY.

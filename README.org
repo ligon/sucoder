@@ -790,9 +790,9 @@ Every SLURM-backed session (=salloc= or =confined= =sbatch=) starts a
 small watchdog on the compute node.  It warns at 30, 15, and 5 minutes
 before the allocation's =--time= via =tmux display-message= and by
 writing a warning under
-=$HOME/.cache/sucoder/timers/<scope>/<node>-<job>/= (the
+=/tmp/sucoder-<uid>/timers/<scope>/<node>-<job>/= (the
 un-suffixed =slurm-deadline.warn= and per-mirror
-=slurm-deadline-<mirror>.warn= are also written in the cache root for
+=slurm-deadline-<mirror>.warn= are also written in =$HOME/.cache/sucoder/= for
 older prompts; these compatibility copies show the last writer).
 It never cancels the job; that stays with
 =sucoder release=.
@@ -804,8 +804,15 @@ whether it started or reused a timer. Failures explicitly report that
 deadline warnings and periodic snapshots are unavailable; diagnostics remain
 in =timer.log= beside its =owner= and =status= files. Timers from the older
 implementation are not killed by a broad process-name match; they exit with
-their old allocation. Shared-filesystem lock behavior should be verified
-when bringing up a new target.
+their old allocation.
+
+Locks, owner/readiness records, threshold markers, and timer logs live in a
+private, owner-verified mode-700 directory on node-local =/tmp=. This transient
+state only needs to survive for the watchdog lifetime. =TMPDIR= is deliberately
+not used: it may point at shared storage. Staged scripts and compatibility
+warnings stay on NFS; NFS need not support =flock=. Working clones may use
+=/local/job<jobid>/=, with snapshots pushed to durable storage. Lustre is not
+used for the timer's frequent small-file operations.
 
 The same script snapshots the mirror's dirty working tree (tracked and
 untracked files, not ignored ones) to =refs/sucoder/wip/<mirror>= on

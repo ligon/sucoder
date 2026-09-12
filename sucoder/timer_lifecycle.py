@@ -6,7 +6,18 @@ node=$(hostname) || exit 1
 [[ "$node" =~ ^[a-zA-Z0-9._-]+$ && "$JOB" =~ ^[0-9]+$ ]] || {
     echo "sucoder timer: invalid node or allocation identity" >&2; exit 1;
 }
-STATE_DIR="$CACHE_DIR/timers/$TIMER_SCOPE/$node-$JOB"
+# Locks and liveness records are node-local, just like /proc. Shared HOME
+# may be NFS without flock support; TMPDIR may also point at shared storage.
+# Never follow or chmod a pre-created path in world-writable /tmp.
+RUNTIME_DIR="/tmp/sucoder-$UID"
+umask 077
+mkdir -m 700 "$RUNTIME_DIR" 2>/dev/null || true
+if [ -L "$RUNTIME_DIR" ] || [ ! -d "$RUNTIME_DIR" ] ||
+   [ ! -O "$RUNTIME_DIR" ] || [ "$(stat -c %a "$RUNTIME_DIR")" != 700 ]; then
+    echo "sucoder timer: unsafe runtime directory: $RUNTIME_DIR" >&2
+    exit 1
+fi
+STATE_DIR="$RUNTIME_DIR/timers/$TIMER_SCOPE/$node-$JOB"
 mkdir -p "$STATE_DIR" || exit 1
 chmod 700 "$STATE_DIR" || exit 1
 command -v flock >/dev/null || { echo "sucoder timer: flock unavailable" >&2; exit 1; }
