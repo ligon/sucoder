@@ -49,6 +49,17 @@ timer supervision. Keep monitoring through scheduler errors.
   and mutation-derived regression tests; adapt assertions to supervision.
 - Keep compatibility warning files cleared when a new watchdog starts.
 
+Verification: OK against sections 3-5. `python -m pytest -q` passed all 759
+tests on Python 3.12. Four scheduler-error regression cases failed before the
+loop fix. A real-file staging test checks the open inode and quoted paths.
+The SSH supervisor, lifecycle module, remote bootstrap, and their regression
+tests are byte-for-byte unchanged from `258accb`. GitNexus's comparison with
+main reports the expected confined-launch and warning-loop scope.
+
+Reproduce from the repository root with `pytest -q`; the focused checks are
+`pytest -q tests/test_slurm_timer_script.py tests/test_timer_lifecycle.py
+tests/test_batch_script.py tests/test_cli.py tests/test_mirror.py`.
+
 ## 6. Open questions
 
 No implementation decision is blocked. Cluster smoke testing and issue #15's
