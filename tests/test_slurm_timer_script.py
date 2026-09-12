@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -81,7 +82,7 @@ def test_both_bash_helpers_reach_the_rendered_script():
 def test_state_files_are_per_mirror_and_legacy_warn_kept():
     s = _render(mirror_token="alpha")
     assert 'WARN_FILE="$STATE_DIR/slurm-deadline-$MIRROR_TOKEN.warn"' in s
-    assert 'LEGACY_WARN_FILE="$STATE_DIR/slurm-deadline.warn"' in s
+    assert 'LEGACY_WARN_FILE="$CACHE_DIR/slurm-deadline.warn"' in s
     assert "MIRROR_TOKEN=alpha\n" in s
     for n in (5, 15, 30):
         assert f'WARN{n}="$STATE_DIR/.slurm-warn-{n}-$MIRROR_TOKEN"' in s
@@ -95,7 +96,7 @@ def test_startup_clears_the_legacy_warn_file_too():
     is kept for."""
     s = _render(mirror_token="alpha")
     rm = next(ln for ln in s.splitlines() if ln.startswith("rm -f "))
-    for var in ("$WARN5", "$WARN15", "$WARN30", "$WARN_FILE", "$LEGACY_WARN_FILE"):
+    for var in ("$WARN5", "$WARN15", "$WARN30", "$WARN_FILE", "$LEGACY_WARN_FILE", "$MIRROR_WARN_FILE"):
         assert f'"{var}"' in rm, f"{var} not cleared at startup: {rm}"
     # Cleared before any warning could be written.
     assert s.index(rm) < s.index("warn() {")
@@ -255,23 +256,30 @@ def _drive(tmp_path: Path, time_left: list, **render) -> list:
     """Run the rendered timer against stubbed squeue/tmux/sleep.
 
     ``time_left`` is fed to successive ``squeue -o %L`` polls; once it is
-    exhausted the job reads as gone and the loop ends.  Returns the
-    messages the human would have seen, in order.
+    exhausted the job reads as gone and the loop ends. None represents
+    a failed query; (rc, output) also permits partial output on failure.
+    Returns the messages the human would have seen, in order.
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     counter, log = tmp_path / "n", tmp_path / "msgs"
+    polls = [(1, "") if v is None else v if isinstance(v, tuple) else (0, v)
+             for v in time_left]
     (bin_dir / "squeue").write_text(
         '#!/bin/bash\n'
-        f'n=$(cat {counter} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {counter}\n'
-        'vals=(' + " ".join(f'"{v}"' for v in time_left) + ')\n'
-        'if [ "$n" -le "${#vals[@]}" ]; then echo "${vals[$((n-1))]}"; fi\n'
+        f'n=$(cat {shlex.quote(str(counter))} 2>/dev/null || echo 0); '
+        f'n=$((n+1)); echo $n > {shlex.quote(str(counter))}\n'
+        'vals=(' + " ".join(shlex.quote(v) for _, v in polls) + ')\n'
+        'codes=(' + " ".join(str(rc) for rc, _ in polls) + ')\n'
+        'if [ "$n" -le "${#vals[@]}" ]; then\n'
+        '  echo "${vals[$((n-1))]}"; exit "${codes[$((n-1))]}"\n'
+        'fi\n'
     )
     # has-session always succeeds; only display-message is recorded.
     (bin_dir / "tmux").write_text(
         '#!/bin/bash\n'
         'case "$1" in\n'
-        f'  display-message) echo "${{@: -1}}" >> {log} ;;\n'
+        f'  display-message) echo "${{@: -1}}" >> {shlex.quote(str(log))} ;;\n'
         '  has-session) exit 0 ;;\n'
         'esac\n'
         'exit 0\n'
@@ -285,8 +293,9 @@ def _drive(tmp_path: Path, time_left: list, **render) -> list:
     env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}",
                HOME=str(tmp_path / "home"))
     (tmp_path / "home").mkdir()
-    subprocess.run(["bash", str(script)], env=env, timeout=60,
-                   capture_output=True, text=True)
+    result = subprocess.run(["bash", str(script)], env=env, timeout=10,
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
     if not log.exists():
         return []
     return [ln for ln in log.read_text().splitlines() if ln.strip()]
@@ -362,6 +371,40 @@ def test_sustained_squeue_silence_still_reports_the_job_gone(tmp_path):
     """Tolerating blips must not mean never noticing a finished job."""
     msgs = _drive(tmp_path, ["10:00:00"])
     assert any("no longer queued" in m for m in msgs), msgs
+
+
+@_bash
+@pytest.mark.parametrize("failures", [[None] * 4, [(1, "1:00")] * 4])
+def test_scheduler_errors_keep_monitoring_until_recovery(tmp_path, failures):
+    # Errors are unknown state, even when squeue emits partial output (ledger 3).
+    msgs = _drive(tmp_path, ["2:00:00", *failures, "25:00", "12:00", "4:00"])
+    deadline = [m for m in msgs if "min left" in m]
+    assert len(deadline) == 3, msgs
+    assert "Commit and save NOW" in deadline[-1]
+    assert int((tmp_path / "n").read_text()) == 11
+
+
+@_bash
+def test_failed_query_interrupts_consecutive_empty_observations(tmp_path):
+    msgs = _drive(tmp_path, ["", "", None, "", "", "4:00"])
+    assert any("Commit and save NOW" in m for m in msgs), msgs
+    assert int((tmp_path / "n").read_text()) == 9
+
+
+@_bash
+@_git
+def test_scheduler_outage_does_not_suspend_periodic_snapshots(repo_pair, tmp_path):
+    origin, work = repo_pair
+    (work / "a.txt").write_text("recover this during the outage\n")
+    # All cadence ticks occur during failed queries; recovery is outside a
+    # threshold and outside the cadence, so only the outage can save this tree.
+    _drive(tmp_path, [None, None, None, "2:00:00"],
+           snapshot_dir=str(work), snapshot_minutes=2)
+    saved = subprocess.run(
+        ["git", "show", "refs/sucoder/wip/K-Aggregators:a.txt"], cwd=origin,
+        capture_output=True, text=True, check=True,
+    )
+    assert saved.stdout == "recover this during the outage\n"
 
 
 def test_lifecycle_hint_matches_the_launch_mode():

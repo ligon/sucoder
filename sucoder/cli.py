@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import getpass
+import hashlib
 import json
 import os
 import re
@@ -46,7 +47,7 @@ from .config import (
 from .executor import CommandError, CommandExecutor
 from .logging_utils import setup_logger
 from .local_tier import work_path
-from .slurm_timer import TIME_LEFT_TO_MINS_SH, build_timer_script
+from .slurm_timer import TIME_LEFT_TO_MINS_SH, build_timer_script, timer_identity
 from .mirror import (
     _sanitize_session_token,
     MirrorError,
@@ -1183,8 +1184,11 @@ def _start_slurm_timer(
         tmux_session=tmux_session,
         job_id=job_id,
         snapshot_dir=snapshot_dir,
+        timer_scope=timer_identity(session.mirror_name, getattr(session, "target_name", None)),
     )
-    script_name = f"slurm-timer-{token}.sh"
+    # Immutable script names: staging never truncates a running shell's file.
+    digest = hashlib.sha256(timer_script.encode()).hexdigest()[:24]
+    script_name = f"slurm-timer-{digest}.sh"
 
     # Write the script to the compute node via stdin, then run it.
     # The script lives in the user's runtime cache rather than /tmp for
@@ -1195,48 +1199,46 @@ def _start_slurm_timer(
     node = session.compute_node
 
     q_script = shlex.quote(script_name)
-    # Temp file + atomic rename, never ``cat >`` onto the live path.  The
-    # pkill below retires the previous timer only *after* this write, so a
-    # relaunch would otherwise truncate a script the old timer's bash is
-    # still reading -- which does not restart it, it stops it at whatever
-    # byte offset it had reached.  ``mv -f`` swaps the directory entry,
-    # leaving the running process's open inode intact.
-    write_result = _sp.run(
+
+    def timer_run(*args, **kwargs):
+        # Timer diagnostics must not abort an otherwise usable session.
+        try:
+            return _sp.run(*args, **kwargs)
+        except (_sp.TimeoutExpired, OSError) as exc:
+            return _sp.CompletedProcess(args[0], -1, "", str(exc))
+
+    write_result = timer_run(
         ["ssh", *ssh_opts, node,
-         'd="$HOME/.cache/sucoder"; '
-         'mkdir -p "$d" && chmod 700 "$d" 2>/dev/null || true; '
-         f't="$d/"{q_script}".tmp.$$"; '
-         'umask 077 && cat > "$t" && chmod 700 "$t" && '
-         f'mv -f "$t" "$d/"{q_script}'],
-        input=timer_script, capture_output=True, text=True, check=False,
+         'umask 077; mkdir -p "$HOME/.cache/sucoder" && '
+         'tmp=$(mktemp "$HOME/.cache/sucoder/.timer.XXXXXX") && '
+         'cat > "$tmp" && chmod 700 "$tmp" && '
+         f'mv "$tmp" "$HOME/.cache/sucoder/"{q_script}'],
+        input=timer_script, capture_output=True, text=True, check=False, timeout=30,
     )
     if write_result.returncode != 0:
-        logger.warning("Failed to write SLURM timer script: %s",
-                        write_result.stderr.strip())
+        logger.warning("Failed to write SLURM timer on %s for job %s (exit %s): %s. "
+                       "Deadline warnings and periodic snapshots are unavailable.",
+                       node, job_id, write_result.returncode,
+                       write_result.stderr.strip() or "no stderr")
         return
 
-    # Every _build_executor for this target (attach, pull, status, ...)
-    # lands here, so retire the previous timer for this mirror first or
-    # they pile up, each snapshotting.  The [s] bracket keeps pkill from
-    # matching the shell that runs it.
-    q_pattern = shlex.quote(f"[s]lurm-timer-{token}.sh")
-    # ``nohup ... &`` returns 0 whether or not the script actually started,
-    # so the rc below only proves ssh worked; ``-x`` is what catches a
-    # missing or non-executable timer.
-    run_result = _sp.run(
+    # The script ensures one live watchdog using allocation-scoped locks.
+    # No process name matching, signaling stale PIDs, or routine restarts.
+    run_result = timer_run(
         ["ssh", *ssh_opts, node,
-         f'pkill -u "$USER" -f {q_pattern} 2>/dev/null; '
-         f'p="$HOME/.cache/sucoder/"{q_script}; '
-         '[ -x "$p" ] || { echo "timer not startable: $p" >&2; exit 1; }; '
-         'nohup "$p" > /dev/null 2>&1 &'],
-        capture_output=True, text=True, check=False,
+         f'bash "$HOME/.cache/sucoder/"{q_script} --ensure'],
+        capture_output=True, text=True, check=False, timeout=30,
     )
-    if run_result.returncode == 0:
-        logger.info("SLURM deadline timer started on %s for job %d",
-                     node, job_id)
+    if run_result.returncode == 0 and run_result.stdout.strip().startswith(
+        ("SUCODER_TIMER_STARTED ", "SUCODER_TIMER_REUSED ")
+    ):
+        logger.info("SLURM deadline timer ready on %s for job %d: %s",
+                     node, job_id, run_result.stdout.strip())
     else:
-        logger.warning("Failed to start SLURM timer: %s",
-                        run_result.stderr.strip())
+        logger.warning("Failed to start SLURM timer on %s for job %s (exit %s): %s. "
+                       "Deadline warnings and periodic snapshots are unavailable.",
+                       node, job_id, run_result.returncode,
+                       run_result.stderr.strip() or "no valid readiness response")
 
 
 def _prompt_yes_no(message: str) -> bool:

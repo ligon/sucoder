@@ -1,3 +1,4 @@
+import subprocess
 """Tests for remote execution: config parsing, session, tunnel, and RemoteExecutor."""
 
 import os
@@ -1385,149 +1386,42 @@ def test_sync_remote_calls_push_via_login_node(
     assert "ControlPath" in env["GIT_SSH_COMMAND"]
 
 
-def test_ensure_remote_clone_mirror_exists_skips_init(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """When the remote mirror already exists, ensure_remote_clone skips git init."""
-    from sucoder.executor import CommandResult
-
-    manager = _build_remote_manager(tmp_path)
-    ctx = manager.context_for("rproj")
-
-    agent_calls: list = []
-
-    def fake_run_agent(args, **kwargs):
-        agent_calls.append(list(args))
-        # All calls succeed → mirror exists and is valid
-        return CommandResult(list(args), list(args), "", "", 0)
-
-    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
-    # The mirror exists and reads fine; the pull verdict is not what
-    # this test is about, and the real one would hit the network.
-    monkeypatch.setattr(manager, "_pull_from_remote", lambda ctx: True)
-
-    # Mock _sync_remote since we don't want actual sync
-    sync_called = []
-    monkeypatch.setattr(manager, "_sync_remote", lambda ctx: sync_called.append(True))
-
-    manager.ensure_remote_clone(ctx)
-
-    # Should have rev-parse check and config fixup, but NOT git init
-    all_cmds = [" ".join(str(a) for a in c) for c in agent_calls]
-    assert any("rev-parse" in cmd for cmd in all_cmds)
-    assert not any("git init" in cmd for cmd in all_cmds)
-    # Sync should still be called
-    assert sync_called
+def test_ensure_remote_clone_mirror_exists_skips_init(tmp_path, monkeypatch):
+    manager, ctx, path = _local_bootstrap_manager(tmp_path, monkeypatch)
+    subprocess.run(["git", "clone", str(ctx.canonical_path), str(path)], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(path), "config", "review.keep", "yes"], check=True)
+    assert manager.ensure_remote_clone(ctx)
+    value = subprocess.check_output(["git", "-C", str(path), "config", "review.keep"], text=True)
+    assert value.strip() == "yes"
 
 
-def test_ensure_remote_clone_pushes_to_genuinely_empty_mirror(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """First-time bootstrap is not blocked by the unverified-mirror veto.
+def test_ensure_remote_clone_pushes_to_genuinely_empty_mirror(tmp_path, monkeypatch):
+    manager, ctx, path = _local_bootstrap_manager(tmp_path, monkeypatch)
+    monkeypatch.setattr(manager, "_pull_from_remote", lambda ctx: pytest.fail("fresh repo fetched"))
+    assert manager.ensure_remote_clone(ctx)
+    assert (path / "README.md").read_text() == "hi\n"
 
-    Runs the *real* _pull_from_remote against a remote that has no repo
-    at all: the fetch fails, but the content probe confirms there are no
-    commits, so the push must proceed without --allow-unverified-mirror.
-    Guards the false positive that would break every fresh setup.
-    """
-    from sucoder.executor import CommandResult
+
+def test_ensure_remote_clone_refuses_push_over_unverified_mirror(tmp_path, monkeypatch):
     from sucoder.mirror import MirrorError
-
-    manager = _build_remote_manager(tmp_path)
-    ctx = manager.context_for("rproj")
-
-    def fake_remote(args, **kwargs):
-        s = " ".join(str(a) for a in args)
-        if "echo" in s:
-            return CommandResult(list(args), list(args), "/home/ligon\n", "", 0)
-        # No repo, hence no HEAD and no base branch: an empty mirror.
-        if "rev-parse" in s:
-            return CommandResult(list(args), list(args), "", "fatal", 1)
-        return CommandResult(list(args), list(args), "", "", 0)
-
-    monkeypatch.setattr(manager.executor, "run_agent", fake_remote)
-    if hasattr(manager.executor, "run_on_login_node"):
-        monkeypatch.setattr(manager.executor, "run_on_login_node", fake_remote)
-    # The fetch fails the way an empty remote's does.
-    monkeypatch.setattr(
-        manager.executor, "run_human",
-        lambda args, **kw: _transport_result(
-            args, 128, "fatal: couldn't find remote ref main"),
-    )
-
-    pushed: list = []
-    monkeypatch.setattr(manager, "_sync_remote", lambda ctx: pushed.append(True))
-
-    manager.ensure_remote_clone(ctx)  # must NOT raise
-
-    assert pushed == [True], "bootstrap over an empty mirror was blocked"
-
-
-def test_ensure_remote_clone_refuses_push_over_unverified_mirror(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Bootstrap honours the pull veto; the flag is the escape hatch."""
-    from sucoder.executor import CommandResult
-    from sucoder.mirror import MirrorError
-
-    manager = _build_remote_manager(tmp_path)
-    ctx = manager.context_for("rproj")
-
-    monkeypatch.setattr(
-        manager.executor, "run_agent",
-        lambda args, **kw: CommandResult(list(args), list(args), "", "", 0),
-    )
-    # The mirror could not be read and may hold commits.
+    manager, ctx, path = _local_bootstrap_manager(tmp_path, monkeypatch)
+    subprocess.run(["git", "clone", str(ctx.canonical_path), str(path)], check=True, capture_output=True)
     monkeypatch.setattr(manager, "_pull_from_remote", lambda ctx: False)
-
-    pushed: list = []
+    pushed = []
     monkeypatch.setattr(manager, "_sync_remote", lambda ctx: pushed.append(True))
-
     with pytest.raises(MirrorError, match="Refusing to push"):
         manager.ensure_remote_clone(ctx)
-    assert not pushed, "bootstrap force-pushed over an unverified mirror"
-
+    assert not pushed
     manager.ensure_remote_clone(ctx, allow_unverified_mirror=True)
     assert pushed == [True]
 
 
-def test_ensure_remote_clone_mirror_not_exists_inits_and_syncs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """When the remote mirror does NOT exist, ensure_remote_clone inits then syncs."""
-    from sucoder.executor import CommandResult
-
-    manager = _build_remote_manager(tmp_path)
-    ctx = manager.context_for("rproj")
-
-    agent_calls: list = []
-    call_counter = [0]
-
-    def fake_run_agent(args, **kwargs):
-        agent_calls.append({"args": list(args), "kwargs": kwargs})
-        call_counter[0] += 1
-        # First call is rev-parse → fail; also $HOME query needs to work
-        args_str = " ".join(str(a) for a in args)
-        if "rev-parse" in args_str and call_counter[0] <= 2:
-            return CommandResult(list(args), list(args), "", "", 1)
-        if "echo" in args_str:
-            return CommandResult(list(args), list(args), "/home/testuser\n", "", 0)
-        return CommandResult(list(args), list(args), "", "", 0)
-
-    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
-    # Freshly re-inited mirror; see sibling test for the pull verdict.
-    monkeypatch.setattr(manager, "_pull_from_remote", lambda ctx: True)
-
-    sync_called = []
-    monkeypatch.setattr(manager, "_sync_remote", lambda ctx: sync_called.append(True))
-
-    manager.ensure_remote_clone(ctx)
-
-    # Should have rev-parse, rm, mkdir, git init, and git config calls
-    all_cmds = [" ".join(str(a) for a in c["args"]) for c in agent_calls]
-    assert any("rev-parse" in cmd for cmd in all_cmds)
-    assert any("init" in cmd for cmd in all_cmds)
-    assert sync_called
+def test_ensure_remote_clone_mirror_not_exists_inits_and_syncs(tmp_path, monkeypatch):
+    manager, ctx, path = _local_bootstrap_manager(tmp_path, monkeypatch)
+    assert not path.exists()
+    assert manager.ensure_remote_clone(ctx)
+    assert (path / ".git").is_dir()
+    assert (path / "README.md").exists()
 
 
 def _remote_exec_with_scaffolding(tmp_path: Path):
@@ -1615,51 +1509,14 @@ def test_remote_git_env_debug_preserves_verbosity(
     assert "ConnectTimeout=10" in cmd
 
 
-def test_ensure_remote_clone_rebuilds_empty_mirror(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A husk repo (exists, but no commits/base branch) is rebuilt.
-
-    Regression guard for the PlayPen/DTN failure: a remote mirror that
-    was `git init`'d by a prior failed bootstrap but never received a
-    push has no `main` ref.  ensure_remote_clone must rebuild it rather
-    than sync into the half-dead repo.
-    """
-    from sucoder.executor import CommandResult
-
-    manager = _build_remote_manager(tmp_path)
-    ctx = manager.context_for("rproj")
-
-    agent_calls: list = []
-
-    def fake_run_agent(args, **kwargs):
-        agent_calls.append(list(args))
-        s = " ".join(str(a) for a in args)
-        if "echo" in s:
-            return CommandResult(list(args), list(args), "/home/ligon\n", "", 0)
-        if "rev-parse" in s and "--git-dir" in s:
-            # Repo exists on disk.
-            return CommandResult(list(args), list(args), ".git\n", "", 0)
-        if "rev-parse" in s and ("HEAD" in s or "refs/heads/" in s):
-            # No commits, no base branch → husk.
-            return CommandResult(list(args), list(args), "", "fatal", 1)
-        return CommandResult(list(args), list(args), "", "", 0)
-
-    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
-    # Isolate the rebuild decision: don't touch the network.  True =
-    # "mirror read successfully"; the verdict itself is covered by
-    # test_ensure_remote_clone_refuses_push_over_unverified_mirror.
-    monkeypatch.setattr(manager, "_pull_from_remote", lambda ctx: True)
-    sync_called: list = []
-    monkeypatch.setattr(manager, "_sync_remote", lambda ctx: sync_called.append(True))
-
-    manager.ensure_remote_clone(ctx)
-
-    cmds = [" ".join(str(a) for a in c) for c in agent_calls]
-    # Husk detected → wiped and re-initialised before syncing.
-    assert any("rm -rf" in c for c in cmds)
-    assert any("git init" in c for c in cmds)
-    assert sync_called
+def test_ensure_remote_clone_rebuilds_empty_mirror(tmp_path, monkeypatch):
+    """A previous failed bootstrap is now recovered in place, never wiped."""
+    manager, ctx, path = _local_bootstrap_manager(tmp_path, monkeypatch)
+    path.mkdir()
+    subprocess.run(["git", "-C", str(path), "init", "-b", "main"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(path), "config", "review.keep", "yes"], check=True)
+    assert manager.ensure_remote_clone(ctx)
+    assert subprocess.check_output(["git", "-C", str(path), "config", "review.keep"], text=True).strip() == "yes"
 
 
 def test_git_transports_login_first_then_dtn(
@@ -2386,3 +2243,11 @@ def test_forward_x11_explicit_defaults_off() -> None:
     """The explicit marker is independent of forward_x11 itself."""
     executor = _make_remote_executor(forward_x11=True)
     assert executor.forward_x11_explicit is False
+
+
+def _local_bootstrap_manager(tmp_path, monkeypatch):
+    manager = _build_remote_manager(tmp_path)
+    path = tmp_path / "remote-bootstrap"
+    monkeypatch.setattr(manager, "_resolve_remote_path", lambda ctx: str(path))
+    monkeypatch.setattr(manager, "_git_transports", lambda ctx: [("local-test", str(path), None)])
+    return manager, manager.context_for("rproj"), path

@@ -1729,14 +1729,14 @@ def test_launch_confined_stages_and_starts_deadline_timer(tmp_path, monkeypatch)
     # straight onto the live path would truncate a script a running
     # job is still reading, silently killing that job's watchdog.
     timer_path = timer["args"][4]
-    assert timer_path.endswith("/.cache/sucoder/slurm-timer-sample.sh")
+    assert "/.cache/sucoder/slurm-timer-sample-" in timer_path
     stage = timer["args"][2]
     assert "chmod 700" in stage
     assert 'mv -f "$t" "$1"' in stage
     assert "cat > \"$t\"" in stage
     assert timer_path not in stage, "destination must not be interpolated"
     # The batch body starts exactly that file, after the session check.
-    assert f"nohup {timer_path} > /dev/null &" in batch["input"]
+    assert f"bash {timer_path} --ensure" in batch["input"]
     # Confined specifics threaded through: runtime job id, dedicated socket,
     # the mirror as snapshot dir, the configured cadence.
     assert 'JOB="${SLURM_JOB_ID:-}"' in timer["input"]
@@ -1749,6 +1749,30 @@ def test_launch_confined_stages_and_starts_deadline_timer(tmp_path, monkeypatch)
     # sbatch is submitted only after both files are staged.
     sbatch_idx = next(i for i, c in enumerate(calls) if c["args"][0] == "sbatch")
     assert all(calls.index(w) < sbatch_idx for w in writes)
+
+
+def test_confined_timer_staging_keeps_open_script_intact(tmp_path, monkeypatch):
+    """An existing reader keeps its inode when the staged script is replaced."""
+    manager, ctx = _confined_manager(tmp_path, monkeypatch)
+    calls = []
+    manager.executor.run_agent = _confined_responder(calls, sbatch_out="17")
+    manager._launch_confined(
+        ctx, ["claude"], remote_prelude_text=None,
+        prelude_sentinel="__X__", env=None, detached=True,
+    )
+    timer = next(c for c in calls if c["args"][0] == "sh"
+                 and c["input"] and "# sucoder SLURM deadline timer" in c["input"])
+    path = tmp_path / "timer with 'quotes'.sh"
+    command = [*timer["args"][:4], str(path)]
+    old = "#!/bin/bash\necho old\n"
+    new = "#!/bin/bash\necho new\n"
+    subprocess.run(command, input=old, text=True, check=True, capture_output=True)
+    with path.open() as reader:
+        subprocess.run(command, input=new, text=True, check=True, capture_output=True)
+        assert reader.read() == old
+    assert path.read_text() == new
+    assert path.stat().st_mode & 0o777 == 0o700
+    assert not list(tmp_path.glob("*.tmp.*"))
 
 
 def test_launch_confined_local_tier_stages_prepare_script(tmp_path, monkeypatch):

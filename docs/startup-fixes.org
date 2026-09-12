@@ -1,0 +1,80 @@
+#+title: Collaborate startup fixes — implementation and validation
+
+* Remote initialization and reconciliation
+
+Remote bootstrap no longer removes a mirror directory. A small Bash protocol
+initializes absent or empty directories, recognizes the intended working tree,
+and refuses symlinks, broken repositories, arbitrary nonempty directories, and
+failed/ambiguous probes. Existing empty repositories recover in place, keeping
+their configuration. An unborn HEAD does not hide feature branches, tags, or
+WIP refs from the content check.
+
+A repository initialized by this invocation skips the initial reconciliation
+fetch and gets a non-forcing first push, without a subsequent hard reset.
+Existing repositories retain reconciliation and the explicit overwrite policy.
+Failed working-tree status checks now stop the push, even with the unverified
+mirror override. Missing-ref errors accompanied by a generic disconnect tail
+are repository errors, not reasons to retry through the DTN.
+
+Red-team regression cases include SSH errors, timeouts, invalid probe replies,
+broken/non-repository directories, ancestor Git discovery, symlinks, unborn
+HEAD with a feature branch, interrupted initialization, status failure, and a
+concurrent commit arriving before initial publication. Existing files/refs and
+configuration are checked after failure; tests do not merely assert commands.
+
+* Timer lifecycle
+
+Both launch modes use the watchdog's =--ensure= handshake. Startup and lifetime
+locks are scoped by target, mirror, node, and allocation. A healthy owner is
+reused; a stale owner record is checked against Linux process birth time.
+There is no process-name matching or PID-based termination. Scripts are staged
+under distinct names so a running script is not truncated. Readiness and
+failure diagnostics are explicit, and the background process detaches stdin
+and startup lock descriptors.
+
+Primary warnings and logs are allocation-scoped. The old cache-root warning
+paths remain compatibility copies; simultaneous writers can replace those
+copies, so the scoped files are authoritative. Pre-upgrade timers are not
+forcibly retired and can coexist until their old allocation ends.
+
+Red-team tests execute real Bash/flock processes: concurrent starters, restart
+with stale metadata, target/allocation separation, missing executables, SSH
+timeout handling, and both confined/unconfined script variants. A real Git
+snapshot test checks warning delivery, tracked/untracked work preservation,
+and that the agent's staged index is unchanged.
+
+* Shared skills
+
+The YAML corrections are already upstream in closed issue
+[[https://github.com/ligon/sucoder-skills/issues/1][sucoder-skills #1]]. The local consuming checkout at =d6462b7= still carried
+the old descriptions. Filed [[https://github.com/ligon/sucoder-skills/issues/3][sucoder-skills #3]] for non-destructive deployment,
+revision verification on local/Savio consumers, and validation coverage.
+No shared skill checkout was modified by this implementation. A locally built
+Savio catalog containing an error is not evidence of Savio's own checkout
+revision; the follow-up explicitly calls for checking both.
+
+* Validation
+
+- =.venv/bin/python -m pytest -q=: 744 passed. Existing Typer completion
+  deprecation warnings remain.
+- Local CLI smoke: =collaborate= against a disposable repository with an
+  explicit stand-in command exited 0 and emitted =HARNESS_STARTED=. Used the
+  current account with =--no-agent-sudo=, an isolated Git config, and
+  =--no-agent-remote=; this does not validate cross-account sudo policy.
+- Savio smoke: ran under existing allocation =38714904= on =n0170.savio3=.
+  Temporary directories on shared HOME exercised create/reuse and preservation
+  of non-repository files. Both timer variants reported =STARTED monitoring=
+  followed by =REUSED monitoring=. Temporary test files were removed.
+- The Savio smoke used stand-in tmux/squeue responses and did not launch an
+  LLM harness, attach to an agent session, or submit a new allocation. Actual
+  sbatch submission/attachment remains covered by the existing automated tests,
+  not a fresh live confined session in this pass.
+- GitNexus CLI impact and change analysis identify shared startup, Git
+  synchronization, and confined launch flows (aggregate CRITICAL risk).
+  Its bounded process graph is supplementary to the tests and direct review.
+
+The changes introduce no new user configuration. Timer supervision requires
+Bash, flock, and Linux /proc; flock behavior was exercised on Savio's shared
+filesystem. Old cached scripts/logs are retained for diagnosis, not swept by
+startup. This pass does not redesign synchronization between arbitrary
+concurrent writers to an already-established mirror.
