@@ -441,7 +441,56 @@ local machine cannot run heavyweight computation.  The privilege
 separation shifts from "different Unix users on the same box" to "same
 user on different machines"---the network boundary enforces isolation.
 
-*** Configuration
+*** Ordinary Linux host over SSH
+
+A single Linux box needs only a =host= target. SuCoder runs on the launcher;
+install Git, Bash, tmux, and the chosen agent harness on the remote host,
+with their executables available to non-interactive SSH commands. The agent
+runs as the SSH user, without a remote sudo or separate coder account.
+
+#+begin_src yaml
+targets:
+  workstation:
+    host: workstation.example.org  # or an existing ~/.ssh/config alias
+    remote_user: ligon             # optional; otherwise SSH chooses the user
+    mirror_root: ~/mirrors
+    # ssh_options:
+    #   Port: 2222
+    #   IdentityFile: ~/.ssh/workstation
+#+end_src
+
+From the local repository:
+
+#+begin_src sh
+sucoder -T workstation collaborate
+sucoder -T workstation attach
+sucoder -T workstation pull
+sucoder -T workstation tunnel status
+#+end_src
+
+Execution and Git transport use the configured host directly, including after
+connection expiry. Normal SSH config, authentication, and host-key checking
+apply. =remote_user= and =ssh_options= are used for both connection startup
+and subsequent commands. An explicit =remote_user= overrides any =User=
+option, regardless of capitalization. SuCoder evaluates =ssh -G= before
+choosing a shared connection, so edits to SSH aliases or included config files
+do not reuse a connection to the previous account or host. Prefer an SSH alias for settings that should also
+apply to standalone =ssh= and =git= commands.
+
+=host= cannot be combined with =gateway=, =transfer_host=, =slurm=, or the
+BRC-specific =cert_file= option. Standard SSH certificates can instead use
+=IdentityFile= and =CertificateFile= in SSH config or =ssh_options=.
+No scheduler allocation, deadline watchdog, or WIP snapshotter is started.
+The mirror uses persistent storage on that host.
+
+=tunnel up= warms the one connection without writing cluster aliases to
+=~/.ssh/config=. =tunnel forward 8888= forwards a service on that host;
+=tunnel down= closes the SSH connection. =release= is a Slurm-only operation;
+end the remote tmux session when finished with an ordinary host. =--node= is
+rejected by =collaborate=, =attach=, and =tunnel forward=: a direct target has
+one host and no scheduler to request a node from.
+
+*** Cluster configuration
 
 Define a named target in =~/.sucoder/config.yaml=:
 

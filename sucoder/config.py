@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shutil
@@ -75,8 +76,8 @@ class RemoteConfig:
     ``mirror_root`` it overrides the global one.
     """
 
-    gateway: str                                    # Jump host, e.g. "brc.berkeley.edu"
-    transfer_host: str                              # DTN for git transport
+    gateway: str = ""                               # Jump host, e.g. "brc.berkeley.edu"
+    transfer_host: str = ""                         # DTN for git transport
     remote_user: Optional[str] = None               # SSH username on the remote host
     mirror_root: Path = field(default_factory=lambda: Path("~/mirrors"))
     ssh_options: Dict[str, str] = field(default_factory=dict)
@@ -92,6 +93,13 @@ class RemoteConfig:
     slurm: Optional[SlurmConfig] = None             # Compute-node allocation params
     system_prompt_extra: Optional[Path] = None      # Target-specific prompt snippet
     cert_file: Optional[Path] = None                # Local SSH cert (private key) presented to the gateway
+    host: Optional[str] = None                      # Direct SSH host or ~/.ssh/config alias
+
+    def __post_init__(self) -> None:
+        if self.host:
+            # Keep the legacy endpoint fields usable by reporting/cleanup code.
+            self.gateway = self.host
+            self.transfer_host = self.host
 
     def ssh_control_kwargs(self) -> Dict[str, Any]:
         """Shared SSH kwargs threaded to SshControl and
@@ -105,13 +113,51 @@ class RemoteConfig:
         call sites.  ``cert_file`` is a string path (or ``None``); consumers
         that only care about the gateway hop use it, others ignore it.
         """
+        direct_options = {}
+        if self.host:
+            identity = repr((self.host, self.remote_user, sorted(self.ssh_options.items()),
+                             self._direct_ssh_identity()))
+            direct_options = {
+                "extra_options": self.direct_ssh_options(),
+                "socket_name": "direct-" + hashlib.sha256(identity.encode()).hexdigest()[:24],
+            }
         return {
             "control_persist": self.control_persist,
             "keepalive_interval": self.keepalive_interval,
             "keepalive_count_max": self.keepalive_count_max,
             "cert_file": str(self.cert_file) if self.cert_file else None,
             "user": self.remote_user,
+            **direct_options,
         }
+
+    def direct_ssh_options(self) -> List[str]:
+        """Options shared by direct connections, Git, and reconnects."""
+        return [part for key, value in self.direct_ssh_option_map().items()
+                for part in ("-o", f"{key}={value}")]
+
+    def direct_ssh_option_map(self) -> Dict[str, str]:
+        """Apply the explicit account override regardless of option spelling."""
+        options = {key: value for key, value in self.ssh_options.items()
+                   if not (self.remote_user and key.lower() == "user")}
+        if self.remote_user:
+            options["User"] = self.remote_user
+        return options
+
+    def _direct_ssh_identity(self) -> str:
+        """Resolve SSH aliases before choosing a reusable master socket.
+
+        Do not cache: SSH config (including Include files) can change between
+        commands. Fail closed if resolution fails instead of reusing an old
+        destination's connection. ssh -G evaluates config without connecting.
+        """
+        try:
+            result = subprocess.run(
+                ["ssh", "-G", *self.direct_ssh_options(), str(self.host)],
+                capture_output=True, text=True, check=True, timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ConfigError("Cannot resolve direct SSH configuration with ssh -G.") from exc
+        return result.stdout
 
 
 @dataclass
@@ -1026,11 +1072,21 @@ def _parse_remote_config(raw: Any) -> Optional[RemoteConfig]:
     if not isinstance(raw, dict):
         raise ConfigError("`remote` must be a mapping when provided.")
 
-    gateway = raw.get("gateway")
+    host = raw.get("host")
+    if "host" in raw:
+        if (
+            not isinstance(host, str) or not host.strip() or host.startswith("-")
+            or any(c.isspace() for c in host)
+        ):
+            raise ConfigError("`remote.host` must be a non-empty SSH hostname or alias.")
+        conflicts = {"gateway", "transfer_host", "slurm", "cert_file"}.intersection(raw)
+        if conflicts:
+            raise ConfigError("`remote.host` cannot be combined with: " + ", ".join(sorted(conflicts)))
+    gateway = host or raw.get("gateway")
     if not gateway or not isinstance(gateway, str):
         raise ConfigError("`remote.gateway` must be a non-empty string.")
 
-    transfer_host = raw.get("transfer_host")
+    transfer_host = host or raw.get("transfer_host")
     if not transfer_host or not isinstance(transfer_host, str):
         raise ConfigError("`remote.transfer_host` must be a non-empty string.")
 
@@ -1077,6 +1133,7 @@ def _parse_remote_config(raw: Any) -> Optional[RemoteConfig]:
     cert_file = _expand_path(cert_file_raw)
 
     return RemoteConfig(
+        host=host,
         gateway=gateway,
         transfer_host=transfer_host,
         remote_user=remote_user,

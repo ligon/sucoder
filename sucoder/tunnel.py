@@ -141,6 +141,7 @@ class SshControl:
     # (``jump_host is None``); login/DTN/compute authenticate by publickey
     # through the gateway mux and must not be forced onto the gateway cert.
     cert_file: Optional[str] = None
+    socket_name: Optional[str] = None  # Optional connection identity for direct targets
     # Set True by establish() when *this* process authenticated the master.
     # A master we just brought up cannot be a post-suspend zombie, so
     # is_active() can trust the cheap structural check and skip the remote
@@ -166,7 +167,7 @@ class SshControl:
 
     @property
     def socket_path(self) -> Path:
-        return _control_socket_path(self.gateway)
+        return _control_socket_path(self.socket_name or self.gateway)
 
     def _format_host(self, host: str) -> str:
         if self.user:
@@ -262,6 +263,7 @@ class SshControl:
                         "-o", "ControlMaster=auto",
                         "-o", f"ControlPath={self.socket_path}",
                         "-o", "ConnectTimeout=5",
+                        *self.extra_options,
                         self._format_host(self.gateway),
                         "true",
                     ],
