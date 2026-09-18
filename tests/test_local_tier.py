@@ -152,14 +152,29 @@ def _run_prepare(
     return subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env)
 
 
-def _push_snapshot(work: Path, mirror: Path, ref: str, subject: str) -> str:
-    """Take a snapshot the way the timer does and push it to the mirror."""
-    env = dict(os.environ, GIT_INDEX_FILE=str(work / ".git" / f"tmpidx-{abs(hash(ref))}"))
+def _push_snapshot(
+    work: Path, mirror: Path, ref: str, subject: str, when: str | None = None,
+) -> str:
+    """Take a snapshot the way the timer does and push it to the mirror.
+
+    ``when`` pins the committer date.  Retention picks by
+    ``--sort=-committerdate``, and snapshots taken in the same second sort
+    ambiguously, so any test about *which* ref survives must set it.
+    """
+    env = dict(os.environ, GIT_INDEX_FILE=str(work / ".git" / f"tmpidx-{ref.replace('/', '_')}"))
     subprocess.run(["git", "read-tree", "HEAD"], cwd=work, env=env, check=True)
     subprocess.run(["git", "add", "-A"], cwd=work, env=env, check=True)
     tree = subprocess.run(["git", "write-tree"], cwd=work, env=env,
                           capture_output=True, text=True, check=True).stdout.strip()
-    wip = _git(work, "commit-tree", tree, "-p", "HEAD", "-m", subject)
+    if when is None:
+        wip = _git(work, "commit-tree", tree, "-p", "HEAD", "-m", subject)
+    else:
+        wip = subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@x",
+             "commit-tree", tree, "-p", "HEAD", "-m", subject],
+            cwd=work, capture_output=True, text=True, check=True,
+            env=dict(os.environ, GIT_COMMITTER_DATE=when, GIT_AUTHOR_DATE=when),
+        ).stdout.strip()
     _git(work, "push", "-q", "--force", "origin", f"{wip}:{ref}")
     return wip
 
@@ -449,3 +464,128 @@ def test_missing_or_detached_mirror_fails_loudly(shared, tmp_path):
     _git(mirror, "checkout", "-q", "--detach")
     r = _run_prepare(mirror, local)
     assert r.returncode == 1 and "detached HEAD" in r.stderr
+
+
+# -- retention (issue 14) -------------------------------------------------------
+#
+# Per-job refs would otherwise accumulate one per allocation forever.
+# Deleting them frees nothing by itself -- each snapshot is commit-tree -p
+# HEAD and already orphans its predecessor -- but it is what lets the
+# gc --auto receive-pack runs on every hook push reap them at all.
+
+# Job 1 is still on a node; everything else has ended.
+_ONE_LIVE = 'case "$2" in 1) echo RUNNING;; *) echo "Invalid job id specified" >&2; exit 1;; esac'
+
+
+def _remote_wip_refs(mirror: Path) -> set[str]:
+    out = _git(mirror, "for-each-ref", "--format=%(refname)", "refs/sucoder")
+    return {ln for ln in out.splitlines() if ln}
+
+
+def _seed(shared, refs, subjects=None, squeue=_GONE):
+    """Prepare job 1, then push one snapshot per (job, timestamp) in *refs*."""
+    mirror, local = shared
+    assert _run_prepare(mirror, local, job_id=1, squeue=squeue).returncode == 0
+    work = local / "job1" / "mirrors" / "K"
+    for job, when in refs:
+        (work / f"f{job}.txt").write_text(f"job {job}\n")
+        subject = (subjects or {}).get(job, _subject(job))
+        target = (subjects or {}).get(f"ref{job}", _ref(job))
+        _push_snapshot(work, mirror, target, subject, when)
+        (work / f"f{job}.txt").unlink()
+    return mirror, local
+
+
+@_bash
+@_needs_git
+def test_ended_jobs_snapshots_are_retired_keeping_the_newest(shared):
+    mirror, local = _seed(shared, [(1, "2026-09-10T00:00:00+00:00"),
+                                   (2, "2026-09-11T00:00:00+00:00"),
+                                   (3, "2026-09-12T00:00:00+00:00")])
+    assert _remote_wip_refs(mirror) == {_ref(1), _ref(2), _ref(3)}
+
+    r = _run_prepare(mirror, local, job_id=9, squeue=_GONE)
+    assert r.returncode == 0, r.stderr
+    # The newest ended job's snapshot survives: job 9 has not taken its own
+    # yet and will not for up to wip_snapshot_minutes.
+    assert _remote_wip_refs(mirror) == {_ref(3)}
+    assert "retired WIP snapshot" in r.stdout
+    assert _ref(1) in r.stdout and _ref(2) in r.stdout
+
+
+@_bash
+@_needs_git
+def test_a_live_jobs_snapshot_is_never_retired(shared):
+    mirror, local = _seed(shared, [(1, "2026-09-10T00:00:00+00:00"),
+                                   (2, "2026-09-11T00:00:00+00:00"),
+                                   (3, "2026-09-12T00:00:00+00:00")])
+    r = _run_prepare(mirror, local, job_id=9, squeue=_ONE_LIVE)
+    assert r.returncode == 0, r.stderr
+    # 3 is newest-ended and kept; 2 is retired; 1 is still running.
+    assert _remote_wip_refs(mirror) == {_ref(1), _ref(3)}
+    assert _ref(1) not in r.stdout
+
+
+@_bash
+@_needs_git
+def test_unknown_scheduler_answer_retires_nothing(shared):
+    """Deleting on an unknown answer is the same mistake as restoring on
+    one, and it deletes the only durable copy of someone's work."""
+    mirror, local = _seed(shared, [(1, "2026-09-10T00:00:00+00:00"),
+                                   (2, "2026-09-11T00:00:00+00:00")])
+    r = _run_prepare(mirror, local, job_id=9, squeue=_UNREACHABLE)
+    assert r.returncode == 0, r.stderr
+    assert _remote_wip_refs(mirror) == {_ref(1), _ref(2)}
+    assert "retired" not in r.stdout
+
+
+@_bash
+@_needs_git
+def test_without_squeue_nothing_is_retired(shared):
+    mirror, local = _seed(shared, [(1, "2026-09-10T00:00:00+00:00"),
+                                   (2, "2026-09-11T00:00:00+00:00")],
+                          squeue=None)
+    r = _run_prepare(mirror, local, job_id=9, squeue=None)
+    assert r.returncode == 0, r.stderr
+    assert _remote_wip_refs(mirror) == {_ref(1), _ref(2)}
+
+
+@_bash
+@_needs_git
+def test_this_jobs_own_snapshot_is_never_retired(shared):
+    """A re-run of prepare inside one job must not delete that job's own
+    snapshot: it is the live record of the tree being worked on."""
+    mirror, local = _seed(shared, [(1, "2026-09-10T00:00:00+00:00"),
+                                   (7, "2026-09-11T00:00:00+00:00"),
+                                   (8, "2026-09-12T00:00:00+00:00")])
+    r = _run_prepare(mirror, local, job_id=7, squeue=_GONE)
+    assert r.returncode == 0, r.stderr
+    assert _ref(7) in _remote_wip_refs(mirror)
+
+
+@_bash
+@_needs_git
+def test_legacy_shared_ref_is_retired_once_a_newer_job_ref_exists(shared):
+    """The legacy ref goes through the same rule as any other candidate:
+    it survives while it is the newest ended snapshot and is retired once
+    a per-job one supersedes it."""
+    mirror, local = shared
+    assert _run_prepare(mirror, local, job_id=1, squeue=_GONE).returncode == 0
+    work = local / "job1" / "mirrors" / "K"
+    (work / "old.txt").write_text("from a pre-upgrade timer\n")
+    _push_snapshot(work, mirror, "refs/sucoder/wip/K", _subject(77),
+                   "2026-09-10T00:00:00+00:00")
+    (work / "old.txt").unlink()
+
+    # Alone, it is the newest ended snapshot and is kept.
+    r = _run_prepare(mirror, local, job_id=9, squeue=_GONE)
+    assert "refs/sucoder/wip/K" in _remote_wip_refs(mirror), r.stdout
+
+    (work / "new.txt").write_text("from a current timer\n")
+    _push_snapshot(work, mirror, _ref(5), _subject(5), "2026-09-12T00:00:00+00:00")
+    (work / "new.txt").unlink()
+
+    r = _run_prepare(mirror, local, job_id=10, squeue=_GONE)
+    assert r.returncode == 0, r.stderr
+    assert _remote_wip_refs(mirror) == {_ref(5)}
+    assert "refs/sucoder/wip/K" in r.stdout          # named as retired

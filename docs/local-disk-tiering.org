@@ -171,6 +171,29 @@ Points that matter:
   from the snapshot's subject.  Where =squeue= is not on =PATH= at all
   the restore proceeds but says so, because declining outright would
   break every relaunch in the environment issue 15 describes.
+- Ended jobs' snapshots are retired :: per-job refs would otherwise
+  accumulate one per allocation forever, so prepare deletes the ones whose
+  jobs =squeue= reports have ended -- keeping the newest as a fallback,
+  since this job has not taken its own snapshot yet and will not for up to
+  =wip_snapshot_minutes=.  A live job's snapshot is never touched, and
+  neither is one whose job could not be checked: deleting on an unknown
+  answer is the same mistake as restoring on one, and it deletes the only
+  durable copy of somebody's work.
+- Nothing runs =git gc= on the mirror :: deleting a ref frees nothing by
+  itself.  Every snapshot is =commit-tree -p HEAD=, so each one already
+  orphans its predecessor whatever the ref is called; retiring the refs is
+  what makes those orphans collectable at all.  The =gc --auto= that
+  =receive-pack= already runs on every hook push then reaps them on the
+  mirror's own =gc.pruneExpire=, which bounds the pile at one expiry window
+  of churn instead of forever.  The default window is two weeks; a mirror
+  whose outputs churn hard can shorten it with =git config gc.pruneExpire
+  2.days.ago= /in the mirror/.  That is deliberately the human's setting:
+  an automatic gc from the launcher would take a lock on a Lustre
+  repository at every launch, and on the workloads measured so far it would
+  find nothing to do (10.51 MiB unreachable against 841 MiB packed, well
+  under =gc --auto='s own threshold).  The cheapest real fix is upstream of
+  all of it: =.gitignore= generated outputs, so the churn never enters a
+  snapshot.
 - What it doesn't cover :: ignored files (=.venv=, =node_modules=,
   =.gitnexus=) are rebuilt, which is the point, since they're the
   flock-hostile things.  The staged/unstaged distinction is lost on

@@ -251,6 +251,42 @@ else
         echo "SUCODER: WIP snapshot $ref is from commit ${parent:0:7}, not the current $(git rev-parse --short HEAD); not restored" >&2
     done
 fi
+
+# Retire snapshots belonging to jobs that have ended (issue 14).
+#
+# Keyed by job, the refs are per job rather than one per mirror, so without
+# this they accumulate one per allocation forever.  Deleting them does not
+# itself free anything -- every snapshot is commit-tree -p HEAD, so each one
+# already orphans its predecessor regardless of ref shape -- but it is what
+# makes the orphans collectable at all: the gc --auto that receive-pack
+# already runs on every hook push then reaps them on the mirror's own
+# gc.pruneExpire.  That turns unbounded growth into one expiry window of
+# churn.  No gc is run from here: it would take a lock on the human's
+# repository at every launch, and on the measured workload it would find
+# nothing to do.
+#
+# The newest ended job's snapshot is kept as a fallback: this job has not
+# taken its own yet, and will not for up to wip_snapshot_minutes.  A live
+# job's snapshot is never touched, and neither is one whose job could not be
+# checked -- deleting on an unknown answer is the same mistake as restoring
+# on one.
+wip_kept=""
+for ref in $(git for-each-ref --sort=-committerdate --format='%(refname)' \
+             "$WIP_NS" "$WIP_LEGACY" 2>/dev/null); do
+    job=$(wip_job_of "$ref")
+    [ -n "$job" ] || continue
+    [ -n "$JOB" ] && [ "$job" = "$JOB" ] && continue     # our own, still in use
+    [ "$wip_have_squeue" -eq 1 ] || continue             # cannot tell: leave it
+    wip_job_gone "$job" || continue                      # live or unknown: leave it
+    if [ -z "$wip_kept" ]; then
+        wip_kept="$ref"                                  # newest ended job: fallback
+        continue
+    fi
+    if git push --quiet origin ":$ref" 2>/dev/null; then
+        git update-ref -d "$ref" 2>/dev/null || true
+        echo "SUCODER: retired WIP snapshot $ref (job $job has ended)"
+    fi
+done
 echo "SUCODER: local-tier working clone ready at $WORK ($branch)"
 '''
 
