@@ -2339,9 +2339,25 @@ class MirrorManager:
         to the window command because ``sbatch`` does not carry
         ``agent_launcher.env``.  ``new-session -A -d`` is idempotent and
         detached; the human attaches separately via
-        ``srun --overlap --pty tmux -L <socket> attach``.  The keeper loop
-        holds the job while the session lives; when the agent exits, the
-        session ends, the keeper exits, and the job frees.
+        ``srun --overlap --pty tmux -L <socket> attach``.
+
+        The keeper loop holds the job while the tmux SESSION lives, which
+        is not the same as while the agent lives.
+        :meth:`_build_remote_agent_cmd_str` appends ``; exec bash -l`` to
+        the window command, deliberately, so the window survives a clean
+        ``/exit`` and the human can reattach and inspect state.  The
+        session therefore also survives, the keeper goes on polling, and
+        the job runs to its full ``--time`` with nobody home.  That is
+        ``docs/persistent-presence.org`` open decision 1, resolved as (a)
+        -- keep ``exec bash -l``, bounded by the courtesy ``--time`` --
+        with (c), an idle timeout in the keeper, never implemented.
+
+        Two things depend on reading this correctly.  ``_launch_confined``'s
+        reuse-probe treats a live job as a live session and attaches to it,
+        so after one clean ``/exit`` every later ``collaborate`` lands in
+        that shell rather than starting an agent.  And ``sucoder sessions``
+        exists partly to report it: a live tmux session does not mean a
+        live agent, so it reads the pane's child process instead.
 
         ``timer_path`` (a staged ``slurm_timer.build_timer_script`` output)
         is started/reused through its ``--ensure`` handshake after the session is confirmed and
