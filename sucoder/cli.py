@@ -2484,7 +2484,13 @@ def doctor(
     to the session log.
     """
     config = _get_config(ctx)
-    remote = _get_active_target(ctx)
+    mirror = _resolve_mirror_name(ctx, mirror)
+    # An explicit -T target overlays the mirror's own `remote` block
+    # (`_build_manager_for_mirror`), so BOTH have to be consulted: a mirror
+    # carrying its own non-confined `slurm` block would otherwise walk past
+    # this guard straight into `_ensure_slurm_node`.
+    settings = config.mirrors.get(mirror)
+    remote = _get_active_target(ctx) or (settings.remote if settings else None)
     if remote is not None and remote.slurm is not None and not remote.slurm.confined:
         typer.echo(
             "`doctor` will not allocate a compute node just to read "
@@ -2495,7 +2501,6 @@ def doctor(
         )
         raise typer.Exit(code=2)
 
-    mirror = _resolve_mirror_name(ctx, mirror)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     manager = _build_manager_for_mirror(config, logger, False, mirror, cli_ctx=ctx)
     host, reports = manager.tool_preflight(manager.context_for(mirror))

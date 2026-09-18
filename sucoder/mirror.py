@@ -3297,7 +3297,7 @@ class MirrorManager:
         """Record tool versions in the log before the agent starts (GH #20).
 
         Reports; never gates.  An agent that reads "gh 2.67.0, below floor
-        2.83.0" in the launch log has "my tool is stale" available as an
+        2.90.0" in the launch log has "my tool is stale" available as an
         explanation *before* it writes "this repository is broken" into a
         handoff note -- which is the incident this exists to prevent (see
         ``sucoder.tool_preflight``).

@@ -46,16 +46,18 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #
 # The KEYS of `floors` are what gets probed, so an entry adds a tool as well as
 # setting its floor; `null` records the version without judging it.  Entries
-# merge over the shipped defaults (gh 2.83.0, git 2.34.0, jq 1.6, rg 13.0.0,
+# merge over the shipped defaults (gh 2.90.0, git 2.34.0, jq 1.6, rg 13.0.0,
 # tmux 3.0), so naming one tool does not stop checking the others.  A tool
 # sucoder does not know is probed with `--version`.
 # tool_preflight:
 #   enabled: true
 #   floors:
-#     gh: "2.83.0"          # first gh release after cli/cli#11983 was closed;
-#                           # older clients fail `gh pr edit` / `gh issue view`
-#                           # with a Projects (classic) deprecation error that
-#                           # names GitHub, not the client (GH #20)
+#     gh: "2.95.0"          # a floor is a STALENESS threshold, not a fix
+#                           # boundary: gh 2.67.0 failed every `gh pr edit` /
+#                           # `gh issue view` with a Projects (classic)
+#                           # deprecation error that names GitHub rather than
+#                           # the client, and no upstream fix version exists to
+#                           # floor at (GH #20; see README)
 #     tmux: null            # record the version, stop warning about it
 #     shellcheck: "0.9.0"   # add a tool of your own
 

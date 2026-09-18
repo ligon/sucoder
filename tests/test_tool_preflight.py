@@ -453,3 +453,47 @@ def test_doctor_exits_zero_when_everything_is_current(tmp_path, monkeypatch):
     result = CliRunner().invoke(cli.app, ["--config", str(config), "doctor", "sample"])
     assert result.exit_code == 0, result.output
     assert "gh version 2.101.0" in result.output
+
+
+def test_doctor_refuses_a_mirrors_own_slurm_block_too(tmp_path, monkeypatch):
+    """The -T target is not the only way a mirror acquires a `slurm` block.
+
+    ``_build_manager_for_mirror`` overlays an explicit target ONTO the
+    mirror's own ``remote:``; consult only the target and a mirror that
+    carries its own non-confined SLURM config walks past the guard into
+    ``salloc``.
+    """
+    from typer.testing import CliRunner
+
+    from sucoder import cli
+
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+    import os
+
+    user = os.environ.get("USER", "coder")
+    (tmp_path / "mirrors").mkdir(exist_ok=True)
+    (tmp_path / "canonical").mkdir(exist_ok=True)
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        f"""
+human_user: {user}
+agent_user: {user}
+agent_group: {user}
+mirror_root: {tmp_path / "mirrors"}
+mirrors:
+  sample:
+    canonical_repo: {tmp_path / "canonical"}
+    mirror_name: sample
+    remote:
+      gateway: brc.example.edu
+      transfer_host: dtn.example.edu
+      mirror_root: ~/mirrors
+      slurm:
+        partition: savio3
+        account: acct
+""",
+        encoding="utf-8",
+    )
+    result = CliRunner().invoke(cli.app, ["--config", str(config), "doctor", "sample"])
+    assert result.exit_code == 2
+    assert "will not allocate a compute node" in result.output

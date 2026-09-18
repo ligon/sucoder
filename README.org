@@ -1223,18 +1223,17 @@ will get) and logs what it found:
 
 #+begin_example
 INFO Tool versions on n0043.savio4:
-  gh: gh version 2.67.0 (2025-02-11), floor 2.83.0 -- BELOW FLOOR [/global/home/users/u/bin/gh]
+  gh: gh version 2.67.0 (2025-02-11), floor 2.90.0 -- BELOW FLOOR [/global/home/users/u/bin/gh]
   git: git version 2.43.7, floor 2.34.0 [/usr/bin/git]
   jq: jq-1.6, floor 1.6 [/usr/bin/jq]
   rg: not found, floor 13.0.0
   tmux: tmux 3.7c, floor 3.0 [/global/home/users/u/bin/tmux]
-WARNING Tool preflight: gh: gh version 2.67.0 (2025-02-11), floor 2.83.0 -- BELOW FLOOR [...]
+WARNING Tool preflight: gh: gh version 2.67.0 (2025-02-11), floor 2.90.0 -- BELOW FLOOR [...]
         (this is a HOST tooling fact, not a property of the repository; sucoder
         does not manage these binaries and did not block the launch)
 #+end_example
 
-*Why this exists.*  A target's =gh= was 2.67.0 (February 2025).  Against a
-server-side change fixed upstream in October 2025 ([[https://github.com/cli/cli/issues/11983][cli/cli#11983]]), every =gh pr
+*Why this exists.*  A target's =gh= was 2.67.0 (February 2025).  Every =gh pr
 edit= and =gh issue view= failed with =GraphQL: Projects (classic) is being
 deprecated ... (repository.pullRequest.projectCards)=---an error naming a GitHub
 product sunset, emitted for a command carrying no project flags.  An agent
@@ -1267,19 +1266,30 @@ Both live in one place, =tool_preflight= in =config.yaml=:
 tool_preflight:
   # enabled: false          # skip the probe at launch; `sucoder doctor` still runs it
   floors:
-    gh: "2.83.0"            # override a shipped floor
+    gh: "2.95.0"            # override a shipped floor
     tmux: null              # record the version, stop judging it
     shellcheck: "0.9.0"     # add a tool (probed with --version)
 #+end_src
 
 The keys of =floors= are what gets probed, so one knob both adds a tool and sets
 its floor, and =null= silences a floor without losing the reading.  Entries are
-merged over the shipped defaults (=gh 2.83.0=, =git 2.34.0=, =jq 1.6=, =rg
+merged over the shipped defaults (=gh 2.90.0=, =git 2.34.0=, =jq 1.6=, =rg
 13.0.0=, =tmux 3.0=), so naming one tool does not quietly stop checking the rest.
-Only the =gh= floor is incident-derived---v2.83.0 is the first release published
-after cli/cli#11983 was closed; the other four are conservative defaults, not
-findings.  A floor =sucoder= cannot parse is rejected when the config loads, not
-at launch.
+A floor =sucoder= cannot parse is rejected when the config loads, not at launch.
+
+*A floor is a staleness threshold, not a correctness boundary.*  It says "old
+enough that a server-shaped failure should be suspected of being the client",
+which is the whole job; it does not certify that a passing version is free of
+any particular incompatibility---and for the incident above there is no version
+that would.  [[https://github.com/cli/cli/issues/11983][cli/cli#11983]] is an /issue/, closed 2025-10-21 by its own reporter
+with no linked commit; duplicates kept arriving through March 2026 (#12476,
+#12640, #13069); the two PRs that would have fixed it (#13083, #13282) were both
+closed *unmerged*; and =projectCards= is still referenced across cli/cli today,
+=pkg/cmd/pr/edit/edit.go= included.  What /is/ established is two readings:
+2.67.0 failed on the affected target and 2.101.0 succeeded on it.  The shipped
+=gh= floor sits between them---near enough to current to catch a genuinely stale
+client, far enough back that a fortnightly release does not re-fire it.  All five
+defaults are conservative choices, not findings.
 
 *** =sucoder doctor=
 The same check on demand:

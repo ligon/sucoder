@@ -908,7 +908,7 @@ def _parse_tool_preflight(raw: Any, *, path: Path) -> ToolPreflightConfig:
             if parse_version(value) is None:
                 raise ConfigError(
                     f"`tool_preflight.floors.{name}` is not a readable version "
-                    f"in {path}: {value!r} (expected something like '2.83.0')."
+                    f"in {path}: {value!r} (expected something like '2.90.0')."
                 )
             floors[name] = value
 

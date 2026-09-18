@@ -6,9 +6,8 @@ The shipped prompts and skills tell an agent to use ``gh``, ``git``,
 to be in the target's ``$HOME`` and says nothing about how old it is.
 
 *The incident (GH #20).*  A target's ``gh`` was 2.67.0 (February 2025).
-Against a server-side change fixed upstream in October 2025
-(``cli/cli#11983``), every ``gh pr edit`` and ``gh issue view`` failed
-with ``GraphQL: Projects (classic) is being deprecated ...
+Every ``gh pr edit`` and ``gh issue view`` failed with ``GraphQL:
+Projects (classic) is being deprecated ...
 (repository.pullRequest.projectCards)`` -- an error naming a GitHub
 product sunset, emitted for a command carrying no project flags.  An
 agent concluded *"gh pr edit is broken on this repo"* and wrote that up
@@ -53,14 +52,29 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 #: judge it".  Users extend or override it through ``tool_preflight.floors``
 #: in the sucoder config.
 #:
-#: Only ``gh`` is incident-derived.  ``cli/cli#11983`` was closed
-#: 2025-10-21 and v2.83.0 (2025-11-04) is the first release *published
-#: after* that close -- v2.82.1 landed one day after and is ambiguous, so
-#: the floor is deliberately the conservative side of the boundary.  The
-#: other four are modest "old enough to surprise someone" defaults, not
-#: findings; raise them locally if your prompts need more.
+#: **A floor is a STALENESS threshold, not a correctness boundary.**  It
+#: says "old enough that a server-shaped failure should be suspected of
+#: being the client", which is the whole job here; it does not certify
+#: that a passing version is free of any particular incompatibility.
+#:
+#: That distinction is forced by the evidence, and the evidence is worth
+#: recording because GH #20 reads the other way.  The issue says the
+#: projectCards failure was "fixed upstream in October 2025
+#: (cli/cli#11983)".  Checked against the upstream record: #11983 is an
+#: *issue*, closed 2025-10-21 **by its own reporter with no linked
+#: commit**; duplicates kept arriving through March 2026 (#12476,
+#: #12640, #13069); the two PRs that would have fixed it (#13083,
+#: #13282) were both closed **unmerged**; and ``projectCards`` is still
+#: referenced across cli/cli today, ``pkg/cmd/pr/edit/edit.go``
+#: included.  So there is no fix version to floor at.  What is
+#: established is two readings: 2.67.0 failed on the affected target and
+#: 2.101.0 succeeded on it.  The floor sits between them, near enough to
+#: current to catch a genuinely stale client and far enough back that it
+#: is not re-fired by every fortnightly release.  All five are
+#: conservative defaults, not findings; raise them locally if your
+#: prompts need more.
 DEFAULT_TOOL_FLOORS: Dict[str, Optional[str]] = {
-    "gh": "2.83.0",
+    "gh": "2.90.0",
     "git": "2.34.0",
     "jq": "1.6",
     "rg": "13.0.0",
