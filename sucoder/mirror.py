@@ -78,6 +78,7 @@ from .permissions import (
 from .skills_version import validate_skills_version
 from .local_tier import build_prepare_script, cache_exports_sh, work_path, work_path_shell
 from .slurm_timer import build_timer_script, timer_identity
+from .tool_preflight import ToolReport, build_probe_script, evaluate, format_report
 from .workspace_prefs import WorkspacePrefs
 
 
@@ -3030,6 +3031,7 @@ class MirrorManager:
             else self._supports_inline_prompt(command)
         )
 
+        self._maybe_run_tool_preflight(ctx)
         self._maybe_run_poetry_auto_install(ctx, mirror_path)
         self._maybe_suggest_mcp_servers(ctx, mirror_path)
 
@@ -3267,6 +3269,79 @@ class MirrorManager:
 
         self.logger.debug("Exec'ing agent (replaces current process): %s", final_command)
         os.execvp(final_command[0], final_command)
+
+    def tool_preflight(self, ctx: MirrorContext) -> Tuple[Optional[str], List[ToolReport]]:
+        """Probe the target's tool versions; return ``(hostname, findings)``.
+
+        One round trip: a generated bash probe
+        (:func:`tool_preflight.build_probe_script`) is fed to ``bash -l -s``
+        on stdin, so it never appears on a command line and so it resolves
+        binaries under the *login* PATH -- the one the agent will get, and
+        the reason ``shutil.which`` here would answer for the wrong host
+        and the wrong profile (same argument as :meth:`_report_agent_binary`,
+        which this generalises to remote targets).
+
+        Login shells print banners and MOTDs, so only tagged lines are
+        parsed and everything else is discarded.  Under ``--dry-run`` the
+        executor returns empty stdout, which yields no reports -- silence,
+        not an invented finding.
+
+        Raises nothing of its own: a failed probe is an empty list.  The
+        caller decides whether to log or to exit non-zero; the launch path
+        does the former, ``sucoder doctor`` the latter.
+        """
+        floors = self.config.tool_preflight.floors
+        script = build_probe_script(list(floors))
+        try:
+            result = self.executor.run_agent(
+                ["bash", "-l", "-s"],
+                check=False,
+                capture_output=True,
+                input=script,
+                timeout=60,
+            )
+        except Exception as exc:                  # noqa: BLE001 - best effort by contract
+            self.logger.debug("Tool preflight probe failed: %s", exc)
+            return None, []
+        return evaluate(result.stdout, floors)
+
+    def _maybe_run_tool_preflight(self, ctx: MirrorContext) -> None:
+        """Record tool versions in the log before the agent starts (GH #20).
+
+        Reports; never gates.  An agent that reads "gh 2.67.0, below floor
+        2.90.0" in the launch log has "my tool is stale" available as an
+        explanation *before* it writes "this repository is broken" into a
+        handoff note -- which is the incident this exists to prevent (see
+        ``sucoder.tool_preflight``).
+
+        The whole body is best-effort, in the discipline of
+        ``slurm_timer.snapshot_wip``: nothing here may fail a launch,
+        including this method's own bugs.
+
+        Caveat worth knowing when you read the output: for a *confined*
+        (sbatch) target the executor points at the login node at this
+        point, while the agent will run on a compute node.  Tools in a
+        shared ``$HOME`` (``gh``, ``rg``, ``jq``) are the same binary; a
+        system ``git`` or ``tmux`` need not be.  The probed hostname is in
+        the report line so that difference is visible where it is read.
+        """
+        try:
+            if not self.config.tool_preflight.enabled or self.executor.dry_run:
+                return
+            host, reports = self.tool_preflight(ctx)
+            if not reports:
+                return
+            self.logger.info("%s", format_report(host, reports))
+            for report in reports:
+                if report.is_warning:
+                    self.logger.warning(
+                        "Tool preflight: %s  (this is a HOST tooling fact, not a "
+                        "property of the repository; sucoder does not manage these "
+                        "binaries and did not block the launch)",
+                        report.describe(),
+                    )
+        except Exception as exc:                  # noqa: BLE001 - never fail a launch
+            self.logger.debug("Tool preflight skipped: %s", exc)
 
     def _maybe_run_poetry_auto_install(self, ctx: MirrorContext, mirror_path: Path) -> None:
         """Offer or run `poetry install` for Poetry-based projects."""

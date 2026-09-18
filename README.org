@@ -1266,6 +1266,107 @@ The check is skipped for remote launches (PATH belongs to the remote host), unde
 =agent_launcher.nvm= block is configured, since that pins resolution deliberately
 and it happens inside the nvm shell.
 
+** Tool versions on the target (launch preflight)
+The section above answers /which agent binary/ runs.  This one answers a
+neighbouring question the shipped prompts and skills make unavoidable: the
+agent is told to use =gh=, =git=, =jq=, =rg= and =tmux=, and a session inherits
+whatever happens to be in the target's =$HOME=.  Until now =sucoder= never said
+how old any of it was.
+
+Before every launch, =sucoder= runs one probe on the target (a generated bash
+script fed to =bash -l -s=, so it resolves under the same login PATH the agent
+will get) and logs what it found:
+
+#+begin_example
+INFO Tool versions on n0043.savio4:
+  gh: gh version 2.67.0 (2025-02-11), floor 2.90.0 -- BELOW FLOOR [/global/home/users/u/bin/gh]
+  git: git version 2.43.7, floor 2.34.0 [/usr/bin/git]
+  jq: jq-1.6, floor 1.6 [/usr/bin/jq]
+  rg: not found, floor 13.0.0
+  tmux: tmux 3.7c, floor 3.0 [/global/home/users/u/bin/tmux]
+WARNING Tool preflight: gh: gh version 2.67.0 (2025-02-11), floor 2.90.0 -- BELOW FLOOR [...]
+        (this is a HOST tooling fact, not a property of the repository; sucoder
+        does not manage these binaries and did not block the launch)
+#+end_example
+
+*Why this exists.*  A target's =gh= was 2.67.0 (February 2025).  Every =gh pr
+edit= and =gh issue view= failed with =GraphQL: Projects (classic) is being
+deprecated ... (repository.pullRequest.projectCards)=---an error naming a GitHub
+product sunset, emitted for a command carrying no project flags.  An agent
+concluded /"gh pr edit is broken on this repo"/ and wrote that up as a
+repo-specific gotcha for others to inherit.  The misattribution, not the outage,
+is what the preflight prevents: the version is in the log before the agent
+starts.  It also makes visible, for the first time, the case where two targets
+carry different versions and a workflow verified on one silently fails on the
+other.
+
+*What it deliberately does not do.*  It never gates---a stale tool must not stop
+a session starting, and nothing in the check can fail a launch, including its own
+bugs.  It never touches the network: the floor is a constant in the config file,
+because a preflight that needs the internet fails on exactly the constrained
+targets it is meant to help.  And it does not manage the tools; they live in the
+user's =$HOME=, shared across targets, and =sucoder= is not a package manager.
+Replacing a running, user-owned static binary is =mv= (which replaces the
+directory entry and leaves running processes on the old inode), never =cp= over
+the top---several targets may share one =$HOME= and another session may be
+mid-call.  Auth and config are unaffected; for =gh= they live in =~/.config/gh/=.
+
+A version string it cannot read (=tmux 3.3a=, =jq-1.6= and =gh version 2.67.0
+(2025-02-11)= are all handled, but the world is larger than five tools) is
+reported as unreadable---recorded, and neither a pass nor a warning.
+
+*** Floors and which tools are probed
+Both live in one place, =tool_preflight= in =config.yaml=:
+
+#+begin_src yaml
+tool_preflight:
+  # enabled: false          # skip the probe at launch; `sucoder doctor` still runs it
+  floors:
+    gh: "2.95.0"            # override a shipped floor
+    tmux: null              # record the version, stop judging it
+    shellcheck: "0.9.0"     # add a tool (probed with --version)
+#+end_src
+
+The keys of =floors= are what gets probed, so one knob both adds a tool and sets
+its floor, and =null= silences a floor without losing the reading.  Entries are
+merged over the shipped defaults (=gh 2.90.0=, =git 2.34.0=, =jq 1.6=, =rg
+13.0.0=, =tmux 3.0=), so naming one tool does not quietly stop checking the rest.
+A floor =sucoder= cannot parse is rejected when the config loads, not at launch.
+
+*A floor is a staleness threshold, not a correctness boundary.*  It says "old
+enough that a server-shaped failure should be suspected of being the client",
+which is the whole job; it does not certify that a passing version is free of
+any particular incompatibility---and for the incident above there is no version
+that would.  [[https://github.com/cli/cli/issues/11983][cli/cli#11983]] is an /issue/, closed 2025-10-21 by its own reporter
+with no linked commit; duplicates kept arriving through March 2026 (#12476,
+#12640, #13069); the two PRs that would have fixed it (#13083, #13282) were both
+closed *unmerged*; and =projectCards= is still referenced across cli/cli today,
+=pkg/cmd/pr/edit/edit.go= included.  What /is/ established is two readings:
+2.67.0 failed on the affected target and 2.101.0 succeeded on it.  The shipped
+=gh= floor sits between them---near enough to current to catch a genuinely stale
+client, far enough back that a fortnightly release does not re-fire it.  All five
+defaults are conservative choices, not findings.
+
+*** =sucoder doctor=
+The same check on demand:
+
+#+begin_src sh
+sucoder doctor [<mirror>]
+#+end_src
+
+Unlike the launch-time preflight it *exits non-zero* when a tool is missing or
+below its floor (the same convention as =sucoder tunnel doctor=), and it prints
+the =mv=-not-=cp= note above.  It refuses a non-confined SLURM target rather than
+quietly running =salloc=: a diagnostic must not bill a compute allocation.  Run
+it without =-T= (or against a confined target) to probe the login node, or read
+the report the launcher already wrote to the session log.
+
+*Caveat worth knowing.*  For a confined (=sbatch=) target the preflight runs on
+the login node at launch time, while the agent runs on a compute node.  Tools
+under a shared =$HOME= (=gh=, =rg=, =jq=) are the same binary; a system =git= or
+=tmux= need not be.  The probed hostname is printed in the report so that
+difference is visible where it is read.
+
 ** Pin agent Node version with nvm
 Some agents (e.g., Codex) bundle their own Node.js runtime.  =sucoder= can wrap the
 launch so that the agent runs under a newer nvm-managed runtime instead (for example Node 22).

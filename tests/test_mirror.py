@@ -80,6 +80,7 @@ def build_manager(
     prompt_handler: Optional[Callable[[str], bool]] = None,
     executor: Optional[CommandExecutor] = None,
     report_agent_binary: bool = False,
+    tool_preflight: bool = False,
 ) -> MirrorManager:
     canonical = tmp_path / "canonical"
     canonical.mkdir()
@@ -146,6 +147,14 @@ def build_manager(
     # binary is sluggish).  Tests that exercise it opt back in explicitly.
     if not report_agent_binary:
         manager._report_agent_binary = lambda *a, **kw: None  # type: ignore[method-assign]
+    # Same reasoning as the binary-resolution diagnostic above: the tool
+    # preflight spawns a login shell and a handful of `--version` probes on
+    # the host running the tests, which makes every launch_agent test
+    # host-dependent and adds an extra run_agent call that call-order
+    # assertions would have to know about.  Tests that exercise it opt in
+    # (see tests/test_tool_preflight.py).
+    if not tool_preflight:
+        manager._maybe_run_tool_preflight = lambda *a, **kw: None  # type: ignore[method-assign]
     return manager
 
 
