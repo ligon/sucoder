@@ -1,4 +1,4 @@
-#+title: WIP-ref identity, restore safety, and retention (issues 19, 16, 14)
+#+title: Session listing, and the confined job/agent lifecycle
 #+date: 2026-09-18
 #+status: READY
 #+author: Sue
@@ -6,74 +6,108 @@
 
 * Mission
 
-Implement the two changes recommended in
-[[file:handoffs/2026-09-18-wip-ref-triage.org][the triage note]] (=bfb2054=).
-Read it first: it corrects issue 16 and re-bases issue 19's evidence, and
-both corrections change what the fix has to do.
+Build =sucoder sessions=: one listing of every SuCoder job on a cluster,
+across all configured targets, with enough state to diagnose and reap.
 
-Baseline =bfb2054= on =main=. Branch: =fix/wip-ref-identity=.
+Background, in order: the triage note
+[[file:handoffs/2026-09-18-wip-ref-triage.org][2026-09-18-wip-ref-triage.org]],
+then PR 21 (=a413909=, closed issue 19), then the findings below.
 
-* A. Snapshot identity and restore gate (closes 19, re-scopes 16)
+* What was established first
 
-1. Snapshots write =refs/sucoder/wip-job/<token>/<job>=, a *sibling*
-   namespace. Not =refs/sucoder/wip/<token>/<job>=: an existing
-   =refs/sucoder/wip/<token>= blocks it with a directory/file conflict, and
-   =--atomic= does not rescue delete-plus-create, so nesting costs a window
-   in which the mirror holds no snapshot. Verified on git 2.43.7.
-2. Restore reads *both* shapes. Among candidates whose =wip^ = HEAD=, take
-   this job's own ref if one exists, else the newest whose job =squeue= says
-   is not RUNNING. A failed =squeue= is unknown state, not "gone" (ledger 3):
-   decline. A ref whose job id cannot be determined: decline, with a
-   diagnostic. Name the source job in the restore line.
-3. Refuse at config load when two configured mirrors sanitize to the same
-   token, naming both. This covers 16's whole residue at once: the shared
-   warn file, the staged =job-<token>.sh= / =local-tier-<token>.sh=, and the
-   tmux session *and socket* (=mirror.py:213-222=), which 16 does not name
-   and which fails first.
-4. The shared =$CACHE_DIR/slurm-deadline-<token>.warn= still collides when
-   one mirror has two live jobs. Note that =STATE_DIR= is reassigned to
-   node-local =/tmp/.../$node-$JOB= in =timer_lifecycle.py:20=, so the
-   node-local warn file is *already* per-job; only the =$CACHE_DIR= copy in
-   shared =$HOME= collides, and the WORKSPACE prelude
-   (=mirror.py:5373-5375=) is what tells the agent to poll it.
+The user's reported symptoms -- =collaborate= attaching instead of launching,
+=attach= landing in a bash shell -- are *one event*, and it is not a bug in
+=attach=.
 
-Deliberately deferred: issue 19's option 3 (warn or refuse at launch when a
-mirror already holds a live job). It is a launch-flow change with an
-interactive confirmation, and A.1/A.2 remove the data-loss teeth without it.
-Decide it separately.
+- =mirror.py:2446= appends =; exec bash -l= to the window command, so the
+  tmux window outlives the agent by design (rationale at =mirror.py:2433=).
+- The batch body's keeper is =while tmux has-session; do sleep 15; done=
+  (=mirror.py:2405=), so the job then runs to its full =--time=.
+- =mirror.py:2343-2344= still claims the opposite --- "when the agent exits,
+  the session ends, the keeper exits, and the job frees". *That docstring is
+  false*, and it is the assumption =_launch_confined='s reuse-probe rests on
+  (=mirror.py:2757-2787=). Fix the docstring whatever else happens.
+- So after one clean =/exit=, every later =collaborate= attaches to the
+  leftover shell, and so does every =attach=. It is a login *shell* inside
+  the job step on the *compute* node, not a shell on a login node.
 
-* B. Retention (closes 14)
+*Decided: keep =exec bash -l=.* It buys a window for manual repo checks after
+the agent exits. Revisit only once the surrounding process is bulletproof.
+The cost it leaves on the table is an allocation held for its full =--time=
+after every clean exit, which is exactly what the listing must surface.
 
-At prepare time, never per snapshot. Drop job refs whose jobs =squeue=
-reports gone, retire the legacy =refs/sucoder/wip/<token>= only once a job
-ref exists, then gc the mirror with an *explicit* expiry. Never
-=--prune=now=: the mirror is the human's push target on Lustre and a
-snapshot may be in flight. Note that a default =git gc --prune= is a no-op
-here -- =gc.pruneExpire= is =2.weeks.ago= -- which is why issue 14's first
-listed option does not work.
+Ruled out: launcher version skew (every =attach= guard predates the
+launcher's [2026-06-29, 2026-09-09) window); =_adopt_existing_allocation=
+(=cli.py:824=), which is salloc-only and never runs for a confined target.
 
-Also document, where =wip_snapshot_minutes= is documented, that a
-snapshotted repo's outputs belong in =.gitignore=.
+* The listing
 
-* Change surface
+** One query per cluster, not per target
 
-- =sucoder/slurm_timer.py:93-94= -- ref name and push
-- =sucoder/local_tier.py:150-159= -- restore gate; needs the job id, which
-  the prepare template does not currently carry
-- =sucoder/config.py= -- sanitize-collision refusal
-- =sucoder/mirror.py:5373-5375= -- WORKSPACE prelude quotes the ref path and
-  the "last snapshot" command to the agent, and must follow
-- =docs/local-disk-tiering.org:118-150,273= -- documented ref name and
-  restore rule
-- =README.org=, =config.example.yaml= -- if any new configuration appears
-- tests: =tests/test_local_tier.py:146=,
-  =tests/test_slurm_timer_script.py:156+=, =tests/test_mirror.py:1067=,
-  =tests/test_timer_lifecycle.py:141=
+All four Savio targets share =gateway: hpc.brc.berkeley.edu=, one =$HOME= and
+one Slurm; they differ only in partition/account/qos. So group configured
+targets by cluster and run *one* =squeue --me= per cluster. =hhsurveys= is
+direct-SSH with no scheduler and has no jobs to list.
+
+Jobs carry =--job-name=sucoder-<token>= (=mirror.py:265,2889=), so filtering
+=squeue --me= on the =sucoder-= prefix finds every SuCoder job whatever
+launched it.
+
+** Enumerate from squeue, never from the session files
+
+This is the design decision the whole command turns on. File-first
+enumeration inherits the one-slot bug --- =~/.sucoder/sessions/
+<mirror>--<target>.yaml= holds a single =slurm_job_id= --- and so shows
+exactly the jobs that are not the problem. squeue-first finds the orphans: a
+job whose session record was lost, corrupted (=session.py:60-66= swallows
+parse errors and returns a blank session), or written under a different =-T=
+spelling. Those jobs are unreachable by every SuCoder command and can only be
+=scancel='d by hand.
+
+That same blankness is the confined duplicate-job mechanism:
+=_launch_confined= sees no =slurm_job_id= and submits a *second* sbatch over
+a live one --- the leak the reuse-probe exists to prevent.
+
+** Columns
+
+Per job: mirror, target, job id, state, *time left* (=%L=), node. Then:
+
+- Session record present? Map via =RemoteSession.holders_of_job(job_id)=
+  (=session.py:116=), which already returns the =<mirror>--<target>= keys
+  referencing a job. Empty means ORPHAN. Corroborate the target from
+  partition/account/qos, which is a unique signature per configured target.
+- The reverse sweep: session files whose job is *not* in squeue are STALE
+  records; name them so =release= can clear them.
+- Repo, branch, dirty, and the last WIP snapshot --- now per job, so
+  =refs/sucoder/wip-job/<token>/<jobid>= answers directly.
+- Agent or bare shell. *This signal does not exist anywhere today.*
+  =srun --overlap --jobid=<J> tmux -L <socket> list-panes -F
+  '#{pane_current_command}'= distinguishes =bash= from the agent. It costs an
+  =srun= per job, so put it behind =--deep= rather than making it the default.
+
+=_confined_session_ready= (=mirror.py:2672=) checks only that the tmux
+session exists, which =exec bash -l= guarantees forever; it is not a
+substitute.
+
+** Shape
+
+Follow =sucoder nodes= (=cli.py:3183=): read-only, reuses the target's warm
+gateway ControlMaster so it costs no OTP when a tunnel is up, runs its query
+on the login node, prints one row per thing. Same shape with =squeue= instead
+of =sinfo=.
+
+* Then, and only then, issue 19's option 3
+
+With a squeue-first listing, the launch-time guard is a consequence rather
+than a feature: launch runs the same query, and if the mirror already has a
+live job it says so and offers to attach. =release= can offer the list
+instead of cancelling whatever the session file happens to name. Warn and
+confirm, never refuse --- one mirror on two targets can be deliberate.
 
 * Constraints
 
-- No =.venv= in a node-local clone (it is ignored, so it dies with the job).
-  Rebuild it without the NFS =flock= detour:
+- No =.venv= in a node-local clone (ignored, dies with the job). Rebuild
+  without the NFS =flock= detour:
 
   #+begin_src sh
   export UV_PYTHON_INSTALL_DIR="$SUCODER_LOCAL_ROOT/cache/uv-python"
@@ -85,66 +119,34 @@ snapshotted repo's outputs belong in =.gitignore=.
 
   Plain =uv venv= fails with =Could not acquire lock ... No locks available=:
   uv's default Python dir is =$HOME/.local/share/uv/python=, on NFS.
-- =.venv/bin/python -m pytest -q= from the mirror root; 763 tests passed at
-  the PR-13 baseline.
-- Run =detect_changes()= before committing (=CLAUDE.md=), and =impact= before
-  editing a symbol.
-- Additive only. Do not force-push to origin; the post-commit hook publishes
+- =.venv/bin/python -m pytest -q= from the mirror root. 809 pass on
+  =a413909=, plus one pre-existing environment failure,
+  =tests/test_direct_remote.py::test_direct_collaborate_rejects_node= (a
+  chmod-based readability check), verified against clean =main=.
+- New configuration means =README.org= and =config.example.yaml= updates
+  (=CLAUDE.md=). A listing command should need none.
+- Additive only. Never force-push to origin; the post-commit hook publishes
   every commit to the shared mirror.
+- Put =Closes #N= only in the PR body, never in a commit message, unless the
+  commit really does close the issue: a commit message merged to the default
+  branch overrides the PR body. PR 21 closed issue 14 this way by accident.
 
-* Open
+* Open issues after PR 21
 
-Settled: job 38975827 had no snapshotter at all -- launcher version skew,
-not a dead one, and =git= is present on these nodes because sbatch is invoked
-without =--export=. Details in the triage note's Correction section and on
-issue 15. Neither A nor B is affected; no liveness signal was added here.
-
-Issue 15 now has a concrete, decided-shape backlog: say so when a job has no
-watchdog, record each snapshot cycle's outcome to =$CACHE_DIR= (not
-=$STATE_DIR=, which is node-local since =6b9c221= and dies with the job), and
-decide whether =git= joins the =tmux=/=squeue= preflight in
-=timer_lifecycle.py:74-78=. That last one is a real trade, not an oversight:
-making it fatal also costs the deadline warnings, which do not need git.
-
-Job 38710868 produced zero snapshots over six days and its artifacts are
-gone. Indeterminate, and it is the case issue 15 actually describes.
+- 16 :: re-scoped. Its WIP-ref claim does not hold (=mirror_dirname= is the
+  raw name); the real shared state is the tmux session and socket, the staged
+  scripts, and the warn file. The config-load refusal landed, but
+  =_create_ephemeral_mirror= injects into =config.mirrors= at runtime and
+  bypasses it --- an ephemeral mirror is named from the git root directory,
+  which can contain a space. Noted on the issue with two options.
+- 14 :: reopened after PR 21 closed it by accident. Retention bounds the ref
+  set, not the objects.
+- 15 :: its specific hypothesis (missing =git=) is contradicted here ---
+  sbatch is invoked without =--export=, so the batch body inherits the
+  submitting environment. Its structural complaint stands; job 38710868 is
+  its genuine open instance.
+- 20, 17, 1 :: pre-existing, untouched.
 
 * Outcome
 
-A committed as =8e25952= on =fix/wip-ref-identity=, published to the shared
-mirror. 803 pass, plus one pre-existing failure:
-=tests/test_direct_remote.py::test_direct_collaborate_rejects_node= (a
-chmod-based readability check) fails in this environment both before and
-after, verified against clean =main=.
-
-B committed as =9dbb96d=, scoped down from the plan above on review. *No automated
-=git gc= on the shared mirror.* The measured number does not support it:
-LSMS_Library carries 10.51 MiB unreachable against 841 MiB packed, and
-=gc --auto= would not fire there anyway (2429 loose objects against a 6700
-threshold). A gc step would take a lock on the human's Lustre repository at
-every launch and do nothing on the observed workload. Instead: prune the
-refs, and let the =gc --auto= that =receive-pack= already runs on every hook
-push collect what that makes unreachable, on the mirror's own
-=gc.pruneExpire=. That turns issue 14's unbounded growth into a bound of one
-expiry window of churn, and the expiry stays the human's setting -- documented,
-not written by us.
-
-If a workload later justifies an explicit gc, it should arrive as opt-in
-configuration (=slurm.wip_gc=), with the =README.org= and
-=config.example.yaml= updates =CLAUDE.md= requires.
-
-Both changes are on =fix/wip-ref-identity= and open as
-[[https://github.com/ligon/sucoder/pull/21][PR 21]]. It closes 19; 14 and 16
-stay open, 14 because B bounds the /ref set/ and not the objects (see below)
-and 16 for the naming decision its remaining half needs. 809 pass, plus the
-one pre-existing failure above. Status: awaiting review.
-
-B does not close 14, and the PR should not be read as claiming it does. The
-orphans 14 counts come from =commit-tree -p HEAD= /within/ one job's ref --
-39002769's eleven snapshots orphaned each other while its ref stayed live --
-and retention does not touch that rate. What retention does is keep the ref
-set bounded, which A would otherwise have made worse: per-job refs left
-un-retired would hold every old snapshot /reachable/ forever, so nothing
-could ever collect them. Whether the objects are collected remains the
-mirror's own =gc.pruneExpire=, and on the measured workload =gc --auto= will
-not fire anyway (2429 loose against a 6700 threshold).
+Not started. Design agreed with the human; no code written.
