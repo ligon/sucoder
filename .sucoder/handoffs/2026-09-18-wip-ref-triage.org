@@ -260,7 +260,7 @@ ran 1-20:44:04, not the ~24 hours stated above.
 =_build_sbatch_command= (=mirror.py:253-281=) passes no =--export=, so sbatch
 defaults to =--export=ALL= and the batch body inherits the submitting
 environment.  =local-tier-*.sh= is pure git run under a plain non-login bash
-from the batch body and succeeded on n0036, n0043, n0045 and n0029.  =git= is
+from the batch body and succeeded on n0043, n0045 and n0029.  =git= is
 not missing on these nodes.  That is a property of how sbatch is invoked here,
 not a guarantee: it would break under =--export=NONE=.
 
