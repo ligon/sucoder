@@ -1,191 +1,91 @@
-#+title: PR 13 cluster validation and issue 15
-#+date: 2026-09-12
+#+title: WIP-ref identity, restore safety, and retention (issues 19, 16, 14)
+#+date: 2026-09-18
 #+status: READY
 #+author: Sue
 #+property: header-args :eval never-export :tangle no :results output :exports code
 
-* Mission and baseline
+* Mission
 
-Validate [[https://github.com/ligon/sucoder/pull/13][PR 13]] on a real Slurm
-allocation and settle [[https://github.com/ligon/sucoder/issues/15][issue 15's]]
-batch-environment Git availability. This is validation, not harness
-installation. The earlier unfinished task is preserved at
-[[file:handoffs/2026-08-25-savio-harness-bootstrap.org][the archived bootstrap handoff]].
+Implement the two changes recommended in
+[[file:handoffs/2026-09-18-wip-ref-triage.org][the triage note]] (=bfb2054=).
+Read it first: it corrects issue 16 and re-bases issue 19's evidence, and
+both corrections change what the fix has to do.
 
-Code baseline: =fe3845f9bcdccc87c813444f534e92cc6c6f0983= on
-=fix/slurm-timer-hardening=. Fetch the current PR head, which also contains
-this handoff, and record its SHA. Do not assume GitHub main includes it.
-Read =AGENTS.md= and =.coder/ledger.md= before making changes.
+Baseline =bfb2054= on =main=. Branch: =fix/wip-ref-identity=.
 
-Both launch paths use =bash <timer> --ensure=, allocation-scoped locks, and
-readiness responses. Failed scheduler queries leave monitoring and periodic
-snapshots running. Three consecutive successful empty queries establish
-disappearance. Preserve =258accb='s supervision and startup safety.
+* A. Snapshot identity and restore gate (closes 19, re-scopes 16)
 
-* Already verified
+1. Snapshots write =refs/sucoder/wip-job/<token>/<job>=, a *sibling*
+   namespace. Not =refs/sucoder/wip/<token>/<job>=: an existing
+   =refs/sucoder/wip/<token>= blocks it with a directory/file conflict, and
+   =--atomic= does not rescue delete-plus-create, so nesting costs a window
+   in which the mirror holds no snapshot. Verified on git 2.43.7.
+2. Restore reads *both* shapes. Among candidates whose =wip^ = HEAD=, take
+   this job's own ref if one exists, else the newest whose job =squeue= says
+   is not RUNNING. A failed =squeue= is unknown state, not "gone" (ledger 3):
+   decline. A ref whose job id cannot be determined: decline, with a
+   diagnostic. Name the source job in the restore line.
+3. Refuse at config load when two configured mirrors sanitize to the same
+   token, naming both. This covers 16's whole residue at once: the shared
+   warn file, the staged =job-<token>.sh= / =local-tier-<token>.sh=, and the
+   tmux session *and socket* (=mirror.py:213-222=), which 16 does not name
+   and which fails first.
+4. The shared =$CACHE_DIR/slurm-deadline-<token>.warn= still collides when
+   one mirror has two live jobs. Note that =STATE_DIR= is reassigned to
+   node-local =/tmp/.../$node-$JOB= in =timer_lifecycle.py:20=, so the
+   node-local warn file is *already* per-job; only the =$CACHE_DIR= copy in
+   shared =$HOME= collides, and the WORKSPACE prelude
+   (=mirror.py:5373-5375=) is what tells the agent to poll it.
 
-- All 759 tests passed locally on Python 3.12.
-- Python 3.9, Python 3.11, and docs CI passed at =fe3845f= (run =34684599185=).
-- Real bash/flock tests cover concurrent starters, owner reuse, startup
-  failure, snapshots, and preservation of the agent's Git index.
-- Scheduler stubs cover repeated errors, partial output on failure, recovery,
-  and snapshots during outages. No real controller outage was induced.
-- A real-file test checks atomic staging, existing readers, and quoted paths.
+Deliberately deferred: issue 19's option 3 (warn or refuse at launch when a
+mirror already holds a live job). It is a launch-flow change with an
+interactive confirmation, and A.1/A.2 remove the data-loss teeth without it.
+Decide it separately.
 
-These do not establish Slurm cgroups, shared-filesystem locking, or executable
-availability in the actual batch environment.
+* B. Retention (closes 14)
 
-* Entry checks
+At prepare time, never per snapshot. Drop job refs whose jobs =squeue=
+reports gone, retire the legacy =refs/sucoder/wip/<token>= only once a job
+ref exists, then gc the mirror with an *explicit* expiry. Never
+=--prune=now=: the mirror is the human's push target on Lustre and a
+snapshot may be in flight. Note that a default =git gc --prune= is a no-op
+here -- =gc.pruneExpire= is =2.weeks.ago= -- which is why issue 14's first
+listed option does not work.
 
-SuCoder runs on the launcher host; the remote session runs as the SSH user,
-normally =ligon=. Verify the launcher uses the PR's Python package before
-testing generated scripts. A PR checkout only on the cluster does not update
-the launcher. Record these facts without dumping credentials or environment:
+Also document, where =wip_snapshot_minutes= is documented, that a
+snapshotted repo's outputs belong in =.gitignore=.
 
-#+begin_src sh
-git status --short --branch
-git rev-parse HEAD
-date -u
-hostname -f
-id -un
-printf 'SLURM_JOB_ID=%s\n' "${SLURM_JOB_ID:-}"
-nproc
-cat /proc/self/cgroup
-#+end_src
+* Change surface
 
-Without an allocation, stop before tests/workloads and request a relaunch with
-=-T savio-htc= or =-T carleton-htc=. Use an installed harness. Do not install
-harnesses or copy launcher configuration, keys, or password stores for this task.
+- =sucoder/slurm_timer.py:93-94= -- ref name and push
+- =sucoder/local_tier.py:150-159= -- restore gate; needs the job id, which
+  the prepare template does not currently carry
+- =sucoder/config.py= -- sanitize-collision refusal
+- =sucoder/mirror.py:5373-5375= -- WORKSPACE prelude quotes the ref path and
+  the "last snapshot" command to the agent, and must follow
+- =docs/local-disk-tiering.org:118-150,273= -- documented ref name and
+  restore rule
+- =README.org=, =config.example.yaml= -- if any new configuration appears
+- tests: =tests/test_local_tier.py:146=,
+  =tests/test_slurm_timer_script.py:156+=, =tests/test_mirror.py:1067=,
+  =tests/test_timer_lifecycle.py:141=
 
-* Confined launch smoke test
+* Constraints
 
-Use a disposable mirror and the normal launcher path with a short allocation
-on the configured shared partition. Record partition, account, QoS, CPU count,
-time limit, and local-disk setting. Do not snapshot an active research mirror
-as a test fixture.
+- =pytest -q= from the mirror root; 763 tests passed at the PR-13 baseline.
+- Run =detect_changes()= before committing (=CLAUDE.md=), and =impact= before
+  editing a symbol.
+- Additive only. Do not force-push to origin; the post-commit hook publishes
+  every commit to the shared mirror.
 
-1. Confirm the batch body runs =bash <timer> --ensure= before the keeper loop.
-   Record the staged timer path/digest. Check job output for
-   =SUCODER_TIMER_STARTED= and absence of startup failure diagnostics.
-2. Inspect the matching directory under
-   =/tmp/sucoder-<uid>/timers/<scope>/<node>-<job>/=. Record =owner=, =status=,
-   and sanitized =timer.log=. Status should reach =monitoring=.
-3. On that allocated node, in the same job environment, run
-   =bash <exact-staged-timer-path> --ensure= twice. Expect
-   =SUCODER_TIMER_REUSED= with the same owner PID/start-time pair.
-   From a login node, use the confined job's =srun --overlap= route.
-4. Compare =/proc/<owner-pid>/cgroup= with the job's cgroup. The watchdog must
-   belong to the allocation and survive detaching the client.
-5. Enable local-disk tiering for the disposable mirror. Verify the timer's
-   snapshot directory is its node-local clone and origin is the shared mirror.
-   Create small tracked and untracked text changes; record =git write-tree=
-   before and after a snapshot. Verify =refs/sucoder/wip/<mirror-token>= on
-   the shared origin contains both changes and the agent's index is unchanged.
-6. Let the short allocation enter a warning threshold. Check warning files
-   and WIP refs. Starting below five minutes should yield one urgent warning,
-   with no subsequent less urgent notices.
-7. End only the disposable tmux session. Under sbatch the keeper should exit
-   and the allocation complete. Exiting just the agent can leave a fallback
-   shell alive; that is not the same as ending tmux. Do not kill unrelated
-   sessions or use process-name matching for cleanup.
+* Open
 
-If an unconfined target is already available, check SSH readiness and reuse
-there too. Otherwise mark it untested; do not reserve a whole node solely for
-this checklist.
-
-* Issue 15: actual batch environment
-
-An interactive =bash -lc= or =srun= inheriting an already repaired PATH does
-not settle this issue. Run this payload directly in a fresh sbatch body,
-before any login-shell wrapper or module setup. Use the normal launcher's
-submission environment/export policy and configured account/partition/QoS,
-one task, and a short time limit. Record the exact submission command.
-Do not use =env -i= to manufacture a failure.
-
-#+begin_src sh
-#!/bin/bash
-date -u
-hostname -f
-printf 'SLURM_JOB_ID=%s\n' "${SLURM_JOB_ID:-}"
-for executable in git bash flock nohup tmux squeue; do
-    if command -v "$executable"; then
-        printf 'FOUND %s\n' "$executable"
-    else
-        printf 'MISSING %s\n' "$executable"
-    fi
-done
-if command -v git >/dev/null 2>&1; then
-    git --version
-fi
-#+end_src
-
-If Git is missing, preserve the failed lookup and compare a separate
-login-shell probe. Identify the existing module/PATH setup supplying Git.
-Propose the smallest timer-environment fix and a once-per-watchdog diagnostic
-with targeted tests. Follow impact-analysis rules before implementation; do
-not silently edit shell startup files or persist secrets.
-
-If Git is present, record its path/version and a successful snapshot. This
-establishes this target's behavior, not every site's. The missing-Git diagnostic
-remains a separate hardening question in issue 15.
-
-* Regression checks and boundaries
-
-Run from the PR checkout root inside the allocation:
-
-#+begin_src sh
-pytest -q tests/test_slurm_timer_script.py tests/test_timer_lifecycle.py tests/test_batch_script.py
-#+end_src
-
-These tests stub scheduler responses; distinguish them from native validation.
-Never disrupt the scheduler or other jobs to simulate outages. Issues
-[[https://github.com/ligon/sucoder/issues/14][14]] (object retention) and
-[[https://github.com/ligon/sucoder/issues/16][16]] (compatibility warning/WIP-ref
-collisions) remain outside this task. Do not prune or change permissions.
-
-* Deliverable
-
-Replace Outcome with tested SHA, target, node, job ID, timestamp, submission
-options, exact commands, and pass/fail/untested results for each step. Include
-sanitized logs, Git path/version, snapshot ref/tree IDs, and environment
-failures with reproduction commands.
-
-Commit the report on the PR branch and summarize results on PR 13 and issue
-15. Mark this handoff COMPLETE when the report distinguishes all remaining
-untested items. Sign as Sue. No cluster execution is claimed yet.
+An agent is investigating why job 38975827 snapshotted nothing in 24 hours
+(clean tree, or a silently dead snapshotter -- issue 15). The timer checks
+=tmux= and =squeue= at startup (=timer_lifecycle.py:74-77=) but not =git=,
+which is the gap issue 15 names. If the verdict is a dead snapshotter, a
+liveness signal belongs in this work; if it is a clean tree, it does not.
 
 * Outcome
 
-Partial validation on 2026-09-12, via =ssh carleton-htc-ln= and
-=srun --jobid=38661192 --overlap --ntasks=1 --cpus-per-task=1 bash -s=.
-Node =n0036.savio4=, account =co_carleton=, QoS
-=carleton_htc4_normal=, partition =savio4_htc=; reused the existing allocation.
-
-PR baseline =81dd48d93ed47853d3a2d0907ca5b2efc2ff3966= failed startup:
-=flock: 8: No locks available=. Independent probes returned 71 on NFS
-HOME and 0 on node-local /tmp. The fix on =fix/pr13-node-local-locks=
-moves runtime state to a private, owner-checked mode-700 /tmp directory,
-without changing shared script staging or compatibility warning paths.
-
-With the fixed generated script, native startup and two reuse calls passed.
-The watchdog and test shell both belonged to
-=/system.slice/slurmstepd.scope/job_38661192/step_4/user/task_0=.
-Git =2.43.7= at =/usr/bin/git= pushed tracked and untracked changes from
-=/tmp/sucoder-pr13-native.Og6uY7/work= to the durable NFS fixture
-=/global/home/users/ligon/.cache/sucoder/pr13-snapshot.gLzDQe=.
-The real index was unchanged. After ending only the disposable tmux session,
-the watchdog exited and removed its owner/status records (WATCHDOG_EXIT_PASS).
-Snapshot ref
-=refs/sucoder/wip/pr13-review-smoke= resolved to
-=a923fb24baeb0d55797e617235aaafead715e7c1=, tree
-=95ee90e4f9f9225f47a84b6fa37499492e15409b=.
-
-Local validation: 763 tests pass on Python 3.11. The NFS-lock regression
-fails against the original PR template and passes with the fix. Additional
-cases reject symlink, public, and non-directory runtime roots without
-modifying them.
-
-Still untested: fresh sbatch environment (issue 15), end-to-end normal
-launcher submission, native threshold timing, /local clone preparation,
-and unconfined SSH launch. This srun probe does not settle issue 15.
-The existing allocation was not cancelled. Full handoff remains READY.
+Not started.
