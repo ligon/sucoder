@@ -70,7 +70,31 @@ origin, two jobs -- which is exactly issue 19.
 | 38854624 |                      1 |
 
 Four distinct jobs have written into the one ref; 30 snapshot commits
-survive only as unreachable objects.  Mode 1 (loss) is not hypothetical.
+survive only as unreachable objects.  The ref is shared across jobs: that
+much is fact, and mode 1 follows from the mechanism.
+
+What the orphans do *not* show is loss.  Those four jobs snapshot in
+strictly sequential windows -- 38761619 (09-13/14), 38854624 (09-15),
+38958677 (09-16 02:07-05:18), 39002769 (09-17 09:14 onward) -- and a
+relaunch superseding the previous job's snapshot after restoring it is the
+designed flow, not a collision.  The overlapping pair named in the issue is
+38975827 (09-16 08:08, cancelled) against 39002769, and *38975827 has no
+snapshot commits at all*, reachable or not.  Nothing was gc'd in between --
+loose objects from both 09-16 and 09-17 are still present -- so it never
+wrote one.  The incident that prompted 19 lost no work.
+
+Two things follow.  First, the question 19 calls unanswerable -- "was there
+uncommitted work in the other job?" -- is in fact answerable after the fact,
+from the shared mirror, with =git fsck --unreachable --no-reflogs= plus the
+=job <ID>= already in each snapshot's subject.  Worth saying on the issue:
+the cancellation was made on less information than existed.
+
+Second, a 24-hour job that never snapshotted is its own question.  A clean
+tree throughout would explain it, and so would
+[[https://github.com/ligon/sucoder/issues/15][15]] -- the snapshotter failing
+silently when =git= is missing from the batch environment.  There is no
+positive liveness signal that distinguishes them.  Not a claim, an open
+question, and it belongs with 15.
 
 Mode 2 (cross-restore) follows from =local_tier.py:152-156=: the restore
 gate tests =wip^ == HEAD= and a clean tree, never *whose* snapshot it is.
@@ -113,9 +137,10 @@ once a job ref exists.  Verified: sibling refs push, enumerate
 | =git gc --prune=now= |       5 |
 
 Issue 14's first option ("=git gc --prune= / =--auto= on the mirror") is
-therefore a no-op at defaults, and packing makes the orphans marginally
-harder to shed later.  14 needs an explicit expiry window, and that window
-has to be long enough to be safe against a snapshot in flight.
+therefore a no-op at defaults.  14 needs an explicit expiry window, and that
+window has to be long enough to be safe against a snapshot in flight.
+(Packing the orphans is harmless: git 2.42 and later default to cruft packs,
+which carry per-object mtimes and prune correctly on expiry.)
 
 ** Issue 14's magnitude on the live workload
 
@@ -153,6 +178,11 @@ Two changes, in this order.
 4. Issue 19's option 3 (refuse a second job for a mirror that already has
    one) should warn and require confirmation, not refuse: the same mirror
    on two targets can be deliberate.
+5. Residual after (1): =slurm-deadline-<token>.warn= is still shared when one
+   mirror has two live jobs, and the prelude tells the agent to poll it, so
+   one job's "allocation may have ended" can be read as the other's.  (3)
+   does not cover this -- it is about two *mirrors*.  Suffix it with the job
+   id, or accept it and say so where the prelude names the file.
 
 Do *not* key the ref on =timer_identity=: it includes =target_name=
 (=slurm_timer.py:36-38=), and a relaunch of one mirror on a different
@@ -176,8 +206,8 @@ documented, that a snapshotted repo's outputs belong in =.gitignore=.
 - =sucoder/slurm_timer.py:93-94= -- ref name and push
 - =sucoder/local_tier.py:150-159= -- restore gate
 - =sucoder/mirror.py:213-222= -- tmux session/socket token (16)
-- =sucoder/mirror.py:1067-1068= region -- the WORKSPACE prelude quotes the
-  ref path to the agent and must follow
+- =sucoder/mirror.py:5373-5375= -- the WORKSPACE prelude quotes the ref path
+  and the "last snapshot" command to the agent, and must follow
 - =sucoder/config.py= -- the sanitize-collision refusal (16)
 - =docs/local-disk-tiering.org:118-150= -- documented ref name and restore
   rule
@@ -192,5 +222,11 @@ documented, that a snapshotted repo's outputs belong in =.gitignore=.
 - =squeue= answers only for the cluster it is run against; an id from
   another cluster reads as "invalid job id", i.e. gone.  Single-cluster
   here, but the restore gate should not be assumed portable.
+- Deleting the legacy ref has a mixed-version window: a timer from before
+  the upgrade, still live on another job, keeps writing
+  =refs/sucoder/wip/<token>=.  The restore gate handles both shapes with one
+  rule -- a job ref carries its id in the name, a legacy ref in its commit
+  subject (issue 19's option 2) -- so the window degrades to "the legacy ref
+  reappears", not to a wrong restore.
 
 Prepared by Sue (2026-09-18).
