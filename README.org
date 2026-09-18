@@ -682,6 +682,53 @@ are treated as argv.
    =savio=) is added to the canonical repo so the human can
    =git fetch savio= to pull back agent work.
 
+*** Listing your sessions
+
+=sucoder sessions= lists every SuCoder job across all configured
+clusters, with its state, time left, node, and what the tmux session is
+actually running.  It needs no =-T=: it reports on everything.
+
+#+begin_src shell
+sucoder sessions          # probe each job's tmux pane (a few seconds)
+sucoder sessions --fast   # skip the probe; job ids and clocks only
+#+end_src
+
+#+begin_example
+carleton-htc   savio4_htc / co_carleton / carleton_htc4_normal
+  LSMS_Library  39002769  RUNNING  11-00:13  n0043.savio4  claude  6m
+  SuCoder       39025067  RUNNING  11-22:24  n0029.savio4  bash    2h   ! agent exited
+
+savio-node   savio3 / fc_jevons
+  K-Aggregators 38991234  RUNNING   3-04:11  n0142.savio3  claude  4m   ! no session record
+
+stale session records (job gone; 'sucoder release' clears):
+  MetricsMiscellany--carleton-htc -> 38999103
+#+end_example
+
+Targets sharing a gateway share a =$HOME= and a scheduler, so they are
+queried once between them and sorted out afterwards by
+partition/account/qos.  The listing is enumerated from =squeue=, not
+from the session records under =~/.sucoder/sessions/=: those hold one
+job id per (mirror, target), so a record-driven listing would show
+exactly the jobs that are /not/ the problem.  Two flags matter:
+
+- =! no session record= :: nothing local points at this job, so
+  =attach=, =release= and =renew= --- which all resolve through that
+  record --- cannot reach it.  Only =scancel= can.  It happens when a
+  record is overwritten by a later launch, is unreadable, or was written
+  under a different =-T= spelling.
+- =! agent exited= :: the allocation is alive but its tmux pane is a
+  bare shell.  A confined job's window ends in =exec bash -l= so it
+  survives a clean =/exit=, and the batch body's keeper polls only
+  whether the session exists --- so the job goes on holding its slice for
+  the rest of its =--time= with nobody home.  Nothing else reports this.
+
+The =! agent exited= check is why the probe exists, and why it is on by
+default: it reads the pane's child process, not
+=#{pane_current_command}=, which reports the pane's /shell/ and would
+call every working agent dead.  =--fast= skips it and says so.
+Read-only throughout --- nothing submits, cancels or writes.
+
 *** Inspecting node availability
 
 Before reserving a node (or targeting one with =--node= /
@@ -785,9 +832,9 @@ on =confined= (=sbatch=) and =salloc= targets:
   laptop pushed first is reported for the agent to =git pull
   --ff-only=;
 - the deadline watchdog snapshots uncommitted work to
-  =refs/sucoder/wip/<name>= on the shared mirror every
+  =refs/sucoder/wip-job/<name>/<jobid>= on the shared mirror every
   =wip_snapshot_minutes= and restores it on the next launch when the
-  branch tip has not moved;
+  branch tip has not moved and the job that took it has ended;
 - SLURM wipes =/local/job<ID>/= when the job ends; nothing is orphaned
   and =--node= pinning is unnecessary.
 
@@ -864,12 +911,21 @@ warnings stay on NFS; NFS need not support =flock=. Working clones may use
 used for the timer's frequent small-file operations.
 
 The same script snapshots the mirror's dirty working tree (tracked and
-untracked files, not ignored ones) to =refs/sucoder/wip/<mirror>= on
-the mirror's =origin= at each warning and every
-=wip_snapshot_minutes= (default 10; =0= disables the periodic run).  A
-mirror with no =origin= is never snapshotted, so on a shared-filesystem
-mirror this is a no-op today; it becomes live with the local-disk
-tiering described in [[file:docs/local-disk-tiering.org][docs/local-disk-tiering.org]].
+untracked files, not ignored ones) to
+=refs/sucoder/wip-job/<mirror>/<jobid>= on the mirror's =origin= at each
+warning and every =wip_snapshot_minutes= (default 10; =0= disables the
+periodic run).  A mirror with no =origin= is never snapshotted, so on a
+shared-filesystem mirror this is a no-op today; it becomes live with the
+local-disk tiering described in [[file:docs/local-disk-tiering.org][docs/local-disk-tiering.org]].
+
+The ref carries the job id because one mirror can be running in two jobs
+at once, on two nodes, with two different uncommitted trees.  A relaunch
+restores this job's own snapshot if it has one, otherwise the newest whose
+job has ended -- never one belonging to a job still running, which would
+silently import another node's work.  Snapshotted repositories should
+=.gitignore= their generated outputs: every snapshot that changes the tree
+writes a new commit to the shared mirror, and the superseded one becomes
+unreachable there until it is collected.
 
 #+begin_src yaml
     slurm:

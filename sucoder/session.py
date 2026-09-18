@@ -143,6 +143,31 @@ class RemoteSession:
         return holders
 
     @classmethod
+    def recorded_jobs(cls) -> dict:
+        """Map every session key to the SLURM job it claims.
+
+        The forward direction of :meth:`holders_of_job`, and the other half
+        of what ``sucoder sessions`` needs: that method answers "does any
+        record name this job?" (an unnamed job is unreachable by every
+        command), this one answers "does this record's job still exist?"
+        (a record naming a dead job is what ``release`` should clear).
+        Neither direction subsumes the other.
+        """
+        recorded: dict = {}
+        directory = _session_dir()
+        if not directory.is_dir():
+            return recorded
+        for path in sorted(directory.glob("*.yaml")):
+            try:
+                with path.open("r", encoding="utf-8") as fh:
+                    data = yaml.safe_load(fh) or {}
+            except (yaml.YAMLError, OSError):
+                continue
+            if isinstance(data, dict) and data.get("slurm_job_id"):
+                recorded[path.stem] = data["slurm_job_id"]
+        return recorded
+
+    @classmethod
     def compute_nodes_for_target(cls, target_name: str) -> dict:
         """Map session key -> compute node for sessions on *target_name*.
 

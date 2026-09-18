@@ -1,191 +1,204 @@
-#+title: PR 13 cluster validation and issue 15
-#+date: 2026-09-12
-#+status: READY
+#+title: Session listing, and the confined job/agent lifecycle
+#+date: 2026-09-18
+#+status: COMPLETE
 #+author: Sue
 #+property: header-args :eval never-export :tangle no :results output :exports code
 
-* Mission and baseline
+* Mission
 
-Validate [[https://github.com/ligon/sucoder/pull/13][PR 13]] on a real Slurm
-allocation and settle [[https://github.com/ligon/sucoder/issues/15][issue 15's]]
-batch-environment Git availability. This is validation, not harness
-installation. The earlier unfinished task is preserved at
-[[file:handoffs/2026-08-25-savio-harness-bootstrap.org][the archived bootstrap handoff]].
+Build =sucoder sessions=: one listing of every SuCoder job on a cluster,
+across all configured targets, with enough state to diagnose and reap.
 
-Code baseline: =fe3845f9bcdccc87c813444f534e92cc6c6f0983= on
-=fix/slurm-timer-hardening=. Fetch the current PR head, which also contains
-this handoff, and record its SHA. Do not assume GitHub main includes it.
-Read =AGENTS.md= and =.coder/ledger.md= before making changes.
+Background, in order: the triage note
+[[file:handoffs/2026-09-18-wip-ref-triage.org][2026-09-18-wip-ref-triage.org]],
+then PR 21 (=a413909=, closed issue 19), then the findings below.
 
-Both launch paths use =bash <timer> --ensure=, allocation-scoped locks, and
-readiness responses. Failed scheduler queries leave monitoring and periodic
-snapshots running. Three consecutive successful empty queries establish
-disappearance. Preserve =258accb='s supervision and startup safety.
+* What was established first
 
-* Already verified
+The user's reported symptoms -- =collaborate= attaching instead of launching,
+=attach= landing in a bash shell -- are *one event*, and it is not a bug in
+=attach=.
 
-- All 759 tests passed locally on Python 3.12.
-- Python 3.9, Python 3.11, and docs CI passed at =fe3845f= (run =34684599185=).
-- Real bash/flock tests cover concurrent starters, owner reuse, startup
-  failure, snapshots, and preservation of the agent's Git index.
-- Scheduler stubs cover repeated errors, partial output on failure, recovery,
-  and snapshots during outages. No real controller outage was induced.
-- A real-file test checks atomic staging, existing readers, and quoted paths.
+- =mirror.py:2446= appends =; exec bash -l= to the window command, so the
+  tmux window outlives the agent by design (rationale at =mirror.py:2433=).
+- The batch body's keeper is =while tmux has-session; do sleep 15; done=
+  (=mirror.py:2405=), so the job then runs to its full =--time=.
+- =mirror.py:2343-2344= still claims the opposite --- "when the agent exits,
+  the session ends, the keeper exits, and the job frees". *That docstring is
+  false*, and it is the assumption =_launch_confined='s reuse-probe rests on
+  (=mirror.py:2757-2787=). Fix the docstring whatever else happens.
+- So after one clean =/exit=, every later =collaborate= attaches to the
+  leftover shell, and so does every =attach=. It is a login *shell* inside
+  the job step on the *compute* node, not a shell on a login node.
 
-These do not establish Slurm cgroups, shared-filesystem locking, or executable
-availability in the actual batch environment.
+*Decided: keep =exec bash -l=.* It buys a window for manual repo checks after
+the agent exits. Revisit only once the surrounding process is bulletproof.
+The cost it leaves on the table is an allocation held for its full =--time=
+after every clean exit, which is exactly what the listing must surface.
 
-* Entry checks
+Ruled out: launcher version skew (every =attach= guard predates the
+launcher's [2026-06-29, 2026-09-09) window); =_adopt_existing_allocation=
+(=cli.py:824=), which is salloc-only and never runs for a confined target.
 
-SuCoder runs on the launcher host; the remote session runs as the SSH user,
-normally =ligon=. Verify the launcher uses the PR's Python package before
-testing generated scripts. A PR checkout only on the cluster does not update
-the launcher. Record these facts without dumping credentials or environment:
+* The listing
 
-#+begin_src sh
-git status --short --branch
-git rev-parse HEAD
-date -u
-hostname -f
-id -un
-printf 'SLURM_JOB_ID=%s\n' "${SLURM_JOB_ID:-}"
-nproc
-cat /proc/self/cgroup
-#+end_src
+** One query per cluster, not per target
 
-Without an allocation, stop before tests/workloads and request a relaunch with
-=-T savio-htc= or =-T carleton-htc=. Use an installed harness. Do not install
-harnesses or copy launcher configuration, keys, or password stores for this task.
+All four Savio targets share =gateway: hpc.brc.berkeley.edu=, one =$HOME= and
+one Slurm; they differ only in partition/account/qos. So group configured
+targets by cluster and run *one* =squeue --me= per cluster. =hhsurveys= is
+direct-SSH with no scheduler and has no jobs to list.
 
-* Confined launch smoke test
+Jobs carry =--job-name=sucoder-<token>= (=mirror.py:265,2889=), so filtering
+=squeue --me= on the =sucoder-= prefix finds every SuCoder job whatever
+launched it.
 
-Use a disposable mirror and the normal launcher path with a short allocation
-on the configured shared partition. Record partition, account, QoS, CPU count,
-time limit, and local-disk setting. Do not snapshot an active research mirror
-as a test fixture.
+** Enumerate from squeue, never from the session files
 
-1. Confirm the batch body runs =bash <timer> --ensure= before the keeper loop.
-   Record the staged timer path/digest. Check job output for
-   =SUCODER_TIMER_STARTED= and absence of startup failure diagnostics.
-2. Inspect the matching directory under
-   =/tmp/sucoder-<uid>/timers/<scope>/<node>-<job>/=. Record =owner=, =status=,
-   and sanitized =timer.log=. Status should reach =monitoring=.
-3. On that allocated node, in the same job environment, run
-   =bash <exact-staged-timer-path> --ensure= twice. Expect
-   =SUCODER_TIMER_REUSED= with the same owner PID/start-time pair.
-   From a login node, use the confined job's =srun --overlap= route.
-4. Compare =/proc/<owner-pid>/cgroup= with the job's cgroup. The watchdog must
-   belong to the allocation and survive detaching the client.
-5. Enable local-disk tiering for the disposable mirror. Verify the timer's
-   snapshot directory is its node-local clone and origin is the shared mirror.
-   Create small tracked and untracked text changes; record =git write-tree=
-   before and after a snapshot. Verify =refs/sucoder/wip/<mirror-token>= on
-   the shared origin contains both changes and the agent's index is unchanged.
-6. Let the short allocation enter a warning threshold. Check warning files
-   and WIP refs. Starting below five minutes should yield one urgent warning,
-   with no subsequent less urgent notices.
-7. End only the disposable tmux session. Under sbatch the keeper should exit
-   and the allocation complete. Exiting just the agent can leave a fallback
-   shell alive; that is not the same as ending tmux. Do not kill unrelated
-   sessions or use process-name matching for cleanup.
+This is the design decision the whole command turns on. File-first
+enumeration inherits the one-slot bug --- =~/.sucoder/sessions/
+<mirror>--<target>.yaml= holds a single =slurm_job_id= --- and so shows
+exactly the jobs that are not the problem. squeue-first finds the orphans: a
+job whose session record was lost, corrupted (=session.py:60-66= swallows
+parse errors and returns a blank session), or written under a different =-T=
+spelling. Those jobs are unreachable by every SuCoder command and can only be
+=scancel='d by hand.
 
-If an unconfined target is already available, check SSH readiness and reuse
-there too. Otherwise mark it untested; do not reserve a whole node solely for
-this checklist.
+That same blankness is the confined duplicate-job mechanism:
+=_launch_confined= sees no =slurm_job_id= and submits a *second* sbatch over
+a live one --- the leak the reuse-probe exists to prevent.
 
-* Issue 15: actual batch environment
+** Columns
 
-An interactive =bash -lc= or =srun= inheriting an already repaired PATH does
-not settle this issue. Run this payload directly in a fresh sbatch body,
-before any login-shell wrapper or module setup. Use the normal launcher's
-submission environment/export policy and configured account/partition/QoS,
-one task, and a short time limit. Record the exact submission command.
-Do not use =env -i= to manufacture a failure.
+Per job: mirror, target, job id, state, *time left* (=%L=), node. Then:
 
-#+begin_src sh
-#!/bin/bash
-date -u
-hostname -f
-printf 'SLURM_JOB_ID=%s\n' "${SLURM_JOB_ID:-}"
-for executable in git bash flock nohup tmux squeue; do
-    if command -v "$executable"; then
-        printf 'FOUND %s\n' "$executable"
-    else
-        printf 'MISSING %s\n' "$executable"
-    fi
-done
-if command -v git >/dev/null 2>&1; then
-    git --version
-fi
-#+end_src
+- Session record present? Map via =RemoteSession.holders_of_job(job_id)=
+  (=session.py:116=), which already returns the =<mirror>--<target>= keys
+  referencing a job. Empty means ORPHAN. Corroborate the target from
+  partition/account/qos, which is a unique signature per configured target.
+- The reverse sweep: session files whose job is *not* in squeue are STALE
+  records; name them so =release= can clear them.
+- Repo, branch, dirty, and the last WIP snapshot --- now per job, so
+  =refs/sucoder/wip-job/<token>/<jobid>= answers directly.
+- Agent or bare shell. *This signal does not exist anywhere today.*
+  =srun --overlap --jobid=<J> tmux -L <socket> list-panes -F
+  '#{pane_current_command}'= distinguishes =bash= from the agent. It costs an
+  =srun= per job, so put it behind =--deep= rather than making it the default.
 
-If Git is missing, preserve the failed lookup and compare a separate
-login-shell probe. Identify the existing module/PATH setup supplying Git.
-Propose the smallest timer-environment fix and a once-per-watchdog diagnostic
-with targeted tests. Follow impact-analysis rules before implementation; do
-not silently edit shell startup files or persist secrets.
+=_confined_session_ready= (=mirror.py:2672=) checks only that the tmux
+session exists, which =exec bash -l= guarantees forever; it is not a
+substitute.
 
-If Git is present, record its path/version and a successful snapshot. This
-establishes this target's behavior, not every site's. The missing-Git diagnostic
-remains a separate hardening question in issue 15.
+** Shape
 
-* Regression checks and boundaries
+Follow =sucoder nodes= (=cli.py:3183=): read-only, reuses the target's warm
+gateway ControlMaster so it costs no OTP when a tunnel is up, runs its query
+on the login node, prints one row per thing. Same shape with =squeue= instead
+of =sinfo=.
 
-Run from the PR checkout root inside the allocation:
+* Then, and only then, issue 19's option 3
 
-#+begin_src sh
-pytest -q tests/test_slurm_timer_script.py tests/test_timer_lifecycle.py tests/test_batch_script.py
-#+end_src
+With a squeue-first listing, the launch-time guard is a consequence rather
+than a feature: launch runs the same query, and if the mirror already has a
+live job it says so and offers to attach. =release= can offer the list
+instead of cancelling whatever the session file happens to name. Warn and
+confirm, never refuse --- one mirror on two targets can be deliberate.
 
-These tests stub scheduler responses; distinguish them from native validation.
-Never disrupt the scheduler or other jobs to simulate outages. Issues
-[[https://github.com/ligon/sucoder/issues/14][14]] (object retention) and
-[[https://github.com/ligon/sucoder/issues/16][16]] (compatibility warning/WIP-ref
-collisions) remain outside this task. Do not prune or change permissions.
+* Constraints
 
-* Deliverable
+- No =.venv= in a node-local clone (ignored, dies with the job). Rebuild
+  without the NFS =flock= detour:
 
-Replace Outcome with tested SHA, target, node, job ID, timestamp, submission
-options, exact commands, and pass/fail/untested results for each step. Include
-sanitized logs, Git path/version, snapshot ref/tree IDs, and environment
-failures with reproduction commands.
+  #+begin_src sh
+  export UV_PYTHON_INSTALL_DIR="$SUCODER_LOCAL_ROOT/cache/uv-python"
+  uv venv .venv --python "$(command -v python3)"
+  uv pip install --python .venv/bin/python \
+      "pyyaml>=6" "typer[all]>=0.13,<1.0" "click>=8.1,<9.0" \
+      "packaging>=24.0" "pytest>=7.2"
+  #+end_src
 
-Commit the report on the PR branch and summarize results on PR 13 and issue
-15. Mark this handoff COMPLETE when the report distinguishes all remaining
-untested items. Sign as Sue. No cluster execution is claimed yet.
+  Plain =uv venv= fails with =Could not acquire lock ... No locks available=:
+  uv's default Python dir is =$HOME/.local/share/uv/python=, on NFS.
+- =.venv/bin/python -m pytest -q= from the mirror root. 809 pass on
+  =a413909=, plus one pre-existing environment failure,
+  =tests/test_direct_remote.py::test_direct_collaborate_rejects_node= (a
+  chmod-based readability check), verified against clean =main=.
+- New configuration means =README.org= and =config.example.yaml= updates
+  (=CLAUDE.md=). A listing command should need none.
+- Additive only. Never force-push to origin; the post-commit hook publishes
+  every commit to the shared mirror.
+- Put =Closes #N= only in the PR body, never in a commit message, unless the
+  commit really does close the issue: a commit message merged to the default
+  branch overrides the PR body. PR 21 closed issue 14 this way by accident.
+
+* Open issues after PR 21
+
+- 16 :: re-scoped. Its WIP-ref claim does not hold (=mirror_dirname= is the
+  raw name); the real shared state is the tmux session and socket, the staged
+  scripts, and the warn file. The config-load refusal landed, but
+  =_create_ephemeral_mirror= injects into =config.mirrors= at runtime and
+  bypasses it --- an ephemeral mirror is named from the git root directory,
+  which can contain a space. Noted on the issue with two options.
+- 14 :: reopened after PR 21 closed it by accident. Retention bounds the ref
+  set, not the objects.
+- 15 :: its specific hypothesis (missing =git=) is contradicted here ---
+  sbatch is invoked without =--export=, so the batch body inherits the
+  submitting environment. Its structural complaint stands; job 38710868 is
+  its genuine open instance.
+- 20, 17, 1 :: pre-existing, untouched.
 
 * Outcome
 
-Partial validation on 2026-09-12, via =ssh carleton-htc-ln= and
-=srun --jobid=38661192 --overlap --ntasks=1 --cpus-per-task=1 bash -s=.
-Node =n0036.savio4=, account =co_carleton=, QoS
-=carleton_htc4_normal=, partition =savio4_htc=; reused the existing allocation.
+Landed. =sucoder sessions= merged as =e37c2c5= (PR 23); the earlier WIP-ref
+work merged as =a413909= (PR 21). 835 tests pass, plus the one pre-existing
+environment failure. CI green on 3.9, 3.11 and docs for both.
 
-PR baseline =81dd48d93ed47853d3a2d0907ca5b2efc2ff3966= failed startup:
-=flock: 8: No locks available=. Independent probes returned 71 on NFS
-HOME and 0 on node-local /tmp. The fix on =fix/pr13-node-local-locks=
-moves runtime state to a private, owner-checked mode-700 /tmp directory,
-without changing shared script staging or compatibility warning paths.
+Built as designed: one =squeue= per cluster, enumerated from the scheduler
+rather than the session files, grouped by target, pane probe on by default
+with =--fast= to skip. The pure half is =sucoder/sessions_report.py= (no
+I/O), which is what let three bugs surface in tests before release:
 
-With the fixed generated script, native startup and two reuse calls passed.
-The watchdog and test shell both belonged to
-=/system.slice/slurmstepd.scope/job_38661192/step_4/user/task_0=.
-Git =2.43.7= at =/usr/bin/git= pushed tracked and untracked changes from
-=/tmp/sucoder-pr13-native.Og6uY7/work= to the durable NFS fixture
-=/global/home/users/ligon/.cache/sucoder/pr13-snapshot.gLzDQe=.
-The real index was unchanged. After ending only the disposable tmux session,
-the watchdog exited and removed its owner/status records (WATCHDOG_EXIT_PASS).
-Snapshot ref
-=refs/sucoder/wip/pr13-review-smoke= resolved to
-=a923fb24baeb0d55797e617235aaafead715e7c1=, tree
-=95ee90e4f9f9225f47a84b6fa37499492e15409b=.
+1. =#{pane_current_command}= is *not* a liveness signal. Measured against a
+   live session, a running =claude= reported as =bash= --- the window command
+   is =bash -lc '<agent>; exec bash -l'= and the agent is that shell's child.
+   The first probe would have flagged every working agent as exited, and the
+   flag exists to say a slice is safe to release, so a false positive there
+   costs somebody their session. It reads the shell's child now, verified
+   cross-node against two live allocations. Mutation-checked.
+2. A target configuring nothing matched everything. =savio= pins no
+   partition, account or qos, and "every configured field agrees" made it a
+   wildcard that swallowed every job on the cluster. Most specific wins now;
+   ties match nothing.
+3. =int("39025067_3")= is =390250673= --- Python accepts underscores as digit
+   separators, so a Slurm array element would have become a plausible job id
+   belonging to nobody. =parse_squeue= requires =isdigit=.
 
-Local validation: 763 tests pass on Python 3.11. The NFS-lock regression
-fails against the original PR template and passes with the fix. Additional
-cases reject symlink, public, and non-directory runtime roots without
-modifying them.
+* Not verified, for whoever picks this up
 
-Still untested: fresh sbatch environment (issue 15), end-to-end normal
-launcher submission, native threshold timing, /local clone preparation,
-and unconfined SSH launch. This srun probe does not settle issue 15.
-The existing allocation was not cancelled. Full handoff remains READY.
+The =! no session record= path has never run against real session files.
+=~/.sucoder/sessions/= lives on the launcher host, not on Savio, so from a
+compute node every job renders as an orphan. The logic is unit-tested; the
+first real =sucoder sessions= run on the laptop is its first true exercise.
+Check that flag before trusting it.
+
+Also unexercised: =--fast=, the stale-record sweep against real records, and
+any cluster other than Savio (all four Savio targets share one gateway, so
+the multi-cluster grouping has only ever been tested with a single cluster
+plus unit tests).
+
+* Next
+
+Issue 19's option 3 is now a few lines on top of this: launch runs the same
+=squeue --me --name=sucoder-<token>= query, and offers to attach rather than
+allocating a second job. Warn and confirm, never refuse --- one mirror on two
+targets can be deliberate.
+
+Still open and untouched by this work: 20 (has PR 22, not ours), 17, 16
+(including the ephemeral-mirror hole noted on the issue), 15, 14, 1.
+
+Deliberately unchanged: =exec bash -l=. The human keeps it --- it buys a
+window for manual repo checks after the agent exits --- until the surrounding
+process is bulletproof. =sucoder sessions= is what makes its cost visible in
+the meantime. The false docstring at =mirror.py:2343-2344= ("when the agent
+exits, the session ends, the keeper exits, and the job frees") is still
+there and still wrong; fixing it is a one-line job nobody has done.

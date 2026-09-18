@@ -1073,8 +1073,10 @@ def test_prelude_workspace_block_unconfined_local_tier(tmp_path, monkeypatch):
     assert "WORKSPACE (local-disk tiering)" in prelude
     assert "Working clone (your cwd): /local/job1234567/mirrors/sample" in prelude
     assert "Shared mirror (origin; durable; the human's push/pull target): /global/home/users/coder/mirrors/sample" in prelude
-    assert "refs/sucoder/wip/sample" in prelude
-    assert "git -C /global/home/users/coder/mirrors/sample log -1 --format='%ci %s' refs/sucoder/wip/sample" in prelude
+    # Per-job ref (issue 19); job 1234567 is this fixture's allocation.
+    assert "refs/sucoder/wip-job/sample/1234567" in prelude
+    assert "git -C /global/home/users/coder/mirrors/sample log -1 --format='%ci %s' refs/sucoder/wip-job/sample/1234567" in prelude
+    assert "never one belonging to a job still running" in prelude
     assert "slurm-deadline-sample.warn" in prelude
     assert "every 10 minutes and at each deadline warning" in prelude
     assert ".sucoder/handoff.org in this clone" in prelude

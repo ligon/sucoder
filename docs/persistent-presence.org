@@ -200,6 +200,14 @@ Release = =scancel=.
    so agent-exit -> session ends -> keeper exits -> job frees (loses
    post-exit reattach; re-=collaborate= re-=sbatch=s); (c) idle timeout
    in the keeper.  Lean (a)+(c).
+
+   /Resolved: (a) only./  =exec bash -l= shipped and stays --- it buys a
+   window for manual repo checks after the agent exits.  (c) was never
+   implemented, so a confined job really does hold its slice for the full
+   =--time= after a clean =/exit=.  =sucoder sessions= makes that visible
+   (=! agent exited=) rather than fixing it; reconsider (c) once the
+   surrounding process is bulletproof.  The cost scales with the target:
+   on a 12-day =carleton-htc= slice it is 12 days.
 2. *Deadline warnings.*  =_start_slurm_timer= runs a nohup on the compute
    node today; under sbatch the batch script can emit the 30/15/5-min
    warnings itself (one place, in-cgroup).  Fold in or keep separate?
