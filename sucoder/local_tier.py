@@ -6,9 +6,10 @@ durable repository; the agent works in a full clone under
 ``<local_disk>/job<ID>/mirrors/<token>`` whose ``origin`` points back at
 the shared mirror.  A ``post-commit`` hook publishes every commit to the
 mirror the moment it exists, and the deadline timer
-(``slurm_timer``) snapshots the dirty tree to ``refs/sucoder/wip/<token>``
-there.  Slurm's epilog wipes ``<local_disk>/job<ID>`` when the job ends,
-so there is nothing to clean up and nothing to orphan.
+(``slurm_timer``) snapshots the dirty tree to
+``refs/sucoder/wip-job/<token>/<job>`` there.  Slurm's epilog wipes
+``<local_disk>/job<ID>`` when the job ends, so there is nothing to clean
+up and nothing to orphan.
 
 Layout is a pure function of three inputs (local disk root, job id,
 mirror token) so the batch body, the timer, and the launcher agree on
@@ -90,6 +91,7 @@ set -u
 MIRROR=@MIRROR@
 TOKEN=@TOKEN@
 LOCAL_ROOT=@LOCAL_ROOT@
+JOB=@JOB_REF@
 WORK="$LOCAL_ROOT/mirrors/$TOKEN"
 umask 077
 mkdir -p "$LOCAL_ROOT/mirrors" "$LOCAL_ROOT/cache/uv" "$LOCAL_ROOT/cache/pip" \
@@ -144,19 +146,110 @@ else
     echo "SUCODER: existing post-commit hook at $hook left alone; commits will NOT auto-publish to $MIRROR" >&2
 fi
 
-# Restore uncommitted work from the last WIP snapshot, but only onto the
-# exact commit it was taken from and only into a clean tree.  The ref is
-# left in place: the next snapshot overwrites it.
-wip="refs/sucoder/wip/$TOKEN"
-if git fetch --quiet origin "+$wip:$wip" 2>/dev/null; then
-    parent=$(git rev-parse -q --verify "$wip^" 2>/dev/null || true)
-    if [ -n "$parent" ] && [ "$parent" = "$(git rev-parse HEAD)" ] && [ -z "$(git status --porcelain)" ]; then
-        if git read-tree -m -u "$wip" && git reset --quiet; then
-            echo "SUCODER: restored uncommitted work from $wip ($(git log -1 --format=%s "$wip"))"
-        fi
-    elif [ -n "$parent" ]; then
-        echo "SUCODER: WIP snapshot $wip is from commit ${parent:0:7}, not the current $(git rev-parse --short HEAD); not restored" >&2
+# Restore uncommitted work from a WIP snapshot -- but only onto the exact
+# commit it was taken from, only into a clean tree, and only from a job
+# that is not still running somewhere else.
+#
+# That last gate is issue 19.  Two jobs on one mirror have two separate
+# clones on two nodes, and are normally on the same branch at the same
+# commit, so parent==HEAD alone happily imported the OTHER job's dirty
+# tree and announced it as restored work.  Nothing in the message said
+# whose it was.  Both halves are fixed here: pick by job, and say which.
+#
+# Two ref shapes are candidates.  Current snapshots are per job,
+# refs/sucoder/wip-job/<token>/<job>.  The legacy shared
+# refs/sucoder/wip/<token> is still read because a pre-upgrade timer on
+# another live job keeps writing it; its job id exists only in the
+# snapshot's subject.
+WIP_NS="refs/sucoder/wip-job/$TOKEN"
+WIP_LEGACY="refs/sucoder/wip/$TOKEN"
+# One wildcard refspec rather than two explicit ones: naming a ref that
+# origin does not have fails the whole fetch, and a wildcard that matches
+# nothing does not.  Origin is this mirror's own repository, so everything
+# under refs/sucoder/ there is this mirror's.
+git fetch --quiet --prune origin "+refs/sucoder/*:refs/sucoder/*" 2>/dev/null || true
+
+wip_job_of() {
+    # A per-job ref carries the id in its name; a legacy one only in the
+    # subject the snapshotter writes, "WIP snapshot <date> job <ID>".
+    case "$1" in
+        "$WIP_NS"/*) printf '%s\n' "${1##*/}" ;;
+        *) git log -1 --format=%s "$1" 2>/dev/null |
+               sed -n 's/^.*[[:space:]]job[[:space:]]\{1,\}\([0-9][0-9]*\)[[:space:]]*$/\1/p' ;;
+    esac
+}
+
+wip_job_gone() {
+    # Mirrors the launcher's scheduler convention (cli.py, _slurm_job_node):
+    # a successful EMPTY query and an "invalid job id" error are the only
+    # answers accepted as "the job is gone".  Any other failure is unknown
+    # state and must not be read as gone.
+    local out rc
+    out=$(squeue --job "$1" --noheader -o '%T' 2>&1); rc=$?
+    if [ "$rc" -eq 0 ]; then
+        [ -z "$out" ]
+        return
     fi
+    case "$out" in
+        *[Ii]nvalid\ job\ id*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+wip_head=$(git rev-parse HEAD)
+wip_have_squeue=0
+command -v squeue >/dev/null 2>&1 && wip_have_squeue=1
+wip_own="" wip_own_job=""
+wip_best="" wip_best_job="" wip_best_unchecked=0
+wip_stale=""
+while read -r _when ref; do
+    [ -n "$ref" ] || continue
+    parent=$(git rev-parse -q --verify "$ref^" 2>/dev/null) || continue
+    if [ "$parent" != "$wip_head" ]; then
+        wip_stale="${wip_stale:+$wip_stale }$ref"
+        continue
+    fi
+    job=$(wip_job_of "$ref")
+    if [ -n "$JOB" ] && [ "$job" = "$JOB" ]; then
+        # This job's own snapshot: a re-run of prepare inside one job.
+        wip_own="$ref" wip_own_job="$job"
+        continue
+    fi
+    [ -n "$wip_best" ] && continue      # a newer eligible one already won
+    if [ -z "$job" ]; then
+        echo "SUCODER: WIP snapshot $ref records no job id; not restored" >&2
+        continue
+    fi
+    if [ "$wip_have_squeue" -eq 0 ]; then
+        wip_best="$ref" wip_best_job="$job" wip_best_unchecked=1
+    elif wip_job_gone "$job"; then
+        wip_best="$ref" wip_best_job="$job"
+    else
+        echo "SUCODER: WIP snapshot $ref belongs to job $job, which is still running or could not be checked; not restored" >&2
+    fi
+done <<WIP_CANDIDATES
+$(git for-each-ref --sort=-committerdate --format='%(committerdate:unix) %(refname)' "$WIP_NS" "$WIP_LEGACY" 2>/dev/null)
+WIP_CANDIDATES
+
+wip_pick="$wip_own" wip_pick_job="$wip_own_job" wip_unchecked=0
+if [ -z "$wip_pick" ]; then
+    wip_pick="$wip_best" wip_pick_job="$wip_best_job" wip_unchecked="$wip_best_unchecked"
+fi
+if [ -n "$wip_pick" ] && [ -z "$(git status --porcelain)" ]; then
+    if git read-tree -m -u "$wip_pick" && git reset --quiet; then
+        note=""
+        if [ "$wip_unchecked" -eq 1 ]; then
+            note=" [squeue unavailable: could not check whether job $wip_pick_job is still running]"
+        fi
+        echo "SUCODER: restored uncommitted work from job $wip_pick_job, $wip_pick ($(git log -1 --format=%s "$wip_pick"))$note"
+    fi
+elif [ -n "$wip_pick" ]; then
+    echo "SUCODER: WIP snapshot $wip_pick not restored: the working tree is not clean" >&2
+else
+    for ref in $wip_stale; do
+        parent=$(git rev-parse -q --verify "$ref^" 2>/dev/null || true)
+        echo "SUCODER: WIP snapshot $ref is from commit ${parent:0:7}, not the current $(git rev-parse --short HEAD); not restored" >&2
+    done
 fi
 echo "SUCODER: local-tier working clone ready at $WORK ($branch)"
 '''
@@ -172,10 +265,15 @@ def build_prepare_script(
     """Render the prepare script for one mirror.
 
     ``mirror_path`` is the shared mirror's absolute path; ``mirror_token``
-    the sanitized mirror name (``mirror._sanitize_session_token``).  The
+    the sanitized mirror name (``config.sanitize_session_token``).  The
     script is *executed*, not sourced: every early ``exit`` is its own,
     and the batch body recomputes the same paths from the same inputs
     (:func:`work_path_shell`, :func:`cache_exports_sh`).
+
+    ``job_id`` ``None`` means "read ``$SLURM_JOB_ID`` at run time", as in
+    :func:`slurm_timer.build_timer_script`.  The restore gate needs it to
+    recognise this job's own snapshot; with no id it still runs, and simply
+    has no own-snapshot case to prefer.
     """
     hook = POST_COMMIT_HOOK.rstrip("\n")
     return (
@@ -183,5 +281,6 @@ def build_prepare_script(
         .replace("@MIRROR@", shlex.quote(mirror_path))
         .replace("@TOKEN@", shlex.quote(mirror_token))
         .replace("@LOCAL_ROOT@", local_root_shell(local_disk_root, job_id))
+        .replace("@JOB_REF@", '"${SLURM_JOB_ID:-}"' if job_id is None else shlex.quote(str(job_id)))
         .replace("@HOOK@", hook)
     )

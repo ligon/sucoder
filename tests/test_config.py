@@ -7,6 +7,7 @@ import pytest
 
 from sucoder.config import (
     KNOWN_AGENTS,
+    sanitize_session_token,
     AuditConfig,
     BranchPrefixes,
     ConfigError,
@@ -946,3 +947,99 @@ def test_slurm_local_disk_rejects_junk(value):
     from sucoder.config import ConfigError, _parse_slurm_config
     with pytest.raises(ConfigError, match="local_disk"):
         _parse_slurm_config(_slurm_raw(local_disk=value))
+
+
+# -- session-token collisions (issue 16) ---------------------------------------
+#
+# The token names a great deal of shared state that nothing else namespaces:
+# the tmux session AND its dedicated socket, the staged job-<token>.sh and
+# local-tier-<token>.sh in a shared $HOME, the deadline warn file, and the
+# local-disk working clone path.  Two mirrors that sanitize alike collide on
+# all of it.  Config load is the one moment someone can rename a mirror, so
+# that is where this is refused.
+#
+# Note what is NOT in that list: the WIP ref.  The issue claimed two such
+# mirrors shared refs/sucoder/wip/<token> on origin; they do not.
+# mirror_dirname is the RAW name, so each mirror is its own repository with
+# its own origin and its own ref namespace -- pinned by
+# test_colliding_tokens_do_not_share_a_mirror_directory below.
+
+
+def test_sanitize_session_token_only_arms_for_metacharacters():
+    assert sanitize_session_token("SuCoder") == "SuCoder"
+    assert sanitize_session_token("K-Aggregators") == "K-Aggregators"
+    assert sanitize_session_token("a.b_c-1") == "a.b_c-1"
+    assert sanitize_session_token("K Agg") == "K_Agg"
+    assert sanitize_session_token("K/Agg") == "K_Agg"
+
+
+def test_mirrors_that_sanitize_alike_are_refused_at_config_load(tmp_path: Path) -> None:
+    (tmp_path / "one").mkdir()
+    (tmp_path / "two").mkdir()
+    config_path = write_config(
+        tmp_path,
+        f"""
+human_user: ligon
+agent_user: coder
+agent_group: coder
+mirror_root: ./mirrors
+mirrors:
+  "K Agg":
+    canonical_repo: {tmp_path / 'one'}
+  "K/Agg":
+    canonical_repo: {tmp_path / 'two'}
+""",
+    )
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(config_path)
+    message = str(excinfo.value)
+    assert "`K Agg`" in message and "`K/Agg`" in message
+    assert "`K_Agg`" in message
+    # It must say what is actually at stake, or the reader cannot judge it.
+    assert "tmux" in message and "socket" in message
+
+
+def test_distinct_tokens_load_fine(tmp_path: Path) -> None:
+    (tmp_path / "one").mkdir()
+    (tmp_path / "two").mkdir()
+    config_path = write_config(
+        tmp_path,
+        f"""
+human_user: ligon
+agent_user: coder
+agent_group: coder
+mirror_root: ./mirrors
+mirrors:
+  "K Agg":
+    canonical_repo: {tmp_path / 'one'}
+  "K-Agg":
+    canonical_repo: {tmp_path / 'two'}
+""",
+    )
+    assert set(load_config(config_path).mirrors) == {"K Agg", "K-Agg"}
+
+
+def test_colliding_tokens_do_not_share_a_mirror_directory(tmp_path: Path) -> None:
+    """Issue 16 claimed two mirrors sanitizing alike share a WIP ref on
+    origin.  They cannot: mirror_dirname is the raw name, so they are two
+    repositories.  Pinned here because the correction is easy to lose."""
+    (tmp_path / "one").mkdir()
+    (tmp_path / "two").mkdir()
+    config_path = write_config(
+        tmp_path,
+        f"""
+human_user: ligon
+agent_user: coder
+agent_group: coder
+mirror_root: ./mirrors
+mirrors:
+  "K Agg":
+    canonical_repo: {tmp_path / 'one'}
+  "K-Agg":
+    canonical_repo: {tmp_path / 'two'}
+""",
+    )
+    config = load_config(config_path)
+    dirnames = {config.mirrors[n].mirror_dirname for n in config.mirrors}
+    assert dirnames == {"K Agg", "K-Agg"}          # raw, never sanitized
+    assert len({sanitize_session_token(d) for d in dirnames}) == 2

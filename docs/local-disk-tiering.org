@@ -128,8 +128,9 @@ git add -A                      # tracked + untracked; honours .gitignore
 tree=$(git write-tree)
 [ "$tree" = "$(cat "$marker" 2>/dev/null)" ] && exit 0
 wip=$(git commit-tree "$tree" -p HEAD -m "WIP snapshot $(date -Is) job $SLURM_JOB_ID")
-git update-ref refs/sucoder/wip/<mirror> "$wip"
-git push --quiet --force origin refs/sucoder/wip/<mirror>
+ref=refs/sucoder/wip-job/<mirror>/$SLURM_JOB_ID
+git update-ref "$ref" "$wip"
+git push --quiet --force origin "$ref"
 echo "$tree" > "$marker"
 #+end_src
 
@@ -142,13 +143,34 @@ Points that matter:
   history anyone depends on.
 - Unchanged trees cost nothing :: comparing tree hashes makes the
   idle case a =write-tree= and a string compare.
-- Restore on relaunch is conditional :: rebuild the working clone, and
-  if =refs/sucoder/wip/<mirror>= exists /and/ its parent equals the
-  branch tip, apply its tree to the working directory (=git read-tree
-  -m -u <wip>= followed by =git reset= to unstage) so the agent finds
-  the same dirty tree it left.  If commits have landed since the
-  snapshot, its parent no longer matches; leave it alone and name it
-  in the handoff.
+- One ref per (mirror, job) :: the ref is keyed on the job id as well as
+  the mirror.  It originally was not, and a mirror running in two jobs at
+  once -- two clones, on two nodes, with two different dirty trees -- had
+  one slot to store them in, so each snapshot force-pushed over the
+  other's (issue 19).  =refs/sucoder/wip-job/<mirror>/<job>= is a
+  /sibling/ of the old =refs/sucoder/wip/<mirror>=, never a child: git
+  refuses to create a ref below an existing one, and =--atomic= does not
+  rescue a delete-plus-create, so nesting under the old name would have
+  needed a window in which the mirror held no snapshot at all.
+- Restore on relaunch is conditional :: rebuild the working clone, and if
+  a candidate snapshot exists /and/ its parent equals the branch tip,
+  apply its tree to the working directory (=git read-tree -m -u <wip>=
+  followed by =git reset= to unstage) so the agent finds the same dirty
+  tree it left.  If commits have landed since the snapshot, its parent no
+  longer matches; leave it alone and name it in the handoff.
+- Restore never takes a live job's tree :: two jobs on one mirror are
+  normally on the same branch at the same commit, so "parent equals the
+  tip" is true for the /other/ job's snapshot too, and the restore used
+  to import it and announce it as resumed work with nothing saying whose
+  it was.  Candidates are therefore filtered by their job: this job's own
+  snapshot first (an idempotent re-run of prepare inside one job), then
+  the newest whose job =squeue= reports has ended.  A failed =squeue= is
+  unknown state, not "gone" -- the same rule the launcher uses -- so it
+  declines.  The legacy shared ref is still read, since a pre-upgrade
+  timer on another live job keeps writing it; its job id is recovered
+  from the snapshot's subject.  Where =squeue= is not on =PATH= at all
+  the restore proceeds but says so, because declining outright would
+  break every relaunch in the environment issue 15 describes.
 - What it doesn't cover :: ignored files (=.venv=, =node_modules=,
   =.gitnexus=) are rebuilt, which is the point, since they're the
   flock-hostile things.  The staged/unstaged distinction is lost on

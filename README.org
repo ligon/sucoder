@@ -785,9 +785,9 @@ on =confined= (=sbatch=) and =salloc= targets:
   laptop pushed first is reported for the agent to =git pull
   --ff-only=;
 - the deadline watchdog snapshots uncommitted work to
-  =refs/sucoder/wip/<name>= on the shared mirror every
+  =refs/sucoder/wip-job/<name>/<jobid>= on the shared mirror every
   =wip_snapshot_minutes= and restores it on the next launch when the
-  branch tip has not moved;
+  branch tip has not moved and the job that took it has ended;
 - SLURM wipes =/local/job<ID>/= when the job ends; nothing is orphaned
   and =--node= pinning is unnecessary.
 
@@ -864,12 +864,21 @@ warnings stay on NFS; NFS need not support =flock=. Working clones may use
 used for the timer's frequent small-file operations.
 
 The same script snapshots the mirror's dirty working tree (tracked and
-untracked files, not ignored ones) to =refs/sucoder/wip/<mirror>= on
-the mirror's =origin= at each warning and every
-=wip_snapshot_minutes= (default 10; =0= disables the periodic run).  A
-mirror with no =origin= is never snapshotted, so on a shared-filesystem
-mirror this is a no-op today; it becomes live with the local-disk
-tiering described in [[file:docs/local-disk-tiering.org][docs/local-disk-tiering.org]].
+untracked files, not ignored ones) to
+=refs/sucoder/wip-job/<mirror>/<jobid>= on the mirror's =origin= at each
+warning and every =wip_snapshot_minutes= (default 10; =0= disables the
+periodic run).  A mirror with no =origin= is never snapshotted, so on a
+shared-filesystem mirror this is a no-op today; it becomes live with the
+local-disk tiering described in [[file:docs/local-disk-tiering.org][docs/local-disk-tiering.org]].
+
+The ref carries the job id because one mirror can be running in two jobs
+at once, on two nodes, with two different uncommitted trees.  A relaunch
+restores this job's own snapshot if it has one, otherwise the newest whose
+job has ended -- never one belonging to a job still running, which would
+silently import another node's work.  Snapshotted repositories should
+=.gitignore= their generated outputs: every snapshot that changes the tree
+writes a new commit to the shared mirror, and the superseded one becomes
+unreachable there until it is collected.
 
 #+begin_src yaml
     slurm:

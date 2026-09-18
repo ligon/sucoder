@@ -63,7 +63,8 @@ class SlurmConfig:
                                          # job cgroup, confined to the reserved
                                          # cores instead of the whole node
     wip_snapshot_minutes: int = 10       # deadline timer snapshots the dirty
-                                         # working tree to refs/sucoder/wip/
+                                         # working tree to
+                                         # refs/sucoder/wip-job/<mirror>/<jobid>
                                          # every N minutes; 0 disables
 
 
@@ -826,6 +827,50 @@ def _parse_audit_config(raw: Any, *, path: Path) -> AuditConfig:
     return AuditConfig(auto_after_session=auto_raw, scope=scope_raw)
 
 
+# Anything outside this class becomes ``_`` in the session token, which
+# names a great deal of shared state: the tmux session AND its dedicated
+# socket (``mirror.confined_tmux_target``), the staged ``job-<token>.sh``
+# and ``local-tier-<token>.sh`` in a shared ``$HOME``, the deadline warn
+# file, and the local-tier working clone's path.  None of that is
+# namespaced by anything else, so two mirrors that sanitize alike collide
+# on all of it at once -- and the tmux collision fails first and hardest
+# (see the spike note above ``confined_tmux_target``).  Hence
+# :func:`_reject_token_collisions` below: refuse at config load, which is
+# the one moment someone can rename a mirror and fix it.
+_CONFINED_NAME_RE = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def sanitize_session_token(name: str) -> str:
+    """Map a mirror name to a tmux-/socket-/path-safe token.
+
+    A no-op for names already in ``[A-Za-z0-9._-]`` (e.g. ``SuCoder``,
+    ``K-Aggregators``); it only arms for names with shell/tmux metachars.
+
+    Lives here, the lowest layer, because ``config`` must reject
+    collisions and cannot import ``mirror`` (which imports ``config``).
+    ``mirror._sanitize_session_token`` re-exports it.
+    """
+    return _CONFINED_NAME_RE.sub("_", name)
+
+
+def _reject_token_collisions(names: List[str]) -> None:
+    """Refuse two configured mirrors whose names sanitize to one token."""
+    by_token: Dict[str, List[str]] = {}
+    for name in names:
+        by_token.setdefault(sanitize_session_token(name), []).append(name)
+    for token, clashing in sorted(by_token.items()):
+        if len(clashing) > 1:
+            quoted = ", ".join(f"`{n}`" for n in clashing)
+            raise ConfigError(
+                f"Mirrors {quoted} both sanitize to the session token "
+                f"`{token}`, so they would share a tmux session and socket, "
+                f"the staged batch and prepare scripts in $HOME, the deadline "
+                f"warn file, and the local-disk working clone path. "
+                f"Rename one so they differ in more than "
+                f"non-[A-Za-z0-9._-] characters."
+            )
+
+
 def _parse_mirrors(
     raw: Any,
     *,
@@ -896,6 +941,7 @@ def _parse_mirrors(
             remote=remote,
         )
 
+    _reject_token_collisions(list(mirrors))
     return mirrors
 
 

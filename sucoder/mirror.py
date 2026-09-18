@@ -66,6 +66,7 @@ from .config import (
     Config,
     MirrorSettings,
     RemoteConfig,
+    sanitize_session_token,
 )
 from .executor import CommandError, CommandExecutor, CommandResult, RemoteExecutor
 from .permissions import (
@@ -198,16 +199,11 @@ class MirrorContext:
 # tmux servers and the session is unreachable.
 # ---------------------------------------------------------------------------
 
-_CONFINED_NAME_RE = re.compile(r"[^A-Za-z0-9._-]")
-
-
-def _sanitize_session_token(name: str) -> str:
-    """Map a mirror name to a tmux-/socket-safe token.
-
-    A no-op for names already in ``[A-Za-z0-9._-]`` (e.g. ``SuCoder``,
-    ``K-Aggregators``); it only arms for names with shell/tmux metachars.
-    """
-    return _CONFINED_NAME_RE.sub("_", name)
+# Defined in ``config`` (the lowest layer) so config load can refuse two
+# mirrors that sanitize alike -- that refusal is the fix for the shared
+# state listed there, and ``config`` cannot import this module.  Aliased
+# rather than moved so every existing call site keeps working.
+_sanitize_session_token = sanitize_session_token
 
 
 def confined_tmux_target(mirror_name: str) -> Tuple[str, str]:
@@ -5354,6 +5350,12 @@ If you find issues, describe each one clearly with the filename and specific con
             # batch body, so it expands in the agent's shell and tools.
             work = f"$SUCODER_LOCAL_ROOT/mirrors/{token}"
             local_root = f"{root}/job<ID>"
+        # One WIP ref per (mirror, job): a second job on this mirror gets
+        # its own and cannot overwrite this one (issue 19).  Confined, the
+        # id is assigned by sbatch after this renders, but $SLURM_JOB_ID is
+        # set in the agent's shell, so the command below still runs as shown.
+        wip_job = job_id if job_id else "$SLURM_JOB_ID"
+        wip_ref = f"refs/sucoder/wip-job/{token}/{wip_job}"
         slurm = ctx.settings.remote.slurm if ctx.settings.remote else None
         minutes = slurm.wip_snapshot_minutes if slurm else 10
         cadence = (
@@ -5370,9 +5372,10 @@ If you find issues, describe each one clearly with the filename and specific con
             "- Every commit is published to the shared mirror by a post-commit hook the moment it exists; the commit output",
             "  shows 'SUCODER: published'.  A 'REJECTED' line means the human pushed first: `git pull --ff-only`, then commit",
             "  again.  Never force-push to origin.",
-            f"- Uncommitted work (tracked or untracked, not ignored) is snapshotted to refs/sucoder/wip/{token} on the shared",
-            f"  mirror {cadence}; the next launch restores it if no commit has landed since.",
-            f"  Last snapshot: git -C {mirror_path} log -1 --format='%ci %s' refs/sucoder/wip/{token}",
+            f"- Uncommitted work (tracked or untracked, not ignored) is snapshotted to {wip_ref} on the shared",
+            f"  mirror {cadence}; the next launch restores it if no commit has landed since.  The ref is per job, so a",
+            "  relaunch restores the newest snapshot whose job has ended -- never one belonging to a job still running.",
+            f"  Last snapshot: git -C {mirror_path} log -1 --format='%ci %s' {wip_ref}",
             f"- Ignored files (.venv, node_modules, caches) are never durable.  Caches and $TMPDIR live under {local_root}",
             "  ($SUCODER_LOCAL_ROOT) and are rebuilt each job.",
             f"- Deadline warnings: $HOME/.cache/sucoder/slurm-deadline-{token}.warn (30/15/5 minutes before the job's --time).",
