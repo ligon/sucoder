@@ -2845,3 +2845,58 @@ def test_push_reports_local_mirror_branches_were_not_moved(tmp_path, caplog):
         "own branches were not moved" in r.getMessage()
         for r in caplog.records
     ), [r.getMessage() for r in caplog.records]
+
+
+def test_salloc_job_carries_the_same_name_a_confined_launch_uses(tmp_path, monkeypatch):
+    """An unnamed allocation is invisible to everything that looks jobs up
+    by mirror.  `sucoder sessions` filters on the `sucoder-` prefix, so an
+    salloc job did not appear in it at all, and the name-keyed reuse probe
+    that closed issue 19 for confined launches has nothing to match on.
+    The name is sanitized identically to `confined_tmux_target`'s, or the
+    two paths disagree about what a mirror is called.
+    """
+    import logging
+
+    import typer
+
+    from sucoder import session as session_mod
+    from sucoder.config import RemoteConfig, SlurmConfig
+
+    sessions = tmp_path / "sessions"
+    monkeypatch.setattr(session_mod, "_session_dir", lambda: sessions)
+
+    remote = RemoteConfig(
+        gateway="gw", transfer_host="dtn",
+        slurm=SlurmConfig(partition="savio3", account="acct", time="24:00:00"),
+    )
+    sess = session_mod.RemoteSession(
+        mirror_name="K Aggregators", target_name="savio-node", login_node="ln003.brc",
+    )
+
+    class _FakeControl:
+        def ssh_options(self, **kw):
+            return []
+
+    seen = []
+
+    def fake_run(cmd, *a, **kw):
+        joined = " ".join(cmd) if isinstance(cmd, (list, tuple)) else str(cmd)
+        if "salloc" in joined:
+            seen.append(joined)
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="",
+                stderr="salloc: Granted job allocation 34688352\n",
+            )
+        if "squeue --job" in joined:
+            raise subprocess.CalledProcessError(1, cmd, stderr="stop here")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(typer.Exit):
+        cli._ensure_slurm_node(
+            remote, sess, _FakeControl(), _FakeControl(), logging.getLogger("t"),
+        )
+
+    assert seen, "salloc was never invoked"
+    # The space collapses, exactly as confined_tmux_target would render it.
+    assert "--job-name=sucoder-K_Aggregators" in seen[0], seen[0]

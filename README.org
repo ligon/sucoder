@@ -682,6 +682,41 @@ are treated as argv.
    =savio=) is added to the canonical repo so the human can
    =git fetch savio= to pull back agent work.
 
+*** One job per mirror per target
+
+A confined launch never allocates a second job for a mirror that already
+has a live one.  It checks twice, because the two checks fail in
+different ways:
+
+1. the session record, =~/.sucoder/sessions/<mirror>--<target>.yaml=,
+   which holds the job id;
+2. failing that, =squeue --me --name=sucoder-<token>= --- the scheduler.
+
+The second exists because the first holds /one/ id and reads as blank
+when the file is missing, unreadable, or was written under a different
+=-T= spelling.  Blank used to mean "no job", and the launch submitted a
+second =sbatch= over a live one.  Slurm has known the answer all along:
+every launch is submitted =--job-name=sucoder-<token>=.
+
+When the scheduler finds a job the record lost, =collaborate= adopts it
+--- attaches, and writes the id back so =attach=, =release= and =renew=
+can reach it again --- rather than allocating beside it.
+
+A job for the same mirror on a /different/ target does not block the
+launch: one mirror on two targets is a deliberate configuration.  It is
+reported and the new job is allocated.  Targets are told apart by
+partition/account/qos, the same signature =sucoder sessions= groups by,
+so a target that pins none of the three claims nothing.
+
+A failed =squeue= does not block a launch either.  This check is a safety
+net over the record, not a gate; the record-keyed check is the one that
+already refuses to resubmit on an unknown answer.
+
+=salloc= targets carry the same =--job-name=.  Nothing reuses by name on
+that path yet --- it reuses via the record and adopts by node --- but
+without the name an allocation is invisible to =sucoder sessions=, which
+filters on the =sucoder-= prefix.
+
 *** Listing your sessions
 
 =sucoder sessions= lists every SuCoder job across all configured

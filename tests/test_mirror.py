@@ -1320,8 +1320,13 @@ def _confined_manager(tmp_path, monkeypatch, *, target_name=None):
 
 def _confined_responder(calls, *, sbatch_out="12345", live_state="",
                         poll_states=None, ready_rc=0, attach_rc=0,
-                        sacct_state="FAILED"):
-    """run_agent stub dispatching on the confined command shapes."""
+                        sacct_state="FAILED", by_name=""):
+    """run_agent stub dispatching on the confined command shapes.
+
+    ``by_name`` is what ``squeue --me --name=<job>`` returns: the
+    scheduler-keyed reuse probe (issue 19), as distinct from ``live_state``,
+    which answers the id-keyed one.  A tuple is ``(stdout, stderr, rc)``.
+    """
     poll_iter = iter(poll_states if poll_states is not None else ["RUNNING n0001.savio4"])
 
     def run_agent(args, *, check=True, capture_output=True, input=None, **kwargs):
@@ -1349,6 +1354,13 @@ def _confined_responder(calls, *, sbatch_out="12345", live_state="",
             # Dispatch on the actual -o format value (not position), and
             # assert the argv shape, so a drift in the squeue command fails
             # LOUDLY here instead of silently mis-routing to a green pass.
+            if a[1] == "--me":
+                assert any(x.startswith("--name=") for x in a), f"squeue argv: {a}"
+                assert "--noheader" in a, f"squeue argv: {a}"
+                if isinstance(by_name, tuple):
+                    stdout, stderr, rc = by_name
+                    return res(stdout, stderr, rc)
+                return res(by_name)
             assert a[1] == "--job" and "--noheader" in a, f"squeue argv: {a}"
             fmt = a[a.index("-o") + 1] if "-o" in a else None
             if fmt == "%T %N":            # node-poll
@@ -6024,3 +6036,119 @@ def test_skill_catalog_labels_unparseable_skill_by_directory(
     # The old fallback: the file stem, i.e. a nameless entry.
     for line in prelude.splitlines():
         assert not line.startswith("- SKILL"), line
+
+
+# ----------------------------------------------------------------------
+# Issue 19 option 3: never allocate a second job for a mirror that has one
+# ----------------------------------------------------------------------
+#
+# The id-keyed reuse probe above reads the job id from the session record.
+# That record holds ONE id and `RemoteSession.load` returns a blank session
+# when the file is missing or unreadable, so a lost, clobbered or
+# differently-keyed record reads as "no job at all" -- and the launch went
+# straight to sbatch, over a job that was still running.  Slurm has known
+# the answer all along, under --job-name.
+
+_THIS_TARGET = "RUNNING|savio4_htc|co_carleton|carleton_htc4_normal"
+
+
+def test_launch_confined_adopts_a_live_job_the_session_record_lost(tmp_path, monkeypatch):
+    from sucoder.session import RemoteSession
+
+    manager, ctx = _confined_manager(tmp_path, monkeypatch)
+    # No session record at all: the id-keyed probe has nothing to go on.
+    assert RemoteSession.load("sample", target_name=None).slurm_job_id is None
+
+    calls = []
+    manager.executor.run_agent = _confined_responder(
+        calls, by_name=f"4242|{_THIS_TARGET}", live_state="RUNNING",
+    )
+    rc = manager._launch_confined(
+        ctx, ["claude"], remote_prelude_text=None, prelude_sentinel="__X__",
+        env=None, detached=False,
+    )
+    assert rc == 0
+    assert not any(c["args"][0] == "sbatch" for c in calls), (
+        "a job the record lost is still a live job; must not submit over it"
+    )
+    attach = [c for c in calls if c["args"][0] == "srun" and "attach-session" in c["args"]]
+    assert attach and "--jobid=4242" in attach[0]["args"]
+    # The record is healed, so attach/release/renew can reach it again.
+    assert RemoteSession.load("sample", target_name=None).slurm_job_id == 4242
+
+
+def test_launch_confined_allocates_when_the_named_job_is_on_another_target(
+    tmp_path, monkeypatch
+):
+    """One mirror on two targets is a deliberate configuration, not a
+    mistake.  Say so, and allocate."""
+    manager, ctx = _confined_manager(tmp_path, monkeypatch)
+    calls = []
+    manager.executor.run_agent = _confined_responder(
+        calls, by_name="4242|RUNNING|savio3|fc_jevons|normal",
+    )
+    rc = manager._launch_confined(
+        ctx, ["claude"], remote_prelude_text=None, prelude_sentinel="__X__",
+        env=None, detached=False,
+    )
+    assert rc == 0
+    assert any(c["args"][0] == "sbatch" for c in calls), (
+        "a job on a different target must not block this one"
+    )
+
+
+def test_launch_confined_name_probe_failure_still_allocates(tmp_path, monkeypatch):
+    """This probe is a safety net over the id-keyed one, not a gate.  A
+    scheduler blip must not block a launch -- the id-keyed probe already
+    refuses to resubmit on an *unknown* answer for a job it knows about."""
+    manager, ctx = _confined_manager(tmp_path, monkeypatch)
+    calls = []
+    manager.executor.run_agent = _confined_responder(
+        calls, by_name=("", "slurm_load_jobs error: Unable to contact controller", 1),
+    )
+    rc = manager._launch_confined(
+        ctx, ["claude"], remote_prelude_text=None, prelude_sentinel="__X__",
+        env=None, detached=False,
+    )
+    assert rc == 0
+    assert any(c["args"][0] == "sbatch" for c in calls)
+
+
+def test_launch_confined_name_probe_ignores_array_elements(tmp_path, monkeypatch):
+    """`12345_3` is not a job this launcher submitted, and int() would read
+    it as 123453 (underscores are digit separators)."""
+    manager, ctx = _confined_manager(tmp_path, monkeypatch)
+    calls = []
+    manager.executor.run_agent = _confined_responder(
+        calls, by_name=f"4242_3|{_THIS_TARGET}",
+    )
+    manager._launch_confined(
+        ctx, ["claude"], remote_prelude_text=None, prelude_sentinel="__X__",
+        env=None, detached=False,
+    )
+    assert any(c["args"][0] == "sbatch" for c in calls)
+
+
+def test_launch_confined_prefers_the_record_over_the_name_probe(tmp_path, monkeypatch):
+    """The record names a live job: use it, and never issue the name query.
+    The scheduler probe is the fallback, not a second opinion."""
+    from sucoder.session import RemoteSession
+
+    manager, ctx = _confined_manager(tmp_path, monkeypatch)
+    sess = RemoteSession.load("sample", target_name=None)
+    sess.slurm_job_id = 4242
+    sess.save()
+
+    calls = []
+    manager.executor.run_agent = _confined_responder(
+        calls, live_state="RUNNING", by_name=f"9999|{_THIS_TARGET}",
+    )
+    manager._launch_confined(
+        ctx, ["claude"], remote_prelude_text=None, prelude_sentinel="__X__",
+        env=None, detached=False,
+    )
+    assert not any("--me" in c["args"] for c in calls), (
+        "the name probe must not run when the record already names a live job"
+    )
+    attach = [c for c in calls if c["args"][0] == "srun" and "attach-session" in c["args"]]
+    assert attach and "--jobid=4242" in attach[0]["args"]
