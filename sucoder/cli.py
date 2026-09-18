@@ -990,8 +990,16 @@ def _ensure_slurm_node(
 
     # Allocate a new compute node if we still don't have one.
     if not session.slurm_job_id:
+        # Name it the same way a confined launch does.  Nothing here reads
+        # the name back yet -- this path reuses via the session record and
+        # adopts by node -- but it is what makes an salloc job findable at
+        # all: `sucoder sessions` filters on the `sucoder-` prefix, so an
+        # unnamed allocation was invisible to it, and the name-keyed reuse
+        # probe that closed issue 19 for confined launches has nothing to
+        # match on without it.
         salloc_parts = [
             "salloc", "--no-shell",
+            f"--job-name=sucoder-{_sanitize_session_token(session.mirror_name)}",
             f"--partition={slurm.partition}",
             f"--account={slurm.account}",
             f"--time={slurm.time}",

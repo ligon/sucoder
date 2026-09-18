@@ -2604,6 +2604,93 @@ class MirrorManager:
             "`sucoder release` to clear a stale session record."
         )
 
+    def _confined_jobs_by_name(self, job_name: str) -> List[Tuple[int, str, str, str, str]]:
+        """Live jobs submitted under *job_name*, newest id first.
+
+        The scheduler's answer to "does this mirror already have a job?",
+        which the session file cannot give.  ``~/.sucoder/sessions/
+        <mirror>--<target>.yaml`` holds one job id, and
+        :meth:`RemoteSession.load` returns a blank session when the file is
+        missing or unreadable -- so a lost, clobbered or differently-keyed
+        record reads as "no job at all" and the caller submits a *second*
+        sbatch over a live one.  Every confined launch carries
+        ``--job-name=sucoder-<token>`` (:func:`_build_sbatch_command`), so
+        Slurm has known the answer all along.
+
+        Returns ``(job_id, state, partition, account, qos)`` tuples.  A
+        failed query returns empty: this is an extra safety net over the
+        id-keyed probe, and a scheduler blip must not block a launch.
+        """
+        try:
+            result = self.executor.run_agent(
+                ["squeue", "--me", f"--name={job_name}", "--noheader",
+                 "-o", "%i|%T|%P|%a|%q"],
+                check=False, capture_output=True,
+            )
+        except Exception:  # noqa: BLE001 -- advisory probe, never fatal
+            return []
+        if result.returncode != 0:
+            return []
+        jobs: List[Tuple[int, str, str, str, str]] = []
+        for line in result.stdout.splitlines():
+            fields = [f.strip() for f in line.strip().split("|")]
+            if len(fields) != 5 or not fields[0].isdigit():
+                continue          # array elements and noise are not ours
+            jobs.append((int(fields[0]), fields[1], fields[2], fields[3], fields[4]))
+        return sorted(jobs, reverse=True)
+
+    def _job_matches_this_target(self, ctx, partition: str, account: str, qos: str) -> bool:
+        """Was *this* target's configuration what submitted that job?
+
+        Slurm records no target name, so partition/account/qos is the
+        signature -- the same rule ``sucoder sessions`` files jobs under a
+        heading with.  A field this target leaves unset cannot disagree, and
+        a target that pins nothing matches nothing rather than claiming
+        every job on the cluster.
+        """
+        from .sessions_report import JobRow, match_target
+
+        remote = ctx.settings.remote
+        if remote is None or remote.slurm is None:
+            return False
+        name = self.target_name or "_target"
+        row = JobRow(
+            job_id=0, name="", partition=partition, account=account, qos=qos,
+            state="", time_left="", node="",
+        )
+        return match_target(row, {name: remote}, [name]) == name
+
+    def _reuse_confined_job(
+        self, job_id: int, state: str, session_name: str, socket: str,
+        detached: bool,
+    ) -> int:
+        """Attach to an already-live confined job instead of submitting one.
+
+        Shared by both reuse paths -- the one that reads the job id from the
+        session record and the one that recovers it from ``squeue`` when the
+        record has lost it -- so they cannot drift apart.
+        """
+        if detached:
+            return 0
+        if state != "RUNNING":
+            # Queued but no node yet: an `srun --overlap` attach would
+            # block until it starts.  Surface and let the operator
+            # attach once it is up.
+            raise MirrorError(
+                f"Confined SLURM job {job_id} is {state} "
+                "(queued, not yet running).  Attach once it starts "
+                "with `sucoder attach`."
+            )
+        # The agent may already have exited (the keeper holds the job
+        # after a clean /exit), so this attach can land in a bare
+        # login shell rather than a running agent.
+        if not self._confined_session_ready(job_id, session_name, socket):
+            self.logger.warning(
+                "Confined job %s is live but its tmux session is not "
+                "up; attach may fail.", job_id,
+            )
+        return self._attach_confined(job_id, session_name, socket)
+
     def _confined_terminal_reason(self, job_id: int) -> str:
         """Best-effort sacct terminal state for a job that left the queue."""
         try:
@@ -2780,28 +2867,44 @@ class MirrorManager:
                     "Reusing live confined SLURM job %s (%s) for mirror %s.",
                     sess.slurm_job_id, state, ctx.settings.name,
                 )
-                if detached:
-                    return 0
-                if state != "RUNNING":
-                    # Queued but no node yet: an `srun --overlap` attach would
-                    # block until it starts.  Surface and let the operator
-                    # attach once it is up.
-                    raise MirrorError(
-                        f"Confined SLURM job {sess.slurm_job_id} is {state} "
-                        "(queued, not yet running).  Attach once it starts "
-                        "with `sucoder attach`."
-                    )
-                # The agent may already have exited (the keeper holds the job
-                # after a clean /exit), so this attach can land in a bare
-                # login shell rather than a running agent.
-                if not self._confined_session_ready(
-                    sess.slurm_job_id, session_name, socket
-                ):
-                    self.logger.warning(
-                        "Confined job %s is live but its tmux session is not "
-                        "up; attach may fail.", sess.slurm_job_id,
-                    )
-                return self._attach_confined(sess.slurm_job_id, session_name, socket)
+                return self._reuse_confined_job(
+                    sess.slurm_job_id, state, session_name, socket, detached,
+                )
+
+        # Second line of defence, keyed on the scheduler rather than on the
+        # session file (issue 19).  The file holds one job id and reads as
+        # blank when it is missing, unreadable, or was written under another
+        # target spelling -- and "blank" took us straight to sbatch, over a
+        # job that was still running.  Slurm has the answer under
+        # --job-name, so ask it before allocating anything.
+        for job_id, state, partition, account, qos in self._confined_jobs_by_name(
+            session_name
+        ):
+            if job_id == sess.slurm_job_id:
+                continue          # already ruled out above: it is not live
+            if not self._job_matches_this_target(ctx, partition, account, qos):
+                # Same mirror on a different target is a deliberate
+                # configuration, not a mistake; say so and carry on.
+                self.logger.warning(
+                    "Mirror %s also has SLURM job %s (%s) on %s/%s%s -- a "
+                    "different target. Allocating a second job for %s.",
+                    ctx.settings.name, job_id, state, partition, account,
+                    f"/{qos}" if qos else "", self.target_name or "this target",
+                )
+                continue
+            self.logger.warning(
+                "Mirror %s already has live SLURM job %s (%s) on this target, "
+                "which no session record named -- adopting it instead of "
+                "allocating a second. Run `sucoder sessions` to see the rest.",
+                ctx.settings.name, job_id, state,
+            )
+            # Heal the record that lost it, so attach/release/renew can
+            # reach this job again.
+            sess.slurm_job_id = job_id
+            sess.save()
+            return self._reuse_confined_job(
+                job_id, state, session_name, socket, detached,
+            )
 
         # Build the in-tmux command and wrap in `bash -lc` so the agent
         # resolves the login env (PATH/nvm); sbatch runs the batch body with
