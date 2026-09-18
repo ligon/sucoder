@@ -1,0 +1,196 @@
+#+title: Triage: issues 14, 16, 19 (WIP snapshot ref and its shared state)
+#+date: 2026-09-18
+#+status: ANALYSIS
+#+author: Sue
+#+property: header-args :eval never-export :tangle no :results output :exports code
+
+Triage only.  No code changed.  Baseline =0d0b082= on =main=.
+
+* Summary
+
+The three issues are related, but not in the way the issue text says.  They
+are not three views of one shared ref.  They are:
+
+- [[https://github.com/ligon/sucoder/issues/19][19]] :: the ref really is shared, across *jobs* on one mirror.  Confirmed
+  live.  This is the one that loses work.
+- [[https://github.com/ligon/sucoder/issues/16][16]] :: the *ref* half of this issue does not hold for two genuinely
+  different mirrors; the rest of it does, and names less than it should.
+- [[https://github.com/ligon/sucoder/issues/14][14]] :: a property of =commit-tree -p HEAD= plus a force-push, independent
+  of how the ref is named.  Live, but two orders of magnitude smaller than
+  the issue's projection on the workload actually running.
+
+Fixing 19 by keying the ref on the job does *not* fix 14, and 14's obvious
+remedy (=git gc=) does not work with default settings.  Both verified below.
+
+* Issue 16: the ref-collision claim does not hold
+
+16 says two mirrors whose names sanitize alike share
+=refs/sucoder/wip/<token>= on origin.  They do not.  =origin= is that
+mirror's own shared repository:
+
+: mirror_path = remote.mirror_root / settings.mirror_dirname   (mirror.py:190)
+: mirror_dirname = mirror_name                                 (config.py:388-389)
+
+=mirror_dirname= is the *raw* name, never sanitized.  =K Agg= lives at
+=~/mirrors/K Agg= and =K/Agg= at =~/mirrors/K/Agg= -- two repositories, two
+ref namespaces.  A ref named =refs/sucoder/wip/K_Agg= in each cannot collide
+with the other.
+
+What 16 gets right is everything keyed on the token in a *shared* namespace:
+
+- =$HOME/.cache/sucoder/slurm-deadline-<token>.warn= (=slurm_timer.py:124=)
+  -- one =$HOME=, last writer wins, as 16 says;
+- =$HOME/.cache/sucoder/job-<token>.sh= and =local-tier-<token>.sh=
+  (=mirror.py:2808,2819=) -- staged batch and prepare scripts;
+- and one 16 does not name: =confined_tmux_target= (=mirror.py:213-222=)
+  builds *both* the tmux session and its dedicated socket as
+  =sucoder-<token>=.  Two colliding mirrors on one node fight over a tmux
+  server, which is worse than a lost snapshot because it is immediate.
+
+So 16 should be re-scoped: drop the ref claim, keep the shared-=$HOME=
+state, add the tmux name.  Its "cheapest option" -- refuse at config-load
+time when two configured mirrors sanitize alike -- still settles all of it,
+and is unaffected by the correction.
+
+The one case where 16's ref claim *is* true is its own aside, "one mirror
+launched on two targets that share a =$HOME=".  That is one mirror, one
+origin, two jobs -- which is exactly issue 19.
+
+* Issue 19: confirmed live on LSMS_Library
+
+=refs/sucoder/wip/LSMS_Library= on the shared mirror currently holds job
+=39002769='s snapshot.  Unreachable in the same repository
+(=git fsck --unreachable --no-reflogs=, 2026-09-18):
+
+| Job      | Orphaned WIP snapshots |
+|----------+------------------------|
+| 39002769 |                     11 |
+| 38958677 |                     10 |
+| 38761619 |                      8 |
+| 38854624 |                      1 |
+
+Four distinct jobs have written into the one ref; 30 snapshot commits
+survive only as unreachable objects.  Mode 1 (loss) is not hypothetical.
+
+Mode 2 (cross-restore) follows from =local_tier.py:152-156=: the restore
+gate tests =wip^ == HEAD= and a clean tree, never *whose* snapshot it is.
+Two jobs on one mirror are normally on the same branch at the same commit,
+so the gate passes and job A silently adopts job B's dirty tree.  The
+=job <ID>= in the snapshot's own commit message is never consulted.
+
+* Mechanics verified before proposing a fix
+
+Both checks in a scratch repository pair, git 2.43.7.
+
+** Per-job refs cannot simply nest under the existing name
+
+An existing =refs/sucoder/wip/T= blocks =refs/sucoder/wip/T/<job>=
+(directory/file conflict), and =--atomic= does *not* rescue a
+delete-plus-create in one push -- the D/F check fires before the
+transaction resolves the delete:
+
+: ! [remote rejected] refs/sucoder/wip/T (atomic transaction failed)
+: remote: error: cannot lock ref 'refs/sucoder/wip/T/222':
+:         'refs/sucoder/wip/T' exists; cannot create 'refs/sucoder/wip/T/222'
+
+So option 1 in issue 19 costs a two-step migration with a window in which
+the mirror holds *no* snapshot for that mirror -- on the one mechanism whose
+job is to not lose work.  A sibling namespace
+(=refs/sucoder/wip-job/<token>/<job>=) coexists with the legacy ref, needs
+no window, and lets the legacy ref be read for restore and dropped lazily
+once a job ref exists.  Verified: sibling refs push, enumerate
+(=git ls-remote origin 'refs/sucoder/wip-job/T/*'=), and delete remotely.
+
+** Default =git gc= does not prune fresh snapshot orphans
+
+=gc.pruneExpire= defaults to =2.weeks.ago=, so a plain =git gc --prune=
+*packs* the orphaned snapshots instead of dropping them:
+
+| Step                | objects |
+|---------------------+---------|
+| before              |      10 |
+| =git gc --prune=    |      10 |
+| =git gc --prune=now= |       5 |
+
+Issue 14's first option ("=git gc --prune= / =--auto= on the mirror") is
+therefore a no-op at defaults, and packing makes the orphans marginally
+harder to shed later.  14 needs an explicit expiry window, and that window
+has to be long enough to be safe against a snapshot in flight.
+
+** Issue 14's magnitude on the live workload
+
+LSMS_Library, the heaviest tiered mirror: 1751 unreachable objects,
+10.51 MiB on disk total -- and only 338 of those are commits, of which 30
+are WIP snapshots; the rest is ordinary git debris.  Against 841 MiB packed
+this is noise.  The issue's 415 MiB/day is arithmetic over an invented
+3 MiB-rewritten-output workload and says so; nothing observed approaches it.
+
+K-Aggregators carries 4.07 GiB of loose objects, but its newest loose
+object is dated 2026-07-22 -- before tiering.  Do not attribute it to the
+snapshotter.
+
+14 is real and should be fixed, but it is a housekeeping item, not the
+urgent one.
+
+* Recommendation
+
+Two changes, in this order.
+
+** A. Snapshot identity and a restore gate (closes 19, and 16's residue)
+
+1. Write snapshots to =refs/sucoder/wip-job/<token>/<job>=.  Keep reading
+   the legacy =refs/sucoder/wip/<token>= as a restore candidate, and delete
+   it only after a job ref for the same mirror exists.
+2. Restore picks, among candidates whose =wip^ == HEAD=, the newest whose
+   job =squeue= says is *not* RUNNING; prefers this job's own id when one
+   exists (an idempotent re-run of prepare inside the same job).  A failed
+   =squeue= is unknown state, not "gone" (ledger 3) -- do not restore.
+   Say which job a restored snapshot came from in the
+   =SUCODER: restored uncommitted work= line.
+3. For 16: refuse at config load when two configured mirrors sanitize to
+   the same token, and say so naming both.  Cheapest, and it covers the
+   warn file, the staged scripts, and the tmux socket at once.
+4. Issue 19's option 3 (refuse a second job for a mirror that already has
+   one) should warn and require confirmation, not refuse: the same mirror
+   on two targets can be deliberate.
+
+Do *not* key the ref on =timer_identity=: it includes =target_name=
+(=slurm_timer.py:36-38=), and a relaunch of one mirror on a different
+target sharing =$HOME= must still find its snapshot.  Target is the wrong
+axis for the ref; it is the right axis for runtime state, which is what
+=timer_identity= already serves.
+
+** B. Retention (closes 14)
+
+At prepare time, not per snapshot: drop job refs whose jobs =squeue=
+reports gone, then =git gc= on the mirror with an *explicit* expiry, never
+=--prune=now= -- it is the human's push target on Lustre and a concurrent
+snapshot must not be raced.  Per-job refs make this a bounded, nameable
+set; without A there is nothing to enumerate.
+
+Also worth doing regardless: document, where =wip_snapshot_minutes= is
+documented, that a snapshotted repo's outputs belong in =.gitignore=.
+
+* Change surface
+
+- =sucoder/slurm_timer.py:93-94= -- ref name and push
+- =sucoder/local_tier.py:150-159= -- restore gate
+- =sucoder/mirror.py:213-222= -- tmux session/socket token (16)
+- =sucoder/mirror.py:1067-1068= region -- the WORKSPACE prelude quotes the
+  ref path to the agent and must follow
+- =sucoder/config.py= -- the sanitize-collision refusal (16)
+- =docs/local-disk-tiering.org:118-150= -- documented ref name and restore
+  rule
+- tests: =tests/test_local_tier.py:146=,
+  =tests/test_slurm_timer_script.py:156+=, =tests/test_timer_lifecycle.py:141=,
+  =tests/test_mirror.py:1067=
+
+* Loose ends
+
+- =.sucoder/handoff.org= still says =READY= for PR 13, which merged as
+  =f91d9de=.  It is stale and should be marked COMPLETE or archived.
+- =squeue= answers only for the cluster it is run against; an id from
+  another cluster reads as "invalid job id", i.e. gone.  Single-cluster
+  here, but the restore gate should not be assumed portable.
+
+Prepared by Sue (2026-09-18).
