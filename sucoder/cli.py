@@ -3180,6 +3180,207 @@ def renew(
 _PARTITION_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_,.-]*\Z")
 
 
+@app.command("sessions")
+def sessions(
+    ctx: typer.Context,
+    fast: bool = typer.Option(
+        False, "--fast",
+        help="Skip the per-job tmux probe (faster; no 'agent exited' reporting).",
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
+) -> None:
+    """List every SuCoder job on the configured clusters, with its state.
+
+    Enumerated from ``squeue``, not from the session files.  Those hold one
+    job id per (mirror, target), so a file-driven listing shows exactly the
+    jobs that are *not* the problem; the ones worth finding are those a file
+    has lost -- overwritten by a later launch, unreadable, or written under a
+    different ``-T`` spelling.  They are unreachable by ``attach``,
+    ``release`` and ``renew``, which all resolve through the same file, and
+    only ``scancel`` can touch them.  They are flagged ``no session record``.
+    The reverse sweep flags records naming jobs the scheduler has forgotten.
+
+    Targets sharing a gateway share a ``$HOME`` and a scheduler, so they are
+    queried once between them and sorted out afterwards by
+    partition/account/qos.  No ``-T`` is needed: this reports on everything
+    configured.
+
+    Unless ``--fast``, each job's tmux pane is probed for what is actually
+    running in it.  A confined job's window ends in ``exec bash -l``, so it
+    outlives the agent by design and the allocation runs to its full
+    ``--time`` afterwards; a live tmux session therefore does not mean a live
+    agent, and ``agent exited`` is the only signal that says so.  Read-only
+    throughout: nothing here submits, cancels or writes.
+    """
+    from .session import RemoteSession
+    from .sessions_report import (
+        SQUEUE_FORMAT, build_report, group_targets_by_cluster, parse_squeue,
+        render_report,
+    )  # noqa: F401 -- PANE_PROBE_SH is imported by the probe helper
+    from .tunnel import SshControl
+
+    config = _get_config(ctx)
+    if not config.targets:
+        typer.echo("No targets configured; nothing to list.", err=True)
+        raise typer.Exit(code=0)
+
+    logger = setup_logger("sucoder.sessions", config.log_dir, verbose)
+    debug_ssh = _get_debug_ssh(ctx)
+    clusters, schedulerless = group_targets_by_cluster(config.targets)
+
+    mirror_tokens = {
+        name: _sanitize_session_token(name) for name in config.mirrors
+    }
+    jobs_by_cluster: Dict[str, list] = {}
+    errors: List[str] = []
+    probed = not fast
+
+    for cluster, names in clusters.items():
+        remote = config.targets[names[0]]
+        control = SshControl(
+            gateway=remote.gateway, **remote.ssh_control_kwargs(), debug=debug_ssh,
+        )
+        try:
+            _connect_with_retry(control, remote.gateway, logger, config=config)
+        except Exception as exc:  # noqa: BLE001 -- one cluster must not sink the rest
+            errors.append(f"{cluster}: could not connect ({exc})")
+            continue
+        result = _run_remote_capture(
+            control, remote.gateway,
+            f'squeue --me --noheader -o {shlex.quote(SQUEUE_FORMAT)}',
+            debug=debug_ssh,
+        )
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip() or "(no output)"
+            errors.append(f"{cluster}: squeue failed (exit {result.returncode}): {detail}")
+            continue
+        jobs, bad = parse_squeue(result.stdout)
+        for line in bad:
+            errors.append(f"{cluster}: could not parse squeue row: {line}")
+        jobs_by_cluster[cluster] = jobs
+
+    report = build_report(
+        jobs_by_cluster=jobs_by_cluster, clusters=clusters, targets=config.targets,
+        mirror_tokens=mirror_tokens,
+        holders={
+            job.job_id: RemoteSession.holders_of_job(job.job_id)
+            for jobs in jobs_by_cluster.values() for job in jobs
+        },
+        recorded=RemoteSession.recorded_jobs(),
+        schedulerless=schedulerless, errors=errors,
+    )
+
+    if probed:
+        _probe_session_panes(report, config, clusters, logger, debug_ssh)
+
+    typer.echo(render_report(report, probed=probed).rstrip("\n"))
+
+
+def _remote_home_word(path: str) -> str:
+    """Shell-quote a remote path, keeping a leading ``~`` expandable.
+
+    ``shlex.quote("~/mirrors/K Agg")`` quotes the tilde too, so the remote
+    shell looks for a directory literally named ``~``.  Anchor on ``$HOME``
+    instead and quote only the remainder.
+    """
+    if path.startswith("~/"):
+        return '"$HOME"/' + shlex.quote(path[2:])
+    return shlex.quote(path)
+
+
+def _probe_session_panes(report, config, clusters, logger, debug_ssh) -> None:
+    """Fill in each entry's ``pane`` with the command its tmux pane runs.
+
+    One ssh per cluster, not one per job: the probe loops over the jobs
+    inside a single remote shell, so a listing of N jobs costs one round
+    trip rather than N.  Every failure leaves ``pane`` as ``None``, which
+    renders as ``-`` and is never reported as a dead agent -- an
+    unanswered probe is not evidence, the same rule the scheduler queries
+    follow.
+    """
+    from .mirror import confined_tmux_target
+    from .sessions_report import PANE_PROBE_SH
+    from .tunnel import SshControl
+
+    by_cluster: Dict[str, list] = {}
+    for group in report.groups:
+        remote = config.targets.get(group.name)
+        confined = bool(
+            remote is not None and remote.slurm is not None and remote.slurm.confined
+        )
+        for cluster, names in clusters.items():
+            if group.name in names:
+                by_cluster.setdefault(cluster, []).append((group.entries, confined))
+                break
+
+    for cluster, buckets in by_cluster.items():
+        entries = [(e, confined) for bucket, confined in buckets for e in bucket]
+        if not entries:
+            continue
+        names = clusters[cluster]
+        remote = config.targets[names[0]]
+        root = str(getattr(remote, "mirror_root", "") or "~/mirrors")
+        lines = []
+        for entry, confined in entries:
+            mirror = entry.mirror or entry.job.token
+            session_name, socket = confined_tmux_target(mirror)
+            job = shlex.quote(str(entry.job.job_id))
+            # TMPDIR and the cwd are this job's node-local paths and do not
+            # exist on another node, so srun into a sibling allocation fails
+            # before the probe runs unless both are neutralised.
+            lines.append(
+                f'printf "%s\\t" {job}; '
+                f'TMPDIR=/tmp srun --jobid={job} --overlap --quiet --chdir=/tmp '
+                f'bash -c {shlex.quote(PANE_PROBE_SH)} _ '
+                f'{shlex.quote(session_name)} '
+                f'{shlex.quote(socket if confined else "")} 2>/dev/null; echo'
+            )
+            # Age of this job's own WIP snapshot on the shared mirror.  The
+            # ref is per job now, so it answers for this allocation and not
+            # for whichever one wrote last.
+            if entry.mirror:
+                mirror_path = _remote_home_word(f"{root.rstrip('/')}/{entry.mirror}")
+                ref = shlex.quote(
+                    f"refs/sucoder/wip-job/{_sanitize_session_token(entry.mirror)}"
+                    f"/{entry.job.job_id}"
+                )
+                lines.append(
+                    f'printf "wip%s\\t" {job}; '
+                    f"git -C {mirror_path} log -1 --format=%cr {ref} 2>/dev/null; echo"
+                )
+        control = SshControl(
+            gateway=remote.gateway, **remote.ssh_control_kwargs(), debug=debug_ssh,
+        )
+        if not control.is_active():
+            try:
+                _connect_with_retry(control, remote.gateway, logger, config=config)
+            except Exception as exc:  # noqa: BLE001 -- probe is advisory
+                report.errors.append(f"{cluster}: pane probe skipped ({exc})")
+                continue
+        result = _run_remote_capture(
+            control, remote.gateway, "\n".join(lines), debug=debug_ssh, timeout=90,
+        )
+        if result.returncode != 0:
+            report.errors.append(
+                f"{cluster}: pane probe failed (exit {result.returncode}); "
+                "'agent exited' not reported for these jobs"
+            )
+            continue
+        panes, wips = {}, {}
+        for line in result.stdout.splitlines():
+            key, _, value = line.partition("\t")
+            key, value = key.strip(), value.strip()
+            if not value:
+                continue
+            if key.startswith("wip") and key[3:].isdigit():
+                wips[int(key[3:])] = value
+            elif key.isdigit():
+                panes[int(key)] = value
+        for entry, _ in entries:
+            entry.pane = panes.get(entry.job.job_id)
+            entry.wip = wips.get(entry.job.job_id)
+
+
 @app.command("nodes")
 def nodes(
     ctx: typer.Context,
