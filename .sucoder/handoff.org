@@ -88,4 +88,23 @@ liveness signal belongs in this work; if it is a clean tree, it does not.
 
 * Outcome
 
-Not started.
+A committed as =8e25952= on =fix/wip-ref-identity=, published to the shared
+mirror. 803 tests pass; =tests/test_direct_remote.py::
+test_direct_collaborate_rejects_node= fails in this environment both before
+and after (a chmod-based readability check), verified against clean =main=.
+
+B in progress, scoped down from the plan above on review. *No automated
+=git gc= on the shared mirror.* The measured number does not support it:
+LSMS_Library carries 10.51 MiB unreachable against 841 MiB packed, and
+=gc --auto= would not fire there anyway (2429 loose objects against a 6700
+threshold). A gc step would take a lock on the human's Lustre repository at
+every launch and do nothing on the observed workload. Instead: prune the
+refs, and let the =gc --auto= that =receive-pack= already runs on every hook
+push collect what that makes unreachable, on the mirror's own
+=gc.pruneExpire=. That turns issue 14's unbounded growth into a bound of one
+expiry window of churn, and the expiry stays the human's setting -- documented,
+not written by us.
+
+If a workload later justifies an explicit gc, it should arrive as opt-in
+configuration (=slurm.wip_gc=), with the =README.org= and
+=config.example.yaml= updates =CLAUDE.md= requires.

@@ -5,6 +5,7 @@ docs/local-disk-tiering.org.  Needs bash and git; never execs tmux/squeue.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shutil
@@ -118,20 +119,24 @@ def _stub_path(tmp: Path, squeue: str | None) -> tuple[Path, dict]:
 
     ``squeue`` None leaves it off PATH entirely; otherwise it is a stub
     whose body is ``squeue`` (it receives the job id as ``$2``).
+
+    One directory per distinct stub body, never one mutated in place: two
+    prepares in a single test may need different answers, and a rewritten
+    shared stub would silently give the second one the first one's.
     """
-    bin_dir = tmp / f"bin-{'sq' if squeue else 'nosq'}"
-    if not bin_dir.exists():
-        bin_dir.mkdir()
-        for name in _PATH_TOOLS:
-            found = shutil.which(name)
-            if found:
-                (bin_dir / name).symlink_to(found)
+    key = "nosq" if squeue is None else hashlib.sha256(squeue.encode()).hexdigest()[:12]
+    bin_dir = tmp / f"bin-{key}"
+    if bin_dir.exists():
+        return bin_dir, dict(os.environ, PATH=str(bin_dir))
+    bin_dir.mkdir(parents=True)
+    for name in _PATH_TOOLS:
+        found = shutil.which(name)
+        if found:
+            (bin_dir / name).symlink_to(found)
     if squeue is not None:
         stub = bin_dir / "squeue"
         stub.write_text("#!/bin/sh\n" + squeue + "\n")
         stub.chmod(0o755)
-    elif (bin_dir / "squeue").exists():
-        (bin_dir / "squeue").unlink()
     return bin_dir, dict(os.environ, PATH=str(bin_dir))
 
 
