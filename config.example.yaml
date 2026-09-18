@@ -34,6 +34,31 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #   auto_after_session: true
 #   scope: all                  # skills | code | all
 
+# Tool-version preflight (optional; on by default).
+# Before every launch sucoder records the versions of the tools the shipped
+# prompts and skills assume -- gh, git, jq, rg, tmux -- into the session log,
+# and warns when one is below its floor.  It REPORTS and never gates: a stale
+# tool must not stop a session starting.  It never hits the network; the floor
+# is a constant here on purpose, so a target with no outbound access is still
+# told how old its tooling is.  `sucoder doctor` runs the same check on demand
+# (and, being manual, exits non-zero).  See README § "Tool versions on the
+# target (launch preflight)".
+#
+# The KEYS of `floors` are what gets probed, so an entry adds a tool as well as
+# setting its floor; `null` records the version without judging it.  Entries
+# merge over the shipped defaults (gh 2.83.0, git 2.34.0, jq 1.6, rg 13.0.0,
+# tmux 3.0), so naming one tool does not stop checking the others.  A tool
+# sucoder does not know is probed with `--version`.
+# tool_preflight:
+#   enabled: true
+#   floors:
+#     gh: "2.83.0"          # first gh release after cli/cli#11983 was closed;
+#                           # older clients fail `gh pr edit` / `gh issue view`
+#                           # with a Projects (classic) deprecation error that
+#                           # names GitHub, not the client (GH #20)
+#     tmux: null            # record the version, stop warning about it
+#     shellcheck: "0.9.0"   # add a tool of your own
+
 # Named execution targets for remote hosts (optional).
 # Use --target/-T on the CLI to select one.
 # targets:

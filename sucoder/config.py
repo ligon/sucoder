@@ -15,6 +15,8 @@ from typing import Any, Dict, List, Literal, Mapping, Optional
 
 import yaml
 
+from .tool_preflight import DEFAULT_TOOL_FLOORS, parse_version
+
 
 class AgentType(Enum):
     """Known agent CLI types for profile-based flag selection."""
@@ -416,6 +418,33 @@ class AuditConfig:
     """Which audits to run: ``"skills"``, ``"code"``, or ``"all"``."""
 
 
+@dataclass(frozen=True)
+class ToolPreflightConfig:
+    """Floors for the launch-time tool-version preflight (GH #20).
+
+    The preflight records the versions of the tools the shipped prompts
+    and skills assume and warns when one is below a floor.  It never
+    gates a launch and never hits the network -- the floor is a constant
+    here precisely so that a constrained target (no outbound access) is
+    still told how old its tooling is.  See ``sucoder.tool_preflight``.
+    """
+
+    enabled: bool = True
+    """If False, skip the probe at launch.  ``sucoder doctor`` still runs it."""
+
+    floors: Mapping[str, Optional[str]] = field(
+        default_factory=lambda: dict(DEFAULT_TOOL_FLOORS)
+    )
+    """``tool -> floor`` merged over :data:`DEFAULT_TOOL_FLOORS`.
+
+    The KEYS are what gets probed, so an entry adds a tool as well as
+    setting its floor; a ``None`` value means "record the version, do not
+    judge it", which is how a floor is silenced without losing the
+    reading.  A tool outside :data:`VERSION_FLAGS` is probed with
+    ``--version``.
+    """
+
+
 @dataclass
 class Config:
     human_user: str
@@ -434,6 +463,7 @@ class Config:
     mirrors: Mapping[str, MirrorSettings] = field(default_factory=dict)
     targets: Dict[str, RemoteConfig] = field(default_factory=dict)
     audit: AuditConfig = field(default_factory=AuditConfig)
+    tool_preflight: ToolPreflightConfig = field(default_factory=ToolPreflightConfig)
 
     def resolve_target(self, target_name: Optional[str]) -> Optional[RemoteConfig]:
         """Look up a named target, returning ``None`` for local execution."""
@@ -674,6 +704,7 @@ def _build_config(data: Dict[str, Any], *, path: Path) -> Config:
 
     targets = _parse_targets(data.get("targets"))
     audit = _parse_audit_config(data.get("audit"), path=path)
+    tool_preflight = _parse_tool_preflight(data.get("tool_preflight"), path=path)
     mirrors = _parse_mirrors(
         data.get("mirrors"), global_skills=global_skills,
         global_mcp_servers=global_mcp_servers, path=path,
@@ -698,6 +729,7 @@ def _build_config(data: Dict[str, Any], *, path: Path) -> Config:
         mirrors=mirrors,
         targets=targets,
         audit=audit,
+        tool_preflight=tool_preflight,
     )
 
 
@@ -824,6 +856,63 @@ def _parse_audit_config(raw: Any, *, path: Path) -> AuditConfig:
         )
 
     return AuditConfig(auto_after_session=auto_raw, scope=scope_raw)
+
+
+def _parse_tool_preflight(raw: Any, *, path: Path) -> ToolPreflightConfig:
+    """Parse the ``tool_preflight:`` block.
+
+    Missing or empty -> defaults (probe on, :data:`DEFAULT_TOOL_FLOORS`).
+    Configured floors are MERGED over the defaults rather than replacing
+    them, so adding one tool does not silently stop checking the rest.
+
+    A malformed floor is a ``ConfigError`` here, at config-load time,
+    rather than a surprise at launch: the preflight itself is forbidden
+    to raise, so a bad floor there would have to be swallowed.
+    """
+    if raw is None:
+        return ToolPreflightConfig()
+    if not isinstance(raw, dict):
+        raise ConfigError(
+            f"`tool_preflight` must be a mapping in {path}, got {type(raw).__name__}."
+        )
+
+    enabled_raw = raw.get("enabled", True)
+    if not isinstance(enabled_raw, bool):
+        raise ConfigError(
+            f"`tool_preflight.enabled` must be a boolean in {path}, "
+            f"got {type(enabled_raw).__name__}."
+        )
+
+    floors: Dict[str, Optional[str]] = dict(DEFAULT_TOOL_FLOORS)
+    floors_raw = raw.get("floors")
+    if floors_raw is not None:
+        if not isinstance(floors_raw, dict):
+            raise ConfigError(
+                f"`tool_preflight.floors` must be a mapping in {path}, "
+                f"got {type(floors_raw).__name__}."
+            )
+        for name, value in floors_raw.items():
+            if not isinstance(name, str) or not name.strip():
+                raise ConfigError(
+                    f"`tool_preflight.floors` keys must be tool names in {path}, "
+                    f"got {name!r}."
+                )
+            if value is None:
+                floors[name] = None
+                continue
+            if not isinstance(value, str):
+                raise ConfigError(
+                    f"`tool_preflight.floors.{name}` must be a version string or "
+                    f"null in {path}, got {type(value).__name__}."
+                )
+            if parse_version(value) is None:
+                raise ConfigError(
+                    f"`tool_preflight.floors.{name}` is not a readable version "
+                    f"in {path}: {value!r} (expected something like '2.83.0')."
+                )
+            floors[name] = value
+
+    return ToolPreflightConfig(enabled=enabled_raw, floors=floors)
 
 
 def _parse_mirrors(

@@ -48,6 +48,7 @@ from .executor import CommandError, CommandExecutor
 from .logging_utils import setup_logger
 from .local_tier import work_path
 from .slurm_timer import TIME_LEFT_TO_MINS_SH, build_timer_script, timer_identity
+from .tool_preflight import format_report
 from .mirror import (
     _sanitize_session_token,
     MirrorError,
@@ -2456,6 +2457,69 @@ def audit(
 
     if not any_output and not multi:
         raise typer.Exit(0)
+
+
+@app.command("doctor")
+def doctor(
+    ctx: typer.Context,
+    mirror: Optional[str] = typer.Argument(None, help="Mirror name defined in configuration.", shell_complete=_mirror_completion),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
+) -> None:
+    """Report the versions of the tools the prompts and skills assume.
+
+    The same check the launcher runs at every session start (GH #20),
+    on demand: ``gh``, ``git``, ``jq``, ``rg``, ``tmux`` and anything
+    else named in ``tool_preflight.floors``.  No network -- the floors
+    are constants in the config file.
+
+    This is the manual entry point, so unlike the launch-time preflight
+    it EXITS NON-ZERO when a tool is missing or below its floor (same
+    convention as ``sucoder tunnel doctor``).  The launch path stays
+    exit-agnostic: a stale tool must never stop a session starting.
+
+    Refuses a non-confined SLURM target rather than quietly running
+    ``salloc``: a diagnostic must not bill a compute allocation.  Use it
+    against the login node instead (``sucoder doctor`` with no ``-T``,
+    or a confined target), or read the report the launcher already wrote
+    to the session log.
+    """
+    config = _get_config(ctx)
+    remote = _get_active_target(ctx)
+    if remote is not None and remote.slurm is not None and not remote.slurm.confined:
+        typer.echo(
+            "`doctor` will not allocate a compute node just to read "
+            "`--version` output.  Run it without -T (or against a confined "
+            "target) to probe the login node, or read the preflight report "
+            "the launcher writes to the session log.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    mirror = _resolve_mirror_name(ctx, mirror)
+    logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
+    manager = _build_manager_for_mirror(config, logger, False, mirror, cli_ctx=ctx)
+    host, reports = manager.tool_preflight(manager.context_for(mirror))
+    if not reports:
+        typer.echo("No tool versions could be probed on the target.", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(format_report(host, reports))
+    problems = [r for r in reports if r.is_warning]
+    if problems:
+        typer.echo("")
+        for report in problems:
+            typer.echo(f"⚠ {report.describe()}")
+        typer.echo(
+            "\nThese are facts about the HOST, not about the repository.  "
+            "sucoder does not manage these binaries: they live in the user's "
+            "$HOME and are shared across targets.  Replacing a running, "
+            "user-owned static binary is `mv` (replaces the directory entry, "
+            "leaves running processes on the old inode), never `cp` over the "
+            "top (ETXTBSY, or a partial write that breaks every session at "
+            "once).  Config and auth are unaffected -- they live elsewhere "
+            "(for `gh`, in ~/.config/gh/)."
+        )
+        raise typer.Exit(code=1)
 
 
 @app.command("attach")
