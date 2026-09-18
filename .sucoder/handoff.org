@@ -1,6 +1,6 @@
 #+title: Session listing, and the confined job/agent lifecycle
 #+date: 2026-09-18
-#+status: READY
+#+status: COMPLETE
 #+author: Sue
 #+property: header-args :eval never-export :tangle no :results output :exports code
 
@@ -149,4 +149,56 @@ confirm, never refuse --- one mirror on two targets can be deliberate.
 
 * Outcome
 
-Not started. Design agreed with the human; no code written.
+Landed. =sucoder sessions= merged as =e37c2c5= (PR 23); the earlier WIP-ref
+work merged as =a413909= (PR 21). 835 tests pass, plus the one pre-existing
+environment failure. CI green on 3.9, 3.11 and docs for both.
+
+Built as designed: one =squeue= per cluster, enumerated from the scheduler
+rather than the session files, grouped by target, pane probe on by default
+with =--fast= to skip. The pure half is =sucoder/sessions_report.py= (no
+I/O), which is what let three bugs surface in tests before release:
+
+1. =#{pane_current_command}= is *not* a liveness signal. Measured against a
+   live session, a running =claude= reported as =bash= --- the window command
+   is =bash -lc '<agent>; exec bash -l'= and the agent is that shell's child.
+   The first probe would have flagged every working agent as exited, and the
+   flag exists to say a slice is safe to release, so a false positive there
+   costs somebody their session. It reads the shell's child now, verified
+   cross-node against two live allocations. Mutation-checked.
+2. A target configuring nothing matched everything. =savio= pins no
+   partition, account or qos, and "every configured field agrees" made it a
+   wildcard that swallowed every job on the cluster. Most specific wins now;
+   ties match nothing.
+3. =int("39025067_3")= is =390250673= --- Python accepts underscores as digit
+   separators, so a Slurm array element would have become a plausible job id
+   belonging to nobody. =parse_squeue= requires =isdigit=.
+
+* Not verified, for whoever picks this up
+
+The =! no session record= path has never run against real session files.
+=~/.sucoder/sessions/= lives on the launcher host, not on Savio, so from a
+compute node every job renders as an orphan. The logic is unit-tested; the
+first real =sucoder sessions= run on the laptop is its first true exercise.
+Check that flag before trusting it.
+
+Also unexercised: =--fast=, the stale-record sweep against real records, and
+any cluster other than Savio (all four Savio targets share one gateway, so
+the multi-cluster grouping has only ever been tested with a single cluster
+plus unit tests).
+
+* Next
+
+Issue 19's option 3 is now a few lines on top of this: launch runs the same
+=squeue --me --name=sucoder-<token>= query, and offers to attach rather than
+allocating a second job. Warn and confirm, never refuse --- one mirror on two
+targets can be deliberate.
+
+Still open and untouched by this work: 20 (has PR 22, not ours), 17, 16
+(including the ephemeral-mirror hole noted on the issue), 15, 14, 1.
+
+Deliberately unchanged: =exec bash -l=. The human keeps it --- it buys a
+window for manual repo checks after the agent exits --- until the surrounding
+process is bulletproof. =sucoder sessions= is what makes its cost visible in
+the meantime. The false docstring at =mirror.py:2343-2344= ("when the agent
+exits, the session ends, the keeper exits, and the job frees") is still
+there and still wrong; fixing it is a one-line job nobody has done.
