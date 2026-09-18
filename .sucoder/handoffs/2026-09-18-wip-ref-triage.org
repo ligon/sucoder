@@ -89,12 +89,15 @@ from the shared mirror, with =git fsck --unreachable --no-reflogs= plus the
 =job <ID>= already in each snapshot's subject.  Worth saying on the issue:
 the cancellation was made on less information than existed.
 
-Second, a 24-hour job that never snapshotted is its own question.  A clean
-tree throughout would explain it, and so would
+Second, a job that never snapshotted is its own question.  A clean tree
+throughout would explain it, and so would
 [[https://github.com/ligon/sucoder/issues/15][15]] -- the snapshotter failing
 silently when =git= is missing from the batch environment.  There is no
 positive liveness signal that distinguishes them.  Not a claim, an open
 question, and it belongs with 15.
+
+/Settled later the same day; see "Correction" below.  Neither, and the job
+ran 44.7 hours, not 24./
 
 Mode 2 (cross-restore) follows from =local_tier.py:152-156=: the restore
 gate tests =wip^ == HEAD= and a clean tree, never *whose* snapshot it is.
@@ -230,3 +233,52 @@ documented, that a snapshotted repo's outputs belong in =.gitignore=.
   reappears", not to a wrong restore.
 
 Prepared by Sue (2026-09-18).
+
+* Correction (2026-09-18, later)
+
+The open question above was chased down.  The answer is neither branch, and
+the reasoning that framed it was wrong twice.
+
+** Job 38975827: the snapshotter never started
+
+There was nothing in that job to no-op.  No timer script was staged for the
+2026-09-16 08:08 launch under either naming scheme, and since =8a2f6ee= the
+confined path stages one unconditionally (=mirror.py:2813=).  The nearest
+surviving sibling artifact, =~/.cache/sucoder/job-EstimatingIMUE.sh= (mtime
+2026-09-16 14:27), has no =slurm-timer-*.sh --ensure= line at all and matches
+=_build_batch_script= at =8a2f6ee^=, i.e. before the 2026-09-09 change.
+Version skew in the launcher, not a code fault.
+
+The load-bearing negative is the missing marker: no =sucoder-last-wip-tree=
+exists anywhere under that mirror's =.git=, including its linked worktrees.
+The clean-tree early exit /writes/ that marker (=slurm_timer.py:71-99=), so a
+timer that had run and found nothing to do would have left one.  The job also
+ran 1-20:44:04, not the ~24 hours stated above.
+
+** Issue 15's specific hypothesis does not hold here
+
+=_build_sbatch_command= (=mirror.py:253-281=) passes no =--export=, so sbatch
+defaults to =--export=ALL= and the batch body inherits the submitting
+environment.  =local-tier-*.sh= is pure git run under a plain non-login bash
+from the batch body and succeeded on n0043, n0045 and n0029.  =git= is
+not missing on these nodes.  That is a property of how sbatch is invoked here,
+not a guarantee: it would break under =--export=NONE=.
+
+Issue 15's /structural/ complaint is untouched and is exactly what made this
+expensive: "no watchdog was ever started" and "the watchdog ran and failed
+silently" were indistinguishable for 44 hours, so settling it took a
+reconstruction from file mtimes instead of reading a log.
+
+** One case genuinely open
+
+Job 38710868 -- confined, LSMS_Library, tiering on, six days, 09-11 to
+09-17 -- also produced zero snapshots.  Its launcher was in the window where
+the batch body started the timer via a silent =nohup=, so its log says
+nothing either way, and its node-local clone went with the job.
+Indeterminate, and it /is/ the case issue 15 describes.
+
+** What this does not change
+
+Nothing in the recommendation.  A and B are about ref identity and retention;
+this is about liveness, and belongs to 15.  Posted to 15 and to 19, where the
+superseded speculation was.

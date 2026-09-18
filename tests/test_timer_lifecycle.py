@@ -138,7 +138,8 @@ def test_watchdog_warns_and_snapshots_without_changing_index(timers):
     (timers.bin / "squeue").write_text("#!/bin/sh\necho 00:04:00\n")
     assert "STARTED" in finish(timers.start(snapshot_dir=work))
     deadline = time.monotonic() + 5
-    ref = "refs/sucoder/wip/example"
+    # One ref per (mirror, job): the fixture's job id is 12 (issue 19).
+    ref = "refs/sucoder/wip-job/example/12"
     while time.monotonic() < deadline:
         check = subprocess.run(["git", "-C", str(origin), "rev-parse", "--verify", ref],
                                capture_output=True)

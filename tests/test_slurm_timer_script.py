@@ -162,10 +162,22 @@ def _git_run(cwd: Path, *args: str) -> str:
     ).stdout.strip()
 
 
-def _snapshot(work: Path, token: str = "mirror") -> subprocess.CompletedProcess:
+def _wip_ref(token: str = "mirror", job: int = 42) -> str:
+    """Where a snapshot lands: one ref per (mirror, job).
+
+    Keyed by job because two jobs on one mirror have two clones on two
+    nodes and one slot per mirror let the later force-push over the
+    earlier one's only copy (issue 19).  A SIBLING of the legacy
+    ``refs/sucoder/wip/<token>``, never a child: a ref at the parent path
+    blocks creating one below it.
+    """
+    return f"refs/sucoder/wip-job/{token}/{job}"
+
+
+def _snapshot(work: Path, token: str = "mirror", job: int = 42) -> subprocess.CompletedProcess:
     script = (
         "set -u\n"
-        f"SNAPSHOT_DIR={work}\nMIRROR_TOKEN={token}\nJOB=42\n"
+        f"SNAPSHOT_DIR={work}\nMIRROR_TOKEN={token}\nJOB={job}\n"
         + WIP_SNAPSHOT_SH + "\nsnapshot_wip\n"
     )
     return subprocess.run(["bash", "-c", script], capture_output=True, text=True)
@@ -191,7 +203,7 @@ def repo_pair(tmp_path):
 def test_snapshot_clean_tree_is_a_noop(repo_pair):
     origin, work = repo_pair
     assert _snapshot(work).returncode == 0
-    assert subprocess.run(["git", "show-ref", "refs/sucoder/wip/mirror"], cwd=origin).returncode != 0
+    assert subprocess.run(["git", "show-ref", _wip_ref()], cwd=origin).returncode != 0
 
 
 @_bash
@@ -203,8 +215,8 @@ def test_snapshot_dirty_tree_lands_on_origin_and_skips_ignored(repo_pair):
     (work / ".venv").mkdir(); (work / ".venv" / "x").write_text("ignored\n")
     r = _snapshot(work)
     assert r.returncode == 0, r.stderr
-    wip = _git_run(origin, "rev-parse", "refs/sucoder/wip/mirror")
-    assert _git_run(origin, "rev-parse", "refs/sucoder/wip/mirror^") == _git_run(work, "rev-parse", "HEAD")
+    wip = _git_run(origin, "rev-parse", _wip_ref())
+    assert _git_run(origin, "rev-parse", _wip_ref() + "^") == _git_run(work, "rev-parse", "HEAD")
     files = _git_run(origin, "ls-tree", "-r", "--name-only", wip).splitlines()
     assert "notes.org" in files and "README" in files
     assert not any(f.startswith(".venv") for f in files)
@@ -222,11 +234,11 @@ def test_snapshot_unchanged_tree_skips_via_marker(repo_pair):
     origin, work = repo_pair
     (work / "notes.org").write_text("new\n")
     assert _snapshot(work).returncode == 0
-    first = _git_run(origin, "rev-parse", "refs/sucoder/wip/mirror")
+    first = _git_run(origin, "rev-parse", _wip_ref())
     marker = work / ".git" / "sucoder-last-wip-tree"
     assert marker.exists() and marker.read_text().strip() == _git_run(origin, "rev-parse", f"{first}^{{tree}}")
     assert _snapshot(work).returncode == 0
-    assert _git_run(origin, "rev-parse", "refs/sucoder/wip/mirror") == first
+    assert _git_run(origin, "rev-parse", _wip_ref()) == first
     # The marker lives under .git/, so it never appears in a snapshot.
     assert "sucoder-last-wip-tree" not in _git_run(origin, "ls-tree", "-r", "--name-only", first)
 
@@ -240,7 +252,7 @@ def test_snapshot_without_origin_is_a_noop(tmp_path):
     _git_run(solo, "add", "-A"); _git_run(solo, "commit", "-q", "-m", "init")
     (solo / "b").write_text("dirty\n")
     assert _snapshot(solo).returncode == 0
-    assert subprocess.run(["git", "show-ref", "refs/sucoder/wip/mirror"], cwd=solo).returncode != 0
+    assert subprocess.run(["git", "show-ref", _wip_ref()], cwd=solo).returncode != 0
     assert not (solo / ".git" / "sucoder-last-wip-tree").exists()
 
 
@@ -401,7 +413,7 @@ def test_scheduler_outage_does_not_suspend_periodic_snapshots(repo_pair, tmp_pat
     _drive(tmp_path, [None, None, None, "2:00:00"],
            snapshot_dir=str(work), snapshot_minutes=2)
     saved = subprocess.run(
-        ["git", "show", "refs/sucoder/wip/K-Aggregators:a.txt"], cwd=origin,
+        ["git", "show", _wip_ref("K-Aggregators") + ":a.txt"], cwd=origin,
         capture_output=True, text=True, check=True,
     )
     assert saved.stdout == "recover this during the outage\n"
@@ -444,7 +456,7 @@ def test_snapshot_force_updates_a_diverged_wip_ref(repo_pair):
     best-effort -- in exactly the scenario the snapshotter exists for.
     """
     origin, work = repo_pair
-    ref = "refs/sucoder/wip/mirror"
+    ref = _wip_ref()
     show = lambda: subprocess.run(
         ["git", "show-ref", "-s", ref], cwd=origin,
         capture_output=True, text=True).stdout.strip()

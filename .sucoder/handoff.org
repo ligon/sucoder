@@ -72,7 +72,21 @@ snapshotted repo's outputs belong in =.gitignore=.
 
 * Constraints
 
-- =pytest -q= from the mirror root; 763 tests passed at the PR-13 baseline.
+- No =.venv= in a node-local clone (it is ignored, so it dies with the job).
+  Rebuild it without the NFS =flock= detour:
+
+  #+begin_src sh
+  export UV_PYTHON_INSTALL_DIR="$SUCODER_LOCAL_ROOT/cache/uv-python"
+  uv venv .venv --python "$(command -v python3)"
+  uv pip install --python .venv/bin/python \
+      "pyyaml>=6" "typer[all]>=0.13,<1.0" "click>=8.1,<9.0" \
+      "packaging>=24.0" "pytest>=7.2"
+  #+end_src
+
+  Plain =uv venv= fails with =Could not acquire lock ... No locks available=:
+  uv's default Python dir is =$HOME/.local/share/uv/python=, on NFS.
+- =.venv/bin/python -m pytest -q= from the mirror root; 763 tests passed at
+  the PR-13 baseline.
 - Run =detect_changes()= before committing (=CLAUDE.md=), and =impact= before
   editing a symbol.
 - Additive only. Do not force-push to origin; the post-commit hook publishes
@@ -80,12 +94,57 @@ snapshotted repo's outputs belong in =.gitignore=.
 
 * Open
 
-An agent is investigating why job 38975827 snapshotted nothing in 24 hours
-(clean tree, or a silently dead snapshotter -- issue 15). The timer checks
-=tmux= and =squeue= at startup (=timer_lifecycle.py:74-77=) but not =git=,
-which is the gap issue 15 names. If the verdict is a dead snapshotter, a
-liveness signal belongs in this work; if it is a clean tree, it does not.
+Settled: job 38975827 had no snapshotter at all -- launcher version skew,
+not a dead one, and =git= is present on these nodes because sbatch is invoked
+without =--export=. Details in the triage note's Correction section and on
+issue 15. Neither A nor B is affected; no liveness signal was added here.
+
+Issue 15 now has a concrete, decided-shape backlog: say so when a job has no
+watchdog, record each snapshot cycle's outcome to =$CACHE_DIR= (not
+=$STATE_DIR=, which is node-local since =6b9c221= and dies with the job), and
+decide whether =git= joins the =tmux=/=squeue= preflight in
+=timer_lifecycle.py:74-78=. That last one is a real trade, not an oversight:
+making it fatal also costs the deadline warnings, which do not need git.
+
+Job 38710868 produced zero snapshots over six days and its artifacts are
+gone. Indeterminate, and it is the case issue 15 actually describes.
 
 * Outcome
 
-Not started.
+A committed as =8e25952= on =fix/wip-ref-identity=, published to the shared
+mirror. 803 pass, plus one pre-existing failure:
+=tests/test_direct_remote.py::test_direct_collaborate_rejects_node= (a
+chmod-based readability check) fails in this environment both before and
+after, verified against clean =main=.
+
+B committed as =9dbb96d=, scoped down from the plan above on review. *No automated
+=git gc= on the shared mirror.* The measured number does not support it:
+LSMS_Library carries 10.51 MiB unreachable against 841 MiB packed, and
+=gc --auto= would not fire there anyway (2429 loose objects against a 6700
+threshold). A gc step would take a lock on the human's Lustre repository at
+every launch and do nothing on the observed workload. Instead: prune the
+refs, and let the =gc --auto= that =receive-pack= already runs on every hook
+push collect what that makes unreachable, on the mirror's own
+=gc.pruneExpire=. That turns issue 14's unbounded growth into a bound of one
+expiry window of churn, and the expiry stays the human's setting -- documented,
+not written by us.
+
+If a workload later justifies an explicit gc, it should arrive as opt-in
+configuration (=slurm.wip_gc=), with the =README.org= and
+=config.example.yaml= updates =CLAUDE.md= requires.
+
+Both changes are on =fix/wip-ref-identity= and open as
+[[https://github.com/ligon/sucoder/pull/21][PR 21]]. It closes 19; 14 and 16
+stay open, 14 because B bounds the /ref set/ and not the objects (see below)
+and 16 for the naming decision its remaining half needs. 809 pass, plus the
+one pre-existing failure above. Status: awaiting review.
+
+B does not close 14, and the PR should not be read as claiming it does. The
+orphans 14 counts come from =commit-tree -p HEAD= /within/ one job's ref --
+39002769's eleven snapshots orphaned each other while its ref stayed live --
+and retention does not touch that rate. What retention does is keep the ref
+set bounded, which A would otherwise have made worse: per-job refs left
+un-retired would hold every old snapshot /reachable/ forever, so nothing
+could ever collect them. Whether the objects are collected remains the
+mirror's own =gc.pruneExpire=, and on the measured workload =gc --auto= will
+not fire anyway (2429 loose against a 6700 threshold).

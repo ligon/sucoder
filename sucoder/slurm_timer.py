@@ -12,8 +12,11 @@ One bash script serves both launch modes:
 The script warns at 30/15/5 minutes before the allocation's ``--time``
 (``tmux display-message`` for the human, a sentinel file for the agent)
 and, when ``snapshot_dir`` is set, snapshots that working tree's dirty
-state to ``refs/sucoder/wip/<mirror>`` on its ``origin`` every
-``snapshot_minutes`` and at each warning.  A tree with no ``origin`` is
+state to ``refs/sucoder/wip-job/<mirror>/<job>`` on its ``origin`` every
+``snapshot_minutes`` and at each warning.  The job id is in the ref, not
+just in the snapshot's subject: two jobs on one mirror have two separate
+working clones on two nodes, so one slot per mirror meant the later one
+force-pushed over the earlier one's only copy (issue 19).  A tree with no ``origin`` is
 never snapshotted: there is nowhere durable for the snapshot to go, and
 ``git add -A`` on a shared filesystem is not free (see
 ``docs/local-disk-tiering.org``).
@@ -61,9 +64,17 @@ left_to_mins() {
 }
 '''.strip("\n")
 
-# Snapshot the dirty tree of $SNAPSHOT_DIR to refs/sucoder/wip/$MIRROR_TOKEN
-# on origin.  Every step is best-effort: the timer must never die because
-# a snapshot could not be taken.  Runs in a subshell so cd/trap/export do
+# Snapshot the dirty tree of $SNAPSHOT_DIR to
+# refs/sucoder/wip-job/$MIRROR_TOKEN/$JOB on origin.  Keyed by job as well
+# as mirror: the ref is the only durable record of an uncommitted tree, and
+# one slot per mirror let a second job on the same mirror overwrite it
+# (issue 19).  It is a SIBLING of the legacy refs/sucoder/wip/$MIRROR_TOKEN,
+# not a child, because an existing ref at the parent path blocks creating
+# one below it -- and --atomic does not rescue a delete-plus-create, so
+# nesting would need a window with no snapshot at all.  The prepare script
+# reads both shapes.
+# Every step is best-effort: the timer must never die because a snapshot
+# could not be taken.  Runs in a subshell so cd/trap/export do
 # not leak.  A temporary index leaves the agent's real index untouched;
 # the "last tree" marker lives under .git/ because ``add -A`` would sweep
 # up a marker in the working tree and defeat the unchanged check.
@@ -90,8 +101,9 @@ snapshot_wip() {
         wip=$(git -c user.name=sucoder-wip -c user.email=sucoder-wip@localhost \
                   commit-tree "$tree" -p HEAD \
                   -m "WIP snapshot $(date -Is) job $JOB") || exit 0
-        git update-ref "refs/sucoder/wip/$MIRROR_TOKEN" "$wip" || exit 0
-        if git push --quiet --force origin "refs/sucoder/wip/$MIRROR_TOKEN" >/dev/null 2>&1; then
+        ref="refs/sucoder/wip-job/$MIRROR_TOKEN/$JOB"
+        git update-ref "$ref" "$wip" || exit 0
+        if git push --quiet --force origin "$ref" >/dev/null 2>&1; then
             echo "$tree" > "$marker"
         fi
     )
@@ -240,8 +252,9 @@ def build_timer_script(
 ) -> str:
     """Render the timer script.
 
-    ``mirror_token`` names the per-mirror state files and the WIP ref; the
-    caller sanitizes it (``mirror._sanitize_session_token``).  ``job_id``
+    ``mirror_token`` names the per-mirror state files and the WIP ref's
+    mirror component; the caller sanitizes it
+    (``config.sanitize_session_token``).  ``job_id``
     ``None`` means "read ``$SLURM_JOB_ID`` at run time" (confined launches,
     where the id is unknown until sbatch assigns it).  ``tmux_socket``
     adds ``-L <socket>`` to *every* tmux call, which a confined launch

@@ -113,7 +113,10 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #       # local_disk: true   # with confined: working clone + caches on /local,
 #       #                    # every commit published to the shared mirror
 #       # wip_snapshot_minutes: 10  # deadline timer snapshots the dirty tree to
-#       #                           # refs/sucoder/wip/<mirror> every N min; 0 = off
+#       #                           # refs/sucoder/wip-job/<mirror>/<jobid> every
+#       #                           # N min; 0 = off.  .gitignore generated
+#       #                           # outputs: each snapshot is a new commit on
+#       #                           # the shared mirror.
 
 # Mirrors are optional when using zero-config repo detection.
 mirrors:
