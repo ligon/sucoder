@@ -3374,8 +3374,111 @@ def sessions(
 
     if probed:
         _probe_session_panes(report, config, clusters, logger, debug_ssh)
+        _probe_login_sessions(report, config, schedulerless, logger, debug_ssh)
 
     typer.echo(render_report(report, probed=probed).rstrip("\n"))
+
+
+def _probe_login_sessions(report, config, schedulerless, logger, debug_ssh) -> None:
+    """Fill ``report.logins`` with SuCoder tmux sessions on login hosts.
+
+    A schedulerless target holds no allocation, so ``squeue`` says nothing
+    about it -- but ``collaborate`` still launches a tmux session there,
+    with the same ``exec bash -l`` tail, and a login node has no walltime
+    to ever reap it.  The tmux server is the registry here, filtered on the
+    same ``sucoder-`` prefix the job names carry, so a session whose local
+    record was lost is still found.
+
+    One connection per distinct host, and a host that cannot be reached is
+    reported as an error rather than as an absence: an unanswered probe is
+    not evidence, the same rule the scheduler and pane queries follow.
+    """
+    from .sessions_report import (
+        LOGIN_SESSION_SH, LoginSession, PANE_PROBE_SH, login_hosts_for,
+        parse_tmux_sessions,
+    )
+    from .session import RemoteSession
+    from .tunnel import SshControl
+
+    report.login_probed = True
+    for name in schedulerless:
+        remote = config.targets.get(name)
+        if remote is None:
+            continue
+        hosts = login_hosts_for(
+            name, remote, RemoteSession.login_nodes_for_target(name)
+        )
+        gateway = getattr(remote, "gateway", None)
+        gw_control = None
+        for host in hosts:
+            # Reach a NAMED login node through the gateway, never by
+            # reconnecting to the gateway and hoping: the node it lands on
+            # depends on the account class, so the round-robin cannot be
+            # steered and some nodes are otherwise unreachable.
+            jump_kwargs = {}
+            if gateway and host != gateway:
+                if gw_control is None:
+                    gw_control = SshControl(
+                        gateway=gateway, **remote.ssh_control_kwargs(),
+                        debug=debug_ssh,
+                    )
+                    if not gw_control.is_active():
+                        try:
+                            _connect_with_retry(
+                                gw_control, gateway, logger, config=config
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            report.errors.append(
+                                f"{name}: login-node probe skipped ({exc})"
+                            )
+                            break
+                jump_kwargs = {"jump_host": gateway, "jump_control": gw_control}
+            control = SshControl(
+                gateway=host, **remote.ssh_control_kwargs(),
+                debug=debug_ssh, **jump_kwargs,
+            )
+            if not control.is_active():
+                try:
+                    _connect_with_retry(control, host, logger, config=config)
+                except Exception as exc:  # noqa: BLE001
+                    report.errors.append(
+                        f"{name}: {host} not reached ({exc}); "
+                        "login-node sessions there not listed"
+                    )
+                    continue
+            result = _run_remote_capture(
+                control, host, LOGIN_SESSION_SH, debug=debug_ssh, timeout=60,
+            )
+            if result.returncode != 0:
+                report.errors.append(
+                    f"{name}: tmux query failed on {host} "
+                    f"(exit {result.returncode})"
+                )
+                continue
+            found = parse_tmux_sessions(result.stdout)
+            if not found:
+                continue
+            # Same pane probe as a job entry: an unconfined launch runs on
+            # the default tmux socket, so the socket argument is empty.
+            lines = [
+                f'printf "%s\\t" {shlex.quote(sess)}; '
+                f'bash -c {shlex.quote(PANE_PROBE_SH)} _ {shlex.quote(sess)} "" '
+                f'2>/dev/null; echo'
+                for sess in found
+            ]
+            panes = {}
+            probe = _run_remote_capture(
+                control, host, "\n".join(lines), debug=debug_ssh, timeout=60,
+            )
+            if probe.returncode == 0:
+                for line in probe.stdout.splitlines():
+                    key, _, value = line.partition("\t")
+                    if key.strip() and value.strip():
+                        panes[key.strip()] = value.strip()
+            for sess in found:
+                report.logins.append(LoginSession(
+                    host=host, name=sess, target=name, pane=panes.get(sess),
+                ))
 
 
 def _remote_home_word(path: str) -> str:

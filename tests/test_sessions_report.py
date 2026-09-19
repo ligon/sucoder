@@ -133,6 +133,7 @@ def test_token_maps_back_to_a_configured_mirror_or_not_at_all():
 def _report(rows, holders=None, recorded=None, **kw):
     jobs, _ = parse_squeue("\n".join(rows))
     clusters, schedulerless = group_targets_by_cluster(TARGETS)
+    schedulerless = kw.pop("schedulerless", schedulerless)
     return build_report(
         jobs_by_cluster={"hpc.brc": jobs}, clusters=clusters, targets=TARGETS,
         mirror_tokens=MIRROR_TOKENS, holders=holders or {}, recorded=recorded or {},
@@ -411,3 +412,97 @@ def test_probe_says_nothing_when_tmux_fails(tmp_path):
     """Unknown must stay unknown: SessionEntry.agent_exited is False for
     pane=None, so a failed probe never reads as a dead agent."""
     assert _probe(tmp_path, [], {}) == ""
+
+
+# -- login-node sessions (schedulerless targets) -------------------------------
+#
+# `collaborate` on a target with no `slurm:` block launches tmux on a LOGIN
+# node, with the same `exec bash -l` tail. A job's allocation ends at its
+# --time and takes the tmux server with it; a login node has no walltime, so
+# nothing ever reaps an abandoned session. `sessions` reported these targets
+# as "no scheduler" and never looked.
+
+from sucoder.sessions_report import (  # noqa: E402
+    LoginSession, login_hosts_for, parse_tmux_sessions,
+)
+
+
+def test_tmux_listing_keeps_only_sucoder_sessions():
+    """The `sucoder-` prefix is the same filter the job names carry, so a
+    session whose local record was lost is still found."""
+    out = "sucoder-SuCoder\nsomeones-other-work\nsucoder-K-Aggregators\n\n"
+    assert parse_tmux_sessions(out) == ["sucoder-SuCoder", "sucoder-K-Aggregators"]
+
+
+def test_tmux_listing_ignores_unformatted_and_banner_lines():
+    """Without -F tmux prints `name: 1 windows (...)`, and a login shell can
+    emit a banner; take only bare prefixed names."""
+    out = "Welcome to the cluster\nsucoder-X: 1 windows (created ...)\nsucoder-Y\n"
+    assert parse_tmux_sessions(out) == ["sucoder-Y"]
+
+
+def test_login_hosts_prefer_the_nodes_records_pin_then_the_gateway():
+    """The gateway round-robins, and which node it lands on depends on the
+    account class, so it can never reach every node on its own."""
+    remote = _Remote(gateway="hpc.brc")
+    hosts = login_hosts_for(
+        "savio", remote,
+        {"A--savio": "ln001.brc", "B--savio": "ln002.brc", "C--savio": "ln001.brc"},
+    )
+    # De-duplicated, records first, gateway last, one connection per host.
+    assert hosts == ["ln001.brc", "ln002.brc", "hpc.brc"]
+
+
+def test_login_hosts_for_a_direct_ssh_target_is_its_own_host():
+    remote = _Remote(host="hhsurveys.example.org")
+    assert login_hosts_for("hhsurveys", remote, {}) == ["hhsurveys.example.org"]
+
+
+def test_login_hosts_with_no_records_is_just_the_gateway():
+    assert login_hosts_for("savio", _Remote(gateway="hpc.brc"), {}) == ["hpc.brc"]
+
+
+def test_a_login_session_running_a_shell_is_a_dead_agent():
+    sess = LoginSession(host="ln002.brc", name="sucoder-SuCoder", target="savio",
+                        pane="bash")
+    assert sess.agent_exited
+    assert sess.token == "SuCoder"
+
+
+def test_an_unprobed_login_session_is_not_called_dead():
+    """Unknown is not evidence -- the same rule the scheduler queries follow."""
+    sess = LoginSession(host="ln002.brc", name="sucoder-SuCoder", target="savio")
+    assert not sess.agent_exited
+
+
+def test_render_lists_login_sessions_under_their_target():
+    report = _report([], schedulerless=["savio"])
+    report.login_probed = True
+    report.logins = [
+        LoginSession(host="ln002.brc", name="sucoder-SuCoder", target="savio",
+                     pane="bash"),
+        LoginSession(host="ln001.brc", name="sucoder-LSMS_Library", target="savio",
+                     pane="claude"),
+    ]
+    out = render_report(report)
+    assert "login-node sessions" in out
+    assert "sucoder-SuCoder" in out and "ln002.brc" in out
+    assert "! agent exited" in out
+    # The live one is not flagged.
+    assert out.count("! agent exited") == 1
+    # And the consequence is spelled out, since it differs from a job.
+    assert "no walltime" in out
+
+
+def test_render_says_when_a_schedulerless_target_was_not_inspected():
+    """--fast must not imply absence."""
+    report = _report([], schedulerless=["savio"])
+    assert "not inspected" in render_report(report, probed=False)
+
+
+def test_render_distinguishes_inspected_and_empty_from_not_inspected():
+    report = _report([], schedulerless=["savio"])
+    report.login_probed = True
+    out = render_report(report)
+    assert "no login-node sessions" in out
+    assert "not inspected" not in out
