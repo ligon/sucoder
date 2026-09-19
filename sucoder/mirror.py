@@ -688,14 +688,29 @@ class MirrorManager:
         if not raw.startswith("~"):
             return raw
 
+        # ``not cached`` rather than ``cached is None``: an empty answer is
+        # not a resolution, and reusing one would let a single unexecuted
+        # probe poison every later call on this manager.
         cached = getattr(self, "_resolved_remote_home", None)
-        if cached is None:
+        if not cached:
             run = getattr(self.executor, "run_on_login_node", self.executor.run_agent)
             result = run(
                 ["bash", "-c", "echo $HOME"],
                 check=True,
             )
-            cached = result.stdout.strip()
+            home = result.stdout.strip()
+            if not home:
+                # A dry run executes nothing, so ``echo $HOME`` comes back
+                # empty.  Leave the ``~`` alone rather than substituting
+                # nothing for it: ``~/mirrors/X`` collapsing to
+                # ``/mirrors/X`` printed a command naming a path at the
+                # filesystem root, which is wrong wherever it is read and
+                # would be wrong to run if anyone copied it.  Unlike
+                # ``_resolve_remote_home`` this does not raise -- that one
+                # guards a confined launch that cannot proceed without an
+                # absolute home, whereas a dry run has nothing to launch.
+                return raw
+            cached = home
             self._resolved_remote_home = cached
 
         return raw.replace("~", cached, 1)

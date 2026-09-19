@@ -6152,3 +6152,69 @@ def test_launch_confined_prefers_the_record_over_the_name_probe(tmp_path, monkey
     )
     attach = [c for c in calls if c["args"][0] == "srun" and "attach-session" in c["args"]]
     assert attach and "--jobid=4242" in attach[0]["args"]
+
+
+# -- `~` resolution when the remote $HOME cannot be read -----------------------
+#
+# A dry run executes nothing, so `echo $HOME` returns "".  Substituting that
+# into `~/mirrors/X` produced `/mirrors/X` -- a path at the filesystem root,
+# printed as the command the run "would" have executed.
+
+class _HomeStubExecutor:
+    """Minimal executor whose `echo $HOME` returns whatever it is given."""
+
+    def __init__(self, home_stdout):
+        self.home_stdout = home_stdout
+        self.calls = 0
+        self.remote_mirror_root = ""
+
+    def run_agent(self, args, **kwargs):
+        from sucoder.executor import CommandResult
+        self.calls += 1
+        return CommandResult(list(args), list(args), self.home_stdout, "", 0)
+
+
+def _home_ctx(mirror_path="~/mirrors/SuCoder"):
+    class _Settings:
+        remote = None
+        mirror_dirname = "SuCoder"
+
+    class _Ctx:
+        remote_mirror_path = mirror_path
+        settings = _Settings()
+    return _Ctx()
+
+
+def _bare_manager():
+    return MirrorManager.__new__(MirrorManager)
+
+
+def test_unresolvable_remote_home_leaves_the_tilde_alone():
+    """The dry-run case: no substitution beats substituting nothing."""
+    mgr = _bare_manager()
+    mgr.executor = _HomeStubExecutor("")
+    assert mgr._resolve_remote_path(_home_ctx()) == "~/mirrors/SuCoder"
+
+
+def test_an_unresolved_home_is_not_cached():
+    """One unexecuted probe must not poison every later resolution: the
+    cache test was `is None`, so a cached "" was reused as an answer."""
+    mgr = _bare_manager()
+    mgr.executor = _HomeStubExecutor("")
+    assert mgr._resolve_remote_path(_home_ctx()) == "~/mirrors/SuCoder"
+    assert getattr(mgr, "_resolved_remote_home", None) in (None, "")
+    # A later call, now able to read $HOME, must resolve rather than reuse.
+    mgr.executor = _HomeStubExecutor("/global/home/users/ligon\n")
+    assert mgr._resolve_remote_path(_home_ctx()) == (
+        "/global/home/users/ligon/mirrors/SuCoder"
+    )
+
+
+def test_a_readable_home_still_expands_and_caches():
+    """The ordinary path is unchanged, and still costs one probe."""
+    mgr = _bare_manager()
+    mgr.executor = _HomeStubExecutor("/global/home/users/ligon\n")
+    ctx = _home_ctx()
+    assert mgr._resolve_remote_path(ctx) == "/global/home/users/ligon/mirrors/SuCoder"
+    assert mgr._resolve_remote_path(ctx) == "/global/home/users/ligon/mirrors/SuCoder"
+    assert mgr.executor.calls == 1
