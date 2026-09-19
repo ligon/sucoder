@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
 import re
 import subprocess
 from pathlib import Path
@@ -3049,3 +3050,65 @@ def test_probe_uses_each_targets_own_mirror_root(monkeypatch):
     # The bug: beta's entry rendered under alpha's root.
     assert "/scratch/mirrors/mir0" not in command
     assert '"$HOME"/mirrors/mir1' not in command
+
+
+# -- ephemeral mirrors must not collide on the sanitized token (issue #16) -----
+#
+# `_reject_token_collisions` runs at config load, but `_create_ephemeral_mirror`
+# injects into config.mirrors afterwards, from a *directory* name -- which is
+# far less constrained than a configured one. The collision is silent: the tmux
+# session and socket, the staged scripts and the warn file are all keyed on the
+# sanitized token.
+
+def _ephemeral_config(mirror_names):
+    from sucoder.config import BranchPrefixes, Config, MirrorSettings
+
+    mirrors = {
+        n: MirrorSettings(
+            name=n,
+            canonical_repo=pathlib.Path(f"/nowhere/{n}"),
+            mirror_name=n,
+            branch_prefixes=BranchPrefixes(human="h", agent="a"),
+        )
+        for n in mirror_names
+    }
+    cfg = Config.__new__(Config)
+    cfg.mirrors = mirrors
+    cfg.human_user = "h"
+    cfg.agent_user = "a"
+    cfg.agent_launcher = None
+    cfg.skills = []
+    return cfg
+
+
+def test_ephemeral_mirror_refuses_a_token_collision(tmp_path):
+    """`~/work/K Agg` sanitizes to `K_Agg` and would silently share a tmux
+    session, socket, staged scripts and warn file with a configured `K_Agg`."""
+    config = _ephemeral_config(["K_Agg"])
+    toplevel = tmp_path / "K Agg"
+    toplevel.mkdir()
+    from sucoder.config import ConfigError
+
+    with pytest.raises(ConfigError) as exc:
+        cli._create_ephemeral_mirror(config, toplevel)
+    assert "K_Agg" in str(exc.value)
+    # And nothing was injected on the way out.
+    assert "K Agg" not in config.mirrors
+
+
+def test_ephemeral_mirror_with_no_collision_is_injected(tmp_path):
+    config = _ephemeral_config(["Something-Else"])
+    toplevel = tmp_path / "K Agg"
+    toplevel.mkdir()
+    name = cli._create_ephemeral_mirror(config, toplevel)
+    assert name == "K Agg"
+    assert config.mirrors["K Agg"].canonical_repo == toplevel
+
+
+def test_ephemeral_mirror_does_not_collide_with_itself(tmp_path):
+    """Both callers guarantee the name is not already configured; if that
+    ever changed, a self-collision would block every command in the repo."""
+    config = _ephemeral_config([])
+    toplevel = tmp_path / "PlainName"
+    toplevel.mkdir()
+    assert cli._create_ephemeral_mirror(config, toplevel) == "PlainName"
