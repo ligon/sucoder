@@ -41,6 +41,7 @@ from .config import (
     ConfigError,
     MirrorSettings,
     _detect_git_toplevel,
+    _reject_token_collisions,
     build_default_config,
     load_config,
 )
@@ -1442,6 +1443,21 @@ def _create_ephemeral_mirror(config: Config, git_toplevel: Path) -> str:
     unconfigured-but-cwd-resident repo can be operated on transparently.
     """
     mirror_name = git_toplevel.name
+    # An ephemeral mirror is named from a *directory*, which is far less
+    # constrained than a configured mirror name -- `~/work/K Agg` is an
+    # ordinary thing to have -- and it is injected into config.mirrors
+    # AFTER config load, so the load-time `_reject_token_collisions` has
+    # already run and never sees it.  Re-run it here over the configured
+    # names plus this one.  Without this, an ephemeral mirror silently
+    # shares everything keyed on the sanitized token with whatever it
+    # collides with: the tmux session and socket, the staged batch and
+    # prepare scripts, and the deadline warn file.  The tmux collision
+    # fails first and hardest -- attaching to another job's session.
+    #
+    # Both callers establish that `mirror_name` is not already a
+    # configured mirror before reaching here, so this cannot report the
+    # name as colliding with itself.
+    _reject_token_collisions([*config.mirrors, mirror_name])
     prefixes = BranchPrefixes(human=config.human_user, agent=config.agent_user)
     launcher = config.agent_launcher or AgentLauncher()
     ephemeral = MirrorSettings(
