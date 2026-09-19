@@ -773,6 +773,30 @@ tar backup beside the session directory, and it aborts rather than
 touch anything if =squeue= cannot be reached on every configured
 cluster --- "the query failed" must never be read as "the job is gone".
 
+Targets with no =slurm:= block hold no allocation, so =squeue= says
+nothing about them --- but =collaborate= still launches a tmux session on
+the *login node*, with the same =exec bash -l= tail.  A job's allocation
+ends at its =--time= and takes the tmux server with it; a login node has
+no walltime, so an abandoned session there persists until the node
+reboots, on shared infrastructure.  Those are listed too:
+
+#+begin_example
+savio   no scheduler (login-node sessions)
+  sucoder-SuCoder       ln002.brc  bash    ! agent exited
+  sucoder-LSMS_Library  ln001.brc  claude
+hhsurveys   no scheduler; no login-node sessions
+#+end_example
+
+Enumerated from =tmux list-sessions= filtered on the =sucoder-= prefix ---
+the login-node analogue of filtering =squeue --me= on =sucoder-<token>=,
+so a session whose local record was lost is still found.  The gateway
+round-robins across login nodes, and which one an account reaches depends
+on its class (condo and FCA accounts land on different nodes), so the
+probe asks each node the session records pin *by name* as well as the
+gateway itself; reconnecting to the gateway alone could never see them
+all.  =--fast= skips this too, and says =not inspected= rather than
+implying absence.
+
 The =! agent exited= check is why the probe exists, and why it is on by
 default: it reads the pane's child process, not
 =#{pane_current_command}=, which reports the pane's /shell/ and would

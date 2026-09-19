@@ -86,6 +86,62 @@ PANE_PROBE_SH = (
 )
 
 
+# Enumerate SuCoder tmux sessions on one host.  This is the login-node
+# analogue of ``squeue --me --name=sucoder-<token>``: the tmux server is
+# the registry, and the ``sucoder-`` prefix is the same filter the job
+# names carry, so a session whose local record was lost is still found.
+# Unconfined launches use the DEFAULT tmux socket, so no ``-L`` here.
+LOGIN_SESSION_SH = (
+    'tmux list-sessions -F "#{session_name}" 2>/dev/null || true'
+)
+
+
+@dataclass(frozen=True)
+class LoginSession:
+    """A SuCoder tmux session found on a login (or direct-SSH) host.
+
+    There is no scheduler behind these, and therefore no walltime: a
+    confined job's allocation ends at its ``--time`` and takes the tmux
+    server with it, but a login-node session outlives everything until
+    the node reboots.  The window command ends in ``exec bash -l`` just
+    as the confined one does, so the same clean ``/exit`` leaves the same
+    orphan -- with nothing to ever reap it.  That is why these are worth
+    listing even though they hold no allocation.
+    """
+
+    host: str
+    name: str                      # sucoder-<token>
+    target: str
+    pane: Optional[str] = None     # command running in the pane
+
+    @property
+    def token(self) -> str:
+        return self.name[len(JOB_NAME_PREFIX):]
+
+    @property
+    def agent_exited(self) -> bool:
+        """Same rule as a job entry: unknown is not evidence."""
+        return self.pane is not None and self.pane in _SHELLS
+
+
+def parse_tmux_sessions(text: str) -> List[str]:
+    """SuCoder session names from ``tmux list-sessions -F '#{session_name}'``.
+
+    Everything not carrying the ``sucoder-`` prefix is somebody else's
+    tmux and is dropped, exactly as ``parse_squeue`` drops jobs whose name
+    lacks it.
+    """
+    names: List[str] = []
+    for line in text.splitlines():
+        line = line.strip()
+        # `list-sessions` prints "name: N windows (...)" without -F, and a
+        # stray banner line can reach us through a login shell; take only
+        # bare names carrying the prefix.
+        if line.startswith(JOB_NAME_PREFIX) and " " not in line:
+            names.append(line.rstrip(":"))
+    return names
+
+
 @dataclass(frozen=True)
 class JobRow:
     """One Slurm job that SuCoder launched."""
@@ -174,6 +230,8 @@ class Report:
     schedulerless: List[str] = field(default_factory=list)
     stale: List[StaleRecord] = field(default_factory=list)
     unmatched: List[SessionEntry] = field(default_factory=list)
+    logins: List[LoginSession] = field(default_factory=list)
+    login_probed: bool = False
     errors: List[str] = field(default_factory=list)
 
 
@@ -204,6 +262,30 @@ def group_targets_by_cluster(targets: Mapping[str, object]) -> Tuple[Dict[str, L
         else:
             clusters.setdefault(key, []).append(name)
     return clusters, schedulerless
+
+
+def login_hosts_for(target_name: str, remote, recorded_nodes: Mapping[str, str]) -> List[str]:
+    """Hosts to ask for tmux sessions belonging to *target_name*.
+
+    A gateway round-robins across several login nodes, and at this site the
+    node you land on depends on the account class -- condo and FCA accounts
+    reach different ones -- so reconnecting to the gateway can never see
+    every node, and a hardcoded list would rot.  Take the nodes the session
+    records actually pin (``RemoteSession.login_nodes_for_target``) and add
+    the gateway itself, which resolves to whichever node this account gets.
+    A direct-SSH target has no gateway and is simply its own host.
+
+    De-duplicated, order stable, so a listing costs one connection per
+    distinct host rather than one per record.
+    """
+    hosts: List[str] = []
+    for node in recorded_nodes.values():
+        if node and node not in hosts:
+            hosts.append(node)
+    own = getattr(remote, "gateway", None) or getattr(remote, "host", None)
+    if own and own not in hosts:
+        hosts.append(own)
+    return hosts
 
 
 def target_signature(remote) -> str:
@@ -419,9 +501,28 @@ def render_report(report: Report, *, probed: bool = True) -> str:
         out.append("")
 
     for name in report.schedulerless:
-        out.append(f"{name}   no scheduler")
+        sessions = [s for s in report.logins if s.target == name]
+        if sessions:
+            out.append(f"{name}   no scheduler (login-node sessions)")
+            width = max(len(s.name) for s in sessions)
+            for sess in sessions:
+                flag = "  ! agent exited" if sess.agent_exited else ""
+                out.append(
+                    f"  {sess.name.ljust(width)}  {sess.host}  "
+                    f"{sess.pane or '-'}{flag}"
+                )
+        elif report.login_probed:
+            out.append(f"{name}   no scheduler; no login-node sessions")
+        else:
+            out.append(f"{name}   no scheduler (login-node sessions not inspected)")
     if report.schedulerless:
         out.append("")
+        if any(s.agent_exited for s in report.logins):
+            out.append(
+                "  A login-node session has no walltime: nothing reaps it when the\n"
+                "  agent exits, unlike a job, whose allocation ends at its --time."
+            )
+            out.append("")
 
     if not report.groups and not report.unmatched:
         out.append("No SuCoder jobs found.")
