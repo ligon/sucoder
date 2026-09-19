@@ -1282,8 +1282,17 @@ def _start_slurm_timer(
                        run_result.stderr.strip() or "no valid readiness response")
 
 
-def _prompt_yes_no(message: str) -> bool:
-    return typer.confirm(message, default=True)
+def _prompt_yes_no(message: str, *, default: bool = True) -> bool:
+    """Confirm *message*, defaulting to yes.
+
+    ``default`` exists for the destructive callers.  ``release`` cancels a
+    SLURM allocation, so bare Enter must not do it; the opt-in convenience
+    prompts (poetry install, MCP discovery) keep the yes default, which is
+    why this is a per-call argument rather than a changed global.  Callers
+    must not spell the ``[y/N]`` marker into *message* themselves --
+    ``typer.confirm`` renders it from ``default``, and the two disagreed.
+    """
+    return typer.confirm(message, default=default)
 
 
 def _get_active_target(ctx: Optional[click.Context]) -> Optional["RemoteConfig"]:
@@ -2860,14 +2869,14 @@ def release(
             prompt = (
                 f"SLURM job {job_id} on {compute_node} is shared with "
                 f"{', '.join(siblings)}. Detach mirror {mirror} (kill its "
-                "agent) but keep the job alive for the others? [y/N] "
+                "agent) but keep the job alive for the others?"
             )
         else:
             prompt = (
                 f"Cancel SLURM job {job_id} on {compute_node} for mirror "
-                f"{mirror}? [y/N] "
+                f"{mirror}?"
             )
-        if not _prompt_yes_no(prompt):
+        if not _prompt_yes_no(prompt, default=False):
             typer.echo("Aborted.")
             raise typer.Exit(code=0)
 
@@ -3385,20 +3394,28 @@ def _probe_session_panes(report, config, clusters, logger, debug_ssh) -> None:
         confined = bool(
             remote is not None and remote.slurm is not None and remote.slurm.confined
         )
+        # ``mirror_root`` travels with the group, not with the cluster:
+        # targets sharing a gateway need not share a mirror root, and
+        # reading it off the cluster's first target would silently aim the
+        # WIP lookup at another target's path.
+        root = str(getattr(remote, "mirror_root", "") or "~/mirrors")
         for cluster, names in clusters.items():
             if group.name in names:
-                by_cluster.setdefault(cluster, []).append((group.entries, confined))
+                by_cluster.setdefault(cluster, []).append(
+                    (group.entries, confined, root)
+                )
                 break
 
     for cluster, buckets in by_cluster.items():
-        entries = [(e, confined) for bucket, confined in buckets for e in bucket]
+        entries = [
+            (e, confined, root) for bucket, confined, root in buckets for e in bucket
+        ]
         if not entries:
             continue
         names = clusters[cluster]
         remote = config.targets[names[0]]
-        root = str(getattr(remote, "mirror_root", "") or "~/mirrors")
         lines = []
-        for entry, confined in entries:
+        for entry, confined, root in entries:
             mirror = entry.mirror or entry.job.token
             session_name, socket = confined_tmux_target(mirror)
             job = shlex.quote(str(entry.job.job_id))
@@ -3453,7 +3470,7 @@ def _probe_session_panes(report, config, clusters, logger, debug_ssh) -> None:
                 wips[int(key[3:])] = value
             elif key.isdigit():
                 panes[int(key)] = value
-        for entry, _ in entries:
+        for entry, _, _ in entries:
             entry.pane = panes.get(entry.job.job_id)
             entry.wip = wips.get(entry.job.job_id)
 
