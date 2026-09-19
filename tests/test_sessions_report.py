@@ -166,7 +166,38 @@ def test_a_record_pointing_at_a_vanished_job_is_stale():
     assert [(s.key, s.job_id) for s in report.stale] == [
         ("MetricsMiscellany--carleton-htc", 38999103)
     ]
-    assert "sucoder release" in render_report(report)
+
+
+def test_a_stale_record_names_the_command_that_clears_it():
+    """`release` resolves the mirror through config.mirrors and the target
+    through -T, so the advice has to carry both or it exits 1."""
+    report = _report([], recorded={"SuCoder--carleton-htc": 39025067})
+    stale = report.stale[0]
+    assert (stale.mirror, stale.target, stale.clearable) == (
+        "SuCoder", "carleton-htc", True
+    )
+    assert "sucoder -T carleton-htc release SuCoder" in render_report(report)
+
+
+def test_a_stale_record_for_an_unconfigured_mirror_says_so():
+    """The common case on a long-lived laptop: the job is gone, the mirror
+    has been dropped from the config, and no `release` invocation can reach
+    the record.  Printing `sucoder release` at it would only exit 1."""
+    report = _report([], recorded={"CerealDemand--carleton-htc": 35768982})
+    stale = report.stale[0]
+    assert not stale.clearable
+    assert stale.release_command == ""
+    out = render_report(report)
+    assert "sucoder release CerealDemand" not in out
+    assert "mirror not configured" in out
+
+
+def test_a_record_with_no_target_suffix_still_splits():
+    """Older launches wrote `<mirror>.yaml` with no target half."""
+    report = _report([], recorded={"SuCoder": 32922079})
+    stale = report.stale[0]
+    assert (stale.mirror, stale.target) == ("SuCoder", "")
+    assert stale.release_command == "sucoder release SuCoder"
 
 
 def test_a_shell_in_the_pane_means_the_agent_exited():
@@ -283,8 +314,8 @@ def _probe(tmp_path, panes, children, session="sucoder-K", socket=""):
     """Drive PANE_PROBE_SH with stubbed tmux and ps.
 
     *panes* is the ``pane_pid pane_current_command`` table tmux reports (an
-    empty list makes tmux fail); *children* maps a pane pid to the command
-    of its first child.
+    empty list makes tmux fail); *children* maps a pane pid to its child
+    commands -- a single string, or a list in the order ``ps`` prints them.
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -299,7 +330,11 @@ def _probe(tmp_path, panes, children, session="sucoder-K", socket=""):
         (bin_dir / "tmux").write_text("#!/bin/sh\nexit 1\n")
     # The real call is `ps -o comm= --ppid <pid>`: flag and value are
     # separate arguments, which the first version of this stub got wrong.
-    cases = "".join(f'  {pid}) echo "{comm}" ;;\n' for pid, comm in children.items())
+    cases = ""
+    for pid, comm in children.items():
+        kids = [comm] if isinstance(comm, str) else list(comm)
+        body = "; ".join(f'echo "{k}"' for k in kids)
+        cases += f"  {pid}) {body} ;;\n"
     (bin_dir / "ps").write_text(
         "#!/bin/sh\np=\nwhile [ $# -gt 0 ]; do\n"
         '  case "$1" in --ppid) shift; p="$1" ;; --ppid=*) p="${1#--ppid=}" ;; esac\n'
@@ -333,6 +368,26 @@ def test_probe_reports_a_bare_shell_as_a_shell(tmp_path):
 def test_probe_prefers_a_non_shell_pane_over_a_shell_one(tmp_path):
     """A session with a spare shell window beside the agent's is still live."""
     assert _probe(tmp_path, ["316429 bash", "317637 bash"], {317637: "claude"}) == "claude"
+
+
+@_bash
+def test_probe_looks_past_a_shell_child_to_the_agent(tmp_path):
+    """The regression this replaced: `ps ... | head -n 1` took only the
+    FIRST child, so a shell-named one listed ahead of the agent made a live
+    session read as bare.  Measured against a real tmux server, a pane whose
+    children were (sh, sleep) reported `sh` -- an `agent exited` flag on a
+    working session, which is the false positive that costs somebody their
+    slice.  Every child is considered now, non-shells first.
+    """
+    assert _probe(tmp_path, ["316429 bash"], {316429: ["sh", "claude"]}) == "claude"
+
+
+@_bash
+def test_probe_reports_a_shell_child_when_that_is_all_there_is(tmp_path):
+    """A shell child is still a shell: the human ran `bash` at the prompt
+    after the agent exited.  Nothing non-shell is running, so the flag
+    stands."""
+    assert _probe(tmp_path, ["316429 bash"], {316429: ["sh", "bash"]}) == "sh"
 
 
 @_bash

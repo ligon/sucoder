@@ -736,8 +736,9 @@ carleton-htc   savio4_htc / co_carleton / carleton_htc4_normal
 savio-node   savio3 / fc_jevons
   K-Aggregators 38991234  RUNNING   3-04:11  n0142.savio3  claude  4m   ! no session record
 
-stale session records (job gone; 'sucoder release' clears):
-  MetricsMiscellany--carleton-htc -> 38999103
+stale session records (the job is gone; the record is not):
+  CFEDemands--savio-node           -> 34739256   sucoder -T savio-node release CFEDemands
+  MetricsMiscellany--carleton-htc  -> 38999103   mirror not configured; edit the record by hand
 #+end_example
 
 Targets sharing a gateway share a =$HOME= and a scheduler, so they are
@@ -757,6 +758,20 @@ exactly the jobs that are /not/ the problem.  Two flags matter:
   survives a clean =/exit=, and the batch body's keeper polls only
   whether the session exists --- so the job goes on holding its slice for
   the rest of its =--time= with nobody home.  Nothing else reports this.
+
+The trailing sweep is the reverse direction: session records naming a
+job the scheduler has forgotten.  Each row carries the invocation that
+clears it, because =release= resolves the mirror through
+=config.mirrors= and the target through =-T=, and so cannot reach a
+record whose mirror has since been dropped from the configuration --- a
+common case on a long-lived launcher host.  For those,
+=scripts/clear-stale-sessions.py= does in bulk what =release= does to
+one record: it nulls =slurm_job_id= and =compute_node=, leaves every
+other key (=login_node= included) alone, and never deletes a file.  It
+is a dry run unless given =--apply=, which first writes a timestamped
+tar backup beside the session directory, and it aborts rather than
+touch anything if =squeue= cannot be reached on every configured
+cluster --- "the query failed" must never be read as "the job is gone".
 
 The =! agent exited= check is why the probe exists, and why it is on by
 default: it reads the pane's child process, not

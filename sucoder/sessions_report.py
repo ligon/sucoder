@@ -58,6 +58,13 @@ SQUEUE_FORMAT = "%i|%j|%P|%a|%q|%T|%L|%N"
 # reads as ``bash``), else nothing at all -- an unanswered probe must stay
 # unknown rather than become evidence.
 #
+# *All* of a pane shell's children are considered, not just the first.
+# Taking ``ps ... | head -n 1`` meant that a shell-named child listed ahead
+# of the agent (a backgrounded helper, anything the agent spawns beside
+# itself) made a live session read as a bare shell -- the same
+# false-positive that ``#{pane_current_command}`` produced, and just as
+# costly, since the flag is what tells somebody a slice is safe to release.
+#
 # Takes ``<session> [socket]``; an empty socket means the default tmux
 # server (unconfined launches do not use a dedicated one).
 PANE_PROBE_SH = (
@@ -67,7 +74,10 @@ PANE_PROBE_SH = (
     '-F "#{pane_pid} #{pane_current_command}" 2>/dev/null | '
     '{ first=""; pick=""; '
     'while read -r p cmd; do '
-    'c=$(ps -o comm= --ppid "$p" 2>/dev/null | head -n 1); '
+    'kids=$(ps -o comm= --ppid "$p" 2>/dev/null); '
+    'c=$(printf "%s\n" "$kids" | '
+    'grep -vxE "bash|sh|zsh|dash|ksh|fish|-bash" | head -n 1); '
+    '[ -z "$c" ] && c=$(printf "%s\n" "$kids" | head -n 1); '
     'r="${c:-$cmd}"; '
     '[ -z "$first" ] && first="$r"; '
     'case "$r" in bash|sh|zsh|dash|ksh|fish|-bash) ;; '
@@ -126,10 +136,29 @@ _SHELLS = frozenset({"bash", "sh", "zsh", "dash", "ksh", "fish", "-bash", "login
 
 @dataclass
 class StaleRecord:
-    """A session file pointing at a job the scheduler no longer has."""
+    """A session file pointing at a job the scheduler no longer has.
+
+    *mirror* and *target* are the halves of ``key``, and *clearable* says
+    whether ``release`` can actually reach this record: it resolves the
+    mirror through ``config.mirrors`` and the target through ``-T``, so a
+    record naming a mirror that is no longer configured cannot be cleared
+    by any invocation.  Saying so beats printing advice that exits 1.
+    """
 
     key: str
     job_id: int
+    mirror: str = ""
+    target: str = ""
+    clearable: bool = False
+
+    @property
+    def release_command(self) -> str:
+        """The exact invocation that clears this record, if one exists."""
+        if not self.clearable:
+            return ""
+        if self.target:
+            return f"sucoder -T {self.target} release {self.mirror}"
+        return f"sucoder release {self.mirror}"
 
 
 @dataclass
@@ -326,7 +355,18 @@ def build_report(
 
     for key, job_id in sorted(recorded.items()):
         if job_id not in live:
-            report.stale.append(StaleRecord(key=key, job_id=job_id))
+            # ``<mirror>--<target>``, or a bare ``<mirror>`` from an older
+            # launch that wrote no target suffix.  ``rsplit`` so a mirror
+            # whose own name contains ``--`` still splits at the target.
+            mirror, sep, target = key.rpartition("--")
+            if not sep:
+                mirror, target = key, ""
+            report.stale.append(StaleRecord(
+                key=key, job_id=job_id, mirror=mirror, target=target,
+                # ``release`` looks the mirror up in ``config.mirrors``;
+                # *mirror_tokens* is keyed by exactly that mapping.
+                clearable=mirror in mirror_tokens,
+            ))
 
     return report
 
@@ -388,10 +428,19 @@ def render_report(report: Report, *, probed: bool = True) -> str:
         out.append("")
 
     if report.stale:
-        out.append("stale session records (job gone; 'sucoder release' clears):")
+        out.append("stale session records (the job is gone; the record is not):")
+        width = max(len(r.key) for r in report.stale)
         for record in report.stale:
-            out.append(f"  {record.key} -> {record.job_id}")
+            hint = record.release_command or "mirror not configured; edit the record by hand"
+            out.append(f"  {record.key.ljust(width)}  -> {record.job_id}   {hint}")
         out.append("")
+        if any(not r.clearable for r in report.stale):
+            out.append(
+                "  (`release` resolves the mirror through config.mirrors and the "
+                "target through -T,\n   so a record whose mirror is no longer "
+                "configured cannot be cleared by it.)"
+            )
+            out.append("")
 
     if not probed:
         out.append(
