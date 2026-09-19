@@ -83,6 +83,25 @@ WIP_SNAPSHOT_SH = r'''
 snapshot_wip() {
     [ -n "$SNAPSHOT_DIR" ] || return 0
     [ -e "$SNAPSHOT_DIR/.git" ] || return 0
+    if ! command -v git >/dev/null 2>&1; then
+        # Every git step below is `|| exit 0`, deliberately, so a snapshot
+        # failure can never kill the watchdog.  The cost is that a missing
+        # git makes the whole feature a permanent no-op with no
+        # diagnostics -- indistinguishable from "the tree was clean".
+        # Say so once per job, to the warn file the prompts already poll.
+        # Once, not per cycle: at the default 10-minute interval a
+        # multi-day allocation would otherwise write hundreds of copies.
+        # The marker carries $JOB, so it is self-clearing -- a later job
+        # in the same $HOME reports again rather than inheriting silence.
+        _nogit_marker="${STATE_DIR:-${TMPDIR:-/tmp}}/.sucoder-nogit-$MIRROR_TOKEN-$JOB"
+        [ -e "$_nogit_marker" ] && return 0
+        : > "$_nogit_marker" 2>/dev/null || true
+        if [ -n "${WARN_FILE:-}" ]; then
+            printf '%s\n' "sucoder: git is not on PATH in this job's environment; WIP snapshots are disabled for job $JOB." \
+                >> "$WARN_FILE" 2>/dev/null || true
+        fi
+        return 0
+    fi
     (
         cd "$SNAPSHOT_DIR" || exit 0
         git remote get-url origin >/dev/null 2>&1 || exit 0
