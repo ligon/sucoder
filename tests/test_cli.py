@@ -2900,3 +2900,152 @@ def test_salloc_job_carries_the_same_name_a_confined_launch_uses(tmp_path, monke
     assert seen, "salloc was never invoked"
     # The space collapses, exactly as confined_tmux_target would render it.
     assert "--job-name=sucoder-K_Aggregators" in seen[0], seen[0]
+
+
+# -- the destructive prompt's default ------------------------------------------
+#
+# Every other `release` test passes `-f`, so the confirmation path had no
+# coverage at all: the prompt read `[y/N]` while `typer.confirm` was called
+# with `default=True`, and bare Enter cancelled the allocation.  A regression
+# flipping that back would otherwise pass the whole suite in silence, because
+# the tests that do stub `typer.confirm` return a fixed bool and never see the
+# default.
+
+def test_prompt_yes_no_defaults_to_yes_for_the_opt_in_callers(monkeypatch):
+    """MirrorManager's prompt_handler (poetry install, MCP discovery) reaches
+    this with no `default`, and those are opt-in conveniences."""
+    seen: dict = {}
+    monkeypatch.setattr(
+        cli.typer, "confirm",
+        lambda msg, **kw: seen.update(kw) or True,
+    )
+    cli._prompt_yes_no("enable the thing?")
+    assert seen["default"] is True
+
+
+def test_prompt_yes_no_can_default_to_no(monkeypatch):
+    seen: dict = {}
+    monkeypatch.setattr(
+        cli.typer, "confirm",
+        lambda msg, **kw: seen.update(kw) or False,
+    )
+    cli._prompt_yes_no("cancel the job?", default=False)
+    assert seen["default"] is False
+
+
+def test_release_declines_on_a_bare_enter(tmp_path, monkeypatch):
+    """Enter must NOT cancel the allocation, and nothing may be dialed."""
+    from sucoder import session as session_mod
+
+    runner = CliRunner()
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+    config_path = _slurm_config(tmp_path)
+
+    sessions_dir = fake_home / ".sucoder" / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    (sessions_dir / "sample--fake-slurm.yaml").write_text(
+        "login_node: ln002\nslurm_job_id: 7654321\ncompute_node: n0032\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(session_mod, "_session_dir", lambda: sessions_dir)
+    monkeypatch.setattr(cli, "_connect_with_retry", lambda *a, **kw: None)
+
+    def _must_not_run(*a, **kw):
+        raise AssertionError("release dialed the cluster after declining")
+    monkeypatch.setattr(cli, "_run_remote_capture", _must_not_run)
+
+    # Bare Enter on the confirmation.
+    result = runner.invoke(
+        cli.app,
+        ["--config", str(config_path), "-T", "fake-slurm", "release", "sample"],
+        input="\n",
+    )
+    assert result.exit_code == 0, (result.stdout, result.exception)
+    assert "Aborted." in result.stdout
+    # The prompt must not advertise a default it does not have.
+    assert "[y/N]  [Y/n]" not in result.stdout
+    # And the allocation is still recorded.
+    reloaded = session_mod.RemoteSession.load("sample", target_name="fake-slurm")
+    assert reloaded.slurm_job_id == 7654321
+
+
+# -- the pane probe's per-group mirror_root ------------------------------------
+#
+# `_probe_session_panes` had no tests.  It read `mirror_root` off the
+# cluster's FIRST target and applied it to every group in that cluster, so
+# two targets sharing a gateway but not a mirror root sent one target's WIP
+# lookup at the other's path.
+
+def _probe_fixture(monkeypatch, roots):
+    """Drive _probe_session_panes over two targets on one gateway.
+
+    *roots* maps target name -> mirror_root.  Returns the remote script the
+    probe would have run.
+    """
+    import logging as _logging
+
+    from sucoder import tunnel as tunnel_mod
+    from sucoder.sessions_report import (
+        JobRow, Report, SessionEntry, TargetGroup,
+    )
+
+    def _job(job_id):
+        return JobRow(job_id=job_id, name="sucoder-M", partition="p", account="a",
+                      qos="q", state="RUNNING", time_left="1:00", node="n1")
+
+    names = sorted(roots)
+    report = Report(groups=[
+        TargetGroup(name=n, signature="sig", entries=[
+            SessionEntry(job=_job(1000 + i), mirror=f"mir{i}", target=n),
+        ])
+        for i, n in enumerate(names)
+    ])
+
+    class _Slurm:
+        confined = True
+
+    class _Remote:
+        def __init__(self, root):
+            self.slurm = _Slurm()
+            self.mirror_root = root
+            self.gateway = "gw.example.org"
+        def ssh_control_kwargs(self):
+            return {}
+
+    class _Config:
+        targets = {n: _Remote(roots[n]) for n in names}
+
+    class _Control:
+        def __init__(self, **kw):
+            pass
+        def is_active(self):
+            return True
+
+    monkeypatch.setattr(tunnel_mod, "SshControl", _Control)
+    sent: dict = {}
+
+    def _fake_capture(control, host, command, **kw):
+        sent["command"] = command
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(cli, "_run_remote_capture", _fake_capture)
+    cli._probe_session_panes(
+        report, _Config(), {"gw.example.org": names}, _logging.getLogger("t"), False,
+    )
+    return sent.get("command", "")
+
+
+def test_probe_uses_each_targets_own_mirror_root(monkeypatch):
+    """Two targets, one gateway, different roots: each WIP lookup must use
+    its own, not whichever target sorted first."""
+    command = _probe_fixture(
+        monkeypatch, {"alpha": "~/mirrors", "beta": "/scratch/mirrors"},
+    )
+    assert '"$HOME"/mirrors/mir0' in command, command
+    assert "/scratch/mirrors/mir1" in command, command
+    # The bug: beta's entry rendered under alpha's root.
+    assert "/scratch/mirrors/mir0" not in command
+    assert '"$HOME"/mirrors/mir1' not in command

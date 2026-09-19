@@ -19,13 +19,26 @@ default for all mirrors and is meant to stay project-agnostic.
   fine — verified 2026-07-01: `gitnexus analyze --skills --embeddings` succeeded
   in ~27s and cleared the staleness (the MCP then served HEAD immediately).
   If the index is stale, just run `analyze`; don't assume you can't.
+- **Always pass `--skip-agents-md` to `analyze`.** Without it, every run
+  rewrites the `<!-- gitnexus:start -->` block below with fresh symbol counts
+  and leaves `AGENTS.md` (and `CLAUDE.md`, a symlink to it) dirty in an
+  otherwise clean tree — a spurious diff to explain in every review:
+
+      node .gitnexus/run.cjs analyze --skip-agents-md
+
+  Use `--no-stats` instead if you want the block refreshed but without the
+  volatile counts, and `--index-only` to skip all file injection. Note the
+  advice *inside* the generated block says plain `analyze` and cannot be
+  fixed there: `analyze` rewrites that whole region, and it reinstalls
+  `.claude/skills/gitnexus/` too (both are untracked/generated). This bullet
+  is outside the block, which is the only reason it survives.
 
 ---
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **sucoder** (2069 symbols, 5323 relationships, 182 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **sucoder**. Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 
