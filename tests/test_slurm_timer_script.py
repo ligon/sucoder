@@ -483,3 +483,100 @@ def test_snapshot_force_updates_a_diverged_wip_ref(repo_pair):
     assert subprocess.run(
         ["git", "merge-base", "--is-ancestor", first, second],
         cwd=origin).returncode != 0
+
+
+# -- a missing git must not be a silent no-op (issue #15) ----------------------
+#
+# Every git step in snapshot_wip is `|| exit 0` so a snapshot failure can
+# never kill the watchdog.  The cost was that if git is absent the whole
+# WIP-snapshot feature is a permanent no-op with zero diagnostics --
+# indistinguishable from "the tree was clean".
+
+def _snapshot_without_git(tmp_path, *, token="mirror", job=42, runs=1):
+    """Drive snapshot_wip with a PATH that has no git. Returns the warn text."""
+    work = tmp_path / "work"
+    (work / ".git").mkdir(parents=True)
+    state = tmp_path / "state"
+    state.mkdir()
+    warn = state / "warn"
+    # A PATH containing only a coreutils shim dir: no git anywhere on it.
+    stub = tmp_path / "bin"
+    stub.mkdir()
+    for name in ("printf", "mktemp", "date", "cat", "rm"):
+        found = shutil.which(name)
+        if found:
+            (stub / name).symlink_to(found)
+    script = (
+        "set -u\n"
+        f"PATH={shlex.quote(str(stub))}\n"
+        f"SNAPSHOT_DIR={shlex.quote(str(work))}\n"
+        f"MIRROR_TOKEN={token}\nJOB={job}\n"
+        f"STATE_DIR={shlex.quote(str(state))}\n"
+        f"WARN_FILE={shlex.quote(str(warn))}\n"
+        + WIP_SNAPSHOT_SH
+        + "\n" + ("snapshot_wip\n" * runs)
+    )
+    proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    return warn.read_text() if warn.exists() else ""
+
+
+@_bash
+def test_missing_git_is_reported_to_the_warn_file(tmp_path):
+    text = _snapshot_without_git(tmp_path)
+    assert "git is not on PATH" in text, text
+    assert "job 42" in text, text
+
+
+@_bash
+def test_missing_git_is_reported_only_once_per_job(tmp_path):
+    """At the default 10-minute interval a multi-day allocation would
+    otherwise append hundreds of identical lines."""
+    text = _snapshot_without_git(tmp_path, runs=5)
+    assert text.count("git is not on PATH") == 1, text
+
+
+@_bash
+def test_a_later_job_reports_again_rather_than_inheriting_silence(tmp_path):
+    """The marker carries $JOB, so it is self-clearing across jobs sharing
+    one $HOME -- otherwise the second job would be silently unprotected."""
+    first = _snapshot_without_git(tmp_path, job=111)
+    assert first.count("git is not on PATH") == 1
+    # Same state dir and warn file, new job id.
+    work = tmp_path / "work"
+    state = tmp_path / "state"
+    warn = state / "warn"
+    stub = tmp_path / "bin"
+    script = (
+        "set -u\n"
+        f"PATH={shlex.quote(str(stub))}\n"
+        f"SNAPSHOT_DIR={shlex.quote(str(work))}\n"
+        f"MIRROR_TOKEN=mirror\nJOB=222\n"
+        f"STATE_DIR={shlex.quote(str(state))}\n"
+        f"WARN_FILE={shlex.quote(str(warn))}\n"
+        + WIP_SNAPSHOT_SH + "\nsnapshot_wip\n"
+    )
+    subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
+    text = warn.read_text()
+    assert "job 111" in text and "job 222" in text, text
+
+
+@_bash
+@_git
+def test_a_present_git_writes_no_such_warning(tmp_path):
+    """The diagnostic must not fire on the healthy path."""
+    work = tmp_path / "work"
+    (work / ".git").mkdir(parents=True)
+    state = tmp_path / "state"
+    state.mkdir()
+    warn = state / "warn"
+    script = (
+        "set -u\n"
+        f"SNAPSHOT_DIR={shlex.quote(str(work))}\n"
+        "MIRROR_TOKEN=mirror\nJOB=42\n"
+        f"STATE_DIR={shlex.quote(str(state))}\n"
+        f"WARN_FILE={shlex.quote(str(warn))}\n"
+        + WIP_SNAPSHOT_SH + "\nsnapshot_wip\n"
+    )
+    subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
+    assert not warn.exists() or "git is not on PATH" not in warn.read_text()
