@@ -192,6 +192,14 @@ def test_a_stale_record_for_an_unconfigured_mirror_says_so():
     assert "mirror not configured" in out
 
 
+def test_a_mirror_name_containing_a_double_dash_splits_at_the_target():
+    """`rpartition`, not `partition`: the key is `<mirror>--<target>` and the
+    mirror half may contain the separator itself."""
+    report = _report([], recorded={"my--odd--carleton-htc": 12345})
+    stale = report.stale[0]
+    assert (stale.mirror, stale.target) == ("my--odd", "carleton-htc")
+
+
 def test_a_record_with_no_target_suffix_still_splits():
     """Older launches wrote `<mirror>.yaml` with no target half."""
     report = _report([], recorded={"SuCoder": 32922079})
@@ -388,6 +396,14 @@ def test_probe_reports_a_shell_child_when_that_is_all_there_is(tmp_path):
     after the agent exited.  Nothing non-shell is running, so the flag
     stands."""
     assert _probe(tmp_path, ["316429 bash"], {316429: ["sh", "bash"]}) == "sh"
+
+
+@_bash
+def test_probe_falls_back_to_a_non_shell_pane_command(tmp_path):
+    """No child, but the pane itself is not a shell -- an unconfined launch
+    runs the agent as the window command, so there is nothing below it.
+    The fallback must not turn that into `agent exited`."""
+    assert _probe(tmp_path, ["316429 claude"], {}) == "claude"
 
 
 @_bash
