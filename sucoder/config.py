@@ -159,7 +159,15 @@ class RemoteConfig:
                 capture_output=True, text=True, check=True, timeout=10,
             )
         except (OSError, subprocess.SubprocessError) as exc:
-            raise ConfigError("Cannot resolve direct SSH configuration with ssh -G.") from exc
+            # Pass ssh's own diagnosis along: it names the offending keyword
+            # (a ControlPath with a malformed %-escape, say), where the bare
+            # "cannot resolve" leaves the user to guess which of the host's
+            # settings -- or which Include file -- is the broken one.
+            detail = " ".join(str(getattr(exc, "stderr", "") or "").split())
+            raise ConfigError(
+                f"Cannot resolve direct SSH configuration for {self.host} "
+                f"with ssh -G." + (f" ssh said: {detail}" if detail else "")
+            ) from exc
         return result.stdout
 
 

@@ -3112,3 +3112,533 @@ def test_ephemeral_mirror_does_not_collide_with_itself(tmp_path):
     toplevel = tmp_path / "PlainName"
     toplevel.mkdir()
     assert cli._create_ephemeral_mirror(config, toplevel) == "PlainName"
+
+
+# -- an unusable SSH config must not sink the whole listing --------------------
+#
+# `ssh_control_kwargs()` resolves a direct target through `ssh -G` and raises
+# ConfigError when that config cannot be evaluated (a ControlPath ending in a
+# bare `%`, say).  It was called while *building* each SshControl, outside the
+# try that guards the connect, so one such target aborted `sessions` with a
+# traceback -- discarding the clusters that had already answered.
+
+def _raising_remote(gateway="gw.example.org"):
+    from sucoder.config import ConfigError
+
+    class _Remote:
+        slurm = None
+        mirror_root = "~/mirrors"
+
+        def __init__(self):
+            self.gateway = gateway
+            self.host = gateway
+
+        def ssh_control_kwargs(self):
+            raise ConfigError("Cannot resolve direct SSH configuration for x.")
+
+    return _Remote()
+
+
+def test_pane_probe_survives_unresolvable_ssh_config(monkeypatch):
+    import logging as _logging
+
+    from sucoder.sessions_report import JobRow, Report, SessionEntry, TargetGroup
+
+    job = JobRow(job_id=7, name="sucoder-M", partition="p", account="a", qos="q",
+                 state="RUNNING", time_left="1:00", node="n1")
+    report = Report(groups=[
+        TargetGroup(name="alpha", signature="sig",
+                    entries=[SessionEntry(job=job, mirror="mir", target="alpha")]),
+    ])
+
+    class _Config:
+        targets = {"alpha": _raising_remote()}
+
+    def _no_capture(*args, **kwargs):  # pragma: no cover -- must not be reached
+        raise AssertionError("probed a target whose SSH config cannot be read")
+
+    monkeypatch.setattr(cli, "_run_remote_capture", _no_capture)
+    cli._probe_session_panes(
+        report, _Config(), {"gw.example.org": ["alpha"]},
+        _logging.getLogger("t"), False,
+    )
+    assert any("pane probe skipped" in e and "Cannot resolve" in e
+               for e in report.errors), report.errors
+    # An unanswered probe is not evidence: no entry is marked agent-exited.
+    assert report.groups[0].entries[0].pane is None
+
+
+def test_login_probe_survives_unresolvable_ssh_config(monkeypatch):
+    import logging as _logging
+
+    from sucoder.sessions_report import Report
+
+    report = Report(groups=[])
+
+    class _Config:
+        targets = {"droplet": _raising_remote(gateway="direct.example.org")}
+
+    def _no_capture(*args, **kwargs):  # pragma: no cover -- must not be reached
+        raise AssertionError("probed a host whose SSH config cannot be read")
+
+    monkeypatch.setattr(cli, "_run_remote_capture", _no_capture)
+    cli._probe_login_sessions(
+        report, _Config(), ["droplet"], _logging.getLogger("t"), False,
+    )
+    assert any("Cannot resolve" in e for e in report.errors), report.errors
+    assert report.login_probed
+
+
+# -- the warm path must not pay for a liveness probe (perf regression guard) ---
+#
+# is_active()'s end-to-end probe opens a real ssh session, and on a BRC login
+# node a session *open* is ~10s before the command is even exec'd.  Probing
+# first and then running the command paid that toll twice per host.  The work
+# is BatchMode, so it is its own probe: connect only when the transport fails.
+
+def _capture_harness(monkeypatch, results):
+    """Drive _capture_over_tunnel over a scripted sequence of ssh results.
+
+    Returns (captured_commands, connect_calls).
+    """
+    calls, connects = [], []
+    pending = list(results)
+
+    def _fake_capture(control, host, command, **kw):
+        calls.append(command)
+        return pending.pop(0)
+
+    def _fake_connect(control, label, logger, **kw):
+        connects.append(label)
+
+    monkeypatch.setattr(cli, "_run_remote_capture", _fake_capture)
+    monkeypatch.setattr(cli, "_connect_with_retry", _fake_connect)
+    return calls, connects
+
+
+def _done(rc, stderr=""):
+    return SimpleNamespace(returncode=rc, stdout="out", stderr=stderr)
+
+
+def test_warm_tunnel_runs_command_without_connecting(monkeypatch):
+    import logging as _logging
+
+    calls, connects = _capture_harness(monkeypatch, [_done(0)])
+    result = cli._capture_over_tunnel(
+        object(), "ln001.brc", "tmux ls", logger=_logging.getLogger("t"),
+    )
+    assert result.returncode == 0
+    assert calls == ["tmux ls"]      # ran once
+    assert connects == []            # and never opened a probe session
+
+
+def test_remote_command_failure_does_not_trigger_reconnect(monkeypatch):
+    """A non-zero exit from the *command* proves the tunnel works; re-authing
+    on it would turn every `tmux ls` on a host with no server into a re-auth."""
+    import logging as _logging
+
+    calls, connects = _capture_harness(monkeypatch, [_done(1, "no server running")])
+    result = cli._capture_over_tunnel(
+        object(), "ln001.brc", "tmux ls", logger=_logging.getLogger("t"),
+    )
+    assert result.returncode == 1
+    assert connects == []
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("rc,stderr", [
+    (255, "ssh: connect to host ln001.brc port 22: Connection refused"),
+    (124, "timed out after 60s (wedged tunnel?)"),
+    (1, "mux_client_request_session: session open refused by peer"),
+])
+def test_transport_failure_connects_and_retries_once(monkeypatch, rc, stderr):
+    import logging as _logging
+
+    calls, connects = _capture_harness(
+        monkeypatch, [_done(rc, stderr), _done(0)],
+    )
+    result = cli._capture_over_tunnel(
+        object(), "ln001.brc", "tmux ls", logger=_logging.getLogger("t"),
+    )
+    assert result.returncode == 0
+    assert connects == ["ln001.brc"]   # authenticated once
+    assert len(calls) == 2             # and retried exactly once
+
+
+# -- login-node probes run concurrently ---------------------------------------
+#
+# Hosts are independent and the cost is almost all remote session setup, so
+# probing them one after another made the wall time the sum rather than the
+# max.  Phase 1 fans out on the warm path only; anything needing credentials
+# is done serially in phase 2, so two OTP prompts can never interleave.
+
+def _login_probe_fixture(monkeypatch, hosts, capture):
+    """Drive _probe_login_sessions over *hosts*, one schedulerless target each."""
+    import logging as _logging
+
+    from sucoder import tunnel as tunnel_mod
+    from sucoder.session import RemoteSession
+    from sucoder.sessions_report import Report
+
+    class _Remote:
+        slurm = None
+        mirror_root = "~/mirrors"
+
+        def __init__(self, host):
+            self.gateway = host
+            self.host = host
+
+        def ssh_control_kwargs(self):
+            return {}
+
+    class _Config:
+        targets = {h: _Remote(h) for h in hosts}
+
+    class _Control:
+        def __init__(self, **kw):
+            self.gateway = kw.get("gateway")
+
+    monkeypatch.setattr(tunnel_mod, "SshControl", _Control)
+    monkeypatch.setattr(
+        RemoteSession, "login_nodes_for_target", staticmethod(lambda name: {}),
+    )
+    monkeypatch.setattr(cli, "_run_remote_capture", capture)
+
+    report = Report(groups=[])
+    cli._probe_login_sessions(
+        report, _Config(), list(hosts), _logging.getLogger("t"), False,
+    )
+    return report
+
+
+def test_login_probes_run_in_parallel(monkeypatch):
+    """Deterministic concurrency check: every host must reach the barrier
+    before any is released.  A serial sweep deadlocks it and raises."""
+    import threading
+
+    hosts = ["ln001.brc", "ln002.brc", "ln003.brc"]
+    barrier = threading.Barrier(len(hosts), timeout=10)
+
+    def _capture(control, host, command, **kw):
+        barrier.wait()          # BrokenBarrierError if the sweep is serial
+        return SimpleNamespace(
+            returncode=0, stdout=f"sucoder-{host}\tclaude\n", stderr="",
+        )
+
+    report = _login_probe_fixture(monkeypatch, hosts, _capture)
+    assert sorted(s.host for s in report.logins) == hosts
+    assert [s.pane for s in report.logins] == ["claude"] * 3
+    assert report.errors == []
+
+
+def test_warm_login_probes_never_authenticate(monkeypatch):
+    """The whole point: a reachable host costs one round trip, not a probe
+    session plus a command session plus a pane session."""
+    calls = []
+
+    def _capture(control, host, command, **kw):
+        calls.append(host)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    def _no_connect(*args, **kwargs):  # pragma: no cover -- must not be reached
+        raise AssertionError("warm host was made to authenticate")
+
+    monkeypatch.setattr(cli, "_connect_with_retry", _no_connect)
+    report = _login_probe_fixture(monkeypatch, ["ln001.brc", "ln002.brc"], _capture)
+    assert sorted(calls) == ["ln001.brc", "ln002.brc"]   # one each, no more
+    assert report.errors == []
+
+
+def test_cold_login_probe_authenticates_serially_then_retries(monkeypatch):
+    """A transport failure in the parallel sweep must be retried *after* the
+    pool closes, so the credential prompt is not competing with other threads."""
+    import logging as _logging
+    import threading
+
+    attempts = []
+    connects = []
+
+    def _capture(control, host, command, **kw):
+        attempts.append(host)
+        if attempts.count(host) == 1:
+            return SimpleNamespace(
+                returncode=255, stdout="", stderr="ssh: connect: Connection refused",
+            )
+        return SimpleNamespace(returncode=0, stdout="sucoder-x\tclaude\n", stderr="")
+
+    def _fake_connect(control, label, logger, **kw):
+        connects.append((label, threading.current_thread().name))
+
+    monkeypatch.setattr(cli, "_connect_with_retry", _fake_connect)
+    report = _login_probe_fixture(monkeypatch, ["ln001.brc"], _capture)
+
+    assert connects and connects[0][0] == "ln001.brc"
+    # The retry happens on the main thread, i.e. after the pool has closed.
+    assert connects[0][1] == threading.main_thread().name
+    assert attempts == ["ln001.brc", "ln001.brc"]        # warm, then retry
+    assert [s.name for s in report.logins] == ["sucoder-x"]
+
+
+def test_remote_capture_routes_its_fallback_through_the_jump_host(monkeypatch):
+    """A jump-only login node does not resolve locally, so the fresh
+    connection ssh opens when the mux refuses a session must go via the
+    gateway -- otherwise a wedged mux becomes "Could not resolve hostname"
+    and costs a full re-auth."""
+    from sucoder.tunnel import SshControl
+
+    gw = SshControl(gateway="hpc.brc.berkeley.edu")
+    ln = SshControl(gateway="ln003.brc", jump_host="hpc.brc.berkeley.edu",
+                    jump_control=gw)
+
+    seen = {}
+
+    def _fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(cli.subprocess, "run", _fake_run)
+    cli._run_remote_capture(ln, "ln003.brc", "tmux ls")
+
+    joined = " ".join(seen["cmd"])
+    assert "ProxyCommand=" in joined
+    assert "hpc.brc.berkeley.edu" in joined
+    assert str(gw.socket_path) in joined
+
+
+# -- the login sweep overlaps the scheduler queries ---------------------------
+#
+# A login-node session has no allocation, so nothing in that sweep reads
+# squeue; it was sequenced after the cluster queries only by accident of where
+# the call sat.  Started first and collected last, its remote session setup
+# (the dominant cost) runs *during* the scheduler queries instead of after.
+
+def test_start_login_probes_does_not_wait_for_the_answers(monkeypatch):
+    """The enabling property: starting the sweep must return immediately,
+    leaving the queries in flight for the caller to get on with its work."""
+    import threading
+
+    release = threading.Event()
+    started = threading.Event()
+
+    def _capture(control, host, command, **kw):
+        started.set()
+        assert release.wait(timeout=10), "probe was never released"
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(cli, "_run_remote_capture", _capture)
+
+    class _Control:
+        pass
+
+    plan = cli._LoginProbes(
+        probes=[("t", "ln001.brc", _Control())], errors=[], pool=None, futures=[],
+    )
+    live = cli._start_login_probes(plan, False)
+    # Returned while the query is still running -- that is the whole point.
+    assert started.wait(timeout=10)
+    assert not live.futures[0].done()
+    release.set()
+    assert live.futures[0].result().returncode == 0
+    live.pool.shutdown(wait=True)
+
+
+def test_sessions_queries_login_nodes_while_squeue_is_still_running(monkeypatch):
+    """Deterministic overlap check on the command itself.
+
+    The fake squeue refuses to return until a login probe has started.  If
+    `sessions` went back to sweeping the login nodes *after* the cluster
+    queries, nothing would ever set that event and this deadlocks out.
+    """
+    import logging as _logging
+    import threading
+
+    from sucoder.session import RemoteSession
+
+    login_started = threading.Event()
+
+    class _Slurm:
+        confined = True
+
+    class _Remote:
+        mirror_root = "~/mirrors"
+        partition = account = qos = None
+
+        def __init__(self, host, slurm):
+            self.gateway = host
+            self.host = host
+            self.slurm = slurm
+
+        def ssh_control_kwargs(self):
+            return {}
+
+    # One scheduler-backed target (queried with squeue) and one schedulerless
+    # (swept for login-node tmux sessions).  Both are needed, or there is no
+    # squeue to overlap with and the test proves nothing.
+    config = SimpleNamespace(
+        targets={
+            "savio": _Remote("hpc.brc", _Slurm()),
+            "droplet": _Remote("direct.example", None),
+        },
+        mirrors={},
+        log_dir=None,
+    )
+
+    # Recorded and asserted on AFTER the command returns: the cluster loop
+    # catches every exception into its error list, so a bare assert in here
+    # would be swallowed and the test would pass regardless.
+    events = []
+
+    def _fake_squeue(control, host, command, **kw):
+        events.append("squeue:start")
+        login_started.wait(timeout=5)     # give the sweep room to reach the wire
+        events.append("squeue:end")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    def _fake_login_capture(control, host, command, **kw):
+        events.append("login")
+        login_started.set()
+        return SimpleNamespace(returncode=0, stdout="sucoder-x\tclaude\n", stderr="")
+
+    monkeypatch.setattr(cli, "_capture_over_tunnel", _fake_squeue)
+    monkeypatch.setattr(cli, "_run_remote_capture", _fake_login_capture)
+    monkeypatch.setattr(cli, "setup_logger", lambda *a, **k: _logging.getLogger("t"))
+    monkeypatch.setattr(
+        RemoteSession, "login_nodes_for_target", staticmethod(lambda name: {}),
+    )
+    monkeypatch.setattr(RemoteSession, "recorded_jobs", staticmethod(lambda: {}))
+    monkeypatch.setattr(
+        RemoteSession, "holders_of_job", staticmethod(lambda job_id: []),
+    )
+
+    ctx = SimpleNamespace(obj={"config": config}, params={})
+    cli.sessions(ctx, fast=False, login_nodes=True, verbose=False)
+
+    assert "login" in events and "squeue:end" in events
+    # The login node was asked while squeue was still outstanding.  Sweeping
+    # afterwards puts "login" last and fails here.
+    assert events.index("login") < events.index("squeue:end"), events
+
+
+# -- a cold start must not crawl through the login nodes ----------------------
+#
+# The warm sweep only helps when masters already exist.  A freshly minted
+# certificate leaves none, so every host fails phase 1 fast and lands in the
+# reconnect path -- which connected them one at a time.  The gateway is the
+# only hop that can prompt (and the only one that can earn "Too many
+# authentication failures" if raced), so it goes first, alone; the nodes
+# behind it are publickey hops through its live mux and go together.
+
+def test_cold_login_connects_gateway_once_then_nodes_in_parallel(monkeypatch):
+    import threading
+
+    order = []
+    order_lock = threading.Lock()
+    hosts = ["ln001.brc", "ln002.brc", "ln003.brc"]
+    barrier = threading.Barrier(len(hosts), timeout=10)
+
+    class _Gateway:
+        gateway = "hpc.brc"
+        jump_control = None
+
+    gw = _Gateway()
+
+    class _Node:
+        def __init__(self, host):
+            self.gateway = host
+            self.jump_control = gw
+
+    pending = [(i, "savio", h, _Node(h)) for i, h in enumerate(hosts)]
+
+    def _fake_connect(control, label, logger, **kw):
+        with order_lock:
+            order.append(label)
+        if control is not gw:
+            # Every node must be connecting at once; serial trips the barrier.
+            barrier.wait()
+
+    monkeypatch.setattr(cli, "_connect_with_retry", _fake_connect)
+    monkeypatch.setattr(
+        cli, "_run_remote_capture",
+        lambda control, host, command, **kw: SimpleNamespace(
+            returncode=0, stdout="", stderr="",
+        ),
+    )
+
+    cli._open_login_gateways(pending, None, None)
+    out = cli._reconnect_login_probes(pending, None, None, False)
+
+    assert order[0] == "hpc.brc"            # gateway before anything else
+    assert order.count("hpc.brc") == 1      # and authenticated once, not per node
+    assert sorted(order[1:]) == hosts
+    assert not any(isinstance(v, Exception) for v in out.values()), out
+
+
+def test_unreachable_login_host_does_not_sink_the_others(monkeypatch):
+    """One host's raise is carried, not thrown: the rest still answer."""
+    class _Node:
+        jump_control = None
+
+        def __init__(self, host):
+            self.gateway = host
+
+    pending = [(0, "t", "good.example", _Node("good.example")),
+               (1, "t", "bad.example", _Node("bad.example"))]
+
+    def _fake_connect(control, label, logger, **kw):
+        if label == "bad.example":
+            raise RuntimeError("host is down")
+
+    monkeypatch.setattr(cli, "_connect_with_retry", _fake_connect)
+    monkeypatch.setattr(
+        cli, "_run_remote_capture",
+        lambda control, host, command, **kw: SimpleNamespace(
+            returncode=0, stdout="", stderr="",
+        ),
+    )
+    out = cli._reconnect_login_probes(pending, None, None, False)
+    assert out[0].returncode == 0
+    assert isinstance(out[1], Exception)
+
+
+def test_no_login_nodes_flag_skips_the_sweep_without_claiming_absence(monkeypatch):
+    """Skipping must leave `login_probed` False, so the report says "not
+    inspected" rather than "no sessions" -- a claim the sweep never made."""
+    import logging as _logging
+
+    from sucoder.session import RemoteSession
+
+    touched = []
+
+    class _Remote:
+        mirror_root = "~/mirrors"
+        partition = account = qos = None
+        slurm = None
+
+        def __init__(self, host):
+            self.gateway = host
+            self.host = host
+
+        def ssh_control_kwargs(self):
+            return {}
+
+    config = SimpleNamespace(
+        targets={"droplet": _Remote("direct.example")}, mirrors={}, log_dir=None,
+    )
+    monkeypatch.setattr(
+        cli, "_run_remote_capture",
+        lambda *a, **kw: touched.append(a) or SimpleNamespace(
+            returncode=0, stdout="", stderr="",
+        ),
+    )
+    monkeypatch.setattr(cli, "setup_logger", lambda *a, **k: _logging.getLogger("t"))
+    monkeypatch.setattr(
+        RemoteSession, "login_nodes_for_target", staticmethod(lambda name: {}),
+    )
+    monkeypatch.setattr(RemoteSession, "recorded_jobs", staticmethod(lambda: {}))
+    monkeypatch.setattr(
+        RemoteSession, "holders_of_job", staticmethod(lambda job_id: []),
+    )
+
+    ctx = SimpleNamespace(obj={"config": config}, params={})
+    cli.sessions(ctx, fast=False, login_nodes=False, verbose=False)
+    assert touched == []          # nothing was asked of any login node

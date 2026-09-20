@@ -423,7 +423,8 @@ def test_probe_says_nothing_when_tmux_fails(tmp_path):
 # as "no scheduler" and never looked.
 
 from sucoder.sessions_report import (  # noqa: E402
-    LoginSession, login_hosts_for, parse_tmux_sessions,
+    LOGIN_SESSION_PANES_SH, LoginSession, login_hosts_for,
+    parse_login_sessions, parse_tmux_sessions,
 )
 
 
@@ -506,3 +507,51 @@ def test_render_distinguishes_inspected_and_empty_from_not_inspected():
     out = render_report(report)
     assert "no login-node sessions" in out
     assert "not inspected" not in out
+
+
+# -- list + pane in one round trip --------------------------------------------
+#
+# Enumerating sessions and then probing their panes were two ssh commands, so
+# each login host paid the ~10s remote session-open twice.  LOGIN_SESSION_PANES_SH
+# fuses them; parse_login_sessions splits the result back apart.
+
+def test_parse_login_sessions_splits_names_and_panes():
+    names, panes = parse_login_sessions(
+        "sucoder-alpha\tclaude\n"
+        "sucoder-beta\tbash\n"
+    )
+    assert names == ["sucoder-alpha", "sucoder-beta"]
+    assert panes == {"sucoder-alpha": "claude", "sucoder-beta": "bash"}
+
+
+def test_parse_login_sessions_drops_foreign_tmux():
+    """Somebody else's tmux is not ours to report, same as parse_tmux_sessions."""
+    names, panes = parse_login_sessions("someone-else\tvim\nsucoder-mine\tclaude\n")
+    assert names == ["sucoder-mine"]
+    assert "someone-else" not in panes
+
+
+def test_parse_login_sessions_missing_pane_stays_unknown():
+    """An unanswered pane probe must not become evidence of a dead agent: the
+    name is still reported, with no pane, which renders as unknown."""
+    names, panes = parse_login_sessions("sucoder-alpha\t\nsucoder-beta\tclaude\n")
+    assert names == ["sucoder-alpha", "sucoder-beta"]
+    assert "sucoder-alpha" not in panes
+    assert panes["sucoder-beta"] == "claude"
+
+
+def test_parse_login_sessions_tolerates_blank_and_bare_lines():
+    """The remote loop emits a trailing blank line per session, and a login
+    banner can still reach us."""
+    names, _ = parse_login_sessions(
+        "sucoder-alpha\tclaude\n\n  \nWelcome to the cluster\nsucoder-beta\tbash\n\n"
+    )
+    assert names == ["sucoder-alpha", "sucoder-beta"]
+
+
+def test_login_panes_script_is_one_command_covering_both_queries():
+    """Regression guard for the merge: the script must still enumerate AND
+    probe, in a single remote shell."""
+    assert "list-sessions" in LOGIN_SESSION_PANES_SH
+    assert "list-panes" in LOGIN_SESSION_PANES_SH
+    assert LOGIN_SESSION_PANES_SH.count("tmux list-sessions") == 1

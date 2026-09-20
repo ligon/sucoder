@@ -32,6 +32,7 @@ Everything here is pure: the caller does the SSH and passes text in.
 
 from __future__ import annotations
 
+import shlex
 from dataclasses import dataclass, field
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -96,6 +97,25 @@ LOGIN_SESSION_SH = (
 )
 
 
+# The same enumeration, but each name followed by a TAB and the command its
+# pane runs -- the two queries fused into ONE remote shell.
+#
+# Splitting them cost a full extra ssh *session open* per host, and on a BRC
+# login node a session open is ~10s of remote setup before the command is
+# even exec'd (measured 2026-09-19), so listing two sessions paid ~20s to
+# answer what one round trip answers.  The loop runs remote-side; the
+# ``sucoder-`` filter deliberately stays local, in `parse_login_sessions`,
+# so the prefix rule lives in exactly one place.
+LOGIN_SESSION_PANES_SH = (
+    'tmux list-sessions -F "#{session_name}" 2>/dev/null | '
+    'while read -r s; do '
+    'printf "%s\t" "$s"; '
+    'bash -c ' + shlex.quote(PANE_PROBE_SH) + ' _ "$s" "" 2>/dev/null; '
+    'echo; '
+    'done || true'
+)
+
+
 @dataclass(frozen=True)
 class LoginSession:
     """A SuCoder tmux session found on a login (or direct-SSH) host.
@@ -140,6 +160,28 @@ def parse_tmux_sessions(text: str) -> List[str]:
         if line.startswith(JOB_NAME_PREFIX) and " " not in line:
             names.append(line.rstrip(":"))
     return names
+
+
+def parse_login_sessions(text: str) -> Tuple[List[str], Dict[str, str]]:
+    """Split ``LOGIN_SESSION_PANES_SH`` output into (names, panes).
+
+    Each line is ``<session name>\t<pane command>``; the pane half is empty
+    when the probe found nothing, which stays absent from the mapping so an
+    unanswered probe reads as unknown rather than as a dead agent -- the
+    same rule the job-entry probe follows.
+
+    Filtering is delegated to :func:`parse_tmux_sessions` so the
+    ``sucoder-`` prefix rule is not restated here.
+    """
+    rows = [line.partition("\t") for line in text.splitlines()]
+    names = parse_tmux_sessions("\n".join(name for name, _, _ in rows))
+    wanted = set(names)
+    panes: Dict[str, str] = {}
+    for name, _, pane in rows:
+        key = name.strip().rstrip(":")
+        if key in wanted and pane.strip():
+            panes[key] = pane.strip()
+    return names, panes
 
 
 @dataclass(frozen=True)

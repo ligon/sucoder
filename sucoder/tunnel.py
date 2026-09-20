@@ -28,7 +28,17 @@ _LOG = logging.getLogger(__name__)
 # answer, while a genuine zombie (mux alive, TCP dead) still fails fast on
 # every attempt and so can never be masked by the retry.
 _LIVENESS_PROBE_ATTEMPTS = 3
-_LIVENESS_PROBE_TIMEOUT = 12    # seconds, wall-clock per attempt
+# Budget per attempt.  This must clear the cost of a *session open*, not of
+# the `true` it runs: on a BRC login node the remote session setup alone is
+# ~10s wall-clock before the command is even exec'd (measured 2026-09-19 --
+# `true`, `echo`, `squeue` and `tmux list-sessions` all cost 9.4-10.0s over
+# an already-warm master).  At the old 12s a merely-loaded node blew the
+# budget, all three attempts timed out, and a live master was declared
+# expired -- forcing a full re-auth, which on this gateway can cost an OTP.
+# Raising it is one-sided: a genuine zombie returns non-zero *immediately*
+# (see the rc branch below) rather than timing out, so detection of a dead
+# master is unaffected and only the slow-but-alive case waits longer.
+_LIVENESS_PROBE_TIMEOUT = 30    # seconds, wall-clock per attempt
 _LIVENESS_PROBE_BACKOFF = 1.0   # seconds between attempts
 
 
