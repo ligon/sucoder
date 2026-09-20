@@ -5,8 +5,11 @@ from __future__ import annotations
 import logging
 import shlex
 import subprocess
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Sequence
+
+from .logging_utils import describe_remote, progress, summarize_command
 
 
 class CommandError(RuntimeError):
@@ -156,6 +159,14 @@ class CommandExecutor:
             run_kwargs["input"] = input
         if timeout is not None:
             run_kwargs["timeout"] = timeout
+        # Say what we are about to wait on.  Only for commands that leave
+        # this machine: those are the ones that cost seconds each (a session
+        # open on a BRC login node is ~8s before the command even starts),
+        # and a launch makes a dozen of them back to back.
+        remote = describe_remote(executed_args)
+        if remote is not None:
+            progress(*remote)
+        started = time.monotonic()
         try:
             result_proc = subprocess.run(
                 executed_args,
@@ -177,6 +188,13 @@ class CommandExecutor:
                     stderr="(timed out)",
                     returncode=-1,
                 ),
+            )
+
+        if remote is not None:
+            self.logger.debug(
+                "%s: %s -> exit %s in %.1fs",
+                remote[0], summarize_command(remote[1]),
+                result_proc.returncode, time.monotonic() - started,
             )
 
         result = CommandResult(

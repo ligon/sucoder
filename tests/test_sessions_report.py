@@ -555,3 +555,44 @@ def test_login_panes_script_is_one_command_covering_both_queries():
     assert "list-sessions" in LOGIN_SESSION_PANES_SH
     assert "list-panes" in LOGIN_SESSION_PANES_SH
     assert LOGIN_SESSION_PANES_SH.count("tmux list-sessions") == 1
+
+
+# -- two questions, one session ---------------------------------------------
+#
+# A gateway is both the cluster's scheduler host and a login host worth
+# sweeping, and BRC's sshd carries one session channel at a time: asked
+# separately, one of the two requests is refused outright.
+
+def test_fused_output_splits_at_the_marker():
+    from sucoder.sessions_report import FUSED_SECTION_MARKER, split_fused
+
+    first, second = split_fused(
+        f"12345|sucoder-m|p|a|q|RUNNING|1:00|n1\n{FUSED_SECTION_MARKER}\n"
+        "sucoder-mirror\tclaude\n"
+    )
+    assert first.strip().startswith("12345")
+    assert second == "sucoder-mirror\tclaude\n"
+
+
+def test_a_missing_marker_means_unanswered_not_empty():
+    """The remote shell died before the second half ran, or the transport
+    did.  Returning "" would record an absence the query never established
+    --- and a login-node session nothing else reaps is exactly the thing
+    worth not losing track of."""
+    from sucoder.sessions_report import split_fused
+
+    first, second = split_fused("12345|sucoder-m|p|a|q|RUNNING|1:00|n1\n")
+    assert first.startswith("12345")
+    assert second is None
+
+
+def test_the_fused_script_keeps_the_first_half_s_exit_status():
+    """The scheduler query is the one whose failure must be reported; the
+    sweep is advisory and ends in ``|| true``, so a naive concatenation
+    would report the sweep's success as squeue's."""
+    from sucoder.sessions_report import fuse_scripts
+
+    script = fuse_scripts("squeue --me", "tmux list-sessions || true")
+    assert script.index("squeue --me") < script.index("tmux list-sessions")
+    assert "__sucoder_rc=$?" in script
+    assert script.rstrip().endswith("exit $__sucoder_rc")

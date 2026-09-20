@@ -13,10 +13,11 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 _LOG = logging.getLogger(__name__)
 
@@ -40,6 +41,19 @@ _LIVENESS_PROBE_ATTEMPTS = 3
 # master is unaffected and only the slow-but-alive case waits longer.
 _LIVENESS_PROBE_TIMEOUT = 30    # seconds, wall-clock per attempt
 _LIVENESS_PROBE_BACKOFF = 1.0   # seconds between attempts
+# How long a *successful* end-to-end probe is trusted for, per socket.  The
+# probe costs a full session open (~8s here), and a command that needs the
+# tunnel three times in a minute paid it three times over.  What the probe
+# rules out is a socket that died between calls -- a suspend, a network
+# change -- which cannot happen twice inside one command run without the
+# work itself failing and taking the reconnect path.  So: verify once, then
+# trust it for a couple of minutes; a stale verdict costs one failed command
+# (``_capture_over_tunnel`` re-authenticates and retries), never a wrong
+# answer.  Process-local by design: another process's probe proves nothing
+# about this one's socket handle.
+_LIVENESS_CACHE_TTL = 120       # seconds
+_VERIFIED: Dict[str, float] = {}
+_VERIFIED_GUARD = threading.Lock()
 
 
 class TunnelError(RuntimeError):
@@ -81,6 +95,63 @@ TRANSIENT_SSH_MARKERS = (
     "no route to host",
     "kex_exchange_identification",   # sshd dropped us before the banner
 )
+
+
+# A mux that answers "Session open refused by peer" is ALIVE: the refusal
+# came from the remote sshd, which means the transport carried the request
+# and brought back the answer.  It means *busy*, not *broken* --- see
+# :func:`session_lock` for why this host hands them out one at a time.
+SESSION_BUSY_MARKERS = (
+    "session open refused",          # the mux relaying the peer's refusal
+    "session request failed",        # mux_client_request_session's own wording
+)
+
+
+def is_session_busy_error(text: str) -> bool:
+    """True if *text* says the master is carrying its one session already."""
+    low = (text or "").lower()
+    return any(marker in low for marker in SESSION_BUSY_MARKERS)
+
+
+# ------------------------------------------------------------------
+# One session channel at a time, per ControlMaster
+# ------------------------------------------------------------------
+#
+# BRC's sshd sets ``MaxSessions 1``: a ControlMaster carries exactly ONE
+# session channel at a time (measured 2026-09-20 on hpc.brc.berkeley.edu
+# and ln002.brc --- of N simultaneous ``ssh <host> true`` over one warm
+# master, exactly one succeeds for every N tried).  The extra requests are
+# not queued but REFUSED, and on a refusal ``ControlMaster=auto`` falls back
+# to dialling the host directly: a fresh authentication, which on this
+# gateway earned ``Too many authentication failures`` and, with fail2ban in
+# front, can cost more than the connection ever saved.
+#
+# Port-forward channels are exempt from ``MaxSessions``, which is why
+# fanning out ACROSS hosts through one gateway (each hop a ``-W`` channel)
+# works, while running two commands ON one host does not.  So concurrency
+# stays where it pays and is serialised where it cannot.
+#
+# In-process only.  It cannot know about another sucoder, an attached
+# session, or a renew loop holding the slot --- those still collide, which
+# is what :func:`is_session_busy_error` and the caller's retry are for.
+_SESSION_LOCKS: Dict[str, threading.RLock] = {}
+_SESSION_LOCKS_GUARD = threading.Lock()
+
+
+def session_lock(key) -> threading.RLock:
+    """Return the lock guarding session channels on one ControlMaster.
+
+    Keyed by socket path (or host, when there is no socket), so every
+    caller reaching one master shares one lock.  Reentrant: a probe nested
+    inside a command path on the same host must not deadlock itself.
+    """
+    name = str(key)
+    with _SESSION_LOCKS_GUARD:
+        lock = _SESSION_LOCKS.get(name)
+        if lock is None:
+            lock = threading.RLock()
+            _SESSION_LOCKS[name] = lock
+        return lock
 
 
 def is_transient_ssh_error(text: str) -> bool:
@@ -205,9 +276,13 @@ class SshControl:
         (the "re-authenticate on every hop" bug).  Two guards fix that:
 
         * **skip** the probe entirely for a master *this* process just
-          established (:attr:`_established_this_session`): it cannot have
-          become a zombie in the sub-second reuse window, so the structural
-          check suffices and no remote shell is spawned on the hot path.
+          established (:attr:`_established_this_session`) or just probed
+          successfully (:data:`_LIVENESS_CACHE_TTL`): neither can have
+          become a zombie in that window, so the structural check suffices
+          and no remote shell is spawned on the hot path.  This is what
+          keeps a command that reaches one host several times from paying
+          a session open each time --- and, on a ``MaxSessions 1`` host,
+          from spending the one slot it has on a probe.
         * **retry** the probe otherwise (:data:`_LIVENESS_PROBE_ATTEMPTS`)
           with a generous per-attempt budget; a true zombie fails fast on
           every attempt, so the retry cannot hide it, but a merely-slow
@@ -226,10 +301,28 @@ class SshControl:
             _LOG.debug("is_active(%s): structural -O check failed", self.gateway)
             return False
         if deep is None:
-            deep = not self._established_this_session
+            deep = not (self._established_this_session or self._recently_verified())
         if not deep:
             return True
         return self._probe_end_to_end(sleep=sleep)
+
+    # -- what the end-to-end probe remembers ----------------------------
+
+    def _recently_verified(self, *, now=time.monotonic) -> bool:
+        """True if this socket carried a session for us just now."""
+        with _VERIFIED_GUARD:
+            when = _VERIFIED.get(str(self.socket_path))
+        return when is not None and (now() - when) < _LIVENESS_CACHE_TTL
+
+    def _note_verified(self, *, now=time.monotonic) -> None:
+        """Record that this socket carried a session for us."""
+        with _VERIFIED_GUARD:
+            _VERIFIED[str(self.socket_path)] = now()
+
+    def _forget_verified(self) -> None:
+        """Drop the remembered verdict: the socket is gone or suspect."""
+        with _VERIFIED_GUARD:
+            _VERIFIED.pop(str(self.socket_path), None)
 
     def _mux_alive(self) -> bool:
         """Structural liveness: is the local mux daemon running? (no remote shell)."""
@@ -261,28 +354,37 @@ class SshControl:
         ``--debug-ssh`` --- which perturbs the socket state and masks the
         bug.  ``BatchMode=yes`` keeps a bad mux from falling through to
         interactive ``/dev/tty`` auth.
+
+        A refusal (``Session open refused by peer``) is NOT a failure here.
+        It is the remote sshd answering that the master's one session slot
+        is taken, and only a working transport could have carried that
+        answer back; reading it as a dead master is how a merely busy
+        connection earned itself a full re-authentication, which on this
+        gateway can cost an OTP.
         """
         last_rc: Optional[int] = None
         last_err = ""
+        lock = session_lock(self.socket_path)
         for attempt in range(1, _LIVENESS_PROBE_ATTEMPTS + 1):
             try:
-                result = subprocess.run(
-                    [
-                        "ssh",
-                        "-o", "BatchMode=yes",
-                        "-o", "ControlMaster=auto",
-                        "-o", f"ControlPath={self.socket_path}",
-                        "-o", "ConnectTimeout=5",
-                        *self.extra_options,
-                        self._format_host(self.gateway),
-                        "true",
-                    ],
-                    capture_output=True,
-                    stdin=subprocess.DEVNULL,
-                    text=True,
-                    check=False,
-                    timeout=_LIVENESS_PROBE_TIMEOUT,
-                )
+                with lock:
+                    result = subprocess.run(
+                        [
+                            "ssh",
+                            "-o", "BatchMode=yes",
+                            "-o", "ControlMaster=auto",
+                            "-o", f"ControlPath={self.socket_path}",
+                            "-o", "ConnectTimeout=5",
+                            *self.extra_options,
+                            self._format_host(self.gateway),
+                            "true",
+                        ],
+                        capture_output=True,
+                        stdin=subprocess.DEVNULL,
+                        text=True,
+                        check=False,
+                        timeout=_LIVENESS_PROBE_TIMEOUT,
+                    )
             except subprocess.TimeoutExpired:
                 last_rc, last_err = None, "timeout"
                 _LOG.debug(
@@ -292,10 +394,18 @@ class SshControl:
                 )
             else:
                 if result.returncode == 0:
+                    self._note_verified()
                     return True
                 last_rc = result.returncode
                 err = (result.stderr or "").strip()
                 last_err = err.splitlines()[-1] if err else ""
+                if is_session_busy_error(err):
+                    _LOG.debug(
+                        "is_active(%s): master busy (one session at a time); "
+                        "treating as alive", self.gateway,
+                    )
+                    self._note_verified()
+                    return True
                 _LOG.debug(
                     "is_active(%s): probe %d/%d rc=%s%s",
                     self.gateway, attempt, _LIVENESS_PROBE_ATTEMPTS, last_rc,
@@ -377,17 +487,9 @@ class SshControl:
             else:
                 cmd.extend(["-J", self._format_host(self.jump_host)])
 
-        # Present a gateway SSH certificate on the *direct* hop only.  The
-        # login/DTN/compute hops ride the gateway mux and authenticate by
-        # publickey, so forcing IdentitiesOnly + the gateway cert on them
-        # would break their auth.  A missing/expired cert degrades cleanly:
-        # ssh offers no identity and falls back to the interactive prompt.
-        if self.jump_host is None and self.cert_file:
-            cmd += [
-                "-o", f"IdentityFile={self.cert_file}",
-                "-o", f"CertificateFile={self.cert_file}-cert.pub",
-                "-o", "IdentitiesOnly=yes",
-            ]
+        # Present a gateway SSH certificate (direct hop only --- see
+        # _identity_options).
+        cmd += self._identity_options()
         cmd.extend(self.extra_options)
         if self.debug:
             cmd.append("-vvv")
@@ -435,41 +537,102 @@ class SshControl:
         self._record_debug_mode()
         # We authenticated this master ourselves this run, so is_active()
         # may trust the cheap structural check for it (no remote shell) and
-        # not re-authenticate a connection it just brought up.
+        # not re-authenticate a connection it just brought up.  Recorded on
+        # the socket as well as on self, because a later command builds its
+        # own SshControl for the same socket and should inherit the verdict
+        # rather than re-prove it.
         self._established_this_session = True
+        self._note_verified()
+
+    def _identity_options(self) -> List[str]:
+        """The ``-o`` flags that present our gateway certificate.
+
+        Applied on the *direct* hop only (``jump_host is None``): login,
+        DTN and compute hops ride the gateway mux and authenticate by
+        publickey, and forcing ``IdentitiesOnly`` plus the gateway cert on
+        them would break that.  A missing or expired cert degrades
+        cleanly --- ssh offers no identity and falls back to the
+        interactive prompt.
+        """
+        if self.jump_host is not None or not self.cert_file:
+            return []
+        return [
+            "-o", f"IdentityFile={self.cert_file}",
+            "-o", f"CertificateFile={self.cert_file}-cert.pub",
+            "-o", "IdentitiesOnly=yes",
+        ]
 
     @property
     def _debug_marker(self) -> Path:
-        """Sidecar file that records whether the socket was created with -vvv."""
+        """Sidecar written when the socket WAS created with ``-vvv``."""
         return self.socket_path.with_suffix(".sock.debug")
 
+    @property
+    def _plain_marker(self) -> Path:
+        """Sidecar written when the socket was NOT created with ``-vvv``.
+
+        The counterpart matters: with only a debug marker, "no marker"
+        meant both "created without -vvv" (the overwhelmingly common case)
+        and "created before markers existed", and telling those apart cost
+        a remote session on every single call --- see
+        :meth:`_socket_debug_mode`.
+        """
+        return self.socket_path.with_suffix(".sock.plain")
+
     def _record_debug_mode(self) -> None:
-        """Write or remove the debug marker to match current ``self.debug``."""
-        if self.debug:
-            self._debug_marker.touch()
-        else:
+        """Record which verbosity this socket was created with."""
+        keep, drop = (
+            (self._debug_marker, self._plain_marker) if self.debug
+            else (self._plain_marker, self._debug_marker)
+        )
+        try:
+            keep.touch()
+        except OSError:  # a marker we cannot write is not worth failing over
+            pass
+        try:
+            drop.unlink()
+        except (FileNotFoundError, OSError):
+            pass
+
+    def _clear_debug_markers(self) -> None:
+        """Remove both sidecars (the socket they describe is gone)."""
+        for marker in (self._debug_marker, self._plain_marker):
             try:
-                self._debug_marker.unlink()
-            except FileNotFoundError:
+                marker.unlink()
+            except (FileNotFoundError, OSError):
                 pass
 
-    def _debug_mode_mismatch(self) -> bool:
-        """True if the live socket was created with a different debug setting.
+    def _socket_debug_mode(self) -> Optional[bool]:
+        """Was the live socket created with ``-vvv``?  ``None`` if unknowable.
 
-        Handles legacy sockets (created before the marker feature) by
-        probing the socket for debug output.  A socket started with
-        ``-vvv`` emits ``debug1:`` lines on stderr even for a simple
-        ``true`` command.
+        Answered from the sidecars, which :meth:`_record_debug_mode` writes
+        for BOTH states, so an ordinary socket answers from a ``stat`` and
+        costs nothing.
+
+        Only a socket from before the sidecars existed needs the remote
+        probe below, and its answer is *recorded*, so a legacy socket pays
+        once in its life rather than once per command.  It used to pay
+        every time: the old encoding was "marker present == debug", which
+        made the normal non-debug case indistinguishable from a legacy one,
+        so every ``ensure()`` opened a session to run ``true`` and look for
+        ``debug1:`` on its stderr.  At ~8s per session open that was the
+        single largest fixed cost in any remote command, and on a
+        ``MaxSessions 1`` host it also spent the only session slot.
+
+        An unanswered probe records nothing and returns ``None``: the
+        caller must not tear down a working master over a guess.
         """
-        marker_exists = self._debug_marker.exists()
-        if marker_exists != self.debug:
+        if self._debug_marker.exists():
             return True
-        # If no marker and not requesting debug, probe for legacy
-        # debug sockets (created before the marker feature existed).
-        # BatchMode=yes prevents the probe from blocking on /dev/tty if
-        # the socket is somehow unattachable.
-        if not self.debug and not marker_exists and self.socket_path.exists():
-            try:
+        if self._plain_marker.exists():
+            return False
+        if not self.socket_path.exists():
+            return None
+        # Legacy socket: ask it once.  A socket started with ``-vvv`` emits
+        # ``debug1:`` lines on stderr even for a bare ``true``.  BatchMode
+        # keeps an unattachable socket from blocking on /dev/tty.
+        try:
+            with session_lock(self.socket_path):
                 result = subprocess.run(
                     [
                         "ssh",
@@ -484,13 +647,28 @@ class SshControl:
                     stdin=subprocess.DEVNULL,
                     text=True,
                     check=False,
-                    timeout=10,
+                    timeout=_LIVENESS_PROBE_TIMEOUT,
                 )
-                if "debug1:" in (result.stderr or ""):
-                    return True
-            except subprocess.TimeoutExpired:
-                pass
-        return False
+        except subprocess.TimeoutExpired:
+            return None
+        if result.returncode != 0:
+            # Busy or broken; either way the stderr is not evidence about
+            # verbosity.  Record nothing and try again another time.
+            return None
+        found = "debug1:" in (result.stderr or "")
+        marker = self._debug_marker if found else self._plain_marker
+        try:
+            marker.touch()
+        except OSError:
+            pass
+        return found
+
+    def _debug_mode_mismatch(self) -> bool:
+        """True if the live socket was created with a different ``debug``."""
+        socket_debug = self._socket_debug_mode()
+        if socket_debug is None:
+            return False
+        return socket_debug != self.debug
 
     def ensure(self, logger: logging.Logger) -> None:
         """Ensure the ControlMaster is active, re-establishing if needed.
@@ -521,7 +699,9 @@ class SshControl:
         # We no longer own a live master; future is_active() calls must run
         # the full end-to-end probe rather than trusting the structural check.
         self._established_this_session = False
+        self._forget_verified()
         if not self.socket_path.exists():
+            self._clear_debug_markers()
             return
         subprocess.run(
             [
@@ -535,11 +715,7 @@ class SshControl:
             text=True,
             check=False,
         )
-        # Clean up the debug marker.
-        try:
-            self._debug_marker.unlink()
-        except FileNotFoundError:
-            pass
+        self._clear_debug_markers()
         logger.debug("ControlMaster to %s closed", self.gateway)
 
     def ssh_options(self, *, with_fallback: bool = False) -> List[str]:
@@ -559,6 +735,16 @@ class SshControl:
         re-auth); otherwise it emits a plain ``ProxyJump``.  This mirrors
         :meth:`establish`'s jump handling so one-off commands survive a
         wedged mux without trying to resolve a jump-only hostname locally.
+
+        For the *gateway itself* there is no jump to route through, and
+        that fallback used to dial out with no identity options at all:
+        ssh then offered every key the agent holds and the gateway
+        answered ``Too many authentication failures`` (observed
+        2026-09-20, on the refusal a concurrent sweep provoked).  Give it
+        the same certificate :meth:`establish` presents, so a fallback
+        authenticates the way the master did instead of hammering the
+        host --- which, with fail2ban in front of it, is worse than the
+        failure it was papering over.
         """
         opts = [
             "-o", "ControlMaster=auto",
@@ -566,16 +752,18 @@ class SshControl:
         ]
         if self.user:
             opts.extend(["-o", f"User={self.user}"])
-        if with_fallback and self.jump_host:
-            if self.jump_control is not None:
+        if with_fallback:
+            if self.jump_host and self.jump_control is not None:
                 opts.extend([
                     "-o",
                     "ProxyCommand=ssh -o ControlMaster=auto "
                     f"-o ControlPath={self.jump_control.socket_path} "
                     f"-W %h:%p {self._format_host(self.jump_host)}",
                 ])
-            else:
+            elif self.jump_host:
                 opts.extend(["-o", f"ProxyJump={self._format_host(self.jump_host)}"])
+            else:
+                opts.extend(self._identity_options())
         return opts
 
 

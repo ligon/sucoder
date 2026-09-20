@@ -3642,3 +3642,332 @@ def test_no_login_nodes_flag_skips_the_sweep_without_claiming_absence(monkeypatc
     ctx = SimpleNamespace(obj={"config": config}, params={})
     cli.sessions(ctx, fast=False, login_nodes=False, verbose=False)
     assert touched == []          # nothing was asked of any login node
+
+
+# ---------------------------------------------------------------------------
+# One session channel at a time (BRC sshd sets MaxSessions 1)
+# ---------------------------------------------------------------------------
+
+
+def test_a_refused_session_is_retried_not_reconnected(monkeypatch):
+    """``Session open refused by peer`` means the master's one session slot
+    is taken --- by another thread, another sucoder, an attached agent.  It
+    used to fall through to `_capture_over_tunnel`'s reconnect: minutes of
+    backoff, possibly an OTP, to recover from a busy signal that clears in
+    under a second."""
+    results = [
+        SimpleNamespace(
+            returncode=255, stdout="",
+            stderr="mux_client_request_session: session request failed: "
+                   "Session open refused by peer",
+        ),
+        SimpleNamespace(returncode=0, stdout="ok", stderr=""),
+    ]
+    attempts = []
+
+    def _fake_run(cmd, **kwargs):
+        attempts.append(list(cmd))
+        return results.pop(0)
+
+    monkeypatch.setattr(cli.subprocess, "run", _fake_run)
+
+    class _Ctl:
+        socket_path = "/run/user/x/gw.sock"
+
+        def ssh_options(self, **kw):
+            return []
+
+    out = cli._run_remote_capture(
+        _Ctl(), "hpc.brc", "squeue --me", sleep=lambda *_: None,
+    )
+    assert out.returncode == 0 and out.stdout == "ok"
+    assert len(attempts) == 2, "a busy master must simply be asked again"
+
+
+def test_a_busy_master_eventually_gives_up_and_reports(monkeypatch):
+    """The retry is bounded: a slot held for minutes is the caller's problem
+    to report, not a loop's to sit in."""
+    busy = SimpleNamespace(
+        returncode=255, stdout="", stderr="Session open refused by peer",
+    )
+    attempts = []
+    monkeypatch.setattr(
+        cli.subprocess, "run",
+        lambda cmd, **kw: (attempts.append(1), busy)[1],
+    )
+
+    class _Ctl:
+        socket_path = "/run/user/x/gw.sock"
+
+        def ssh_options(self, **kw):
+            return []
+
+    out = cli._run_remote_capture(
+        _Ctl(), "hpc.brc", "squeue --me", sleep=lambda *_: None,
+    )
+    assert out.returncode == 255
+    assert len(attempts) == cli._BUSY_RETRY_ATTEMPTS
+
+
+def test_two_commands_on_one_socket_do_not_overlap(monkeypatch):
+    """The fan-out must never send a host two session requests at once: the
+    second is refused, not queued."""
+    import threading
+    import time as _time
+
+    live = []
+    overlapped = []
+
+    def _fake_run(cmd, **kwargs):
+        live.append(1)
+        if len(live) > 1:
+            overlapped.append(True)
+        _time.sleep(0.05)
+        live.pop()
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(cli.subprocess, "run", _fake_run)
+
+    class _Ctl:
+        socket_path = "/run/user/x/shared.sock"
+
+        def ssh_options(self, **kw):
+            return []
+
+    control = _Ctl()
+    threads = [
+        threading.Thread(
+            target=cli._run_remote_capture, args=(control, "hpc.brc", "true"),
+        )
+        for _ in range(4)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert not overlapped, "two session requests were in flight on one master"
+
+
+# ---------------------------------------------------------------------------
+# `sessions`: ask a host once, and ask the cheaper host
+# ---------------------------------------------------------------------------
+
+
+class _SessionsHarness:
+    """Config for a cluster whose gateway is also swept for tmux sessions."""
+
+    class _Slurm:
+        confined = True
+        partition = account = qos = None
+
+    class _Remote:
+        mirror_root = "~/mirrors"
+        host = None
+
+        def __init__(self, gateway, slurm):
+            self.gateway = gateway
+            self.slurm = slurm
+
+        def ssh_control_kwargs(self):
+            return {}
+
+    def __init__(self):
+        self.config = SimpleNamespace(
+            targets={
+                "savio": self._Remote("hpc.brc", self._Slurm()),
+                "savio-login": self._Remote("hpc.brc", None),
+            },
+            mirrors={},
+            log_dir=None,
+        )
+
+
+def _install_sessions_fakes(monkeypatch, *, pinned=None):
+    import logging as _logging
+
+    from sucoder.session import RemoteSession
+
+    monkeypatch.setattr(cli, "setup_logger", lambda *a, **k: _logging.getLogger("t"))
+    # Nothing in these tests may reach the wire, including on the paths a
+    # regression would take.
+    monkeypatch.setattr(cli, "_connect_with_retry", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        RemoteSession, "login_nodes_for_target",
+        staticmethod(lambda name: dict(pinned or {})),
+    )
+    monkeypatch.setattr(RemoteSession, "recorded_jobs", staticmethod(lambda: {}))
+    monkeypatch.setattr(
+        RemoteSession, "holders_of_job", staticmethod(lambda job_id: []),
+    )
+
+
+def test_sessions_asks_a_shared_host_one_question(monkeypatch, capsys):
+    """The gateway is both the cluster's scheduler host and a login host
+    worth sweeping.  Asked separately, the two requests collide on a
+    ``MaxSessions 1`` master and one is refused --- which then costs a
+    serial reconnect and a re-query.  Fused, it is one round trip."""
+    from sucoder.sessions_report import FUSED_SECTION_MARKER
+
+    harness = _SessionsHarness()
+    _install_sessions_fakes(monkeypatch)
+
+    asked = []
+
+    def _fake_cluster(control, host, command, **kw):
+        asked.append((host, command))
+        return SimpleNamespace(
+            returncode=0,
+            stdout=f"{FUSED_SECTION_MARKER}\nsucoder-mirror\tclaude\n",
+            stderr="",
+        )
+
+    swept = []
+
+    def _fake_sweep(control, host, command, **kw):
+        swept.append(host)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(cli, "_capture_over_tunnel", _fake_cluster)
+    monkeypatch.setattr(cli, "_run_remote_capture", _fake_sweep)
+
+    ctx = SimpleNamespace(obj={"config": harness.config}, params={})
+    cli.sessions(ctx, fast=False, login_nodes=True, verbose=False)
+
+    assert len(asked) == 1, f"the shared host was asked twice: {asked!r}"
+    host, command = asked[0]
+    assert host == "hpc.brc"
+    assert "squeue" in command and "tmux list-sessions" in command
+    assert swept == [], f"swept a host the cluster query already covered: {swept!r}"
+    # And the fused half was actually read back into the report.
+    assert "sucoder-mirror" in capsys.readouterr().out
+
+
+def test_sessions_reasks_a_host_whose_fused_answer_never_arrived(monkeypatch):
+    """No marker means the remote shell (or the transport) died before the
+    sweep ran.  Unanswered is not the same as "no sessions there", so the
+    host goes back on the ordinary ask-again path."""
+    harness = _SessionsHarness()
+    _install_sessions_fakes(monkeypatch)
+
+    monkeypatch.setattr(
+        cli, "_capture_over_tunnel",
+        lambda control, host, command, **kw: SimpleNamespace(
+            returncode=0, stdout="", stderr="",     # squeue answered; no marker
+        ),
+    )
+    reasked = []
+
+    def _fake_capture(control, host, command, **kw):
+        reasked.append(host)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(cli, "_run_remote_capture", _fake_capture)
+
+    ctx = SimpleNamespace(obj={"config": harness.config}, params={})
+    cli.sessions(ctx, fast=False, login_nodes=True, verbose=False)
+    assert "hpc.brc" in reasked, "an unanswered sweep was recorded as an absence"
+
+
+def test_sessions_queries_a_pinned_login_node_not_the_gateway(monkeypatch):
+    """Both answer squeue identically --- one Slurm, one $HOME --- but a
+    session open costs ~8s on this gateway against ~4.5s on a login node,
+    and the gateway is the hop every jumped connection already contends
+    for."""
+    harness = _SessionsHarness()
+    _install_sessions_fakes(monkeypatch, pinned={"SuCoder": "ln002.brc"})
+
+    asked = []
+    monkeypatch.setattr(
+        cli, "_capture_over_tunnel",
+        lambda control, host, command, **kw: (
+            asked.append(host),
+            SimpleNamespace(returncode=0, stdout="", stderr=""),
+        )[1],
+    )
+    monkeypatch.setattr(
+        cli, "_run_remote_capture",
+        lambda control, host, command, **kw: SimpleNamespace(
+            returncode=0, stdout="", stderr="",
+        ),
+    )
+
+    ctx = SimpleNamespace(obj={"config": harness.config}, params={})
+    cli.sessions(ctx, fast=True, login_nodes=True, verbose=False)
+    assert asked and asked[0] == "ln002.brc", asked
+
+
+def test_a_retired_login_node_falls_back_to_the_gateway(monkeypatch):
+    """A pinned node can be retired.  The gateway always resolves, so the
+    cluster is not lost over it --- and the fallback is asked plainly,
+    because a fused answer would belong to the wrong host."""
+    harness = _SessionsHarness()
+    _install_sessions_fakes(monkeypatch, pinned={"SuCoder": "ln002.brc"})
+
+    asked = []
+
+    def _fake_cluster(control, host, command, **kw):
+        asked.append((host, command))
+        if host == "ln002.brc":
+            return SimpleNamespace(
+                returncode=255, stdout="",
+                stderr="ssh: Could not resolve hostname ln002.brc",
+            )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(cli, "_capture_over_tunnel", _fake_cluster)
+    monkeypatch.setattr(
+        cli, "_run_remote_capture",
+        lambda control, host, command, **kw: SimpleNamespace(
+            returncode=0, stdout="", stderr="",
+        ),
+    )
+
+    ctx = SimpleNamespace(obj={"config": harness.config}, params={})
+    cli.sessions(ctx, fast=True, login_nodes=True, verbose=False)
+    assert [host for host, _ in asked] == ["ln002.brc", "hpc.brc"], asked
+    assert "tmux list-sessions" not in asked[1][1], (
+        "the gateway fallback must not carry the pinned node's sweep"
+    )
+
+
+def test_the_pane_probe_reuses_the_scheduler_query_s_connection(monkeypatch):
+    """It used to open its own session to the gateway, which on a
+    ``MaxSessions 1`` master is both a second ~8s round trip and a candidate
+    for a refusal."""
+    import logging as _logging
+
+    from sucoder.sessions_report import JobRow, Report, SessionEntry, TargetGroup
+
+    job = JobRow(job_id=1, name="sucoder-m", partition="p", account="a",
+                 qos="q", state="RUNNING", time_left="1:00", node="n1")
+    report = Report(groups=[
+        TargetGroup(name="savio", signature="sig", entries=[
+            SessionEntry(job=job, mirror="SuCoder", target="savio"),
+        ]),
+    ])
+
+    class _Slurm:
+        confined = True
+
+    class _Remote:
+        slurm = _Slurm()
+        mirror_root = "~/mirrors"
+        gateway = "hpc.brc"
+
+        def ssh_control_kwargs(self):
+            return {}
+
+    config = SimpleNamespace(targets={"savio": _Remote()})
+    sentinel = object()
+    asked = []
+
+    def _fake_capture(control, host, command, **kw):
+        asked.append((host, control))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(cli, "_capture_over_tunnel", _fake_capture)
+    cli._probe_session_panes(
+        report, config, {"hpc.brc": ["savio"]}, _logging.getLogger("t"), False,
+        hosts={"hpc.brc": ("ln002.brc", sentinel)},
+    )
+    assert asked == [("ln002.brc", sentinel)], asked

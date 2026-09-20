@@ -116,6 +116,45 @@ LOGIN_SESSION_PANES_SH = (
 )
 
 
+# Two scripts, one session.
+#
+# A gateway is both "the cluster's scheduler host" and "a login host worth
+# sweeping for tmux sessions", so the listing asked it two questions -- and
+# on a ``MaxSessions 1`` master the second request is refused outright,
+# which then costs a serial reconnect and a re-query.  Ask once instead:
+# the answers are separated by a marker no shell output of ours contains.
+#
+# The FIRST script's exit status is what survives, because that is the
+# scheduler query whose failure the caller must report; the sweep is
+# advisory and ends in ``|| true`` anyway.
+FUSED_SECTION_MARKER = "===sucoder-section==="
+
+
+def fuse_scripts(first: str, second: str) -> str:
+    """Return one remote script running *first* then *second*, in that order."""
+    return (
+        f"{first}\n"
+        "__sucoder_rc=$?\n"
+        f"printf '%s\\n' {shlex.quote(FUSED_SECTION_MARKER)}\n"
+        f"{second}\n"
+        "exit $__sucoder_rc\n"
+    )
+
+
+def split_fused(text: str) -> Tuple[str, Optional[str]]:
+    """Split fused output into its two halves.
+
+    The second half is ``None`` when the marker never printed -- the remote
+    shell died before reaching it, or the transport did.  ``None`` means
+    *unanswered*, and the caller must ask that host again rather than
+    record an absence the query never established.
+    """
+    head, sep, tail = text.partition(FUSED_SECTION_MARKER)
+    if not sep:
+        return text, None
+    return head, tail.lstrip("\n")
+
+
 @dataclass(frozen=True)
 class LoginSession:
     """A SuCoder tmux session found on a login (or direct-SSH) host.

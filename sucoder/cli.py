@@ -5,6 +5,7 @@ from __future__ import annotations
 import getpass
 import hashlib
 import json
+import logging
 import os
 import re
 import shlex
@@ -47,7 +48,9 @@ from .config import (
     load_config,
 )
 from .executor import CommandError, CommandExecutor
-from .logging_utils import setup_logger
+from .logging_utils import (
+    progress, set_progress, setup_logger, summarize_command,
+)
 from .local_tier import work_path
 from .slurm_timer import TIME_LEFT_TO_MINS_SH, build_timer_script, timer_identity
 from .tool_preflight import format_report
@@ -460,6 +463,11 @@ def _build_executor(
         from .session import RemoteSession
         from .tunnel import SshControl, TunnelError
 
+        # From here on every command costs a round trip of several seconds,
+        # and a launch makes a dozen of them with nothing on screen in
+        # between.  Announce each one (stderr, so nothing that reads our
+        # stdout is disturbed).
+        set_progress(True)
         remote = mirror_settings.remote
 
         # Resolve the target name for session scoping.  Prefer the
@@ -3024,8 +3032,22 @@ def release(
         typer.echo(result.stderr.strip(), err=True)
 
 
+# Every remote round trip this module makes is timed into this logger, so a
+# slow command leaves a record of *which* trip was slow (the file log always
+# has it; -v puts it on the console).  It is wired up by ``setup_logger``.
+_LOG = logging.getLogger("sucoder.remote")
+
+# A refused session is a busy signal, not a broken tunnel: wait briefly and
+# ask again.  Three tries over ~2.2s -- a session that is merely occupied
+# frees up well inside that, and anything longer belongs to the caller's own
+# retry, not to a loop that holds the terminal.
+_BUSY_RETRY_ATTEMPTS = 3
+_BUSY_RETRY_DELAY = 0.5
+
+
 def _run_remote_capture(
-    control, host: str, command: str, *, debug: bool = False, timeout: int = 30
+    control, host: str, command: str, *, debug: bool = False, timeout: int = 30,
+    sleep=time.sleep,
 ) -> subprocess.CompletedProcess:
     """Run *command* on *host* over an established ControlMaster socket.
 
@@ -3044,8 +3066,11 @@ def _run_remote_capture(
     return-code handling covers it.
 
     Returns the :class:`subprocess.CompletedProcess` (``check=False``);
-    the caller decides what a non-zero exit means.
+    the caller decides what a non-zero exit means.  ``sleep`` is injectable
+    for tests.
     """
+    from .tunnel import is_session_busy_error, session_lock
+
     ssh_cmd = ["ssh"]
     if debug:
         ssh_cmd.append("-v")
@@ -3060,21 +3085,52 @@ def _run_remote_capture(
         *control.ssh_options(with_fallback=True),
         "-o", "BatchMode=yes", host, command,
     ]
-    try:
-        return subprocess.run(
-            ssh_cmd, capture_output=True, text=True, check=False, timeout=timeout
-        )
-    except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout or ""
-        if isinstance(stdout, bytes):
-            stdout = stdout.decode("utf-8", "replace")
-        return subprocess.CompletedProcess(
-            ssh_cmd,
-            124,
-            stdout=stdout,
-            stderr=f"timed out after {timeout}s (wedged tunnel?)",
-        )
 
+    def _once() -> subprocess.CompletedProcess:
+        progress(host, command)
+        started = time.monotonic()
+        try:
+            result = subprocess.run(
+                ssh_cmd, capture_output=True, text=True, check=False,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            stdout = exc.stdout or ""
+            if isinstance(stdout, bytes):
+                stdout = stdout.decode("utf-8", "replace")
+            result = subprocess.CompletedProcess(
+                ssh_cmd,
+                124,
+                stdout=stdout,
+                stderr=f"timed out after {timeout}s (wedged tunnel?)",
+            )
+        _LOG.debug(
+            "%s: %s -> exit %s in %.1fs",
+            host, summarize_command(command), result.returncode,
+            time.monotonic() - started,
+        )
+        return result
+
+    # One session channel at a time per master (``MaxSessions 1``), and a
+    # refusal means the slot is taken, not that the tunnel is broken: wait
+    # for the holder and ask again.  The lock covers this process; the retry
+    # covers everyone else -- another sucoder, an attached agent, the renew
+    # loop.  Without it a refusal fell through to `_capture_over_tunnel`'s
+    # reconnect, i.e. minutes of backoff and possibly an OTP, to recover
+    # from a busy signal that clears in under a second.
+    lock = session_lock(getattr(control, "socket_path", host))
+    for attempt in range(1, _BUSY_RETRY_ATTEMPTS + 1):
+        with lock:
+            result = _once()
+        if (attempt == _BUSY_RETRY_ATTEMPTS
+                or not is_session_busy_error(result.stderr or "")):
+            return result
+        _LOG.debug(
+            "%s: master busy, retrying in %.1fs (attempt %d/%d)",
+            host, _BUSY_RETRY_DELAY * attempt, attempt, _BUSY_RETRY_ATTEMPTS,
+        )
+        sleep(_BUSY_RETRY_DELAY * attempt)
+    return result
 
 # ssh's own "the transport failed" exit code, plus the synthetic one
 # _run_remote_capture returns for a wedged tunnel.  Anything else is the
@@ -3410,10 +3466,9 @@ def sessions(
     """
     from .session import RemoteSession
     from .sessions_report import (
-        SQUEUE_FORMAT, build_report, group_targets_by_cluster, parse_squeue,
-        render_report,
+        LOGIN_SESSION_PANES_SH, SQUEUE_FORMAT, build_report, fuse_scripts,
+        group_targets_by_cluster, parse_squeue, render_report, split_fused,
     )  # noqa: F401 -- PANE_PROBE_SH is imported by the probe helper
-    from .tunnel import SshControl
 
     config = _get_config(ctx)
     if not config.targets:
@@ -3422,6 +3477,10 @@ def sessions(
 
     logger = setup_logger("sucoder.sessions", config.log_dir, verbose)
     debug_ssh = _get_debug_ssh(ctx)
+    # Every round trip announces itself: this listing is minutes of waiting
+    # on ~8s session opens, and silence for that long is indistinguishable
+    # from a hang -- which is what it was reported as.
+    set_progress(True)
     clusters, schedulerless = group_targets_by_cluster(config.targets)
 
     mirror_tokens = {
@@ -3430,6 +3489,23 @@ def sessions(
     jobs_by_cluster: Dict[str, list] = {}
     errors: List[str] = []
     probed = not fast
+
+    # Where each cluster is queried, resolved before anything is asked: a
+    # host that answers BOTH the scheduler query and the login sweep must be
+    # asked once, with the two scripts fused, because its master carries one
+    # session at a time.
+    cluster_hosts: Dict[str, Tuple[str, Any]] = {}
+    for cluster, names in clusters.items():
+        remote = config.targets[names[0]]
+        try:
+            # Resolved inside the try: ssh_control_kwargs() reads a direct
+            # target's config through ``ssh -G`` and raises when that config
+            # is unusable, which is one more way this cluster is unreachable
+            # -- not a reason to discard the clusters already queried.
+            host = _cluster_query_host(names) or remote.gateway
+            cluster_hosts[cluster] = (host, _control_for_host(remote, host, debug_ssh))
+        except Exception as exc:  # noqa: BLE001 -- one cluster must not sink the rest
+            errors.append(f"{cluster}: could not connect ({exc})")
 
     # Ask the login nodes NOW, in the background, and read the answers at the
     # end.  A login-node session has no allocation, so nothing in this sweep
@@ -3442,32 +3518,59 @@ def sessions(
     if probed and login_nodes:
         login_plan = _start_login_probes(
             _plan_login_probes(config, schedulerless, debug_ssh), debug_ssh,
+            deferred_hosts={host for host, _ in cluster_hosts.values()},
         )
 
     for cluster, names in clusters.items():
+        if cluster not in cluster_hosts:
+            continue
         remote = config.targets[names[0]]
+        host, control = cluster_hosts[cluster]
+        squeue = f'squeue --me --noheader -o {shlex.quote(SQUEUE_FORMAT)}'
+        fused = login_plan is not None and host in (login_plan.deferred or {})
         try:
-            # Built inside the try: ssh_control_kwargs() resolves a direct
-            # target's config through ``ssh -G`` and raises when that config
-            # is unusable, which is one more way this cluster is unreachable
-            # -- not a reason to discard the clusters already queried.
-            control = SshControl(
-                gateway=remote.gateway, **remote.ssh_control_kwargs(),
-                debug=debug_ssh,
-            )
             result = _capture_over_tunnel(
-                control, remote.gateway,
-                f'squeue --me --noheader -o {shlex.quote(SQUEUE_FORMAT)}',
+                control, host,
+                fuse_scripts(squeue, LOGIN_SESSION_PANES_SH) if fused else squeue,
                 logger=logger, config=config, debug=debug_ssh,
             )
         except Exception as exc:  # noqa: BLE001 -- one cluster must not sink the rest
             errors.append(f"{cluster}: could not connect ({exc})")
             continue
+        stdout = result.stdout
+        if fused:
+            stdout, swept = split_fused(result.stdout)
+            # Unanswered stays unanswered: with no marker the sweep never
+            # ran, and the host goes back on the reconnect-and-ask path
+            # rather than being recorded as having no sessions.
+            if swept is not None:
+                login_plan.deferred[host] = subprocess.CompletedProcess(
+                    args=[], returncode=0, stdout=swept, stderr="",
+                )
+        if result.returncode != 0 and host != remote.gateway and _needs_tunnel_setup(result):
+            # The pinned login node is gone.  The gateway always resolves,
+            # so ask it instead rather than losing the whole cluster --- and
+            # plainly, because the sweep's half of a fused answer would
+            # belong to the wrong host.
+            logger.info(
+                "%s: %s did not answer; falling back to %s",
+                cluster, host, remote.gateway,
+            )
+            try:
+                result = _capture_over_tunnel(
+                    _control_for_host(remote, remote.gateway, debug_ssh),
+                    remote.gateway, squeue,
+                    logger=logger, config=config, debug=debug_ssh,
+                )
+                stdout = result.stdout
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{cluster}: could not connect ({exc})")
+                continue
         if result.returncode != 0:
-            detail = result.stderr.strip() or result.stdout.strip() or "(no output)"
+            detail = result.stderr.strip() or stdout.strip() or "(no output)"
             errors.append(f"{cluster}: squeue failed (exit {result.returncode}): {detail}")
             continue
-        jobs, bad = parse_squeue(result.stdout)
+        jobs, bad = parse_squeue(stdout)
         for line in bad:
             errors.append(f"{cluster}: could not parse squeue row: {line}")
         jobs_by_cluster[cluster] = jobs
@@ -3484,7 +3587,9 @@ def sessions(
     )
 
     if probed:
-        _probe_session_panes(report, config, clusters, logger, debug_ssh)
+        _probe_session_panes(
+            report, config, clusters, logger, debug_ssh, hosts=cluster_hosts,
+        )
     # Left as `login_probed = False`, which the renderer prints as "login-node
     # sessions not inspected".  Saying "no sessions" would be a claim the
     # sweep never made -- an unanswered probe is not evidence, and a session
@@ -3506,7 +3611,56 @@ class _LoginProbes(NamedTuple):
     probes: List[Tuple[str, str, Any]]        # (target name, host, control)
     errors: List[str]
     pool: Optional[ThreadPoolExecutor]
-    futures: List[Any]
+    futures: List[Any]                        # None where the host is deferred
+    # Hosts whose answer another query is collecting (see `fuse_scripts`):
+    # ``{host: CompletedProcess | None}``, filled in before the fold-in.
+    # ``None`` there means nobody answered for it after all, which puts the
+    # host back on the ordinary reconnect-and-ask path.
+    deferred: Optional[Dict[str, Any]] = None
+
+
+def _cluster_query_host(names) -> Optional[str]:
+    """A login node this cluster's sessions already pin, if any.
+
+    Prefer it over the gateway for the scheduler queries.  Both answer
+    ``squeue`` identically -- one Slurm, one ``$HOME`` -- but a session
+    open costs ~8s on the gateway against ~4.5s on a login node (measured
+    2026-09-20 over warm masters), and the gateway is the hop everything
+    else contends for, including the login sweep and every jumped
+    connection's ``-W`` channel.
+
+    A recorded node can be retired, so the caller falls back to the
+    gateway when it does not answer; the gateway always resolves.
+    Returns ``None`` when nothing is pinned.
+    """
+    from .session import RemoteSession
+
+    for name in names:
+        for node in RemoteSession.login_nodes_for_target(name).values():
+            if node:
+                return node
+    return None
+
+
+def _control_for_host(remote, host: str, debug_ssh: bool, gw_control=None):
+    """An :class:`SshControl` reaching *host* the way *remote* reaches it.
+
+    A host that is not the gateway is reached THROUGH the gateway: its
+    name resolves only inside, and its hop authenticates by publickey over
+    the gateway's mux rather than prompting for itself.
+    """
+    from .tunnel import SshControl
+
+    kwargs = remote.ssh_control_kwargs()
+    gateway = getattr(remote, "gateway", None)
+    if not gateway or host == gateway:
+        return SshControl(gateway=host, **kwargs, debug=debug_ssh)
+    if gw_control is None:
+        gw_control = SshControl(gateway=gateway, **kwargs, debug=debug_ssh)
+    return SshControl(
+        gateway=host, **kwargs, debug=debug_ssh,
+        jump_host=gateway, jump_control=gw_control,
+    )
 
 
 def _plan_login_probes(config, schedulerless, debug_ssh) -> _LoginProbes:
@@ -3562,7 +3716,9 @@ def _plan_login_probes(config, schedulerless, debug_ssh) -> _LoginProbes:
     return _LoginProbes(probes=probes, errors=errors, pool=None, futures=[])
 
 
-def _start_login_probes(plan: _LoginProbes, debug_ssh: bool) -> _LoginProbes:
+def _start_login_probes(
+    plan: _LoginProbes, debug_ssh: bool, *, deferred_hosts=frozenset(),
+) -> _LoginProbes:
     """Fan the warm queries out and return without waiting for them.
 
     Two independent savings, and they compose:
@@ -3581,20 +3737,35 @@ def _start_login_probes(plan: _LoginProbes, debug_ssh: bool) -> _LoginProbes:
     can block on a ``/dev/tty`` credential prompt while the caller is
     running its own -- and anything that does need authenticating is left
     to :func:`_finish_login_probes`, which does it serially.
+
+    *deferred_hosts* are hosts somebody else is already asking (the cluster
+    query, with the sweep's script fused onto it).  Sending them a second
+    request would be refused on a ``MaxSessions 1`` master -- the very
+    collision the fusing exists to avoid -- so they are left to the caller
+    to fill in through ``plan.deferred``.
     """
     from .sessions_report import LOGIN_SESSION_PANES_SH
 
     if not plan.probes:
         return plan
-    pool = ThreadPoolExecutor(max_workers=min(8, len(plan.probes)))
-    futures = [
-        pool.submit(
+    deferred = {
+        host: None for _, host, _ in plan.probes if host in deferred_hosts
+    }
+    submit = [
+        (index, host, control)
+        for index, (_, host, control) in enumerate(plan.probes)
+        if host not in deferred
+    ]
+    futures: List[Any] = [None] * len(plan.probes)
+    pool = (
+        ThreadPoolExecutor(max_workers=min(8, len(submit))) if submit else None
+    )
+    for index, host, control in submit:
+        futures[index] = pool.submit(
             _try_remote_capture, control, host, LOGIN_SESSION_PANES_SH,
             debug=debug_ssh, timeout=60,
         )
-        for _, host, control in plan.probes
-    ]
-    return plan._replace(pool=pool, futures=futures)
+    return plan._replace(pool=pool, futures=futures, deferred=deferred)
 
 
 def _open_login_gateways(pending, logger, config) -> None:
@@ -3696,8 +3867,12 @@ def _finish_login_probes(
     report.errors.extend(plan.errors)
     if not plan.probes:
         return
+    deferred = plan.deferred or {}
     try:
-        warm = [future.result() for future in plan.futures]
+        warm = [
+            deferred.get(host) if future is None else future.result()
+            for (_, host, _), future in zip(plan.probes, plan.futures)
+        ]
     finally:
         if plan.pool is not None:
             plan.pool.shutdown(wait=True)
@@ -3778,19 +3953,23 @@ def _remote_home_word(path: str) -> str:
     return shlex.quote(path)
 
 
-def _probe_session_panes(report, config, clusters, logger, debug_ssh) -> None:
+def _probe_session_panes(
+    report, config, clusters, logger, debug_ssh, hosts=None,
+) -> None:
     """Fill in each entry's ``pane`` with the command its tmux pane runs.
 
     One ssh per cluster, not one per job: the probe loops over the jobs
     inside a single remote shell, so a listing of N jobs costs one round
-    trip rather than N.  Every failure leaves ``pane`` as ``None``, which
+    trip rather than N.  *hosts* maps cluster -> ``(host, control)`` as the
+    caller already resolved it, so the probe reuses the connection the
+    scheduler query just warmed instead of opening a second one to the
+    gateway.  Every failure leaves ``pane`` as ``None``, which
     renders as ``-`` and is never reported as a dead agent -- an
     unanswered probe is not evidence, the same rule the scheduler queries
     follow.
     """
     from .mirror import confined_tmux_target
     from .sessions_report import PANE_PROBE_SH
-    from .tunnel import SshControl
 
     by_cluster: Dict[str, list] = {}
     for group in report.groups:
@@ -3818,6 +3997,7 @@ def _probe_session_panes(report, config, clusters, logger, debug_ssh) -> None:
             continue
         names = clusters[cluster]
         remote = config.targets[names[0]]
+        host, control = (hosts or {}).get(cluster, (None, None))
         lines = []
         for entry, confined, root in entries:
             mirror = entry.mirror or entry.job.token
@@ -3847,12 +4027,11 @@ def _probe_session_panes(report, config, clusters, logger, debug_ssh) -> None:
                     f"git -C {mirror_path} log -1 --format=%cr {ref} 2>/dev/null; echo"
                 )
         try:
-            control = SshControl(
-                gateway=remote.gateway, **remote.ssh_control_kwargs(),
-                debug=debug_ssh,
-            )
+            if control is None:
+                host = remote.gateway
+                control = _control_for_host(remote, host, debug_ssh)
             result = _capture_over_tunnel(
-                control, remote.gateway, "\n".join(lines), logger=logger,
+                control, host, "\n".join(lines), logger=logger,
                 config=config, debug=debug_ssh, timeout=90,
             )
         except Exception as exc:  # noqa: BLE001 -- probe is advisory
