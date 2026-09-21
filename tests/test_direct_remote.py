@@ -300,3 +300,19 @@ mirrors:
     assert "--node requires a cluster target." in result.output
     # The pin must not survive as stale session state for the next launch.
     assert not list((tmp_path / "sessions").glob("*")), "wrote session state before refusing"
+
+
+def test_direct_identity_failure_reports_ssh_diagnosis(monkeypatch):
+    """ssh's own stderr names the broken keyword; without it the user only
+    learns that *something* in ~/.ssh/config is unusable."""
+    import subprocess
+    def fail(*args, **kwargs):
+        raise subprocess.CalledProcessError(
+            255, 'ssh', stderr='vdollar_percent_expand: invalid format\n'
+                              'percent_dollar_expand: failed\n')
+    monkeypatch.setattr(subprocess, 'run', fail)
+    with pytest.raises(ConfigError) as exc:
+        direct().ssh_control_kwargs()
+    message = str(exc.value)
+    assert direct().host in message
+    assert 'vdollar_percent_expand: invalid format' in message

@@ -2251,3 +2251,242 @@ def _local_bootstrap_manager(tmp_path, monkeypatch):
     monkeypatch.setattr(manager, "_resolve_remote_path", lambda ctx: str(path))
     monkeypatch.setattr(manager, "_git_transports", lambda ctx: [("local-test", str(path), None)])
     return manager, manager.context_for("rproj"), path
+
+
+# ---------------------------------------------------------------------------
+# One session at a time, and one probe per connection
+# ---------------------------------------------------------------------------
+#
+# Measured on BRC 2026-09-20: sshd there sets ``MaxSessions 1``, so of N
+# simultaneous ``ssh <host> true`` over one warm master exactly one succeeds
+# and the rest are REFUSED -- whereupon ssh dials the host directly and can
+# earn "Too many authentication failures".  And a session open costs ~8s
+# before the command runs at all, so every probe that was not strictly
+# needed was ~8s of silence that users read as a hang.
+
+
+def _socket_control(monkeypatch, tmp_path, **kwargs):
+    """An SshControl whose socket exists, with no markers beside it."""
+    from sucoder.tunnel import SshControl
+
+    socket_file = tmp_path / "gw.sock"
+    socket_file.touch()
+    monkeypatch.setattr(
+        SshControl, "socket_path", property(lambda self: socket_file)
+    )
+    return SshControl(gateway="gw", **kwargs)
+
+
+class _Ok:
+    returncode = 0
+    stdout = ""
+    stderr = ""
+
+
+def test_a_verified_master_is_not_probed_again(monkeypatch, tmp_path) -> None:
+    """A command that reaches one host several times used to pay a full
+    session open for each liveness probe.  The socket answered once; that
+    verdict holds for the rest of the run."""
+    control = _socket_control(monkeypatch, tmp_path)
+    calls: list[list] = []
+
+    def _fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        return _Ok()
+
+    monkeypatch.setattr("sucoder.tunnel.subprocess.run", _fake_run)
+    assert control.is_active() is True
+    probes = [c for c in calls if "true" in c]
+    assert len(probes) == 1
+
+    calls.clear()
+    assert control.is_active() is True
+    assert not [c for c in calls if "true" in c], (
+        f"probed a master it had just verified: {calls!r}"
+    )
+
+
+def test_closing_a_master_forgets_the_verdict(monkeypatch, tmp_path) -> None:
+    """The socket is gone; nothing about the next one is known."""
+    import logging as _logging
+
+    control = _socket_control(monkeypatch, tmp_path)
+    monkeypatch.setattr("sucoder.tunnel.subprocess.run", lambda cmd, **kw: _Ok())
+    assert control.is_active() is True
+
+    control.close(_logging.getLogger("t"))
+
+    calls: list[list] = []
+
+    def _fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        return _Ok()
+
+    monkeypatch.setattr("sucoder.tunnel.subprocess.run", _fake_run)
+    assert control.is_active() is True
+    assert [c for c in calls if "true" in c], "a closed master must be re-proved"
+
+
+def test_a_busy_master_is_alive_not_expired(monkeypatch, tmp_path) -> None:
+    """``Session open refused by peer`` is the remote sshd answering that the
+    one session slot is taken --- only a working transport carries that back.
+    Reading it as a dead master is how a busy connection earned itself a full
+    re-authentication, which on this gateway can cost an OTP."""
+    control = _socket_control(monkeypatch, tmp_path)
+
+    class _Busy:
+        returncode = 255
+        stdout = ""
+        stderr = (
+            "mux_client_request_session: session request failed: "
+            "Session open refused by peer"
+        )
+
+    def _fake_run(cmd, **kwargs):
+        return _Ok() if "check" in cmd else _Busy()
+
+    monkeypatch.setattr("sucoder.tunnel.subprocess.run", _fake_run)
+    assert control.is_active(sleep=lambda *_: None) is True
+
+
+def test_session_lock_serialises_one_socket_and_not_two() -> None:
+    from sucoder.tunnel import session_lock
+
+    assert session_lock("/run/a.sock") is session_lock("/run/a.sock")
+    assert session_lock("/run/a.sock") is not session_lock("/run/b.sock")
+    # Reentrant: a probe nested inside a command path on the same host must
+    # not deadlock against itself.
+    lock = session_lock("/run/a.sock")
+    with lock:
+        assert lock.acquire(blocking=False)
+        lock.release()
+
+
+def test_the_end_to_end_probe_holds_the_session_lock(monkeypatch, tmp_path) -> None:
+    """Whoever is probing must not be probed over: the second request would
+    be refused, not queued."""
+    from sucoder.tunnel import session_lock
+
+    control = _socket_control(monkeypatch, tmp_path)
+    held: list[bool] = []
+
+    def _fake_run(cmd, **kwargs):
+        if "true" in cmd:
+            lock = session_lock(control.socket_path)
+            # Taken by this same thread (reentrant), so probe for the
+            # *observable* effect instead: a second thread cannot get in.
+            import threading
+            blocked = threading.Event()
+
+            def _try():
+                if not lock.acquire(timeout=0.05):
+                    blocked.set()
+
+            thread = threading.Thread(target=_try)
+            thread.start()
+            thread.join()
+            held.append(blocked.is_set())
+        return _Ok()
+
+    monkeypatch.setattr("sucoder.tunnel.subprocess.run", _fake_run)
+    control.is_active()
+    assert held == [True], "the probe ran without holding the session lock"
+
+
+# -- the legacy-debug probe, which used to run on every single call ---------
+
+
+def test_a_marked_socket_needs_no_remote_probe(monkeypatch, tmp_path) -> None:
+    """The regression that cost ~8s per host per command: with only a
+    "debug" marker, "no marker" meant BOTH "created without -vvv" (the normal
+    case) and "created before markers existed", so every ensure() opened a
+    session to tell them apart."""
+    control = _socket_control(monkeypatch, tmp_path)
+    control._record_debug_mode()          # as establish() does
+
+    calls: list[list] = []
+    monkeypatch.setattr(
+        "sucoder.tunnel.subprocess.run",
+        lambda cmd, **kw: (calls.append(list(cmd)), _Ok())[1],
+    )
+    assert control._debug_mode_mismatch() is False
+    assert calls == [], f"probed a socket whose mode was already recorded: {calls!r}"
+
+
+def test_a_legacy_socket_is_probed_once_and_remembered(monkeypatch, tmp_path) -> None:
+    control = _socket_control(monkeypatch, tmp_path)
+    calls: list[list] = []
+    monkeypatch.setattr(
+        "sucoder.tunnel.subprocess.run",
+        lambda cmd, **kw: (calls.append(list(cmd)), _Ok())[1],
+    )
+    assert control._debug_mode_mismatch() is False
+    assert len(calls) == 1, "the legacy socket should have been asked once"
+
+    calls.clear()
+    assert control._debug_mode_mismatch() is False
+    assert calls == [], "the answer was not recorded; it asked again"
+
+
+def test_an_unanswered_probe_records_nothing(monkeypatch, tmp_path) -> None:
+    """A refusal says nothing about verbosity, and a guess would tear down a
+    working master."""
+    control = _socket_control(monkeypatch, tmp_path)
+
+    class _Busy:
+        returncode = 255
+        stdout = ""
+        stderr = "Session open refused by peer"
+
+    monkeypatch.setattr("sucoder.tunnel.subprocess.run", lambda cmd, **kw: _Busy())
+    assert control._debug_mode_mismatch() is False
+    assert not control._debug_marker.exists()
+    assert not control._plain_marker.exists()
+
+
+def test_a_debug_socket_is_a_mismatch_for_a_plain_run(monkeypatch, tmp_path) -> None:
+    control = _socket_control(monkeypatch, tmp_path, debug=True)
+    control._record_debug_mode()
+    assert control._debug_mode_mismatch() is False
+
+    plain = _socket_control(monkeypatch, tmp_path)   # same socket, debug=False
+    monkeypatch.setattr(
+        "sucoder.tunnel.subprocess.run",
+        lambda cmd, **kw: (_ for _ in ()).throw(
+            AssertionError("asked a marked socket"),
+        ),
+    )
+    assert plain._debug_mode_mismatch() is True
+
+
+# -- a refused session must not become an unauthenticated direct dial -------
+
+
+def test_gateway_fallback_presents_the_certificate(tmp_path) -> None:
+    """When the mux refuses a session, ssh dials the host directly.  For a
+    jumped host that is routed through the gateway; for the gateway ITSELF
+    there is nothing to route through, and the dial used to offer every key
+    the agent holds --- which is how "Too many authentication failures"
+    turned up on a gateway that also runs fail2ban."""
+    from sucoder.tunnel import SshControl
+
+    cert = tmp_path / "brc_cert"
+    control = SshControl(gateway="hpc.brc.berkeley.edu", cert_file=str(cert))
+    opts = control.ssh_options(with_fallback=True)
+    assert f"IdentityFile={cert}" in opts
+    assert f"CertificateFile={cert}-cert.pub" in opts
+    assert "IdentitiesOnly=yes" in opts
+
+
+def test_a_jumped_host_is_not_given_the_gateway_certificate(tmp_path) -> None:
+    """Login, DTN and compute hops authenticate by publickey through the
+    gateway's mux; forcing IdentitiesOnly + the gateway cert breaks them."""
+    from sucoder.tunnel import SshControl
+
+    cert = tmp_path / "brc_cert"
+    control = SshControl(
+        gateway="ln003.brc", jump_host="hpc.brc.berkeley.edu", cert_file=str(cert),
+    )
+    opts = control.ssh_options(with_fallback=True)
+    assert "IdentitiesOnly=yes" not in opts
+    assert any(o.startswith("ProxyJump=") for o in opts)

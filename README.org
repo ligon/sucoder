@@ -724,8 +724,9 @@ clusters, with its state, time left, node, and what the tmux session is
 actually running.  It needs no =-T=: it reports on everything.
 
 #+begin_src shell
-sucoder sessions          # probe each job's tmux pane (a few seconds)
-sucoder sessions --fast   # skip the probe; job ids and clocks only
+sucoder sessions                    # probe each job's tmux pane (a few seconds)
+sucoder sessions --fast             # skip the probe; job ids and clocks only
+sucoder sessions --no-login-nodes   # skip the login-node sweep only
 #+end_src
 
 #+begin_example
@@ -743,8 +744,14 @@ stale session records (the job is gone; the record is not):
 
 Targets sharing a gateway share a =$HOME= and a scheduler, so they are
 queried once between them and sorted out afterwards by
-partition/account/qos.  The listing is enumerated from =squeue=, not
-from the session records under =~/.sucoder/sessions/=: those hold one
+partition/account/qos.  That one query runs on a login node the session
+records already pin when there is one, falling back to the gateway ---
+both answer =squeue= identically, and the login node is the cheaper and
+less contended hop (see [[*What a remote command costs][What a remote command costs]]).  When the same host
+also has to be swept for tmux sessions, both questions travel in one
+script, because that master carries one session at a time.  The listing
+is enumerated from =squeue=, not from the session records under
+=~/.sucoder/sessions/=: those hold one
 job id per (mirror, target), so a record-driven listing would show
 exactly the jobs that are /not/ the problem.  Two flags matter:
 
@@ -795,7 +802,18 @@ on its class (condo and FCA accounts land on different nodes), so the
 probe asks each node the session records pin *by name* as well as the
 gateway itself; reconnecting to the gateway alone could never see them
 all.  =--fast= skips this too, and says =not inspected= rather than
-implying absence.
+implying absence; =--no-login-nodes= skips *only* this sweep, keeping the
+per-job pane probe.
+
+The nodes are asked concurrently, so the wall clock is the slowest node
+rather than the sum --- and the sweep is started before the =squeue=
+queries rather than after them, since a login-node session has no
+allocation and so nothing in it depends on the scheduler.  On a cold
+start (no live ControlMasters --- after minting a certificate, say) the
+gateway is authenticated first and alone, because it is the only hop that
+can prompt, and because several connections racing to authenticate the
+same gateway earns =Too many authentication failures= from =sshd=; the
+nodes behind it are then brought up together.
 
 The =! agent exited= check is why the probe exists, and why it is on by
 default: it reads the pane's child process, not
@@ -1091,6 +1109,48 @@ for the design and the open cgroup-confinement caveat.
 - *Debug mode changes* --- switching =--debug-ssh= on or off
   automatically cycles the ControlMaster socket so the new setting
   takes effect.
+- *Busy masters* --- a =Session open refused by peer= is a /busy/
+  signal, not a dead connection (see below); it is waited out and
+  retried, never re-authenticated.
+
+*** What a remote command costs
+
+Two site facts shape every remote command, and both were measured on
+=hpc.brc.berkeley.edu= (2026-09-20):
+
+1. *A session open costs ~8s*, over an already-warm ControlMaster,
+   before the remote command runs at all --- ~4.5s on a login node, and
+   the same for an =sftp= subsystem open, so it is the session setup
+   itself and not your login shell.  Multiplexing saves the
+   /authentication/, not the time.
+2. *A ControlMaster carries one session channel at a time*
+   (=MaxSessions 1=).  A second simultaneous command on the same host is
+   not queued but *refused*, and on a refusal =ssh= falls back to dialling
+   the host directly --- a fresh authentication, which on this gateway can
+   earn =Too many authentication failures=.  Port-forward channels are
+   exempt, which is why reaching several hosts /through/ one gateway
+   concurrently is fine while running two commands /on/ it is not.
+
+So: connections are verified once per run rather than once per command;
+hosts are asked one question at a time, with the answers to two
+questions fused into one script where they share a host; a refusal is
+waited out rather than reconnected; and a command that can run on a
+login node does, because that hop is cheaper and is not the one every
+jumped connection already contends for.
+
+Because the waiting is unavoidable, it is at least visible: every remote
+round trip announces itself on *stderr* before it is made, naming the
+host and what it is about to run.
+
+#+begin_example
+· ln001.brc  squeue --me --noheader -o '%i|%j|%P|%a|%q|%T|%L|%N'
+· hpc.brc.berkeley.edu  tmux list-sessions -F "#{session_name}" 2>/dev/null ...
+#+end_example
+
+Durations go to the log (=~/.sucoder/logs/=), and =-v= puts them on the
+console along with the connection machinery's own reasoning --- which
+probe timed out, why a master was declared dead, whether a refusal was
+read as busy.
 
 ** Human: Review and Integrate Agent Work
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import getpass
 import hashlib
 import json
+import logging
 import os
 import re
 import shlex
@@ -17,9 +18,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
 
 import click
 
@@ -46,7 +48,9 @@ from .config import (
     load_config,
 )
 from .executor import CommandError, CommandExecutor
-from .logging_utils import setup_logger
+from .logging_utils import (
+    progress, set_progress, setup_logger, summarize_command,
+)
 from .local_tier import work_path
 from .slurm_timer import TIME_LEFT_TO_MINS_SH, build_timer_script, timer_identity
 from .tool_preflight import format_report
@@ -459,6 +463,11 @@ def _build_executor(
         from .session import RemoteSession
         from .tunnel import SshControl, TunnelError
 
+        # From here on every command costs a round trip of several seconds,
+        # and a launch makes a dozen of them with nothing on screen in
+        # between.  Announce each one (stderr, so nothing that reads our
+        # stdout is disturbed).
+        set_progress(True)
         remote = mirror_settings.remote
 
         # Resolve the target name for session scoping.  Prefer the
@@ -3023,8 +3032,22 @@ def release(
         typer.echo(result.stderr.strip(), err=True)
 
 
+# Every remote round trip this module makes is timed into this logger, so a
+# slow command leaves a record of *which* trip was slow (the file log always
+# has it; -v puts it on the console).  It is wired up by ``setup_logger``.
+_LOG = logging.getLogger("sucoder.remote")
+
+# A refused session is a busy signal, not a broken tunnel: wait briefly and
+# ask again.  Three tries over ~2.2s -- a session that is merely occupied
+# frees up well inside that, and anything longer belongs to the caller's own
+# retry, not to a loop that holds the terminal.
+_BUSY_RETRY_ATTEMPTS = 3
+_BUSY_RETRY_DELAY = 0.5
+
+
 def _run_remote_capture(
-    control, host: str, command: str, *, debug: bool = False, timeout: int = 30
+    control, host: str, command: str, *, debug: bool = False, timeout: int = 30,
+    sleep=time.sleep,
 ) -> subprocess.CompletedProcess:
     """Run *command* on *host* over an established ControlMaster socket.
 
@@ -3043,26 +3066,156 @@ def _run_remote_capture(
     return-code handling covers it.
 
     Returns the :class:`subprocess.CompletedProcess` (``check=False``);
-    the caller decides what a non-zero exit means.
+    the caller decides what a non-zero exit means.  ``sleep`` is injectable
+    for tests.
     """
+    from .tunnel import is_session_busy_error, session_lock
+
     ssh_cmd = ["ssh"]
     if debug:
         ssh_cmd.append("-v")
-    ssh_cmd += [*control.ssh_options(), "-o", "BatchMode=yes", host, command]
+    # with_fallback: when the mux refuses a new session, ssh opens a fresh
+    # connection to the host -- and for a jump-only login node (``ln003.brc``)
+    # that direct dial dies with "Could not resolve hostname", because the
+    # name only resolves inside the gateway.  Routing the fallback through
+    # the jump host turns that hard failure into a working command, which
+    # matters most here: the alternative is a full re-auth, and on this
+    # gateway a re-auth can cost an OTP.
+    ssh_cmd += [
+        *control.ssh_options(with_fallback=True),
+        "-o", "BatchMode=yes", host, command,
+    ]
+
+    def _once() -> subprocess.CompletedProcess:
+        progress(host, command)
+        started = time.monotonic()
+        try:
+            result = subprocess.run(
+                ssh_cmd, capture_output=True, text=True, check=False,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            stdout = exc.stdout or ""
+            if isinstance(stdout, bytes):
+                stdout = stdout.decode("utf-8", "replace")
+            result = subprocess.CompletedProcess(
+                ssh_cmd,
+                124,
+                stdout=stdout,
+                stderr=f"timed out after {timeout}s (wedged tunnel?)",
+            )
+        _LOG.debug(
+            "%s: %s -> exit %s in %.1fs",
+            host, summarize_command(command), result.returncode,
+            time.monotonic() - started,
+        )
+        return result
+
+    # One session channel at a time per master (``MaxSessions 1``), and a
+    # refusal means the slot is taken, not that the tunnel is broken: wait
+    # for the holder and ask again.  The lock covers this process; the retry
+    # covers everyone else -- another sucoder, an attached agent, the renew
+    # loop.  Without it a refusal fell through to `_capture_over_tunnel`'s
+    # reconnect, i.e. minutes of backoff and possibly an OTP, to recover
+    # from a busy signal that clears in under a second.
+    lock = session_lock(getattr(control, "socket_path", host))
+    for attempt in range(1, _BUSY_RETRY_ATTEMPTS + 1):
+        with lock:
+            result = _once()
+        # A command that EXITED ZERO already ran: `with_fallback=True` means
+        # ssh answers a mux refusal by dialling the host directly, so the
+        # refusal lands on stderr and the command still succeeds.  Retrying
+        # on stderr alone therefore re-ran successful queries -- measured on
+        # 2026-09-21 against a contended master, one `squeue` became three
+        # (5.4s + 5.3s + 5.2s plus backoff, ~17s for a 5s query), and the
+        # contention is the normal case: an attached agent holds the slot.
+        # Only a command that actually FAILED is worth asking again.
+        if (result.returncode == 0
+                or attempt == _BUSY_RETRY_ATTEMPTS
+                or not is_session_busy_error(result.stderr or "")):
+            return result
+        _LOG.debug(
+            "%s: master busy, retrying in %.1fs (attempt %d/%d)",
+            host, _BUSY_RETRY_DELAY * attempt, attempt, _BUSY_RETRY_ATTEMPTS,
+        )
+        sleep(_BUSY_RETRY_DELAY * attempt)
+    return result
+
+# ssh's own "the transport failed" exit code, plus the synthetic one
+# _run_remote_capture returns for a wedged tunnel.  Anything else is the
+# *remote command* reporting failure over a working connection.
+_SSH_TRANSPORT_RC = (255, 124)
+
+
+def _capture_over_tunnel(
+    control, host: str, command: str, *, logger, config=None,
+    debug: bool = False, timeout: int = 30,
+) -> subprocess.CompletedProcess:
+    """Run *command* on *host*, authenticating only if the warm path fails.
+
+    The obvious shape -- ``if not control.is_active(): connect()``, then run
+    -- asks :meth:`SshControl.is_active` to prove the tunnel works by
+    opening a session and running ``true``.  But on a BRC login node a
+    session *open* costs ~10s of remote setup before the command is even
+    exec'd (measured 2026-09-19: ``true``, ``echo``, ``squeue`` and ``tmux
+    list-sessions`` all 9.4-10.0s over an already-warm master).  So a host
+    that was perfectly reachable paid that toll twice to answer one
+    ``tmux list-sessions``, and the probe cost as much as the work.
+
+    :func:`_run_remote_capture` already passes ``BatchMode=yes``, so a dead
+    mux fails fast and can never fall through to an interactive
+    ``/dev/tty`` prompt.  That makes the work its own liveness probe: run
+    the command, and treat only an *ssh-transport* failure -- not a
+    non-zero exit from the remote command, which proves the tunnel fine --
+    as the signal to bring the connection up and try once more.
+
+    The expensive end-to-end probe still runs, inside
+    :func:`_connect_with_retry`, but now only on the failure path, which is
+    where it earns its keep: it is what distinguishes a zombie mux (re-auth
+    needed) from a merely slow one (reuse).  Auth prompts stay visible
+    because the fallback goes through ``_ensure_ssh_visible`` as before.
+    """
+    result = _run_remote_capture(
+        control, host, command, debug=debug, timeout=timeout,
+    )
+    if not _needs_tunnel_setup(result):
+        return result
+    _connect_with_retry(control, host, logger, config=config)
+    return _run_remote_capture(
+        control, host, command, debug=debug, timeout=timeout,
+    )
+
+
+def _needs_tunnel_setup(result: Optional[subprocess.CompletedProcess]) -> bool:
+    """True if *result* failed because of the ssh transport, not the command.
+
+    A non-zero exit from the remote command is *proof the tunnel works* --
+    ``tmux list-sessions`` on a host with no server is the common case --
+    so re-authenticating on it would be both pointless and, on an OTP
+    gateway, expensive.  Only ssh's own 255, our synthetic wedged-tunnel
+    124, or a recognised transient transport marker mean the connection
+    itself has to be rebuilt.  ``None`` stands for a probe that raised.
+    """
+    from .tunnel import is_transient_ssh_error
+
+    if result is None:
+        return True
+    if result.returncode == 0:
+        return False
+    return (result.returncode in _SSH_TRANSPORT_RC
+            or is_transient_ssh_error(result.stderr or ""))
+
+
+def _try_remote_capture(control, host: str, command: str, **kwargs):
+    """``_run_remote_capture`` that reports a raise as ``None``.
+
+    Used for the parallel warm sweep: one host's exception must not cancel
+    the pool and take the other hosts' answers with it.
+    """
     try:
-        return subprocess.run(
-            ssh_cmd, capture_output=True, text=True, check=False, timeout=timeout
-        )
-    except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout or ""
-        if isinstance(stdout, bytes):
-            stdout = stdout.decode("utf-8", "replace")
-        return subprocess.CompletedProcess(
-            ssh_cmd,
-            124,
-            stdout=stdout,
-            stderr=f"timed out after {timeout}s (wedged tunnel?)",
-        )
+        return _run_remote_capture(control, host, command, **kwargs)
+    except Exception:  # noqa: BLE001 -- retried serially by the caller
+        return None
 
 
 def _relaunch_session(mirror, config, ctx, logger, dry_run):
@@ -3289,6 +3442,12 @@ def sessions(
         False, "--fast",
         help="Skip the per-job tmux probe (faster; no 'agent exited' reporting).",
     ),
+    login_nodes: bool = typer.Option(
+        True, "--login-nodes/--no-login-nodes",
+        help="Ask each login node for SuCoder tmux sessions. "
+             "--no-login-nodes skips that sweep; sessions there are then "
+             "reported as not inspected, never as absent.",
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
 ) -> None:
     """List every SuCoder job on the configured clusters, with its state.
@@ -3316,10 +3475,9 @@ def sessions(
     """
     from .session import RemoteSession
     from .sessions_report import (
-        SQUEUE_FORMAT, build_report, group_targets_by_cluster, parse_squeue,
-        render_report,
+        LOGIN_SESSION_PANES_SH, SQUEUE_FORMAT, build_report, fuse_scripts,
+        group_targets_by_cluster, parse_squeue, render_report, split_fused,
     )  # noqa: F401 -- PANE_PROBE_SH is imported by the probe helper
-    from .tunnel import SshControl
 
     config = _get_config(ctx)
     if not config.targets:
@@ -3328,6 +3486,10 @@ def sessions(
 
     logger = setup_logger("sucoder.sessions", config.log_dir, verbose)
     debug_ssh = _get_debug_ssh(ctx)
+    # Every round trip announces itself: this listing is minutes of waiting
+    # on ~8s session opens, and silence for that long is indistinguishable
+    # from a hang -- which is what it was reported as.
+    set_progress(True)
     clusters, schedulerless = group_targets_by_cluster(config.targets)
 
     mirror_tokens = {
@@ -3337,26 +3499,87 @@ def sessions(
     errors: List[str] = []
     probed = not fast
 
+    # Where each cluster is queried, resolved before anything is asked: a
+    # host that answers BOTH the scheduler query and the login sweep must be
+    # asked once, with the two scripts fused, because its master carries one
+    # session at a time.
+    cluster_hosts: Dict[str, Tuple[str, Any]] = {}
     for cluster, names in clusters.items():
         remote = config.targets[names[0]]
-        control = SshControl(
-            gateway=remote.gateway, **remote.ssh_control_kwargs(), debug=debug_ssh,
-        )
         try:
-            _connect_with_retry(control, remote.gateway, logger, config=config)
+            # Resolved inside the try: ssh_control_kwargs() reads a direct
+            # target's config through ``ssh -G`` and raises when that config
+            # is unusable, which is one more way this cluster is unreachable
+            # -- not a reason to discard the clusters already queried.
+            host = _cluster_query_host(names) or remote.gateway
+            cluster_hosts[cluster] = (host, _control_for_host(remote, host, debug_ssh))
+        except Exception as exc:  # noqa: BLE001 -- one cluster must not sink the rest
+            errors.append(f"{cluster}: could not connect ({exc})")
+
+    # Ask the login nodes NOW, in the background, and read the answers at the
+    # end.  A login-node session has no allocation, so nothing in this sweep
+    # depends on squeue -- it was only ever sequenced after the cluster
+    # queries by accident of where the call sat.  Started here, its remote
+    # session setup (the dominant cost) overlaps the scheduler queries and
+    # the pane probe instead of following them.  The sweep is BatchMode
+    # throughout, so it cannot collide with a credential prompt below.
+    login_plan = None
+    if probed and login_nodes:
+        login_plan = _start_login_probes(
+            _plan_login_probes(config, schedulerless, debug_ssh), debug_ssh,
+            deferred_hosts={host for host, _ in cluster_hosts.values()},
+        )
+
+    for cluster, names in clusters.items():
+        if cluster not in cluster_hosts:
+            continue
+        remote = config.targets[names[0]]
+        host, control = cluster_hosts[cluster]
+        squeue = f'squeue --me --noheader -o {shlex.quote(SQUEUE_FORMAT)}'
+        fused = login_plan is not None and host in (login_plan.deferred or {})
+        try:
+            result = _capture_over_tunnel(
+                control, host,
+                fuse_scripts(squeue, LOGIN_SESSION_PANES_SH) if fused else squeue,
+                logger=logger, config=config, debug=debug_ssh,
+            )
         except Exception as exc:  # noqa: BLE001 -- one cluster must not sink the rest
             errors.append(f"{cluster}: could not connect ({exc})")
             continue
-        result = _run_remote_capture(
-            control, remote.gateway,
-            f'squeue --me --noheader -o {shlex.quote(SQUEUE_FORMAT)}',
-            debug=debug_ssh,
-        )
+        stdout = result.stdout
+        if fused:
+            stdout, swept = split_fused(result.stdout)
+            # Unanswered stays unanswered: with no marker the sweep never
+            # ran, and the host goes back on the reconnect-and-ask path
+            # rather than being recorded as having no sessions.
+            if swept is not None:
+                login_plan.deferred[host] = subprocess.CompletedProcess(
+                    args=[], returncode=0, stdout=swept, stderr="",
+                )
+        if result.returncode != 0 and host != remote.gateway and _needs_tunnel_setup(result):
+            # The pinned login node is gone.  The gateway always resolves,
+            # so ask it instead rather than losing the whole cluster --- and
+            # plainly, because the sweep's half of a fused answer would
+            # belong to the wrong host.
+            logger.info(
+                "%s: %s did not answer; falling back to %s",
+                cluster, host, remote.gateway,
+            )
+            try:
+                result = _capture_over_tunnel(
+                    _control_for_host(remote, remote.gateway, debug_ssh),
+                    remote.gateway, squeue,
+                    logger=logger, config=config, debug=debug_ssh,
+                )
+                stdout = result.stdout
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{cluster}: could not connect ({exc})")
+                continue
         if result.returncode != 0:
-            detail = result.stderr.strip() or result.stdout.strip() or "(no output)"
+            detail = result.stderr.strip() or stdout.strip() or "(no output)"
             errors.append(f"{cluster}: squeue failed (exit {result.returncode}): {detail}")
             continue
-        jobs, bad = parse_squeue(result.stdout)
+        jobs, bad = parse_squeue(stdout)
         for line in bad:
             errors.append(f"{cluster}: could not parse squeue row: {line}")
         jobs_by_cluster[cluster] = jobs
@@ -3373,34 +3596,94 @@ def sessions(
     )
 
     if probed:
-        _probe_session_panes(report, config, clusters, logger, debug_ssh)
-        _probe_login_sessions(report, config, schedulerless, logger, debug_ssh)
+        _probe_session_panes(
+            report, config, clusters, logger, debug_ssh, hosts=cluster_hosts,
+        )
+    # Left as `login_probed = False`, which the renderer prints as "login-node
+    # sessions not inspected".  Saying "no sessions" would be a claim the
+    # sweep never made -- an unanswered probe is not evidence, and a session
+    # nothing reaps is the one worth not losing track of.
+    if login_plan is not None:
+        _finish_login_probes(report, login_plan, logger, config, debug_ssh)
 
     typer.echo(render_report(report, probed=probed).rstrip("\n"))
 
 
-def _probe_login_sessions(report, config, schedulerless, logger, debug_ssh) -> None:
-    """Fill ``report.logins`` with SuCoder tmux sessions on login hosts.
+class _LoginProbes(NamedTuple):
+    """An in-flight login-node sweep: what was asked, and of whom.
 
-    A schedulerless target holds no allocation, so ``squeue`` says nothing
-    about it -- but ``collaborate`` still launches a tmux session there,
-    with the same ``exec bash -l`` tail, and a login node has no walltime
-    to ever reap it.  The tmux server is the registry here, filtered on the
-    same ``sucoder-`` prefix the job names carry, so a session whose local
-    record was lost is still found.
-
-    One connection per distinct host, and a host that cannot be reached is
-    reported as an error rather than as an absence: an unanswered probe is
-    not evidence, the same rule the scheduler and pane queries follow.
+    ``pool`` is left open while the warm queries fly, so the caller can get
+    on with unrelated work; :func:`_finish_login_probes` always shuts it
+    down.
     """
-    from .sessions_report import (
-        LOGIN_SESSION_SH, LoginSession, PANE_PROBE_SH, login_hosts_for,
-        parse_tmux_sessions,
+
+    probes: List[Tuple[str, str, Any]]        # (target name, host, control)
+    errors: List[str]
+    pool: Optional[ThreadPoolExecutor]
+    futures: List[Any]                        # None where the host is deferred
+    # Hosts whose answer another query is collecting (see `fuse_scripts`):
+    # ``{host: CompletedProcess | None}``, filled in before the fold-in.
+    # ``None`` there means nobody answered for it after all, which puts the
+    # host back on the ordinary reconnect-and-ask path.
+    deferred: Optional[Dict[str, Any]] = None
+
+
+def _cluster_query_host(names) -> Optional[str]:
+    """A login node this cluster's sessions already pin, if any.
+
+    Prefer it over the gateway for the scheduler queries.  Both answer
+    ``squeue`` identically -- one Slurm, one ``$HOME`` -- but a session
+    open costs ~8s on the gateway against ~4.5s on a login node (measured
+    2026-09-20 over warm masters), and the gateway is the hop everything
+    else contends for, including the login sweep and every jumped
+    connection's ``-W`` channel.
+
+    A recorded node can be retired, so the caller falls back to the
+    gateway when it does not answer; the gateway always resolves.
+    Returns ``None`` when nothing is pinned.
+    """
+    from .session import RemoteSession
+
+    for name in names:
+        for node in RemoteSession.login_nodes_for_target(name).values():
+            if node:
+                return node
+    return None
+
+
+def _control_for_host(remote, host: str, debug_ssh: bool, gw_control=None):
+    """An :class:`SshControl` reaching *host* the way *remote* reaches it.
+
+    A host that is not the gateway is reached THROUGH the gateway: its
+    name resolves only inside, and its hop authenticates by publickey over
+    the gateway's mux rather than prompting for itself.
+    """
+    from .tunnel import SshControl
+
+    kwargs = remote.ssh_control_kwargs()
+    gateway = getattr(remote, "gateway", None)
+    if not gateway or host == gateway:
+        return SshControl(gateway=host, **kwargs, debug=debug_ssh)
+    if gw_control is None:
+        gw_control = SshControl(gateway=gateway, **kwargs, debug=debug_ssh)
+    return SshControl(
+        gateway=host, **kwargs, debug=debug_ssh,
+        jump_host=gateway, jump_control=gw_control,
     )
+
+
+def _plan_login_probes(config, schedulerless, debug_ssh) -> _LoginProbes:
+    """Decide which hosts to ask for tmux sessions.  Performs no I/O.
+
+    Nothing connects here, so a target whose SSH config will not resolve is
+    recorded as an error and skipped without having cost a round trip.
+    """
+    from .sessions_report import login_hosts_for
     from .session import RemoteSession
     from .tunnel import SshControl
 
-    report.login_probed = True
+    probes: List[Tuple[str, str, Any]] = []
+    errors: List[str] = []
     for name in schedulerless:
         remote = config.targets.get(name)
         if remote is None:
@@ -3418,67 +3701,253 @@ def _probe_login_sessions(report, config, schedulerless, logger, debug_ssh) -> N
             jump_kwargs = {}
             if gateway and host != gateway:
                 if gw_control is None:
-                    gw_control = SshControl(
-                        gateway=gateway, **remote.ssh_control_kwargs(),
-                        debug=debug_ssh,
-                    )
-                    if not gw_control.is_active():
-                        try:
-                            _connect_with_retry(
-                                gw_control, gateway, logger, config=config
-                            )
-                        except Exception as exc:  # noqa: BLE001
-                            report.errors.append(
-                                f"{name}: login-node probe skipped ({exc})"
-                            )
-                            break
+                    try:
+                        gw_control = SshControl(
+                            gateway=gateway, **remote.ssh_control_kwargs(),
+                            debug=debug_ssh,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        errors.append(f"{name}: login-node probe skipped ({exc})")
+                        break
                 jump_kwargs = {"jump_host": gateway, "jump_control": gw_control}
-            control = SshControl(
-                gateway=host, **remote.ssh_control_kwargs(),
-                debug=debug_ssh, **jump_kwargs,
-            )
-            if not control.is_active():
-                try:
-                    _connect_with_retry(control, host, logger, config=config)
-                except Exception as exc:  # noqa: BLE001
-                    report.errors.append(
-                        f"{name}: {host} not reached ({exc}); "
-                        "login-node sessions there not listed"
-                    )
-                    continue
-            result = _run_remote_capture(
-                control, host, LOGIN_SESSION_SH, debug=debug_ssh, timeout=60,
-            )
-            if result.returncode != 0:
-                report.errors.append(
-                    f"{name}: tmux query failed on {host} "
-                    f"(exit {result.returncode})"
+            try:
+                control = SshControl(
+                    gateway=host, **remote.ssh_control_kwargs(),
+                    debug=debug_ssh, **jump_kwargs,
+                )
+            except Exception as exc:  # noqa: BLE001
+                errors.append(
+                    f"{name}: {host} not reached ({exc}); "
+                    "login-node sessions there not listed"
                 )
                 continue
-            found = parse_tmux_sessions(result.stdout)
-            if not found:
-                continue
-            # Same pane probe as a job entry: an unconfined launch runs on
-            # the default tmux socket, so the socket argument is empty.
-            lines = [
-                f'printf "%s\\t" {shlex.quote(sess)}; '
-                f'bash -c {shlex.quote(PANE_PROBE_SH)} _ {shlex.quote(sess)} "" '
-                f'2>/dev/null; echo'
-                for sess in found
+            probes.append((name, host, control))
+    return _LoginProbes(probes=probes, errors=errors, pool=None, futures=[])
+
+
+def _start_login_probes(
+    plan: _LoginProbes, debug_ssh: bool, *, deferred_hosts=frozenset(),
+) -> _LoginProbes:
+    """Fan the warm queries out and return without waiting for them.
+
+    Two independent savings, and they compose:
+
+    * *Across hosts.*  These hosts have nothing to do with each other and
+      the cost is almost entirely remote session setup -- ~10s per open on
+      a BRC login node, before the command runs at all (measured
+      2026-09-19: 3 hosts serially 23.1s, concurrently 10.7s).  Asking
+      concurrently makes the wall time the slowest host, not the sum.
+    * *Against the scheduler query.*  Nothing here reads ``squeue``: a
+      login-node session has no job.  So the sweep needs no ordering
+      against the cluster queries at all and is started before them,
+      leaving only the fold-in to happen afterwards.
+
+    Warm path ONLY.  ``_run_remote_capture`` is ``BatchMode``, so no thread
+    can block on a ``/dev/tty`` credential prompt while the caller is
+    running its own -- and anything that does need authenticating is left
+    to :func:`_finish_login_probes`, which does it serially.
+
+    *deferred_hosts* are hosts somebody else is already asking (the cluster
+    query, with the sweep's script fused onto it).  Sending them a second
+    request would be refused on a ``MaxSessions 1`` master -- the very
+    collision the fusing exists to avoid -- so they are left to the caller
+    to fill in through ``plan.deferred``.
+    """
+    from .sessions_report import LOGIN_SESSION_PANES_SH
+
+    if not plan.probes:
+        return plan
+    deferred = {
+        host: None for _, host, _ in plan.probes if host in deferred_hosts
+    }
+    submit = [
+        (index, host, control)
+        for index, (_, host, control) in enumerate(plan.probes)
+        if host not in deferred
+    ]
+    futures: List[Any] = [None] * len(plan.probes)
+    pool = (
+        ThreadPoolExecutor(max_workers=min(8, len(submit))) if submit else None
+    )
+    for index, host, control in submit:
+        futures[index] = pool.submit(
+            _try_remote_capture, control, host, LOGIN_SESSION_PANES_SH,
+            debug=debug_ssh, timeout=60,
+        )
+    return plan._replace(pool=pool, futures=futures, deferred=deferred)
+
+
+def _open_login_gateways(pending, logger, config) -> None:
+    """Bring up each distinct jump gateway, one at a time.
+
+    The gateway is the ONLY hop in this sweep that can ask for credentials,
+    so it is authenticated serially and before any fan-out.  Two reasons,
+    and the second is the expensive one:
+
+    * two threads prompting for an OTP would overwrite each other on
+      ``/dev/tty`` -- the hazard :func:`_ensure_ssh_visible` exists to
+      avoid; and
+    * N connections racing to authenticate the *same* gateway is how you
+      earn ``Too many authentication failures`` from sshd, which can cost
+      more than the serial connect ever did.
+
+    Once it is up, the login nodes behind it authenticate by publickey
+    through its mux with nothing to prompt for, which is exactly what makes
+    :func:`_reconnect_login_probes`' fan-out safe.  A gateway that will not
+    come up is not reported here: every host behind it then fails on its
+    own and says so with its own name.
+    """
+    seen = set()
+    for _, _, _, control in pending:
+        gateway = getattr(control, "jump_control", None)
+        if gateway is None or id(gateway) in seen:
+            continue
+        seen.add(id(gateway))
+        try:
+            _connect_with_retry(gateway, gateway.gateway, logger, config=config)
+        except Exception:  # noqa: BLE001 -- surfaces per host, with its name
+            pass
+
+
+def _reconnect_login_probes(pending, logger, config, debug_ssh) -> Dict[int, Any]:
+    """Connect and re-query every host the warm sweep could not answer.
+
+    This is the path a *cold* start takes, and it is the one that hurt: a
+    freshly minted certificate leaves no live masters at all, so the warm
+    sweep fails fast for every host and all of them land here.  Connecting
+    them one after another made a cold listing cost the sum of the hops --
+    the ``Connecting to ln001 ... Connecting to ln002 ...`` crawl.
+
+    Hosts behind a gateway go concurrently: :func:`_open_login_gateways`
+    has already authenticated it, so each is a publickey hop through a live
+    mux with no prompt to serialise.  A direct-SSH host has no such gateway
+    and may still prompt for itself, so those stay serial.
+
+    Returns ``{index into pending's probe list: CompletedProcess | Exception}``;
+    a raise is carried rather than thrown so one unreachable host cannot
+    cancel the others' answers.
+    """
+    from .sessions_report import LOGIN_SESSION_PANES_SH
+
+    def _connect_then_query(control, host):
+        _connect_with_retry(control, host, logger, config=config)
+        return _run_remote_capture(
+            control, host, LOGIN_SESSION_PANES_SH, debug=debug_ssh, timeout=60,
+        )
+
+    jumped = [row for row in pending
+              if getattr(row[3], "jump_control", None) is not None]
+    direct = [row for row in pending
+              if getattr(row[3], "jump_control", None) is None]
+
+    out: Dict[int, Any] = {}
+    for index, _, host, control in direct:
+        try:
+            out[index] = _connect_then_query(control, host)
+        except Exception as exc:  # noqa: BLE001
+            out[index] = exc
+    if jumped:
+        with ThreadPoolExecutor(max_workers=min(8, len(jumped))) as pool:
+            futures = [
+                (index, pool.submit(_connect_then_query, control, host))
+                for index, _, host, control in jumped
             ]
-            panes = {}
-            probe = _run_remote_capture(
-                control, host, "\n".join(lines), debug=debug_ssh, timeout=60,
+            for index, future in futures:
+                try:
+                    out[index] = future.result()
+                except Exception as exc:  # noqa: BLE001
+                    out[index] = exc
+    return out
+
+
+def _finish_login_probes(
+    report, plan: _LoginProbes, logger, config, debug_ssh
+) -> None:
+    """Collect the sweep, authenticate what it could not reach, fold in.
+
+    Two tiers of concurrency, because they have different hazards: the warm
+    queries were already in flight (no auth, so unrestricted), while the
+    hosts needing credentials are handled here -- gateways serially, then
+    everything behind them at once.
+    """
+    from .sessions_report import LoginSession, parse_login_sessions
+
+    report.login_probed = True
+    report.errors.extend(plan.errors)
+    if not plan.probes:
+        return
+    deferred = plan.deferred or {}
+    try:
+        warm = [
+            deferred.get(host) if future is None else future.result()
+            for (_, host, _), future in zip(plan.probes, plan.futures)
+        ]
+    finally:
+        if plan.pool is not None:
+            plan.pool.shutdown(wait=True)
+
+    # A warm query can also have been collateral damage: if the caller
+    # re-authenticated the shared gateway while this sweep was in flight,
+    # probes jumping through it saw the socket rebuilt under them.  Those
+    # land here too and are simply retried.
+    pending = [
+        (index, name, host, control)
+        for index, ((name, host, control), result)
+        in enumerate(zip(plan.probes, warm))
+        if _needs_tunnel_setup(result)
+    ]
+    if pending:
+        _open_login_gateways(pending, logger, config)
+        for index, result in _reconnect_login_probes(
+            pending, logger, config, debug_ssh,
+        ).items():
+            warm[index] = result
+
+    for (name, host, control), result in zip(plan.probes, warm):
+        if isinstance(result, Exception):
+            report.errors.append(
+                f"{name}: {host} not reached ({result}); "
+                "login-node sessions there not listed"
             )
-            if probe.returncode == 0:
-                for line in probe.stdout.splitlines():
-                    key, _, value = line.partition("\t")
-                    if key.strip() and value.strip():
-                        panes[key.strip()] = value.strip()
-            for sess in found:
-                report.logins.append(LoginSession(
-                    host=host, name=sess, target=name, pane=panes.get(sess),
-                ))
+            continue
+        if result is None or result.returncode != 0:
+            code = "no result" if result is None else f"exit {result.returncode}"
+            report.errors.append(
+                f"{name}: tmux query failed on {host} ({code})"
+            )
+            continue
+        # One round trip gave both the session list and each pane's command;
+        # an absent pane stays None, which renders as unknown rather than as
+        # a dead agent -- an unanswered probe is not evidence.
+        found, panes = parse_login_sessions(result.stdout)
+        for sess in found:
+            report.logins.append(LoginSession(
+                host=host, name=sess, target=name, pane=panes.get(sess),
+            ))
+
+
+def _probe_login_sessions(report, config, schedulerless, logger, debug_ssh) -> None:
+    """Fill ``report.logins`` with SuCoder tmux sessions on login hosts.
+
+    A schedulerless target holds no allocation, so ``squeue`` says nothing
+    about it -- but ``collaborate`` still launches a tmux session there,
+    with the same ``exec bash -l`` tail, and a login node has no walltime
+    to ever reap it.  The tmux server is the registry here, filtered on the
+    same ``sucoder-`` prefix the job names carry, so a session whose local
+    record was lost is still found.
+
+    One connection per distinct host, and a host that cannot be reached is
+    reported as an error rather than as an absence: an unanswered probe is
+    not evidence, the same rule the scheduler and pane queries follow.
+
+    Plan, sweep and fold in one call.  ``sessions`` splits them instead, to
+    overlap the sweep with its scheduler queries; this is the form for
+    callers with nothing else to be getting on with.
+    """
+    plan = _start_login_probes(
+        _plan_login_probes(config, schedulerless, debug_ssh), debug_ssh,
+    )
+    _finish_login_probes(report, plan, logger, config, debug_ssh)
 
 
 def _remote_home_word(path: str) -> str:
@@ -3493,19 +3962,23 @@ def _remote_home_word(path: str) -> str:
     return shlex.quote(path)
 
 
-def _probe_session_panes(report, config, clusters, logger, debug_ssh) -> None:
+def _probe_session_panes(
+    report, config, clusters, logger, debug_ssh, hosts=None,
+) -> None:
     """Fill in each entry's ``pane`` with the command its tmux pane runs.
 
     One ssh per cluster, not one per job: the probe loops over the jobs
     inside a single remote shell, so a listing of N jobs costs one round
-    trip rather than N.  Every failure leaves ``pane`` as ``None``, which
+    trip rather than N.  *hosts* maps cluster -> ``(host, control)`` as the
+    caller already resolved it, so the probe reuses the connection the
+    scheduler query just warmed instead of opening a second one to the
+    gateway.  Every failure leaves ``pane`` as ``None``, which
     renders as ``-`` and is never reported as a dead agent -- an
     unanswered probe is not evidence, the same rule the scheduler queries
     follow.
     """
     from .mirror import confined_tmux_target
     from .sessions_report import PANE_PROBE_SH
-    from .tunnel import SshControl
 
     by_cluster: Dict[str, list] = {}
     for group in report.groups:
@@ -3533,6 +4006,7 @@ def _probe_session_panes(report, config, clusters, logger, debug_ssh) -> None:
             continue
         names = clusters[cluster]
         remote = config.targets[names[0]]
+        host, control = (hosts or {}).get(cluster, (None, None))
         lines = []
         for entry, confined, root in entries:
             mirror = entry.mirror or entry.job.token
@@ -3561,18 +4035,17 @@ def _probe_session_panes(report, config, clusters, logger, debug_ssh) -> None:
                     f'printf "wip%s\\t" {job}; '
                     f"git -C {mirror_path} log -1 --format=%cr {ref} 2>/dev/null; echo"
                 )
-        control = SshControl(
-            gateway=remote.gateway, **remote.ssh_control_kwargs(), debug=debug_ssh,
-        )
-        if not control.is_active():
-            try:
-                _connect_with_retry(control, remote.gateway, logger, config=config)
-            except Exception as exc:  # noqa: BLE001 -- probe is advisory
-                report.errors.append(f"{cluster}: pane probe skipped ({exc})")
-                continue
-        result = _run_remote_capture(
-            control, remote.gateway, "\n".join(lines), debug=debug_ssh, timeout=90,
-        )
+        try:
+            if control is None:
+                host = remote.gateway
+                control = _control_for_host(remote, host, debug_ssh)
+            result = _capture_over_tunnel(
+                control, host, "\n".join(lines), logger=logger,
+                config=config, debug=debug_ssh, timeout=90,
+            )
+        except Exception as exc:  # noqa: BLE001 -- probe is advisory
+            report.errors.append(f"{cluster}: pane probe skipped ({exc})")
+            continue
         if result.returncode != 0:
             report.errors.append(
                 f"{cluster}: pane probe failed (exit {result.returncode}); "
