@@ -3971,3 +3971,64 @@ def test_the_pane_probe_reuses_the_scheduler_query_s_connection(monkeypatch):
         hosts={"hpc.brc": ("ln002.brc", sentinel)},
     )
     assert asked == [("ln002.brc", sentinel)], asked
+
+
+# -- the busy-retry must not re-run a command that succeeded -------------------
+#
+# `with_fallback=True` makes ssh answer a mux refusal by dialling the host
+# directly: the refusal lands on stderr and the command still runs. Keying the
+# retry on stderr alone re-ran successful queries -- one `squeue` became three
+# against a contended master, and contention is the normal case because an
+# attached agent holds the single session slot.
+
+_BUSY_STDERR = (
+    "mux_client_request_session: session request failed: "
+    "Session open refused by peer\r\n"
+)
+
+
+def _capture_with(monkeypatch, results):
+    """Drive _run_remote_capture over a scripted list of subprocess results."""
+    class _Ctl:
+        socket_path = "/tmp/busy-test.sock"
+        def ssh_options(self, **kwargs):
+            return []
+
+    calls = {"n": 0}
+
+    def fake_run(cmd, **kwargs):
+        i = min(calls["n"], len(results) - 1)
+        calls["n"] += 1
+        rc, out, err = results[i]
+        return SimpleNamespace(returncode=rc, stdout=out, stderr=err)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    out = cli._run_remote_capture(
+        _Ctl(), "ln001.brc", "squeue --me", sleep=lambda _s: None,
+    )
+    return out, calls["n"]
+
+
+def test_busy_stderr_on_a_SUCCESSFUL_command_is_not_retried(monkeypatch):
+    """The regression: exit 0 means the command ran, whatever ssh said."""
+    out, n = _capture_with(monkeypatch, [(0, "JOBID|...", _BUSY_STDERR)])
+    assert out.returncode == 0
+    assert n == 1, f"successful command re-run {n} times"
+
+
+def test_busy_stderr_on_a_FAILED_command_is_still_retried(monkeypatch):
+    """The behaviour the retry exists for must survive: a refusal that kept
+    the command from running is worth asking again."""
+    out, n = _capture_with(monkeypatch, [
+        (255, "", _BUSY_STDERR),
+        (255, "", _BUSY_STDERR),
+        (0, "JOBID|...", ""),
+    ])
+    assert out.returncode == 0
+    assert n == 3
+
+
+def test_a_real_failure_without_a_busy_marker_is_not_retried(monkeypatch):
+    out, n = _capture_with(monkeypatch, [(1, "", "squeue: error: bad option")])
+    assert out.returncode == 1
+    assert n == 1

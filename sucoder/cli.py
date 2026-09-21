@@ -3122,7 +3122,16 @@ def _run_remote_capture(
     for attempt in range(1, _BUSY_RETRY_ATTEMPTS + 1):
         with lock:
             result = _once()
-        if (attempt == _BUSY_RETRY_ATTEMPTS
+        # A command that EXITED ZERO already ran: `with_fallback=True` means
+        # ssh answers a mux refusal by dialling the host directly, so the
+        # refusal lands on stderr and the command still succeeds.  Retrying
+        # on stderr alone therefore re-ran successful queries -- measured on
+        # 2026-09-21 against a contended master, one `squeue` became three
+        # (5.4s + 5.3s + 5.2s plus backoff, ~17s for a 5s query), and the
+        # contention is the normal case: an attached agent holds the slot.
+        # Only a command that actually FAILED is worth asking again.
+        if (result.returncode == 0
+                or attempt == _BUSY_RETRY_ATTEMPTS
                 or not is_session_busy_error(result.stderr or "")):
             return result
         _LOG.debug(
