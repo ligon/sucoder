@@ -4032,3 +4032,54 @@ def test_a_real_failure_without_a_busy_marker_is_not_retried(monkeypatch):
     out, n = _capture_with(monkeypatch, [(1, "", "squeue: error: bad option")])
     assert out.returncode == 1
     assert n == 1
+
+
+# -- --login-node (issue: no way to steer off an unhealthy login node) --------
+#
+# The pin is written once from a round-robin `ssh <gateway> hostname` and
+# reused forever, and _reconcile_login_node deliberately refuses to swap it
+# for a non-SLURM target. So a login node whose Lustre client goes bad while
+# the node stays up could only be escaped by hand-editing the session record.
+
+def test_login_node_override_is_carried_on_the_context():
+    runner = CliRunner()
+    seen = {}
+
+    @cli.app.command("probe-login-node")
+    def _probe(ctx: typer.Context):
+        seen["value"] = cli._get_login_node_override(ctx)
+
+    runner.invoke(cli.app, ["--login-node", "ln002.brc", "probe-login-node"])
+    assert seen["value"] == "ln002.brc"
+
+
+def test_login_node_override_is_stripped():
+    runner = CliRunner()
+    seen = {}
+
+    @cli.app.command("probe-login-node-ws")
+    def _probe(ctx: typer.Context):
+        seen["value"] = cli._get_login_node_override(ctx)
+
+    runner.invoke(cli.app, ["--login-node", "  ln003.brc  ", "probe-login-node-ws"])
+    assert seen["value"] == "ln003.brc"
+
+
+def test_blank_login_node_is_rejected():
+    """An empty value must not silently mean 'no override'."""
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["--login-node", "   ", "list"])
+    assert result.exit_code != 0
+    assert "--login-node" in result.output or "login-node" in str(result.exception)
+
+
+def test_absent_login_node_override_is_none():
+    runner = CliRunner()
+    seen = {}
+
+    @cli.app.command("probe-login-node-absent")
+    def _probe(ctx: typer.Context):
+        seen["value"] = cli._get_login_node_override(ctx)
+
+    runner.invoke(cli.app, ["probe-login-node-absent"])
+    assert seen["value"] is None

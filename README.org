@@ -821,6 +821,27 @@ default: it reads the pane's child process, not
 call every working agent dead.  =--fast= skips it and says so.
 Read-only throughout --- nothing submits, cancels or writes.
 
+*** Choosing a login node
+
+The login node is pinned once, from a round-robin =ssh <gateway> hostname=,
+and stored in the session record; every later command reuses it.  When that
+node goes bad --- BRC's login nodes can lose a Lustre route while the node
+itself stays up and answers ssh --- =--login-node= steers off it:
+
+#+begin_src shell
+sucoder --login-node ln002.brc -T savio collaborate
+#+end_src
+
+It overrides the record's pin and writes the new one back, so subsequent
+commands agree.  The sibling of =--node=, which selects a *compute* node.
+
+For a SLURM target the login node is only a routing hop (the work lives on
+=compute_node= + job id), so repointing is free.  Without a scheduler the
+agent's tmux lives *on* the login node, so changing the pin abandons any
+session on the old one --- =attach= will look at the new node and not find
+it.  sucoder warns when that is what you are doing; =sucoder sessions= still
+lists the session on the old node.
+
 *** Inspecting node availability
 
 Before reserving a node (or targeting one with =--node= /

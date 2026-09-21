@@ -524,6 +524,35 @@ def _build_executor(
             typer.echo(str(exc) + _ssh_debug_hint(debug_ssh), err=True)
             raise typer.Exit(code=1) from exc
 
+        # An explicit --login-node overrides the record's pin, which is
+        # otherwise written once (round-robin `ssh <gateway> hostname`) and
+        # reused forever.  That is the only way to steer off a login node
+        # whose Lustre client has gone bad while the node itself is up.
+        override = _get_login_node_override(cli_ctx)
+        if override and override != session.login_node:
+            previous = session.login_node
+            session.login_node = override
+            session.save()
+            if remote.slurm is None and previous:
+                # For a SLURM target the login node is only a routing hop --
+                # the work lives on compute_node + job id -- so repointing is
+                # free.  Without a scheduler the agent's tmux lives ON the
+                # login node, so the session on the old node is abandoned by
+                # this change: `attach` will look at the new one and not find
+                # it.  Say so rather than silently orphaning it.
+                logger.warning(
+                    "Login node for %s repointed %s -> %s.  This target has "
+                    "no scheduler, so any tmux session on %s stays there and "
+                    "`attach` will no longer reach it; `sucoder sessions` "
+                    "still lists it.",
+                    mirror_settings.name, previous, override, previous,
+                )
+            else:
+                logger.info(
+                    "Login node for %s pinned to %s (was %s).",
+                    mirror_settings.name, override, previous or "unpinned",
+                )
+
         # 2. Pin a login node through the authenticated connection.
         if not session.login_node:
             import subprocess as _sp
@@ -1329,6 +1358,12 @@ def _get_local_disk_root_override(ctx: Optional[click.Context]) -> Optional[str]
     return obj.get("local_disk_root")
 
 
+def _get_login_node_override(ctx: Optional[click.Context]) -> Optional[str]:
+    """Return the --login-node CLI override, or None to use the record's pin."""
+    obj = (ctx.obj if ctx and ctx.obj else {}) or {}
+    return obj.get("login_node")
+
+
 def _get_x11_override(ctx: Optional[click.Context]) -> Optional[bool]:
     """Return the --x11 CLI override, or None to use the target's config."""
     obj = (ctx.obj if ctx and ctx.obj else {}) or {}
@@ -1673,6 +1708,15 @@ def main(
         help="Node-local disk root for --local-disk (default: the "
              "slurm.local_disk path, else /local).  Implies --local-disk.",
     ),
+    login_node: Optional[str] = typer.Option(
+        None,
+        "--login-node",
+        metavar="HOST",
+        help="Route this session through a specific login node (e.g. "
+             "--login-node ln002.brc), overriding the pin in the session "
+             "record.  Use it to steer off an unhealthy node.  The sibling "
+             "of --node, which selects a COMPUTE node.",
+    ),
     x11: Optional[bool] = typer.Option(
         None,
         "--x11/--no-x11",
@@ -1746,6 +1790,11 @@ def main(
             )
         local_disk_root = local_disk_root.rstrip("/") or "/"
 
+    if login_node is not None and not login_node.strip():
+        raise typer.BadParameter(
+            "expected a host (e.g. ln002.brc).", param_hint="--login-node",
+        )
+
     ctx.obj = {
         "config": loaded_config,
         "config_path": config_path,
@@ -1756,6 +1805,7 @@ def main(
         "debug_ssh": debug_ssh,
         "local_disk": local_disk,
         "local_disk_root": local_disk_root,
+        "login_node": login_node.strip() if login_node else None,
         "x11": x11,
     }
 
