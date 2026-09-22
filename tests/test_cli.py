@@ -4098,13 +4098,24 @@ def test_login_node_override_is_stripped(tmp_path, monkeypatch):
 def test_blank_login_node_is_rejected(tmp_path, monkeypatch):
     """An empty value must not silently mean 'no override'."""
     _app_reaches_subcommands(tmp_path, monkeypatch)
-    runner = CliRunner()
-    result = runner.invoke(cli.app, ["--login-node", "   ", "list"])
-    assert result.exit_code != 0
-    # Specifically rejected for being blank -- not refused for some earlier
-    # reason that happens to be non-zero too, which is how this passed
-    # locally and failed in CI.
-    assert "--login-node" in result.output or "login-node" in str(result.exception)
+
+    # Assert on the raised error, not on rendered output.  Typer prints a
+    # BadParameter through Rich, which wraps to the terminal width and can
+    # split `--login-node` across lines, so a substring check on the output
+    # passes at one width and fails at another -- which is exactly what CI
+    # hit once the earlier failure was cleared.  standalone_mode=False hands
+    # back the exception itself instead of a formatted panel.
+    #
+    # `typer.BadParameter`, not `click.BadParameter`: typer vendors its own
+    # click (typer._click), so the installed click package's classes do not
+    # match what it raises.
+    command = typer.main.get_command(cli.app)
+    with pytest.raises(typer.BadParameter) as excinfo:
+        command.main(["--login-node", "   ", "list"], standalone_mode=False)
+    # The rejection must name the flag the user typed, wherever typer
+    # chooses to carry it.
+    named = f"{getattr(excinfo.value, 'param_hint', '')} {excinfo.value}"
+    assert "login-node" in named
 
 
 def test_absent_login_node_override_is_none(tmp_path, monkeypatch):
