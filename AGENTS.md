@@ -10,6 +10,14 @@ default for all mirrors and is meant to stay project-agnostic.
   add targeted tests for behavior changes.
 - If `.sucoder/handoff.org` exists, read it completely at session start and
   treat a `READY` handoff as the current operational task.
+- **Never put a closing keyword next to an issue number in a commit message.**
+  GitHub scans every commit merged to the default branch for `close`, `closes`,
+  `fixes`, `resolves` (and their variants) followed by `#N`, and closes issue N.
+  It does not read the surrounding English. Issue 14 was closed twice this way:
+  once by a stale `Closes #14` left in a commit body after the scope was cut,
+  once by a merge commit that said "does not close #14". The rule is about the
+  tokens, not the intent: write `issue 14` when you mean to discuss it, and put
+  `Closes #N` only in the PR body, only when the PR really closes it.
 - **GitNexus is NOT read-only — do not conclude otherwise from the hook spam.**
   Agents repeatedly misread the `Cannot execute write operations in a read-only
   database` FTS messages as "the index can't be refreshed from here." Those are
