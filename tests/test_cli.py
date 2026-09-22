@@ -4041,7 +4041,29 @@ def test_a_real_failure_without_a_busy_marker_is_not_retried(monkeypatch):
 # for a non-SLURM target. So a login node whose Lustre client goes bad while
 # the node stays up could only be escaped by hand-editing the session record.
 
-def test_login_node_override_is_carried_on_the_context():
+def _app_reaches_subcommands(tmp_path, monkeypatch):
+    """Let `cli.app` get as far as a subcommand on a machine with no agent CLI.
+
+    The root callback loads configuration before it looks at anything else,
+    and with no config file that means ``build_default_config()``, which
+    auto-detects an agent CLI and raises ``ConfigError`` when none is on
+    PATH.  The callback turns that into ``Exit(2)``, so the subcommand body
+    never runs.  Without this, these tests pass only where a known agent
+    happens to be installed: CI has none, which is what made `main` red from
+    the merge that added them.
+
+    Same neutralisation the zero-config tests above use.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    cfg = _fake_default_config(tmp_path)
+    monkeypatch.setattr(cli, "build_default_config", lambda: cfg)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+
+
+def test_login_node_override_is_carried_on_the_context(tmp_path, monkeypatch):
+    _app_reaches_subcommands(tmp_path, monkeypatch)
     runner = CliRunner()
     seen = {}
 
@@ -4049,11 +4071,16 @@ def test_login_node_override_is_carried_on_the_context():
     def _probe(ctx: typer.Context):
         seen["value"] = cli._get_login_node_override(ctx)
 
-    runner.invoke(cli.app, ["--login-node", "ln002.brc", "probe-login-node"])
+    result = runner.invoke(cli.app, ["--login-node", "ln002.brc", "probe-login-node"])
+    # Assert the invocation succeeded before reading what it recorded: a
+    # callback that exits early leaves `seen` empty, and a bare KeyError
+    # names neither the flag nor the reason.
+    assert result.exit_code == 0, result.output
     assert seen["value"] == "ln002.brc"
 
 
-def test_login_node_override_is_stripped():
+def test_login_node_override_is_stripped(tmp_path, monkeypatch):
+    _app_reaches_subcommands(tmp_path, monkeypatch)
     runner = CliRunner()
     seen = {}
 
@@ -4061,19 +4088,38 @@ def test_login_node_override_is_stripped():
     def _probe(ctx: typer.Context):
         seen["value"] = cli._get_login_node_override(ctx)
 
-    runner.invoke(cli.app, ["--login-node", "  ln003.brc  ", "probe-login-node-ws"])
+    result = runner.invoke(
+        cli.app, ["--login-node", "  ln003.brc  ", "probe-login-node-ws"],
+    )
+    assert result.exit_code == 0, result.output
     assert seen["value"] == "ln003.brc"
 
 
-def test_blank_login_node_is_rejected():
+def test_blank_login_node_is_rejected(tmp_path, monkeypatch):
     """An empty value must not silently mean 'no override'."""
-    runner = CliRunner()
-    result = runner.invoke(cli.app, ["--login-node", "   ", "list"])
-    assert result.exit_code != 0
-    assert "--login-node" in result.output or "login-node" in str(result.exception)
+    _app_reaches_subcommands(tmp_path, monkeypatch)
+
+    # Assert on the raised error, not on rendered output.  Typer prints a
+    # BadParameter through Rich, which wraps to the terminal width and can
+    # split `--login-node` across lines, so a substring check on the output
+    # passes at one width and fails at another -- which is exactly what CI
+    # hit once the earlier failure was cleared.  standalone_mode=False hands
+    # back the exception itself instead of a formatted panel.
+    #
+    # `typer.BadParameter`, not `click.BadParameter`: typer vendors its own
+    # click (typer._click), so the installed click package's classes do not
+    # match what it raises.
+    command = typer.main.get_command(cli.app)
+    with pytest.raises(typer.BadParameter) as excinfo:
+        command.main(["--login-node", "   ", "list"], standalone_mode=False)
+    # The rejection must name the flag the user typed, wherever typer
+    # chooses to carry it.
+    named = f"{getattr(excinfo.value, 'param_hint', '')} {excinfo.value}"
+    assert "login-node" in named
 
 
-def test_absent_login_node_override_is_none():
+def test_absent_login_node_override_is_none(tmp_path, monkeypatch):
+    _app_reaches_subcommands(tmp_path, monkeypatch)
     runner = CliRunner()
     seen = {}
 
@@ -4081,5 +4127,6 @@ def test_absent_login_node_override_is_none():
     def _probe(ctx: typer.Context):
         seen["value"] = cli._get_login_node_override(ctx)
 
-    runner.invoke(cli.app, ["probe-login-node-absent"])
+    result = runner.invoke(cli.app, ["probe-login-node-absent"])
+    assert result.exit_code == 0, result.output
     assert seen["value"] is None
