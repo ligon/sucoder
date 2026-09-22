@@ -2,6 +2,7 @@ import grp
 import logging
 import os
 import pwd
+import re
 import subprocess
 import types
 from pathlib import Path
@@ -1077,7 +1078,15 @@ def test_prelude_workspace_block_unconfined_local_tier(tmp_path, monkeypatch):
     assert "refs/sucoder/wip-job/sample/1234567" in prelude
     assert "git -C /global/home/users/coder/mirrors/sample log -1 --format='%ci %s' refs/sucoder/wip-job/sample/1234567" in prelude
     assert "never one belonging to a job still running" in prelude
-    assert "slurm-deadline-sample.warn" in prelude
+    # Issue 27: the per-job file the timer really writes, not the per-mirror
+    # copy a second slice on this mirror clears at startup.  Unconfined, the
+    # launcher knows the job id, and $SLURM_JOB_ID is NOT set in this agent's
+    # shell (it is reached over SSH, not inside an srun step), so the id must
+    # be literal here -- as it is in the timer script itself.
+    assert "/timers/" in prelude
+    assert "$(hostname)-1234567/slurm-deadline-sample.warn" in prelude
+    assert "$SLURM_JOB_ID/slurm-deadline" not in prelude
+    assert "$HOME/.cache/sucoder/slurm-deadline-sample.warn" not in prelude
     assert "every 10 minutes and at each deadline warning" in prelude
     assert ".sucoder/handoff.org in this clone" in prelude
     # Ordering: after the system prompt, before the skill catalog.
@@ -1117,6 +1126,82 @@ def test_prelude_workspace_block_confined_uses_runtime_job_id(tmp_path, monkeypa
     assert "Working clone (your cwd): $SUCODER_LOCAL_ROOT/mirrors/sample" in prelude
     assert "$SUCODER_LOCAL_ROOT is exported in your environment" in prelude
     assert "at each deadline warning only" in prelude
+
+
+def _confined_prelude(tmp_path, monkeypatch):
+    """Render a confined launch and return (prelude, staged timer script)."""
+    manager, ctx = _confined_manager(tmp_path, monkeypatch)
+    manager.executor.local_disk_root = "/local"
+    calls = []
+    manager.executor.run_agent = _confined_responder(calls, sbatch_out="9")
+    manager._launch_confined(
+        ctx, ["claude"], remote_prelude_text=manager._compose_context_prelude(ctx),
+        prelude_sentinel="__X__", env=None, detached=True,
+    )
+    prelude = next(
+        c["input"] for c in calls
+        if c["args"][0] == "sh" and "prelude-" in c["args"][2]
+    )
+    timer = next(
+        c["input"] for c in calls
+        if "sucoder-slurm-timer" in c["args"] and c["input"]
+    )
+    return manager, ctx, prelude, timer
+
+
+def test_prelude_points_at_this_jobs_warn_file_not_the_mirror_copy(
+    tmp_path, monkeypatch,
+):
+    """Issue 27.  Two slices on one mirror compute the same per-mirror warn
+    path, and the second timer's startup `rm -f` clears the first's -- so an
+    agent polling as instructed reads a sibling's deadline or nothing.  The
+    timer already writes a correct per-job file; point the agent at that."""
+    _m, _ctx, prelude, _timer = _confined_prelude(tmp_path, monkeypatch)
+
+    assert "$HOME/.cache/sucoder/slurm-deadline-sample.warn" not in prelude
+    assert "/timers/" in prelude
+    # Node and job are both unknown when this renders, so the path carries
+    # the timer's own expressions rather than values resolved on the laptop.
+    assert "$(hostname)-$SLURM_JOB_ID/slurm-deadline-sample.warn" in prelude
+
+
+def test_prelude_warn_path_uses_the_timers_own_scope(tmp_path, monkeypatch):
+    """The scope is a hash of (mirror, target).  If the preamble ever
+    computed it from different arguments than the timer does, the agent
+    would poll a directory nothing writes -- silently, which is exactly the
+    failure mode issue 27 is about.  Pin them to each other."""
+    _m, _ctx, prelude, timer = _confined_prelude(tmp_path, monkeypatch)
+
+    scope = re.search(r"TIMER_SCOPE=[\'\"]?([0-9a-f]{24})", timer)
+    assert scope, "no TIMER_SCOPE in the staged timer script"
+    assert f"/timers/{scope.group(1)}/" in prelude
+
+    # The preamble spells the rest of that directory out in Python while the
+    # timer builds it in shell, so nothing but this assertion keeps the two
+    # in step.  If either line below changes, the emitted path is stale and
+    # agents silently poll a file nothing writes.
+    assert 'RUNTIME_DIR="/tmp/sucoder-$UID"' in timer
+    assert 'STATE_DIR="$RUNTIME_DIR/timers/$TIMER_SCOPE/$node-$JOB"' in timer
+    assert 'WARN_FILE="$STATE_DIR/slurm-deadline-$MIRROR_TOKEN.warn"' in timer
+
+
+def test_prelude_tells_a_burst_job_to_clone_the_branch(tmp_path, monkeypatch):
+    """Issue 28.  Pushing a branch does not check it out: the mirror's tree
+    stays on whatever it has checked out, so a job pointed at the shared
+    mirror reads the wrong tree and looks like it worked."""
+    _m, _ctx, prelude, _timer = _confined_prelude(tmp_path, monkeypatch)
+
+    assert "give it the shared mirror or a branch you have committed" not in prelude
+    assert (
+        "git clone --branch <branch> /global/home/users/coder/mirrors/sample "
+        "/local/job$SLURM_JOB_ID/mirrors/sample"
+    ) in prelude
+    # $SUCODER_LOCAL_ROOT is inherited by an sbatch child and names a
+    # directory on THIS node; the recipe must not reuse it.
+    clone_line = next(
+        line for line in prelude.splitlines() if "git clone --branch" in line
+    )
+    assert "$SUCODER_LOCAL_ROOT" not in clone_line
 
 
 def test_launch_agent_confined_local_tier_prelude_reaches_batch(tmp_path, monkeypatch):
