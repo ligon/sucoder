@@ -52,6 +52,7 @@ from .logging_utils import (
     progress, set_progress, setup_logger, summarize_command,
 )
 from .local_tier import wip_job_ref, work_path
+from .snapshots_report import DEFAULT_RECOVERY_WINDOW_DAYS
 from .slurm_timer import TIME_LEFT_TO_MINS_SH, build_timer_script, timer_identity
 from .tool_preflight import format_report
 from .mirror import (
@@ -3725,6 +3726,165 @@ def sessions(
         _finish_login_probes(report, login_plan, logger, config, debug_ssh)
 
     typer.echo(render_report(report, probed=probed).rstrip("\n"))
+
+
+@app.command("snapshots")
+def snapshots(
+    ctx: typer.Context,
+    retire: bool = typer.Option(
+        False, "--retire",
+        help="Delete the snapshots the listing marks as past retention.  "
+             "Without it the command is read-only.",
+    ),
+    recovery_window: float = typer.Option(
+        DEFAULT_RECOVERY_WINDOW_DAYS, "--recovery-window",
+        help="Days after a job's end before its snapshot is past retention.",
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
+) -> None:
+    """List every WIP snapshot on the configured clusters, and retire the
+    ones whose job ended long enough ago.
+
+    The launch-independent half of issue 14.  The prepare script retires
+    ended jobs' snapshots, but only when a job is launched against that
+    mirror; a mirror no longer in use keeps its refs forever, and each ref
+    pins a snapshot tree.  This sweeps them from here, with no allocation.
+
+    A snapshot goes by *when its job ended* (``sacct``), never by the age of
+    the ref alone: the ref freezes at the last change while the allocation
+    can run on for days.  Where accounting cannot place the job, ref age is
+    used against the cluster's longest ``slurm.time`` plus the window, and
+    where even that has no finite bound, nothing is deleted.  Read-only
+    unless ``--retire``; every deletion is guarded by the hash the listing
+    saw, so a snapshot rewritten in between is left alone.
+    """
+    from .renew import parse_time_left
+    from .sessions_report import group_targets_by_cluster
+    from .snapshots_report import (
+        SNAPSHOT_LIST_SH, ClusterSnapshots, decide, parse_listing,
+        parse_retire_output, render, retire_script,
+    )
+
+    config = _get_config(ctx)
+    if not config.targets:
+        typer.echo("No targets configured; nothing to list.", err=True)
+        raise typer.Exit(code=0)
+    if recovery_window < 0:
+        typer.echo("--recovery-window must not be negative.", err=True)
+        raise typer.Exit(code=2)
+
+    logger = setup_logger("sucoder.snapshots", config.log_dir, verbose)
+    debug_ssh = _get_debug_ssh(ctx)
+    set_progress(True)
+    clusters, _schedulerless = group_targets_by_cluster(config.targets)
+
+    results: List[ClusterSnapshots] = []
+    for cluster, names in clusters.items():
+        remote = config.targets[names[0]]
+        summary = ClusterSnapshots(cluster=cluster, targets=list(names))
+        results.append(summary)
+
+        # The fallback threshold: the longest allocation any of this
+        # cluster's targets can hold, plus the window.  A target whose
+        # --time is not finite leaves no safe bound, and the fallback is
+        # then declined rather than guessed.
+        fallback_seconds: Optional[int] = None
+        fallback_reason = ""
+        minutes = []
+        for name in names:
+            slurm = getattr(config.targets[name], "slurm", None)
+            parsed = parse_time_left(getattr(slurm, "time", None)) if slurm else None
+            if parsed is None:
+                fallback_reason = (
+                    f"target {name} has no finite slurm.time, so ref age has no safe bound"
+                )
+                minutes = []
+                break
+            minutes.append(parsed)
+        if minutes:
+            fallback_seconds = max(minutes) * 60 + int(recovery_window * 86400)
+
+        roots = sorted({
+            str(getattr(config.targets[name], "mirror_root", "") or "~/mirrors")
+            for name in names
+        })
+        script = (
+            f"bash -c {shlex.quote(SNAPSHOT_LIST_SH)} _ "
+            + " ".join(_remote_home_word(r) for r in roots)
+        )
+        try:
+            host = _cluster_query_host(names) or remote.gateway
+            control = _control_for_host(remote, host, debug_ssh)
+            result = _capture_over_tunnel(
+                control, host, script, logger=logger, config=config,
+                debug=debug_ssh, timeout=120,
+            )
+            if result.returncode != 0 and host != remote.gateway and _needs_tunnel_setup(result):
+                logger.info("%s: %s did not answer; falling back to %s", cluster, host, remote.gateway)
+                host = remote.gateway
+                control = _control_for_host(remote, host, debug_ssh)
+                result = _capture_over_tunnel(
+                    control, host, script, logger=logger, config=config,
+                    debug=debug_ssh, timeout=120,
+                )
+        except Exception as exc:  # noqa: BLE001 -- one cluster must not sink the rest
+            summary.errors.append(f"could not connect ({exc})")
+            continue
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip() or "(no output)"
+            summary.errors.append(f"listing failed (exit {result.returncode}): {detail}")
+            continue
+
+        listing = parse_listing(result.stdout)
+        summary.errors.extend(listing.errors)
+        if listing.sacct_available is False:
+            summary.notes.append(
+                "sacct is not on this cluster's PATH: job end times are unknown, "
+                "so every snapshot is judged by ref age alone"
+            )
+        elif listing.sacct_rc not in (None, 0):
+            summary.notes.append(
+                f"sacct failed (exit {listing.sacct_rc}): job end times are unknown, "
+                "so every snapshot is judged by ref age alone"
+            )
+        summary.decisions = decide(
+            listing, window_days=recovery_window,
+            fallback_seconds=fallback_seconds, fallback_reason=fallback_reason,
+        )
+        if fallback_seconds is None and any(
+            d.snapshot.job_id is None or d.snapshot.job_id not in listing.jobs
+            for d in summary.decisions
+        ):
+            summary.notes.append(fallback_reason)
+
+        if not retire:
+            continue
+        doomed = [d for d in summary.decisions if d.retire]
+        if not doomed:
+            continue
+        try:
+            done = _capture_over_tunnel(
+                control, host, retire_script(doomed), logger=logger, config=config,
+                debug=debug_ssh, timeout=120,
+            )
+        except Exception as exc:  # noqa: BLE001
+            summary.errors.append(f"retire failed ({exc}); nothing was deleted")
+            continue
+        retired, failed = parse_retire_output(done.stdout)
+        for path, ref in retired:
+            summary.notes.append(f"retired {ref} on {path.rsplit('/', 1)[-1]}")
+        for path, ref in failed:
+            summary.errors.append(
+                f"could not retire {ref} on {path.rsplit('/', 1)[-1]} "
+                "(moved since the listing, or not writable); left in place"
+            )
+        if done.returncode != 0 and not retired and not failed:
+            summary.errors.append(
+                f"retire failed (exit {done.returncode}): "
+                f"{done.stderr.strip() or '(no output)'}; nothing was deleted"
+            )
+
+    typer.echo(render(results, retiring=retire).rstrip("\n"))
 
 
 class _LoginProbes(NamedTuple):
