@@ -43,10 +43,78 @@ from .sessions_report import LoginSession, Report, SessionEntry
 _SUBMIT_DELAY = "0.3"
 
 
-def frame(text: str, sender: str, when: str) -> str:
-    """The line that is typed: who, when, and the text on one line."""
+def new_message_id() -> str:
+    """Four hex characters: enough to tell today's messages apart, short
+    enough to type in a reply."""
+    import secrets
+    return secrets.token_hex(2)
+
+
+def frame(text: str, sender: str, when: str, msg_id: str = "") -> str:
+    """The line that is typed: an id, who, when, and the text on one line.
+
+    The id is what a reply names (``REPLY <id>: ...``), so the sender can
+    find that reply in the pane among everything else the agent prints.
+    """
     flat = " ".join(text.split())
-    return f"[message from {sender} via sucoder, {when}] {flat}"
+    tag = f"message {msg_id} from" if msg_id else "message from"
+    return f"[{tag} {sender} via sucoder, {when}] {flat}"
+
+
+REPLY_PREFIX = "REPLY"
+
+# What the remote agent is asked to do, in the default system prompt: answer
+# on its own screen with a line that names the message.  The sender then
+# reads the pane back through the same route it typed into.  There is no
+# path from a cluster to a laptop behind NAT, so a reply cannot be pushed;
+# it can only be pulled, and this line is what the pull looks for.
+
+
+def capture_pane_command(recipient: Recipient, lines: int = 200) -> str:
+    """The shell that prints the last *lines* rows of the recipient's pane,
+    scrollback included, through the same route ``send_keys_command`` types
+    into."""
+    sock = f"-L {shlex.quote(recipient.socket)} " if recipient.socket else ""
+    sess = shlex.quote(recipient.session)
+    tmux = f"tmux {sock}capture-pane -p -S -{int(lines)} -t {sess}"
+    if recipient.job_id is not None:
+        tmux = (
+            f"TMPDIR=/tmp srun --jobid={recipient.job_id} --overlap --quiet --chdir=/tmp "
+            f"bash -c {shlex.quote(tmux)}"
+        )
+    return tmux
+
+
+def pane_tail(text: str, lines: int) -> str:
+    """The last *lines* non-blank rows of a captured pane."""
+    rows = [r.rstrip() for r in text.splitlines() if r.strip()]
+    return "\n".join(rows[-lines:]) if lines > 0 else ""
+
+
+def extract_reply(pane_text: str, msg_id: str) -> Optional[str]:
+    """The reply naming *msg_id*, as the agent typed it, or ``None``.
+
+    A TUI reflows long lines into several rows, indented, so the reply is
+    taken from the row holding ``REPLY <id>`` down to the next blank row or
+    the next row that starts a box border (the input prompt).  The last
+    such reply wins, since an agent may correct itself.
+    """
+    needle = f"{REPLY_PREFIX} {msg_id}"
+    rows = pane_text.splitlines()
+    start = None
+    for i, row in enumerate(rows):
+        if needle in row and not row.lstrip().startswith("[message "):
+            start = i
+    if start is None:
+        return None
+    first = rows[start]
+    first = first[first.index(needle) + len(needle):].lstrip(":").strip()
+    collected = [first] if first else []
+    for row in rows[start + 1:]:
+        if not row.strip() or row.lstrip().startswith(("╭", "│", "╰", "┌", "└", "> ")):
+            break
+        collected.append(row.strip())
+    return " ".join(collected).strip() or None
 
 
 @dataclass(frozen=True)
@@ -115,6 +183,7 @@ def plan_recipients(
     everyone: bool = False,
     force: bool = False,
     gateway_hosts: Optional[set] = None,   # hosts that are round-robin aliases
+    for_reading: bool = False,             # a peek: a shell pane is fine to read
 ) -> Tuple[List[Recipient], List[str]]:
     """Who gets the message, and who was passed over and why.
 
@@ -130,6 +199,9 @@ def plan_recipients(
     skipped: List[str] = []
 
     def consider(label: str, pane: Optional[str], exited: bool, make) -> None:
+        if for_reading:
+            chosen.append(make())
+            return
         if exited:
             skipped.append(f"{label}: agent exited; its pane is a shell, and a message "
                            "typed there would run as a command")

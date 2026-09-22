@@ -895,8 +895,21 @@ text as a command; one whose pane could not be probed is skipped unless
 =--force=.  The message is one line: a newline sent literally is an
 Enter, and would submit half of it.
 
-Messages are delivered, not read: whether the agent acts on one is up
-to it.  The cheaper half of the same fix is the bulletin,
+A reply cannot be pushed back --- a cluster has no route to a laptop
+behind NAT --- so it is pulled.  The default system prompt asks an agent
+to answer on its own screen with a line =REPLY <id>: ...=, naming the id
+the message carried, and =--wait= reads the pane after the send for that
+line and prints it:
+
+#+begin_src shell
+sucoder -T carleton-htc message SuCoder --wait 120 "is n0032's Lustre healthy from where you sit?"
+sucoder -T carleton-htc peek SuCoder -n 60      # the pane's last rows, any time
+#+end_src
+
+=peek= is the read half on its own, for looking at a session without
+sending anything; unlike =message= it will happily show a pane that is
+a bare shell.  Whether an agent acts on a message is still up to it.
+The cheaper half of the same fix is the bulletin,
 =~/.sucoder/bulletin.org= on the host the mirror lives on, which the
 default system prompt tells agents to read before concluding that
 infrastructure is broken and to write to before attempting a repair.
