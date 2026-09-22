@@ -457,6 +457,21 @@ def test_dirty_shared_mirror_warns(shared):
 
 @_bash
 @_needs_git
+def test_a_launchers_stash_on_the_mirror_is_announced(shared):
+    """Issue 33: the launcher may stash a peer's work off the shared tree
+    rather than delete it.  The next job is told, or the work looks lost."""
+    mirror, local = shared
+    (mirror / "peer.py").write_text("untracked, only copy\n")
+    _git(mirror, "stash", "push", "--include-untracked", "-m",
+         "sucoder: stashed by u@h before push, 2026-09-22T10:00")
+    r = _run_prepare(mirror, local)
+    assert r.returncode == 0, r.stderr
+    assert "holds 1 stash(es) a launcher made before a push" in r.stdout
+    assert "stash list" in r.stdout
+
+
+@_bash
+@_needs_git
 def test_missing_or_detached_mirror_fails_loudly(shared, tmp_path):
     mirror, local = shared
     r = _run_prepare(tmp_path / "nowhere", local)

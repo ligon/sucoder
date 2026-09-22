@@ -951,10 +951,21 @@ class MirrorManager:
         options: Sequence[Tuple[str, str]],
         default: str,
     ) -> str:
-        """Print *header*, show a lettered menu, and return the chosen key."""
+        """Print *header*, show a lettered menu, and return the chosen key.
+
+        An answer that is not on the menu is asked again, not passed
+        through: every caller's fall-through branch is its abort, and a key
+        typed from habit for an option that no longer exists (issue 33
+        removed one) should cost a second look, not the session.
+        """
         print(header)
         menu = "\n".join(f"  [{key}] {label}" for key, label in options)
-        return input(f"{menu}\n  Choice [{default}]: ").strip().lower() or default
+        keys = {key for key, _ in options}
+        while True:
+            answer = input(f"{menu}\n  Choice [{default}]: ").strip().lower() or default
+            if answer in keys:
+                return answer
+            print(f"  '{answer}' is not an option; choose one of {', '.join(k for k, _ in options)}.")
 
     @staticmethod
     def _unique_branch_name(
@@ -1468,6 +1479,15 @@ class MirrorManager:
         silently discarding work, we show the user what's dirty and
         let them choose how to proceed.
 
+        The tree is *shared*: another session, on another node or the
+        human's laptop, may be in the middle of using it and cannot see
+        it being modified from here (issue 33).  So no answer deletes
+        anything.  Clearing the tree goes through a rescue branch, which
+        the human can delete afterwards on purpose; stashing leaves a
+        stash a peer can find by name.  Untracked files are shown first
+        and counted separately because they are the ones with no other
+        copy anywhere.
+
         Returns ``True`` if the caller should proceed with the push,
         ``False`` if the user chose to leave the remote untouched
         ("skip push" — they will pull from inside the session instead).
@@ -1488,18 +1508,27 @@ class MirrorManager:
         if not dirty:
             return True
 
-        # Show at most 20 lines to avoid flooding the terminal.
+        # Untracked first: they have no copy anywhere else, so they must
+        # not be the ones that fall off the end of a truncated list.
         lines = dirty.splitlines()
+        untracked = [l for l in lines if l.startswith("??")]
+        tracked = [l for l in lines if not l.startswith("??")]
+        lines = untracked + tracked
         summary = "\n".join(f"  {l}" for l in lines[:20])
         if len(lines) > 20:
             summary += f"\n  … and {len(lines) - 20} more files"
+        counts = f"{len(tracked)} tracked, {len(untracked)} untracked"
+        if untracked:
+            counts += " (untracked files have no other copy)"
 
         answer = self._prompt_choice(
-            f"\n⚠  Remote mirror has uncommitted changes:\n{summary}\n",
+            f"\n⚠  Remote mirror has uncommitted changes ({counts}):\n{summary}\n",
             [
-                ("c", "Commit changes to a rescue branch, then push (default)"),
-                ("s", "Stash changes on the remote, then push"),
-                ("d", "Discard remote changes and push"),
+                ("c", "Save changes on a rescue branch and clear the tree, then "
+                      "push (default; `git branch -D rescue/<date>` on the mirror "
+                      "drops them later, on purpose)"),
+                ("s", "Stash changes on the remote (named, so a peer can find "
+                      "them), then push"),
                 ("k", "Skip the push — leave remote as-is "
                       "(pull from inside the session when ready)"),
                 ("n", "Abort"),
@@ -1510,25 +1539,22 @@ class MirrorManager:
         if answer == "c":
             self._rescue_commit_remote(run, remote_path)
         elif answer == "s":
+            import datetime as _dt
+            import getpass
+            import socket as _socket
+            label = (
+                f"sucoder: stashed by {getpass.getuser()}@{_socket.gethostname()} "
+                f"before push, {_dt.datetime.now().isoformat(timespec='minutes')}"
+            )
             run(
-                ["git", "stash", "--include-untracked"],
+                ["git", "stash", "push", "--include-untracked", "-m", label],
                 check=True,
                 cwd=remote_path,
             )
-            self.logger.info("Remote changes stashed")
-        elif answer == "d":
-            run(
-                ["git", "checkout", "--", "."],
-                check=True,
-                cwd=remote_path,
+            self.logger.info(
+                "Remote changes stashed as %r; `git -C %s stash list` shows it",
+                label, remote_path,
             )
-            # Also clean untracked files shown in porcelain output.
-            run(
-                ["git", "clean", "-fd"],
-                check=False,
-                cwd=remote_path,
-            )
-            self.logger.info("Remote uncommitted changes discarded")
         elif answer == "k":
             # Leave the remote alone.  The agent / user can run
             # `git pull` inside the session once they've decided how

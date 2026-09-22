@@ -5352,6 +5352,18 @@ class TestPromptChoice:
         )
         assert result == "s"
 
+    def test_an_answer_not_on_the_menu_is_asked_again(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Not passed through to the caller's abort branch (issue 33)."""
+        answers = iter(["d", "x", "s"])
+        monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
+        result = MirrorManager._prompt_choice(
+            "Pick:", [("s", "Stash"), ("n", "Abort")], default="n",
+        )
+        assert result == "s"
+        assert "'d' is not an option" in capsys.readouterr().out
+
 
 class TestUniqueBranchName:
     """Tests for MirrorManager._unique_branch_name."""
@@ -5493,28 +5505,60 @@ class TestEnsureRemoteWorktreeClean:
         # Caller should proceed with the push.
         assert result is True
 
-    def test_stash(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_stash_is_named_so_a_peer_can_find_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Issue 33: an anonymous stash on a shared tree makes a peer's
+        untracked files simply vanish from their side."""
         mgr = self._init_manager()
-        run, calls = _make_fake_run(status_output=" M dirty.txt\n")
+        run, calls = _make_fake_run(status_output=" M dirty.txt\n?? new.py\n")
         monkeypatch.setattr("builtins.input", lambda _prompt: "s")
 
         result = mgr._ensure_remote_worktree_clean(run, "/fake/path")
 
-        cmds = [" ".join(c) for c in calls]
-        assert any("stash" in c for c in cmds)
+        stash = next(c for c in calls if "stash" in c)
+        assert stash[:4] == ["git", "stash", "push", "--include-untracked"]
+        assert stash[4] == "-m" and stash[5].startswith("sucoder: stashed by ")
+        assert "@" in stash[5] and "before push, " in stash[5]
         assert result is True
 
-    def test_discard(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_no_answer_deletes_anything(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Issue 33: the old 'd' ran `git clean -fd` on the shared tree,
+        deleting untracked files with no copy anywhere.  It is gone; the
+        rescue-branch answer already clears the tree and keeps a copy."""
         mgr = self._init_manager()
-        run, calls = _make_fake_run(status_output=" M dirty.txt\n")
-        monkeypatch.setattr("builtins.input", lambda _prompt: "d")
+        run, calls = _make_fake_run(status_output=" M dirty.txt\n?? only-copy.py\n")
+        prompts: list[str] = []
+        answers = iter(["d", "c"])          # 'd' is refused; then rescue
+
+        def _capture(prompt: str) -> str:
+            prompts.append(prompt)
+            return next(answers)
+        monkeypatch.setattr("builtins.input", _capture)
 
         result = mgr._ensure_remote_worktree_clean(run, "/fake/path")
 
+        assert "[d]" not in prompts[0]
         cmds = [" ".join(c) for c in calls]
-        assert any("checkout -- ." in c for c in cmds)
-        assert any("clean -fd" in c for c in cmds)
+        assert not any("clean" in c or "checkout -- ." in c for c in cmds)
+        assert any("checkout -b" in c and "rescue/" in c for c in cmds)
         assert result is True
+
+    def test_untracked_files_are_listed_first_and_counted(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """They have no other copy, so they must not be the ones that fall
+        off the end of a truncated list."""
+        mgr = self._init_manager()
+        lines = [f" M tracked{i}.txt" for i in range(22)] + ["?? only-copy.py"]
+        run, _calls = _make_fake_run(status_output="\n".join(lines))
+        monkeypatch.setattr("builtins.input", lambda _prompt: "k")
+
+        mgr._ensure_remote_worktree_clean(run, "/fake/path")
+
+        out = capsys.readouterr().out
+        assert "(22 tracked, 1 untracked (untracked files have no other copy))" in out
+        assert "?? only-copy.py" in out
+        assert out.index("?? only-copy.py") < out.index(" M tracked0.txt")
+        assert "… and 3 more files" in out
 
     def test_skip_push(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """'k' leaves the remote untouched and returns False."""
@@ -5581,7 +5625,7 @@ class TestEnsureRemoteWorktreeClean:
         mgr = self._init_manager()
         lines = "\n".join(f" M file{i}.txt" for i in range(25))
         run, _calls = _make_fake_run(status_output=lines)
-        monkeypatch.setattr("builtins.input", lambda _prompt: "d")
+        monkeypatch.setattr("builtins.input", lambda _prompt: "k")
 
         mgr._ensure_remote_worktree_clean(run, "/fake/path")
 
