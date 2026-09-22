@@ -13,10 +13,11 @@ and the job lifecycle: [[file:handoffs/2026-09-18-sessions-and-job-lifecycle.org
 
 * What landed, in merge order
 
-All four PRs are open and stacked; the auto-mode classifier refuses
-=gh pr merge= ("Merge Without Review"), so merging is the human's step.
+All four PRs are open; none is merged.  The auto-mode classifier
+refuses =gh pr merge= ("Merge Without Review"), so merging is the
+human's step.  32 and 37 stand alone; 34, 35 and 36 are a stack.
 
-1. PR 32 (merged by hand) :: =AGENTS.md= gains the closing-keyword rule
+1. PR 32 :: =AGENTS.md= gains the closing-keyword rule
    --- issue 14 had been closed twice by accident, once by a stale
    =Closes #14= and once by a merge commit saying it did /not/ close it,
    because GitHub reads the tokens and not the English.  Also the
@@ -83,7 +84,8 @@ with "Too many authentication failures".
 
 * Next
 
-- Merge 34, 35, 36 in that order; GitHub retargets each to =main=.
+- Merge 32 and 37 whenever; merge 34, 35, 36 in that order, and GitHub
+  retargets each to =main=.
 - First live =sucoder snapshots --retire=: run =sucoder snapshots= first
   and read the decisions; the three legacy refs go on 2026-09-25 at the
   default window.
