@@ -4309,3 +4309,161 @@ def test_release_remote_command_against_a_real_repo(tmp_path, monkeypatch):
     # No ref at all: still a clean cancel, nothing reported.
     again = subprocess.run(["bash", "-c", cmd], env=env, capture_output=True, text=True)
     assert again.returncode == 0 and again.stdout == ""
+
+
+# -- sucoder snapshots (issue 14's launch-independent sweep) -----------------------
+#
+# Read-only unless --retire; one listing per cluster; the retire round trip
+# carries only the doomed refs, each guarded by the hash the listing saw.
+
+_SNAP_NOW = 1_790_067_930
+_SNAP_DAY = 86400
+
+
+class _SnapshotsHarness:
+    class _Slurm:
+        confined = True
+        partition = account = qos = None
+
+        def __init__(self, time):
+            self.time = time
+
+    class _Remote:
+        host = None
+
+        def __init__(self, gateway, slurm, mirror_root="~/mirrors"):
+            self.gateway = gateway
+            self.slurm = slurm
+            self.mirror_root = mirror_root
+
+        def ssh_control_kwargs(self):
+            return {}
+
+    def __init__(self, *, times=("24:00:00", "12-00:00:00"), roots=None):
+        roots = roots or {}
+        self.config = SimpleNamespace(
+            targets={
+                f"t{i}": self._Remote("hpc.brc", self._Slurm(t), roots.get(f"t{i}", "~/mirrors"))
+                for i, t in enumerate(times)
+            },
+            mirrors={},
+            log_dir=None,
+        )
+
+
+def _snapshots_listing(*rows, sacct_rows=(), now=_SNAP_NOW):
+    out = [f"NOW\t{now}\t-0700"]
+    out += [f"REF\t/home/u/mirrors/{m}\t{ref}\t{sha}\t{when}\t{subj}" for m, ref, sha, when, subj in rows]
+    out += ["SACCT-AVAILABLE\t1", "SACCT-RC\t0"]
+    out += [f"SACCT\t{r}" for r in sacct_rows]
+    return "\n".join(out) + "\n"
+
+
+def _run_snapshots(monkeypatch, harness, listing, *, retire=False, window=7.0, rc=0, retire_stdout="RETIRED\t/home/u/mirrors/M\trefs/sucoder/wip-job/M/7\n"):
+    _install_sessions_fakes(monkeypatch)
+    asked = []
+
+    def _fake(control, host, command, **kw):
+        asked.append((host, command))
+        if len(asked) == 1:
+            return SimpleNamespace(returncode=rc, stdout=listing, stderr="" if rc == 0 else "boom")
+        return SimpleNamespace(returncode=0, stdout=retire_stdout, stderr="")
+    monkeypatch.setattr(cli, "_capture_over_tunnel", _fake)
+    ctx = SimpleNamespace(obj={"config": harness.config}, params={})
+    cli.snapshots(ctx, retire=retire, recovery_window=window, verbose=False)
+    return asked
+
+
+def test_snapshots_lists_and_deletes_nothing_without_retire(monkeypatch, capsys):
+    listing = _snapshots_listing(
+        ("M", "refs/sucoder/wip-job/M/7", "a" * 40, _SNAP_NOW - 30 * _SNAP_DAY, "WIP snapshot x job 7"),
+        ("M", "refs/sucoder/wip-job/M/8", "b" * 40, _SNAP_NOW - 30 * _SNAP_DAY, "WIP snapshot x job 8"),
+        sacct_rows=(f"7|TIMEOUT|{_SNAP_NOW - 20 * _SNAP_DAY}|p|a|q", "8|RUNNING|Unknown|p|a|q"),
+    )
+    asked = _run_snapshots(monkeypatch, _SnapshotsHarness(), listing)
+    out = capsys.readouterr().out
+    assert len(asked) == 1, asked                       # no second, deleting, round trip
+    host, command = asked[0]
+    assert host == "hpc.brc" and command.startswith("bash -c ") and '"$HOME"/mirrors' in command
+    assert "retire: job ended 20d ago, past the 7d window" in out
+    assert "kept: job still going" in out
+    assert "2 snapshot(s); 1 past retention.  --retire deletes them." in out
+
+
+def test_snapshots_retire_sends_only_the_doomed_refs_guarded_by_hash(monkeypatch, capsys):
+    listing = _snapshots_listing(
+        ("M", "refs/sucoder/wip-job/M/7", "a" * 40, _SNAP_NOW - 30 * _SNAP_DAY, "WIP snapshot x job 7"),
+        ("M", "refs/sucoder/wip-job/M/8", "b" * 40, _SNAP_NOW - 30 * _SNAP_DAY, "WIP snapshot x job 8"),
+        sacct_rows=(f"7|TIMEOUT|{_SNAP_NOW - 20 * _SNAP_DAY}|p|a|q", "8|RUNNING|Unknown|p|a|q"),
+    )
+    asked = _run_snapshots(monkeypatch, _SnapshotsHarness(), listing, retire=True)
+    out = capsys.readouterr().out
+    assert len(asked) == 2, asked
+    _, script = asked[1]
+    assert f"update-ref -d refs/sucoder/wip-job/M/7 {'a' * 40}" in script
+    assert "wip-job/M/8" not in script
+    assert "retired refs/sucoder/wip-job/M/7 on M" in out
+    assert "2 snapshot(s); retiring 1." in out
+
+
+def test_snapshots_retire_with_nothing_doomed_makes_no_second_trip(monkeypatch, capsys):
+    listing = _snapshots_listing(
+        ("M", "refs/sucoder/wip-job/M/8", "b" * 40, _SNAP_NOW - 30 * _SNAP_DAY, "WIP snapshot x job 8"),
+        sacct_rows=("8|RUNNING|Unknown|p|a|q",),
+    )
+    asked = _run_snapshots(monkeypatch, _SnapshotsHarness(), listing, retire=True)
+    assert len(asked) == 1
+    assert "nothing past retention" in capsys.readouterr().out
+
+
+def test_snapshots_fallback_is_the_longest_allocation_plus_the_window(monkeypatch, capsys):
+    # No accounting record for job 9: ref age against 12d + 7d = 19d.
+    listing = _snapshots_listing(
+        ("M", "refs/sucoder/wip-job/M/9", "c" * 40, _SNAP_NOW - 18 * _SNAP_DAY, "WIP snapshot x job 9"),
+        ("M", "refs/sucoder/wip-job/M/10", "d" * 40, _SNAP_NOW - 20 * _SNAP_DAY, "WIP snapshot x job 10"),
+    )
+    _run_snapshots(monkeypatch, _SnapshotsHarness(times=("24:00:00", "12-00:00:00")), listing)
+    out = capsys.readouterr().out
+    assert "kept: no accounting record; snapshot 18d old, within the 19d fallback" in out
+    assert "retire: no accounting record; snapshot 20d old, past the 19d fallback" in out
+
+
+def test_snapshots_declines_the_fallback_when_a_target_has_no_finite_time(monkeypatch, capsys):
+    listing = _snapshots_listing(
+        ("M", "refs/sucoder/wip-job/M/9", "c" * 40, _SNAP_NOW - 400 * _SNAP_DAY, "WIP snapshot x job 9"),
+    )
+    asked = _run_snapshots(
+        monkeypatch, _SnapshotsHarness(times=("24:00:00", "UNLIMITED")), listing, retire=True,
+    )
+    out = capsys.readouterr().out
+    assert len(asked) == 1                              # nothing to delete, so no trip
+    assert "kept: no accounting record; target t1 has no finite slurm.time" in out
+    assert "(target t1 has no finite slurm.time, so ref age has no safe bound)" in out
+
+
+def test_snapshots_scans_every_mirror_root_the_cluster_uses(monkeypatch):
+    harness = _SnapshotsHarness(roots={"t0": "~/mirrors", "t1": "/scratch/mirrors"})
+    asked = _run_snapshots(monkeypatch, harness, _snapshots_listing())
+    _, command = asked[0]
+    assert command.endswith(' "$HOME"/mirrors /scratch/mirrors') or command.endswith(' /scratch/mirrors "$HOME"/mirrors'), command
+
+
+def test_snapshots_a_failed_listing_is_an_error_not_a_deletion(monkeypatch, capsys):
+    asked = _run_snapshots(monkeypatch, _SnapshotsHarness(), "", retire=True, rc=1)
+    out = capsys.readouterr().out
+    assert len(asked) == 1
+    assert "! hpc.brc: listing failed (exit 1): boom" in out
+
+
+def test_snapshots_a_moved_ref_is_reported_as_left_in_place(monkeypatch, capsys):
+    listing = _snapshots_listing(
+        ("M", "refs/sucoder/wip-job/M/7", "a" * 40, _SNAP_NOW - 30 * _SNAP_DAY, "WIP snapshot x job 7"),
+        sacct_rows=(f"7|TIMEOUT|{_SNAP_NOW - 20 * _SNAP_DAY}|p|a|q",),
+    )
+    _run_snapshots(
+        monkeypatch, _SnapshotsHarness(), listing, retire=True,
+        retire_stdout="FAILED\t/home/u/mirrors/M\trefs/sucoder/wip-job/M/7\n",
+    )
+    out = capsys.readouterr().out
+    assert "could not retire refs/sucoder/wip-job/M/7 on M" in out
+    assert "left in place" in out
