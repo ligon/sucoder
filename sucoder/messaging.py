@@ -114,6 +114,7 @@ def plan_recipients(
     target: Optional[str] = None,
     everyone: bool = False,
     force: bool = False,
+    gateway_hosts: Optional[set] = None,   # hosts that are round-robin aliases
 ) -> Tuple[List[Recipient], List[str]]:
     """Who gets the message, and who was passed over and why.
 
@@ -124,6 +125,7 @@ def plan_recipients(
     from .config import sanitize_session_token
 
     wanted_token = sanitize_session_token(mirror) if mirror else None
+    gateway_hosts = gateway_hosts or set()
     chosen: List[Recipient] = []
     skipped: List[str] = []
 
@@ -171,11 +173,23 @@ def plan_recipients(
         if entry_selected(entry, None) and (everyone or target is None):
             skipped.append(f"{entry.job.token} (job {entry.job.job_id}): matches no configured "
                            "target, so whether its tmux uses a dedicated socket is unknown")
+    # A gateway is a round-robin alias for the login nodes, so the sweep
+    # can find ONE tmux session under two host names: the gateway's and
+    # the node's own (measured 2026-09-22: hpc.brc.berkeley.edu resolved to
+    # ln003, which was also pinned).  Typing into both delivers twice.  When
+    # a session with the same name and target is reported on a named login
+    # node, the gateway's copy is the same session and is dropped.
+    named_hosts = {
+        (sess.name, sess.target) for sess in report.logins
+        if sess.host not in gateway_hosts
+    }
     for sess in report.logins:
         if not everyone:
             if wanted_token is None or sess.token != wanted_token:
                 continue
         if target is not None and sess.target != target:
+            continue
+        if sess.host in gateway_hosts and (sess.name, sess.target) in named_hosts:
             continue
         label = f"{sess.token} (login session on {sess.host}, {sess.target})"
         consider(

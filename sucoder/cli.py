@@ -3698,10 +3698,13 @@ def message(
         name for name, remote in config.targets.items()
         if getattr(getattr(remote, "slurm", None), "confined", False)
     }
+    gateway_hosts = {
+        getattr(remote, "gateway", None) for remote in config.targets.values()
+    } - {None}
     chosen, skipped = plan_recipients(
         report, cluster_hosts=cluster_hosts, target_cluster=target_cluster,
         confined_targets=confined_targets, mirror=mirror, target=target_name,
-        everyone=everyone, force=force,
+        everyone=everyone, force=force, gateway_hosts=gateway_hosts,
     )
     for note in skipped:
         typer.echo(f"  skipped {note}")
