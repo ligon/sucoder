@@ -863,6 +863,44 @@ target has no finite =--time= even that has no safe bound, and nothing
 is deleted.  Every deletion is guarded by the hash the listing saw, so a
 snapshot rewritten in between is left alone.
 
+*** Messaging a running session
+
+Two agents working one mirror --- one in a job, one on the laptop ---
+have no channel to each other; on 2026-09-21 the only link was a human
+copying between terminals, and a wrong diagnosis was overturned only
+because of it.  =sucoder message= types a line into a running agent's
+session from wherever you are.
+
+#+begin_src shell
+sucoder message LSMS_Library "ln001's Lustre client is wedged; read from dtn, stop repairing"
+sucoder message --all "ln001 is wedged; stop repairing"     # every live session, every cluster
+sucoder message LSMS_Library --dry-run "..."                # who would get it, and the exact line
+sucoder -T carleton-htc message LSMS_Library "..."          # one target, when a mirror runs on two
+#+end_src
+
+For a terminal agent stdin is the API and tmux owns it, so the line is
+=tmux send-keys= into the session's pane --- through =srun --overlap=
+for a job, where the tmux server lives inside the allocation, exactly
+as the pane probe reaches it.  Recipients are the sessions =sucoder
+sessions= shows, enumerated from the scheduler and the login nodes, so
+a job whose record was lost can still be reached.
+
+The text arrives framed, =[message from you@laptop via sucoder, <time>]
+...=, because it lands with the same authority as you typing; the
+system prompt's bulletin convention tells the agent to treat it as a
+peer's report to check, not an instruction from the human.  A session
+whose pane is a bare shell --- an agent that has exited, leaving the
+=exec bash -l= behind --- is never sent to, since Enter there runs the
+text as a command; one whose pane could not be probed is skipped unless
+=--force=.  The message is one line: a newline sent literally is an
+Enter, and would submit half of it.
+
+Messages are delivered, not read: whether the agent acts on one is up
+to it.  The cheaper half of the same fix is the bulletin,
+=~/.sucoder/bulletin.org= on the host the mirror lives on, which the
+default system prompt tells agents to read before concluding that
+infrastructure is broken and to write to before attempting a repair.
+
 *** Choosing a login node
 
 The login node is pinned once, from a round-robin =ssh <gateway> hostname=,

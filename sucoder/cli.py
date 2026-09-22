@@ -3609,6 +3609,175 @@ def sessions(
     # on ~8s session opens, and silence for that long is indistinguishable
     # from a hang -- which is what it was reported as.
     set_progress(True)
+    probed = not fast
+    report, _hosts = _collect_sessions(
+        config, probed=probed, login_nodes=login_nodes, logger=logger, debug_ssh=debug_ssh,
+    )
+    typer.echo(render_report(report, probed=probed).rstrip("\n"))
+
+
+@app.command("message")
+def message(
+    ctx: typer.Context,
+    recipient: str = typer.Argument(
+        ..., metavar="MIRROR|TEXT",
+        help="The mirror whose session gets the message; with --all, the text itself.",
+    ),
+    text: Optional[str] = typer.Argument(None, help="The message."),
+    everyone: bool = typer.Option(
+        False, "--all", help="Send to every live SuCoder session on every cluster.",
+    ),
+    sender: Optional[str] = typer.Option(
+        None, "--from", help="Who the message says it is from (default: user@host here).",
+    ),
+    force: bool = typer.Option(
+        False, "--force",
+        help="Also send to a session whose pane could not be probed.  A pane "
+             "that IS a shell is never sent to, forced or not.",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show who would get it and stop.",
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
+) -> None:
+    """Type a line into a running agent's session, from here.
+
+    Two agents on one mirror have no channel (issue 26): the only link on
+    2026-09-21 was a human copying between terminals.  For a terminal agent
+    stdin is the API and tmux owns it, so this is ``tmux send-keys`` into
+    the session's pane -- through ``srun --overlap`` for a job, where the
+    tmux server lives inside the allocation.  Recipients are the sessions
+    ``sucoder sessions`` shows, enumerated from the scheduler and the
+    login nodes, so a job whose record was lost can still be reached.
+
+    The text is framed with who sent it and when: it lands with the same
+    authority as the human typing, and the prompt's bulletin convention
+    tells the agent to treat it as a peer's report.  A session whose pane
+    is a bare shell is never sent to, because Enter there runs the text
+    as a command.  ``-T`` narrows to one target when a mirror runs on two.
+    """
+    import datetime as _dt
+    import getpass
+    import socket as _socket
+
+    from .messaging import frame, parse_send_output, plan_recipients, send_keys_command
+    from .sessions_report import group_targets_by_cluster
+
+    if everyone:
+        if text is not None:
+            typer.echo("With --all, give only the text (no mirror).", err=True)
+            raise typer.Exit(code=2)
+        mirror, text = None, recipient
+    else:
+        if text is None:
+            typer.echo("Usage: sucoder message MIRROR TEXT, or sucoder message --all TEXT.", err=True)
+            raise typer.Exit(code=2)
+        mirror = recipient
+    if not text.strip():
+        typer.echo("The message is empty.", err=True)
+        raise typer.Exit(code=2)
+
+    config = _get_config(ctx)
+    if not config.targets:
+        typer.echo("No targets configured; nothing to send to.", err=True)
+        raise typer.Exit(code=1)
+    target_name = ((ctx.obj or {}).get("target_name") if ctx else None)
+
+    logger = setup_logger("sucoder.message", config.log_dir, verbose)
+    debug_ssh = _get_debug_ssh(ctx)
+    set_progress(True)
+
+    # The same enumeration the listing does, panes probed: the probe is what
+    # tells a live agent from the shell left behind when it exited.
+    report, cluster_hosts = _collect_sessions(
+        config, probed=True, login_nodes=True, logger=logger, debug_ssh=debug_ssh,
+    )
+    clusters, _ = group_targets_by_cluster(config.targets)
+    target_cluster = {name: cluster for cluster, names in clusters.items() for name in names}
+    confined_targets = {
+        name for name, remote in config.targets.items()
+        if getattr(getattr(remote, "slurm", None), "confined", False)
+    }
+    chosen, skipped = plan_recipients(
+        report, cluster_hosts=cluster_hosts, target_cluster=target_cluster,
+        confined_targets=confined_targets, mirror=mirror, target=target_name,
+        everyone=everyone, force=force,
+    )
+    for note in skipped:
+        typer.echo(f"  skipped {note}")
+    for err in report.errors:
+        typer.echo(f"! {err}", err=True)
+    if not chosen:
+        what = "no live session found" if everyone else f"no live session found for mirror {mirror}"
+        typer.echo(f"{what}" + (f" on target {target_name}" if target_name else "") + ".")
+        raise typer.Exit(code=1)
+
+    who = sender or f"{getpass.getuser()}@{_socket.gethostname()}"
+    line = frame(text, who, _dt.datetime.now().strftime("%Y-%m-%d %H:%M %Z").strip())
+    for r in chosen:
+        typer.echo(f"  {'would send' if dry_run else 'sending'} to {r.label}")
+    if dry_run:
+        typer.echo(f"  line: {line}")
+        return
+
+    # One round trip per host, every recipient there in one script.
+    by_host: Dict[str, List] = {}
+    for r in chosen:
+        by_host.setdefault(r.host, []).append(r)
+    failures = 0
+    for host, recipients in by_host.items():
+        script = "\n".join(send_keys_command(r, line) for r in recipients)
+        control = None
+        for cluster, (h, ctl) in cluster_hosts.items():
+            if h == host:
+                control = ctl
+                break
+        if control is None:
+            remote = config.targets.get(recipients[0].target or "")
+            if remote is None:
+                typer.echo(f"! {host}: no target configuration to reach it with", err=True)
+                failures += len(recipients)
+                continue
+            control = _control_for_host(remote, host, debug_ssh)
+        try:
+            result = _capture_over_tunnel(
+                control, host, script, logger=logger, config=config, debug=debug_ssh, timeout=90,
+            )
+        except Exception as exc:  # noqa: BLE001 -- report and go on to the next host
+            typer.echo(f"! {host}: could not connect ({exc})", err=True)
+            failures += len(recipients)
+            continue
+        sent, failed = parse_send_output(result.stdout)
+        for r in recipients:
+            if r.session in sent:
+                typer.echo(f"  sent to {r.label}")
+            else:
+                failures += 1
+                detail = result.stderr.strip()
+                typer.echo(
+                    f"! not delivered to {r.label}" + (f": {detail}" if detail else ""), err=True,
+                )
+    if failures:
+        raise typer.Exit(code=1)
+
+
+def _collect_sessions(config, *, probed: bool, login_nodes: bool, logger, debug_ssh):
+    """Everything ``sessions`` knows, as a :class:`Report`, plus the warm
+    ``{cluster: (host, control)}`` it queried so a caller can reuse them.
+
+    Split out so ``message`` can address the same sessions the listing
+    shows -- enumerated from the scheduler and the login nodes, not from
+    the session records -- rather than keeping a second, narrower idea of
+    what is running.
+    """
+    import subprocess
+
+    from .session import RemoteSession
+    from .sessions_report import (
+        LOGIN_SESSION_PANES_SH, SQUEUE_FORMAT, build_report, fuse_scripts,
+        group_targets_by_cluster, parse_squeue, split_fused,
+    )
+
     clusters, schedulerless = group_targets_by_cluster(config.targets)
 
     mirror_tokens = {
@@ -3616,7 +3785,6 @@ def sessions(
     }
     jobs_by_cluster: Dict[str, list] = {}
     errors: List[str] = []
-    probed = not fast
 
     # Where each cluster is queried, resolved before anything is asked: a
     # host that answers BOTH the scheduler query and the login sweep must be
@@ -3724,8 +3892,7 @@ def sessions(
     # nothing reaps is the one worth not losing track of.
     if login_plan is not None:
         _finish_login_probes(report, login_plan, logger, config, debug_ssh)
-
-    typer.echo(render_report(report, probed=probed).rstrip("\n"))
+    return report, cluster_hosts
 
 
 @app.command("snapshots")
