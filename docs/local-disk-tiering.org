@@ -178,7 +178,12 @@ Points that matter:
   =wip_snapshot_minutes=.  A live job's snapshot is never touched, and
   neither is one whose job could not be checked: deleting on an unknown
   answer is the same mistake as restoring on one, and it deletes the only
-  durable copy of somebody's work.
+  durable copy of somebody's work.  When a snapshot is kept for that second
+  reason, prepare says so on its =SUCODER:= line and names how many.
+  Retention is the only thing bounding the ref set, and a silent refusal to
+  retire looks exactly like having nothing to retire, so an environment
+  where the scheduler cannot be reached from inside a job would return to
+  the unbounded accumulation of issue 14 with nothing on screen.
 - Nothing runs =git gc= on the mirror :: deleting a ref frees nothing by
   itself.  Every snapshot is =commit-tree -p HEAD=, so each one already
   orphans its predecessor whatever the ref is called; retiring the refs is

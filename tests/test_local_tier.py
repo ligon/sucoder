@@ -549,6 +549,43 @@ def test_without_squeue_nothing_is_retired(shared):
     assert r.returncode == 0, r.stderr
     assert _remote_wip_refs(mirror) == {_ref(1), _ref(2)}
 
+    # ...and it says so.  Retention is the only thing keeping the ref set
+    # finite; silence here is indistinguishable from "nothing to retire",
+    # which is how unbounded accumulation would come back unnoticed.
+    assert "squeue is not on PATH" in r.stdout
+    assert "2 left" in r.stdout
+    assert "issue 14" in r.stdout
+
+
+@_bash
+@_needs_git
+def test_an_unreachable_controller_is_reported_not_swallowed(shared):
+    """A scheduler that answers with an error is the dangerous case: squeue
+    exists, so nothing looks wrong, and every ref is conservatively kept."""
+    mirror, local = _seed(shared, [(1, "2026-09-10T00:00:00+00:00"),
+                                   (2, "2026-09-11T00:00:00+00:00")])
+    r = _run_prepare(mirror, local, job_id=9, squeue=_UNREACHABLE)
+    assert r.returncode == 0, r.stderr
+    assert _remote_wip_refs(mirror) == {_ref(1), _ref(2)}
+    assert "no usable answer for 2 WIP" in r.stdout
+    assert "retired" not in r.stdout
+
+
+@_bash
+@_needs_git
+def test_a_running_job_is_not_reported_as_unchecked(shared):
+    """The distinction the report rests on: a ref left alone because its job
+    is running is retention working, and must not read as a failure to
+    check.  Job 1 runs; 2 and 3 have ended."""
+    mirror, local = _seed(shared, [(1, "2026-09-10T00:00:00+00:00"),
+                                   (2, "2026-09-11T00:00:00+00:00"),
+                                   (3, "2026-09-12T00:00:00+00:00")])
+    r = _run_prepare(mirror, local, job_id=9, squeue=_ONE_LIVE)
+    assert r.returncode == 0, r.stderr
+    assert _ref(1) in _remote_wip_refs(mirror)
+    assert "no usable answer" not in r.stdout
+    assert "squeue is not on PATH" not in r.stdout
+
 
 @_bash
 @_needs_git

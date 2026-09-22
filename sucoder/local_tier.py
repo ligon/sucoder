@@ -184,15 +184,21 @@ wip_job_gone() {
     # a successful EMPTY query and an "invalid job id" error are the only
     # answers accepted as "the job is gone".  Any other failure is unknown
     # state and must not be read as gone.
+    #
+    # Three answers, not two: 0 gone, 1 live, 2 could not tell.  Callers
+    # that only test truthiness are unaffected (2 is false, as 1 was), but
+    # retention needs to distinguish "left alone because it is running"
+    # from "left alone because nothing answered" -- the second is the one
+    # worth reporting, and it used to be invisible (issue 14).
     local out rc
     out=$(squeue --job "$1" --noheader -o '%T' 2>&1); rc=$?
     if [ "$rc" -eq 0 ]; then
-        [ -z "$out" ]
-        return
+        [ -z "$out" ] && return 0
+        return 1
     fi
     case "$out" in
         *[Ii]nvalid\ job\ id*) return 0 ;;
-        *) return 1 ;;
+        *) return 2 ;;
     esac
 }
 
@@ -271,13 +277,19 @@ fi
 # checked -- deleting on an unknown answer is the same mistake as restoring
 # on one.
 wip_kept=""
+wip_unchecked_refs=0
 for ref in $(git for-each-ref --sort=-committerdate --format='%(refname)' \
              "$WIP_NS" "$WIP_LEGACY" 2>/dev/null); do
     job=$(wip_job_of "$ref")
     [ -n "$job" ] || continue
     [ -n "$JOB" ] && [ "$job" = "$JOB" ] && continue     # our own, still in use
-    [ "$wip_have_squeue" -eq 1 ] || continue             # cannot tell: leave it
-    wip_job_gone "$job" || continue                      # live or unknown: leave it
+    if [ "$wip_have_squeue" -eq 0 ]; then                # no scheduler: cannot tell
+        wip_unchecked_refs=$((wip_unchecked_refs + 1))
+        continue
+    fi
+    wip_job_gone "$job"; wip_state=$?
+    [ "$wip_state" -eq 2 ] && wip_unchecked_refs=$((wip_unchecked_refs + 1))
+    [ "$wip_state" -eq 0 ] || continue                   # live or unknown: leave it
     if [ -z "$wip_kept" ]; then
         wip_kept="$ref"                                  # newest ended job: fallback
         continue
@@ -287,6 +299,23 @@ for ref in $(git for-each-ref --sort=-committerdate --format='%(refname)' \
         echo "SUCODER: retired WIP snapshot $ref (job $job has ended)"
     fi
 done
+# Say when the bound did not run.  Retention is the only thing keeping the
+# ref set finite, and its correct-but-silent conservatism is indis-
+# tinguishable from "there was nothing to retire" -- so a cluster where the
+# scheduler cannot be reached from a job returns to unbounded accumulation
+# with nothing on screen.  This is the shape of issue 15 one file over: say
+# it once, do not guess, and do not fail the launch over it.
+if [ "$wip_unchecked_refs" -gt 0 ]; then
+    if [ "$wip_have_squeue" -eq 0 ]; then
+        echo "SUCODER: squeue is not on PATH in this job's environment, so no WIP" \
+             "snapshot could be retired ($wip_unchecked_refs left).  They accumulate" \
+             "until a launch can reach the scheduler (issue 14)."
+    else
+        echo "SUCODER: the scheduler gave no usable answer for $wip_unchecked_refs WIP" \
+             "snapshot(s), which are left in place.  They accumulate until a launch" \
+             "gets an answer (issue 14)."
+    fi
+fi
 echo "SUCODER: local-tier working clone ready at $WORK ($branch)"
 '''
 
