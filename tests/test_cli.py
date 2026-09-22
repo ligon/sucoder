@@ -4485,20 +4485,25 @@ def _message_report(*, pane="claude", token="M"):
 
 
 def _run_message(monkeypatch, report, *, recipient, text=None, everyone=False,
-                 dry_run=False, force=False, target=None, send_stdout=None):
+                 dry_run=False, force=False, target=None, send_stdout=None,
+                 wait=0, pane_outputs=None):
     import logging as _logging
     harness = _SnapshotsHarness(times=("12-00:00:00",))
     monkeypatch.setattr(cli, "setup_logger", lambda *a, **k: _logging.getLogger("t"))
     monkeypatch.setattr(cli, "_connect_with_retry", lambda *a, **kw: None)
+    monkeypatch.setattr(cli, "_message_sleep", lambda s: None)
     control = object()
     monkeypatch.setattr(
         cli, "_collect_sessions",
         lambda config, **kw: (report, {"hpc.brc": ("ln001.brc", control)}),
     )
     trips = []
+    panes = iter(pane_outputs or [])
 
     def _fake(ctl, host, command, **kw):
         trips.append((host, command))
+        if "capture-pane" in command:
+            return SimpleNamespace(returncode=0, stdout=next(panes, ""), stderr="")
         out = send_stdout if send_stdout is not None else "SENT\tsucoder-M\nSENT\tsucoder-L\n"
         return SimpleNamespace(returncode=0, stdout=out, stderr="")
     monkeypatch.setattr(cli, "_capture_over_tunnel", _fake)
@@ -4507,7 +4512,7 @@ def _run_message(monkeypatch, report, *, recipient, text=None, everyone=False,
     code = 0
     try:
         cli.message(ctx, recipient=recipient, text=text, everyone=everyone, sender="me@lyn",
-                    force=force, dry_run=dry_run, verbose=False)
+                    wait=wait, force=force, dry_run=dry_run, verbose=False)
     except typer.Exit as exc:
         code = exc.exit_code
     return code, trips
@@ -4523,7 +4528,7 @@ def test_message_types_a_framed_line_into_the_mirrors_job(monkeypatch, capsys):
     assert "srun --jobid=41 --overlap" in script
     # Nested inside bash -c, so the quoting is doubled; check the content.
     assert "tmux -L sucoder-M send-keys -t sucoder-M -l " in script
-    assert "[message from me@lyn via sucoder, " in script and "] ln001 is wedged" in script
+    assert " from me@lyn via sucoder, " in script and "] ln001 is wedged" in script
     assert "sucoder-L" not in script                      # the login session was not asked for
     assert "sent to M (job 41 on n0035, t0)" in out
 
@@ -4542,7 +4547,7 @@ def test_message_dry_run_shows_the_line_and_makes_no_trip(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert code == 0 and trips == []
     assert "would send to M (job 41 on n0035, t0)" in out
-    assert "line: [message from me@lyn via sucoder, " in out
+    assert "line: [message " in out and " from me@lyn via sucoder, " in out
 
 
 def test_message_never_types_into_a_shell(monkeypatch, capsys):
@@ -4572,3 +4577,80 @@ def test_message_narrows_to_the_active_target(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert code == 1 and trips == []
     assert "no live session found for mirror M on target t9." in out
+
+
+def test_message_wait_pulls_the_reply_from_the_pane(monkeypatch, capsys):
+    import re
+    from sucoder import messaging
+    monkeypatch.setattr(messaging, "new_message_id", lambda: "ab12")
+    reply_pane = " ✨ [message ab12 from me@lyn via sucoder, t] hello\n ● REPLY ab12: all quiet\n   here.\n ╭──╮\n"
+    code, trips = _run_message(
+        monkeypatch, _message_report(), recipient="M", text="hello", wait=30,
+        pane_outputs=["nothing yet\n", reply_pane],
+    )
+    out = capsys.readouterr().out
+    assert code == 0, out
+    captures = [c for _, c in trips if "capture-pane" in c]
+    assert len(captures) == 2                         # polled twice, stopped on the reply
+    assert "srun --jobid=41 --overlap" in captures[0]
+    assert "M (job 41 on n0035, t0) replied: all quiet here." in out
+    assert "waiting up to 30s for a `REPLY ab12:` line" in out
+
+
+def test_message_wait_times_out_and_points_at_peek(monkeypatch, capsys):
+    from sucoder import messaging
+    monkeypatch.setattr(messaging, "new_message_id", lambda: "ab12")
+    times = iter([0.0, 0.0, 100.0, 100.0, 100.0])
+    monkeypatch.setattr(cli.time, "monotonic", lambda: next(times))
+    code, trips = _run_message(
+        monkeypatch, _message_report(), recipient="M", text="hello", wait=30,
+        pane_outputs=["nothing\n", "still nothing\n"],
+    )
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "no reply from M (job 41 on n0035, t0) within 30s; `sucoder peek M` reads its pane later" in out
+
+
+def test_message_without_wait_never_reads_a_pane(monkeypatch):
+    code, trips = _run_message(monkeypatch, _message_report(), recipient="M", text="hello")
+    assert code == 0 and not any("capture-pane" in c for _, c in trips)
+
+
+def _run_peek(monkeypatch, report, *, mirror, lines=40, pane="rows\n", target=None):
+    import logging as _logging
+    harness = _SnapshotsHarness(times=("12-00:00:00",))
+    monkeypatch.setattr(cli, "setup_logger", lambda *a, **k: _logging.getLogger("t"))
+    control = object()
+    monkeypatch.setattr(cli, "_collect_sessions",
+                        lambda config, **kw: (report, {"hpc.brc": ("ln001.brc", control)}))
+    trips = []
+
+    def _fake(ctl, host, command, **kw):
+        trips.append((host, command))
+        return SimpleNamespace(returncode=0, stdout=pane, stderr="")
+    monkeypatch.setattr(cli, "_capture_over_tunnel", _fake)
+    monkeypatch.setattr(cli, "_control_for_host", lambda remote, host, debug, **kw: control)
+    ctx = SimpleNamespace(obj={"config": harness.config, "target_name": target}, params={})
+    code = 0
+    try:
+        cli.peek(ctx, mirror=mirror, lines=lines, verbose=False)
+    except typer.Exit as exc:
+        code = exc.exit_code
+    return code, trips
+
+
+def test_peek_shows_the_tail_of_the_pane_through_the_allocation(monkeypatch, capsys):
+    code, trips = _run_peek(monkeypatch, _message_report(), mirror="M", lines=2,
+                            pane="a\n\nb\nc\n")
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert len(trips) == 1 and "srun --jobid=41 --overlap" in trips[0][1]
+    assert "capture-pane -p -S -200 -t sucoder-M" in trips[0][1]
+    assert "--- M (job 41 on n0035, t0) (claude)" in out
+    assert out.rstrip().endswith("b\nc")
+
+
+def test_peek_reads_a_shell_pane_that_message_would_refuse(monkeypatch, capsys):
+    code, trips = _run_peek(monkeypatch, _message_report(pane="bash"), mirror="M")
+    assert code == 0 and len(trips) == 1
+    assert "(bash)" in capsys.readouterr().out

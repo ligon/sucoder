@@ -14,7 +14,8 @@ import subprocess
 import pytest
 
 from sucoder.messaging import (
-    Recipient, frame, parse_send_output, plan_recipients, send_keys_command,
+    Recipient, capture_pane_command, extract_reply, frame, new_message_id,
+    pane_tail, parse_send_output, plan_recipients, send_keys_command,
 )
 from sucoder.sessions_report import (
     JobRow, LoginSession, Report, SessionEntry, TargetGroup,
@@ -196,3 +197,59 @@ def test_a_session_seen_via_the_gateway_and_its_own_node_is_one_recipient():
         _report(logins=logins[:1]), mirror="L", gateway_hosts={"hpc.brc"}, **PLAN,
     )
     assert [r.host for r in chosen] == ["hpc.brc"]
+
+
+# -- the reply, pulled from the pane ----------------------------------------------
+
+def test_frame_carries_an_id_a_reply_can_name():
+    line = frame("hi", "me@lyn", "2026-09-22 11:11", "ab12")
+    assert line == "[message ab12 from me@lyn via sucoder, 2026-09-22 11:11] hi"
+    assert len(new_message_id()) == 4 and new_message_id() != new_message_id()
+
+
+def test_capture_goes_through_the_allocation_like_the_send():
+    r = Recipient("x", "ln001.brc", "sucoder-M", socket="sucoder-M", job_id=42)
+    cmd = capture_pane_command(r, lines=150)
+    assert "srun --jobid=42 --overlap" in cmd
+    assert "tmux -L sucoder-M capture-pane -p -S -150 -t sucoder-M" in cmd
+    assert "srun" not in capture_pane_command(Recipient("x", "h", "sucoder-L"))
+
+
+PANE = """\
+ ✨ [message ab12 from ligon@lyn via sucoder, 2026-09-22 11:11] Hi there, please
+    confirm.
+ ● Working on it.
+ ● REPLY ab12: got it, all good here; the framing arrived intact and I am
+   carrying on with the tests.
+ ╭────────╮
+ │ > Well │
+ ╰────────╯
+"""
+
+
+def test_extract_reply_joins_the_reflowed_rows_and_stops_at_the_prompt_box():
+    assert extract_reply(PANE, "ab12") == (
+        "got it, all good here; the framing arrived intact and I am carrying on with the tests."
+    )
+
+
+def test_extract_reply_ignores_the_message_itself_and_other_ids():
+    # The framed line mentions the id too; it is not a reply.
+    assert extract_reply(PANE.replace("REPLY ab12", "REPLY zz99"), "ab12") is None
+    assert extract_reply("", "ab12") is None
+
+
+def test_extract_reply_takes_the_last_reply_when_the_agent_corrects_itself():
+    pane = PANE + "\n ● REPLY ab12: correction, one test failed.\n\n"
+    assert extract_reply(pane, "ab12") == "correction, one test failed."
+
+
+def test_pane_tail_drops_blank_rows_and_keeps_the_last_n():
+    assert pane_tail("a\n\nb\n c \n\n", 2) == "b\n c"
+
+
+def test_a_peek_may_read_a_shell_pane():
+    chosen, skipped = plan_recipients(
+        _report(_job(1, "M", pane="bash")), mirror="M", for_reading=True, **PLAN,
+    )
+    assert len(chosen) == 1 and skipped == []

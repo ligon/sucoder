@@ -3630,6 +3630,11 @@ def message(
     sender: Optional[str] = typer.Option(
         None, "--from", help="Who the message says it is from (default: user@host here).",
     ),
+    wait: float = typer.Option(
+        0, "--wait", metavar="SECONDS",
+        help="After sending, keep reading the recipient's pane this long for a "
+             "`REPLY <id>:` line, and print it.  0 sends and returns.",
+    ),
     force: bool = typer.Option(
         False, "--force",
         help="Also send to a session whose pane could not be probed.  A pane "
@@ -3650,18 +3655,27 @@ def message(
     ``sucoder sessions`` shows, enumerated from the scheduler and the
     login nodes, so a job whose record was lost can still be reached.
 
-    The text is framed with who sent it and when: it lands with the same
-    authority as the human typing, and the prompt's bulletin convention
-    tells the agent to treat it as a peer's report.  A session whose pane
-    is a bare shell is never sent to, because Enter there runs the text
-    as a command.  ``-T`` narrows to one target when a mirror runs on two.
+    The text is framed with an id, who sent it and when: it lands with the
+    same authority as the human typing, and the prompt's bulletin
+    convention tells the agent to treat it as a peer's report.  A session
+    whose pane is a bare shell is never sent to, because Enter there runs
+    the text as a command.  ``-T`` narrows to one target when a mirror
+    runs on two.
+
+    Nothing on a cluster can reach a laptop behind NAT, so a reply cannot
+    be pushed back; it is pulled.  ``--wait`` reads the pane after the send
+    for a line ``REPLY <id>: ...``, which the default system prompt asks
+    agents to answer with, and prints it.  ``sucoder peek`` reads a pane
+    at any other time.
     """
     import datetime as _dt
     import getpass
     import socket as _socket
 
-    from .messaging import frame, parse_send_output, plan_recipients, send_keys_command
-    from .sessions_report import group_targets_by_cluster
+    from .messaging import (
+        capture_pane_command, extract_reply, frame, new_message_id,
+        parse_send_output, send_keys_command,
+    )
 
     if everyone:
         if text is not None:
@@ -3676,19 +3690,190 @@ def message(
     if not text.strip():
         typer.echo("The message is empty.", err=True)
         raise typer.Exit(code=2)
+    if wait < 0:
+        typer.echo("--wait must not be negative.", err=True)
+        raise typer.Exit(code=2)
 
     config = _get_config(ctx)
     if not config.targets:
         typer.echo("No targets configured; nothing to send to.", err=True)
         raise typer.Exit(code=1)
     target_name = ((ctx.obj or {}).get("target_name") if ctx else None)
-
     logger = setup_logger("sucoder.message", config.log_dir, verbose)
     debug_ssh = _get_debug_ssh(ctx)
     set_progress(True)
 
-    # The same enumeration the listing does, panes probed: the probe is what
-    # tells a live agent from the shell left behind when it exited.
+    chosen, skipped, report, hosts = _plan_session_recipients(
+        config, mirror=mirror, target=target_name, everyone=everyone, force=force,
+        logger=logger, debug_ssh=debug_ssh,
+    )
+    for note in skipped:
+        typer.echo(f"  skipped {note}")
+    for err in report.errors:
+        typer.echo(f"! {err}", err=True)
+    if not chosen:
+        what = "no live session found" if everyone else f"no live session found for mirror {mirror}"
+        typer.echo(f"{what}" + (f" on target {target_name}" if target_name else "") + ".")
+        raise typer.Exit(code=1)
+
+    who = sender or f"{getpass.getuser()}@{_socket.gethostname()}"
+    msg_id = new_message_id()
+    line = frame(text, who, _dt.datetime.now().strftime("%Y-%m-%d %H:%M %Z").strip(), msg_id)
+    for r in chosen:
+        typer.echo(f"  {'would send' if dry_run else 'sending'} to {r.label}")
+    if dry_run:
+        typer.echo(f"  line: {line}")
+        return
+
+    # One round trip per host, every recipient there in one script.
+    by_host: Dict[str, List] = {}
+    for r in chosen:
+        by_host.setdefault(r.host, []).append(r)
+    failures = 0
+    delivered = []
+    for host, recipients in by_host.items():
+        script = "\n".join(send_keys_command(r, line) for r in recipients)
+        control = _control_for_recipient(config, hosts, host, recipients[0], debug_ssh)
+        if control is None:
+            typer.echo(f"! {host}: no target configuration to reach it with", err=True)
+            failures += len(recipients)
+            continue
+        try:
+            result = _capture_over_tunnel(
+                control, host, script, logger=logger, config=config, debug=debug_ssh, timeout=90,
+            )
+        except Exception as exc:  # noqa: BLE001 -- report and go on to the next host
+            typer.echo(f"! {host}: could not connect ({exc})", err=True)
+            failures += len(recipients)
+            continue
+        sent, failed = parse_send_output(result.stdout)
+        for r in recipients:
+            if r.session in sent:
+                typer.echo(f"  sent to {r.label}")
+                delivered.append(r)
+            else:
+                failures += 1
+                detail = result.stderr.strip()
+                typer.echo(
+                    f"! not delivered to {r.label}" + (f": {detail}" if detail else ""), err=True,
+                )
+
+    if wait > 0 and delivered:
+        typer.echo(f"  waiting up to {int(wait)}s for a `REPLY {msg_id}:` line ...")
+        pending = list(delivered)
+        deadline = time.monotonic() + wait
+        while pending:
+            for r in list(pending):
+                control = _control_for_recipient(config, hosts, r.host, r, debug_ssh)
+                try:
+                    got = _capture_over_tunnel(
+                        control, r.host, capture_pane_command(r), logger=logger,
+                        config=config, debug=debug_ssh, timeout=90,
+                    )
+                except Exception as exc:  # noqa: BLE001 -- keep polling the others
+                    logger.info("%s: pane read failed (%s)", r.host, exc)
+                    continue
+                reply = extract_reply(got.stdout or "", msg_id)
+                if reply is not None:
+                    typer.echo(f"  {r.label} replied: {reply}")
+                    pending.remove(r)
+            if not pending or time.monotonic() >= deadline:
+                break
+            _message_sleep(_MESSAGE_POLL_SECONDS)
+        for r in pending:
+            typer.echo(
+                f"  no reply from {r.label} within {int(wait)}s; "
+                f"`sucoder peek {mirror or r.session[len('sucoder-'):]}` reads its pane later"
+            )
+    if failures:
+        raise typer.Exit(code=1)
+
+
+# A pane read is one ssh session open (~10s on a BRC login node), so a poll
+# tighter than this would only queue behind itself.
+_MESSAGE_POLL_SECONDS = 5.0
+_message_sleep = time.sleep
+
+
+@app.command("peek")
+def peek(
+    ctx: typer.Context,
+    mirror: str = typer.Argument(..., help="The mirror whose session's pane to read."),
+    lines: int = typer.Option(40, "-n", "--lines", help="How many rows of the pane to show."),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
+) -> None:
+    """Show the tail of a running session's pane, from here.
+
+    The read half of ``message``: a cluster cannot reach a laptop, so an
+    agent's answer is whatever it printed on its own screen, and this is
+    how that screen is read -- through ``srun --overlap`` for a job, as the
+    pane probe does.  A pane that is a bare shell is fine to read; only
+    typing into one is refused.
+    """
+    from .messaging import capture_pane_command, pane_tail
+
+    config = _get_config(ctx)
+    if not config.targets:
+        typer.echo("No targets configured; nothing to read.", err=True)
+        raise typer.Exit(code=1)
+    if lines <= 0:
+        typer.echo("--lines must be positive.", err=True)
+        raise typer.Exit(code=2)
+    target_name = ((ctx.obj or {}).get("target_name") if ctx else None)
+    logger = setup_logger("sucoder.peek", config.log_dir, verbose)
+    debug_ssh = _get_debug_ssh(ctx)
+    set_progress(True)
+
+    chosen, skipped, report, hosts = _plan_session_recipients(
+        config, mirror=mirror, target=target_name, everyone=False, force=True,
+        logger=logger, debug_ssh=debug_ssh, for_reading=True,
+    )
+    for note in skipped:
+        typer.echo(f"  skipped {note}")
+    for err in report.errors:
+        typer.echo(f"! {err}", err=True)
+    if not chosen:
+        typer.echo(
+            f"no live session found for mirror {mirror}"
+            + (f" on target {target_name}" if target_name else "") + "."
+        )
+        raise typer.Exit(code=1)
+    failures = 0
+    for r in chosen:
+        control = _control_for_recipient(config, hosts, r.host, r, debug_ssh)
+        if control is None:
+            typer.echo(f"! {r.host}: no target configuration to reach it with", err=True)
+            failures += 1
+            continue
+        try:
+            got = _capture_over_tunnel(
+                control, r.host, capture_pane_command(r, lines=max(lines, 200)),
+                logger=logger, config=config, debug=debug_ssh, timeout=90,
+            )
+        except Exception as exc:  # noqa: BLE001
+            typer.echo(f"! {r.label}: could not read the pane ({exc})", err=True)
+            failures += 1
+            continue
+        if got.returncode != 0:
+            typer.echo(f"! {r.label}: pane read failed: {got.stderr.strip() or '(no output)'}", err=True)
+            failures += 1
+            continue
+        typer.echo(f"--- {r.label}" + (f" ({r.pane})" if r.pane else ""))
+        typer.echo(pane_tail(got.stdout or "", lines))
+    if failures:
+        raise typer.Exit(code=1)
+
+
+def _plan_session_recipients(
+    config, *, mirror, target, everyone, force, logger, debug_ssh, for_reading=False,
+):
+    """The sessions a message (or a peek) addresses, from the same
+    collection ``sessions`` prints, with the warm controls it used."""
+    from .messaging import plan_recipients
+    from .sessions_report import group_targets_by_cluster
+
+    # Panes probed: the probe is what tells a live agent from the shell
+    # left behind when it exited.
     report, cluster_hosts = _collect_sessions(
         config, probed=True, login_nodes=True, logger=logger, debug_ssh=debug_ssh,
     )
@@ -3703,65 +3888,24 @@ def message(
     } - {None}
     chosen, skipped = plan_recipients(
         report, cluster_hosts=cluster_hosts, target_cluster=target_cluster,
-        confined_targets=confined_targets, mirror=mirror, target=target_name,
+        confined_targets=confined_targets, mirror=mirror, target=target,
         everyone=everyone, force=force, gateway_hosts=gateway_hosts,
+        for_reading=for_reading,
     )
-    for note in skipped:
-        typer.echo(f"  skipped {note}")
-    for err in report.errors:
-        typer.echo(f"! {err}", err=True)
-    if not chosen:
-        what = "no live session found" if everyone else f"no live session found for mirror {mirror}"
-        typer.echo(f"{what}" + (f" on target {target_name}" if target_name else "") + ".")
-        raise typer.Exit(code=1)
+    return chosen, skipped, report, cluster_hosts
 
-    who = sender or f"{getpass.getuser()}@{_socket.gethostname()}"
-    line = frame(text, who, _dt.datetime.now().strftime("%Y-%m-%d %H:%M %Z").strip())
-    for r in chosen:
-        typer.echo(f"  {'would send' if dry_run else 'sending'} to {r.label}")
-    if dry_run:
-        typer.echo(f"  line: {line}")
-        return
 
-    # One round trip per host, every recipient there in one script.
-    by_host: Dict[str, List] = {}
-    for r in chosen:
-        by_host.setdefault(r.host, []).append(r)
-    failures = 0
-    for host, recipients in by_host.items():
-        script = "\n".join(send_keys_command(r, line) for r in recipients)
-        control = None
-        for cluster, (h, ctl) in cluster_hosts.items():
-            if h == host:
-                control = ctl
-                break
-        if control is None:
-            remote = config.targets.get(recipients[0].target or "")
-            if remote is None:
-                typer.echo(f"! {host}: no target configuration to reach it with", err=True)
-                failures += len(recipients)
-                continue
-            control = _control_for_host(remote, host, debug_ssh)
-        try:
-            result = _capture_over_tunnel(
-                control, host, script, logger=logger, config=config, debug=debug_ssh, timeout=90,
-            )
-        except Exception as exc:  # noqa: BLE001 -- report and go on to the next host
-            typer.echo(f"! {host}: could not connect ({exc})", err=True)
-            failures += len(recipients)
-            continue
-        sent, failed = parse_send_output(result.stdout)
-        for r in recipients:
-            if r.session in sent:
-                typer.echo(f"  sent to {r.label}")
-            else:
-                failures += 1
-                detail = result.stderr.strip()
-                typer.echo(
-                    f"! not delivered to {r.label}" + (f": {detail}" if detail else ""), err=True,
-                )
-    if failures:
-        raise typer.Exit(code=1)
+def _control_for_recipient(config, cluster_hosts, host, recipient, debug_ssh):
+    """A warm control for *host* if the collection already has one, else
+    one built from the recipient's target; ``None`` when nothing configured
+    can reach it."""
+    for _cluster, (h, ctl) in cluster_hosts.items():
+        if h == host:
+            return ctl
+    remote = config.targets.get(recipient.target or "")
+    if remote is None:
+        return None
+    return _control_for_host(remote, host, debug_ssh)
 
 
 def _collect_sessions(config, *, probed: bool, login_nodes: bool, logger, debug_ssh):
