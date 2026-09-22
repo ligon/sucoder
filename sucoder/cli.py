@@ -51,7 +51,7 @@ from .executor import CommandError, CommandExecutor
 from .logging_utils import (
     progress, set_progress, setup_logger, summarize_command,
 )
-from .local_tier import work_path
+from .local_tier import wip_job_ref, work_path
 from .slurm_timer import TIME_LEFT_TO_MINS_SH, build_timer_script, timer_identity
 from .tool_preflight import format_report
 from .mirror import (
@@ -2887,6 +2887,12 @@ def release(
         "-f",
         help="Skip the confirmation prompt.",
     ),
+    keep_wip: bool = typer.Option(
+        False,
+        "--keep-wip",
+        help="Leave the job's WIP snapshot ref on the mirror instead of "
+             "retiring it with the job.",
+    ),
 ) -> None:
     """Cancel the SLURM allocation for this mirror and clear session state.
 
@@ -2895,6 +2901,14 @@ def release(
     removed from the agent wrapper and the backstop timer (so a
     transient agent failure can't tear down your allocation); this
     command is the explicit way to free the resources.
+
+    A clean release also retires the job's WIP snapshot ref on the
+    mirror (issue 14).  The snapshot exists for one case -- the job died
+    with uncommitted work in a node-local clone that is now gone -- and a
+    job released on purpose is not that case: the work was committed or
+    deliberately abandoned.  Only *this job's* ref goes, never a glob over
+    the mirror, and never on the sibling-detach path, where the job
+    survives for co-resident mirrors.  ``--keep-wip`` opts out.
     """
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
@@ -2951,6 +2965,11 @@ def release(
                 f"Cancel SLURM job {job_id} on {compute_node} for mirror "
                 f"{mirror}?"
             )
+            if not keep_wip:
+                prompt += (
+                    " Its WIP snapshot, if any, is retired too "
+                    "(--keep-wip keeps it)."
+                )
         if not _prompt_yes_no(prompt, default=False):
             typer.echo("Aborted.")
             raise typer.Exit(code=0)
@@ -3062,9 +3081,19 @@ def release(
     # `nodes` command, which runs `sinfo` on the gateway the same way;
     # `_run_remote_capture` adds BatchMode + a wall-clock timeout so a dead
     # mux fails fast instead of hanging.
+    wip_ref = mirror_path = None
+    if not keep_wip:
+        # The snapshot lives on the shared mirror, whose root is the
+        # target's (not the cluster's first target's: see the pane probe).
+        root = str(getattr(remote, "mirror_root", "") or "~/mirrors")
+        mirror_path = _remote_home_word(
+            f"{root.rstrip('/')}/{settings.mirror_dirname}"
+        )
+        wip_ref = wip_job_ref(mirror, job_id)
     result = _run_remote_capture(
         gw_control, remote.gateway,
-        f"scancel {shlex.quote(str(job_id))}", debug=debug_ssh,
+        _release_remote_command(job_id, mirror_path=mirror_path, wip_ref=wip_ref),
+        debug=debug_ssh,
     )
     if result.returncode != 0:
         # scancel exits 0 even for a nonexistent job (just warns to stderr),
@@ -3078,8 +3107,47 @@ def release(
 
     _forget_allocation()
     typer.echo(f"Released SLURM job {job_id} on {compute_node}.")
+    for line in (result.stdout or "").splitlines():
+        mark, _, what = line.partition("\t")
+        if mark == _WIP_RETIRED_MARK:
+            typer.echo(f"Retired WIP snapshot {wip_ref} ({what.strip()}).")
     if result.stderr.strip():
         typer.echo(result.stderr.strip(), err=True)
+
+
+# Printed by the release round trip when the job's snapshot ref was deleted,
+# followed by a tab and the snapshot's abbreviated hash and subject.  The
+# hash is what lets a human undo a mistaken release: the commit stays in
+# the mirror's object store until its next prune, two weeks by default.
+_WIP_RETIRED_MARK = "SUCODER-WIP-RETIRED"
+
+
+def _release_remote_command(
+    job_id: int, *, mirror_path: Optional[str] = None, wip_ref: Optional[str] = None,
+) -> str:
+    """The one-round-trip shell that cancels *job_id* and retires its snapshot.
+
+    A BRC login node charges ~10s per ssh session before the command even
+    runs, so the ref delete rides in the same session as ``scancel``.  It
+    runs only if ``scancel`` succeeded -- a job that could not be cancelled
+    may still be writing that ref -- and its own failure never changes the
+    exit status, which stays ``scancel``'s: the release did its job even if
+    the tidying did not.  *mirror_path* is already shell-quoted (see
+    :func:`_remote_home_word`); *wip_ref* is not.
+    """
+    cancel = f"scancel {shlex.quote(str(job_id))}"
+    if not (mirror_path and wip_ref):
+        return cancel
+    ref = shlex.quote(wip_ref)
+    git = f"git -C {mirror_path}"
+    return (
+        f"{cancel}; rc=$?; "
+        f"if [ \"$rc\" -eq 0 ] && {git} rev-parse -q --verify {ref}'^{{commit}}' "
+        f">/dev/null 2>&1; then "
+        f"subj=$({git} log -1 --format='%h %s' {ref} 2>/dev/null); "
+        f"{git} update-ref -d {ref} && printf '{_WIP_RETIRED_MARK}\\t%s\\n' \"$subj\"; "
+        f"fi; exit \"$rc\""
+    )
 
 
 # Every remote round trip this module makes is timed into this logger, so a
@@ -4077,10 +4145,7 @@ def _probe_session_panes(
             # for whichever one wrote last.
             if entry.mirror:
                 mirror_path = _remote_home_word(f"{root.rstrip('/')}/{entry.mirror}")
-                ref = shlex.quote(
-                    f"refs/sucoder/wip-job/{_sanitize_session_token(entry.mirror)}"
-                    f"/{entry.job.job_id}"
-                )
+                ref = shlex.quote(wip_job_ref(entry.mirror, entry.job.job_id))
                 lines.append(
                     f'printf "wip%s\\t" {job}; '
                     f"git -C {mirror_path} log -1 --format=%cr {ref} 2>/dev/null; echo"

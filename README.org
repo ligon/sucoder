@@ -947,7 +947,9 @@ on =confined= (=sbatch=) and =salloc= targets:
 - the deadline watchdog snapshots uncommitted work to
   =refs/sucoder/wip-job/<name>/<jobid>= on the shared mirror every
   =wip_snapshot_minutes= and restores it on the next launch when the
-  branch tip has not moved and the job that took it has ended;
+  branch tip has not moved and the job that took it has ended; a clean
+  =sucoder release= retires the job's own snapshot (=--keep-wip= keeps
+  it), and the next launch retires those of other ended jobs;
 - SLURM wipes =/local/job<ID>/= when the job ends; nothing is orphaned
   and =--node= pinning is unnecessary.
 

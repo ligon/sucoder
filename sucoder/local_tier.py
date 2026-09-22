@@ -29,6 +29,8 @@ from __future__ import annotations
 import shlex
 from typing import Optional
 
+from .config import sanitize_session_token
+
 DEFAULT_LOCAL_DISK = "/local"
 
 
@@ -318,6 +320,17 @@ if [ "$wip_unchecked_refs" -gt 0 ]; then
 fi
 echo "SUCODER: local-tier working clone ready at $WORK ($branch)"
 '''
+
+
+def wip_job_ref(mirror_name: str, job_id: int) -> str:
+    """The per-job WIP snapshot ref for *mirror_name* under job *job_id*.
+
+    ``refs/sucoder/wip-job/<token>/<job>``, exactly as the prepare script's
+    ``WIP_NS`` and the timer's snapshotter spell it.  Anything that names a
+    snapshot ref from the launcher side (``release``, ``sessions``) should
+    come through here so the three cannot drift apart.
+    """
+    return f"refs/sucoder/wip-job/{sanitize_session_token(mirror_name)}/{job_id}"
 
 
 def build_prepare_script(
