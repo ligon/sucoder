@@ -108,3 +108,58 @@ def test_setup_logger_does_not_stack_handlers(tmp_path):
     first = len(logging.getLogger("sucoder.tunnel").handlers)
     setup_logger("sucoder.test-wiring", tmp_path, verbose=False)
     assert len(logging.getLogger("sucoder.tunnel").handlers) == first
+
+
+# -- a bounded poll must not print one line per attempt ---------------------
+
+class _FakeProc:
+    def __init__(self, returncode: int = 0, stdout: str = "", stderr: str = ""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def _probe_executor():
+    from sucoder.executor import CommandExecutor
+
+    log = logging.getLogger("sucoder.test-progress-gate")
+    log.setLevel(logging.DEBUG)
+    if not log.handlers:
+        log.addHandler(logging.NullHandler())
+    return CommandExecutor(
+        human_user="ligon", agent_user="coder", agent_group="coder",
+        logger=log, dry_run=False, use_sudo_for_agent=False,
+    )
+
+
+# A remote-looking argv: describe_remote() must classify it as a round trip,
+# or the gate under test would never be reached.
+_REMOTE_ARGV = ["ssh", "-o", "BatchMode=yes", "ln001.brc", "tmux has-session"]
+
+
+def test_a_repeated_probe_can_opt_out_of_its_progress_line(monkeypatch, capsys):
+    """`collaborate` polls `tmux has-session` up to 100 times waiting for a
+    confined job's session.  One identical line per attempt is the wall of
+    text that reads as a hang -- the very thing these lines exist to
+    prevent -- so the poll announces itself once and silences the rest."""
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: _FakeProc(1))
+    set_progress(True)
+    try:
+        result = _probe_executor().run_agent(
+            _REMOTE_ARGV, check=False, show_progress=False,
+        )
+    finally:
+        set_progress(False)
+    assert capsys.readouterr().err == ""
+    # Silenced, not skipped: the command still ran and still answered.
+    assert result.returncode == 1
+
+
+def test_the_progress_line_is_still_on_by_default(monkeypatch, capsys):
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: _FakeProc(0))
+    set_progress(True)
+    try:
+        _probe_executor().run_agent(_REMOTE_ARGV, check=False)
+    finally:
+        set_progress(False)
+    assert "ln001.brc" in capsys.readouterr().err

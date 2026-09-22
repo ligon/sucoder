@@ -1672,6 +1672,97 @@ def test_launch_confined_save_failure_surfaces_scancel_hint(tmp_path, monkeypatc
     assert "8899" in blob and "scancel 8899" in blob
 
 
+# ----------------------------------------------------------------------
+# _confined_session_ready — a wait that must not read as a hang
+# ----------------------------------------------------------------------
+
+def _ready_stub(rcs, seen):
+    """run_agent stub for the has-session probe, returning *rcs* in order
+    and recording each call's ``show_progress``."""
+    it = iter(rcs)
+
+    def run_agent(args, **kwargs):
+        seen.append(kwargs.get("show_progress", True))
+        a = list(args)
+        return CommandResult(requested_args=a, executed_args=a,
+                             stdout="", stderr="", returncode=next(it))
+    return run_agent
+
+
+def test_session_ready_announces_itself_once_not_once_per_probe(
+    tmp_path, monkeypatch, caplog,
+):
+    """Under local-disk tiering this gate polls up to 100 times while the
+    job clones the mirror.  Every probe is the same command, so a progress
+    line each reads as a hang; only the first prints one, and a single INFO
+    says what the wait is for and how long it may last."""
+    import logging
+
+    manager, _ctx = _confined_manager(tmp_path, monkeypatch)
+    seen = []
+    manager.executor.run_agent = _ready_stub([1, 1, 0], seen)
+
+    with caplog.at_level(logging.INFO, logger=manager.logger.name):
+        assert manager._confined_session_ready(
+            77, "sucoder-sample", "sucoder-sample",
+            attempts=100, delay=3,
+            waiting_for="the job is cloning the mirror to local disk",
+        ) is True
+
+    assert seen == [True, False, False], seen
+    blob = "\n".join(r.getMessage() for r in caplog.records)
+    assert "77" in blob and "cloning the mirror" in blob
+    # The budget in minutes, not 300 seconds for the reader to divide.
+    assert "5 min" in blob, blob
+
+
+def test_session_ready_is_silent_when_the_session_is_already_up(
+    tmp_path, monkeypatch, caplog,
+):
+    """The reuse/attach path usually finds the session on the first probe.
+    Announcing a wait that never happened is its own kind of noise."""
+    import logging
+
+    manager, _ctx = _confined_manager(tmp_path, monkeypatch)
+    seen = []
+    manager.executor.run_agent = _ready_stub([0], seen)
+
+    with caplog.at_level(logging.INFO, logger=manager.logger.name):
+        assert manager._confined_session_ready(
+            77, "sucoder-sample", "sucoder-sample", attempts=20, delay=3,
+        ) is True
+
+    assert seen == [True]
+    assert not [r for r in caplog.records if "Waiting up to" in r.getMessage()]
+
+
+def test_session_ready_heartbeats_while_it_waits(tmp_path, monkeypatch, caplog):
+    """A five-minute budget with nothing on screen is the same failure the
+    progress lines exist to fix, so a long wait still says it is alive
+    (~every 30s) without one line per probe."""
+    import logging
+
+    manager, _ctx = _confined_manager(tmp_path, monkeypatch)
+    seen = []
+    manager.executor.run_agent = _ready_stub([1] * 25, seen)
+
+    with caplog.at_level(logging.INFO, logger=manager.logger.name):
+        assert manager._confined_session_ready(
+            77, "sucoder-sample", "sucoder-sample", attempts=25, delay=3,
+        ) is False
+
+    beats = [r.getMessage() for r in caplog.records if "Still waiting" in r.getMessage()]
+    # 25 probes x 3s = 75s: heartbeats at 30s and 60s, not 25 lines.
+    assert len(beats) == 2, beats
+    assert "30s" in beats[0] and "1 min" in beats[1]
+
+
+def test_format_wait_reads_in_the_units_people_wait_in():
+    assert mirror._format_wait(45) == "45s"
+    assert mirror._format_wait(300) == "5 min"
+    assert mirror._format_wait(90) == "1 min 30s"
+
+
 def test_resolve_remote_home_resolves_and_caches(tmp_path):
     """`_resolve_remote_home` resolves $HOME via the executor, caches it, and
     raises on an empty result (a bad absolute path would be worse silent)."""

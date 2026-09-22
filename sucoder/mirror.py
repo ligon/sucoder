@@ -247,6 +247,18 @@ def confined_attach_command(
     ]
 
 
+def _format_wait(seconds: int) -> str:
+    """A poll budget in the units an operator waits in.
+
+    Whole minutes past a minute: "5 min" answers "should I go get coffee?"
+    where "300s" makes the reader do the division.
+    """
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, rest = divmod(seconds, 60)
+    return f"{minutes} min" if not rest else f"{minutes} min {rest}s"
+
+
 def _build_sbatch_command(slurm, *, job_name, log_path, script_path, nodelist=None):
     """Build the ``sbatch`` argv for a ``confined`` launch.
 
@@ -2784,6 +2796,7 @@ class MirrorManager:
         *,
         attempts: int = 20,
         delay: int = 3,
+        waiting_for: Optional[str] = None,
     ) -> bool:
         """Bounded poll that the confined tmux session has actually come up.
 
@@ -2792,18 +2805,46 @@ class MirrorManager:
         ``|| new-session`` fallback, so attaching before the session exists
         fails spuriously -- this gate prevents that.  Probes
         ``srun --jobid=J --overlap tmux -L sock has-session -t sess``.
+
+        Says once what it is waiting on and for how long, then prints a
+        progress line only for the FIRST probe.  The probes are identical,
+        and up to 100 copies of one line (the local-disk budget) reads as a
+        hang rather than as a wait -- the very thing the progress lines
+        exist to prevent.  Suppressed probes remain in the executor's debug
+        log, so ``-v`` still shows every round trip.  ``waiting_for`` names
+        what the job is still doing, which is what makes a long wait
+        legible rather than alarming.
         """
-        for _ in range(max(1, attempts)):
+        attempts = max(1, attempts)
+        # Heartbeat about every 30s: silence for the whole budget would be
+        # no better than the wall of lines this replaces.
+        step = max(1, delay)
+        heartbeat = max(1, (30 + step - 1) // step)
+        for attempt in range(attempts):
             result = self.executor.run_agent(
                 [
                     "srun", f"--jobid={job_id}", "--overlap",
                     "tmux", "-L", socket, "has-session", "-t", session_name,
                 ],
                 check=False, capture_output=True,
+                show_progress=(attempt == 0),
             )
             if result.returncode == 0:
                 return True
+            if attempt == 0:
+                # Only now is there a wait to explain: on the reuse path the
+                # session is usually already up and the first probe answers.
+                self.logger.info(
+                    "Waiting up to %s for job %s's tmux session%s...",
+                    _format_wait(attempts * delay), job_id,
+                    f" ({waiting_for})" if waiting_for else "",
+                )
             time.sleep(delay)
+            if (attempt + 1) % heartbeat == 0 and attempt + 1 < attempts:
+                self.logger.info(
+                    "Still waiting for job %s's tmux session (%s elapsed).",
+                    job_id, _format_wait((attempt + 1) * delay),
+                )
         return False
 
     def _confined_capture_pane(
@@ -3067,6 +3108,11 @@ class MirrorManager:
         ready_attempts = 100 if local_disk_root else 20
         if not self._confined_session_ready(
             job_id, session_name, socket, attempts=ready_attempts,
+            waiting_for=(
+                "the job is cloning the mirror to local disk, then starting tmux"
+                if local_disk_root
+                else "the job is starting tmux"
+            ),
         ):
             pane = self._confined_capture_pane(job_id, session_name, socket)
             raise MirrorError(

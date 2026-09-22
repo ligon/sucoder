@@ -85,6 +85,7 @@ class CommandExecutor:
         capture_output: bool = True,
         timeout: Optional[int] = None,
         input: Optional[str] = None,
+        show_progress: bool = True,
     ) -> CommandResult:
         return self._run(
             list(args),
@@ -96,6 +97,7 @@ class CommandExecutor:
             capture_output=capture_output,
             timeout=timeout,
             input=input,
+            show_progress=show_progress,
         )
 
     def _run(
@@ -110,6 +112,7 @@ class CommandExecutor:
         capture_output: bool = True,
         timeout: Optional[int] = None,
         input: Optional[str] = None,
+        show_progress: bool = True,
     ) -> CommandResult:
         requested_args = list(args)
         executed_args = (
@@ -163,8 +166,14 @@ class CommandExecutor:
         # this machine: those are the ones that cost seconds each (a session
         # open on a BRC login node is ~8s before the command even starts),
         # and a launch makes a dozen of them back to back.
+        #
+        # ``show_progress=False`` is for a caller that repeats one identical
+        # round trip -- a bounded poll -- where a line per attempt reads as
+        # a hang rather than as a wait.  Such a caller announces the wait
+        # once itself; the suppressed trips stay visible in the debug log
+        # below, so -v loses nothing.
         remote = describe_remote(executed_args)
-        if remote is not None:
+        if remote is not None and show_progress:
             progress(*remote)
         started = time.monotonic()
         try:
@@ -330,12 +339,14 @@ class RemoteExecutor(CommandExecutor):
         capture_output: bool = True,
         timeout: Optional[int] = None,
         input: Optional[str] = None,
+        show_progress: bool = True,
     ) -> CommandResult:
         """Run a command on the remote login node via SSH.
 
         ``input``, when set, is piped to the remote command over stdin
         (e.g. ``cat > file``) so large content never appears on a command
-        line.
+        line.  ``show_progress=False`` drops the per-round-trip progress
+        line for a caller that repeats one identical probe.
         """
         remote_cwd = self._translate_path(cwd) if cwd else None
         # Allocate a TTY when output isn't captured (interactive agents).
@@ -358,6 +369,7 @@ class RemoteExecutor(CommandExecutor):
                 capture_output=capture_output,
                 timeout=effective_timeout,
                 input=input,
+                show_progress=show_progress,
             )
             if self.debug_ssh and result.stderr:
                 self.logger.debug(
