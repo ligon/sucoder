@@ -179,3 +179,20 @@ def test_a_job_matching_no_target_is_named_not_guessed_at():
 def test_nothing_selected_without_a_mirror_or_everyone():
     chosen, skipped = plan_recipients(_report(_job(1, "M")), **PLAN)
     assert chosen == [] and skipped == []
+
+
+def test_a_session_seen_via_the_gateway_and_its_own_node_is_one_recipient():
+    """The gateway is a round-robin alias for the login nodes, so one tmux
+    session can be reported under both names.  Two sends would be two
+    deliveries."""
+    logins = [LoginSession("hpc.brc", "sucoder-L", "savio", pane="claude"),
+              LoginSession("ln003.brc", "sucoder-L", "savio", pane="claude")]
+    chosen, skipped = plan_recipients(
+        _report(logins=logins), mirror="L", gateway_hosts={"hpc.brc"}, **PLAN,
+    )
+    assert [r.host for r in chosen] == ["ln003.brc"] and skipped == []
+    # With no named node reporting it, the gateway's copy is the only one.
+    chosen, _ = plan_recipients(
+        _report(logins=logins[:1]), mirror="L", gateway_hosts={"hpc.brc"}, **PLAN,
+    )
+    assert [r.host for r in chosen] == ["hpc.brc"]
