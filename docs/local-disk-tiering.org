@@ -184,6 +184,22 @@ Points that matter:
   retire looks exactly like having nothing to retire, so an environment
   where the scheduler cannot be reached from inside a job would return to
   the unbounded accumulation of issue 14 with nothing on screen.
+- A clean release retires its own snapshot :: =sucoder release= deletes
+  the ref for the job it cancels, in the same round trip as =scancel= and
+  only if that succeeded.  This is the one rule keyed to what actually
+  decides a snapshot's value: it exists for a job that /died/ with
+  uncommitted work in a clone that is now gone, and a job released on
+  purpose is not that job -- the work was committed or deliberately
+  abandoned, whether five minutes or twelve days in.  Age and count rules
+  only approximate that, badly: a three-day-old snapshot from a crashed
+  job is precious and a three-minute-old one from a clean exit is
+  garbage.  Only that job's ref goes, never a glob over the mirror, and
+  never on the sibling-detach path, where the job survives for the other
+  mirrors on it.  The release names what it deleted, hash included, since
+  the commit stays in the object store until the mirror's next prune;
+  =--keep-wip= leaves the ref alone.  It cannot be the only rule, because
+  it is cleanup keyed to an exit path that often does not run: =scancel=
+  by an admin, walltime, a node failure and an OOM kill all bypass it.
 - Nothing runs =git gc= on the mirror :: deleting a ref frees nothing by
   itself.  Every snapshot is =commit-tree -p HEAD=, so each one already
   orphans its predecessor whatever the ref is called; retiring the refs is

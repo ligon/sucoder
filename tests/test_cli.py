@@ -4130,3 +4130,182 @@ def test_absent_login_node_override_is_none(tmp_path, monkeypatch):
     result = runner.invoke(cli.app, ["probe-login-node-absent"])
     assert result.exit_code == 0, result.output
     assert seen["value"] is None
+
+
+# -- release retires the job's WIP snapshot (issue 14) -------------------------
+#
+# The snapshot exists for a job that died with uncommitted work; a job
+# released on purpose is not that job.  Only this job's ref, only after a
+# successful scancel, never on the sibling-detach path.
+
+def _release_fixture(tmp_path, monkeypatch, *, session_yaml=None):
+    from sucoder import session as session_mod
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+    config_path = _slurm_config(tmp_path)
+    sessions_dir = fake_home / ".sucoder" / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    (sessions_dir / "sample--fake-slurm.yaml").write_text(
+        session_yaml
+        or "login_node: ln002\nslurm_job_id: 7654321\ncompute_node: n0032\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(session_mod, "_session_dir", lambda: sessions_dir)
+    monkeypatch.setattr(cli, "_connect_with_retry", lambda *a, **kw: None)
+    return config_path
+
+
+def test_release_retires_the_jobs_wip_snapshot(tmp_path, monkeypatch):
+    config_path = _release_fixture(tmp_path, monkeypatch)
+    captured: dict = {}
+
+    def _fake_capture(control, host, command, **kw):
+        captured["command"] = command
+        return SimpleNamespace(
+            returncode=0,
+            stdout="SUCODER-WIP-RETIRED\tabc1234 WIP snapshot 2026-09-22T01:00:00-07:00 job 7654321\n",
+            stderr="",
+        )
+    monkeypatch.setattr(cli, "_run_remote_capture", _fake_capture)
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["--config", str(config_path), "-T", "fake-slurm", "release", "sample", "-f"],
+    )
+    assert result.exit_code == 0, (result.stdout, result.exception)
+    cmd = captured["command"]
+    # One round trip: scancel first, the delete gated on its success.
+    assert cmd.startswith("scancel 7654321; rc=$?; if [ \"$rc\" -eq 0 ]"), cmd
+    # This job's ref, under the target's mirror root, and nothing wider.
+    assert 'update-ref -d refs/sucoder/wip-job/sample/7654321' in cmd, cmd
+    assert '"$HOME"/mirrors/sample' in cmd, cmd
+    assert "wip-job/sample/*" not in cmd and "for-each-ref" not in cmd
+    # The human is told what went, by hash, so a mistake is recoverable.
+    assert "Retired WIP snapshot refs/sucoder/wip-job/sample/7654321 (abc1234" in result.stdout
+    assert "Released SLURM job 7654321" in result.stdout
+
+
+def test_release_keep_wip_leaves_the_snapshot(tmp_path, monkeypatch):
+    config_path = _release_fixture(tmp_path, monkeypatch)
+    captured: dict = {}
+
+    def _fake_capture(control, host, command, **kw):
+        captured["command"] = command
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+    monkeypatch.setattr(cli, "_run_remote_capture", _fake_capture)
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["--config", str(config_path), "-T", "fake-slurm", "release", "sample",
+         "-f", "--keep-wip"],
+    )
+    assert result.exit_code == 0, (result.stdout, result.exception)
+    assert captured["command"] == "scancel 7654321"
+    assert "Retired WIP snapshot" not in result.stdout
+
+
+def test_release_prompt_says_the_snapshot_goes(tmp_path, monkeypatch):
+    config_path = _release_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        cli, "_run_remote_capture",
+        lambda *a, **kw: SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
+    result = CliRunner().invoke(
+        cli.app,
+        ["--config", str(config_path), "-T", "fake-slurm", "release", "sample"],
+        input="\n",
+    )
+    assert result.exit_code == 0
+    assert "WIP snapshot" in result.stdout and "--keep-wip" in result.stdout
+    assert "Aborted." in result.stdout
+
+
+def test_release_sibling_detach_never_touches_the_snapshot(tmp_path, monkeypatch):
+    """With a co-resident mirror on the job, release detaches; the job -- and
+    every snapshot it is still writing -- survives, and nothing is dialed."""
+    from sucoder.session import RemoteSession
+
+    # No compute_node: the detach branch then has no tmux to kill and must
+    # not reach for the gateway either.
+    config_path = _release_fixture(
+        tmp_path, monkeypatch,
+        session_yaml="login_node: ln002\nslurm_job_id: 7654321\n",
+    )
+    monkeypatch.setattr(
+        RemoteSession, "holders_of_job",
+        staticmethod(lambda job_id, **kw: ["other--fake-slurm"]),
+    )
+
+    def _must_not_run(*a, **kw):
+        raise AssertionError("release dialed the cluster on the detach path")
+    monkeypatch.setattr(cli, "_run_remote_capture", _must_not_run)
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["--config", str(config_path), "-T", "fake-slurm", "release", "sample", "-f"],
+    )
+    assert result.exit_code == 0, (result.stdout, result.exception)
+    assert "Detached mirror sample from SLURM job 7654321" in result.stdout
+    assert "Retired" not in result.stdout
+
+
+def test_release_remote_command_against_a_real_repo(tmp_path, monkeypatch):
+    """The rendered shell, run for real: a stub scancel on PATH, a mirror
+    with this job's ref and a neighbour's.  Only this job's goes, only when
+    scancel succeeds, and the exit status is scancel's either way."""
+    import subprocess
+
+    from sucoder.local_tier import wip_job_ref
+
+    mirror = tmp_path / "mirrors" / "K Agg"
+    mirror.mkdir(parents=True)
+    run = lambda *argv: subprocess.run(  # noqa: E731
+        argv, cwd=mirror, check=True, capture_output=True, text=True,
+    )
+    run("git", "init", "-q")
+    run("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit",
+        "-q", "--allow-empty", "-m", "base")
+    head = run("git", "rev-parse", "HEAD").stdout.strip()
+    tree = run("git", "rev-parse", "HEAD^{tree}").stdout.strip()
+    mine = run("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit-tree",
+               tree, "-p", head, "-m", "WIP snapshot 2026-09-22T01:00:00 job 7").stdout.strip()
+    ours = wip_job_ref("K Agg", 7)
+    theirs = wip_job_ref("K Agg", 8)
+    run("git", "update-ref", ours, mine)
+    run("git", "update-ref", theirs, mine)
+
+    stub = tmp_path / "bin"
+    stub.mkdir()
+    (stub / "scancel").write_text(
+        "#!/bin/sh\necho \"$1\" >> \"$SCANCEL_LOG\"; exit \"${SCANCEL_RC:-0}\"\n"
+    )
+    (stub / "scancel").chmod(0o755)
+    env = dict(os.environ, PATH=f"{stub}:{os.environ['PATH']}",
+               SCANCEL_LOG=str(tmp_path / "scancel.log"))
+
+    cmd = cli._release_remote_command(
+        7, mirror_path=cli._remote_home_word(str(mirror)), wip_ref=ours,
+    )
+
+    # scancel fails: the ref is untouched, and the status is scancel's.
+    failed = subprocess.run(["bash", "-c", cmd], env=dict(env, SCANCEL_RC="3"),
+                            capture_output=True, text=True)
+    assert failed.returncode == 3
+    assert "SUCODER-WIP-RETIRED" not in failed.stdout
+    assert run("git", "rev-parse", ours).stdout.strip() == mine
+
+    # scancel succeeds: this job's ref goes, the neighbour's stays.
+    ok = subprocess.run(["bash", "-c", cmd], env=env, capture_output=True, text=True)
+    assert ok.returncode == 0, ok.stderr
+    assert ok.stdout.startswith(f"SUCODER-WIP-RETIRED\t{mine[:7]} WIP snapshot"), ok.stdout
+    assert subprocess.run(["git", "rev-parse", "-q", "--verify", ours],
+                          cwd=mirror, capture_output=True).returncode != 0
+    assert run("git", "rev-parse", theirs).stdout.strip() == mine
+    assert (tmp_path / "scancel.log").read_text().split() == ["7", "7"]
+
+    # No ref at all: still a clean cancel, nothing reported.
+    again = subprocess.run(["bash", "-c", cmd], env=env, capture_output=True, text=True)
+    assert again.returncode == 0 and again.stdout == ""
