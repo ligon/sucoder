@@ -5611,6 +5611,25 @@ If you find issues, describe each one clearly with the filename and specific con
         # set in the agent's shell, so the command below still runs as shown.
         wip_job = job_id if job_id else "$SLURM_JOB_ID"
         wip_ref = f"refs/sucoder/wip-job/{token}/{wip_job}"
+        # The deadline warning THIS job's timer writes:
+        # $RUNTIME_DIR/timers/$TIMER_SCOPE/$node-$JOB/... (timer_lifecycle.py:20).
+        # Spelled with the same shell expressions the timer itself used, not
+        # resolved here: the node is not known when this renders, and
+        # `hostname` is what the timer keyed the directory on, so reusing the
+        # expression cannot disagree with it.  The per-mirror copy under
+        # ~/.cache is cleared by the next job's timer startup `rm -f`, so two
+        # slices on one mirror read each other's deadline or none (issue 27);
+        # never point an agent at that one.
+        # The job half follows the same rule the timer script uses for its
+        # own $JOB (slurm_timer.py:303): the literal id when the launcher
+        # knows it, $SLURM_JOB_ID only when it does not -- on the unconfined
+        # path that variable is not set in the agent's shell, because the
+        # agent is reached over SSH rather than inside an srun step.
+        scope = timer_identity(ctx.settings.name, self.target_name)
+        warn_file = (
+            f"/tmp/sucoder-$(id -u)/timers/{scope}/$(hostname)-{wip_job}"
+            f"/slurm-deadline-{token}.warn"
+        )
         slurm = ctx.settings.remote.slurm if ctx.settings.remote else None
         minutes = slurm.wip_snapshot_minutes if slurm else 10
         cadence = (
@@ -5633,9 +5652,13 @@ If you find issues, describe each one clearly with the filename and specific con
             f"  Last snapshot: git -C {mirror_path} log -1 --format='%ci %s' {wip_ref}",
             f"- Ignored files (.venv, node_modules, caches) are never durable.  Caches and $TMPDIR live under {local_root}",
             "  ($SUCODER_LOCAL_ROOT) and are rebuilt each job.",
-            f"- Deadline warnings: $HOME/.cache/sucoder/slurm-deadline-{token}.warn (30/15/5 minutes before the job's --time).",
+            f"- Deadline warnings (30/15/5 minutes before the job's --time), for this job alone: {warn_file}",
             "- Handoff notes go to .sucoder/handoff.org in this clone, committed.",
-            "- A job you dispatch to another node cannot see this clone: give it the shared mirror or a branch you have committed.",
+            "- A job you dispatch to another node cannot see this clone.  Clone your branch into that job's own disk:",
+            f"      git clone --branch <branch> {mirror_path} {root}/job$SLURM_JOB_ID/mirrors/{token}",
+            "  and let $SLURM_JOB_ID resolve inside that job ($SUCODER_LOCAL_ROOT is inherited from this one, and",
+            "  names a directory on this node).  Pointing the job at the shared mirror instead reads whatever branch",
+            "  the mirror has checked out -- not the branch you pushed, and it will not say so.",
         ]
         return "\n".join(lines)
 
