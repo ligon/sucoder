@@ -1,0 +1,237 @@
+#+title: Session listing, and the confined job/agent lifecycle
+#+date: 2026-09-18
+#+status: COMPLETE
+#+author: Sue
+#+property: header-args :eval never-export :tangle no :results output :exports code
+
+* Mission
+
+Build =sucoder sessions=: one listing of every SuCoder job on a cluster,
+across all configured targets, with enough state to diagnose and reap.
+
+Background, in order: the triage note
+[[file:handoffs/2026-09-18-wip-ref-triage.org][2026-09-18-wip-ref-triage.org]],
+then PR 21 (=a413909=, closed issue 19), then the findings below.
+
+* What was established first
+
+The user's reported symptoms -- =collaborate= attaching instead of launching,
+=attach= landing in a bash shell -- are *one event*, and it is not a bug in
+=attach=.
+
+- =mirror.py:2446= appends =; exec bash -l= to the window command, so the
+  tmux window outlives the agent by design (rationale at =mirror.py:2433=).
+- The batch body's keeper is =while tmux has-session; do sleep 15; done=
+  (=mirror.py:2405=), so the job then runs to its full =--time=.
+- =mirror.py:2343-2344= still claims the opposite --- "when the agent exits,
+  the session ends, the keeper exits, and the job frees". *That docstring is
+  false*, and it is the assumption =_launch_confined='s reuse-probe rests on
+  (=mirror.py:2757-2787=). Fix the docstring whatever else happens.
+- So after one clean =/exit=, every later =collaborate= attaches to the
+  leftover shell, and so does every =attach=. It is a login *shell* inside
+  the job step on the *compute* node, not a shell on a login node.
+
+*Decided: keep =exec bash -l=.* It buys a window for manual repo checks after
+the agent exits. Revisit only once the surrounding process is bulletproof.
+The cost it leaves on the table is an allocation held for its full =--time=
+after every clean exit, which is exactly what the listing must surface.
+
+Ruled out: launcher version skew (every =attach= guard predates the
+launcher's [2026-06-29, 2026-09-09) window); =_adopt_existing_allocation=
+(=cli.py:824=), which is salloc-only and never runs for a confined target.
+
+* The listing
+
+** One query per cluster, not per target
+
+All four Savio targets share =gateway: hpc.brc.berkeley.edu=, one =$HOME= and
+one Slurm; they differ only in partition/account/qos. So group configured
+targets by cluster and run *one* =squeue --me= per cluster. =hhsurveys= is
+direct-SSH with no scheduler and has no jobs to list.
+
+Jobs carry =--job-name=sucoder-<token>= (=mirror.py:265,2889=), so filtering
+=squeue --me= on the =sucoder-= prefix finds every SuCoder job whatever
+launched it.
+
+** Enumerate from squeue, never from the session files
+
+This is the design decision the whole command turns on. File-first
+enumeration inherits the one-slot bug --- =~/.sucoder/sessions/
+<mirror>--<target>.yaml= holds a single =slurm_job_id= --- and so shows
+exactly the jobs that are not the problem. squeue-first finds the orphans: a
+job whose session record was lost, corrupted (=session.py:60-66= swallows
+parse errors and returns a blank session), or written under a different =-T=
+spelling. Those jobs are unreachable by every SuCoder command and can only be
+=scancel='d by hand.
+
+That same blankness is the confined duplicate-job mechanism:
+=_launch_confined= sees no =slurm_job_id= and submits a *second* sbatch over
+a live one --- the leak the reuse-probe exists to prevent.
+
+** Columns
+
+Per job: mirror, target, job id, state, *time left* (=%L=), node. Then:
+
+- Session record present? Map via =RemoteSession.holders_of_job(job_id)=
+  (=session.py:116=), which already returns the =<mirror>--<target>= keys
+  referencing a job. Empty means ORPHAN. Corroborate the target from
+  partition/account/qos, which is a unique signature per configured target.
+- The reverse sweep: session files whose job is *not* in squeue are STALE
+  records; name them so =release= can clear them.
+- Repo, branch, dirty, and the last WIP snapshot --- now per job, so
+  =refs/sucoder/wip-job/<token>/<jobid>= answers directly.
+- Agent or bare shell. *This signal does not exist anywhere today.*
+  =srun --overlap --jobid=<J> tmux -L <socket> list-panes -F
+  '#{pane_current_command}'= distinguishes =bash= from the agent. It costs an
+  =srun= per job, so put it behind =--deep= rather than making it the default.
+
+=_confined_session_ready= (=mirror.py:2672=) checks only that the tmux
+session exists, which =exec bash -l= guarantees forever; it is not a
+substitute.
+
+** Shape
+
+Follow =sucoder nodes= (=cli.py:3183=): read-only, reuses the target's warm
+gateway ControlMaster so it costs no OTP when a tunnel is up, runs its query
+on the login node, prints one row per thing. Same shape with =squeue= instead
+of =sinfo=.
+
+* Then, and only then, issue 19's option 3
+
+With a squeue-first listing, the launch-time guard is a consequence rather
+than a feature: launch runs the same query, and if the mirror already has a
+live job it says so and offers to attach. =release= can offer the list
+instead of cancelling whatever the session file happens to name. Warn and
+confirm, never refuse --- one mirror on two targets can be deliberate.
+
+* Constraints
+
+- No =.venv= in a node-local clone (ignored, dies with the job). Rebuild
+  without the NFS =flock= detour:
+
+  #+begin_src sh
+  export UV_PYTHON_INSTALL_DIR="$SUCODER_LOCAL_ROOT/cache/uv-python"
+  uv venv .venv --python "$(command -v python3)"
+  uv pip install --python .venv/bin/python \
+      "pyyaml>=6" "typer[all]>=0.13,<1.0" "click>=8.1,<9.0" \
+      "packaging>=24.0" "pytest>=7.2"
+  #+end_src
+
+  Plain =uv venv= fails with =Could not acquire lock ... No locks available=:
+  uv's default Python dir is =$HOME/.local/share/uv/python=, on NFS.
+- =.venv/bin/python -m pytest -q= from the mirror root. 809 pass on
+  =a413909=, plus one pre-existing environment failure,
+  =tests/test_direct_remote.py::test_direct_collaborate_rejects_node= (a
+  chmod-based readability check), verified against clean =main=.
+- New configuration means =README.org= and =config.example.yaml= updates
+  (=CLAUDE.md=). A listing command should need none.
+- Additive only. Never force-push to origin; the post-commit hook publishes
+  every commit to the shared mirror.
+- Put =Closes #N= only in the PR body, never in a commit message, unless the
+  commit really does close the issue: a commit message merged to the default
+  branch overrides the PR body. PR 21 closed issue 14 this way by accident.
+
+* Open issues after PR 21
+
+- 16 :: re-scoped. Its WIP-ref claim does not hold (=mirror_dirname= is the
+  raw name); the real shared state is the tmux session and socket, the staged
+  scripts, and the warn file. The config-load refusal landed, but
+  =_create_ephemeral_mirror= injects into =config.mirrors= at runtime and
+  bypasses it --- an ephemeral mirror is named from the git root directory,
+  which can contain a space. Noted on the issue with two options.
+- 14 :: reopened after PR 21 closed it by accident. Retention bounds the ref
+  set, not the objects.
+- 15 :: its specific hypothesis (missing =git=) is contradicted here ---
+  sbatch is invoked without =--export=, so the batch body inherits the
+  submitting environment. Its structural complaint stands; job 38710868 is
+  its genuine open instance.
+- 20, 17, 1 :: pre-existing, untouched.
+
+* Outcome
+
+Landed. =sucoder sessions= merged as =e37c2c5= (PR 23); the earlier WIP-ref
+work merged as =a413909= (PR 21). 835 tests pass, plus the one pre-existing
+environment failure. CI green on 3.9, 3.11 and docs for both.
+
+Built as designed: one =squeue= per cluster, enumerated from the scheduler
+rather than the session files, grouped by target, pane probe on by default
+with =--fast= to skip. The pure half is =sucoder/sessions_report.py= (no
+I/O), which is what let three bugs surface in tests before release:
+
+1. =#{pane_current_command}= is *not* a liveness signal. Measured against a
+   live session, a running =claude= reported as =bash= --- the window command
+   is =bash -lc '<agent>; exec bash -l'= and the agent is that shell's child.
+   The first probe would have flagged every working agent as exited, and the
+   flag exists to say a slice is safe to release, so a false positive there
+   costs somebody their session. It reads the shell's child now, verified
+   cross-node against two live allocations. Mutation-checked.
+2. A target configuring nothing matched everything. =savio= pins no
+   partition, account or qos, and "every configured field agrees" made it a
+   wildcard that swallowed every job on the cluster. Most specific wins now;
+   ties match nothing.
+3. =int("39025067_3")= is =390250673= --- Python accepts underscores as digit
+   separators, so a Slurm array element would have become a plausible job id
+   belonging to nobody. =parse_squeue= requires =isdigit=.
+
+* Not verified, for whoever picks this up
+
+The =! no session record= path has never run against real session files.
+=~/.sucoder/sessions/= lives on the launcher host, not on Savio, so from a
+compute node every job renders as an orphan. The logic is unit-tested; the
+first real =sucoder sessions= run on the laptop is its first true exercise.
+Check that flag before trusting it.
+
+Also unexercised: =--fast=, the stale-record sweep against real records, and
+any cluster other than Savio (all four Savio targets share one gateway, so
+the multi-cluster grouping has only ever been tested with a single cluster
+plus unit tests).
+
+* Issue 19 option 3 --- landed (=2ee5c5d=, PR 25)
+
+Turned out not to be about two deliberate launches racing.
+=_launch_confined= already refused to resubmit while a job was live, but it
+asked the *session record*, which holds one job id and comes back blank when
+the file is missing, unreadable, or written under a different =-T= spelling.
+Blank meant "no job", so the launch submitted over something still running
+--- issue 19's collision reached from the other side.
+
+Now: record first, then =squeue --me --name=sucoder-<token>=, which Slurm
+could always answer. A live job for this mirror on this target is *adopted*
+--- attached to, and written back into the record --- which heals the orphan
+rather than merely declining to make another.
+
+Three deliberate non-blocks: a job on a different target (one mirror on two
+targets is a real configuration); a failed =squeue= (a safety net over the
+record probe, not a gate --- failing closed would make a controller blip
+into "cannot launch"); and an array element like =4242_3=, which =int()=
+would read as 42423.
+
+=salloc= jobs now carry the same =--job-name=. They had none, so they were
+invisible to =sucoder sessions=, which filters on the =sucoder-= prefix ---
+a blind spot in the command shipped hours earlier.
+
+* Next
+
+- The *unconfined* path can still double-allocate when its record is lost.
+  It reuses via the record and adopts by node; naming the jobs (landed in
+  PR 25) is the prerequisite for a name-keyed probe there.
+  =_ensure_slurm_node= has a documented persist-before-query window, so it
+  deserves its own change rather than a rider.
+- =sucoder sessions='s =! no session record= path has still never run
+  against real session files: those live on the launcher host, not the
+  cluster. First run on the laptop is its first true exercise.
+- Issue 16's ephemeral-mirror hole (=_create_ephemeral_mirror= injects into
+  =config.mirrors= at runtime, bypassing the config-load refusal). Two
+  options written up on the issue.
+- Issue 15's remaining open instance is job 38710868. Its =git=-missing
+  hypothesis is contradicted here; the structural complaint is not.
+
+Still open and untouched by this work: 20 (has PR 22, not ours), 17, 16
+(including the ephemeral-mirror hole noted on the issue), 15, 14, 1.
+
+Deliberately unchanged: =exec bash -l=. The human keeps it --- it buys a
+window for manual repo checks after the agent exits --- until the surrounding
+process is bulletproof. =sucoder sessions= is what makes its cost visible in
+the meantime. The false docstring at =mirror.py:2343-2344= ("when the agent
+exits, the session ends, the keeper exits, and the job frees") is still
+there and still wrong; fixing it is a one-line job nobody has done.
