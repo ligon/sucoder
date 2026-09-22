@@ -5352,6 +5352,18 @@ class TestPromptChoice:
         )
         assert result == "s"
 
+    def test_an_answer_not_on_the_menu_is_asked_again(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Not passed through to the caller's abort branch (issue 33)."""
+        answers = iter(["d", "x", "s"])
+        monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
+        result = MirrorManager._prompt_choice(
+            "Pick:", [("s", "Stash"), ("n", "Abort")], default="n",
+        )
+        assert result == "s"
+        assert "'d' is not an option" in capsys.readouterr().out
+
 
 class TestUniqueBranchName:
     """Tests for MirrorManager._unique_branch_name."""
@@ -5493,28 +5505,60 @@ class TestEnsureRemoteWorktreeClean:
         # Caller should proceed with the push.
         assert result is True
 
-    def test_stash(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_stash_is_named_so_a_peer_can_find_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Issue 33: an anonymous stash on a shared tree makes a peer's
+        untracked files simply vanish from their side."""
         mgr = self._init_manager()
-        run, calls = _make_fake_run(status_output=" M dirty.txt\n")
+        run, calls = _make_fake_run(status_output=" M dirty.txt\n?? new.py\n")
         monkeypatch.setattr("builtins.input", lambda _prompt: "s")
 
         result = mgr._ensure_remote_worktree_clean(run, "/fake/path")
 
-        cmds = [" ".join(c) for c in calls]
-        assert any("stash" in c for c in cmds)
+        stash = next(c for c in calls if "stash" in c)
+        assert stash[:4] == ["git", "stash", "push", "--include-untracked"]
+        assert stash[4] == "-m" and stash[5].startswith("sucoder: stashed by ")
+        assert "@" in stash[5] and "before push, " in stash[5]
         assert result is True
 
-    def test_discard(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_no_answer_deletes_anything(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Issue 33: the old 'd' ran `git clean -fd` on the shared tree,
+        deleting untracked files with no copy anywhere.  It is gone; the
+        rescue-branch answer already clears the tree and keeps a copy."""
         mgr = self._init_manager()
-        run, calls = _make_fake_run(status_output=" M dirty.txt\n")
-        monkeypatch.setattr("builtins.input", lambda _prompt: "d")
+        run, calls = _make_fake_run(status_output=" M dirty.txt\n?? only-copy.py\n")
+        prompts: list[str] = []
+        answers = iter(["d", "c"])          # 'd' is refused; then rescue
+
+        def _capture(prompt: str) -> str:
+            prompts.append(prompt)
+            return next(answers)
+        monkeypatch.setattr("builtins.input", _capture)
 
         result = mgr._ensure_remote_worktree_clean(run, "/fake/path")
 
+        assert "[d]" not in prompts[0]
         cmds = [" ".join(c) for c in calls]
-        assert any("checkout -- ." in c for c in cmds)
-        assert any("clean -fd" in c for c in cmds)
+        assert not any("clean" in c or "checkout -- ." in c for c in cmds)
+        assert any("checkout -b" in c and "rescue/" in c for c in cmds)
         assert result is True
+
+    def test_untracked_files_are_listed_first_and_counted(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """They have no other copy, so they must not be the ones that fall
+        off the end of a truncated list."""
+        mgr = self._init_manager()
+        lines = [f" M tracked{i}.txt" for i in range(22)] + ["?? only-copy.py"]
+        run, _calls = _make_fake_run(status_output="\n".join(lines))
+        monkeypatch.setattr("builtins.input", lambda _prompt: "k")
+
+        mgr._ensure_remote_worktree_clean(run, "/fake/path")
+
+        out = capsys.readouterr().out
+        assert "(22 tracked, 1 untracked (untracked files have no other copy))" in out
+        assert "?? only-copy.py" in out
+        assert out.index("?? only-copy.py") < out.index(" M tracked0.txt")
+        assert "… and 3 more files" in out
 
     def test_skip_push(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """'k' leaves the remote untouched and returns False."""
@@ -5581,7 +5625,7 @@ class TestEnsureRemoteWorktreeClean:
         mgr = self._init_manager()
         lines = "\n".join(f" M file{i}.txt" for i in range(25))
         run, _calls = _make_fake_run(status_output=lines)
-        monkeypatch.setattr("builtins.input", lambda _prompt: "d")
+        monkeypatch.setattr("builtins.input", lambda _prompt: "k")
 
         mgr._ensure_remote_worktree_clean(run, "/fake/path")
 
@@ -6394,3 +6438,102 @@ def test_a_readable_home_still_expands_and_caches():
     assert mgr._resolve_remote_path(ctx) == "/global/home/users/ligon/mirrors/SuCoder"
     assert mgr._resolve_remote_path(ctx) == "/global/home/users/ligon/mirrors/SuCoder"
     assert mgr.executor.calls == 1
+
+
+# -- _ensure_remote_worktree_clean against a real repository (issue 33) ----------
+#
+# The fake-run tests above prove which commands are issued.  These prove the
+# commands do what the menu promises on an actual tree: nothing is deleted,
+# the copy is where the prompt says, and the tree is clean for the push.
+
+import subprocess as _sp
+
+
+def _real_git(cwd, *argv):
+    return _sp.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *argv],
+        cwd=cwd, check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+
+def _dirty_mirror(tmp_path):
+    """A mirror with a tracked edit and an untracked file that exists nowhere else."""
+    from sucoder.executor import CommandResult
+
+    mirror = tmp_path / "mirror"
+    mirror.mkdir()
+    _real_git(mirror, "init", "-q", "-b", "main")
+    (mirror / "README").write_text("hello\n")
+    _real_git(mirror, "add", "README")
+    _real_git(mirror, "commit", "-q", "-m", "base")
+    _real_git(mirror, "config", "receive.denyCurrentBranch", "updateInstead")
+    (mirror / "README").write_text("hello\nhand edit\n")
+    (mirror / "only-copy.py").write_text("untracked; the only copy\n")
+
+    def run(args, *, check=False, cwd=None, **_kw):
+        r = _sp.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args[1:]],
+                    cwd=cwd, capture_output=True, text=True)
+        if check and r.returncode != 0:
+            raise AssertionError(f"{args} failed: {r.stderr}")
+        return CommandResult(requested_args=list(args), executed_args=list(args),
+                             stdout=r.stdout, stderr=r.stderr, returncode=r.returncode)
+
+    mgr = MirrorManager.__new__(MirrorManager)
+    mgr.logger = logging.getLogger("sucoder.test.worktree_real")
+    return mirror, run, mgr
+
+
+def _push_accepted(tmp_path, mirror) -> bool:
+    """Whether a push into the mirror's checked-out branch is accepted now."""
+    clone = tmp_path / "clone"
+    _real_git(tmp_path, "clone", "-q", str(mirror), str(clone))
+    (clone / "from-clone").write_text("x\n")
+    _real_git(clone, "add", "from-clone")
+    _real_git(clone, "commit", "-q", "-m", "from the clone")
+    return _sp.run(["git", "push", "-q", "origin", "main"], cwd=clone,
+                   capture_output=True, text=True).returncode == 0
+
+
+def test_real_rescue_keeps_every_file_and_clears_the_tree(tmp_path, monkeypatch):
+    mirror, run, mgr = _dirty_mirror(tmp_path)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "c")
+
+    assert mgr._ensure_remote_worktree_clean(run, str(mirror)) is True
+
+    assert _real_git(mirror, "status", "--porcelain") == ""
+    assert _real_git(mirror, "symbolic-ref", "--short", "HEAD") == "main"
+    branch = next(b.strip("* ") for b in _real_git(mirror, "branch").splitlines()
+                  if b.strip("* ").startswith("rescue/"))
+    assert _real_git(mirror, "show", f"{branch}:only-copy.py") == "untracked; the only copy"
+    assert "hand edit" in _real_git(mirror, "show", f"{branch}:README")
+    assert not (mirror / "only-copy.py").exists()          # cleared, not deleted
+    assert _push_accepted(tmp_path, mirror)
+
+
+def test_real_stash_is_findable_by_the_name_the_prepare_script_greps_for(tmp_path, monkeypatch):
+    mirror, run, mgr = _dirty_mirror(tmp_path)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "s")
+
+    assert mgr._ensure_remote_worktree_clean(run, str(mirror)) is True
+
+    assert _real_git(mirror, "status", "--porcelain") == ""
+    listing = _real_git(mirror, "stash", "list")
+    assert "sucoder: stashed by " in listing and "before push, " in listing
+    # The untracked file rides in the stash's third parent.
+    assert _real_git(mirror, "show", "stash@{0}^3:only-copy.py") == "untracked; the only copy"
+    assert _push_accepted(tmp_path, mirror)
+    # And `git stash pop` brings it all back.
+    _real_git(mirror, "stash", "pop", "-q")
+    assert (mirror / "only-copy.py").read_text() == "untracked; the only copy\n"
+
+
+def test_real_skip_leaves_the_tree_exactly_as_found(tmp_path, monkeypatch):
+    mirror, run, mgr = _dirty_mirror(tmp_path)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "k")
+
+    assert mgr._ensure_remote_worktree_clean(run, str(mirror)) is False
+
+    assert (mirror / "only-copy.py").read_text() == "untracked; the only copy\n"
+    assert "hand edit" in (mirror / "README").read_text()
+    assert _real_git(mirror, "stash", "list") == ""
+    assert not _push_accepted(tmp_path, mirror)          # which is the point of the menu

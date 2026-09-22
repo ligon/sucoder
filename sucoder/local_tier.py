@@ -113,6 +113,12 @@ fi
 if ! git -C "$MIRROR" diff --quiet || ! git -C "$MIRROR" diff --cached --quiet; then
     echo "SUCODER: shared mirror $MIRROR has uncommitted changes to tracked files; commits from the local clone will be REJECTED until it is clean" >&2
 fi
+# A launcher that found the mirror dirty may have stashed a peer's work
+# rather than delete it (issue 33).  Say so, or the work looks lost.
+stashes=$(git -C "$MIRROR" stash list 2>/dev/null | grep -c 'sucoder: stashed by' || true)
+if [ "${stashes:-0}" -gt 0 ]; then
+    echo "SUCODER: shared mirror $MIRROR holds $stashes stash(es) a launcher made before a push; that work is not lost: git -C $MIRROR stash list"
+fi
 
 if [ ! -e "$WORK/.git" ]; then
     # Invariant before the only destructive step: WORK is always
