@@ -4467,3 +4467,108 @@ def test_snapshots_a_moved_ref_is_reported_as_left_in_place(monkeypatch, capsys)
     out = capsys.readouterr().out
     assert "could not retire refs/sucoder/wip-job/M/7 on M" in out
     assert "left in place" in out
+
+
+# -- sucoder message (issue 26) ----------------------------------------------------
+#
+# Recipients come from the same collection `sessions` prints; the send is one
+# script per host; nothing is typed into a shell; --dry-run makes no trip.
+
+def _message_report(*, pane="claude", token="M"):
+    from sucoder.sessions_report import JobRow, LoginSession, Report, SessionEntry, TargetGroup
+    entry = SessionEntry(
+        job=JobRow(41, f"sucoder-{token}", "p", "a", "q", "RUNNING", "1:00", "n0035"),
+        mirror=token, target="t0", session_keys=(f"{token}--t0",), pane=pane,
+    )
+    login = LoginSession("ln003.brc", "sucoder-L", "t0", pane="claude")
+    return Report(groups=[TargetGroup("t0", "p / a / q", [entry])], logins=[login])
+
+
+def _run_message(monkeypatch, report, *, recipient, text=None, everyone=False,
+                 dry_run=False, force=False, target=None, send_stdout=None):
+    import logging as _logging
+    harness = _SnapshotsHarness(times=("12-00:00:00",))
+    monkeypatch.setattr(cli, "setup_logger", lambda *a, **k: _logging.getLogger("t"))
+    monkeypatch.setattr(cli, "_connect_with_retry", lambda *a, **kw: None)
+    control = object()
+    monkeypatch.setattr(
+        cli, "_collect_sessions",
+        lambda config, **kw: (report, {"hpc.brc": ("ln001.brc", control)}),
+    )
+    trips = []
+
+    def _fake(ctl, host, command, **kw):
+        trips.append((host, command))
+        out = send_stdout if send_stdout is not None else "SENT\tsucoder-M\nSENT\tsucoder-L\n"
+        return SimpleNamespace(returncode=0, stdout=out, stderr="")
+    monkeypatch.setattr(cli, "_capture_over_tunnel", _fake)
+    monkeypatch.setattr(cli, "_control_for_host", lambda remote, host, debug, **kw: control)
+    ctx = SimpleNamespace(obj={"config": harness.config, "target_name": target}, params={})
+    code = 0
+    try:
+        cli.message(ctx, recipient=recipient, text=text, everyone=everyone, sender="me@lyn",
+                    force=force, dry_run=dry_run, verbose=False)
+    except typer.Exit as exc:
+        code = exc.exit_code
+    return code, trips
+
+
+def test_message_types_a_framed_line_into_the_mirrors_job(monkeypatch, capsys):
+    code, trips = _run_message(monkeypatch, _message_report(), recipient="M", text="ln001 is wedged")
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert len(trips) == 1
+    host, script = trips[0]
+    assert host == "ln001.brc"
+    assert "srun --jobid=41 --overlap" in script
+    # Nested inside bash -c, so the quoting is doubled; check the content.
+    assert "tmux -L sucoder-M send-keys -t sucoder-M -l " in script
+    assert "[message from me@lyn via sucoder, " in script and "] ln001 is wedged" in script
+    assert "sucoder-L" not in script                      # the login session was not asked for
+    assert "sent to M (job 41 on n0035, t0)" in out
+
+
+def test_message_all_reaches_jobs_and_login_sessions_one_trip_per_host(monkeypatch, capsys):
+    code, trips = _run_message(monkeypatch, _message_report(), recipient="stop", everyone=True)
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert sorted(h for h, _ in trips) == ["ln001.brc", "ln003.brc"]
+    assert "sent to M (job 41 on n0035, t0)" in out
+    assert "sent to L (login session on ln003.brc, t0)" in out
+
+
+def test_message_dry_run_shows_the_line_and_makes_no_trip(monkeypatch, capsys):
+    code, trips = _run_message(monkeypatch, _message_report(), recipient="M", text="x", dry_run=True)
+    out = capsys.readouterr().out
+    assert code == 0 and trips == []
+    assert "would send to M (job 41 on n0035, t0)" in out
+    assert "line: [message from me@lyn via sucoder, " in out
+
+
+def test_message_never_types_into_a_shell(monkeypatch, capsys):
+    code, trips = _run_message(monkeypatch, _message_report(pane="bash"), recipient="M", text="x", force=True)
+    out = capsys.readouterr().out
+    assert code == 1 and trips == []
+    assert "skipped M (job 41 on n0035, t0): agent exited" in out
+    assert "no live session found for mirror M." in out
+
+
+def test_message_reports_a_failed_delivery_and_exits_nonzero(monkeypatch, capsys):
+    code, trips = _run_message(
+        monkeypatch, _message_report(), recipient="M", text="x", send_stdout="FAILED\tsucoder-M\n",
+    )
+    err = capsys.readouterr().err
+    assert code == 1 and len(trips) == 1
+    assert "not delivered to M (job 41 on n0035, t0)" in err
+
+
+def test_message_all_with_two_positionals_is_a_usage_error(monkeypatch, capsys):
+    code, trips = _run_message(monkeypatch, _message_report(), recipient="M", text="x", everyone=True)
+    assert code == 2 and trips == []
+
+
+def test_message_narrows_to_the_active_target(monkeypatch, capsys):
+    code, trips = _run_message(monkeypatch, _message_report(), recipient="M", text="x", target="t9")
+    out = capsys.readouterr().out
+    assert code == 1 and trips == []
+    assert "no live session found for mirror M on target t9." in out
