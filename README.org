@@ -821,6 +821,48 @@ default: it reads the pane's child process, not
 call every working agent dead.  =--fast= skips it and says so.
 Read-only throughout --- nothing submits, cancels or writes.
 
+*** Listing and retiring WIP snapshots
+
+=sucoder snapshots= lists every WIP snapshot ref on every configured
+cluster's mirrors, with what the scheduler's accounting says about the
+job that took it, and whether it is past retention.  Like =sessions= it
+needs no =-T= and is read-only; =--retire= deletes what the listing marks.
+
+#+begin_src shell
+sucoder snapshots                       # list; nothing is deleted
+sucoder snapshots --retire              # delete the ones past retention
+sucoder snapshots --recovery-window 3   # days after a job's end; default 7
+#+end_src
+
+#+begin_example
+hpc.brc.berkeley.edu   (carleton-htc, savio-htc, savio-node)
+  LSMS_Library   wip-job/LSMS_Library/39123514  0h   39123514  running           kept: job still going
+  LSMS_Library   wip/LSMS_Library               3d   39002769  cancelled 3d ago  kept: within the 7d window
+  SuCoder        wip-job/SuCoder/38710868       41d  38710868  timeout 40d ago   retire: job ended 40d ago, past the 7d window
+
+3 snapshot(s); 1 past retention.  --retire deletes them.
+#+end_example
+
+The prepare script already retires ended jobs' snapshots, but only when
+a job is launched against that mirror, so a mirror no longer in use kept
+its refs forever --- and each ref pins a snapshot tree that =gc= can then
+never collect.  This is the sweep that needs no launch and no
+allocation.  Mirrors are found on the cluster's filesystem, not in the
+config, so a mirror dropped from the configuration (the one =release=
+can no longer reach) is swept too.
+
+A snapshot is judged by /when its job ended/, from =sacct=, never by the
+age of the ref alone.  The snapshotter leaves the ref untouched while the
+tree is unchanged, and a confined window survives the agent's exit, so a
+ref can sit frozen for days under a job that is still alive; any
+age-only threshold shorter than the allocation would delete a live job's
+only snapshot.  Where accounting cannot place a job (aged out, or no
+=sacct=), ref age is used instead against the cluster's longest
+=slurm.time= plus the window, which no live job can exceed; where a
+target has no finite =--time= even that has no safe bound, and nothing
+is deleted.  Every deletion is guarded by the hash the listing saw, so a
+snapshot rewritten in between is left alone.
+
 *** Choosing a login node
 
 The login node is pinned once, from a round-robin =ssh <gateway> hostname=,

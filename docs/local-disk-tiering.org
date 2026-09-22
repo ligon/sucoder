@@ -200,6 +200,18 @@ Points that matter:
   =--keep-wip= leaves the ref alone.  It cannot be the only rule, because
   it is cleanup keyed to an exit path that often does not run: =scancel=
   by an admin, walltime, a node failure and an OOM kill all bypass it.
+- The sweep that needs no launch :: retention in prepare runs only
+  when a job is launched against that mirror, so a mirror out of use kept
+  its refs forever.  =sucoder snapshots= lists every snapshot on every
+  configured cluster from the laptop and, with =--retire=, deletes those
+  whose job =sacct= reports ended more than a recovery window ago (seven
+  days by default; a fact about how long a human takes to notice, which
+  does not scale with job length).  Ref age is only the fallback, for a
+  job accounting cannot place, and then against the cluster's longest
+  =slurm.time= plus the window, which a live job cannot exceed; a target
+  with no finite =--time= leaves no safe bound, and those refs are kept
+  and the reason printed.  Deleting on an unanswered query is the one
+  outcome worse than keeping too much.
 - Nothing runs =git gc= on the mirror :: deleting a ref frees nothing by
   itself.  Every snapshot is =commit-tree -p HEAD=, so each one already
   orphans its predecessor whatever the ref is called; retiring the refs is
