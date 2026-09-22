@@ -255,8 +255,12 @@ def test_listing_script_finds_every_snapshot_once_and_asks_sacct_once(tmp_path):
     _git(a, "update-ref", "refs/sucoder/wip-job/A/11", snap)
     _git(a, "update-ref", "refs/sucoder/wip/A", snap)        # legacy: id from the subject
     _git(a, "update-ref", "refs/heads/not-a-snapshot", snap)  # never listed
-    # A linked worktree beside the mirror shares its refs: listed once.
+    # A linked worktree beside the mirror shares its refs: listed once,
+    # under the mirror's name, whatever order the glob yields them in.
     _git(a, "worktree", "add", "-q", "--detach", str(root / "A.wt"), head)
+    # A symlink to the mirror is the same repository: listed once, under
+    # the name that sorts first.
+    os.symlink(a, root / "A-link")
     # A directory that is not a repository is skipped.
     (root / "notes").mkdir()
     # A second mirror with no snapshots contributes nothing.

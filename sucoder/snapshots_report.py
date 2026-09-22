@@ -62,10 +62,13 @@ WIP_PREFIX = "refs/sucoder/"
 # Mirrors come from the filesystem, not the config: a mirror dropped from
 # the config is exactly the one nothing else can reach (``release``
 # resolves through config.mirrors), and its refs are the ones that would
-# otherwise be permanent.  Two directory entries for one repository (a
-# symlink beside its target, a linked worktree beside its main one) are
-# listed once, by the real common git dir: refs live there, so a delete
-# from either entry is the same delete.
+# otherwise be permanent.  A linked worktree is skipped (its git dir is
+# not its common dir): its refs are the main checkout's, and listing it
+# would show the same snapshot under a second name.  Two directory
+# entries for one repository (a symlink beside its target) are listed
+# once, by the real git dir, under whichever name sorts first -- the glob
+# runs without a trailing slash and under LC_ALL=C so that a name that is
+# a prefix of another always comes first, on every runner.
 #
 # ``SLURM_TIME_FORMAT=%s`` asks sacct for epoch seconds so no time-zone
 # arithmetic is done on this side; the cluster's offset is sent anyway, for
@@ -74,11 +77,14 @@ WIP_PREFIX = "refs/sucoder/"
 # ("WIP snapshot <date> job <ID>"), the same two rules the prepare script
 # applies.
 SNAPSHOT_LIST_SH = r'''printf 'NOW\t%s\t%s\n' "$(date +%s)" "$(date +%z)"
+export LC_ALL=C
 seen=" "; jobs=""
 for root in "$@"; do
-  for m in "$root"/*/; do
-    m=${m%/}
-    gd=$(git -C "$m" rev-parse --git-common-dir 2>/dev/null) || continue
+  for m in "$root"/*; do
+    [ -d "$m" ] || continue
+    gd=$(git -C "$m" rev-parse --git-dir 2>/dev/null) || continue
+    cd_=$(git -C "$m" rev-parse --git-common-dir 2>/dev/null) || continue
+    [ "$gd" = "$cd_" ] || continue
     gd=$(cd "$m" && cd "$gd" && pwd -P) || continue
     case "$seen" in *" $gd "*) continue ;; esac
     seen="$seen$gd "
