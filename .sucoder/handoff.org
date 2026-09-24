@@ -1,5 +1,5 @@
 #+title: Issues 14 and 26: retention rules, the snapshot sweep, and a channel between agents
-#+date: 2026-09-22
+#+date: 2026-09-24
 #+status: COMPLETE
 #+author: Sue
 #+property: header-args :eval never-export :tangle no :results output :exports code
@@ -99,3 +99,66 @@ with "Too many authentication failures".
   =c= already makes, and to name the stash =s= creates.
 - =default_system_prompt.org= and =~/.sucoder/system_prompt.org= differ
   in three places besides the new section; decide which is canonical.
+
+* Addendum, 2026-09-24: everything above is merged; issues 26 and 33 closed
+
+Merged, in order: 32, 34, 38 (35 re-landed: it had merged into its
+stacked base because that branch was not deleted, so GitHub never
+retargeted it -- delete the base branch when merging a stack, or merge
+bottom-up and retarget by hand), 37, 36, 39 (the closing-keyword rule
+now covers PR bodies too, after issue 14 was closed a third time by a
+body saying "does not close"), 40, 41, 42.  Issue 14 is open again and
+is the only open issue.
+
+** Issue 33, closed by PR 40
+
+The worktree-clean prompt no longer has a discard answer; the stash is
+named (=sucoder: stashed by user@host before push, <time>=) and the
+prepare script announces such stashes; untracked files are listed first
+and counted; an answer not on the menu re-prompts.  Verified live
+through =agents-clone= against a throwaway mirror under
+=~/sucoder-test-33= (removed afterwards).  =push= goes through =sync=
+and never reaches the prompt; =agents-clone= is the light command that
+does.  A first push to a mirror that does not exist refuses as
+unverified and needs =--allow-unverified-mirror=; =agents-clone=
+initialises it cleanly.
+
+** Issue 26, closed by PRs 32, 36, 41, 42
+
+- 41 :: the gateway alias and a pinned login node were the same
+  machine, so one tmux session was planned twice.  =sucoder sessions=
+  still lists such a session twice; that is a listing duplicate in the
+  login sweep, not filed.
+- 42 :: replies are pulled.  The frame carries an id; the default
+  system prompt (and the live copy, by hand) asks for =REPLY <id>: ...=
+  on the agent's own screen; =message --wait= reads the pane for it;
+  =sucoder peek MIRROR -n N= reads a pane any time and will show a
+  shell pane.  Live: a send to the confined SuCoder job on n0032 came
+  back with the reply after one poll.
+- Discovery is ligon/sucoder-skills#7: a =sucoder-peers= skill, and the
+  note that the sucoder CLI can be installed on the cluster (a second
+  config to keep in step) or that the raw =srun --overlap= + =tmux
+  send-keys= form works from inside a job today.  The companion prelude
+  line (how many other sessions hold this mirror at launch) is not
+  filed on this repo.
+
+** Cluster access, said plainly
+
+Everything "live" above ran as the user on a Savio login node through
+the CLI's warm ControlMaster (=ssh savio-gw= reuses it; the bare
+hostname does not).  It is a full shell, not read-only: the listing
+script writes a temp file under =/tmp=, the pane probe runs =srun
+--overlap= into live jobs, and the issue 33 test created and deleted a
+directory in the home directory.  Name every write.
+
+** Next
+
+- Issue 14: re-measure under concurrent slices; decide whether ref
+  deletion is meant to bound disk (needs an explicit prune) or only the
+  ref set.  The three legacy refs cross the 7-day window on 2026-09-25;
+  =sucoder snapshots --retire= that day is the first live delete.
+- Skills issue 7, then the prelude line.
+- The =sessions= duplicate for a login session seen under two host
+  names.
+- =default_system_prompt.org= and =~/.sucoder/system_prompt.org= still
+  differ in three places besides the two sections added this week.
