@@ -20,6 +20,10 @@ from typing import Callable, Dict, List, Literal, Mapping, NamedTuple, NoReturn,
 import yaml
 
 from .remote_bootstrap import INITIALIZE_MIRROR_SH
+from .agent_mode import (
+    SERVICE_LAUNCH_PROBE_SH, codex_remote_command, config_override,
+    service_launch, service_marker,
+)
 
 
 class SkillMetadata(NamedTuple):
@@ -2193,6 +2197,10 @@ class MirrorManager:
         substitution that the remote shell evaluates.
         """
         safe = re.sub(r"[^A-Za-z0-9._-]", "_", ctx.settings.name)
+        if getattr(self, "_service_launch", None) is not None:
+            # Two allocations can start this mirror with different instructions.
+            # Keep the service's staged config immutable until it reads it.
+            safe += "-" + secrets.token_hex(8)
         remote_path = f'"$HOME/.cache/sucoder/prelude-{safe}.txt"'
         self.executor.run_agent(
             [
@@ -2514,6 +2522,9 @@ class MirrorManager:
         batch job starts.
         """
         agent_cmd_str = f"{shlex.join(command)}; exec bash -l"
+        launch = getattr(self, "_service_launch", None)
+        if launch is not None:
+            agent_cmd_str = service_marker(launch) + agent_cmd_str
         if remote_prelude_text is not None:
             agent_cmd_str = self._externalize_prelude(
                 agent_cmd_str, prelude_sentinel, remote_prelude_text, ctx,
@@ -2983,6 +2994,7 @@ class MirrorManager:
             # Heal the record that lost it, so attach/release/renew can
             # reach this job again.
             sess.slurm_job_id = job_id
+            sess.service_launch = None  # Adopted job's mode is discovered from tmux.
             sess.save()
             return self._reuse_confined_job(
                 job_id, state, session_name, socket, detached,
@@ -3108,6 +3120,7 @@ class MirrorManager:
         # never silently leaked.
         sess.slurm_job_id = job_id
         sess.compute_node = None
+        sess.service_launch = getattr(self, "_service_launch", None)
         try:
             sess.save()
         except OSError as exc:
@@ -3173,6 +3186,28 @@ class MirrorManager:
         immediately instead of attaching a terminal; post-session hooks
         are skipped because the agent is still running.
         """
+        launcher = ctx.agent_launcher
+        base_command = list(command_override) if command_override else list(launcher.command)
+        if not base_command:
+            raise MirrorError(
+                f"Agent launcher command for mirror {ctx.settings.name} is empty."
+            )
+        command = base_command + list(extra_args or [])
+        effective_model = model_override if model_override is not None else launcher.model
+        try:
+            remote_command = codex_remote_command(command)
+        except ValueError as exc:
+            raise MirrorError(str(exc)) from exc
+        self._service_launch = None
+        if remote_command is not None:
+            if remote_command != command:
+                self.logger.info(
+                    "Running codex remote-control start in the foreground under "
+                    "SuCoder; tmux owns the service process."
+                )
+            command = remote_command
+            self._service_launch = {"command": list(command), "model": effective_model}
+
         mirror_path = self._ensure_mirror_exists(ctx)
         # Where the agent process starts.  Same as the mirror unless
         # local-disk tiering moves it to a node-local clone (remote only).
@@ -3184,19 +3219,9 @@ class MirrorManager:
         elif sync:
             self.sync(ctx)
 
-        launcher = ctx.agent_launcher
-        base_command = list(command_override) if command_override else list(launcher.command)
-        if not base_command:
-            raise MirrorError(
-                f"Agent launcher command for mirror {ctx.settings.name} is empty."
-            )
         # Store detected agent type so helpers (e.g., _file_read_hint) can
         # produce agent-appropriate output without threading args everywhere.
         self._detected_agent_type = _detect_agent_type(base_command)
-        command = list(base_command)
-        if extra_args:
-            command.extend(extra_args)
-        effective_model = model_override if model_override is not None else launcher.model
 
         model_for_flag, provider_env = self._provider_launch_environment(
             effective_model, self._detected_agent_type,
@@ -3226,10 +3251,18 @@ class MirrorManager:
         self._maybe_suggest_mcp_servers(ctx, mirror_path)
 
         # Get merged templates (per-mirror > global > agent profile)
-        templates = self._get_merged_templates(command, launcher)
-        command = self._apply_agent_flag_templates(
-            command, ctx, launcher, templates, model=model_for_flag,
-        )
+        if self._service_launch is not None:
+            # Codex's service accepts config overrides, not TUI model/sandbox
+            # flags or a positional prompt. Reuse native prelude staging below.
+            command = self._remote_control_flags(command, launcher, model_for_flag)
+            templates = AgentFlagTemplates(system_prompt="-c")
+            if prelude:
+                prelude = config_override("developer_instructions", prelude)
+        else:
+            templates = self._get_merged_templates(command, launcher)
+            command = self._apply_agent_flag_templates(
+                command, ctx, launcher, templates, model=model_for_flag,
+            )
 
         # Inject system prompt via native flag if available, otherwise
         # trailing text.
@@ -3252,7 +3285,12 @@ class MirrorManager:
                 flag_tokens = shlex.split(templates.system_prompt)
                 if flag_tokens:
                     # Add flag and content as separate args to preserve content with spaces
-                    command = self._insert_after_executable(command, flag_tokens + [injected_prelude])
+                    if self._service_launch is not None:
+                        # Keep the full SuCoder context even if an earlier -c
+                        # also supplied developer_instructions.
+                        command = list(command) + flag_tokens + [injected_prelude]
+                    else:
+                        command = self._insert_after_executable(command, flag_tokens + [injected_prelude])
                     if externalize_prelude:
                         remote_prelude_text = prelude
             elif templates.system_prompt_file:
@@ -3342,6 +3380,10 @@ class MirrorManager:
                 # confined batch body uses; here the job id is known.
                 launch_cwd, exports = self._prepare_local_tier(ctx, local_disk_root)
                 agent_cmd_str = f"{exports}; {agent_cmd_str}"
+            if self._service_launch is not None:
+                return self._launch_remote_service(
+                    ctx, tmux_name, agent_cmd_str, launch_cwd, detached=detached,
+                )
             command = self._build_tmux_launch_command(
                 tmux_name, agent_cmd_str, detached=detached,
             )
@@ -3388,6 +3430,84 @@ class MirrorManager:
                 )
 
             return result.returncode
+
+    def _remote_control_flags(
+        self, command: Sequence[str], launcher: AgentLauncher, model: Optional[str],
+    ) -> List[str]:
+        """Adapt SuCoder's existing intents to Codex service config (ledger 5)."""
+        defaults = []
+        needs_yolo = launcher.needs_yolo
+        if needs_yolo is None:
+            needs_yolo = self._default_needs_yolo(command)
+        if needs_yolo:
+            for key, value in (("sandbox_mode", "danger-full-access"),
+                               ("approval_policy", "never")):
+                defaults.extend(["-c", config_override(key, value)])
+        # Defaults precede user -c options, so explicit restrictions win.
+        result = [command[0], *defaults, *command[1:]]
+        for flag in launcher.default_flags:
+            result.extend(self._render_flag_template("{flag}", flag=flag))
+        if model:
+            result.extend(["-c", config_override("model", model)])
+        return result
+
+    def _launch_remote_service(
+        self, ctx: MirrorContext, tmux_name: str, command: str, cwd: Path,
+        *, detached: bool,
+    ) -> int:
+        """Start/reuse a service, record the actual pane, then optionally attach.
+
+        Starting detached first lets renewal retain a CLI command override while
+        the initial terminal is still attached. An existing session owns its
+        metadata; requesting a service must not relabel an existing TUI.
+        """
+        from .session import RemoteSession
+
+        # `new-session -A -d` attaches when a session exists, requiring a TTY.
+        # Create without -A and distinguish creation from reuse in one round
+        # trip. Recheck after a failed create in case another launcher won.
+        exists = shlex.join(["tmux", "has-session", "-t", tmux_name])
+        create = shlex.join(["tmux", "new-session", "-d", "-s", tmux_name, command])
+        script = (
+            f"if {exists} 2>/dev/null; then :; "
+            f"elif {create}; then printf 'SUCODER_CREATED\\n'; "
+            f"else {exists}; fi"
+        )
+        result = self.executor.run_agent(
+            ["bash", "-c", script], check=False, cwd=str(cwd), capture_output=True,
+        )
+        if result.returncode != 0:
+            raise MirrorError(
+                f"Remote-control tmux launch failed (exit {result.returncode}): "
+                f"{(result.stderr or '').strip()}"
+            )
+        if not self.executor.dry_run:
+            created = "SUCODER_CREATED" in (result.stdout or "").splitlines()
+            probe = None if created else self.executor.run_agent(
+                ["bash", "-c", SERVICE_LAUNCH_PROBE_SH, "_", tmux_name, ""],
+                check=False, capture_output=True,
+            )
+            if created or (probe is not None and probe.returncode == 0):
+                session = RemoteSession.load(ctx.settings.name, target_name=self.target_name)
+                try:
+                    # A fresh pane may not have executed its marker yet. The
+                    # successful create identifies its launch unambiguously.
+                    if created:
+                        session.service_launch = self._service_launch
+                    else:
+                        assert probe is not None
+                        session.service_launch = service_launch(probe.stdout)
+                    session.save()
+                except (ValueError, OSError) as exc:
+                    self.logger.warning("Could not record service launch for renewal: %s", exc)
+            else:
+                self.logger.warning("Could not read tmux service metadata for renewal.")
+        if detached:
+            return 0
+        result = self.executor.run_agent(
+            ["tmux", "attach-session", "-t", tmux_name], check=False, capture_output=False,
+        )
+        return result.returncode
 
     def _get_effective_launch_mode(
         self,

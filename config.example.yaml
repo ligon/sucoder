@@ -162,6 +162,10 @@ mirrors:
       # command: [opencode]
       # Goose's interactive entry point is: [goose, run, --interactive]
       # Native Kimi Code CLI: [kimi]
+      # Remote Codex service: [codex, remote-control]
+      # [codex, remote-control, start] also works; SuCoder keeps it in the foreground.
+      # The service uses -c config overrides for context, model, and permissions.
+      # TUI flag templates below do not apply; default_flags must be service options.
       # Kimi + OpenRouter example model: openrouter/moonshotai/kimi-k3
       # model: openrouter/deepseek/deepseek-chat
       needs_yolo: true

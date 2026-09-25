@@ -3350,16 +3350,23 @@ def _relaunch_session(mirror, config, ctx, logger, dry_run):
     no re-clone is needed; ``sync=False`` leaves the working tree exactly
     as the previous agent left it (it rehydrates from its handoff note).
 
-    NB: drives the real allocation + launch path; cluster-validate.  The
-    relaunch uses the mirror's *configured* agent (any per-invocation
-    ``--agent``/``--agent-command`` override from the original
-    ``collaborate`` is not persisted, so configure the agent in
-    config.yaml for a renewable target).
+    A recorded remote-control launch retains its command and model. Ordinary
+    terminal sessions use the configured harness as before; their CLI command
+    overrides are not persisted. Credentials and the prelude are rebuilt.
     """
     from .session import RemoteSession
+    from .agent_mode import service_launch
 
     _tgt = ((ctx.obj or {}).get("target_name") if ctx else None)
     session = RemoteSession.load(mirror, target_name=_tgt)
+    try:
+        launch = service_launch(session.service_launch)
+    except ValueError as exc:
+        logger.warning("Cannot renew invalid service launch: %s", exc)
+        return None
+    overrides = {}
+    if launch is not None:
+        overrides = {"command_override": launch["command"], "model_override": launch["model"]}
     # Force a fresh allocation: clear job AND node so _ensure_slurm_node
     # does not adopt the slice we're about to replace.
     session.slurm_job_id = None
@@ -3373,6 +3380,7 @@ def _relaunch_session(mirror, config, ctx, logger, dry_run):
             manager.context_for(mirror),
             sync=False,
             detached=True,
+            **overrides,
         )
     except Exception as exc:  # noqa: BLE001 - relaunch must not crash the loop
         logger.warning("relaunch failed: %s", exc)
@@ -3434,6 +3442,8 @@ def renew(
     from .session import RemoteSession
     from .tunnel import SshControl, TunnelError
     from .renew import JobStatus, RenewSettings, parse_time_left, run_renew_loop
+    from .agent_mode import SERVICE_LAUNCH_PROBE_SH, service_launch
+    from .mirror import confined_tmux_target
 
     _tgt_name = ((ctx.obj or {}).get("target_name") if ctx else None)
     session = RemoteSession.load(mirror, target_name=_tgt_name)
@@ -3469,6 +3479,8 @@ def renew(
         typer.echo(f"Failed to reach the cluster: {exc}" + _ssh_debug_hint(debug_ssh), err=True)
         raise typer.Exit(code=1) from exc
 
+    mode_checked = set()
+
     def probe(job_id):
         cmd = f"squeue --job {shlex.quote(str(job_id))} -h -o '%T|%L'"
         result = _run_remote_capture(ln_control, login_node, cmd, debug=debug_ssh)
@@ -3479,6 +3491,53 @@ def renew(
         if not line:
             return JobStatus(ok=True, state=None)  # job no longer queued
         state, _, left = line.partition("|")
+        if state.strip() == "RUNNING" and job_id not in mode_checked:
+            # Live metadata heals records adopted by scheduler name, including
+            # CLI overrides that were never present in config.yaml (ledger 4).
+            cur = RemoteSession.load(mirror, target_name=_tgt_name)
+            name, socket = confined_tmux_target(mirror)
+            query = shlex.join([
+                "bash", "-c", SERVICE_LAUNCH_PROBE_SH, "_",
+                name if confined else f"sucoder-{mirror}", socket if confined else "",
+            ])
+            if confined:
+                query = (
+                    f"TMPDIR=/tmp srun --jobid={job_id} --overlap --quiet --chdir=/tmp "
+                    + query
+                )
+                metadata = _run_remote_capture(ln_control, login_node, query, debug=debug_ssh)
+            elif cur.compute_node:
+                cn = SshControl(
+                    gateway=cur.compute_node, **remote.ssh_control_kwargs(),
+                    jump_host=login_node, jump_control=ln_control,
+                    extra_options=["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null"],
+                    debug=debug_ssh,
+                )
+                metadata = _run_remote_capture(cn, cur.compute_node, query, debug=debug_ssh)
+            else:
+                return JobStatus(ok=False)
+            if metadata.returncode != 0:
+                logger.warning("Cannot inspect job %s's launch mode; renewal will retry.", job_id)
+                return JobStatus(ok=False)
+            cur = RemoteSession.load(mirror, target_name=_tgt_name)
+            if cur.slurm_job_id != job_id:
+                return JobStatus(ok=False)  # Another launcher replaced the record.
+            try:
+                launch = service_launch(metadata.stdout)
+                # New panes set their marker asynchronously. Keep a launch
+                # saved by submission while that pane is still starting.
+                launch = launch or service_launch(cur.service_launch)
+            except ValueError as exc:
+                logger.warning("Cannot inspect service launch: %s", exc)
+                return JobStatus(ok=False)
+            cur.service_launch = launch
+            cur.save()
+            mode_checked.add(job_id)
+            if launch is not None:
+                typer.echo(
+                    "Remote-control service: renewal restarts the server. Checkpoint requests "
+                    "are sentinel files, not chat messages; active chats are not automatically resumed."
+                )
         return JobStatus(
             ok=True, state=state.strip() or None, mins_left=parse_time_left(left),
         )
@@ -3489,6 +3548,12 @@ def renew(
         )
 
     def request_checkpoint():
+        cur = RemoteSession.load(mirror, target_name=_tgt_name)
+        if cur.service_launch is not None:
+            logger.info(
+                "Writing the remote-control checkpoint sentinel; use the connected "
+                "Codex client to checkpoint active chats."
+            )
         msg = "renew: re-allocation imminent -- commit, push, write handoff now"
         write = (
             'mkdir -p "$HOME/.cache/sucoder" && '
@@ -3811,6 +3876,7 @@ def peek(
     typing into one is refused.
     """
     from .messaging import capture_pane_command, pane_tail
+    from .agent_mode import CODEX_REMOTE_CONTROL
 
     config = _get_config(ctx)
     if not config.targets:
@@ -3859,6 +3925,8 @@ def peek(
             failures += 1
             continue
         typer.echo(f"--- {r.label}" + (f" ({r.pane})" if r.pane else ""))
+        if r.agent_mode == CODEX_REMOTE_CONTROL:
+            typer.echo("Remote-control service log; read and steer chats in the connected Codex client.")
         typer.echo(pane_tail(got.stdout or "", lines))
     if failures:
         raise typer.Exit(code=1)
@@ -4462,7 +4530,7 @@ def _finish_login_probes(
     hosts needing credentials are handled here -- gateways serially, then
     everything behind them at once.
     """
-    from .sessions_report import LoginSession, parse_login_sessions
+    from .sessions_report import LoginSession, parse_login_session_status
 
     report.login_probed = True
     report.errors.extend(plan.errors)
@@ -4511,10 +4579,11 @@ def _finish_login_probes(
         # One round trip gave both the session list and each pane's command;
         # an absent pane stays None, which renders as unknown rather than as
         # a dead agent -- an unanswered probe is not evidence.
-        found, panes = parse_login_sessions(result.stdout)
+        found, statuses = parse_login_session_status(result.stdout)
         for sess in found:
             report.logins.append(LoginSession(
-                host=host, name=sess, target=name, pane=panes.get(sess),
+                host=host, name=sess, target=name, pane=statuses[sess].command,
+                agent_mode=statuses[sess].agent_mode,
             ))
 
 
@@ -4570,7 +4639,7 @@ def _probe_session_panes(
     follow.
     """
     from .mirror import confined_tmux_target
-    from .sessions_report import PANE_PROBE_SH
+    from .sessions_report import SESSION_PANE_PROBE_SH, parse_pane_status
 
     by_cluster: Dict[str, list] = {}
     for group in report.groups:
@@ -4610,7 +4679,7 @@ def _probe_session_panes(
             lines.append(
                 f'printf "%s\\t" {job}; '
                 f'TMPDIR=/tmp srun --jobid={job} --overlap --quiet --chdir=/tmp '
-                f'bash -c {shlex.quote(PANE_PROBE_SH)} _ '
+                f'bash -c {shlex.quote(SESSION_PANE_PROBE_SH)} _ '
                 f'{shlex.quote(session_name)} '
                 f'{shlex.quote(socket if confined else "")} 2>/dev/null; echo'
             )
@@ -4644,15 +4713,17 @@ def _probe_session_panes(
         panes, wips = {}, {}
         for line in result.stdout.splitlines():
             key, _, value = line.partition("\t")
-            key, value = key.strip(), value.strip()
-            if not value:
+            key = key.strip()
+            if not value.strip():
                 continue
             if key.startswith("wip") and key[3:].isdigit():
-                wips[int(key[3:])] = value
+                wips[int(key[3:])] = value.strip()
             elif key.isdigit():
-                panes[int(key)] = value
+                panes[int(key)] = parse_pane_status(value)
         for entry, _, _ in entries:
-            entry.pane = panes.get(entry.job.job_id)
+            status = panes.get(entry.job.job_id)
+            if status is not None:
+                entry.pane, entry.agent_mode = status
             entry.wip = wips.get(entry.job.job_id)
 
 

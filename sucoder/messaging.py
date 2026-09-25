@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 from .sessions_report import LoginSession, Report, SessionEntry
+from .agent_mode import CODEX_REMOTE_CONTROL, TERMINAL
 
 # Between the text and the Enter that submits it.  A burst of typed
 # characters followed by an immediate Enter can reach a TUI's input loop
@@ -128,6 +129,7 @@ class Recipient:
     job_id: Optional[int] = None   # reached through srun --overlap when set
     target: Optional[str] = None
     pane: Optional[str] = None     # what the probe saw running there
+    agent_mode: str = TERMINAL
 
 
 def send_keys_command(recipient: Recipient, line: str) -> str:
@@ -139,6 +141,8 @@ def send_keys_command(recipient: Recipient, line: str) -> str:
     way the pane probe does.  Prints ``SENT`` or ``FAILED`` with the
     session name so a batch of sends reports per recipient.
     """
+    if recipient.agent_mode == CODEX_REMOTE_CONTROL:
+        raise ValueError("Remote-control services cannot receive terminal messages.")
     sock = f"-L {shlex.quote(recipient.socket)} " if recipient.socket else ""
     sess = shlex.quote(recipient.session)
     tmux = (
@@ -198,9 +202,16 @@ def plan_recipients(
     chosen: List[Recipient] = []
     skipped: List[str] = []
 
-    def consider(label: str, pane: Optional[str], exited: bool, make) -> None:
+    def consider(label: str, pane: Optional[str], exited: bool, mode: str, make) -> None:
         if for_reading:
             chosen.append(make())
+            return
+        if mode == CODEX_REMOTE_CONTROL:
+            skipped.append(f"{label}: remote-control service; send instructions through "
+                           "the connected Codex client, not the tmux pane")
+            return
+        if mode == "unknown" and not force:
+            skipped.append(f"{label}: interaction mode not probed; --force sends anyway")
             return
         if exited:
             skipped.append(f"{label}: agent exited; its pane is a shell, and a message "
@@ -234,11 +245,11 @@ def plan_recipients(
             confined = group.name in confined_targets
             label = f"{name} (job {entry.job.job_id} on {entry.job.node or '?'}, {group.name})"
             consider(
-                label, entry.pane, entry.agent_exited,
+                label, entry.pane, entry.agent_exited, entry.agent_mode,
                 lambda: Recipient(
                     label=label, host=host, session=session,
                     socket=socket if confined else "", job_id=entry.job.job_id,
-                    target=group.name, pane=entry.pane,
+                    target=group.name, pane=entry.pane, agent_mode=entry.agent_mode,
                 ),
             )
     for entry in report.unmatched:
@@ -265,10 +276,10 @@ def plan_recipients(
             continue
         label = f"{sess.token} (login session on {sess.host}, {sess.target})"
         consider(
-            label, sess.pane, sess.agent_exited,
+            label, sess.pane, sess.agent_exited, sess.agent_mode,
             lambda: Recipient(
                 label=label, host=sess.host, session=sess.name, socket="",
-                job_id=None, target=sess.target, pane=sess.pane,
+                job_id=None, target=sess.target, pane=sess.pane, agent_mode=sess.agent_mode,
             ),
         )
     return chosen, skipped
