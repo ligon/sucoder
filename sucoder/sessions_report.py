@@ -34,7 +34,9 @@ from __future__ import annotations
 
 import shlex
 from dataclasses import dataclass, field
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
+
+from .agent_mode import CODEX_REMOTE_CONTROL, MODE_PROBE_SH, TERMINAL
 
 JOB_NAME_PREFIX = "sucoder-"
 
@@ -106,11 +108,17 @@ LOGIN_SESSION_SH = (
 # answer what one round trip answers.  The loop runs remote-side; the
 # ``sucoder-`` filter deliberately stays local, in `parse_login_sessions`,
 # so the prefix rule lives in exactly one place.
+SESSION_PANE_PROBE_SH = (
+    'pane=$(bash -c ' + shlex.quote(PANE_PROBE_SH) + ' _ "$1" "$2"); '
+    'mode=$(bash -c ' + shlex.quote(MODE_PROBE_SH) + ' _ "$1" "$2") || mode=unknown; '
+    'printf "%s\\t%s\\n" "$pane" "$mode"'
+)
+
 LOGIN_SESSION_PANES_SH = (
     'tmux list-sessions -F "#{session_name}" 2>/dev/null | '
     'while read -r s; do '
     'printf "%s\t" "$s"; '
-    'bash -c ' + shlex.quote(PANE_PROBE_SH) + ' _ "$s" "" 2>/dev/null; '
+    'bash -c ' + shlex.quote(SESSION_PANE_PROBE_SH) + ' _ "$s" "" 2>/dev/null; '
     'echo; '
     'done || true'
 )
@@ -172,6 +180,7 @@ class LoginSession:
     name: str                      # sucoder-<token>
     target: str
     pane: Optional[str] = None     # command running in the pane
+    agent_mode: str = TERMINAL     # service metadata is independent of liveness
 
     @property
     def token(self) -> str:
@@ -201,6 +210,33 @@ def parse_tmux_sessions(text: str) -> List[str]:
     return names
 
 
+class PaneStatus(NamedTuple):
+    command: Optional[str]
+    agent_mode: str
+
+
+def parse_pane_status(text: str) -> PaneStatus:
+    """Accept legacy command-only probes and the extended command/mode pair."""
+    command, sep, mode = text.partition("\t")
+    mode = mode.strip() if sep else TERMINAL
+    if mode not in {TERMINAL, CODEX_REMOTE_CONTROL}:
+        mode = "unknown"
+    return PaneStatus(command.strip() or None, mode)
+
+
+def parse_login_session_status(text: str) -> Tuple[List[str], Dict[str, PaneStatus]]:
+    """Parse live tmux metadata, including services with no launcher record."""
+    rows = [line.partition("\t") for line in text.splitlines()]
+    names = parse_tmux_sessions("\n".join(name for name, _, _ in rows))
+    wanted = set(names)
+    statuses = {}
+    for name, _, value in rows:
+        key = name.strip().rstrip(":")
+        if key in wanted:
+            statuses[key] = parse_pane_status(value)
+    return names, statuses
+
+
 def parse_login_sessions(text: str) -> Tuple[List[str], Dict[str, str]]:
     """Split ``LOGIN_SESSION_PANES_SH`` output into (names, panes).
 
@@ -212,14 +248,8 @@ def parse_login_sessions(text: str) -> Tuple[List[str], Dict[str, str]]:
     Filtering is delegated to :func:`parse_tmux_sessions` so the
     ``sucoder-`` prefix rule is not restated here.
     """
-    rows = [line.partition("\t") for line in text.splitlines()]
-    names = parse_tmux_sessions("\n".join(name for name, _, _ in rows))
-    wanted = set(names)
-    panes: Dict[str, str] = {}
-    for name, _, pane in rows:
-        key = name.strip().rstrip(":")
-        if key in wanted and pane.strip():
-            panes[key] = pane.strip()
+    names, statuses = parse_login_session_status(text)
+    panes = {key: status.command for key, status in statuses.items() if status.command}
     return names, panes
 
 
@@ -252,6 +282,7 @@ class SessionEntry:
     session_keys: Sequence[str] = ()   # <mirror>--<target> records naming it
     pane: Optional[str] = None         # command running in the tmux pane
     wip: Optional[str] = None          # age of the last WIP snapshot
+    agent_mode: str = TERMINAL
 
     @property
     def orphaned(self) -> bool:
@@ -540,17 +571,26 @@ def _entry_row(entry: SessionEntry) -> Tuple[str, ...]:
     if entry.orphaned:
         flags.append("no session record")
     if entry.agent_exited:
-        flags.append("agent exited")
+        flags.append("service exited" if entry.agent_mode == CODEX_REMOTE_CONTROL else "agent exited")
     return (
         entry.mirror or job.token,
         str(job.job_id),
         job.state,
         job.time_left or "-",
         job.node or "-",
-        entry.pane or "-",
+        pane_description(entry.pane, entry.agent_mode),
         entry.wip or "-",
         ("! " + ", ".join(flags)) if flags else "",
     )
+
+
+def pane_description(pane: Optional[str], agent_mode: str) -> str:
+    """Show service identity without claiming that it or any chat is alive."""
+    if agent_mode == CODEX_REMOTE_CONTROL:
+        return f"{pane or '-'} (remote-control service)"
+    if agent_mode == "unknown":
+        return f"{pane or '-'} (mode unknown)"
+    return pane or "-"
 
 
 def render_report(report: Report, *, probed: bool = True) -> str:
@@ -587,10 +627,11 @@ def render_report(report: Report, *, probed: bool = True) -> str:
             out.append(f"{name}   no scheduler (login-node sessions)")
             width = max(len(s.name) for s in sessions)
             for sess in sessions:
-                flag = "  ! agent exited" if sess.agent_exited else ""
+                exited = "service exited" if sess.agent_mode == CODEX_REMOTE_CONTROL else "agent exited"
+                flag = f"  ! {exited}" if sess.agent_exited else ""
                 out.append(
                     f"  {sess.name.ljust(width)}  {sess.host}  "
-                    f"{sess.pane or '-'}{flag}"
+                    f"{pane_description(sess.pane, sess.agent_mode)}{flag}"
                 )
         elif report.login_probed:
             out.append(f"{name}   no scheduler; no login-node sessions")

@@ -33,6 +33,9 @@ class RemoteSession:
     # ``tunnel-<target>`` session).  Each entry is a dict:
     # ``{"local_port": int, "node": str, "remote_port": int}``.
     forwards: list = field(default_factory=list)
+    # Remote-control command/model, before generated flags or prompt injection.
+    # No credentials or composed prelude; renewal rebuilds those (ledger 5).
+    service_launch: Optional[dict] = None
 
     # ------------------------------------------------------------------
     # Persistence
@@ -74,6 +77,7 @@ class RemoteSession:
             slurm_job_id=data.get("slurm_job_id"),
             compute_node=data.get("compute_node"),
             remote_mirror_root=data.get("remote_mirror_root"),
+            service_launch=data.get("service_launch"),
             forwards=list(data.get("forwards") or []),
         )
 
@@ -100,6 +104,7 @@ class RemoteSession:
             "slurm_job_id": self.slurm_job_id,
             "compute_node": self.compute_node,
             "remote_mirror_root": self.remote_mirror_root,
+            "service_launch": self.service_launch,
             "forwards": self.forwards,
         }
         tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")

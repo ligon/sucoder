@@ -367,6 +367,49 @@ sucoder --no-agent-sudo agents-clone project
   Demonstrates the in-repo Org skills—structure, markup, tables, capture, citations,
   exporting, agenda integration—so humans and agents have a quick reference.
 
+*** Codex remote control
+
+Use =--agent-command= for a command with subcommands; =--agent= and =--harness= select a single executable.
+For example, on a configured Savio target:
+
+#+begin_src shell
+sucoder -T savio collaborate project --agent-command "codex remote-control"
+#+end_src
+
+=--agent-command "codex remote-control start"= is also accepted.
+SuCoder converts =start= to the foreground form and reports that choice, so tmux and Slurm retain ownership of the service process.
+Commands such as =stop= and =pair= are management operations; run them separately on the remote host.
+The remote Codex installation must support =remote-control= and have the authentication and pairing required by the connected Codex client.
+See the [[https://learn.chatgpt.com/docs/developer-commands?surface=cli#codex-remote-control][Codex remote-control reference]].
+
+The service starts in the mirror's working directory, including the existing local-disk clone and Slurm confinement when configured.
+The full SuCoder prelude (system prompt, target instructions, and skills catalog) is installed in =AGENTS.override.md= in the service's actual working directory.
+This keeps the defaults available when a connected client replaces Codex's =developer_instructions= config value; SuCoder also supplies that config value for clients that retain it.
+SuCoder preserves an existing local override's text, or copies =AGENTS.md= into a separate generated region when creating the override.
+It refreshes generated regions on each service launch and adds the override to Git's local exclude file.
+The original =AGENTS.md= stays unchanged; its copy refreshes at launch, and the agent is directed to read the current file before working.
+The launcher needs =python3= on the agent host and allows the prelude size plus 1 MiB for native instruction files; explicit =project_doc_max_bytes= overrides still take precedence.
+An edited or ambiguous generated block, a concurrent edit, or a symlinked or Git-tracked override stops launch with an error and preserves the file.
+The file remains available to later Codex chats in that mirror.
+Choose the mirror's working directory in the connected client: native instructions are scoped to that directory and its children.
+After updating SuCoder, restart the service and open a new chat to load these instructions; reattaching to an existing service does not refresh it.
+=--model= and =agent_launcher.model= become a =model= config override.
+The usual =needs_yolo= intent becomes =sandbox_mode="danger-full-access"= and =approval_policy="never"= config defaults; set =needs_yolo: false= to omit them, or supply explicit =-c= overrides to restrict them.
+SuCoder does not apply TUI flag templates to this subcommand; =default_flags= must contain options supported by =remote-control=.
+
+To make this the mirror's default launch:
+
+#+begin_src yaml
+agent_launcher:
+  command: [codex, remote-control]
+#+end_src
+
+=sucoder sessions= labels the pane as a remote-control service, including when the local launcher record is missing.
+=sucoder message= skips it even with =--force=; send instructions through the connected Codex client.
+=sucoder peek= displays the service log.
+=sucoder renew= retains the service command and model across allocation turnover, and regenerates the SuCoder prelude.
+Its checkpoint request remains a file sentinel; renewal restarts the server and does not automatically checkpoint or resume active chats.
+
 ** Parallel Work with Worktrees
 Inside the mirror the agent can use git worktrees to work on multiple
 tasks in parallel.  Claude supports this natively via =claude --worktree NAME=;
@@ -909,6 +952,8 @@ sucoder -T carleton-htc peek SuCoder -n 60      # the pane's last rows, any time
 =peek= is the read half on its own, for looking at a session without
 sending anything; unlike =message= it will happily show a pane that is
 a bare shell.  Whether an agent acts on a message is still up to it.
+For a Codex remote-control service, =peek= shows server logs and =message= refuses terminal delivery, including with =--force=.
+Read and steer its chats through the connected Codex client.
 The cheaper half of the same fix is the bulletin,
 =~/.sucoder/bulletin.org= on the host the mirror lives on, which the
 default system prompt tells agents to read before concluding that
@@ -1211,6 +1256,11 @@ Before each turnover the loop writes
 note, then rehydrates from that note after relaunch.  Stop renewal with
 Ctrl-C (the allocation is left running) or =sucoder release= (frees it).
 
+For Codex remote control, renewal preserves the original service command and model, including =--agent-command= and =--model= overrides.
+The prelude and credential environment are rebuilt for the replacement allocation.
+The checkpoint sentinel is not a chat message: checkpoint active work through the connected Codex client before turnover.
+Renewal restarts the server; it does not automatically resume its chats.
+
 See [[file:docs/persistent-presence.org][docs/persistent-presence.org]]
 for the design and the open cgroup-confinement caveat.
 
@@ -1340,6 +1390,7 @@ mirrors:
       command: [aider]
       model: openrouter/deepseek/deepseek-chat
       # Alternatives: [opencode], [goose, run, --interactive], or [kimi].
+      # Remote Codex service: [codex, remote-control] (start is normalized to foreground).
       # Optional: map generic intents to agent-specific flags
       needs_yolo: true
       writable_dirs:
