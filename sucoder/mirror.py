@@ -2222,6 +2222,8 @@ class MirrorManager:
         launches while keeping the file out of the mirrored git worktree.
         """
         safe = re.sub(r"[^A-Za-z0-9._-]", "_", ctx.settings.name)
+        if getattr(self, "_service_launch", None) is not None:
+            safe += "-" + secrets.token_hex(8)
         if ctx.is_remote:
             home = self._resolve_remote_home(ctx)
         else:
@@ -3238,6 +3240,7 @@ class MirrorManager:
         env_to_use = env or None
 
         prelude = self._compose_context_prelude(ctx)
+        service_context = prelude if self._service_launch is not None else None
         inline_prompt_supported = (
             supports_inline_prompt
             if supports_inline_prompt is not None
@@ -3255,6 +3258,11 @@ class MirrorManager:
             # Codex's service accepts config overrides, not TUI model/sandbox
             # flags or a positional prompt. Reuse native prelude staging below.
             command = self._remote_control_flags(command, launcher, model_for_flag)
+            if prelude:
+                # Allow the full prelude plus native instructions. Explicit
+                # user -c limits later in argv still take precedence.
+                budget = len(prelude.encode("utf-8")) + 1024 * 1024
+                command = [command[0], "-c", f"project_doc_max_bytes={budget}", *command[1:]]
             templates = AgentFlagTemplates(system_prompt="-c")
             if prelude:
                 prelude = config_override("developer_instructions", prelude)
@@ -3331,6 +3339,9 @@ class MirrorManager:
 
         # Determine launch mode: explicit config > agent profile default > subprocess
         effective_mode = self._get_effective_launch_mode(command, launcher)
+
+        if service_context:
+            command = self._wrap_codex_service_context(ctx, command, service_context)
 
         # Environment values may include API keys resolved from pass. Stage
         # them over stdin in an agent-owned 0600 file, then source and unlink
@@ -3430,6 +3441,15 @@ class MirrorManager:
                 )
 
             return result.returncode
+
+    def _wrap_codex_service_context(
+        self, ctx: MirrorContext, command: Sequence[str], prelude: str,
+    ) -> List[str]:
+        """Stage native context without changing Codex home or trust (ledger 5)."""
+        source = Path(__file__).with_name("codex_context.py").read_text(encoding="utf-8")
+        source += f"\nrun({ascii(prelude)}, sys.argv[1:])\n"
+        path = self._write_context_prelude_file(ctx, source)
+        return ["python3", path, *command]
 
     def _remote_control_flags(
         self, command: Sequence[str], launcher: AgentLauncher, model: Optional[str],
