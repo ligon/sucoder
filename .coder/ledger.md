@@ -3,12 +3,14 @@
 Search tier: GitNexus query/context/impact, source and tests, installed Codex
 0.154.0 help, and official OpenAI command/configuration documentation.
 Baseline: main `df2f7b4`. Prepared by Sue, 2026-09-25.
-Implementation: `bd5df6b` on `feat/codex-remote-control`.
+Implementation: `bd5df6b`, prompt repair `bf8989d`, on `feat/codex-remote-control`.
+Follow-up: preserve instructions across remote-client overrides, 2026-09-26.
 
 ## 1. Task
 
 Launch Codex remote control inside SuCoder's existing remote job/tmux lifecycle,
-carry the SuCoder prelude and model/permission settings through Codex config,
+carry the SuCoder prelude through native instructions and Codex config,
+retain model/permission settings,
 and distinguish the service from a terminal conversation in sessions, messaging,
 peek, and renewal. Keep ordinary harness launches compatible.
 
@@ -19,6 +21,7 @@ peek, and renewal. Keep ordinary harness launches compatible.
 | Command selection and argv parsing | `sucoder/cli.py:1588` | `test_launch_commands_forward_harness_and_model` | Reuse `--agent-command`; keep `--agent` as an executable selector |
 | Harness flag and prompt assembly | `sucoder/mirror.py:3155`, `sucoder/config.py:278` | `test_launch_agent_supports_overrides`, `test_agent_doc_injected_for_non_claude` | Extend for the Codex remote-control subcommand |
 | Remote prelude staging | `sucoder/mirror.py:2176` | `test_build_remote_agent_cmd_str_externalizes_prelude` | Reuse stdin staging and sentinel substitution; give service launches unique files |
+| Native context-file staging | `sucoder/mirror.py:2216` (current) | `test_staged_installer_runs_in_final_clone_and_keeps_launches_separate` | Reuse private agent-side staging for the standalone Codex context installer |
 | Remote tmux and confined submission | `sucoder/mirror.py:2480`, `sucoder/mirror.py:2914` | `test_launch_confined_wraps_agent_in_bash_lc`, `tests/test_batch_script.py` | Reuse cgroup, cwd, cache and watchdog setup |
 | Atomic launcher records | `sucoder/session.py:19` | `tests/test_remote.py` session round trips and atomic-save tests | Extend with a service launch description for renewal |
 | Scheduler/tmux discovery and pane liveness | `sucoder/sessions_report.py:71`, `sucoder/cli.py:3911` | `tests/test_sessions_report.py`, session collection tests in `test_cli.py` | Extend live probes with a tmux mode marker; records are not the registry |
@@ -44,8 +47,14 @@ peek, and renewal. Keep ordinary harness launches compatible.
 ## 4. Invariants and assumptions
 
 - Preserve existing agent profile defaults outside remote-control launches.
-- Preserve the full prelude, including target instructions and skills, as one
-  TOML string in `developer_instructions`; never pass it as a positional prompt.
+- Preserve the full prelude, including target instructions and skills, in native
+  mirror-scoped Codex instructions; never pass it as a positional prompt.
+  Codex 0.154.0 replaces the server's `developer_instructions` when a client
+  supplies `thread/start.developerInstructions`. Passing argv correctly alone
+  does not establish that the model receives the prompt.
+- Preserve existing `AGENTS.md` and local override instructions. Install the
+  native context in the actual launch directory after local-tier preparation.
+  Do not change the shared Codex home, authentication, or hook trust.
 - Keep model and permission configuration as argv values, with correct quoting.
 - Record the requested launch only for a newly submitted job or tmux window;
   reattaching must not relabel an existing session from the requested command.
@@ -60,7 +69,15 @@ peek, and renewal. Keep ordinary harness launches compatible.
 
 - Extend the launch path with a small, pure Codex subcommand adapter: executable
   detection alone cannot distinguish a TUI from an app-server service.
-- Reuse remote prelude externalization for the complete config override.
+- Reuse private agent-side file staging for a standalone context installer.
+  A local `AGENTS.override.md` carries the prelude and existing native project
+  instructions. Refresh only generated regions, preserve user text, and use
+  an atomic write. A copied `AGENTS.md` is refreshed on each service launch;
+  the bootstrap prompt also directs the agent to read current project guidance.
+  Exclude the generated file through the repository's local Git exclude file.
+  Verify generated-region hashes before refresh; preserve manual and concurrent
+  edits. Refuse tracked or symlinked overrides rather than alter shared sources.
+  Keep the developer config override as a fallback for clients using another cwd.
 - Extend pane reports with mode metadata separate from process liveness.
 - Store the service command/model before generated flags for renewal, without
   resolved credentials or the composed prelude; rebuild those on replacement.
@@ -72,42 +89,53 @@ peek, and renewal. Keep ordinary harness launches compatible.
 
 ## 6. Open questions
 
-No implementation decision is blocked. Authentication/pairing, cluster egress,
-and concurrent allocations sharing Codex state require a live cluster check.
-Local tests used fake agents and private tmux sockets.
+Scope is each SuCoder mirror, as assumed while the optional scope question was
+unanswered. No host-wide Codex settings are changed. Native instructions apply
+only when the client selects the mirror or a directory beneath it; a different
+cwd still depends on the developer config surviving client overrides.
+Authentication/pairing, cluster egress, and concurrent allocations sharing Codex
+state require a live cluster check. Local protocol probes use an isolated Codex
+home and a loopback fake model endpoint, without pairing or paid model requests.
 
-Verification, 2026-09-25 (Sue):
+Verification, 2026-09-26 (Sue):
 
-- OK (sections 2-5): `sucoder/agent_mode.py:46` recognizes subcommands without
-  confusing model/config values for commands. `mirror.py:3434` reuses the
-  permission intent and maps it to config; `mirror.py:3288` keeps the complete
-  prelude. Unicode, control characters, shell metacharacters, and a second
-  queued prelude were checked through TOML parsing and an actual tmux pane.
-- OK (sections 3-4): `sessions_report.py:110` extends the existing live probe;
-  `messaging.py:204` excludes service panes even with force. Existing liveness,
-  WIP ages, and legacy command-only probe parsing remain covered.
-- OK (sections 2-5): `session.py:38`, `mirror.py:3123`, and `cli.py:3340` retain
-  command/model through renewal, save before polling, preserve existing job
-  metadata on reuse, and rebuild the prelude. `cli.py:3549` still checkpoints
-  through a file sentinel, without typing into service stdin.
-- `.venv/bin/python -m pytest -q tests/test_remote_control.py`: 51 passed.
-- `umask 022; .venv/bin/python -m pytest -q --tb=short`: 1119 passed, one
+- OK (sections 2-5): `sucoder/agent_mode.py:46` retains subcommand detection,
+  service flags, model overrides, and terminal/service distinction. The initial
+  argv-only checks were insufficient: a real `thread/start` with client
+  developer instructions discarded the server's developer config.
+- OK (sections 2-5): `sucoder/mirror.py:3445` stages the standalone installer
+  through `_write_context_prelude_file`; each launch has a unique immutable
+  script. It runs in the final job cwd, after local-disk preparation. An actual
+  staged-script test verifies cwd, Unicode, shell metacharacters, and separation
+  between queued launches.
+- OK (sections 3-4): `sucoder/codex_context.py:60` adds the full prelude to
+  mirror-local native instructions. Tests preserve global/project instructions,
+  existing local override text, edits outside generated regions, linked-worktree
+  scoping, and updates to the original AGENTS.md. Edited generated regions,
+  concurrent changes, symlinked overrides, and tracked overrides are preserved
+  and rejected explicitly. Git-local excludes cover output and temporary files.
+- OK (sections 3-4): `tests/test_codex_context.py:158` runs installed Codex
+  0.154.0 app-server with an isolated home and a loopback fake model endpoint.
+  The captured model request contains the complete 40+ KiB prelude, client
+  instructions, project instructions, global instructions, and native base
+  instructions even though the server developer config was replaced.
+- `umask 022; .venv/bin/python -m pytest -q --tb=short`: 1132 passed, one
   pre-existing failure, `test_direct_collaborate_rejects_node`: startup reports
   the agent cannot read the temporary config before reaching its assertion.
-- With the host's default umask `0007`, the suite has 1114 passes and six
-  failures. All six reproduce in an untouched `git archive df2f7b4` checkout.
-  The additional five are SSH Include fixtures created group-writable and
-  timer fixtures expecting 0755 directories; these pass with umask 022.
-- Mypy on the six changed source files reports the same 69 diagnostics as
-  the baseline's five existing files; no new diagnostics. Command:
-  `.venv/bin/python -m mypy --follow-imports=silent sucoder/agent_mode.py sucoder/mirror.py sucoder/cli.py sucoder/messaging.py sucoder/session.py sucoder/sessions_report.py`.
-- Changed Python sources parse using Python 3.9 syntax. Installed Codex 0.154.0
-  accepts the generated config/subcommand argument layout with `--help`.
-- GitNexus was refreshed with `--skip-agents-md`; `detect-changes --scope all`
-  reports the expected launch, session persistence, discovery, and messaging
-  paths. Its CRITICAL rating reflects the shared launch/persistence callers;
-  no other feature paths were intentionally modified.
+  The full run includes all 64 remote-control/context cases.
+- The original six failures under default umask 0007 were reproduced in an
+  untouched `git archive df2f7b4` checkout. Five disappear with umask 022
+  (SSH Include permissions and timer directory modes); the config-readability
+  failure remains. No unrelated fixes are included.
+- `.venv/bin/python -m mypy --follow-imports=silent sucoder/codex_context.py`
+  passes. Including mirror.py reports its same two baseline diagnostics.
+  Both changed runtime sources parse using Python 3.9 syntax.
+- GitNexus refreshed with `--skip-agents-md`; `detect-changes --scope staged`
+  reports the expected installer and launch paths (eight flows, HIGH because
+  launch_agent is shared). Session persistence, messaging, and renewal behavior
+  remain covered by the full suite.
 
 Official references:
 - https://learn.chatgpt.com/docs/developer-commands?surface=cli#codex-remote-control
 - https://learn.chatgpt.com/docs/config-file/config-reference
+- https://learn.chatgpt.com/docs/agent-configuration/agents-md
