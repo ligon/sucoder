@@ -20,6 +20,7 @@ from typing import Callable, Dict, List, Literal, Mapping, NamedTuple, NoReturn,
 import yaml
 
 from .remote_bootstrap import INITIALIZE_MIRROR_SH
+from .codex_remote import build_remote_command
 
 
 class SkillMetadata(NamedTuple):
@@ -3164,6 +3165,7 @@ class MirrorManager:
         model_override: Optional[str] = None,
         env_override: Optional[Mapping[str, str]] = None,
         supports_inline_prompt: Optional[bool] = None,
+        codex_remote_control: Optional[str] = None,
         detached: bool = False,
     ) -> int:
         """Launch the configured agent command within the mirror working tree.
@@ -3193,6 +3195,16 @@ class MirrorManager:
         # Store detected agent type so helpers (e.g., _file_read_hint) can
         # produce agent-appropriate output without threading args everywhere.
         self._detected_agent_type = _detect_agent_type(base_command)
+        remote_mode = codex_remote_control
+        if remote_mode is None and self._detected_agent_type == AgentType.CODEX:
+            remote_mode = launcher.codex_remote_control
+            if remote_mode is None and self.config.agent_launcher is not None:
+                remote_mode = self.config.agent_launcher.codex_remote_control
+        if remote_mode not in (None, "off", "terminal", "server"):
+            raise MirrorError(f"Unknown Codex remote-control mode: {remote_mode!r}")
+        remote_enabled = remote_mode in ("terminal", "server")
+        if remote_enabled and self._detected_agent_type != AgentType.CODEX:
+            raise MirrorError("Remote control requires --harness codex (or --agent codex).")
         command = list(base_command)
         if extra_args:
             command.extend(extra_args)
@@ -3243,7 +3255,11 @@ class MirrorManager:
         # (see ``_externalize_prelude``).
         prelude_sentinel = "__SUCODER_PRELUDE_FROM_FILE__"
         remote_prelude_text: Optional[str] = None
-        if prelude:
+        if prelude and remote_enabled:
+            # A server can create threads from several clients. Make the
+            # SuCoder context a server default, rather than a TUI-only prompt.
+            remote_prelude_text = "developer_instructions=" + json.dumps(prelude)
+        elif prelude:
             if templates.system_prompt:
                 externalize_prelude = ctx.is_remote
                 injected_prelude = prelude_sentinel if externalize_prelude else prelude
@@ -3288,6 +3304,18 @@ class MirrorManager:
             self._report_agent_binary(ctx, command, launcher)
         except Exception:  # pragma: no cover - defensive
             self.logger.debug("Agent binary report failed.", exc_info=True)
+
+        if remote_enabled:
+            assert remote_mode is not None
+            instructions = remote_prelude_text
+            if instructions and ctx.is_remote:
+                instructions = prelude_sentinel
+            elif not ctx.is_remote:
+                remote_prelude_text = None
+            try:
+                command = build_remote_command(command, remote_mode, instructions=instructions)
+            except ValueError as exc:
+                raise MirrorError(str(exc)) from exc
 
         command = self._wrap_with_nvm(command, launcher)
 
@@ -3739,6 +3767,7 @@ class MirrorManager:
         model_override: Optional[str] = None,
         env_override: Optional[Mapping[str, str]] = None,
         supports_inline_prompt: Optional[bool] = None,
+        codex_remote_control: Optional[str] = None,
         skip_lfs: bool = True,
     ) -> int:
         """One-shot helper to prepare canonical, ensure clone, and launch the agent."""
@@ -3774,6 +3803,7 @@ class MirrorManager:
             model_override=model_override,
             env_override=env_override,
             supports_inline_prompt=supports_inline_prompt,
+            codex_remote_control=codex_remote_control,
         )
 
     def _get_merged_templates(

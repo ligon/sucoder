@@ -4101,7 +4101,7 @@ def test_bootstrap_invokes_steps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
             "launch:{'sync': False, 'task_name': 'demo', 'base_branch': 'dev', "
             "'extra_args': ['--flag'], 'command_override': None, 'model_override': None, "
             "'env_override': None, "
-            "'supports_inline_prompt': None}"
+            "'supports_inline_prompt': None, 'codex_remote_control': None}"
         ),
     ]
 

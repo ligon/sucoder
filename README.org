@@ -1503,6 +1503,121 @@ The check is skipped for remote launches (PATH belongs to the remote host), unde
 =agent_launcher.nvm= block is configured, since that pins resolution deliberately
 and it happens inside the nvm shell.
 
+** Codex remote control through SuCoder
+
+For a new Codex launch, enable remote access alongside the terminal UI:
+
+#+begin_src sh
+sucoder -T savio collaborate --agent codex --remote-control
+#+end_src
+
+The terminal and remote clients connect to the same launch-owned app server.
+The terminal creates the initial conversation; select that conversation in
+your remote client to continue it. To start only the server and create chats
+from a remote client instead:
+
+#+begin_src sh
+sucoder -T savio collaborate --agent codex --remote-control-only
+#+end_src
+
+These options also work with =agents-run= and the newer =--harness codex=
+spelling. To make the short command =sucoder -T savio collaborate --agent codex=
+enable remote control by default, add this to =~/.sucoder/config.yaml=:
+
+#+begin_src yaml
+agent_launcher:
+  codex_remote_control: terminal
+#+end_src
+
+Values are =terminal=, =server=, and ="off"= (quote ="off"= in YAML).
+The same key in a mirror's =agent_launcher= block overrides the global
+default. =--remote-control=, =--remote-control-only=, and =--no-remote-control=
+override configuration for one launch. The setting only applies when the
+selected harness is Codex; other harnesses keep their normal behavior.
+Use configuration for a default that also applies to automatic relaunches.
+
+Both processes run within the existing tmux launch and, on confined targets,
+the SLURM job cgroup. Detach tmux to leave them running; exiting the terminal
+UI ends that launch's server, while Ctrl-C ends a server-only launch.
+=sucoder attach= reconnects to tmux. =sucoder release= and the allocation's
+deadline retain their usual meaning. These options affect new launches;
+reusing a running session keeps its original mode.
+
+The integration uses Codex's experimental =app-server --remote-control=
+support (accepted by the installed 0.159.2 CLI), and checks for the flag on
+the target before starting. The terminal connects through a private,
+launch-specific Unix socket on node-local =/tmp=; no new TCP listener or SSH
+forward is required. It starts the server directly, avoiding the extra
+foreground =codex remote-control= initialization handshake discussed below.
+This does not establish a fix for every Codex startup timeout.
+
+Log in to Codex with ChatGPT on the target first. Remote availability still
+depends on account access and outbound connectivity. A local socket becoming
+ready is not proof of enrollment: confirm that the host appears in your
+remote client. Terminal mode prints a private server-log path before opening
+the UI; server-only mode leaves server output visible. Runtime logs and the
+socket are removed when the launch exits. No persistent daemon settings or
+Codex database locations are changed. If another remote-control process is
+already using the same Codex installation, end that process before starting
+this one; SuCoder does not stop other servers automatically.
+
+SuCoder passes its context prelude as =developer_instructions= on the server,
+so new chats created by either client receive it. Model, sandbox, approval,
+=-c= configuration, =--enable=, =--disable=, and =--search= options propagate
+to the server; terminal mode also accepts =--no-alt-screen=. Other raw Codex
+arguments, including subcommands and profiles, currently produce an error
+instead of silently losing settings. Use =--no-remote-control= for those
+ordinary CLI launches. In the remote client, select the mirror directory
+when creating another chat.
+
+*** Manual command and the original startup failure
+
+After SuCoder has opened a shell on an allocated compute node, run Codex's
+remote-control command in a tmux window from the desired mirror:
+
+#+begin_src sh
+codex --version
+codex remote-control
+#+end_src
+
+Wait for =This machine is available for remote control as ...= before
+connecting from the remote client.  In Codex 0.157.1 this command runs in the
+foreground; keep its tmux window and the SLURM allocation alive.  Detaching
+tmux leaves the command running; Ctrl-C stops it.  Remote control does not
+extend the allocation.  This is a command to run in the compute-node shell,
+not a prompt or extra argument to SuCoder's normal interactive Codex launch.
+
+On Savio, an observed intermittent startup failure is:
+
+#+begin_example
+Starting app-server with remote control enabled...
+Error: timed out waiting for initialize response
+
+Caused by:
+    deadline has elapsed
+#+end_example
+
+This is the local app-server initialization handshake.  Retry the command
+after it exits.  In the September 29, 2026 investigation on =n0041.savio4=,
+the same command failed and then connected successfully from both a test
+shell and the original user shell, without changing SSH tunnels or login
+credentials.  Successful runs established the outbound remote-control
+WebSocket to =chatgpt.com=.
+
+The precise cause of the intermittent timeout remains unconfirmed.  Shared
+filesystem latency is a candidate: the account's Codex state was on Lustre,
+and temporary node-local SQLite tests also connected.  Both shared and
+local-state runs succeeded, so this does not establish that moving SQLite
+fixes the timeout.  Do not delete Codex state or relocate its databases as
+part of this retry procedure.
+
+Check versions separately if investigating further: the shell CLI was
+=0.157.1= while the independently updated managed app-server was =0.159.2=.
+The successful foreground command started its own server; it did not prove
+that remote control was enabled on the existing managed daemon.  The
+=app-server daemon enable-remote-control= alternative did not complete within
+a 30-second diagnostic bound and is not a verified recovery procedure here.
+
 ** Tool versions on the target (launch preflight)
 The section above answers /which agent binary/ runs.  This one answers a
 neighbouring question the shipped prompts and skills make unavoidable: the

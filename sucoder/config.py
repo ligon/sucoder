@@ -211,6 +211,7 @@ class AgentLauncher:
 
     command: List[str] = field(default_factory=lambda: ["claude"])
     model: Optional[str] = None
+    codex_remote_control: Optional[Literal["off", "terminal", "server"]] = None
     env: Dict[str, str] = field(default_factory=dict)
     nvm: Optional[NvmConfig] = None
     accepts_inline_prompt: Optional[bool] = None
@@ -1070,6 +1071,12 @@ def _parse_agent_launcher(raw: Any) -> AgentLauncher:
     if model is not None and (not isinstance(model, str) or not model.strip()):
         raise ConfigError("`agent_launcher.model` must be a non-empty string when provided.")
 
+    codex_remote_control = raw.get("codex_remote_control")
+    if codex_remote_control is not None and codex_remote_control not in ("off", "terminal", "server"):
+        raise ConfigError(
+            '`agent_launcher.codex_remote_control` must be "off", "terminal", or "server".'
+        )
+
     nvm_settings = _parse_nvm_settings(raw.get("nvm"))
 
     accepts_inline_prompt = raw.get("accepts_inline_prompt")
@@ -1115,6 +1122,7 @@ def _parse_agent_launcher(raw: Any) -> AgentLauncher:
     return AgentLauncher(
         command=command,
         model=model.strip() if model is not None else None,
+        codex_remote_control=codex_remote_control,
         env=dict(env_raw),
         nvm=nvm_settings,
         accepts_inline_prompt=accepts_inline_prompt,

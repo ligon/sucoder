@@ -273,6 +273,8 @@ def test_direct_collaborate_rejects_node(tmp_path, monkeypatch):
     silently clear the pin; refuse it the way attach and tunnel forward do."""
     from typer.testing import CliRunner
 
+    # Exercise target validation independently of host sudo/permission setup.
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
     monkeypatch.setattr(session, "_session_dir", lambda: tmp_path / "sessions")
     path = tmp_path / "config.yaml"
     human = os.environ.get("USER", "coder")

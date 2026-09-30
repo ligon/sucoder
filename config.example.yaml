@@ -5,6 +5,17 @@ mirror_root: /var/tmp/coder-mirrors
 log_dir: /home/<your-username>/.sucoder/logs
 system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 
+# Codex remote control (optional; ordinary terminal launch by default).
+# Applies when Codex is selected, including --agent codex / --harness codex.
+# Per-mirror agent_launcher.codex_remote_control overrides this default.
+# agent_launcher:
+#   codex_remote_control: terminal  # terminal | server | "off" (quote "off" in YAML)
+# terminal: normal TUI and remote clients share a launch-owned server.
+# server: run only the server; use a remote client to open a chat.
+# Requires a Codex build with `app-server --remote-control` and ChatGPT login
+# on the target. --remote-control / --remote-control-only / --no-remote-control
+# override this setting for one launch. Existing sessions keep their mode.
+
 # Provider credentials (optional). Values stay in the human user's `pass`
 # store; only the pass entry name belongs in this file. The first line of
 # the entry is used as the API key. OpenRouter metadata is built in.
@@ -164,6 +175,7 @@ mirrors:
       # Native Kimi Code CLI: [kimi]
       # Kimi + OpenRouter example model: openrouter/moonshotai/kimi-k3
       # model: openrouter/deepseek/deepseek-chat
+      # codex_remote_control: terminal  # terminal | server | "off"; Codex only
       needs_yolo: true
       writable_dirs:
         - "~"
