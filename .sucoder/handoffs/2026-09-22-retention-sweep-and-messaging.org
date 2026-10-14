@@ -1,0 +1,164 @@
+#+title: Issues 14 and 26: retention rules, the snapshot sweep, and a channel between agents
+#+date: 2026-09-24
+#+status: COMPLETE
+#+author: Sue
+#+property: header-args :eval never-export :tangle no :results output :exports code
+
+* Mission
+
+Work the open GitHub issues once cluster submissions were unblocked.
+Two were open at the start: 14 (WIP snapshot refs) and 26 (no channel
+between concurrent agents).  Previous handoff, for the session listing
+and the job lifecycle: [[file:handoffs/2026-09-18-sessions-and-job-lifecycle.org]].
+
+* What landed, in merge order
+
+All four PRs are open; none is merged.  The auto-mode classifier
+refuses =gh pr merge= ("Merge Without Review"), so merging is the
+human's step.  32 and 37 stand alone; 34, 35 and 36 are a stack.
+
+1. PR 32 :: =AGENTS.md= gains the closing-keyword rule
+   --- issue 14 had been closed twice by accident, once by a stale
+   =Closes #14= and once by a merge commit saying it did /not/ close it,
+   because GitHub reads the tokens and not the English.  Also the
+   "Concurrent sessions and the bulletin" section in
+   =default_system_prompt.org= and, by hand, in
+   =~/.sucoder/system_prompt.org= (the two had already drifted in three
+   places; neither was overwritten).
+2. PR 34 :: =sucoder release= retires the job's own WIP snapshot ref, in
+   the same round trip as =scancel=, only on success, never a glob,
+   never on the sibling-detach path.  =--keep-wip= opts out.
+   =local_tier.wip_job_ref= is the one launcher-side spelling of the ref.
+3. PR 35 (base: 34) :: =sucoder snapshots= --- the launch-independent
+   sweep.  Pure half in =sucoder/snapshots_report.py=.  Precedence from
+   the design on issue 14: running job keeps; ended job goes once =End=
+   is past =--recovery-window= (7d); accounting silent -> ref age
+   against the cluster's longest =slurm.time= plus the window; no finite
+   =--time= -> delete nothing, say why.  Each delete guarded by the sha
+   the listing saw.
+4. PR 36 (base: 35) :: =sucoder message MIRROR TEXT= and =--all=.  Pure
+   half in =sucoder/messaging.py=.  Recipients come from
+   =_collect_sessions=, factored out of =sessions= (which is otherwise
+   unchanged).  Framed with sender and time; never typed into a shell
+   pane; =--dry-run= shows the plan and the exact line.
+
+Also: issue 33 filed, the sibling issue 26 referred to and nobody had
+filed --- the worktree-clean prompt's =s= and =d= answers act on the
+shared mirror (stash hides untracked work; =git clean -fd= deletes it).
+
+* Verified live, and not
+
+The gateway ControlMaster was warm, so the cluster answered read-only
+queries without an OTP.  Pattern that works, from the laptop:
+=cli._control_for_host(remote, remote.gateway, False)= then
+=cli._capture_over_tunnel(control, host, script, logger=, config=)=.
+Plain =ssh hpc.brc.berkeley.edu= does not: it skips the mux and fails
+with "Too many authentication failures".
+
+- Measured 2026-09-22 ~02:00 PDT: three per-job refs across all mirrors,
+  two for running jobs (LSMS_Library 39123514, AggregationWith
+  LimitedCommitment 39131515, both carleton-htc); three legacy
+  =refs/sucoder/wip/*= from the 09-18 cancellations.  =sacct= on ln003
+  answers =End= for ended jobs and honours =SLURM_TIME_FORMAT=%s=.
+- =sucoder snapshots= ran live: five snapshots, all correctly kept at the
+  default window; =--recovery-window 1= marked the three legacy refs and,
+  without =--retire=, deleted nothing.  A linked worktree beside its
+  mirror (=AggregationWithLimitedCommitment.rosca-revision=) first
+  listed twice; deduping on =--git-common-dir= fixed it.
+- =sucoder message --dry-run=, one mirror and =--all=: both running
+  agents found, panes probed live (=claude=), line shown.
+- *Not run live*: =snapshots --retire= (the classifier refused a
+  throwaway ref on the shared mirror), and =message= without
+  =--dry-run= (those are the human's live agents).  Both paths run for
+  real in tests against a scratch repository / a detached tmux.
+
+* Constraints learned
+
+- The classifier denies =gh pr merge= and any write under =~/mirrors/=
+  on the cluster.  Do not retry; say so.
+- =detect_changes= after an insertion names the line-shifted neighbours
+  of the insertion point as changed; check the hunk headers before
+  believing its risk level.
+- Never put a closing keyword next to =#N= in a commit message.  Write
+  "issue 14".  The rule is in =AGENTS.md= now.
+
+* Next
+
+- Merge 32 and 37 whenever; merge 34, 35, 36 in that order, and GitHub
+  retargets each to =main=.
+- First live =sucoder snapshots --retire=: run =sucoder snapshots= first
+  and read the decisions; the three legacy refs go on 2026-09-25 at the
+  default window.
+- First live =sucoder message=: send yourself something from a laptop
+  session to a confined job and watch the pane; the 0.3s pause before
+  Enter is a guess about the TUI's input loop, not a measurement.
+- Issue 14 still owes the re-measurement under concurrent slices, and a
+  decision on whether ref deletion is meant to bound disk (needs an
+  explicit =gc --prune=<date>=) or only the ref set.  Nothing runs =gc=.
+- Issue 33: the fix is to route =d= through the rescue-branch commit
+  =c= already makes, and to name the stash =s= creates.
+- =default_system_prompt.org= and =~/.sucoder/system_prompt.org= differ
+  in three places besides the new section; decide which is canonical.
+
+* Addendum, 2026-09-24: everything above is merged; issues 26 and 33 closed
+
+Merged, in order: 32, 34, 38 (35 re-landed: it had merged into its
+stacked base because that branch was not deleted, so GitHub never
+retargeted it -- delete the base branch when merging a stack, or merge
+bottom-up and retarget by hand), 37, 36, 39 (the closing-keyword rule
+now covers PR bodies too, after issue 14 was closed a third time by a
+body saying "does not close"), 40, 41, 42.  Issue 14 is open again and
+is the only open issue.
+
+** Issue 33, closed by PR 40
+
+The worktree-clean prompt no longer has a discard answer; the stash is
+named (=sucoder: stashed by user@host before push, <time>=) and the
+prepare script announces such stashes; untracked files are listed first
+and counted; an answer not on the menu re-prompts.  Verified live
+through =agents-clone= against a throwaway mirror under
+=~/sucoder-test-33= (removed afterwards).  =push= goes through =sync=
+and never reaches the prompt; =agents-clone= is the light command that
+does.  A first push to a mirror that does not exist refuses as
+unverified and needs =--allow-unverified-mirror=; =agents-clone=
+initialises it cleanly.
+
+** Issue 26, closed by PRs 32, 36, 41, 42
+
+- 41 :: the gateway alias and a pinned login node were the same
+  machine, so one tmux session was planned twice.  =sucoder sessions=
+  still lists such a session twice; that is a listing duplicate in the
+  login sweep, not filed.
+- 42 :: replies are pulled.  The frame carries an id; the default
+  system prompt (and the live copy, by hand) asks for =REPLY <id>: ...=
+  on the agent's own screen; =message --wait= reads the pane for it;
+  =sucoder peek MIRROR -n N= reads a pane any time and will show a
+  shell pane.  Live: a send to the confined SuCoder job on n0032 came
+  back with the reply after one poll.
+- Discovery is ligon/sucoder-skills#7: a =sucoder-peers= skill, and the
+  note that the sucoder CLI can be installed on the cluster (a second
+  config to keep in step) or that the raw =srun --overlap= + =tmux
+  send-keys= form works from inside a job today.  The companion prelude
+  line (how many other sessions hold this mirror at launch) is not
+  filed on this repo.
+
+** Cluster access, said plainly
+
+Everything "live" above ran as the user on a Savio login node through
+the CLI's warm ControlMaster (=ssh savio-gw= reuses it; the bare
+hostname does not).  It is a full shell, not read-only: the listing
+script writes a temp file under =/tmp=, the pane probe runs =srun
+--overlap= into live jobs, and the issue 33 test created and deleted a
+directory in the home directory.  Name every write.
+
+** Next
+
+- Issue 14: re-measure under concurrent slices; decide whether ref
+  deletion is meant to bound disk (needs an explicit prune) or only the
+  ref set.  The three legacy refs cross the 7-day window on 2026-09-25;
+  =sucoder snapshots --retire= that day is the first live delete.
+- Skills issue 7, then the prelude line.
+- The =sessions= duplicate for a login session seen under two host
+  names.
+- =default_system_prompt.org= and =~/.sucoder/system_prompt.org= still
+  differ in three places besides the two sections added this week.

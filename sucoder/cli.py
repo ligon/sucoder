@@ -676,6 +676,22 @@ def _build_executor(
         saved_root = session.remote_mirror_root
         saved_node = session.compute_node
 
+        # --time overrides slurm.time for any job this run submits: a launch
+        # that must fit before a maintenance reservation, when the usual
+        # request cannot.  Applied to the target's SlurmConfig, which is
+        # what both request builders read (the salloc argv below and
+        # mirror._build_sbatch_command); the config file is untouched.
+        time_override = _get_time_limit_override(cli_ctx)
+        if (
+            time_override and remote.slurm is not None
+            and time_override != remote.slurm.time
+        ):
+            logger.info(
+                "--time %s overrides slurm.time (%s) for any job this run "
+                "submits.", time_override, remote.slurm.time,
+            )
+            remote.slurm.time = time_override
+
         # Resolve local-disk tiering (docs/local-disk-tiering.org): CLI flags
         # override config.  When on, the agent works in a clone under
         # <root>/job<ID> on the node, published to the shared mirror by a
@@ -1365,6 +1381,16 @@ def _get_login_node_override(ctx: Optional[click.Context]) -> Optional[str]:
     return obj.get("login_node")
 
 
+# sbatch/salloc --time: minutes, MM:SS, HH:MM:SS, D-HH, D-HH:MM, D-HH:MM:SS.
+_SLURM_TIME_RE = re.compile(r"^(?:\d+-)?\d+(?::\d{1,2}){0,2}$")
+
+
+def _get_time_limit_override(ctx: Optional[click.Context]) -> Optional[str]:
+    """Return the --time CLI override, or None to request slurm.time."""
+    obj = (ctx.obj if ctx and ctx.obj else {}) or {}
+    return obj.get("time_limit")
+
+
 def _get_x11_override(ctx: Optional[click.Context]) -> Optional[bool]:
     """Return the --x11 CLI override, or None to use the target's config."""
     obj = (ctx.obj if ctx and ctx.obj else {}) or {}
@@ -1718,6 +1744,15 @@ def main(
              "record.  Use it to steer off an unhealthy node.  The sibling "
              "of --node, which selects a COMPUTE node.",
     ),
+    time_limit: Optional[str] = typer.Option(
+        None,
+        "--time",
+        metavar="LIMIT",
+        help="Wall-time to request for any SLURM job this run submits, "
+             "instead of the target's slurm.time, in SLURM's own format "
+             "(36:00:00, 5-00:00:00).  For a launch that must fit before a "
+             "maintenance reservation; the config file is not changed.",
+    ),
     x11: Optional[bool] = typer.Option(
         None,
         "--x11/--no-x11",
@@ -1796,6 +1831,21 @@ def main(
             "expected a host (e.g. ln002.brc).", param_hint="--login-node",
         )
 
+    if time_limit is not None:
+        time_limit = time_limit.strip()
+        if not _SLURM_TIME_RE.match(time_limit):
+            raise typer.BadParameter(
+                "expected a SLURM time limit: minutes, MM:SS, HH:MM:SS, D-HH, "
+                "D-HH:MM or D-HH:MM:SS (e.g. 36:00:00, 5-00:00:00).",
+                param_hint="--time",
+            )
+        if resolved_target is None or resolved_target.slurm is None:
+            raise typer.BadParameter(
+                "--time is a SLURM wall-time request, so it needs a SLURM "
+                "target: -T <target> whose config has a slurm: section.",
+                param_hint="--time",
+            )
+
     ctx.obj = {
         "config": loaded_config,
         "config_path": config_path,
@@ -1807,6 +1857,7 @@ def main(
         "local_disk": local_disk,
         "local_disk_root": local_disk_root,
         "login_node": login_node.strip() if login_node else None,
+        "time_limit": time_limit,
         "x11": x11,
     }
 

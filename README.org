@@ -1133,6 +1133,22 @@ targets:
 fields are optional --- omitting them keeps the partition default, which
 is the right behaviour for whole-node partitions.
 
+=time= is the wall-time request (=--time= to =sbatch= or =salloc=), and
+the scheduler will not start a job that cannot finish before a
+reservation: a 12-day request with a maintenance window a week away sits
+PENDING (=ReqNodeNotAvail, Reserved for maintenance=) until the window
+has passed.  The launcher reports that reason while it waits.  For one
+launch that must fit, =--time= on the command line overrides
+=slurm.time= without editing the config:
+
+#+begin_src shell
+sucoder --time 5-00:00:00 -T carleton-htc collaborate SuCoder
+#+end_src
+
+It takes SLURM's own formats (=36:00:00=, =5-00=, =5-00:00:00=) and needs
+a SLURM target.  A job that is already queued can be shortened in place
+from a login node: =scontrol update jobid=<id> TimeLimit=5-00:00:00=.
+
 *** Deadline watchdog and WIP snapshots
 
 Every SLURM-backed session (=salloc= or =confined= =sbatch=) starts a

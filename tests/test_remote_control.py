@@ -236,7 +236,7 @@ def test_confined_submission_records_service_before_polling(tmp_path, monkeypatc
     calls = []
     manager.executor.run_agent = _confined_responder(calls)
 
-    def poll(job_id):
+    def poll(job_id, **kw):
         session = RemoteSession.load("sample")
         assert session.slurm_job_id == job_id and session.service_launch == LAUNCH
         raise MirrorError("still pending")

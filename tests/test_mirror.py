@@ -1412,12 +1412,16 @@ def _confined_responder(calls, *, sbatch_out="12345", live_state="",
     scheduler-keyed reuse probe (issue 19), as distinct from ``live_state``,
     which answers the id-keyed one.  A tuple is ``(stdout, stderr, rc)``.
     """
-    poll_iter = iter(poll_states if poll_states is not None else ["RUNNING n0001.savio4"])
+    poll_iter = iter(
+        poll_states if poll_states is not None
+        else ["RUNNING|n0001.savio4|None|N/A"]
+    )
 
     def run_agent(args, *, check=True, capture_output=True, input=None, **kwargs):
         a = list(args)
         calls.append({"args": a, "input": input, "check": check,
-                      "capture_output": capture_output})
+                      "capture_output": capture_output,
+                      "show_progress": kwargs.get("show_progress", True)})
 
         def res(stdout="", stderr="", rc=0):
             if check and rc != 0:
@@ -1448,7 +1452,7 @@ def _confined_responder(calls, *, sbatch_out="12345", live_state="",
                 return res(by_name)
             assert a[1] == "--job" and "--noheader" in a, f"squeue argv: {a}"
             fmt = a[a.index("-o") + 1] if "-o" in a else None
-            if fmt == "%T %N":            # node-poll
+            if fmt == "%T|%N|%r|%S":      # node-poll (state|node|reason|start)
                 nxt = next(poll_iter)
                 return res(nxt) if isinstance(nxt, str) else nxt(res)
             if fmt == "%T":               # live/state probe
@@ -1511,7 +1515,9 @@ def test_poll_confined_node_three_way(tmp_path, monkeypatch):
     # PENDING (empty %N) then RUNNING with a node.
     calls = []
     manager.executor.run_agent = _confined_responder(
-        calls, poll_states=["PENDING ", "RUNNING n0007.savio4"],
+        calls, poll_states=[
+            "PENDING||Priority|N/A", "RUNNING|n0007.savio4|None|N/A",
+        ],
     )
     assert manager._poll_confined_node(42, attempts=5, delay=0) == "n0007.savio4"
 
@@ -1529,10 +1535,133 @@ def test_poll_confined_node_three_way(tmp_path, monkeypatch):
     # tagged PENDING, not a bogus node.
     calls = []
     manager.executor.run_agent = _confined_responder(
-        calls, poll_states=["PENDING ", "PENDING ", "PENDING "],
+        calls, poll_states=["PENDING||Resources|N/A"] * 3,
     )
     with pytest.raises(MirrorError, match="still PENDING"):
         manager._poll_confined_node(42, attempts=3, delay=0)
+
+
+def test_poll_confined_node_says_why_once_and_in_the_error(
+    tmp_path, monkeypatch, caplog,
+):
+    """A queued job's pending reason and estimated start are logged the
+    first time Slurm gives them, again only when they change, and end up in
+    the PENDING-timeout error.  Only the first probe prints a progress
+    line: the 39 after it are the same round trip, and a heartbeat about
+    every two minutes is what shows the wait is alive."""
+    import logging
+
+    manager, _ = _confined_manager(tmp_path, monkeypatch)
+    calls = []
+    manager.executor.run_agent = _confined_responder(
+        calls, poll_states=[
+            "PENDING||None|N/A",            # the scheduler has not looked yet
+            "PENDING||Priority|N/A",
+            "PENDING||Priority|N/A",
+        ] + ["PENDING||Resources|2026-10-20T08:00:00"] * 37,
+    )
+    with caplog.at_level(logging.INFO, logger=manager.logger.name):
+        with pytest.raises(MirrorError, match="still PENDING") as exc:
+            manager._poll_confined_node(7, attempts=40, delay=15)
+
+    said = [r.getMessage() for r in caplog.records if "SLURM job 7 is" in r.getMessage()]
+    assert len(said) == 2, said
+    assert "PENDING (Priority)" in said[0]
+    assert "Waiting up to 10 min" in said[0]
+    assert "PENDING (Resources)" in said[1]
+    assert "estimates a start at 2026-10-20T08:00:00" in said[1]
+    assert "Waiting up to" not in said[1]
+
+    beats = [r.getMessage() for r in caplog.records if "still PENDING" in r.getMessage()]
+    # 40 polls x 15s = 10 min: heartbeats at 2, 4, 6 and 8 min, not 40 lines.
+    assert len(beats) == 4, beats
+    assert "(Resources) (2 min elapsed)" in beats[0] and "8 min" in beats[-1]
+
+    err = str(exc.value)
+    assert "~10 min" in err
+    assert "reason: Resources" in err and "estimated start 2026-10-20T08:00:00" in err
+    assert "sucoder attach" in err and "sucoder release" in err
+
+    progress = [c["show_progress"] for c in calls if c["args"][0] == "squeue"]
+    assert progress == [True] + [False] * 39
+
+
+def test_poll_confined_node_names_the_time_request_behind_reqnodenotavail(
+    tmp_path, monkeypatch, caplog,
+):
+    """The reason that cost a session: a 12-day --time cannot clear a
+    maintenance reservation, so the job sits and nothing said why.  The
+    first announcement and the error now name the request and the knob."""
+    import logging
+
+    manager, _ = _confined_manager(tmp_path, monkeypatch)
+    calls = []
+    manager.executor.run_agent = _confined_responder(
+        calls,
+        poll_states=["PENDING||ReqNodeNotAvail, Reserved for maintenance|N/A"] * 2,
+    )
+    with caplog.at_level(logging.INFO, logger=manager.logger.name):
+        with pytest.raises(MirrorError) as exc:
+            manager._poll_confined_node(
+                8, attempts=2, delay=0, time_request="12-00:00:00",
+            )
+
+    blob = "\n".join(r.getMessage() for r in caplog.records)
+    assert "PENDING (ReqNodeNotAvail, Reserved for maintenance)" in blob
+    assert "(12-00:00:00)" in blob
+    assert "scontrol update jobid=8 TimeLimit=" in blob
+    err = str(exc.value)
+    assert "reason: ReqNodeNotAvail, Reserved for maintenance" in err
+    assert "(12-00:00:00)" in err and "slurm.time" in err
+
+    # A reason that is not about the request gets no such advice.
+    assert mirror._pending_hint("Priority", "12-00:00:00", 8) == ""
+    assert mirror._pending_hint("Resources", None, 8) == ""
+    # A QOS wall-time cap is the same remedy from the other side.
+    assert "slurm.time" in mirror._pending_hint(
+        "QOSMaxWallDurationPerJobLimit", None, 8,
+    )
+
+
+def test_poll_confined_node_is_quiet_when_the_job_starts_at_once(
+    tmp_path, monkeypatch, caplog,
+):
+    """The usual case on a quiet condo: RUNNING by the second poll.  An
+    unanswered first poll (reason None) is not worth a line, and a job
+    that starts is not a wait to explain."""
+    import logging
+
+    manager, _ = _confined_manager(tmp_path, monkeypatch)
+    calls = []
+    manager.executor.run_agent = _confined_responder(
+        calls, poll_states=[
+            "PENDING||None|N/A", "RUNNING|n0007.savio4|None|2026-10-14T10:00:00",
+        ],
+    )
+    with caplog.at_level(logging.INFO, logger=manager.logger.name):
+        assert manager._poll_confined_node(9, attempts=5, delay=15) == "n0007.savio4"
+
+    assert not [r for r in caplog.records if "SLURM job 9" in r.getMessage()]
+
+
+def test_launch_confined_tells_the_poll_what_time_was_asked(tmp_path, monkeypatch):
+    """The poll's hint quotes the --time the job asked for, and the launch
+    is where that is known."""
+    manager, ctx = _confined_manager(tmp_path, monkeypatch)
+    calls = []
+    manager.executor.run_agent = _confined_responder(calls, sbatch_out="91")
+    seen = {}
+
+    def fake_poll(self, job_id, **kw):
+        seen.update(kw)
+        return "n0001.savio4"
+
+    monkeypatch.setattr(MirrorManager, "_poll_confined_node", fake_poll)
+    manager._launch_confined(
+        ctx, ["claude"], remote_prelude_text=None,
+        prelude_sentinel="__X__", env=None, detached=True,
+    )
+    assert seen == {"time_request": ctx.settings.remote.slurm.time}
 
 
 def test_launch_confined_submits_persists_and_attaches(tmp_path, monkeypatch):
@@ -1541,7 +1670,7 @@ def test_launch_confined_submits_persists_and_attaches(tmp_path, monkeypatch):
     manager, ctx = _confined_manager(tmp_path, monkeypatch)
     calls = []
     manager.executor.run_agent = _confined_responder(
-        calls, sbatch_out="55501", poll_states=["RUNNING n0009.savio4"],
+        calls, sbatch_out="55501", poll_states=["RUNNING|n0009.savio4|None|N/A"],
     )
 
     rc = manager._launch_confined(
@@ -2021,7 +2150,7 @@ def test_launch_confined_session_not_ready_surfaces_log(tmp_path, monkeypatch):
     manager, ctx = _confined_manager(tmp_path, monkeypatch)
     calls = []
     manager.executor.run_agent = _confined_responder(
-        calls, sbatch_out="13", poll_states=["RUNNING n0001.savio4"], ready_rc=1,
+        calls, sbatch_out="13", poll_states=["RUNNING|n0001.savio4|None|N/A"], ready_rc=1,
     )
     with pytest.raises(MirrorError, match="did not come up") as exc:
         manager._launch_confined(
