@@ -2288,6 +2288,130 @@ def test_local_disk_root_flag_reaches_build_executor(tmp_path, monkeypatch):
     assert cli._get_local_disk_root_override(seen["cli_ctx"]) == "/scratch/l"
 
 
+def test_time_flag_reaches_build_executor(tmp_path, monkeypatch):
+    """--time rides ctx.obj like its siblings, stripped, and the accessor
+    reads it back for ``_build_executor``."""
+    runner = CliRunner()
+    config_path = _slurm_config(tmp_path)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+    seen = {}
+
+    def fake_build_executor(*args, **kwargs):
+        seen.update(kwargs)
+        raise typer.Exit(code=0)      # captured what we need; skip the command body
+
+    monkeypatch.setattr(cli, "_build_executor", fake_build_executor)
+    result = runner.invoke(
+        cli.app,
+        ["--config", str(config_path), "-T", "fake-slurm", "--time", " 5-00:00:00 ",
+         "list", "models", "--harness", "aider"],
+    )
+    assert seen, f"_build_executor was never reached: {_plain_output(result)}"
+    assert seen["cli_ctx"].obj["time_limit"] == "5-00:00:00"
+    assert cli._get_time_limit_override(seen["cli_ctx"]) == "5-00:00:00"
+
+
+def test_time_flag_rejects_what_sbatch_would(tmp_path, monkeypatch):
+    """SLURM's own grammar, checked here rather than ten seconds later on
+    the login node: minutes, MM:SS, HH:MM:SS, D-HH, D-HH:MM, D-HH:MM:SS."""
+    runner = CliRunner()
+    config_path = _slurm_config(tmp_path)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        cli, "_build_executor",
+        lambda *a, **k: (_ for _ in ()).throw(typer.Exit(code=0)),
+    )
+    for bad in ["", "soon", "1:2:3:4", "5-", "5d"]:
+        result = runner.invoke(
+            cli.app,
+            ["--config", str(config_path), "-T", "fake-slurm", "--time", bad,
+             "list", "models"],
+        )
+        assert result.exit_code != 0, bad
+        assert "SLURM time limit" in _plain_output(result), bad
+    for good in ["120", "90:00", "36:00:00", "5-00", "5-00:00", "12-00:00:00"]:
+        result = runner.invoke(
+            cli.app,
+            ["--config", str(config_path), "-T", "fake-slurm", "--time", good,
+             "list", "models"],
+        )
+        assert result.exit_code == 0, (good, _plain_output(result))
+
+
+def test_time_flag_needs_a_slurm_target(tmp_path, monkeypatch):
+    """A wall-time request with no scheduler to send it to is a mistake
+    worth stopping on, not a flag to ignore."""
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+    result = runner.invoke(
+        cli.app,
+        ["--config", str(config_path), "--time", "5-00:00:00", "list", "models"],
+    )
+    assert result.exit_code != 0
+    assert "needs a SLURM target" in _plain_output(result)
+
+
+def test_build_executor_applies_time_override_before_any_request(
+    tmp_path, monkeypatch, caplog,
+):
+    """The override lands on the target's SlurmConfig -- the object both
+    request builders read -- before the salloc step runs, and says so
+    once, naming what it replaced."""
+    import logging
+    from types import SimpleNamespace
+
+    _install_build_executor_fakes(monkeypatch, tmp_path)
+    config = Config(human_user="coder", mirror_root=tmp_path / "mirrors")
+    settings = _confined_mirror_settings(tmp_path, confined=False)
+    assert settings.remote.slurm.time == "02:00:00"      # the dataclass default
+    at_salloc = {}
+
+    def spy_ensure_slurm_node(remote, session, ln_control, gw_control, logger, **kw):
+        at_salloc["time"] = remote.slurm.time
+        session.slurm_job_id = 999
+        session.compute_node = "n0001.savio4"
+        session.save()
+        return "n0001.savio4", _FakeSshControl(gateway="n0001.savio4")
+
+    monkeypatch.setattr(cli, "_ensure_slurm_node", spy_ensure_slurm_node)
+    logger = logging.getLogger("t")
+    with caplog.at_level(logging.INFO, logger="t"):
+        cli._build_executor(
+            config, logger, dry_run=False, mirror_settings=settings,
+            cli_ctx=SimpleNamespace(obj={"time_limit": "5-00:00:00"}),
+        )
+
+    assert at_salloc["time"] == "5-00:00:00"
+    assert settings.remote.slurm.time == "5-00:00:00"
+    said = [r.getMessage() for r in caplog.records if "overrides slurm.time" in r.getMessage()]
+    assert said == [
+        "--time 5-00:00:00 overrides slurm.time (02:00:00) for any job this "
+        "run submits."
+    ]
+
+
+def test_build_executor_without_time_flag_keeps_the_config_request(
+    tmp_path, monkeypatch, caplog,
+):
+    import logging
+    from types import SimpleNamespace
+
+    _install_build_executor_fakes(monkeypatch, tmp_path)
+    config = Config(human_user="coder", mirror_root=tmp_path / "mirrors")
+    settings = _confined_mirror_settings(tmp_path, confined=True)
+    logger = logging.getLogger("t")
+    with caplog.at_level(logging.INFO, logger="t"):
+        cli._build_executor(
+            config, logger, dry_run=False, mirror_settings=settings,
+            cli_ctx=SimpleNamespace(obj={}),
+        )
+    assert settings.remote.slurm.time == "02:00:00"
+    assert not [r for r in caplog.records if "overrides slurm.time" in r.getMessage()]
+
+
 def test_build_executor_unconfined_local_disk_is_tiering(tmp_path, monkeypatch):
     """An unconfined (salloc) target with slurm.local_disk keeps the mirror
     root shared, hands the root to the executor, tells the allocation step
