@@ -263,6 +263,42 @@ def _format_wait(seconds: int) -> str:
     return f"{minutes} min" if not rest else f"{minutes} min {rest}s"
 
 
+def _pending_reason(raw: str) -> str:
+    """squeue's ``%r`` as something worth repeating, or ''.
+
+    A job the scheduler has not looked at yet says ``None``; so does a
+    running one.  Neither is a reason to wait, so neither is reported.
+    """
+    reason = raw.strip()
+    return "" if reason in ("", "None", "(null)") else reason
+
+
+def _start_estimate(raw: str) -> str:
+    """squeue's ``%S`` when Slurm has one, else ''."""
+    start = raw.strip()
+    return "" if start in ("", "N/A", "Unknown") else start
+
+
+def _pending_hint(reason: str, time_request: Optional[str], job_id: int) -> str:
+    """What a PENDING reason wants from the operator, or ''.
+
+    ``ReqNodeNotAvail`` is the one that cost a session: with a maintenance
+    reservation ahead, a 12-day ``--time`` cannot finish before the window,
+    so the job sits until the window has passed, and nothing said so.  A
+    QOS wall-duration limit is the same remedy from the other side.
+    Sentence-leading double space, so it appends to a finished sentence.
+    """
+    if "ReqNodeNotAvail" in reason or "WallDuration" in reason:
+        asked = f" ({time_request})" if time_request else ""
+        return (
+            f"  No node can hold the job for its whole --time request{asked}: "
+            "a maintenance reservation ahead, a QOS wall-time cap, or nodes "
+            "down.  Shorten slurm.time in the target's config, or on the "
+            f"queued job: `scontrol update jobid={job_id} TimeLimit=<d-hh:mm:ss>`."
+        )
+    return ""
+
+
 def _build_sbatch_command(slurm, *, job_name, log_path, script_path, nodelist=None):
     """Build the ``sbatch`` argv for a ``confined`` launch.
 
@@ -2770,12 +2806,18 @@ class MirrorManager:
             return result.stdout.strip().splitlines()[0].strip() or "?"
         return "?"
 
+    # The node poll's squeue format: state, node, pending reason, estimated
+    # start.  '|'-delimited because a reason has spaces and commas
+    # ("ReqNodeNotAvail, Reserved for maintenance").
+    _NODE_POLL_FORMAT = "%T|%N|%r|%S"
+
     def _poll_confined_node(
-        self, job_id: int, *, attempts: int = 40, delay: int = 15
+        self, job_id: int, *, attempts: int = 40, delay: int = 15,
+        time_request: Optional[str] = None,
     ) -> str:
         """Poll until *job_id* is RUNNING on a node; return the node name.
 
-        Three-way per poll (``squeue -o '%T %N'``):
+        Three-way per poll (``squeue -o '%T|%N|%r|%S'``):
 
         - RUNNING + non-empty ``%N`` -> return the node.
         - PENDING/CONFIGURING (state present, ``%N`` empty) -> keep waiting.
@@ -2784,17 +2826,36 @@ class MirrorManager:
           this as PENDING (the handoff's "empty-%N abort that leaks" trap)
           and never persist the literal state word as a node.
 
-        On exhausting *attempts* while still PENDING, raise tagged PENDING:
-        the job is already persisted, so the caller leaves it RECORDED (no
-        orphan) and the operator attaches later.  A probe failure raises
-        too; the poll NEVER scancels (persist-before-poll keeps it
-        recoverable).
+        While it waits it says WHY: Slurm's pending reason (``%r``) and
+        estimated start (``%S``) are logged the first time they are known
+        and again only when they change, with a heartbeat about every two
+        minutes.  Only the first probe prints a progress line; the rest are
+        identical round trips and stay in the debug log (the rule
+        ``_confined_session_ready`` follows).  ``time_request`` is the
+        ``--time`` the job asked for, quoted when the reason says the
+        request cannot be placed (a maintenance reservation ahead).
+
+        On exhausting *attempts* while still PENDING, raise tagged PENDING
+        with the last reason: the job is already persisted, so the caller
+        leaves it RECORDED (no orphan) and the operator attaches later.  A
+        probe failure raises too; the poll NEVER scancels
+        (persist-before-poll keeps it recoverable).
         """
+        attempts = max(1, attempts)
+        step = max(1, delay)
+        # Heartbeat about every 2 minutes: the reason rarely changes, and a
+        # line per 15s poll (40 over the budget) reads as a hang.
+        heartbeat = max(1, (120 + step - 1) // step)
         last_state = "?"
-        for _ in range(max(1, attempts)):
+        last_reason = ""
+        last_start = ""
+        announced: Optional[Tuple[str, str]] = None
+        for attempt in range(attempts):
             result = self.executor.run_agent(
-                ["squeue", "--job", str(job_id), "--noheader", "-o", "%T %N"],
+                ["squeue", "--job", str(job_id), "--noheader",
+                 "-o", self._NODE_POLL_FORMAT],
                 check=False, capture_output=True,
+                show_progress=(attempt == 0),
             )
             if result.returncode != 0:
                 if "invalid job id" in result.stderr.lower():
@@ -2807,15 +2868,43 @@ class MirrorManager:
             line = result.stdout.strip()
             if not line:
                 raise MirrorError(self._confined_terminal_message(job_id))
-            parts = line.split()
-            last_state = parts[0]
-            if last_state == "RUNNING" and len(parts) >= 2 and parts[1]:
-                return parts[1]
+            fields = [f.strip() for f in line.split("|", 3)] + ["", "", ""]
+            state, node, reason, start = fields[:4]
+            last_state = state or "?"
+            if last_state == "RUNNING" and node:
+                return node
+            last_reason = _pending_reason(reason)
+            last_start = _start_estimate(start)
+            key = (last_state, last_reason)
+            # Say why, once per distinct answer.  Right after sbatch the
+            # scheduler may not have looked yet (reason "None"): skip that
+            # first empty answer rather than announce a wait with no why.
+            if key != announced and (last_reason or attempt > 0):
+                self.logger.info(
+                    "SLURM job %s is %s%s%s%s%s", job_id, last_state,
+                    f" ({last_reason})" if last_reason else "",
+                    f"; Slurm estimates a start at {last_start}"
+                    if last_start else "",
+                    f".  Waiting up to {_format_wait(attempts * step)} before "
+                    "leaving it queued." if announced is None else ".",
+                    _pending_hint(last_reason, time_request, job_id),
+                )
+                announced = key
             time.sleep(delay)
+            if (attempt + 1) % heartbeat == 0 and attempt + 1 < attempts:
+                self.logger.info(
+                    "SLURM job %s still %s%s (%s elapsed).", job_id, last_state,
+                    f" ({last_reason})" if last_reason else "",
+                    _format_wait((attempt + 1) * step),
+                )
         raise MirrorError(
-            f"SLURM job {job_id} still PENDING after ~{attempts * delay}s "
-            f"(last state: {last_state}).  It is recorded; the scheduler "
-            "will start it -- attach later with `sucoder attach`."
+            f"SLURM job {job_id} still PENDING after "
+            f"~{_format_wait(attempts * step)} (last state: {last_state}"
+            + (f", reason: {last_reason}" if last_reason else "")
+            + (f", estimated start {last_start}" if last_start else "")
+            + ").  It is recorded; the scheduler will start it -- attach "
+            "later with `sucoder attach`, or `sucoder release` to give it up."
+            + _pending_hint(last_reason, time_request, job_id)
         )
 
     def _confined_terminal_message(self, job_id: int) -> str:
@@ -3136,7 +3225,7 @@ class MirrorManager:
         self.logger.info(
             "Submitted confined SLURM job %s; waiting for RUNNING...", job_id,
         )
-        node = self._poll_confined_node(job_id)
+        node = self._poll_confined_node(job_id, time_request=slurm.time)
         sess.compute_node = node
         sess.save()
         self.logger.info("Confined SLURM job %s RUNNING on %s.", job_id, node)
