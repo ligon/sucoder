@@ -1,0 +1,216 @@
+#+title: Codex node-local SQLite state: Slice 0 inventory on Savio
+#+date: 2026-10-15
+#+status: Inventory and outcomes 1--2 complete; outcomes 3--7 open
+#+author: Sue
+#+property: header-args :eval never-export :tangle no :results output :exports code
+
+* Scope and authorization
+
+This record covers the read-only inventory part of Slice 0 in [[file:codex-local-state.org][the design]] (its "Slice 0" section) together with spike outcomes 1 and 2: which SQLite stores and locks follow =sqlite_home= on the installed Savio build, and whether each launch mode owns an independent foreground server.
+The human authorized this part on the existing confined allocation; outcomes 3--7 (abrupt stops and restores, queue and goal replay, drain-and-seal races, injected failures, shared-versus-local latency) were not run and need a separate disposable allocation.
+Read-only here means: every Codex launch used an isolated =HOME= and =CODEX_HOME= under a private spike root, a loopback fake model, and no credentials; nothing under the real Codex home was opened by the harness, and the strace classification below is the evidence that Codex did not open it either.
+No =daemon=, =doctor= or =remote-control= management command was run against the real home.
+The live managed daemon (pid 3630696, started 2026-10-14 20:56, working under =/local/job39919092/=) runs on another node and was left alone.
+
+* Environment
+
+| Item                 | Value                                                                 |
+|----------------------+-----------------------------------------------------------------------|
+| Host, job            | n0033.savio4, Slurm job 39969504 (co_carleton, savio4_htc)            |
+| Slice                | 4 cores, 24 GB, cgroup =slurmstepd.scope/job_39969504/step_batch=     |
+| Date                 | 2026-10-15, 13:19--13:25 UTC                                          |
+| Codex                | codex-cli 0.162.1 (npm package, native musl binary)                   |
+| Managed daemon       | =packages/app-server-daemon/current= -> =releases/0.162.1-*=          |
+| Binary identity      | npm and managed 0.162.1 binaries share sha256 =628e3548...0d92e1=     |
+| Node, Python         | v20.20.2, 3.12.13                                                     |
+| strace, tmux, sqlite | 5.18, 3.7c, =/usr/bin/sqlite3=; =ptrace_scope= 0                      |
+
+| Filesystem       | Mount                                   | Relevant options                        |
+|------------------+-----------------------------------------+-----------------------------------------|
+| =$HOME=          | =/global/home=, NFS v3                  | =local_lock=none=                       |
+| real Codex home  | =/global/scratch=, Lustre               | =flock,lazystatfs,encrypt=              |
+| =/local=         | =/dev/mapper/VGmain-local=, ext4        | =rw,relatime,discard=                   |
+| test state root  | =/global/scratch/.../.sucoder-state-spike/job39969504= | Lustre, mode 0700         |
+
+The real Codex home is =~/.codex -> /global/scratch/fsa/fc_jevons/ligon/codex-home=.
+The human explained the symlink: NFS =$HOME= does not support the locking SQLite needs, so the databases were moved to a Lustre partition that does, and that partition is often nearly unusable because of contention.
+Both halves are visible in the mount options and in the lock traffic measured below.
+
+** Prior art found during this phase
+
+=codex-home/sqlite-backups/n0140-job39450011/recovery-tools/= (2026-10-01, job 39450011 on n0140, Codex 0.160.0) already cut the live managed daemon over to =/local/job39450011/codex-sqlite/active= with =CODEX_SQLITE_HOME= plus =-c sqlite_home=, verified through =/proc/<pid>/fd= that every open =.sqlite*= handle was local, and ran a fifteen-minute per-database online-backup loop to the shared home.
+Its =RECOVERY.org= counted 1299 database-locked warnings in a four-hour window on Lustre.
+It inspected =.sqlite*= handles only; lock files, sidecar directories, the TUI and =--no-daemon= modes, override precedence and the current build are what this phase adds.
+=codex-home/sqlite-lustre-moved-2026-10-14/= holds a second manual relocation with a =stale-writer-locks/= directory and no accompanying note.
+Neither was cited in the design or the ledger before this phase; the ledger now records both.
+
+* Method
+
+- Harness :: [[file:../scripts/codex_sqlite_placement_spike.py][=scripts/codex_sqlite_placement_spike.py=]] runs one case; [[file:../scripts/codex_sqlite_placement_matrix.sh][=scripts/codex_sqlite_placement_matrix.sh=]] runs the nine cases after the hand-run first case.
+  The harness imports =sucoder.agent_mode.config_override= to encode the =sqlite_home= argument, as design step 7 requires, and reuses the isolated-home, loopback fake-model app-server pattern of =tests/test_codex_context.py:158=.
+- Per case :: fresh =codex-home/=, =user-home/=, =workspace/= (a =git init= directory) and =tmp/= under the spike root, created with umask 077.
+  The isolated =config.toml= trusts the workspace and, for one case, sets =sqlite_home=.
+  The environment is =PATH=, =HOME=, =CODEX_HOME=, =TMPDIR=, =NO_PROXY=, =RUST_LOG=error=, =TERM=, =LANG= and, for the env cases, =CODEX_SQLITE_HOME=.
+  Every launch is wrapped in =strace -f -y -s 256 -e trace=%file,connect,bind,flock,fcntl=.
+- App-server driver :: JSON-RPC over stdio: =initialize=, =initialized=, =thread/start= with =cwd= and without =ephemeral=, =turn/start= carrying a unique marker string, wait for =turn/completed=, snapshot =/proc/<pid>/fd= of every descendant, =thread/list=, then close stdin and escalate through SIGINT, SIGTERM and SIGKILL only if the process survives twelve seconds.
+- Remote-control driver :: =codex ... remote-control --no-daemon= with no stdin, observed for twenty seconds with periodic fd snapshots, then stopped the same way.
+- TUI driver :: =tmux -L spike-<case>= on a private socket runs =codex ... --cd <workspace> <marker>=; after twenty-five seconds the pane pid's descendants are snapshotted, the pane text captured, and =/quit= then =C-c= sent.
+- Classification :: every path strace saw is assigned to the first matching root: the override targets, the isolated =CODEX_HOME=, =HOME=, workspace and temp directories, the real Codex home, the real =$HOME=, =/tmp/codex-daemon-<uid>=, =/tmp=, =/local=, =/global/scratch=, =/global/home=, the install directory, or system paths.
+  Tags record the syscall, write-open flags, mutations, =flock= and =fcntl(F_SETLK)=.
+- After each case :: a file tree of every root, =sqlite_master= tables plus =user_version= and =journal_mode= for every =*.sqlite= opened read-only, and a byte search for the marker across all roots.
+
+Exact inventory commands, with exit status captured per command:
+
+#+begin_src shell
+hostname; date -u; codex --version; codex --help; codex remote-control --help
+findmnt -T "$HOME"; findmnt -T "$SUCODER_LOCAL_ROOT"; findmnt -T "$SUCODER_SHARED_STATE_TEST_ROOT"
+node --version; cat /proc/self/cgroup; nproc; squeue --me -o "%i %P %T %L %C %m"
+sha256sum <npm codex binary> <managed releases/0.162.1-*/bin/codex>
+#+end_src
+
+Exact case commands (the first by hand, the rest through the matrix script; =$R= is the cases directory):
+
+#+begin_src shell
+export SUCODER_REPO=/local/job39969504/mirrors/SuCoder SPIKE_ROOT=/local/job39969504/spike-codex-state
+python3 -I scripts/codex_sqlite_placement_spike.py --case c1-cfg --sqlite-config $R/c1-cfg/sqlite-cfg
+scripts/codex_sqlite_placement_matrix.sh    # c0-default ... c9-tui, see the table below
+#+end_src
+
+Raw evidence (per case =result.json=, =strace.log=, =stderr.log=, =stdout.log=; the inventory and matrix logs; the scripts as run) is preserved outside the job at =/global/scratch/fsa/fc_jevons/ligon/.sucoder-state-spike/job39969504/evidence/= (mode 0700, 34 files).
+The =/local= case directories, including the 67 MB plugin clones, die with the job.
+
+* Results
+
+** Inventory commands
+
+All commands exited 0.
+=nproc= reports 4 inside the job cgroup, so the slice is confined.
+The mount facts are in the Environment table; =local_lock=none= on =/global/home= is the configuration under which POSIX byte-range locks are not honoured locally, and =flock= on =/global/scratch= is the Lustre option that makes them work there.
+
+** Placement by case
+
+| Case           | Override                              | Mode                       | Six databases opened under                          | Exit, stop          |
+|----------------+---------------------------------------+----------------------------+-----------------------------------------------------+---------------------|
+| c0-default     | none                                  | app-server                 | =CODEX_HOME=                                        | 0, EOF then SIGINT  |
+| c1-cfg         | =-c sqlite_home=<abs>=                | app-server                 | the =-c= directory                                  | 0, EOF              |
+| c2-env         | =CODEX_SQLITE_HOME=<abs>=             | app-server                 | the env directory                                   | 0, EOF              |
+| c3-env-vs-cfg  | env =X=, =-c= =Y=                     | app-server                 | =Y=: configuration beats the environment            | 0, EOF              |
+| c4-toml-vs-cfg | =config.toml= =X=, =-c= =Y=           | app-server                 | =Y=: the command line beats =config.toml=           | 0, EOF              |
+| c5-relative    | =-c sqlite_home="rel-sqlite"=         | app-server                 | =<cwd>/rel-sqlite=, inside the Git workspace        | 0, EOF              |
+| c6-missing     | =-c= absolute, directory absent       | app-server                 | created by Codex (=mkdir 0777= masked by umask)     | 0, EOF              |
+| c7-unwritable  | =-c= absolute, directory mode 0500    | app-server                 | none: exit 1 before any database or thread          | 1                   |
+| c8-rc-nodaemon | =-c sqlite_home=<abs>=                | =remote-control --no-daemon= | the =-c= directory (five stores; no thread)        | 1, relay error      |
+| c9-tui         | =-c sqlite_home=<abs>=                | TUI in tmux                | the =-c= directory, held by the TUI process itself  | =/quit=             |
+
+The six databases are =state_5=, =thread_history_1=, =goals_1=, =queue_1=, =memories_1= and =logs_2=, each with =-wal= and =-shm= sidecars, journal mode WAL, =user_version= 0, schema versioned through an =_sqlx_migrations= table.
+=memories_1= is opened although the =memories= feature is off.
+Every app-server case completed one marker turn in about six seconds of wall time, and the fake model received the marker.
+
+c7's error text, verbatim from stderr:
+
+#+begin_example
+Error: failed to initialize sqlite state runtime under <dir>: failed to initialize state runtime at <dir>
+#+end_example
+
+No database was opened anywhere else in c7, so Codex 0.162.1 does not fall back to =CODEX_HOME= when the configured location is unusable; it fails the launch.
+
+** What follows =sqlite_home= and what does not
+
+Followed the override in every case that reached a thread: the six databases and their sidecars, and nothing else.
+
+Stayed in =CODEX_HOME= in every case, regardless of override:
+
+- =thread-writer-locks/.coordination.lock= (=flock LOCK_EX=) and =thread-writer-locks/<thread-id>.lock= (=flock LOCK_EX|LOCK_NB=), created with mode 0666 masked by umask.
+- =installation_id= (=flock LOCK_EX= while written).
+- =.tmp/plugins.sync.lock= (=flock LOCK_EX=) and =tmp/arg0/codex-arg0<random>/.lock= (=flock LOCK_EX|LOCK_NB=).
+- =sessions/<yyyy>/<mm>/<dd>/rollout-<timestamp>-<thread-id>.jsonl=, opened =O_RDWR|O_CREAT|O_APPEND= with mode 0666 masked by umask, containing the marker, and re-opened read-only 39 further times during the single-turn c1 run.
+- In TUI mode additionally =history.jsonl= (=O_RDWR|O_CREAT|O_APPEND=, mode 0600; contains the marker), =version.json= and =shell_snapshots/=.
+- In =--no-daemon= mode additionally =app-server-control/app-server-startup.lock=.
+
+Not observed in any case: =.sqlite-maintenance.lock= (present in the real home, dated 2026-10-01) and =agent_message_board_1.sqlite=.
+The latter is named in the binary and gated by the =agent_message_board= feature, which =codex features list= reports as "under development, false"; the design's inventory table should list it as an optional, flag-gated seventh store.
+The maintenance lock may belong to a periodic task these short runs never reached; it remains unclassified.
+
+** Server ownership by mode (outcome 2)
+
+- app-server :: the launched native binary itself holds all eighteen database and sidecar descriptors; the only Unix-socket connections are =/dev/log= and =/var/run/nscd/socket=.
+  Nothing under =/tmp/codex-daemon-<uid>= is touched.
+- TUI :: the same: the TUI process holds the eighteen descriptors, makes no =codex-daemon= access at all, and connects only to the session bus and its own tmux socket.
+  =daemon_auto_start= is "stable, true" in the feature list, but no daemon was spawned for this launch.
+- =remote-control --no-daemon= :: the embedded server opened =state_5=, =goals_1=, =queue_1=, =memories_1= and =logs_2= under the override, created a relay socket under =/tmp/codex-rc-<random>/rc.sock= and a control lock plus socket at =/tmp/codex-daemon-<uid>/<64-hex>=, attempted TLS connections to public addresses, and exited 1 with "Remote control is enabled on n0033.savio4 but the connection is errored", because the isolated home has no credentials.
+  The 64-hex name differs from the real home's (=75c014f5...= against =1fa531dc...=) and is not the plain SHA-256 of either home path; its derivation was not established.
+  The directory is per host, and it was empty after the process exited.
+
+An authenticated remote-control launch cannot be exercised with a synthetic home, and this phase did not use real credentials; what is established is that the embedded server opens its stores under the override before the relay step.
+
+** Shutdown and WAL state
+
+- app-server, stdin closed :: exit 0 within twelve seconds in eight of nine cases, but every main database file stayed at 4096 bytes with all content, including the marker, in the =-wal= files.
+  The connections were not closed before exit, so nothing was checkpointed.
+  A file copy of =*.sqlite= taken after such an exit would be empty; the design's choice of the SQLite backup API, which reads through the WAL, is the correct one, and "sealed" must mean a close that checkpoints, or a backup-API copy, not merely a zero exit.
+- app-server, c0 :: stdin EOF did not end the process within twelve seconds because the plugin marketplace =git clone= was still running; SIGINT ended it.
+  A graceful-shutdown profile must bound or wait for that sync.
+- TUI, =/quit= :: =thread_history_1.sqlite= was closed cleanly (no =-wal= or =-shm= left, marker in the main file) while the other five retained their WAL and shared-memory files.
+  Two UI warnings were shown in the pane and were not inspected.
+
+** Non-SQLite I/O in =CODEX_HOME=, recorded separately
+
+Counting strace lines by location for the six-second c1 run: 1972 on the =sqlite_home= directory; 5568 on =CODEX_HOME/.tmp=, 670 on =CODEX_HOME/skills=, 147 on =CODEX_HOME/sessions=, 319 elsewhere in =CODEX_HOME=; 5809 on the workspace; 3730 PATH probes under =/global= (Lmod, =~/.nvm=, =~/.claude/plugins=, =~/.elan=, =~/.local/bin=); 18775 elsewhere (sandbox =pivot_root= setup, =/proc=, =/usr=).
+Every fresh home cloned a plugin marketplace from the network into =CODEX_HOME/.tmp/plugins-clone-<random>/= (a 25 MB pack, 4535 entries, 67 MB on disk, left in place) and populated =skills/.system/=.
+The =plugins= and =remote_plugin= features are "stable, true".
+Moving the databases does not remove this traffic from the shared home; the design's statement that retaining shared configuration does not eliminate shared-home access is confirmed and now quantified.
+
+** Lock traffic, the contention mechanism
+
+In c1's six seconds SQLite issued 1656 =fcntl(F_SETLK)= calls on the override directory: 1002 on =state_5.sqlite-shm=, 224 on =thread_history_1.sqlite-shm=, 56--70 on each other =-shm=, and 29 on each main file.
+On ext4 these are local; on Lustre each is a lock-server round trip, which is how a nearly idle session becomes "nearly unusable" under contention and how the Oct 1 diagnosis reached 1299 locked warnings in four hours.
+No timing claim is made from these uncontended single runs; outcome 7 remains open.
+
+** Schema inventory (c1, 0.162.1)
+
+| Database                 | Tables                                                                                                                                                                                                                                                              |
+|--------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| =state_5.sqlite=         | =backfill_state=, =external_agent_config_imports=, =project_idempotency_keys=, =project_roots=, =projects=, =remote_control_enrollments=, =rollout_migration_skipped_rollouts=, =rollout_migration_state=, =thread_attachments=, =thread_dynamic_tools=, =thread_sections=, =thread_spawn_edges=, =threads= |
+| =thread_history_1.sqlite= | =thread_history_projection_state=, =thread_items=, =thread_realtime_items=, =thread_turns=                                                                                                                                                                           |
+| =goals_1.sqlite=         | =thread_goal_continuation_deferrals=, =thread_goals=                                                                                                                                                                                                                 |
+| =queue_1.sqlite=         | =queued_items=, =queued_thread_revisions=                                                                                                                                                                                                                            |
+| =memories_1.sqlite=      | =consolidation_progress=, =jobs=, =stage1_outputs=                                                                                                                                                                                                                  |
+| =logs_2.sqlite=          | =logs=                                                                                                                                                                                                                                                              |
+
+Each also carries =_sqlx_migrations= and, where used, =sqlite_sequence=.
+The =rollout_migration_*= tables and the =codex migrate-rollouts= subcommand show that the JSONL rollout is the older store and the paginated SQLite history the newer one, yet 0.162.1 still writes and re-reads the rollout.
+
+* Consequences for the design
+
+1. The inventory table in the design is confirmed for the six databases on 0.162.1 and should add =agent_message_board_1.sqlite= as flag-gated and optional, and note that no maintenance lock was observed in these modes.
+2. The =sessions/= rollout file and, for the TUI, =history.jsonl= are external transcript dependencies in =CODEX_HOME=.
+   A generation that captures only the databases does not capture everything the server reads for a thread; outcome 3 must establish whether resume works from the databases alone, or the generation must include the thread's rollout file.
+3. The runner must pass an absolute =sqlite_home=: a relative value resolves against the process cwd and lands inside the managed clone.
+   It must pre-create the directory with mode 0700 rather than let Codex create it with =0777= masked by umask, and verify effective placement through =/proc/<pid>/fd= as the Oct 1 =cutover.py= did.
+   A launch whose location is unusable fails with exit 1 and the error text above; that is the loud failure the design wants, and there is no silent fallback to repair.
+4. Precedence is =-c= over =CODEX_SQLITE_HOME= over =config.toml=, so an explicit =-c= from the runner is sufficient and a user's =config.toml= value cannot defeat it; the conflict rule in the design should compare against both the environment and the file.
+5. "Sealed" needs a definition that checks WAL state: after an app-server stdin EOF the data is entirely in WAL, and after a TUI =/quit= only the history store was checkpointed.
+   The backup API reads committed WAL content, so warm captures are unaffected; the sealed profile must either close through a path that checkpoints or accept the backup-API copy as the sealed artifact.
+6. In remote-control mode the embedded server creates a per-host control socket and lock under =/tmp/codex-daemon-<uid>/=, and a startup lock in =CODEX_HOME/app-server-control/=; the independent-ownership check must cover both, and an authenticated test is still required.
+7. Shared-home plugin and skill synchronization is the dominant non-SQLite I/O and is unaffected by placement; it belongs in the shared-home I/O budget, not the recovery generation.
+
+* Limits of this phase
+
+- Single, uncontended runs; no latency, size or duration claim is made.
+- No abrupt stop, restore into another allocation, claim race, failure injection or replay test was run.
+- Remote control was exercised only to the relay step, unauthenticated.
+- The =/tmp/codex-daemon= name derivation and the TUI's two warnings were not resolved.
+- Which component re-reads the rollout file, and whether resume depends on it, was not characterized.
+
+* Next actions
+
+Run outcomes 3--7 from the design on a disposable =co_carleton= allocation, cloning this branch from the shared mirror into that job's own =/local=, with the test state root above as =SUCODER_SHARED_STATE_TEST_ROOT=.
+Start with outcome 3 restricted to the question raised in consequence 2: restore the six databases, with and without the rollout file, into a fresh home and check =thread/list= and =thread/resume= for the marker.
+Keep the harness's isolation rules; never point a case at the real home.
+
+* Local document checks
+
+Recorded with the commit: =git diff --check=, Emacs =org-lint= on this file, an ASCII scan, and a check that every =file:= link target exists.
+No Python runtime path changed, so pytest was not rerun; GitNexus is not installed in this clone (=.gitnexus/= is generated and absent), so =detect_changes= could not be run and the change set is documentation and standalone scripts only.
+
+Recorded by Sue.

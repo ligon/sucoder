@@ -230,3 +230,46 @@ Official references:
 - https://learn.chatgpt.com/docs/developer-commands?surface=cli#codex-remote-control
 - https://learn.chatgpt.com/docs/config-file/config-reference
 - https://learn.chatgpt.com/docs/agent-configuration/agents-md
+
+Spike evidence, 2026-10-15 (Sue), Slice 0 read-only inventory, job 39969504
+on n0033.savio4 (4 cores, confined cgroup):
+
+- Prior art not cited above: `$CODEX_HOME/sqlite-backups/n0140-job39450011/`
+  `recovery-tools/` (`RECOVERY.org`, `cutover.py`, `snapshot.py`,
+  `checkpoint.py`, `codex-local`), written 2026-10-01 in job 39450011 on
+  n0140 against the managed Codex 0.160.0 daemon. It stopped that daemon,
+  took SQLite online backups of the six shared databases, restarted it with
+  `CODEX_SQLITE_HOME` plus `-c sqlite_home=<local>`, and verified through
+  `/proc/<pid>/fd` that every open `.sqlite*` handle was under
+  `/local/job39450011/codex-sqlite/active`. A 15-minute loop then wrote
+  per-database online backups (`Connection.backup`, `quick_check`, sha256,
+  `SNAPSHOT.json`, keep last two) to the shared home. Its diagnosis counted
+  1299 database-locked warnings in a four-hour window on Lustre. It checked
+  `.sqlite*` handles only: lock files and sidecar directories, the TUI and
+  `--no-daemon` modes, override precedence and the current 0.162.1 build are
+  what this spike adds. `$CODEX_HOME/sqlite-lustre-moved-2026-10-14/` holds
+  a second manual relocation (databases plus `stale-writer-locks/`); no
+  accompanying note was found.
+- Reused here: `sucoder/agent_mode.py:config_override` encodes the
+  `sqlite_home` argument; `tests/test_codex_context.py:158` supplies the
+  isolated-home, loopback fake-model app-server driver.
+- `$HOME` (`/global/home`) is NFS mounted `local_lock=none`, which is why the
+  real Codex home is a symlink to `/global/scratch/fsa/fc_jevons/ligon/`
+  `codex-home` on Lustre (`flock`); `/local` is ext4. The npm `codex` 0.162.1
+  native binary and the managed daemon's `releases/0.162.1-*/bin/codex` have
+  the same sha256, so the spike's binary is the production binary.
+- The 0.162.1 binary names a seventh database, `agent_message_board_1.sqlite`,
+  absent from the design's inventory table (`docs/codex-local-state.org:60-67`).
+- The live daemon (pid 3630696, started 2026-10-14 20:56, working under
+  `/local/job39919092/`) runs on another node; nothing in this spike talks to
+  it, and no `daemon`/`doctor` command is run against the real home.
+- Results (same day): all six databases follow `-c sqlite_home`, which beats
+  `CODEX_SQLITE_HOME`, which beats `config.toml`; a relative value resolves
+  against the cwd; a missing directory is created `0777` masked by umask; an
+  unwritable one fails the launch with exit 1 and no fallback. Thread-writer
+  locks, `installation_id`, plugin and arg0 locks, the `sessions/` rollout
+  JSONL and the TUI's `history.jsonl` stay in `CODEX_HOME`. The app-server and
+  TUI hold their own database descriptors with no daemon socket; the
+  `--no-daemon` server creates `/tmp/codex-daemon-<uid>/<hash>` and needs
+  credentials to go further. Stdin EOF leaves all data in WAL. Full record:
+  `docs/codex-local-state-spike.org`.
