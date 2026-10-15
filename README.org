@@ -1130,6 +1130,25 @@ retention protocol is Slice 3, so generations accumulate unpruned for
 now, and archiving a managed thread fails until =archived_sessions=
 joins the bind set.
 
+=sucoder codex-state-status <mirror>= (with =-T <target>=, as for
+=attach= and =release=) reports what the runner recorded for the
+mirror's recorded allocation, one line per fact: the run and its mode
+(fresh, restore or reuse); the placement state; the rollout replica's
+age and lag in bytes, with any anomaly; the last durable generation with
+its class and age, and a generation still unsynced when there is one;
+the checkpoint state, last outcome and dropped-trigger count; the
+active goals and queued items pending on the stores; the generation a
+restore came from; and the reason when the launch was refused or
+blocked.  It reads =latest-run=, =status.json= and =owner.json= under
+=<local_disk>/job<ID>/state/codex/<scope>/=, on a confined target
+inside the allocation through =srun --overlap= (never compute-node
+SSH); =--json= prints =status.json= as recorded, =--dry-run= prints the
+reads, a job whose launch never placed its state answers "no managed run
+recorded", and nothing here launches, checkpoints or drains (on a
+confined target nothing is allocated either; an unconfined target builds
+its executor as every command there does, which re-allocates a node when
+the recorded job has ended).
+
 #+begin_src yaml
     slurm:
       partition: savio4_htc

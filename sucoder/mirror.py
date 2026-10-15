@@ -25,9 +25,13 @@ from .agent_mode import (
     service_launch, service_marker,
 )
 from .codex_state import (
+    RUN_ID as _STATE_RUN_ID,
+    STATUS_FILES as _STATE_STATUS_FILES,
     CodexStateLaunch as _CodexStateLaunch,
+    CodexStateStatus as _CodexStateStatus,
     check_durable_root as _state_check_durable_root,
     durable_root_for as _state_durable_root_for,
+    local_scope_dir as _state_local_scope_dir,
     runner_command as _state_runner_command,
     runner_source as _state_runner_source,
     scope_id as _state_scope_id,
@@ -3074,11 +3078,11 @@ class MirrorManager:
         env: Optional[Mapping[str, str]],
         detached: bool,
         selection: Optional[str] = None,
+        codex_state_scope: Optional[str] = None,
     ) -> int:
         """Submit + (for interactive) attach a confined sbatch launch.
 
         Flow: reuse-probe -> build agent cmd (prelude to NFS, ``bash -lc``
-        codex_state_scope: Optional[str] = None,
         wrap) -> stage batch script to NFS -> ``sbatch`` -> persist id
         IMMEDIATELY -> bounded RUNNING-poll -> persist node -> confirm the
         tmux session -> attach (interactive) or return (detached / renew).
@@ -3088,15 +3092,15 @@ class MirrorManager:
         selection rides in ``command`` and only a job this launch submits
         runs it; see :meth:`_reuse_confined_job`.
 
-        Post-session hooks (``_auto_commit_agent_skills`` / ``_maybe_run_audit``)
-        are intentionally NOT run: detaching tmux returns rc=0 while the
-        agent keeps running inside the job, so those end-of-session hooks
-        would fire wrongly.  The agent's lifecycle is owned by the job.
         ``codex_state_scope`` is the managed Codex state scope digest the
         launch decided (``_codex_state_launch(ctx).scope``) or None; the
         staged deadline timer uses it to request a capture from the runner
         at each warning (``slurm_timer.build_timer_script``).
 
+        Post-session hooks (``_auto_commit_agent_skills`` / ``_maybe_run_audit``)
+        are intentionally NOT run: detaching tmux returns rc=0 while the
+        agent keeps running inside the job, so those end-of-session hooks
+        would fire wrongly.  The agent's lifecycle is owned by the job.
         """
         from .session import RemoteSession
 
@@ -3212,12 +3216,12 @@ class MirrorManager:
                 snapshot_dir_shell=work_path_shell(local_disk_root, safe),
                 snapshot_minutes=slurm.wip_snapshot_minutes,
                 timer_scope=timer_identity(ctx.settings.name, self.target_name),
+                codex_state_scope=codex_state_scope,
+                local_disk_root=local_disk_root,
             )
         else:
             timer_script = build_timer_script(
                 mirror_token=safe,
-                codex_state_scope=codex_state_scope,
-                local_disk_root=local_disk_root,
                 tmux_session=session_name,
                 tmux_socket=socket,
                 snapshot_dir=mirror_path,
@@ -3599,11 +3603,11 @@ class MirrorManager:
                     env=None,
                     detached=detached,
                     selection=selection,
+                    codex_state_scope=state.scope if state is not None else None,
                 )
 
             # Wrap in tmux so the session survives SSH disconnects, with the
             # large prelude externalized to a file.  See
-                    codex_state_scope=state.scope if state is not None else None,
             # ``_build_remote_agent_cmd_str`` for the scancel / exec-bash
             # rationale.
             tmux_name = f"sucoder-{ctx.settings.name}"
@@ -3707,12 +3711,16 @@ class MirrorManager:
 
     def _codex_state_launch(
         self, ctx: MirrorContext, *, restore: Optional[str] = None, fresh: bool = False,
+        agent_type: Optional[AgentType] = None,
     ) -> Optional[_CodexStateLaunch]:
         """What the staged runner is told, or None when this launch is unmanaged.
 
         Unmanaged: the target has ``slurm.codex_state`` off, or the detected
         agent is not Codex; a history selection in either case is an error
-        rather than silently ignored.  Enabled state without local-disk
+        rather than silently ignored.  ``agent_type`` stands in for the
+        detected one when nothing is being launched (``codex_state_status``
+        asks about Codex state on a manager that has launched nothing, so
+        there is no detection to read).  Enabled state without local-disk
         tiering on this launch is an error too: the databases need the
         node-local root the working clone uses, and the design forbids a
         silent fall back to shared placement.  The durable root is the
@@ -3735,7 +3743,8 @@ class MirrorManager:
                     f"which is not enabled for this target (slurm.codex_state on {ctx.settings.name})."
                 )
             return None
-        if self._detected_agent_type != AgentType.CODEX:
+        detected = agent_type if agent_type is not None else self._detected_agent_type
+        if detected != AgentType.CODEX:
             if selected:
                 raise MirrorError(
                     "--codex-state-from/--codex-state-fresh apply to a Codex launch only "
@@ -3774,6 +3783,100 @@ class MirrorManager:
             checkpoint_timeout_seconds=state.checkpoint_timeout_seconds,
             restore=restore,
             fresh=fresh,
+        )
+
+    def codex_state_status(self, ctx: MirrorContext, job_id: int) -> _CodexStateStatus:
+        """What the managed runner recorded for *job_id*'s allocation.
+
+        The operator surface of docs/codex-local-state.org: ``latest-run``
+        under the scope directory names the run this allocation placed, and
+        that run's ``status.json`` and ``owner.json`` carry its mode, state,
+        replica, last durable generation, checkpoint and pending work.  One
+        ``cat`` per file: on a confined target inside the allocation through
+        ``srun --jobid=J --overlap`` (the route attach, release and the
+        session probes take; never compute-node SSH outside the cgroup),
+        otherwise through the executor, which already targets the compute
+        node.  A refused or never-placed launch writes no ``latest-run``,
+        reported as ``run=None`` rather than as an error; a ``status.json``
+        missing behind a present ``latest-run``, unreadable JSON, or a read
+        that fails is a MirrorError naming the path.  A dry run cannot learn
+        the run id: it sends the first read (the executor logs it) and
+        returns the two it would send with ``<run>`` in place.  The scope is
+        the launch's, so a target whose managed state is misconfigured is
+        refused here the way a launch is.
+        """
+        launch = self._codex_state_launch(ctx, agent_type=AgentType.CODEX)
+        if launch is None:
+            raise MirrorError(
+                f"slurm.codex_state is not enabled for mirror {ctx.settings.name}; "
+                "there is no managed Codex state to report."
+            )
+        # _codex_state_launch has already refused an unset local-disk root.
+        local_disk_root = str(getattr(self.executor, "local_disk_root", None) or "")
+        scope_dir = _state_local_scope_dir(local_disk_root, job_id, launch.scope)
+        commands: List[List[str]] = []
+
+        def argv_for(path: str) -> List[str]:
+            if ctx.confined:
+                return ["srun", f"--jobid={job_id}", "--overlap", "cat", path]
+            return ["cat", path]
+
+        def read(path: str) -> Optional[str]:
+            """The file's text; None when it does not exist; MirrorError otherwise."""
+            argv = argv_for(path)
+            commands.append(argv)
+            try:
+                result = self.executor.run_agent(argv, check=False, capture_output=True)
+            except (CommandError, OSError) as exc:
+                raise MirrorError(f"Could not read {path} for job {job_id}: {exc}") from exc
+            if result.returncode == 0:
+                return str(result.stdout or "")
+            stderr = (result.stderr or "").strip()
+            if "No such file or directory" in stderr:
+                return None
+            raise MirrorError(
+                f"Could not read {path} for job {job_id} (exit {result.returncode}): "
+                f"{stderr or 'no error output'}"
+            )
+
+        def parse(path: str, text: str) -> dict:
+            try:
+                data = json.loads(text)
+            except ValueError as exc:
+                raise MirrorError(f"{path} for job {job_id} is not readable JSON: {exc}") from exc
+            if not isinstance(data, dict):
+                raise MirrorError(f"{path} for job {job_id} does not hold a JSON object.")
+            return data
+
+        latest_path = f"{scope_dir}/latest-run"
+        latest = read(latest_path)
+        if self.executor.dry_run:
+            for name in _STATE_STATUS_FILES:
+                commands.append(argv_for(f"{scope_dir}/<run>/{name}"))
+            return _CodexStateStatus(
+                job_id=job_id, scope=launch.scope, scope_dir=scope_dir, commands=commands, dry_run=True,
+            )
+        if latest is None:
+            return _CodexStateStatus(job_id=job_id, scope=launch.scope, scope_dir=scope_dir, commands=commands)
+        run = latest.strip()
+        if not _STATE_RUN_ID.fullmatch(run):
+            raise MirrorError(
+                f"{latest_path} for job {job_id} names no run id ({run!r}); the managed run cannot be located."
+            )
+        run_dir = f"{scope_dir}/{run}"
+        status_path = f"{run_dir}/status.json"
+        status_text = read(status_path)
+        if status_text is None:
+            raise MirrorError(
+                f"{status_path} is missing although {latest_path} names run {run}; the run's record is incomplete."
+            )
+        status = parse(status_path, status_text)
+        owner_path = f"{run_dir}/owner.json"
+        owner_text = read(owner_path)
+        owner = None if owner_text is None else parse(owner_path, owner_text)
+        return _CodexStateStatus(
+            job_id=job_id, scope=launch.scope, scope_dir=scope_dir, commands=commands,
+            run=run, status=status, owner=owner,
         )
 
     def _absolute_for_codex_state(self, ctx: MirrorContext, what: str, value: str) -> str:

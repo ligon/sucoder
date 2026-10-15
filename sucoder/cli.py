@@ -2215,6 +2215,99 @@ def worktrees(
         _display()
 
 
+@app.command("codex-state-status")
+def codex_state_status(
+    ctx: typer.Context,
+    mirror: Optional[str] = typer.Argument(None, help="Mirror name defined in configuration.", shell_complete=_mirror_completion),  # type: ignore[arg-type]
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print the reads without executing them."),
+    as_json: bool = typer.Option(False, "--json", help="Print the run's status.json as recorded instead of the summary."),
+) -> None:
+    """Show the managed Codex state of this mirror's recorded allocation.
+
+    With ``slurm.codex_state`` on, the staged runner records each launch
+    under ``<local_disk>/job<ID>/state/codex/<scope>/``: ``latest-run``
+    names the run this allocation placed, and the run's ``status.json``
+    carries its mode (fresh, restore or reuse), placement state, rollout
+    replica age and lag, last durable generation with its class and age,
+    checkpoint state, and the active goals or queued items found on its
+    stores.  This reads those files -- on a confined target inside the
+    allocation through ``srun --overlap``, otherwise on the compute node --
+    and prints one line per fact; ``--json`` prints ``status.json`` as
+    recorded.  A job whose launch was refused or never placed has no
+    ``latest-run``, reported as "no managed run recorded", exit 0.
+    Read-only on the managed state: nothing here launches, checkpoints or
+    drains, and on a confined target nothing is allocated (the reads go
+    through the login node).  On an unconfined target the executor is
+    built the way every command there builds it, which re-allocates a node
+    when the recorded job has already ended.
+    """
+    from typing import cast
+
+    mirror = _resolve_mirror_name(ctx, mirror)
+    config = _get_config(ctx)
+    settings = config.mirrors.get(mirror)
+    target = _get_active_target(cast(click.Context, ctx))
+    if target is not None and settings is not None:
+        from dataclasses import replace
+        settings = replace(settings, remote=target)
+    if not settings or not settings.remote or settings.remote.slurm is None:
+        typer.echo(
+            f"Mirror {mirror} has no SLURM target; managed Codex state "
+            "(slurm.codex_state) lives on a SLURM allocation.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    from .codex_state import format_status
+    from .session import RemoteSession
+
+    # The session before the manager: on an unconfined target building the
+    # executor ensures a compute node, which allocates one when the record
+    # holds no live job, and a status command must never allocate.
+    _tgt_name = ((ctx.obj or {}).get("target_name") if ctx else None)
+    session = RemoteSession.load(mirror, target_name=_tgt_name)
+    if not session.slurm_job_id:
+        typer.echo(
+            f"No SLURM allocation recorded for mirror {mirror}"
+            f"{f' (target {_tgt_name})' if _tgt_name else ''}; "
+            "no managed Codex run to report."
+        )
+        raise typer.Exit(code=0)
+    job_id = session.slurm_job_id
+
+    logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
+    manager = _build_manager_for_mirror(config, logger, dry_run, mirror, cli_ctx=cast(click.Context, ctx))
+    try:
+        report = manager.codex_state_status(manager.context_for(mirror), job_id)
+    except MirrorError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    if report.dry_run:
+        typer.echo(
+            f"DRY-RUN: managed Codex state for job {job_id} (scope {report.scope}) "
+            "would be read with:"
+        )
+        for argv in report.commands:
+            typer.echo("  " + shlex.join(argv))
+        return
+    if report.run is None:
+        typer.echo(
+            f"no managed run recorded for job {job_id} (scope {report.scope}): "
+            f"{report.scope_dir}/latest-run is absent, so no launch placed its "
+            "state in this allocation.",
+            err=as_json,
+        )
+        raise typer.Exit(code=0)
+    if as_json:
+        typer.echo(json.dumps(report.status, indent=2, sort_keys=True))
+        return
+    typer.echo(f"managed Codex state for mirror {mirror}: job {job_id}, scope {report.scope}")
+    typer.echo(f"path: {report.run_dir}")
+    typer.echo(format_status(report.status or {}, run=report.run, owner=report.owner))
+
+
 def _codex_remote_mode(enabled: Optional[bool], server_only: bool) -> Optional[str]:
     if server_only:
         if enabled is False:

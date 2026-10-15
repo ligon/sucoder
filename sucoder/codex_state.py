@@ -16,7 +16,7 @@ import posixpath
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from .agent_mode import config_override
 
@@ -27,6 +27,7 @@ DURABLE_ROOT_NAME = ".sucoder-state"
 # sequence plus an eight-hex random suffix.  The selector names history and
 # nothing else; it never carries a path or shell text.
 RESTORE_SELECTOR = re.compile(r"[0-9a-f]{32}/[0-9]{6}-[0-9a-f]{8}")
+RUN_ID = re.compile(r"[0-9a-f]{32}")
 
 
 @dataclass(frozen=True)
@@ -185,3 +186,169 @@ def runner_command(
 def runner_source() -> str:
     """The runner script to stage, byte for byte."""
     return RUNNER_SOURCE.read_text(encoding="utf-8")
+
+
+# ----------------------------------------------------------------- operator status
+
+STATUS_FILES = ("status.json", "owner.json")
+
+
+def local_scope_dir(local_disk_root: str, job_id: int, scope: str) -> str:
+    """``<root>/job<ID>/state/codex/<scope>``: the runner's scope directory on the node.
+
+    The allocation-local root is the local-tier layout's ``<root>/job<ID>``
+    (``local_tier.local_root_shell`` spells the same path as a shell word);
+    the runner keeps ``latest-run`` and one directory per run under
+    ``state/codex/<scope>`` below it.
+    """
+    root = local_disk_root.rstrip("/") or "/"
+    return posixpath.join(root, f"job{job_id}", "state", "codex", scope)
+
+
+@dataclass(frozen=True)
+class CodexStateStatus:
+    """What ``sucoder codex-state-status`` found for one allocation.
+
+    ``run`` is None when ``latest-run`` is absent: a refused or never-placed
+    launch does not write it, so there is no managed run to report.
+    ``commands`` lists every read sent, or on a dry run the reads that would
+    be sent (the run id is unknown there, so ``<run>`` stands in for it).
+    """
+
+    job_id: int
+    scope: str
+    scope_dir: str
+    commands: List[List[str]]
+    run: Optional[str] = None
+    status: Optional[Dict[str, Any]] = None
+    owner: Optional[Dict[str, Any]] = None
+    dry_run: bool = False
+
+    @property
+    def run_dir(self) -> Optional[str]:
+        return None if self.run is None else posixpath.join(self.scope_dir, self.run)
+
+
+def _seconds(value: Any) -> str:
+    """``12.3s`` for a number; ``unknown`` for None (never measured)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return "unknown"
+    return f"{value:g}s"
+
+
+def _name_of(record: Any) -> Optional[str]:
+    """The ``name`` of a published-generation record, or None."""
+    if isinstance(record, Mapping) and isinstance(record.get("name"), str):
+        return str(record["name"])
+    return None
+
+
+def describe_pending_work(pending: Any) -> str:
+    """Active goals and queued items as the runner reports them, or ``none``.
+
+    Explicit thread ids and counts: an active goal drives unprompted model
+    requests the moment its thread resumes and a queued item executes once,
+    so the operator decides per thread (pause the goal in Codex) and must
+    never read a summary that hides one.  Mirrors the runner's own wording
+    without importing it (the staged runner is Python 3.6 code).
+    """
+    if not isinstance(pending, Mapping):
+        return "not reported"
+    parts: List[str] = []
+    goals = pending.get("active_goals") or []
+    if goals:
+        parts.append(f"active goal on thread(s) {', '.join(str(t) for t in goals)}")
+    queued = pending.get("queued") or {}
+    if isinstance(queued, Mapping):
+        for tid, count in sorted(queued.items()):
+            parts.append(f"{count} queued item(s) on thread {tid}")
+    for note in pending.get("unreadable") or []:
+        parts.append(f"a store the runner cannot read ({note})")
+    return "; ".join(parts) if parts else "none"
+
+
+def format_status(status: Mapping[str, Any], *, run: str, owner: Optional[Mapping[str, Any]] = None) -> str:
+    """The operator's one-line-per-fact summary of a run's ``status.json``.
+
+    Every key is optional: a launch refused or blocked before its
+    ``starting`` transition has written only ``state``, ``reason`` and the
+    transitions.  ``run`` comes from ``latest-run``, which the caller has
+    already read, so the first line always names it.  The numbers an
+    operator acts on (durable age, the unsynced generation, replica lag,
+    pending work) are printed as the runner recorded them, never rolled up.
+    """
+    owner = owner or {}
+    lines: List[str] = []
+    mode = status.get("mode") or ("restore" if status.get("restore") else None) or (
+        "reuse" if owner.get("reused_run") else None) or "unknown"
+    lines.append(f"mode: {mode}  run: {run}")
+
+    state = status.get("state") or "unknown"
+    detail = ""
+    if state == "exited":
+        detail = f" (exit {status.get('exit')}, {status.get('outcome') or 'unknown'})"
+    elif state in ("misplaced", "stopped_misplaced"):
+        detail = f" (misplaced: {', '.join(status.get('misplaced') or []) or 'unknown'})"
+    elif state == "unverified" and status.get("note"):
+        detail = f" ({status['note']})"
+    lines.append(f"state: {state}{detail}")
+
+    replica = status.get("replica")
+    if isinstance(replica, Mapping):
+        threads = replica.get("threads") or {}
+        text = (f"replica: age {_seconds(replica.get('age_seconds'))}, lag {replica.get('lag_bytes', 'unknown')} bytes, "
+                f"{len(threads)} thread(s)")
+        for key in ("anomalies", "errors"):
+            found = replica.get(key)
+            if isinstance(found, Mapping) and found:
+                text += f"; {key}: " + ", ".join(f"{tid}: {why}" for tid, why in sorted(found.items()))
+        lines.append(text)
+    else:
+        lines.append("replica: not reported yet")
+
+    last = _name_of(status.get("last_generation"))
+    if last is not None:
+        record = status["last_generation"]
+        text = f"last durable generation: {last} ({record.get('class') or 'unknown'}, age {_seconds(status.get('durable_age_seconds'))})"
+    else:
+        text = "last durable generation: none"
+    unsynced = _name_of(status.get("unsynced_generation"))
+    if unsynced is not None:
+        text += f"; unsynced: {unsynced}"
+    lines.append(text)
+
+    checkpoint = status.get("checkpoint")
+    if isinstance(checkpoint, Mapping):
+        text = (f"checkpoint: {checkpoint.get('state') or 'unknown'}, last outcome {checkpoint.get('last_outcome') or 'none'}, "
+                f"{checkpoint.get('dropped', 0)} dropped")
+        flight = checkpoint.get("in_flight")
+        if isinstance(flight, Mapping):
+            text += f"; in flight: {flight.get('generation')} ({flight.get('trigger')})"
+        if checkpoint.get("reason"):
+            text += f"; reason: {checkpoint['reason']}"
+        lines.append(text)
+    else:
+        lines.append("checkpoint: not reported yet")
+
+    pending = status.get("pending_work")
+    if not isinstance(pending, Mapping):
+        pending = owner.get("pending_work")
+    lines.append(f"pending work: {describe_pending_work(pending)}")
+
+    restored = status.get("restored_from")
+    if not isinstance(restored, Mapping):
+        restored = owner.get("restored_from")
+    if isinstance(restored, Mapping):
+        text = f"restored from: {restored.get('run')}/{restored.get('generation')} ({restored.get('class') or 'unknown'}"
+        if restored.get("captured_at_iso"):
+            text += f", captured {restored['captured_at_iso']}"
+        lines.append(text + ")")
+    if status.get("restore_ignored"):
+        lines.append(f"restore ignored: {status['restore_ignored']} (this allocation's run was reused instead)")
+
+    durable = status.get("durable") or owner.get("durable")
+    if durable:
+        lines.append(f"durable run: {durable}")
+    if status.get("reason"):
+        lines.append(f"reason: {status['reason']}")
+    return "\n".join(lines)
