@@ -287,8 +287,9 @@ on n0033.savio4 (4 cores, confined cgroup):
   Codex's sandbox still working (`symlink` and `bind` sub-tests, 2026-10-15;
   evidence under `evidence-outcomes/job39969504-bind/`). Episode tests
   (`scripts/codex_state_episode.py`, `evidence-outcomes/job39969504-episode/`):
-  rollout skew in either direction resumes (database ahead shows the client
-  turns the model lacks); per-turn tail replication 13 ms, identical at the
+  rollout skew in either direction keeps the model correct, but a database
+  ahead of the rollout leaves the SQLite history permanently wrong (projection
+  watermark past the file's end: phantom turns shown, real turns missing); per-turn tail replication 13 ms, identical at the
   next turn/start; residue 1.7 metadata calls per turn with skills, AGENTS and
   history.jsonl bound, not load-bearing; TUI and remote-control start under
   bwrap; compaction appends to the rollout.
