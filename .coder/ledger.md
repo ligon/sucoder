@@ -275,8 +275,11 @@ on n0033.savio4 (4 cores, confined cgroup):
   `docs/codex-local-state-spike.org`.
 - Outcomes 3-7 (same day, job 39975196 on n0038.savio4, `scripts/codex_state_outcomes.py`,
   record section "Outcomes 3--7"): `thread/resume` needs the rollout JSONL at the
-  absolute path in `threads.path`; without it every history read fails and the
-  SQLite history is only a projection that the server rebuilds from the file.
+  absolute path in `threads.path`; without it every history read fails, and
+  with it a restored database is overridden by the file on resume (12 of 20
+  warm restores showed more turns than their capture): for thread history the
+  generation does not determine what resumes, the shared rollout does, and
+  `sessions/` is not relocatable on this build.
   20/20 seeded abrupt-stop interleavings restored every completed turn from both
   warm and post-crash captures. Unattended `thread/resume` executes a queued
   message once and, with an active goal, issues ~20 model requests per second
