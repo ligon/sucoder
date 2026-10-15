@@ -1,53 +1,61 @@
-#+TITLE: Codex node-local state: Slice 1 implemented; Slice 2 next
+#+TITLE: Codex node-local state: Slice 2 implemented; review fixes and Slice 3 next
 #+DATE: 2026-10-15
-#+STATUS: COMPLETE
+#+STATUS: IN PROGRESS
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
 * Where things stand
 
-Branch =main=, last commit =6e7c998=, shared mirror in sync, tree clean.
-The human chose the bind-mount layout with per-turn rollout replication after the Slice 0 spike; the design records it in the governing section "Revision after Slice 0" of [[file:../docs/codex-local-state.org][the design]], and the measurements are in [[file:../docs/codex-local-state-spike.org][the spike record]].
-Slice 1 (placement and process ownership) is implemented and published.
-Nothing is enabled on any real mirror: =slurm.codex_state= is off by default, applies only to Codex launches on targets with local-disk tiering, and a managed launch starts an empty history separate from the human's shared Codex history.
-The human was offered the choice between starting Slice 2 on this slice and releasing it; no answer had been given when this note was written.
-The earlier handoffs are preserved in [[file:handoffs/2026-10-15-slice0-spike.org]], [[file:handoffs/2026-10-15-slice0-inventory.org]] and [[file:handoffs/2026-10-15-codex-local-state-design.org]].
+Branch =main=, last commit =f99a246=, shared mirror in sync.
+Slice 2 of [[file:../docs/codex-local-state.org][the design]] is implemented and published; its record is the "Slice 2 record" section at the end of the design, which governs where it conflicts with the sections above it.
+Nothing is enabled on any real mirror: =slurm.codex_state= is off by default.
+The human approved spending Codex credits for reviews and trials in this session ("codex credits are less expensive than claude credits").
+The earlier handoffs are preserved under [[file:handoffs/]]; the Slice 1 one is [[file:handoffs/2026-10-15-slice1-implemented.org]].
 
-* What Slice 1 delivers
+* Commits this session
 
-- [[file:../sucoder/codex_state_runner.py][=sucoder/codex_state_runner.py=]] :: staged to the node like the native context installer and run as =python3 <runner> --scope <digest> -- <command>=; Python 3.6-clean because that is the default =python3= on some node images.
-  It resolves =SUCODER_LOCAL_ROOT= at run time, creates =<root>/state/codex/<scope>/<run>/{db,home,snapshots}= with mode 0700, takes a per-scope startup lock, substitutes the =sqlite_home= placeholder with the absolute =db= path, binds local directories over =sessions=, =.tmp=, =tmp=, =thread-writer-locks=, =shell_snapshots= and =app-server-control= of the shared =CODEX_HOME= in a per-process =bwrap= namespace (plus a copy of =skills/= and file binds for =AGENTS.md=, =AGENTS.override.md= and =history.jsonl=), binding only entries that exist and recording the rest, launches Codex as a child in the same process group, ignores =SIGINT=, forwards =SIGTERM= and =SIGHUP= to bwrap's child, verifies placement through =/proc= (every =.sqlite= descriptor under =db=, every rollout descriptor on local disk), and exits with the child's code.
-  Refusals exit 70 (=bwrap= missing, =CODEX_SQLITE_HOME= set, =sqlite_home= in the argv, =config.toml= or a =-p= profile, no =CODEX_HOME/sessions=, no local root); a misplaced store stops Codex and exits 71; =owner.json=, =status.json= and =runner.log= under the run directory record what happened.
-- [[file:../sucoder/codex_state.py][=sucoder/codex_state.py=]] :: the scope digest (SHA-256 of gateway, remote user, resolved mirror path, slot), the placeholder inserted right after the executable, the outermost runner command, the staged source.
-- =slurm.codex_state= :: =enabled=, =checkpoint_minutes=, =checkpoint_timeout_seconds=, =durable_root=; strict, requires =local_disk=; documented in =README.org= and =config.example.yaml=.
-- Wiring :: =launch_agent= decides once per launch (=_codex_state_scope=), inserts the placeholder at the argv stage before nvm and installer wrapping, and wraps the staged runner outermost after the context installer; in remote-control modes the supervisor's server and client invocations both carry the placeholder.
-- [[file:../tests/test_codex_state.py][Tests]] :: 34 cases: helpers, configuration, the wiring for TUI and remote-control commands, the runner on this node against a fake =codex= (placement, misplacement stop, early exit, SIGTERM through bwrap, every refusal) and against the real Codex app-server with the loopback fake model; the bwrap and Codex cases skip where those are absent.
+- =270e9cb= :: launcher passes =--durable-root=, =--checkpoint-minutes=, =--checkpoint-timeout=, =--restore RUN/GENERATION= or =--fresh=; CLI flags =--codex-state-from= and =--codex-state-fresh=; durable-root refusals; README and example config.
+- =a95522e= :: the one baseline test failure fixed: Codex 0.162.1 carries its base instructions as the first developer message, not a top-level =instructions= field.
+- =96a77a4= :: =sucoder/codex_context.py= made Python-3.6-clean with a test running the staged form under =/usr/bin/python3.6=; written by Codex (gpt-6-astra) in an isolated worktree through the Slice 1 runner.
+- =f074a5d= :: runner replicates rollouts and publishes database generations (replicator and checkpointer threads, ordering invariant, =.incoming= publication, warm/sealed/crash).
+- =7f55e44=, =6acc531= :: real-Codex app-server harness (=tests/codex_app_server.py=) and the contracts measured on 0.162.1, including =thread/archive= failing with =EXDEV= under the bind layout.
+- =f92298b= :: runner restores a named generation, gates pending work (detect only), reuses a run in place.
+- =f99a246= :: design record and README.
+
+* In flight when this note was written
+
+- A review-fix pass on the runner (an agent working on =sucoder/codex_state_runner.py= and =tests/test_codex_state_runner.py=) for the eleven findings of Codex's read-only review of =f074a5d=: shrink during replication lag appended as growth; projection-table read failure degrading to watermark 0; replica directory entries not fsynced; ack ordering (=inflight= cleared before =last_generation= written); status-write errors derailing capture; all required stores vanishing reported as a skip; durable =getsize= under the snapshot lock; the ordering rule strengthened to wait for the local rollout size at backup; =holders_of= statting every fd and two shutdown timeouts; existing durable directories unchecked for symlinks/ownership/mode; dir-fsync failure after a successful rename.
+  If that work is uncommitted when you arrive, review the diff and the tests, then commit it as one change.
+- A second list, from Codex's review of =f92298b=, not yet assigned (same file, so it waits for the first pass): a refusal after =place_replicas= begins leaves partial files locally and under the new run's durable =rollouts/=, and =write_run_meta= can refuse after =db/= is installed (stage replicas too, write provenance before activation, roll back on failure); reuse in place does not check that the canonical home and durable root match the recorded provenance; an =owner.json= without pids counts as dead ownership; =OSError= during restore escapes the exit-70 contract; restore has no bound against stalled Lustre reads and writes no status before them; validation gaps (=threads= null crashes =check_replicas=, zero =replica_bytes= skips the prefix check, =match= with =$= accepts a trailing newline, unlisted stores in a generation ignored); manifest hashed on a second read; =pending_work= not persisted on refusal; three test assertions that can pass vacuously.
 
 * Verification
 
-- =tests/test_codex_state.py=: 34 passed here; full suite 1206 passed, 1 failed.
-  The failure, =tests/test_codex_context.py::test_codex_model_receives_prelude_when_client_replaces_developer_instructions=, is a baseline failure against Codex 0.162.1 (its model request no longer carries a top-level =instructions= field) and was not touched.
-- =mypy --follow-imports=silent= clean on the two new modules; the runner compiles under =/usr/bin/python3.6=.
-- By hand: the TUI runs under the runner in a tmux pane (prompt executed, state placed, rollout local, =/quit= exits 0); Codex installs its own =SIGINT= handler, so the runner's inherited ignore is harmless; a ten-second =fc_jevons= job on n0038 confirmed =bwrap=, user namespaces and a working bind on that node image.
-- The real shared home has every bind directory and =history.jsonl=; it lacks =AGENTS.md= and =AGENTS.override.md=, which the runner skips.
-- GitNexus cannot load on this node image (=libssl.so.3=); callers of every touched symbol were grepped by hand and are listed in commit =37225ea=.
+- =tests/test_codex_state.py= + =tests/test_codex_state_runner.py=: 101 passed in 65 s at =f92298b= (bwrap, codex 0.162.1 and python3.6 all present on this node, no skips); =tests/test_codex_app_server.py=: 8 passed in 15 s; =tests/test_codex_context.py=: 14 passed.
+- Full suite at =270e9cb=: 1258 passed, 1 failed (the test fixed in =a95522e=); 81 s serially.
+- =/usr/bin/python3.6 -m py_compile= and =mypy --follow-imports=silent= clean on the runner; mypy on cli/mirror/config/codex_state: 69 errors, all baseline in =cli.py=, none introduced.
+- Real traffic under the Slice 2 runner: a nine-minute gpt-6-astra review session with tool calls, ten warm generations at the one-minute cadence (0.3-0.5 s each) and a sealed final one; the 1.1 MB rollout replicated with offset = replica = local size; 12 MB on Lustre for the run; the shared Codex home untouched (your own concurrent VS Code session on job 39919092 was the only writer there).
+- Real-model restore: that run's sealed generation =000011-4f2b18e6= (run =effbc1a47d31420f9fae86f24f840ddd=, scope =bb3bdae6...=, durable root =/global/scratch/fsa/fc_jevons/ligon/.sucoder-state-trial=) restored under =SUCODER_LOCAL_ROOT=/local/job39969504/trial-root2= (a simulated second allocation) with =codex exec resume <thread>=: 6 stores and the 1.1 MB rollout placed and verified, Codex resumed the thread under its original id and sent 123k tokens of restored history; the first attempt died on an upstream 503 (model at capacity; the final generation correctly came out =crash=), the retry reused the run in place (=--restore= ignored loudly), and gpt-6-astra answered from the restored history alone, naming the commit it had reviewed and its own top finding; sealed final generation on exit 0.
 
-* Next phase: Slice 2
+* Limitations recorded
 
-Replication, generations and restore, per the revision section of the design:
+- Generations accumulate unpruned until Slice 3 (about 1 MB per capture at these sizes; 6 per hour at the default cadence).
+- Archiving a managed thread fails with =EXDEV= until =archived_sessions= joins the bind set and replication, capture and restore cover it.
+- Python 3.6 nodes need the =sqlite3= CLI for backups; a node image without it fails every capture rather than copying files.
+- Lustre episode behaviour (a blocked replicator, a stuck capture, a stalled restore) is reasoned about and tested with permission faults, not reproduced.
 
-1. A watcher in the runner follows each rollout under =home/sessions= by file growth and appends new bytes with =fsync= to =DURABLE/runs/<run>/rollouts/<thread-id>.jsonl=, recording offsets in =replica.json= and the replica age in =status.json=; never in Codex's path.
-2. Database generations through the SQLite backup API, captured only after every replica is confirmed byte-identical to its local file; the manifest records each thread's =next_rollout_byte_offset= from =thread_history_projection_state= and the replica length.
-3. Restore as generation plus replicas placed at the same relative paths and bound again, refusing any generation whose recorded offset exceeds the replica (the spike showed the projection then skips real turns and shows phantom ones); sealed means a backup taken after the owned server stopped.
-4. Before an unattended =thread/resume=, refuse when =goals_1= holds an active goal or =queue_1= holds rows for the thread; =paused= is the hold for goals.
-5. One startup line announcing that the managed history is fresh and separate from the shared one, as the design asks.
-6. Timer checkpoint requests, =RemoteSession= metadata and renewal are Slice 3; do not start them in Slice 2.
+* Next concrete actions
+
+1. Land the two review-fix passes (above), re-run both runner test modules and the full suite, and ask Codex to confirm each of its findings is resolved over =f074a5d..HEAD= (plain =codex exec= with the diff; =review --uncommitted= rejects a custom prompt).
+2. Refresh this note and the design record with the fix commit ids.
+3. Slice 3 per the design: timer checkpoint requests through =checkpoint.request=, =RemoteSession= metadata, renewal with acknowledged handoff, fencing, pins, retention.
+4. Clean-up candidates when done: the trial durable root above, =/local/job39969504/state/codex/= trial scopes, =/local/job39969504/trial-root2=, and the git worktrees under this session's scratchpad (=git worktree prune= after removing them).
 
 * Operational notes
 
-- Use =fc_jevons= for normal-priority burst jobs; =co_carleton= is preemptible and its queue stalled a one-core probe.
-- The existing staged context installer (=codex_context.py=) fails on Python 3.6 node images (=from __future__ import annotations=); make it 3.6-clean in its own change.
-- =~/.sucoder/bulletin.org= does not exist on this host; create it with a dated entry before any infrastructure diagnosis.
-- This slice (job 39969504) is still held, with no work pending; release it with =sucoder release= unless Slice 2 starts.
+- =codex exec= works under the runner with the human's ChatGPT login; =--sandbox read-only= for reviews, =workspace-write= for edits in an isolated worktree; =codex exec review --uncommitted= rejects a custom prompt, so use plain =exec= and have it read =git diff= itself.
+- Use =fc_jevons= for burst jobs; the full suite needs no burst (81 s serially here).
+- GitNexus cannot load on this node image (=libssl.so.3=); callers are grepped by hand and listed in commit messages.
+- =~/.sucoder/bulletin.org= still does not exist on this host.
+- This slice (job 39969504) is held; release with =sucoder release= when the review passes are done, unless Slice 3 starts.
 
 Recorded by Sue.
