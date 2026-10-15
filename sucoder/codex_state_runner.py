@@ -51,10 +51,12 @@ What it does, per ``docs/codex-local-state.org`` ("Revision after Slice 0"):
   run's ``rollouts/.incoming-<thread-id>.jsonl``, ``run.json`` is written,
   and only then is everything activated by renames (the replicas to their
   final names, the sessions tree under ``home/``, the stores into ``db/``).
-  A refusal at any point removes what the attempt created and nothing else;
-  a durable side that does not answer within the restore deadline leaves the
-  launch ``blocked``.  Nothing verifies, nothing is placed and Codex does
-  not start;
+  A refusal at any point up to the ownership record (the bind preparation
+  included) removes what the attempt created and nothing else; a durable
+  side that does not answer within the restore deadline leaves the launch
+  ``blocked`` (the abandoned restore thread is fenced: it writes nothing
+  more and rolls back if it wakes up).  Nothing verifies, nothing is placed
+  and Codex does not start;
 - reuses this allocation's latest run in place when it still has its
   databases and nobody holds them (recorded pids dead, unknown ownership
   refuses), under the same canonical ``CODEX_HOME`` and the same durable run
@@ -117,16 +119,19 @@ def replication_interval():
 def restore_timeout(checkpoint_timeout):
     """Seconds a restore may spend before the launch is reported blocked:
     max(120, 4 x --checkpoint-timeout), or SUCODER_CODEX_STATE_RESTORE_TIMEOUT
-    when it is a positive finite number.  Read at call time."""
+    when it is a positive finite number no greater than a day; either is
+    clamped to a day (``Thread.join`` overflows on a huge wait).  Read at
+    call time."""
     try:
         value = float(os.environ.get("SUCODER_CODEX_STATE_RESTORE_TIMEOUT") or 0)
     except ValueError:
         value = 0.0
-    if value > 0 and value != float("inf"):
-        return value
-    return max(120.0, 4.0 * checkpoint_timeout)
+    if not (value > 0 and value <= RESTORE_TIMEOUT_MAX):     # NaN, non-positive, infinite or huge
+        value = max(120.0, 4.0 * checkpoint_timeout)
+    return min(value, RESTORE_TIMEOUT_MAX)
 
 
+RESTORE_TIMEOUT_MAX = 86400.0
 REPLICATION_INTERVAL = replication_interval()
 LOCAL_BUNDLES_KEPT = 3
 # ``--restore RUN/GENERATION`` names history under DURABLE/runs, never a path.
@@ -394,10 +399,19 @@ def load_manifest(gen_dir, name):
     return manifest, hashlib.sha256(raw).hexdigest()
 
 
+def require_int(value, what):
+    """``value`` when it is a non-negative int; a bool, a float, a numeric
+    string or anything else is a TypeError (``int()`` would coerce 0.5 to 0,
+    "7" to 7 and True to 1), which check_manifest reports as malformed."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise TypeError("%s is %r, not a non-negative integer" % (what, value))
+    return value
+
+
 def check_manifest(manifest, name, run, generation, scope, codex_home, codex_home_real, unattended):
     """The manifest against this launch: reads only, every refusal specific.
     ``threads`` is normalized in place (absent or null becomes {}), so every
-    later step reads the same dict."""
+    later step reads the same dict.  Every count is required to be an int."""
     try:
         if manifest.get("format") != 1:
             raise Refused("generation %s: manifest format %r is not 1; this runner does not claim compatibility with it" % (name, manifest.get("format")))
@@ -424,7 +438,7 @@ def check_manifest(manifest, name, run, generation, scope, codex_home, codex_hom
         for store, record in databases.items():
             if store not in REQUIRED_STORES and store not in OPTIONAL_STORES:
                 raise Refused("generation %s lists an unclassified store %s" % (name, store))
-            int(record["bytes"])
+            require_int(record["bytes"], "databases[%s].bytes" % store)
             str(record["sha256"])
         threads = manifest.get("threads")
         if threads is None:
@@ -433,8 +447,8 @@ def check_manifest(manifest, name, run, generation, scope, codex_home, codex_hom
             raise Refused("generation %s: threads is not an object" % name)
         manifest["threads"] = threads
         for tid, entry in threads.items():
-            int(entry["next_rollout_byte_offset"])
-            int(entry["replica_bytes"])
+            for key in ("next_rollout_byte_offset", "next_rollout_ordinal", "replica_bytes"):
+                require_int(entry[key], "threads[%s].%s" % (tid, key))
             str(entry["rollout_sha256_prefix"])
             relative = entry["relative_path"]
             if not isinstance(relative, str):
@@ -535,6 +549,7 @@ def stage_replicas(manifest, name, sources, staging_sessions, rollouts, attempt)
         local = os.path.join(staging_sessions, entry["relative_path"])
         incoming = os.path.join(rollouts, ".incoming-" + tid + ".jsonl")
         ensure_private_tree(os.path.dirname(local), staging_sessions)
+        attempt.check_fence()           # before each durable write
         attempt.incoming.append(incoming)
         try:
             digest, head, copied = copy_whole(source, [local, incoming], int(entry["replica_bytes"]))
@@ -555,21 +570,25 @@ def activate_restore(name, attempt, staging, db_dir, rollouts):
     name and ``rollouts/`` synced, the staged sessions tree renamed under
     ``home/``, then the staged stores renamed into ``db/``.  Every rename
     stays within one directory or one local filesystem."""
+    attempt.check_fence()
     while attempt.incoming:
         incoming = attempt.incoming[0]
         final = os.path.join(rollouts, os.path.basename(incoming)[len(".incoming-"):])
         if os.path.lexists(final):
             raise Refused("generation %s: %s already exists; a restore never overwrites a replica of the new run" % (name, final))
+        attempt.check_fence()
         os.rename(incoming, final)
         attempt.placed.append(final)
         attempt.incoming.pop(0)
     if attempt.placed:
         fsync_path(rollouts)        # the final names, not only the bytes
+    attempt.check_fence()
     staged_sessions = os.path.join(staging, "sessions")
     if os.path.isdir(staged_sessions):
         os.rename(staged_sessions, attempt.sessions)
         attempt.sessions_installed = True
     os.rename(os.path.join(staging, "db"), db_dir)
+    attempt.db_installed = True
     try:
         os.rmdir(staging)
     except OSError:
@@ -577,24 +596,37 @@ def activate_restore(name, attempt, staging, db_dir, rollouts):
 
 
 class RestoreAttempt(object):
-    """What one restore attempt has created, so a refusal after its first
+    """What one launch attempt has created, so a refusal after its first
     durable write removes exactly that and nothing else: the staging tree,
     the ``.incoming-*`` replicas (or the replicas renamed from them), the
     durable run directory when this attempt created it, the two run.json
-    copies, and the sessions tree it renamed under ``home/``."""
+    copies, the sessions tree it renamed under ``home/`` and the ``db/`` it
+    installed (from its staging, or created empty by a fresh launch).  The
+    transaction lasts until owner.json and latest-run are written: the
+    fresh path records its creations here too.  ``fenced`` is set by the
+    launch when it has reported the restore blocked: from then on every
+    durable write of the abandoned restore thread refuses and rolls back."""
 
-    def __init__(self, local, home_local, durable_run):
+    def __init__(self, local, home_local, durable_run, label="restore"):
+        self.label = label
         self.step = "validating the selector"
         self.staging = os.path.join(local, "restore-staging")
         self.local_meta = os.path.join(local, "run.json")
         self.durable_meta = os.path.join(durable_run, "run.json")
         self.sessions = os.path.join(home_local, "sessions")
+        self.db_dir = os.path.join(local, "db")
         self.durable_run = durable_run
         self.durable_created = False
         self.meta_written = False
         self.sessions_installed = False
+        self.db_installed = False
+        self.fenced = False
         self.incoming = []
         self.placed = []
+
+    def check_fence(self):
+        if self.fenced:
+            raise Refused("fenced: the launch already reported this restore blocked, so its late thread writes nothing more")
 
     def rollback(self):
         removed, kept = [], []
@@ -616,6 +648,8 @@ class RestoreAttempt(object):
         tree(self.staging)
         if self.sessions_installed:
             tree(self.sessions)
+        if self.db_installed:
+            tree(self.db_dir)
         if self.meta_written:
             unlink(self.local_meta)
             unlink(self.local_meta + ".tmp")
@@ -628,8 +662,8 @@ class RestoreAttempt(object):
                 unlink(self.durable_meta)
                 unlink(self.durable_meta + ".tmp")
         if removed or kept:
-            log("restore rolled back: removed %s%s" % (", ".join(removed) or "nothing",
-                                                       "; could not remove " + ", ".join(kept) if kept else ""))
+            log("%s rolled back: removed %s%s" % (self.label, ", ".join(removed) or "nothing",
+                                                  "; could not remove " + ", ".join(kept) if kept else ""))
 
 
 def restore_generation(selector, durable, durable_base, scope, meta, unattended, local, home_local, durable_run, status, attempt):
@@ -673,12 +707,14 @@ def restore_generation(selector, durable, durable_base, scope, meta, unattended,
         if unattended:
             gate_unattended(pending, "generation " + name)
         attempt.step = "creating the durable run directory"
+        attempt.check_fence()           # the first durable write
         attempt.durable_created = not os.path.isdir(durable_run)
         ensure_durable_run(durable_run, durable_base)
         attempt.step = "staging the replicas"
         rollout_bytes = stage_replicas(manifest, name, sources, os.path.join(staging, "sessions"), rollouts, attempt)
         attempt.step = "writing run.json"
         meta["parent"] = {"run": run, "generation": generation, "class": manifest["class"], "manifest_sha256": manifest_sha}
+        attempt.check_fence()
         attempt.meta_written = True
         write_run_meta(meta, local, durable_run)
         attempt.step = "activating"
@@ -706,8 +742,13 @@ def restore_bounded(timeout, attempt, *args):
     """``restore_generation`` on a daemon thread, joined with the deadline: a
     durable side that does not answer (an episode on the shared filesystem)
     blocks that thread, which is abandoned, and the launch reports blocked
-    instead of hanging; nothing was started.  The normal path is the same
-    call on another thread."""
+    instead of hanging; nothing was started.  The abandoned thread is fenced
+    first: should it wake up later, its next durable write refuses and it
+    rolls back what it had created instead of activating a restore the
+    launch has already reported blocked (a thread past its last fence check
+    still finishes that activation; nothing reuses the result, since no
+    owner.json is written for it).  The normal path is the same call on
+    another thread."""
     outcome = {}
 
     def work():
@@ -715,12 +756,15 @@ def restore_bounded(timeout, attempt, *args):
             outcome["result"] = restore_generation(*args)
         except BaseException as exc:
             outcome["error"] = exc
+            if attempt.fenced:          # nobody reads the outcome of an abandoned thread
+                log("the abandoned restore thread ended: %s" % exc)
 
     worker = threading.Thread(target=work, name="codex-state-restore")
     worker.daemon = True
     worker.start()
     worker.join(timeout)
     if worker.is_alive():
+        attempt.fenced = True
         raise Blocked("the durable side has not answered in %ds while %s; the restore is blocked, nothing is in use and Codex did not "
                       "start. Retry when the durable filesystem answers, or pass --fresh for a new, empty history" % (timeout, attempt.step))
     if "error" in outcome:
@@ -934,16 +978,29 @@ def ensure_private_dir(path, parent_is_ours=True):
 def ensure_private_tree(path, base):
     """Every component of ``path`` from ``base`` downward: checked when it
     exists, created when it does not.  Components above ``base`` are the
-    operator's filesystem and are not judged."""
+    operator's filesystem and are not judged; the missing ones are created
+    one by one from the first missing component down, each one's parent
+    synced (best effort there: logged when it fails), so a generation under
+    a brand-new durable root never depends on a name that was not synced."""
     base = os.path.normpath(base)
     path = os.path.normpath(path)
     if path != base and not path.startswith(base + "/"):
         raise Refused("%s is not under %s" % (path, base))
+    missing = []
     above = os.path.dirname(base)
-    if above and not os.path.isdir(above):
-        # The operator's filesystem above the base: a configured root may be
-        # new, so its missing ancestors are created and not judged.
-        os.makedirs(above, 0o700, exist_ok=True)
+    while above and above != "/" and not os.path.isdir(above):
+        missing.append(above)
+        above = os.path.dirname(above)
+    for directory in reversed(missing):
+        try:
+            os.mkdir(directory, 0o700)
+        except FileExistsError:
+            continue
+        try:
+            fsync_path(os.path.dirname(directory))
+        except OSError as exc:
+            log("created %s but could not sync its parent directory (%s: %s); the parent is the operator's and the launch goes on" % (
+                directory, type(exc).__name__, exc))
     current = base
     ensure_private_dir(current, parent_is_ours=False)
     if path != base:
@@ -1787,10 +1844,28 @@ class Checkpointer(object):
             fields["last_generation"] = last
         return fields
 
+    def adopt_unsynced(self, record):
+        """A reused run's outstanding unsynced generation, from the status.json
+        the earlier launch left: taken over when it names a generation
+        directory that exists under this durable run, so the next capture's
+        retry acknowledges it; anything else is ignored with a log line.
+        Before the scheduler starts, so no lock."""
+        usable = (isinstance(record, dict) and isinstance(record.get("name"), str) and isinstance(record.get("path"), str)
+                  and record["path"] == os.path.join(self.generations, record["name"]) and os.path.isdir(record["path"]))
+        if not usable:
+            log("status.json records an unusable unsynced_generation (%r); it is not taken over" % (record,))
+            return False
+        self.pending_sync = record
+        log("generation %s of the reused run is not acknowledged yet (the sync of %s failed in the earlier launch); "
+            "retried before the next capture" % (record["name"], self.generations))
+        return True
+
     def retry_sync(self):
         """A generation published but whose directory entry's sync failed is
-        acknowledged only once ``generations/`` syncs: retried before every
-        later capture and at the exit, and promoted to the last generation."""
+        acknowledged only once ``generations/`` syncs: retried at the start
+        of every later capture (the final one included, under its deadline on
+        its own worker; never on the exit path itself, where a blocked sync
+        would hang the exit) and promoted to the last generation."""
         with self.inflight_lock:
             pending = self.pending_sync
         if pending is None:
@@ -2008,11 +2083,23 @@ class Checkpointer(object):
 
     # -- after Codex exits
 
+    def describe_unsynced(self):
+        """The exit path's note on a generation still unacknowledged: its sync
+        is retried only inside a capture, so when no final capture runs it
+        stays as it is."""
+        with self.inflight_lock:
+            pending = self.pending_sync
+        if pending is None:
+            return ""
+        return "; generation %s stays unacknowledged (its directory sync is retried only inside a capture)" % pending["name"]
+
     def final(self, cls):
         """One last replication pass and the sealed or crash capture under one
         shutdown deadline of the checkpoint timeout: waiting for a capture in
         flight spends from it, the final capture gets what remains, and when
-        nothing remains it is skipped.  Release is never blocked."""
+        nothing remains it is skipped.  Release is never blocked: nothing here
+        touches the durable side itself (the final capture's worker retries an
+        unsynced generation's directory sync, under the deadline)."""
         self.stop_event.set()
         if self.thread.is_alive():
             self.thread.join(2.0)
@@ -2025,7 +2112,8 @@ class Checkpointer(object):
                 break
             time.sleep(0.1)
         if flight is not None:
-            log("final %s capture skipped: capture %s is still in flight; last durable generation: %s" % (cls, flight["generation"], self.describe_last()))
+            log("final %s capture skipped: capture %s is still in flight; last durable generation: %s%s" % (
+                cls, flight["generation"], self.describe_last(), self.describe_unsynced()))
             return
         with self.inflight_lock:
             listed = self.seq is not None
@@ -2033,14 +2121,13 @@ class Checkpointer(object):
             # The scheduler never got its listing of generations/ back: the
             # durable side is not answering, and the exit path does not ask it.
             log("final %s capture skipped: the durable generations listing never completed, so nothing could be published; "
-                "last durable generation: %s" % (cls, self.describe_last()))
+                "last durable generation: %s%s" % (cls, self.describe_last(), self.describe_unsynced()))
             return
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             log("final %s capture skipped: the %ds shutdown budget was spent waiting for the capture in flight; last durable "
-                "generation: %s" % (cls, self.timeout, self.describe_last()))
+                "generation: %s%s" % (cls, self.timeout, self.describe_last(), self.describe_unsynced()))
             return
-        self.retry_sync()
         worker = self.begin("final", cls, final_pass=True, budget=remaining)
         if worker is None:
             return
@@ -2100,8 +2187,11 @@ def run(args):
         durable_run = os.path.join(durable, "runs", run_id)
         restored = None
         restore_ignored = None
+        attempt = None
+        unsynced_before = None
         pending = {"active_goals": [], "queued": {}}
         if mode == "reuse":
+            unsynced_before = status.data.get("unsynced_generation")    # the earlier launch's, taken over below
             if args.restore:
                 restore_ignored = args.restore
                 log("IGNORING --restore %s: this allocation already holds run %s with its local databases, and within one "
@@ -2131,40 +2221,61 @@ def run(args):
                 "codex_home": codex_home, "codex_home_real": codex_home_real,
                 "created": created, "created_iso": utc_iso(created),
             }
+            attempt = RestoreAttempt(local, home_local, durable_run, label=mode if mode == "restore" else "fresh launch")
+            staging = attempt.staging
             if mode == "restore":
-                attempt = RestoreAttempt(local, home_local, durable_run)
-                staging = attempt.staging
                 name, _, gen_dir = selector_paths(durable, selector)
                 status.update("restoring", restore=name, source=gen_dir)    # before the first durable read
                 restored, pending = restore_bounded(restore_timeout(args.checkpoint_timeout), attempt, selector, durable, durable_base,
                                                     args.scope, meta, args.unattended, local, home_local, durable_run, status, attempt)
             else:
+                attempt.durable_created = not os.path.isdir(durable_run)
                 ensure_durable_run(durable_run, durable_base)    # refused before anything local is created
                 mkdir_private(db_dir)
+                attempt.db_installed = True
+                attempt.meta_written = True
                 write_run_meta(meta, local, durable_run)
         # The binds last: a restore has renamed its sessions tree under home/
-        # by now, so nothing created the directory before it.
-        binds, skipped = prepare_binds(codex_home_real, home_local, keep_existing=(mode == "reuse"))
-        argv = bwrap_argv(binds, command)
-        owner = {
-            "scope": args.scope, "run": run_id, "local": local, "db": db_dir, "codex_home": codex_home,
-            "codex_home_real": codex_home_real, "job": meta["allocation"]["job"], "node": meta["allocation"]["node"],
-            "durable_root": durable_base, "durable": durable_run,
-            "bound": [{"local": l, "target": t} for l, t in binds], "skipped": skipped,
-            "runner_pid": os.getpid(), "started": time.time(), "command": elide(command),
-            "reused_run": mode == "reuse", "restored_from": restored, "pending_work": pending,
-        }
-        if owner_before is not None:
-            previous = list(owner_before.get("previous") or [])
-            previous.append({"runner_pid": owner_before.get("runner_pid"), "child_pid": owner_before.get("child_pid"),
-                             "started": owner_before.get("started")})
-            owner["previous"] = previous
-            owner["first_started"] = owner_before.get("first_started", owner_before.get("started"))
-        if restore_ignored:
-            owner["restore_ignored"] = restore_ignored
-        write_json(os.path.join(local, "owner.json"), owner)
-        with open(os.path.join(scope_dir, "latest-run"), "w") as handle:
-            handle.write(run_id + "\n")
+        # by now, so nothing created the directory before it.  Until owner.json
+        # and latest-run are written the launch is still the attempt's
+        # transaction: a refusal or an OSError here takes back what a restore
+        # or a fresh launch created (a reused run has nothing to take back),
+        # so the next launch starts clean.
+        launch = {"restore": "restore of %s" % args.restore, "fresh": "the new run %s" % run_id[:8],
+                  "reuse": "reuse of run %s" % run_id[:8]}[mode]
+        step = "preparing the binds"
+        try:
+            binds, skipped = prepare_binds(codex_home_real, home_local, keep_existing=(mode == "reuse"))
+            argv = bwrap_argv(binds, command)
+            owner = {
+                "scope": args.scope, "run": run_id, "local": local, "db": db_dir, "codex_home": codex_home,
+                "codex_home_real": codex_home_real, "job": meta["allocation"]["job"], "node": meta["allocation"]["node"],
+                "durable_root": durable_base, "durable": durable_run,
+                "bound": [{"local": l, "target": t} for l, t in binds], "skipped": skipped,
+                "runner_pid": os.getpid(), "started": time.time(), "command": elide(command),
+                "reused_run": mode == "reuse", "restored_from": restored, "pending_work": pending,
+            }
+            if owner_before is not None:
+                previous = list(owner_before.get("previous") or [])
+                previous.append({"runner_pid": owner_before.get("runner_pid"), "child_pid": owner_before.get("child_pid"),
+                                 "started": owner_before.get("started")})
+                owner["previous"] = previous
+                owner["first_started"] = owner_before.get("first_started", owner_before.get("started"))
+            if restore_ignored:
+                owner["restore_ignored"] = restore_ignored
+            step = "writing owner.json"
+            write_json(os.path.join(local, "owner.json"), owner)
+            step = "recording the latest run"
+            with open(os.path.join(scope_dir, "latest-run"), "w") as handle:
+                handle.write(run_id + "\n")
+        except Refused:
+            if attempt is not None:
+                attempt.rollback()
+            raise
+        except OSError as exc:
+            if attempt is not None:
+                attempt.rollback()
+            raise Refused("%s failed while %s: %s: %s" % (launch, step, type(exc).__name__, exc))
         fields = {"scope": args.scope, "run": run_id, "db": db_dir, "durable": durable_run, "bound": [t for _, t in binds],
                   "skipped": skipped, "mode": mode, "reused_run": mode == "reuse", "restored_from": restored, "pending_work": pending}
         if restore_ignored:
@@ -2239,6 +2350,8 @@ def run(args):
     replicator.start()
     checkpointer = Checkpointer(local, db_dir, os.path.join(home_local, "sessions"), durable_run, replicator, status, meta,
                                 args.checkpoint_minutes, args.checkpoint_timeout, placed)
+    if unsynced_before is not None:
+        checkpointer.adopt_unsynced(unsynced_before)
     checkpointer.start()
     while True:
         try:
@@ -2288,7 +2401,7 @@ def main(argv=None):
                              "under ABS_BASE/codex/<scope>/runs): its stores are staged and verified locally, its rollout replicas placed "
                              "at their recorded paths, and Codex starts on them; refused with exit 70 when anything does not verify, "
                              "with nothing of the attempt left behind. A durable side that does not answer within max(120 s, 4 x "
-                             "--checkpoint-timeout) (SUCODER_CODEX_STATE_RESTORE_TIMEOUT overrides, in seconds) leaves the launch "
+                             "--checkpoint-timeout) (SUCODER_CODEX_STATE_RESTORE_TIMEOUT overrides, in seconds, at most a day) leaves the launch "
                              "blocked, exit 70: retry, or pass --fresh. Ignored when this allocation already holds an intact run for "
                              "the scope, which is reused in place instead")
     parser.add_argument("--fresh", action="store_true",
