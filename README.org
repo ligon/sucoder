@@ -1120,8 +1120,8 @@ would show phantom turns), and reports active goals and queued items
 it finds rather than altering them; a restore that the durable
 filesystem does not answer within =max(120 s, 4 x
 checkpoint_timeout_seconds)= (=SUCODER_CODEX_STATE_RESTORE_TIMEOUT=
-overrides) is reported =blocked= and refused rather than left
-hanging.  The transfer-fencing and
+overrides, at most a day) is reported =blocked= and refused rather
+than left hanging.  The transfer-fencing and
 retention protocol is Slice 3, so generations accumulate unpruned for
 now, and archiving a managed thread fails until =archived_sessions=
 joins the bind set.
