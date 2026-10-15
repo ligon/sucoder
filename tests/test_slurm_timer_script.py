@@ -7,6 +7,7 @@ on n0036.savio4, 2026-09-09).  Nothing here execs ``tmux`` or ``squeue``.
 """
 from __future__ import annotations
 
+import difflib
 import os
 import re
 import shlex
@@ -16,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from sucoder.slurm_timer import WIP_SNAPSHOT_SH, build_timer_script
+from sucoder.slurm_timer import CODEX_CHECKPOINT_SH, WIP_SNAPSHOT_SH, build_timer_script
 
 _bash = pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
 _git = pytest.mark.skipif(shutil.which("git") is None, reason="git not available")
@@ -272,6 +273,12 @@ def _drive(tmp_path: Path, time_left: list, **render) -> list:
     a failed query; (rc, output) also permits partial output on failure.
     Returns the messages the human would have seen, in order.
     """
+    return _drive_run(tmp_path, time_left, **render)[0]
+
+
+def _drive_run(tmp_path: Path, time_left: list, **render) -> tuple:
+    """:func:`_drive`, also returning the finished process: its stdout is
+    what ``--ensure`` would have appended to ``timer.log``."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     counter, log = tmp_path / "n", tmp_path / "msgs"
@@ -309,8 +316,8 @@ def _drive(tmp_path: Path, time_left: list, **render) -> list:
                             capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     if not log.exists():
-        return []
-    return [ln for ln in log.read_text().splitlines() if ln.strip()]
+        return [], result
+    return [ln for ln in log.read_text().splitlines() if ln.strip()], result
 
 
 @_bash
@@ -580,3 +587,286 @@ def test_a_present_git_writes_no_such_warning(tmp_path):
     )
     subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
     assert not warn.exists() or "git is not on PATH" not in warn.read_text()
+
+
+# -- managed Codex state: each deadline warning requests a capture -------------
+#
+# A managed Codex launch (docs/codex-local-state.org) stages a runner that
+# owns the Codex process and captures its databases on its own cadence.  The
+# timer's part is one more capture at each deadline warning: it touches
+# <local root>/state/codex/<scope>/<run>/checkpoint.request, which the runner
+# polls, consumes and services single-flight.  The timer never captures,
+# hashes or writes anything durable, and without a scope it is unchanged.
+
+SCOPE = "0123456789abcdef" * 4            # a 64-hex scope digest
+RUN = "fedcba9876543210" * 2              # a 32-hex run id
+_RUNTIME_ROOT = '/local/job"${SLURM_JOB_ID}"'
+_CLONE = _RUNTIME_ROOT + "/mirrors/K-Aggregators"
+
+
+def _managed(**kw) -> str:
+    base = dict(tmux_socket="s", snapshot_dir_shell=_CLONE,
+                codex_state_scope=SCOPE, local_disk_root="/local")
+    base.update(kw)
+    return _render(**base)
+
+
+def test_without_a_scope_the_script_is_byte_identical():
+    """The feature is additive: a Claude launch, or a target with
+    codex_state off, ships exactly the script it shipped before."""
+    plain = _render(tmux_socket="s", snapshot_dir_shell=_CLONE)
+    assert plain == _render(tmux_socket="s", snapshot_dir_shell=_CLONE, codex_state_scope=None)
+    assert "codex" not in plain.lower() and "checkpoint" not in plain.lower()
+    diff = list(difflib.ndiff(plain.splitlines(), _managed().splitlines()))
+    assert not [ln for ln in diff if ln.startswith("- ")], "a scope may only add lines"
+    added = [ln[2:] for ln in diff if ln.startswith("+ ")]
+    assert added[0] == f"CODEX_STATE_DIR={_RUNTIME_ROOT}/state/codex/{SCOPE}"
+    assert added.count("        request_codex_checkpoint") == 3
+    assert set(added[1:]) - {"        request_codex_checkpoint", ""} == set(CODEX_CHECKPOINT_SH.splitlines())
+
+
+def test_scope_renders_the_request_function_and_calls_it_at_each_warning():
+    s = _managed()
+    assert not re.search(r"@[A-Z_]+@", s), s
+    assert f"\nCODEX_STATE_DIR={_RUNTIME_ROOT}/state/codex/{SCOPE}\n" in s
+    assert "request_codex_checkpoint() {" in s
+    assert s.index("request_codex_checkpoint() {") < s.index("        request_codex_checkpoint\n")
+    # Right after snapshot_wip in each of the three warning branches...
+    assert s.count("        snapshot_wip\n        request_codex_checkpoint\n") == 3
+    # ...and nowhere else: one definition, three calls -- not on the
+    # periodic tick (the runner has its own cadence) and not once the job
+    # has left the queue (nothing left to request).
+    assert s.count("request_codex_checkpoint") == 4
+    assert "request_codex_checkpoint" not in s[s.index('if [ "$SNAPSHOT_MINUTES" -gt 0 ]'):]
+    # A literal job id spells the root as local_root_shell does for it.
+    literal = _render(job_id=42, codex_state_scope=SCOPE, local_disk_root="/local/")
+    assert f"\nCODEX_STATE_DIR=/local/job42/state/codex/{SCOPE}\n" in literal
+
+
+def test_request_function_touches_local_control_files_only():
+    """No durable path, no backup, no hashing, nothing created but the
+    request: the runner owns all of that.  Everything the function reads
+    or writes hangs off $CODEX_STATE_DIR, and the only commands it runs are
+    cat, the ``:`` redirection and echo."""
+    for token in (".sucoder-state", "generations", "rollouts", "durable", "sha256",
+                  "sqlite", "manifest", "mkdir", "git ", "flock", "sleep"):
+        assert token not in CODEX_CHECKPOINT_SH, token
+    # "could not touch" is a message; no line runs touch, git, or the like.
+    assert not re.search(r"^\s*(touch|git|mkdir|cp|mv|rm|find|tar)\b", CODEX_CHECKPOINT_SH, re.M)
+    assert set(re.findall(r"\$\w+", CODEX_CHECKPOINT_SH)) == {
+        "$CODEX_STATE_DIR", "$run", "$why", "$request",
+        "$_codex_request_said_ok", "$_codex_request_said_fail",
+    }
+    assert "return 0" in CODEX_CHECKPOINT_SH and "exit" not in CODEX_CHECKPOINT_SH
+
+
+def test_scope_is_validated_and_needs_the_local_root():
+    """``shlex.quote`` is the identity on a hex digest, so "the scope is
+    quoted" is observable only as the refusal of anything that is not one
+    -- a path component is built from it."""
+    assert shlex.quote(SCOPE) == SCOPE
+    for bad in ("a b", "../" + SCOPE[3:], SCOPE[:-1], SCOPE + "0", SCOPE.upper(), SCOPE + "'", ""):
+        with pytest.raises(ValueError, match="64-hex"):
+            _managed(codex_state_scope=bad)
+    for root in (None, ""):
+        with pytest.raises(ValueError, match="local_disk_root"):
+            _render(tmux_socket="s", codex_state_scope=SCOPE, local_disk_root=root)
+
+
+@_bash
+def test_bash_syntax_with_a_scope(tmp_path):
+    r = _bash_n(_managed(), tmp_path)
+    assert r.returncode == 0, r.stderr
+    r = _bash_n(_render(job_id=42, codex_state_scope=SCOPE, local_disk_root="/local"), tmp_path)
+    assert r.returncode == 0, r.stderr
+
+
+def _request(state_dir: Path, *, runs: int = 1, between: str = "") -> subprocess.CompletedProcess:
+    """Run ``request_codex_checkpoint`` ``runs`` times against ``state_dir``
+    (the rendered ``$CODEX_STATE_DIR``), with ``between`` executed after
+    the first call.  stdout is what ``timer.log`` would receive."""
+    script = (
+        "set -u\n"
+        f"CODEX_STATE_DIR={shlex.quote(str(state_dir))}\n"
+        + CODEX_CHECKPOINT_SH + "\n"
+        + "request_codex_checkpoint\n" + between
+        + "request_codex_checkpoint\n" * (runs - 1)
+    )
+    return subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+
+
+def _tree(root: Path) -> set:
+    return {str(p.relative_to(root)) for p in root.rglob("*")} if root.exists() else set()
+
+
+@pytest.fixture
+def managed_root(tmp_path):
+    """``<local root>/state/codex/<scope>`` as the runner leaves it under
+    ``<tmp>/local/job42``: a run directory and ``latest-run`` naming it."""
+    state_dir = tmp_path / "local" / "job42" / "state" / "codex" / SCOPE
+    (state_dir / RUN).mkdir(parents=True)
+    (state_dir / "latest-run").write_text(RUN + "\n")
+    return state_dir
+
+
+@_bash
+def test_request_touches_the_latest_runs_checkpoint_request(managed_root):
+    before = _tree(managed_root)
+    r = _request(managed_root)
+    assert r.returncode == 0 and r.stderr == ""
+    request = managed_root / RUN / "checkpoint.request"
+    assert request.is_file() and request.stat().st_size == 0
+    assert _tree(managed_root) == before | {f"{RUN}/checkpoint.request"}
+    assert r.stdout.count("requested a Codex state checkpoint") == 1
+    assert str(request) in r.stdout
+
+
+@_bash
+def test_request_logs_once_per_outcome_not_per_warning(managed_root):
+    r = _request(managed_root, runs=3)
+    assert r.returncode == 0
+    assert r.stdout.count("sucoder timer:") == 1
+    assert (managed_root / RUN / "checkpoint.request").is_file()
+
+
+@_bash
+def test_request_without_a_run_leaves_nothing_behind_and_does_not_fail(tmp_path):
+    state_dir = tmp_path / "local" / "job42" / "state" / "codex" / SCOPE
+    r = _request(state_dir, runs=3)                 # no scope directory at all
+    assert r.returncode == 0 and r.stderr == ""
+    assert not (tmp_path / "local").exists()
+    assert r.stdout.count("could not request a Codex state checkpoint") == 1
+    assert "no managed run is recorded" in r.stdout
+    state_dir.mkdir(parents=True)                   # the runner never recorded a run
+    r = _request(state_dir)
+    assert r.returncode == 0 and _tree(state_dir) == set()
+
+
+@_bash
+@pytest.mark.parametrize("latest, why", [
+    ("not-a-run\n", "does not name a run"),
+    ("../../escape\n", "does not name a run"),
+    (RUN[::-1] + "\n", "is missing"),       # well formed, but no such run directory
+])
+def test_request_refuses_a_bad_or_absent_run(tmp_path, latest, why):
+    state_dir = tmp_path / "state" / "codex" / SCOPE
+    state_dir.mkdir(parents=True)
+    (state_dir / "latest-run").write_text(latest)
+    before = _tree(tmp_path)
+    r = _request(state_dir, runs=2)
+    assert r.returncode == 0 and r.stderr == ""
+    assert _tree(tmp_path) == before                # nothing created, nowhere
+    assert r.stdout.count("could not request") == 1 and why in r.stdout
+
+
+@_bash
+def test_request_recovers_once_the_runner_records_a_run(tmp_path):
+    """Each outcome logs on its first occurrence: a warning before the
+    runner placed its run logs the failure, a later one logs the success."""
+    state_dir = tmp_path / "state" / "codex" / SCOPE
+    state_dir.mkdir(parents=True)
+    between = (
+        f"mkdir -p {shlex.quote(str(state_dir / RUN))}\n"
+        f"echo {RUN} > {shlex.quote(str(state_dir / 'latest-run'))}\n"
+    )
+    r = _request(state_dir, runs=3, between=between)
+    assert r.returncode == 0
+    assert (state_dir / RUN / "checkpoint.request").is_file()
+    lines = [ln for ln in r.stdout.splitlines() if ln.startswith("sucoder timer:")]
+    assert len(lines) == 2 and "could not request" in lines[0] and "requested" in lines[1]
+
+
+@_bash
+def test_deadline_warnings_request_a_checkpoint_from_the_runner(tmp_path, managed_root):
+    """End to end: the rendered script under real bash with squeue and tmux
+    stubbed.  Three warnings fire, the request lands on local disk, and
+    timer.log carries one line about it."""
+    msgs, result = _drive_run(tmp_path, ["2:00:00", "25:00", "12:00", "4:00"],
+                              codex_state_scope=SCOPE, local_disk_root=str(tmp_path / "local"))
+    assert len([m for m in msgs if "min left" in m]) == 3
+    assert (managed_root / RUN / "checkpoint.request").is_file()
+    assert result.stdout.count("requested a Codex state checkpoint") == 1
+
+
+@_bash
+def test_periodic_tick_and_job_gone_do_not_request_a_checkpoint(tmp_path, managed_root):
+    """The runner has its own cadence; the timer asks at the warnings only,
+    and a job that has left the queue has nothing left to request."""
+    msgs, result = _drive_run(tmp_path, ["2:00:00", "1:59:00", "1:58:00"], snapshot_minutes=1,
+                              codex_state_scope=SCOPE, local_disk_root=str(tmp_path / "local"))
+    assert not [m for m in msgs if "min left" in m]
+    assert any("no longer queued" in m for m in msgs), msgs
+    assert not (managed_root / RUN / "checkpoint.request").exists()
+    assert "Codex state checkpoint" not in result.stdout
+
+
+@_bash
+def test_warnings_without_a_managed_run_leave_the_local_root_untouched(tmp_path):
+    local = tmp_path / "local" / "job42"
+    local.mkdir(parents=True)
+    msgs, result = _drive_run(tmp_path, ["25:00", "12:00", "4:00"],
+                              codex_state_scope=SCOPE, local_disk_root=str(tmp_path / "local"))
+    assert len([m for m in msgs if "min left" in m]) == 3
+    assert _tree(local) == set()
+    assert result.stdout.count("could not request a Codex state checkpoint") == 1
+
+
+# -- the launcher hands the scope to the timer for a managed Codex launch ----
+
+def _confined_launch(tmp_path, monkeypatch, command):
+    """A confined launch end to end through ``_launch_confined`` with the
+    scheduler stubbed (``tests.test_mirror._confined_responder``), managed
+    Codex state enabled on the target the way ``tests.test_codex_state``
+    wires it, and ``mirror.build_timer_script`` wrapped to capture its
+    arguments.  Returns (captured kwargs, staged batch script, staged timer).
+    """
+    from sucoder import mirror as mirror_mod
+    from sucoder.config import AgentLauncher, CodexStateConfig
+    from tests.test_mirror import _confined_responder
+    from tests.test_remote_control import _manager
+
+    manager, ctx = _manager(tmp_path, monkeypatch, remote=True)
+    ctx.settings.remote.slurm.local_disk = "/local"
+    ctx.settings.remote.slurm.codex_state = CodexStateConfig(enabled=True)
+    ctx.settings.agent_launcher = AgentLauncher(command=["claude"])
+    manager.executor.local_disk_root = "/local"
+    manager.executor.agent_user = "coder"
+    monkeypatch.setattr("sucoder.session._session_dir", lambda: tmp_path / "sessions")
+    monkeypatch.setattr(mirror_mod.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr(manager, "_resolve_remote_path", lambda ctx: "/global/scratch/u/mirrors/sample")
+    calls = []
+    manager.executor.run_agent = _confined_responder(calls, sbatch_out="9")
+    captured = []
+    real = mirror_mod.build_timer_script
+
+    def capture(**kw):
+        captured.append(kw)
+        return real(**kw)
+
+    monkeypatch.setattr(mirror_mod, "build_timer_script", capture)
+    manager.launch_agent(ctx, sync=False, command_override=list(command),
+                         supports_inline_prompt=True, detached=True)
+    batch = next(c["input"] for c in calls
+                 if c["args"][0] == "sh" and c["input"] and "/job-sample.sh" in c["args"][2])
+    timer = next(c["input"] for c in calls if "sucoder-slurm-timer" in c["args"] and c["input"])
+    assert len(captured) == 1
+    return captured[0], batch, timer
+
+
+def test_managed_codex_launch_hands_the_scope_to_the_timer(tmp_path, monkeypatch):
+    from sucoder.codex_state import scope_id
+
+    kw, batch, timer = _confined_launch(tmp_path, monkeypatch, ["codex"])
+    scope = scope_id("cluster", "coder", "/global/scratch/u/mirrors/sample")
+    assert kw["codex_state_scope"] == scope and kw["local_disk_root"] == "/local"
+    assert f'\nCODEX_STATE_DIR=/local/job"${{SLURM_JOB_ID}}"/state/codex/{scope}\n' in timer
+    assert timer.count("        request_codex_checkpoint\n") == 3
+    # The same digest the staged runner is told, so the two meet on disk.
+    assert "codex-state-runner" in batch and f"--scope {scope}" in batch
+
+
+def test_claude_launch_hands_no_scope_to_the_timer(tmp_path, monkeypatch):
+    kw, batch, timer = _confined_launch(tmp_path, monkeypatch, ["claude"])
+    assert kw["codex_state_scope"] is None
+    assert "codex" not in timer.lower() and "checkpoint" not in timer.lower()
+    assert "codex-state-runner" not in batch

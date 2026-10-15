@@ -1094,7 +1094,11 @@ thread's rollout, as it grows, to =DURABLE/runs/<run>/rollouts/<thread-id>.jsonl
 and every =checkpoint_minutes= it captures the databases into a
 generation under =DURABLE/runs/<run>/generations/<generation>/= with a
 =manifest.json= that records, per thread, the rollout offset the
-databases correspond to.  A generation is /warm/ when taken while Codex
+databases correspond to.  The deadline timer also requests a capture at
+each of its 30-, 15- and 5-minute warnings by touching the run's
+=checkpoint.request= on local disk, which the runner services on its own
+single-flight worker (the timer itself never backs up, hashes or writes
+to the durable root).  A generation is /warm/ when taken while Codex
 runs, /sealed/ when taken after the owned server has stopped cleanly,
 and /crash/ when taken after an abnormal or unknown exit (kept for
 explicit recovery, never promoted to sealed); nothing in the shared home

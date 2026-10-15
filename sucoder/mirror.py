@@ -3078,6 +3078,7 @@ class MirrorManager:
         """Submit + (for interactive) attach a confined sbatch launch.
 
         Flow: reuse-probe -> build agent cmd (prelude to NFS, ``bash -lc``
+        codex_state_scope: Optional[str] = None,
         wrap) -> stage batch script to NFS -> ``sbatch`` -> persist id
         IMMEDIATELY -> bounded RUNNING-poll -> persist node -> confirm the
         tmux session -> attach (interactive) or return (detached / renew).
@@ -3091,6 +3092,11 @@ class MirrorManager:
         are intentionally NOT run: detaching tmux returns rc=0 while the
         agent keeps running inside the job, so those end-of-session hooks
         would fire wrongly.  The agent's lifecycle is owned by the job.
+        ``codex_state_scope`` is the managed Codex state scope digest the
+        launch decided (``_codex_state_launch(ctx).scope``) or None; the
+        staged deadline timer uses it to request a capture from the runner
+        at each warning (``slurm_timer.build_timer_script``).
+
         """
         from .session import RemoteSession
 
@@ -3196,7 +3202,9 @@ class MirrorManager:
         # the first staged file is still the batch script.
         if local_disk_root:
             # Snapshot the working clone (runtime path: the job id is not
-            # known yet), not the shared mirror.
+            # known yet), not the shared mirror.  A managed Codex launch
+            # (scope given; managed state is local-disk only) also has
+            # each warning request a capture from the staged runner.
             timer_script = build_timer_script(
                 mirror_token=safe,
                 tmux_session=session_name,
@@ -3208,6 +3216,8 @@ class MirrorManager:
         else:
             timer_script = build_timer_script(
                 mirror_token=safe,
+                codex_state_scope=codex_state_scope,
+                local_disk_root=local_disk_root,
                 tmux_session=session_name,
                 tmux_socket=socket,
                 snapshot_dir=mirror_path,
@@ -3593,6 +3603,7 @@ class MirrorManager:
 
             # Wrap in tmux so the session survives SSH disconnects, with the
             # large prelude externalized to a file.  See
+                    codex_state_scope=state.scope if state is not None else None,
             # ``_build_remote_agent_cmd_str`` for the scancel / exec-bash
             # rationale.
             tmux_name = f"sucoder-{ctx.settings.name}"

@@ -21,6 +21,15 @@ never snapshotted: there is nowhere durable for the snapshot to go, and
 ``git add -A`` on a shared filesystem is not free (see
 ``docs/local-disk-tiering.org``).
 
+With ``codex_state_scope`` set (a managed Codex launch,
+``docs/codex-local-state.org``) each deadline warning also asks the
+staged state runner for a capture by touching the current run's
+``checkpoint.request`` on local disk.  The timer never does the capture
+itself: the runner polls that file, consumes it and runs one
+single-flight backup to the durable root ("Scheduling and outages": the
+timer enqueues through a nonblocking local control path and does no
+backup, checksumming or upload inline).
+
 It lives in its own module because ``cli`` imports ``mirror``, not the
 reverse, so a builder both can share cannot live in either.  The script
 is a plain template with ``@TOKEN@`` placeholders rather than an
@@ -31,9 +40,16 @@ from __future__ import annotations
 
 import shlex
 import hashlib
+import re
 from typing import Optional
 
+from .local_tier import local_root_shell
 from .timer_lifecycle import TIMER_LIFECYCLE_SH
+
+# The managed-state scope digest (``codex_state.scope_id``): the runner
+# fails closed on every identifier it is handed, and this one becomes a
+# path component here, so the builder does too.
+_SCOPE_DIGEST = re.compile(r"[0-9a-f]{64}")
 
 
 def timer_identity(mirror_name: str, target_name: Optional[str]) -> str:
@@ -129,6 +145,51 @@ snapshot_wip() {
 }
 '''.strip("\n")
 
+# Ask the managed Codex state runner (codex_state_runner.py) for a
+# capture.  The runner records this allocation's run id in
+# $CODEX_STATE_DIR/latest-run and polls <that run>/checkpoint.request once
+# a second, consuming it and running one single-flight capture; a request
+# that lands during a capture is dropped and counted, never queued.  The
+# timer only touches that file: no backup, hashing or durable I/O happens
+# here, everything read or written is on local disk, and nothing is ever
+# created but the request itself (a missing run or run directory means
+# there is nothing to ask).  Every step is best-effort so the watchdog
+# can never die because of it, and it runs in the main shell, not a
+# subshell, because the two flags make each outcome log once -- first
+# success, first failure -- rather than at every warning.  The log is
+# timer.log (``--ensure`` redirects ``--run`` there), the only trace a
+# request leaves.  Called at the deadline warnings only: the runner has
+# its own capture cadence, and a job that has left the queue has nothing
+# left to request.
+CODEX_CHECKPOINT_SH = r'''
+_codex_request_said_ok=0
+_codex_request_said_fail=0
+request_codex_checkpoint() {
+    local run="" why="" request=""
+    run=$(cat "$CODEX_STATE_DIR/latest-run" 2>/dev/null) || run=""
+    if [ -z "$run" ]; then
+        why="no managed run is recorded in $CODEX_STATE_DIR/latest-run"
+    elif ! [[ "$run" =~ ^[0-9a-f]{32}$ ]]; then
+        why="$CODEX_STATE_DIR/latest-run does not name a run"
+    elif [ ! -d "$CODEX_STATE_DIR/$run" ]; then
+        why="run directory $CODEX_STATE_DIR/$run is missing"
+    else
+        request="$CODEX_STATE_DIR/$run/checkpoint.request"
+        { : > "$request"; } 2>/dev/null || why="could not touch $request"
+    fi
+    if [ -z "$why" ]; then
+        if [ "$_codex_request_said_ok" -eq 0 ]; then
+            _codex_request_said_ok=1
+            echo "sucoder timer: requested a Codex state checkpoint ($request); later requests are not logged."
+        fi
+    elif [ "$_codex_request_said_fail" -eq 0 ]; then
+        _codex_request_said_fail=1
+        echo "sucoder timer: could not request a Codex state checkpoint: $why"
+    fi
+    return 0
+}
+'''.strip("\n")
+
 # State files are per mirror: several confined mirrors share one $HOME,
 # and a second timer's startup ``rm -f`` must not clear the first's
 # markers.  The un-suffixed ``slurm-deadline.warn`` is still written for
@@ -138,6 +199,11 @@ snapshot_wip() {
 # mirror -- that is what the legacy path means -- so with several
 # confined mirrors it is last-writer-wins; the suffixed file is the
 # one to poll.
+#
+# The three ``@CODEX_*@`` tokens render as nothing unless a managed Codex
+# scope is given.  Each sits at the end of an existing line and its
+# replacement starts with the newline(s) it needs, so a script rendered
+# without a scope is byte-identical to one rendered before the feature.
 _TEMPLATE = r'''#!/bin/bash
 # sucoder SLURM deadline timer + WIP snapshotter (generated; do not edit).
 set -u
@@ -150,7 +216,7 @@ TMUX_BIN=(@TMUX_CMD@)
 SNAPSHOT_DIR=@SNAPSHOT_DIR@
 SNAPSHOT_MINUTES=@SNAPSHOT_MINUTES@
 JOB=@JOB_REF@
-TIMER_SCOPE=@TIMER_SCOPE@
+TIMER_SCOPE=@TIMER_SCOPE@@CODEX_STATE_VARS@
 @TIMER_LIFECYCLE@
 WARN_FILE="$STATE_DIR/slurm-deadline-$MIRROR_TOKEN.warn"
 LEGACY_WARN_FILE="$CACHE_DIR/slurm-deadline.warn"
@@ -167,7 +233,7 @@ fi
 
 @LEFT_TO_MINS@
 
-@SNAPSHOT_WIP@
+@SNAPSHOT_WIP@@CODEX_CHECKPOINT@
 
 warn() {
     echo "$1" > "$WARN_FILE"
@@ -238,15 +304,15 @@ while true; do
     if [ "$mins" -le 5 ] && [ ! -f "$WARN5" ]; then
         warn "SLURM: ~${mins} min left (job $JOB). Commit and save NOW."
         touch "$WARN5" "$WARN15" "$WARN30"
-        snapshot_wip
+        snapshot_wip@CODEX_REQUEST@
     elif [ "$mins" -le 15 ] && [ ! -f "$WARN15" ]; then
         warn "SLURM: ~${mins} min left (job $JOB). Start wrapping up."
         touch "$WARN15" "$WARN30"
-        snapshot_wip
+        snapshot_wip@CODEX_REQUEST@
     elif [ "$mins" -le 30 ] && [ ! -f "$WARN30" ]; then
         warn "SLURM: ~${mins} min left (job $JOB)."
         touch "$WARN30"
-        snapshot_wip
+        snapshot_wip@CODEX_REQUEST@
     fi
 
     if [ "$SNAPSHOT_MINUTES" -gt 0 ] && [ $((elapsed % SNAPSHOT_MINUTES)) -eq 0 ]; then
@@ -268,6 +334,8 @@ def build_timer_script(
     snapshot_dir_shell: Optional[str] = None,
     snapshot_minutes: int = 10,
     timer_scope: Optional[str] = None,
+    codex_state_scope: Optional[str] = None,
+    local_disk_root: Optional[str] = None,
 ) -> str:
     """Render the timer script.
 
@@ -287,6 +355,17 @@ def build_timer_script(
     (``local_tier.work_path_shell``), so a runtime ``${SLURM_JOB_ID}`` in
     it still expands.  Give at most one of the two.
 
+    ``codex_state_scope`` (the 64-hex managed-state scope digest,
+    ``codex_state.scope_id``) makes every deadline warning also request a
+    capture from the staged Codex state runner (``request_codex_checkpoint``
+    above).  It needs ``local_disk_root``, the tiering root the launch
+    uses: the runner's control files live under
+    ``<root>/job<ID>/state/codex/<scope>/`` (the same ``SUCODER_LOCAL_ROOT``
+    it is given, rendered by :func:`local_tier.local_root_shell` with the
+    literal or runtime job id), and the periodic cadence stays the
+    runner's own.  Without a scope the rendered script is byte-identical
+    to one without the feature.
+
     Every user-controlled value is shell-quoted.  The only unquoted
     substitutions are the ``$SLURM_JOB_ID`` reference itself and a
     caller-quoted ``snapshot_dir_shell``.
@@ -295,6 +374,22 @@ def build_timer_script(
         raise ValueError("snapshot_minutes must be >= 0")
     if snapshot_dir is not None and snapshot_dir_shell is not None:
         raise ValueError("give snapshot_dir or snapshot_dir_shell, not both")
+    codex_vars = codex_fn = codex_call = ""
+    if codex_state_scope is not None:
+        if not _SCOPE_DIGEST.fullmatch(codex_state_scope):
+            raise ValueError("codex_state_scope must be the 64-hex scope digest")
+        if not local_disk_root:
+            raise ValueError("codex_state_scope needs local_disk_root (managed state is local-disk only)")
+        # Layout owned by codex_state_runner.py (``scope_dir``): the local
+        # root the runner resolves from SUCODER_LOCAL_ROOT, then
+        # state/codex/<scope>.  Only ${SLURM_JOB_ID} is unquoted.
+        state_dir = (
+            f"{local_root_shell(local_disk_root, job_id)}/state/codex/"
+            f"{shlex.quote(codex_state_scope)}"
+        )
+        codex_vars = f"\nCODEX_STATE_DIR={state_dir}"
+        codex_fn = "\n\n" + CODEX_CHECKPOINT_SH
+        codex_call = "\n        request_codex_checkpoint"
     snapshot_word = (
         snapshot_dir_shell if snapshot_dir_shell is not None
         else shlex.quote(snapshot_dir or "")
@@ -319,6 +414,10 @@ def build_timer_script(
         )
     return (
         _TEMPLATE
+        # First, so a later user value can never be re-expanded by them.
+        .replace("@CODEX_STATE_VARS@", codex_vars)
+        .replace("@CODEX_CHECKPOINT@", codex_fn)
+        .replace("@CODEX_REQUEST@", codex_call)
         .replace("@TIMER_SCOPE@", shlex.quote(timer_scope or timer_identity(mirror_token, None)))
         .replace("@TIMER_LIFECYCLE@", TIMER_LIFECYCLE_SH)
         .replace("@MIRROR_TOKEN@", shlex.quote(mirror_token))
