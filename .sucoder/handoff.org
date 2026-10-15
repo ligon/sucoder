@@ -1,13 +1,14 @@
-#+TITLE: Codex node-local state: Slice 2 implemented and reviewed; Slice 3 next
+#+TITLE: Codex node-local state: Slice 2 reviewed; Slice 3a-3c landed; 3d-3e next
 #+DATE: 2026-10-15
-#+STATUS: COMPLETE
+#+STATUS: IN PROGRESS
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
 * Where things stand
 
-Branch =main=, last commit =1e69fb8= (docs) on top of =930eae4= (code), shared mirror in sync, tree clean.
-Slice 2 of [[file:../docs/codex-local-state.org][the design]] is implemented and published; its record is the "Slice 2 record" section at the end of the design, which governs where it conflicts with the sections above it.
+Branch =main=, shared mirror in sync; the last commits are listed below.
+Slice 2 of [[file:../docs/codex-local-state.org][the design]] is implemented, reviewed and published; Slice 3's first three pieces (timer requests, a status surface, a drain request with a sealed acknowledgement) landed in the same session.
+The record for all of it is the "Slice 2 record" section at the end of the design, which governs where it conflicts with the sections above it.
 Nothing is enabled on any real mirror: =slurm.codex_state= is off by default.
 The human approved spending Codex credits for reviews and trials in this session ("codex credits are less expensive than claude credits").
 The earlier handoffs are preserved under [[file:handoffs/]]; the Slice 1 one is [[file:handoffs/2026-10-15-slice1-implemented.org]].
@@ -24,6 +25,11 @@ The earlier handoffs are preserved under [[file:handoffs/]]; the Slice 1 one is 
 - =f6e460f=, =4298140=, =3ff3608=, =930eae4= :: four runner review-fix passes, each from a read-only Codex review or confirmation run through the managed runner itself; details in the design's Slice 2 record ("Review fixes").
 - =c2efc73=, =d0d469e= :: launcher review fixes: a history selection refused over a live session at the preflight and at every reuse decision; =//= roots; relative roots; exact =tmux has-session -t =name=.
 - =9765ca7=, =525e2be=, =61dae0e=, =e9a9c58=, =41fd29e=, =1e69fb8= :: docs for the above (=9c8bc7c= was a duplicate insertion, removed by =525e2be=); =d147480= corrects the spike record's rollout_path claim; =6e4efb2= the previous handoff.
+- =2d8c94a= :: the archive measurement across four bind layouts (binding =archived_sessions= does not help: =EXDEV= across separate vfsmounts).
+- =18a3cab= :: Slice 3a, the deadline timer touches the run's =checkpoint.request= at the 30/15/5-minute warnings. WARNING: this commit's =sucoder/mirror.py= does not import (IndentationError at line 3606) because it was staged from a region split of a file two agents had edited concurrently; =a9fa6ec= restores a consistent tree. Never check out =18a3cab= alone.
+- =a9fa6ec= :: Slice 3b, =sucoder codex-state-status <mirror> [--json]=. Its commit message was mangled by a shell quoting error; =54b1541= (empty) carries the intended message.
+- =a97674a= :: Slice 3c runner half, =drain.request= / =drain.ack= (see the design record); =7cdbca1=, =a5f4b89= docs.
+- Slice 3c launcher half (=sucoder release= drains the managed owner first; =sucoder codex-state-drain=) :: see the entry below this list if it landed; otherwise it was in flight when this note was written and its working tree is covered by the WIP snapshot.
 
 * Review loop and where it stopped
 
@@ -49,10 +55,12 @@ Accepted residuals, by design, documented in the design record: the prefix hash 
 
 * Next concrete actions
 
-1. Slice 3 per the design, in this order: (a) =slurm_timer.py= touches the run's =checkpoint.request= at the 30/15/5-minute warnings (the runner already honours the file); (b) a status surface (=sucoder= subcommand reading =status.json= through the executor: scope, run, replica age, last generation and class, pending work); (c) =RemoteSession= metadata and renewal with acknowledged handoff; (d) fencing, pins, retention; (e) =archived_sessions= in the bind set with replication, capture and restore covering it.
-2. Slice 4 pilot: enable =slurm.codex_state= on one disposable mirror first; the human's laptop config is where the flag lives.
-3. The real default durable root, =~/mirrors/.sucoder-state= (=/global/scratch/fsa/fc_jevons/ligon/mirrors/.sucoder-state=), was never created this session: every trial used the sibling =.sucoder-state-trial= and trial scopes, so a pilot starts clean.
-4. Clean-up when the human agrees: the trial durable root =/global/scratch/fsa/fc_jevons/ligon/.sucoder-state-trial= (143 MB: one real run with 35 one-minute generations plus the restore and confirmation runs), the trial scopes under =/local/job39969504/state/codex/= and =/local/job39969504/trial-root2= (wiped with the job anyway), and the git worktrees under this session's scratchpad (=git worktree prune= after removing them).
+1. Slice 3d, renewal with acknowledged handoff. Input token: a renew-mode =drain.ack= with its nonce, the sealed generation's name and manifest sha256, Codex's exit code, and =child {pid, starttime}= with =stopped: true=; the drained runner holds =startup.lock= until released (SIGTERM, or a release-mode drain with a new nonce). Work: a managed-owner descriptor in =RemoteSession= (Codex command and model, scope, run, requested parent generation, durable root identity); =_relaunch_session= retaining the old allocation and the pending-new attempt rather than clearing them; replacement authorization through =launch_agent= that excludes only the verified drained predecessor from =_launch_confined='s =squeue --name= adoption and keeps every other duplicate-job protection; readiness from the new run's =status.json= (=placed= with the expected parent) rather than =tmux has-session=; typed outcomes (ready, pending, retryable failure, lost or unknown owner); and the regression that drives the real confined adoption branch. Read the design's "Planned renewal sequence" and the review's lifecycle findings first; =sucoder codex-state-drain --mode renew --json= already produces the token.
+2. Slice 3e, fencing, lineage pins and retention under =DURABLE/metadata.lock/= (atomic mkdir), =lineages/=, =transfers/=, =pins/=; prune warm generations to the newest three and the newest sealed per run only under that protocol.
+3. Close the gap in 3a: an unconfined managed launch's timer is started from =cli._start_slurm_timer=, which does not know the scope, so its warnings fire without a request; pass =codex_state_scope= and =local_disk_root= there once cli.py learns the scope.
+4. Slice 4 pilot: enable =slurm.codex_state= on one disposable mirror first (the flag lives in the human's laptop config); the real default root =~/mirrors/.sucoder-state= was never created this session, so the pilot starts clean. Use =sucoder codex-state-status= to watch it and =sucoder release= (which drains first) to end it.
+5. Archiving a managed thread stays unsupported (atomic =EXDEV= failure, state consistent): binding =archived_sessions= does not help; it needs a single-mount layout or an upstream copy-and-delete fallback.
+6. Clean-up when the human agrees: the trial durable root =/global/scratch/fsa/fc_jevons/ligon/.sucoder-state-trial= (143 MB), the trial scopes under =/local/job39969504/state/codex/= and =/local/job39969504/trial-root2= (wiped with the job anyway).
 
 * Operational notes
 
@@ -60,6 +68,7 @@ Accepted residuals, by design, documented in the design record: the prefix hash 
 - Use =fc_jevons= for burst jobs; the full suite needs no burst (81 s serially here).
 - GitNexus cannot load on this node image (=libssl.so.3=); callers are grepped by hand and listed in commit messages.
 - =~/.sucoder/bulletin.org= still does not exist on this host.
-- This slice (job 39969504) is held with no work pending once the last confirmation is read; release with =sucoder release= unless Slice 3 starts in this session.
+- Lesson from this session: never let two agents edit one file concurrently and then split the result by region; stage whole files, or serialize the agents. =18a3cab= is what the split produced.
+- This slice (job 39969504) is held; release with =sucoder release= when the 3c launcher half has landed and no further Slice 3 work starts in this session.
 
 Recorded by Sue.
