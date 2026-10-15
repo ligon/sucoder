@@ -425,6 +425,14 @@ Seven further tests ran on this slice (job 39969504) with [[file:../scripts/code
 - Resolve the rollout choice in consequence 1 before Slice 2 defines what a generation promises; the measured contracts if the bind-mount layout is chosen are: launch through =bwrap= with =sessions=, =.tmp=, =tmp=, =thread-writer-locks=, =shell_snapshots=, =app-server-control=, a read-only =skills/= copy and the =AGENTS= and =history.jsonl= files bound to local disk; replicate the rollout tail after each =turn/completed= with =fsync=, lag-tolerant; capture the database generation only after the replica is confirmed identical and record each thread's =next_rollout_byte_offset= and the replica length in the manifest; restore as generation plus replica, rebound at the same mount points, refusing any generation whose offset exceeds the replica.
   Check newer Codex builds for a supported way to relocate =sessions/= and for the paginated-history migration that would remove the dependency.
 
+* Corrections (2026-10-15, after Slice 2)
+
+Two statements above were corrected by =tests/test_codex_app_server.py= against the same build (0.162.1), with the design's "Slice 2 record" as the governing text:
+
+- =threads.rollout_path= is stored canonicalized (the realpath), not "as written": with =CODEX_HOME= given through a symlink the row holds the real path, and =thread/resume= rewrites it to the new canonical location.
+  The symlink and bind layouts measured above still work because both make the canonical path resolve; the inference about how the path is stored was wrong, not the measurements.
+- The database-ahead hazard needs a gap of several turns to reproduce: with a one-turn gap the next turn's append crosses the stale watermark and the projection resumes mid-record; the three-turn gap freezes it as recorded above.
+
 * Local document checks
 
 Recorded with each commit: =git diff --check=, Emacs =org-lint= on this file, an ASCII scan, and a check that every =file:= link target exists.
