@@ -72,11 +72,11 @@ def stats(values):
 class Home:
     """An isolated CODEX_HOME plus HOME and TMPDIR under one private root."""
 
-    def __init__(self, root, trusted=()):
+    def __init__(self, root, trusted=(), tmp=None):
         self.root = pathlib.Path(root)
         self.codex_home = self.root / "codex-home"
         self.user_home = self.root / "user-home"
-        self.tmp = self.root / "tmp"
+        self.tmp = pathlib.Path(tmp) if tmp else self.root / "tmp"
         for d in (self.root, self.codex_home, self.user_home, self.tmp):
             d.mkdir(parents=True, mode=0o700, exist_ok=True)
         self.trusted = list(trusted)
@@ -122,7 +122,7 @@ def make_workspace(path):
 class Server:
     """One isolated foreground ``codex app-server`` driven over stdio."""
 
-    def __init__(self, label, home, sqlite_home, cwd, quiet=True, extra_options=()):
+    def __init__(self, label, home, sqlite_home, cwd, quiet=True, extra_options=(), prefix=(), strace_log=None):
         self.label = label
         self.home = home
         self.sqlite_home = pathlib.Path(sqlite_home)
@@ -133,7 +133,10 @@ class Server:
         self.model_seen = []
         threading.Thread(target=self._drain_model, daemon=True).start()
         options = base_options(self.model.server_port, str(self.sqlite_home)) + (QUIET if quiet else []) + list(extra_options)
-        self.cmd = [CODEX, *options, "app-server"]
+        cmd = [CODEX, *options, "app-server"]
+        if strace_log:
+            cmd = ["strace", "-f", "-tt", "-y", "-s", "256", "-o", str(strace_log), "-e", "trace=%file,connect,bind,flock,fcntl", "--", *cmd]
+        self.cmd = [*prefix, *cmd]
         self.notifications = []
         self.cond = threading.Condition()
         self.replies = queue.Queue()
@@ -808,6 +811,129 @@ def sessions_symlink(args, root, evidence):
     return write_result(evidence, "sessions_symlink", result)
 
 
+# ---------------------------------------------------------------- bind mount
+
+def bwrap_prefix(binds):
+    """Per-process binds of local directories over CODEX_HOME subdirectories; the shared home is untouched."""
+    cmd = ["bwrap", "--dev-bind", "/", "/"]
+    for local, target in binds.items():
+        cmd += ["--bind", str(local), str(target)]
+    return cmd + ["--unshare-user", "--uid", str(os.getuid()), "--gid", str(os.getgid()), "--die-with-parent", "--"]
+
+
+def strace_window(log, start, end, local_prefixes=()):
+    """Paths touched between two wall-clock instants (strace -tt, local time).
+
+    A path under a bound mount point is physically local even though strace
+    prints the mount-point path; such prefixes count as "/bound".
+    """
+    import datetime
+    lo = datetime.datetime.fromtimestamp(start).strftime("%H:%M:%S.%f")
+    hi = datetime.datetime.fromtimestamp(end).strftime("%H:%M:%S.%f")
+    counts, paths = {}, {}
+    local_prefixes = [str(x).rstrip("/") for x in local_prefixes]
+    quoted = re.compile(r'"((?:/)[^"]*)"')
+    fdpath = re.compile(r"<(/[^>]*?)(?: \(deleted\))?>")
+    with open(log, errors="replace") as handle:
+        for line in handle:
+            m = re.match(r"^\d+\s+(\d\d:\d\d:\d\d\.\d+)\s+(.*)$", line)
+            if not m or not (lo <= m.group(1) <= hi):
+                continue
+            body = m.group(2)
+            for found in set(quoted.findall(body)) | set(fdpath.findall(body)):
+                top = "/" + found.split("/")[1] if found.count("/") else found
+                if any(found == x or found.startswith(x + "/") for x in local_prefixes):
+                    top = "/bound"
+                elif found.startswith("/global/scratch"):
+                    top = "/global/scratch"
+                elif found.startswith("/global/home"):
+                    top = "/global/home"
+                counts[top] = counts.get(top, 0) + 1
+                if top.startswith("/global"):
+                    paths[found] = paths.get(found, 0) + 1
+    return counts, paths
+
+
+def bind(args, root, evidence):
+    """CODEX_HOME on Lustre, sessions/ bound to local disk per process: Lustre operations per turn."""
+    if not shutil.which("bwrap"):
+        raise SystemExit("bwrap not installed")
+    if not args.lustre_root:
+        raise SystemExit("--lustre-root is required for the bind test")
+    base = pathlib.Path(root) / "bind" / args.bind_set
+    w = make_workspace(base / "w")
+    h = Home(pathlib.Path(args.lustre_root) / f"bind-home-{args.bind_set}", trusted=[w], tmp=base / "tmp")  # shared-home stand-in on Lustre, TMPDIR local
+    subdirs = ["sessions"] if args.bind_set == "sessions" else ["sessions", ".tmp", "tmp", "thread-writer-locks", "shell_snapshots"]
+    for d in subdirs:
+        (h.codex_home / d).mkdir(mode=0o700, exist_ok=True)
+    local_sessions = base / "sessions-1"
+    binds = {}
+    for d in subdirs:
+        local = local_sessions if d == "sessions" else base / f"local-{d.strip('.')}-1"
+        local.mkdir(parents=True, mode=0o700, exist_ok=True)
+        binds[local] = h.codex_home / d
+    result = {"started_utc": utc(), "bind_set": args.bind_set, "bound": {str(k): str(v) for k, v in binds.items()},
+              "codex_home": str(h.codex_home), "local_sessions": str(local_sessions), "tmpdir": str(h.tmp)}
+    s = Server("bind", h, base / "sqlite-A", w, prefix=bwrap_prefix(binds), strace_log=base / "strace.log")
+    tid, _ = s.start_thread()
+    s.turn(tid, "SPKM_bind_0")
+    t0 = time.time()
+    turns = [s.turn(tid, f"SPKM_bind_{k}") for k in range(1, args.turns + 1)]
+    t1 = time.time()
+    result["turns_ok"] = sum(1 for t in turns if t["ok"])
+    result["turn_p50"] = percentile([t["duration"] for t in turns if t["ok"]], 0.5)
+    listed = s.rpc("thread/list", {"limit": 10, "useStateDbOnly": True})
+    result["stored_path"] = [t["path"] for t in listed["data"] if t["id"] == tid][0]
+    result["rollout_physical"] = [str(p.relative_to(local_sessions)) for p in local_sessions.rglob("*.jsonl")]
+    result["shared_sessions_outside"] = [str(p.relative_to(h.codex_home / "sessions")) for p in (h.codex_home / "sessions").rglob("*")]
+    result["fd_sqlite_like"] = sorted(x for proc in s.pids() for x in proc["paths"] if ".sqlite" in x or ".jsonl" in x or ".lock" in x)
+    result["stop"] = s.stop()
+    time.sleep(1)
+    counts, paths = strace_window(base / "strace.log", t0, t1, local_prefixes=list(binds.values()))
+    result["syscalls_per_toplevel_during_turns"] = counts
+    result["global_paths_during_turns"] = paths
+    result["lustre_ops_per_turn"] = (counts.get("/global/scratch", 0)) / max(1, args.turns)
+    home = str(h.codex_home)
+    groups = {}
+    for pth, n in paths.items():
+        if pth == home or home.startswith(pth + "/"):
+            g = "ancestors of CODEX_HOME"
+        elif pth.startswith(home + "/"):
+            g = "CODEX_HOME/" + pth[len(home) + 1:].split("/")[0]
+        else:
+            g = "other"
+        groups[g] = groups.get(g, 0) + n
+    result["lustre_groups_during_turns"] = groups
+    b = backup(base / "sqlite-A", base / "backup")
+    result["backup"] = {k: b[k] for k in ("ok", "complete", "seconds", "bytes")}
+    # "new allocation": restored databases and a copy of the local sessions directory bound at the same path
+    binds2 = {}
+    for local, target in binds.items():
+        local2 = pathlib.Path(str(local)[:-2] + "-2")
+        shutil.copytree(local, local2)
+        shutil.rmtree(local)
+        binds2[local2] = target
+    result["restore"] = restore(base / "backup", base / "sqlite-B")
+    s2 = Server("bind-restored", h, base / "sqlite-B", w, prefix=bwrap_prefix(binds2))
+    try:
+        r = s2.rpc("thread/resume", {"threadId": tid})
+        result["resume_new_allocation"] = {"ok": True, "turns": len(r["thread"]["turns"])}
+        t = s2.turn(tid, "SPKM_bindf_0")
+        time.sleep(0.5)
+        result["follow_up_ok"] = t["ok"]
+        result["history_to_model"] = sorted(m for m in s2.model_markers() if m != "SPKM_bindf_0")
+    except Exception as error:  # noqa: BLE001
+        result["resume_new_allocation"] = {"ok": False, "error": str(error)[:300]}
+    result["stop_2"] = s2.stop()
+    result["shared_sessions_outside_after"] = [str(p.relative_to(h.codex_home / "sessions")) for p in (h.codex_home / "sessions").rglob("*")]
+    print(f"  bind [{args.bind_set}]: stored_path under CODEX_HOME={str(h.codex_home) in result['stored_path']} rollout_physical={len(result['rollout_physical'])} "
+          f"shared_sessions_outside={result['shared_sessions_outside']} lustre_ops_per_turn={result['lustre_ops_per_turn']:.1f} "
+          f"groups={groups} per_toplevel={ {k: v for k, v in counts.items() if k in ('/bound', '/local', '/global/scratch', '/global/home', '/global')} } "
+          f"resume_new_alloc={result['resume_new_allocation']} history={len(result.get('history_to_model', []))}/{args.turns + 1}", flush=True)
+    print("  lustre paths during turns:", dict(sorted(((p, n) for p, n in paths.items() if p.startswith('/global/scratch')), key=lambda kv: -kv[1])[:8]), flush=True)
+    return write_result(evidence, "bind", result)
+
+
 # ---------------------------------------------------------------- outcome 7
 
 def latency(args, root, evidence):
@@ -909,7 +1035,7 @@ def latency(args, root, evidence):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("tests", nargs="+", choices=["restore", "interleave", "replay", "writers", "latency", "symlink", "all"])
+    parser.add_argument("tests", nargs="+", choices=["restore", "interleave", "replay", "writers", "latency", "symlink", "bind", "all"])
     parser.add_argument("--root", default=os.environ.get("SPIKE_ROOT") or os.path.join(os.environ.get("SUCODER_LOCAL_ROOT", "/tmp"), "spike-codex-outcomes"))
     parser.add_argument("--evidence", required=True, help="durable directory for per-test result.json files")
     parser.add_argument("--lustre-root", default=os.environ.get("SUCODER_SHARED_STATE_TEST_ROOT"))
@@ -922,6 +1048,7 @@ def main():
     parser.add_argument("--seed", type=int, default=20261015)
     parser.add_argument("--watch", type=int, default=30, help="seconds to watch for unprompted activity after resume")
     parser.add_argument("--keep", action="store_true", help="keep passing interleaving directories")
+    parser.add_argument("--bind-set", choices=["sessions", "full"], default="full", help="which CODEX_HOME subdirectories the bind test binds to local disk")
     args = parser.parse_args()
     args.placements = [p for p in args.placements.split(",") if p]
     os.umask(0o077)
@@ -939,7 +1066,7 @@ def main():
         t0 = now()
         try:
             path = {"restore": restore_matrix, "interleave": interleavings, "replay": replay,
-                    "writers": writers, "latency": latency, "symlink": sessions_symlink}[name](args, root, evidence)
+                    "writers": writers, "latency": latency, "symlink": sessions_symlink, "bind": bind}[name](args, root, evidence)
             print(f"== {name} done in {now() - t0:.0f}s -> {path}", flush=True)
         except Exception as error:  # noqa: BLE001
             import traceback

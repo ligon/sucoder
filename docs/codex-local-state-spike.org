@@ -343,18 +343,36 @@ Findings:
 - Per-turn p95 stayed within 25 percent of p50 in every row except the two-server local-home runs (35 percent, a 17 ms spread); in absolute terms the Lustre runs were the most variable, with a 0.11 s gap between p50 and p95.
 - These are single-node samples between 14:08 and 14:11 UTC under whatever load =/global/scratch= carried at the time; they are not a speedup claim and the design should not quote them as one.
 
+** Bind mounts: the hot path without Lustre
+
+The human's concern is not Lustre's median latency but its episodes, when every operation takes minutes; the number that matters is therefore how many synchronous Lustre operations a turn contains, not their average cost.
+The =bind= sub-test launches the server through =bwrap --unshare-user --uid <own> --gid <own> --bind <local dir> CODEX_HOME/<subdir>=: a per-process mount namespace in which a local directory replaces a subdirectory of the shared home, while every other process keeps seeing the shared home unchanged, the stored rollout path stays =CODEX_HOME/sessions/...=, and Codex's own sandbox still runs nested inside (checked with =codex sandbox=; =/global/scratch= is read-only in it, as outside).
+=CODEX_HOME= sat on the Lustre test root, =TMPDIR= on local disk, and strace counted every path touched during six turns after a warm-up, on this slice (job 39969504).
+In both bind sets the rollout was physically on local disk, the shared =sessions/= stayed empty from outside, and a second server with the local directories copied to new paths and bound at the same mount points resumed the thread with all seven turns and sent the whole history to the model.
+
+| Bound to local disk                                                  | Lustre operations per turn | What remains on Lustre during a turn                                                                                                      |
+|----------------------------------------------------------------------+----------------------------+-------------------------------------------------------------------------------------------------------------------------------------------|
+| =sessions=                                                           | about 18                   | =tmp/arg0/<random>/git= (4), =skills/.system/.codex-system-skills.marker= (3), =skills= and =skills/.system= (3), =AGENTS.md= and =AGENTS.override.md= (2), path-component =readlink= and =lstat= calls |
+| =sessions=, =.tmp=, =tmp=, =thread-writer-locks=, =shell_snapshots=  | about 10                   | the =skills= stats (6), the two =AGENTS= stats (2), and about one =readlink= per path component of =CODEX_HOME= every few turns              |
+
+All of the remaining operations are metadata calls on entries of =CODEX_HOME= that the turn does not modify; no data is read or written on Lustre during a turn.
+They would reach zero by binding a read-only copy of =skills/= and the two =AGENTS= files as well, leaving the path-component lookups, which are client-cache hits unless another client has modified a directory on the chain.
+The harness's own artifacts are excluded from these counts: its isolated user home sat on Lustre, so =git= read =~/.gitconfig= there twenty times per turn, whereas production =HOME= is on NFS.
+Separately, Codex executes =git= about three times per turn and =lsb_release= every third turn; their PATH walks and =~/.gitconfig= reads touch =/global/home= and =/global/software=, which are NFS, not Lustre.
+
 ** Consequences for the design, second set
 
 1. For thread history, the generation does not determine what resumes; the rollout does.
    On resume the server rebuilds the SQLite history projection from the rollout at the absolute path in =threads.path=: without the file every history read fails, and with it a restored database is overridden by whatever the file holds (12 of 20 warm restores showed more turns than their captured database).
    A generation's consistency claim therefore covers goals, queue, memories, logs and the non-history parts of state; for the conversation itself the recovery point is the shared rollout, not the generation.
    The design must choose: either the rollout joins the generation, captured and restored with it, or the history-consistency guarantee is dropped and documented as "whatever the shared rollout contains".
-   The first is possible on this build: the binary has no setting for the sessions directory, but it stores the rollout path as written rather than canonicalized, so with =CODEX_HOME/sessions= a symlink to a local directory the stored path stays =CODEX_HOME/sessions/...=, and after retargeting the symlink to a copy and deleting the original, =thread/resume= and a follow-up turn with full history succeed (the =symlink= sub-test; evidence under =evidence-outcomes/job39969504-symlink/=).
-   A copy at the =CODEX_HOME=-relative path without the symlink is not found, and rewriting =threads.path= remains the guessed fix the design forbids.
-   The symlink would have to live in the =CODEX_HOME= the managed server uses; in the shared home it would redirect every other Codex process using that home, so taking this path means a per-scope private home, which the design currently excludes.
+   The first is possible on this build without touching the shared home: the binary has no setting for the sessions directory, but it stores the rollout path as written rather than canonicalized, so a local directory placed at =CODEX_HOME/sessions= keeps the stored path valid; a symlink does it (the =symlink= sub-test) but redirects every process using the home, and a per-process =bwrap= bind mount does it for the managed server alone (the =bind= sub-test above).
+   A copy at the =CODEX_HOME=-relative path without either is not found, and rewriting =threads.path= remains the guessed fix the design forbids.
+   The trade-off is then explicit: with the rollout on local disk the turn contains no Lustre data operation and about ten metadata calls, so a Lustre episode no longer stalls the conversation, but a crash loses up to one capture interval of conversation, whereas today the shared rollout loses nothing at a crash.
+   A per-turn append of the rollout's tail to the shared home, outside Codex's own path, would recover most of that safety at one Lustre write per turn that can lag without blocking.
    This record names the choice and does not make it.
 2. The rollout is also where the latency is: with the databases local and the home on Lustre a turn took 0.21 s at the median, against 0.51 s with everything on Lustre and 0.042 s with everything on =/local=.
-   The design's choice to move only the databases buys part of the improvement; moving =sessions/= as well is possible only through the symlink described in consequence 1, with the private-home cost that goes with it.
+   The design's choice to move only the databases buys part of the improvement; moving =sessions/= as well is possible through the per-process bind mount described in consequence 1, which needs no private home.
 3. Unattended continuation must check =goals_1= and =queue_1= before =thread/resume=: refuse or require explicit confirmation when the thread has an =active= goal or queued rows, and offer =paused= as the hold for goals.
    The design's fallback, that unattended recovery of such a profile is unsupported, is the measured outcome for queued work.
 4. Lineage exclusivity cannot be delegated to Codex: two homes on one =sqlite_home= are two writers.
@@ -367,13 +385,14 @@ Findings:
 - Fake-model workloads only; no tool calls, approvals, attachments or compaction were exercised, so the inventory of rollout-dependent features is a lower bound.
 - The latency arms are one node, one afternoon, two concurrency levels.
 - Interleavings cover one writer and 20 seeds.
-- Remote control was not exercised beyond the inventory phase.
+- Remote control was not exercised beyond the inventory phase; the bind-mount test used the app-server driver only, and whether =bwrap= composes with the remote-control relay and the TUI is untested.
 
 ** Next actions
 
 - Implementation (Slice 1 onward) can proceed against these contracts: absolute =sqlite_home=, pre-created 0700, placement verified through =/proc=, rollout recorded in the manifest, goal and queue checks before unattended resume, single owner per lineage.
 - Before production opt-in, repeat outcome 4 with a real-model thread once (a paused goal, a queued message) to confirm the hold behavior is not an artifact of empty replies.
-- Resolve the rollout choice in consequence 1 before Slice 2 defines what a generation promises; check newer Codex builds for a supported way to relocate =sessions/= and for the paginated-history migration that would remove the dependency.
+- Resolve the rollout choice in consequence 1 before Slice 2 defines what a generation promises: whether the managed server runs inside a =bwrap= namespace with =sessions= and the other write-heavy subdirectories bound to local disk, and whether the rollout tail is replicated to the shared home per turn.
+  Check newer Codex builds for a supported way to relocate =sessions/= and for the paginated-history migration that would remove the dependency.
 
 * Local document checks
 

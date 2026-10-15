@@ -279,9 +279,13 @@ on n0033.savio4 (4 cores, confined cgroup):
   with it a restored database is overridden by the file on resume (12 of 20
   warm restores showed more turns than their capture): for thread history the
   generation does not determine what resumes, the shared rollout does.
-  `sessions/` is relocatable only through a `CODEX_HOME/sessions` symlink:
-  the stored path is not canonicalized, and resume survives retargeting the
-  symlink (`symlink` sub-test, 2026-10-15).
+  `sessions/` is relocatable because the stored path is not canonicalized: a
+  symlink works but redirects every process; a per-process `bwrap` bind mount
+  of local disk over `CODEX_HOME/sessions` (and `.tmp`, `tmp`,
+  `thread-writer-locks`, `shell_snapshots`) leaves about ten metadata calls
+  and no data I/O on Lustre per turn, with the shared home untouched and
+  Codex's sandbox still working (`symlink` and `bind` sub-tests, 2026-10-15;
+  evidence under `evidence-outcomes/job39969504-bind/`).
   20/20 seeded abrupt-stop interleavings restored every completed turn from both
   warm and post-crash captures. Unattended `thread/resume` executes a queued
   message once and, with an active goal, issues ~20 model requests per second
