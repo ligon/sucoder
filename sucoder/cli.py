@@ -67,6 +67,7 @@ from .mirror import (
     confined_tmux_target,
 )
 from .startup_checks import StartupError, run_startup_checks
+from . import tmux_env
 
 
 def _version_callback(value: bool) -> None:
@@ -2223,6 +2224,112 @@ def _codex_remote_mode(enabled: Optional[bool], server_only: bool) -> Optional[s
     return None if enabled is None else "terminal" if enabled else "off"
 
 
+def _tmux_launch_preamble(
+    ctx: typer.Context,
+    config: Config,
+    mirror: str,
+    *,
+    wrap: bool,
+    dry_run: bool,
+    logger: logging.Logger,
+) -> None:
+    """Settle where the agent session will live before anything expensive runs.
+
+    A remote launch always lands in the target's tmux; from inside a
+    local tmux that nests, so say so now, before the ssh and the
+    allocation, rather than letting the prefix key explain it later.  A
+    local launch outside tmux is moved into a local session
+    ``sucoder-<mirror>`` by re-running this very command line inside
+    ``tmux new-session``: the inner ``sucoder`` sees ``$TMUX`` and
+    launches in place, so nothing about the launch itself (``sudo``, the
+    TTY, the post-session hooks) changes, and the session belongs to the
+    human's own tmux server.  ``os.execvp`` means this does not return
+    on that path.  See :mod:`tmux_env` for the rationale.
+    """
+    settings = config.mirrors.get(mirror)
+    remote = _get_active_target(ctx) or (settings.remote if settings else None)
+    state = tmux_env.detect()
+    if remote is not None:
+        if state.inside:
+            typer.echo(tmux_env.nested_remote_warning(state), err=True)
+        return
+    if state.inside or not wrap:
+        return
+    session = tmux_env.local_session_name(mirror)
+    if not tmux_env.interactive_terminal():
+        typer.echo(
+            tmux_env.unwrapped_local_warning(session, "this is not an interactive terminal"),
+            err=True,
+        )
+        return
+    if not tmux_env.tmux_available():
+        typer.echo(tmux_env.unwrapped_local_warning(session, "tmux is not on PATH"), err=True)
+        return
+    if tmux_env.session_exists(session):
+        if dry_run:
+            typer.echo(
+                f"[dry-run] would attach to the existing local tmux session {session}.",
+                err=True,
+            )
+            return
+        typer.echo(
+            f"Local tmux session {session} already exists; attaching to it rather than "
+            f"starting a second agent (`tmux kill-session -t ={session}` to relaunch).",
+            err=True,
+        )
+        logger.info("Attaching to existing local tmux session %s", session)
+        os.execvp("tmux", tmux_env.attach_argv(session))
+    argv = tmux_env.new_session_argv(session, tmux_env.command_argv(), os.getcwd())
+    if dry_run:
+        # The dry run itself stays here: re-run inside tmux it would print
+        # and exit, closing the session it had just opened.
+        typer.echo(
+            f"[dry-run] would re-run inside a local tmux session: {shlex.join(argv)}",
+            err=True,
+        )
+        return
+    typer.echo(
+        f"Starting the agent in local tmux session {session} "
+        f"(detach: your tmux prefix, then d; back: sucoder attach {mirror}).",
+        err=True,
+    )
+    logger.info("Re-executing inside local tmux session %s: %s", session, shlex.join(argv))
+    os.execvp("tmux", argv)
+
+
+def _attach_local(mirror: str, *, node: Optional[str], via_srun: bool) -> None:
+    """Reach the local session ``collaborate`` started for *mirror*.
+
+    From inside tmux on the same (default) server, ``switch-client`` moves
+    this client over; tmux refuses to nest a server inside itself anyway.
+    From another server, or outside tmux, ``attach-session`` as usual.
+    Does not return: ``switch-client`` exits with its status, and the
+    attach is an ``os.execvp``.
+    """
+    if node or via_srun:
+        typer.echo(
+            "--node and --via-srun need a cluster target; this mirror is local.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    session = tmux_env.local_session_name(mirror)
+    if not tmux_env.tmux_available():
+        typer.echo("tmux is not on PATH, so there is no local session to attach to.", err=True)
+        raise typer.Exit(code=1)
+    if not tmux_env.session_exists(session):
+        typer.echo(
+            f"No local tmux session {session}.  `sucoder collaborate {mirror}` run outside "
+            "tmux starts one; a launch made inside your own tmux lives in that pane instead.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    state = tmux_env.detect()
+    if state.on_default_server:
+        result = subprocess.run(tmux_env.switch_argv(session), check=False)
+        raise typer.Exit(code=result.returncode)
+    os.execvp("tmux", tmux_env.attach_argv(session))
+
+
 @app.command("agents-run")
 def agents_run(
     ctx: typer.Context,
@@ -2297,6 +2404,13 @@ def agents_run(
         "--lfs/--no-lfs",
         help="Download Git LFS objects during clone (default: skip LFS to avoid failures).",
     ),
+    wrap_tmux: bool = typer.Option(
+        True,
+        "--tmux/--no-tmux",
+        help="Run a local launch inside a local tmux session sucoder-<mirror> when "
+             "not already in tmux (default: --tmux; remote launches always use the "
+             "target's tmux).",
+    ),
     extra_args: Optional[List[str]] = typer.Argument(
         None,
         help="Additional arguments appended to the agent launch command.",
@@ -2308,6 +2422,7 @@ def agents_run(
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
+    _tmux_launch_preamble(ctx, config, mirror, wrap=wrap_tmux, dry_run=dry_run, logger=logger)
     manager = _build_manager_for_mirror(config, logger, dry_run, mirror, cli_ctx=ctx)
     command_override = _resolve_harness_command(
         harness=harness, agent=agent, agent_command=agent_command,
@@ -2424,6 +2539,13 @@ def collaborate(
              "If you already hold a live allocation on that node, this "
              "session adopts (shares) it instead of reserving a new one.",
     ),
+    wrap_tmux: bool = typer.Option(
+        True,
+        "--tmux/--no-tmux",
+        help="Run a local launch inside a local tmux session sucoder-<mirror> when "
+             "not already in tmux (default: --tmux; remote launches always use the "
+             "target's tmux).",
+    ),
     extra_args: Optional[List[str]] = typer.Argument(
         None,
         help="Additional arguments appended to the agent launch command.",
@@ -2435,6 +2557,7 @@ def collaborate(
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
+    _tmux_launch_preamble(ctx, config, mirror, wrap=wrap_tmux, dry_run=dry_run, logger=logger)
 
     # If --node is specified, inject it into the session so that
     # _ensure_slurm_node uses --nodelist to request that node.
@@ -2737,6 +2860,12 @@ def attach(
         from dataclasses import replace
         settings = replace(settings, remote=target)
 
+    if target is None and settings is not None and settings.remote is None:
+        # A local mirror: the session `collaborate` started on this
+        # machine's tmux server, if any.
+        _attach_local(mirror, node=node, via_srun=via_srun)
+        return
+
     if not settings or not settings.remote:
         typer.echo("Mirror is not configured for remote execution.", err=True)
         raise typer.Exit(code=1)
@@ -2778,6 +2907,11 @@ def attach(
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     debug_ssh = _get_debug_ssh(ctx)
     x11_on, x11_explicit = _resolve_x11(remote, _get_x11_override(ctx), logger)
+
+    # Say before the ssh that the remote tmux will nest in this one.
+    state = tmux_env.detect()
+    if state.inside:
+        typer.echo(tmux_env.nested_remote_warning(state, what="the agent session"), err=True)
 
     if remote.host:
         from .executor import RemoteExecutor

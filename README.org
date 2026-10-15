@@ -164,7 +164,7 @@ The canonical repository remains unwritable by the agent throughout.
 | =start-task=         | Create a task branch (step 4)                |
 | =agents-run=         | Launch the agent (steps 5--6)                |
 | =worktrees=          | List active worktrees with status             |
-| =attach=             | Reconnect to a remote tmux session            |
+| =attach=             | Reconnect to a mirror's tmux session          |
 | =audit=              | Run compliance review of skills and/or code  |
 | =list=               | Discover harnesses, models, mirrors, or skills|
 
@@ -175,7 +175,7 @@ The canonical repository remains unwritable by the agent throughout.
 - status :: Summarize the state of a mirror, including permissions and git remotes.
 - collaborate :: Prepare canonical, ensure mirror, and launch agent in one step.
 - worktrees :: List active git worktrees in a mirror with per-worktree status (branch, commits ahead, dirty state).  Supports =--watch= for live monitoring and =--diff= for file-level changes.
-- attach :: Reconnect to a remote agent session via tmux after an SSH disconnect.
+- attach :: Reconnect to an agent session via tmux: a remote one after an SSH disconnect, or the local session =collaborate= started (see [[*Where the agent session lives][Where the agent session lives]]).
 - nodes :: Show compute-node availability for a SLURM partition (read-only =sinfo= query over the warm gateway tunnel; see [[*Inspecting node availability][Inspecting node availability]]).
 - tunnel :: Keep the free SSH hops to a target warm (=up= / =status= / =doctor= / =down=), and forward a compute-node service port to localhost (=forward= / =forwards=) so a web app served on a node (Jupyter, claude-science, ...) is reachable in a local browser without new authentication.
 - audit :: Run a compliance review of agent-written skills and/or mirror code changes (see [[*Auditing][Auditing]]).
@@ -366,6 +366,41 @@ sucoder --no-agent-sudo agents-clone project
 - Org authoring playground (documentation example): load =docs/examples/org-authoring-demo.org= using your agent's file-read command.
   Demonstrates the in-repo Org skills—structure, markup, tables, capture, citations,
   exporting, agenda integration—so humans and agents have a quick reference.
+
+*** Where the agent session lives
+
+Every launch ends in a tmux session named =sucoder-<mirror>=.  A remote
+launch always did: the tmux on the login or compute node is what
+survives a dropped SSH connection and what =message=, =peek= and =renew=
+talk to.  A local launch now does too.  Before anything expensive runs,
+=collaborate= and =agents-run= look at =$TMUX=:
+
+- Local launch, outside tmux :: =sucoder= re-runs its own command line
+  inside a new local session =sucoder-<mirror>= on your tmux server, in
+  the same directory, and you land in the agent there.  Nothing else
+  changes: the inner =sucoder= sees =$TMUX= and launches as before.
+  Detach with =C-b d=; come back with =sucoder attach <mirror>=, which
+  switches your client to it when you are already in tmux and attaches
+  otherwise.  If the session already exists, =collaborate= attaches to
+  it instead of starting a second agent; ~tmux kill-session -t
+  =sucoder-<mirror>~ clears it.  =--no-tmux= keeps the old behaviour (the
+  agent bound to this terminal), as does a non-interactive terminal, a
+  =TERM=dumb= one (Emacs =M-x shell=, eshell), or a machine without tmux,
+  each with a one-line note.  The session inherits its environment from
+  your tmux server, so a variable exported only in this shell after that
+  server started is not seen, as with any tmux session.
+- Local launch, inside tmux :: unchanged; the agent runs in the current
+  pane.
+- Remote launch or =attach=, inside tmux :: the remote tmux nests inside
+  your local one, and that is structural (it is the remote tmux that
+  survives disconnects).  =sucoder= says so before the ssh, naming your
+  local session and prefix.  The outer tmux reads keys first, and its
+  prefix pressed twice is passed through, so =C-b C-b d= detaches the
+  remote session while =C-b d= detaches the local one and leaves the ssh
+  open in its window.  If you nest often, the usual =.tmux.conf= trick
+  is a key that turns the outer prefix off and on (=bind -T root F12 set
+  key-table off= and =bind -T off F12 set -u key-table=), so the remote
+  session gets every key while you work in it.
 
 *** Codex remote control
 

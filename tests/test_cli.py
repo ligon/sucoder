@@ -5,6 +5,7 @@ import os
 import pathlib
 import re
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -4778,3 +4779,285 @@ def test_peek_reads_a_shell_pane_that_message_would_refuse(monkeypatch, capsys):
     code, trips = _run_peek(monkeypatch, _message_report(pane="bash"), mirror="M")
     assert code == 0 and len(trips) == 1
     assert "(bash)" in capsys.readouterr().out
+
+
+# --- tmux placement: collaborate / agents-run / attach --------------------
+
+def _local_mirror_config(tmp_path: Path) -> Path:
+    """A config with one local mirror, ``sample``, and no targets."""
+    human = os.environ.get("USER", "coder")
+    mirror_root = tmp_path / "mirrors"
+    mirror_root.mkdir(exist_ok=True)
+    canonical_repo = tmp_path / "canonical"
+    canonical_repo.mkdir(exist_ok=True)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"""
+human_user: {human}
+agent_user: {human}
+agent_group: {human}
+mirror_root: {mirror_root}
+mirrors:
+  sample:
+    canonical_repo: {canonical_repo}
+    mirror_name: sample
+    branch_prefixes:
+      human: {human}
+      agent: {human}
+targets:
+  plain-remote:
+    gateway: gw.example.org
+    transfer_host: dtn.example.org
+""",
+        encoding="utf-8",
+    )
+    return config_path
+
+
+def _tmux_scene(monkeypatch, *, inside, session_exists=False, terminal=True,
+                tmux=True, argv=("sucoder", "collaborate", "sample")):
+    """Pin every tmux-facing probe so no server is consulted.
+
+    Returns the list ``os.execvp`` calls land in; an exec raises
+    ``SystemExit(0)`` so the runner reports it as a clean exit, and the
+    manager factory raises if the command gets past the preamble when it
+    should not have.
+    """
+    from sucoder import tmux_env
+
+    state = (
+        tmux_env.TmuxContext(
+            inside=True, socket="/tmp/tmux-1000/default", session="main", prefix="C-b",
+        )
+        if inside else tmux_env.TmuxContext(inside=False)
+    )
+    monkeypatch.setattr(tmux_env, "detect", lambda *a, **kw: state)
+    monkeypatch.setattr(tmux_env, "interactive_terminal", lambda *a, **kw: terminal)
+    monkeypatch.setattr(tmux_env, "tmux_available", lambda: tmux)
+    monkeypatch.setattr(tmux_env, "session_exists", lambda *a, **kw: session_exists)
+    monkeypatch.setattr(sys, "argv", list(argv))
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+    execs: list = []
+
+    def fake_execvp(file, args):
+        execs.append((file, list(args)))
+        raise SystemExit(0)
+
+    monkeypatch.setattr(cli.os, "execvp", fake_execvp)
+    return execs
+
+
+class _RecordingManager:
+    """Stands in for MirrorManager: records bootstrap/launch, does nothing."""
+
+    def __init__(self, calls):
+        self.calls = calls
+
+    def context_for(self, name):
+        return SimpleNamespace(name=name)
+
+    def bootstrap(self, *args, **kwargs):
+        self.calls.append(("bootstrap", kwargs))
+
+    def launch_agent(self, *args, **kwargs):
+        self.calls.append(("launch_agent", kwargs))
+        return 0
+
+
+def _install_manager(monkeypatch):
+    calls: list = []
+    monkeypatch.setattr(
+        cli, "_build_manager_for_mirror", lambda *a, **kw: _RecordingManager(calls),
+    )
+    return calls
+
+
+def _output(result) -> str:
+    return result.stdout + (result.output or "") + str(result.stderr_bytes or b"")
+
+
+def test_collaborate_outside_tmux_reexecs_into_a_local_session(tmp_path, monkeypatch):
+    """A local launch from a plain terminal moves itself into tmux first.
+
+    The exec happens BEFORE the manager is built: the inner sucoder does
+    the real work, and it will see ``$TMUX`` and launch in place.
+    """
+    config_path = _local_mirror_config(tmp_path)
+    execs = _tmux_scene(monkeypatch, inside=False)
+    monkeypatch.setattr(
+        cli, "_build_manager_for_mirror",
+        lambda *a, **kw: pytest.fail("bootstrap must not run in the outer process"),
+    )
+    result = CliRunner().invoke(
+        cli.app, ["--config", str(config_path), "collaborate", "sample"],
+    )
+    assert result.exit_code == 0, _output(result)
+    assert execs == [(
+        "tmux",
+        ["tmux", "new-session", "-s", "sucoder-sample", "-c", os.getcwd(),
+         "sucoder collaborate sample"],
+    )]
+    assert "Starting the agent in local tmux session sucoder-sample" in _output(result)
+
+
+def test_collaborate_inside_tmux_launches_in_place(tmp_path, monkeypatch):
+    config_path = _local_mirror_config(tmp_path)
+    execs = _tmux_scene(monkeypatch, inside=True)
+    calls = _install_manager(monkeypatch)
+    result = CliRunner().invoke(
+        cli.app, ["--config", str(config_path), "collaborate", "sample"],
+    )
+    assert result.exit_code == 0, _output(result)
+    assert execs == []
+    assert [name for name, _ in calls] == ["bootstrap"]
+    assert "note:" not in _output(result)
+
+
+def test_collaborate_no_tmux_keeps_the_terminal_without_comment(tmp_path, monkeypatch):
+    config_path = _local_mirror_config(tmp_path)
+    execs = _tmux_scene(monkeypatch, inside=False)
+    calls = _install_manager(monkeypatch)
+    result = CliRunner().invoke(
+        cli.app, ["--config", str(config_path), "collaborate", "--no-tmux", "sample"],
+    )
+    assert result.exit_code == 0, _output(result)
+    assert execs == []
+    assert [name for name, _ in calls] == ["bootstrap"]
+    assert "note:" not in _output(result)
+
+
+def test_collaborate_without_a_terminal_warns_and_launches_in_place(tmp_path, monkeypatch):
+    """No tty (or TERM=dumb): tmux would refuse, so say so and carry on."""
+    config_path = _local_mirror_config(tmp_path)
+    execs = _tmux_scene(monkeypatch, inside=False, terminal=False)
+    calls = _install_manager(monkeypatch)
+    result = CliRunner().invoke(
+        cli.app, ["--config", str(config_path), "collaborate", "sample"],
+    )
+    assert result.exit_code == 0, _output(result)
+    assert execs == []
+    assert [name for name, _ in calls] == ["bootstrap"]
+    assert "bound to this terminal" in _output(result)
+    assert "tmux new -s sucoder-sample" in _output(result)
+
+
+def test_collaborate_dry_run_describes_the_reexec_and_stays(tmp_path, monkeypatch):
+    config_path = _local_mirror_config(tmp_path)
+    execs = _tmux_scene(monkeypatch, inside=False)
+    calls = _install_manager(monkeypatch)
+    result = CliRunner().invoke(
+        cli.app, ["--config", str(config_path), "collaborate", "--dry-run", "sample"],
+    )
+    assert result.exit_code == 0, _output(result)
+    assert execs == []
+    assert "[dry-run] would re-run inside a local tmux session" in _output(result)
+    assert [name for name, _ in calls] == ["bootstrap"]
+
+
+def test_collaborate_attaches_to_an_existing_local_session(tmp_path, monkeypatch):
+    """A second `collaborate` for a running local session attaches, not duplicates."""
+    config_path = _local_mirror_config(tmp_path)
+    execs = _tmux_scene(monkeypatch, inside=False, session_exists=True)
+    monkeypatch.setattr(
+        cli, "_build_manager_for_mirror",
+        lambda *a, **kw: pytest.fail("a second agent must not be launched"),
+    )
+    result = CliRunner().invoke(
+        cli.app, ["--config", str(config_path), "collaborate", "sample"],
+    )
+    assert result.exit_code == 0, _output(result)
+    assert execs == [("tmux", ["tmux", "attach-session", "-t", "=sucoder-sample"])]
+    assert "already exists; attaching to it" in _output(result)
+
+
+def test_agents_run_takes_the_same_tmux_preamble(tmp_path, monkeypatch):
+    config_path = _local_mirror_config(tmp_path)
+    execs = _tmux_scene(
+        monkeypatch, inside=False, argv=("sucoder", "agents-run", "sample", "--no-sync"),
+    )
+    monkeypatch.setattr(
+        cli, "_build_manager_for_mirror",
+        lambda *a, **kw: pytest.fail("launch must not run in the outer process"),
+    )
+    result = CliRunner().invoke(
+        cli.app, ["--config", str(config_path), "agents-run", "sample", "--no-sync"],
+    )
+    assert result.exit_code == 0, _output(result)
+    assert execs[0][1][-1] == "sucoder agents-run sample --no-sync"
+
+
+def test_collaborate_remote_inside_tmux_warns_before_the_ssh(tmp_path, monkeypatch):
+    """`-T target collaborate` from inside tmux: name the nesting up front.
+
+    The warning must come from the preamble, before the manager (and so
+    before any ControlMaster or allocation) exists; the launch continues.
+    """
+    config_path = _local_mirror_config(tmp_path)
+    execs = _tmux_scene(monkeypatch, inside=True)
+    calls = _install_manager(monkeypatch)
+    result = CliRunner().invoke(
+        cli.app,
+        ["--config", str(config_path), "-T", "plain-remote", "collaborate", "sample"],
+    )
+    assert result.exit_code == 0, _output(result)
+    assert execs == []
+    assert [name for name, _ in calls] == ["bootstrap"]
+    text = _output(result)
+    assert 'inside tmux session "main"' in text
+    assert "`C-b C-b d` detaches the remote session" in text
+
+
+def test_collaborate_remote_outside_tmux_says_nothing(tmp_path, monkeypatch):
+    config_path = _local_mirror_config(tmp_path)
+    _tmux_scene(monkeypatch, inside=False)
+    _install_manager(monkeypatch)
+    result = CliRunner().invoke(
+        cli.app,
+        ["--config", str(config_path), "-T", "plain-remote", "collaborate", "sample"],
+    )
+    assert result.exit_code == 0, _output(result)
+    assert "note:" not in _output(result)
+
+
+def test_attach_local_mirror_attaches_from_outside_tmux(tmp_path, monkeypatch):
+    config_path = _local_mirror_config(tmp_path)
+    execs = _tmux_scene(monkeypatch, inside=False, session_exists=True)
+    result = CliRunner().invoke(cli.app, ["--config", str(config_path), "attach", "sample"])
+    assert result.exit_code == 0, _output(result)
+    assert execs == [("tmux", ["tmux", "attach-session", "-t", "=sucoder-sample"])]
+
+
+def test_attach_local_mirror_switches_client_from_inside_the_same_server(tmp_path, monkeypatch):
+    """Inside tmux on the default server, attach would be refused as nested; switch instead."""
+    config_path = _local_mirror_config(tmp_path)
+    execs = _tmux_scene(monkeypatch, inside=True, session_exists=True)
+    ran: list = []
+
+    def fake_run(argv, **kwargs):
+        ran.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+    result = CliRunner().invoke(cli.app, ["--config", str(config_path), "attach", "sample"])
+    assert result.exit_code == 0, _output(result)
+    assert execs == []
+    assert ran == [["tmux", "switch-client", "-t", "=sucoder-sample"]]
+
+
+def test_attach_local_mirror_without_a_session_explains(tmp_path, monkeypatch):
+    config_path = _local_mirror_config(tmp_path)
+    execs = _tmux_scene(monkeypatch, inside=False, session_exists=False)
+    result = CliRunner().invoke(cli.app, ["--config", str(config_path), "attach", "sample"])
+    assert result.exit_code == 1, _output(result)
+    assert execs == []
+    assert "No local tmux session sucoder-sample" in _output(result)
+
+
+def test_attach_local_mirror_refuses_cluster_flags(tmp_path, monkeypatch):
+    config_path = _local_mirror_config(tmp_path)
+    _tmux_scene(monkeypatch, inside=False, session_exists=True)
+    result = CliRunner().invoke(
+        cli.app, ["--config", str(config_path), "attach", "sample", "--node", "n0001"],
+    )
+    assert result.exit_code == 1, _output(result)
+    assert "this mirror is local" in _output(result)
