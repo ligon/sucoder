@@ -69,7 +69,21 @@ What it does, per ``docs/codex-local-state.org`` ("Revision after Slice 0"):
   ``queue_1``) in the stores it is about to hand to Codex and records it; it
   never rewrites a row to hold it.  With ``--unattended`` it refuses instead
   (and accepts sealed generations only), because an active goal drives
-  unprompted model requests and a queued item executes once on resume.
+  unprompted model requests and a queued item executes once on resume;
+- serves drain requests (``<run>/drain.request``, JSON with a nonce and a
+  mode, written atomically by the launcher's release path) with a sealed
+  acknowledgement (``<run>/drain.ack``, mirrored in ``status.json`` under
+  ``drain_ack``): with no human at the terminal (``terminal: none`` in
+  owner.json) Codex is stopped the way a forwarded SIGTERM stops it and the
+  ordinary exit path takes the final capture; with a TTY in front of a person
+  Codex is not signalled, a warm generation is captured and acknowledged as
+  ``warm_only``, and the final capture on the person's own exit updates the
+  acknowledgement.  The acknowledgement carries the nonce, the outcome, the
+  generation, Codex's exit code and proof that the exact child process (pid
+  and start time recorded at launch) is gone.  In mode ``renew`` the runner
+  then holds ``startup.lock``, drained, until SIGTERM, SIGHUP or SIGINT or a
+  ``release``-mode request with a new nonce, so no restart in this
+  allocation can invalidate the acknowledgement.
 """
 import argparse
 import fcntl
@@ -282,6 +296,31 @@ def pid_alive(pid):
     except PermissionError:
         return True
     return True
+
+
+def read_starttime(pid):
+    """Field 22 of ``/proc/<pid>/stat`` (the start time in clock ticks since
+    boot), or None.  Together with the pid it names one process incarnation;
+    a dead pid alone proves nothing under pid reuse.  The comm field may hold
+    spaces and parentheses, so the fields are counted after the last ``)``,
+    where field 3 begins."""
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return None
+    try:
+        with open("/proc/%d/stat" % pid) as handle:
+            fields = handle.read().rsplit(")", 1)[1].split()
+        return int(fields[19])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def process_gone(pid, starttime):
+    """No process with exactly this pid and start time exists any more.  With
+    no start time recorded only the pid's absence counts."""
+    current = read_starttime(pid)
+    if current is None:
+        return True
+    return starttime is not None and current != starttime
 
 
 def connect_readonly(path):
@@ -933,7 +972,8 @@ class Status(object):
             return False
         if not isinstance(data.get("transitions"), list):
             data["transitions"] = []
-        for key in ("exit", "outcome", "child_pid", "placed", "misplaced", "note"):   # the previous launch's, not this one's
+        for key in ("exit", "outcome", "child_pid", "child_starttime", "placed", "misplaced", "note", "drain", "drain_ack", "hold",
+                    "released_by"):   # the previous launch's, not this one's
             data.pop(key, None)
         with self.lock:
             self.data = data
@@ -1284,6 +1324,35 @@ def elide(command):
         else:
             out.append(arg)
     return out
+
+
+def command_pids(child):
+    """The sandboxed command under bwrap: bwrap's direct children, or bwrap
+    itself when none is visible.  bwrap stays alive as the parent of the
+    command and does not relay signals; delivered to bwrap itself, SIGTERM
+    would end it and --die-with-parent would then SIGKILL Codex before it
+    could shut down.  Signalled directly, the command exits on its own terms
+    and bwrap propagates its exit status."""
+    return [pid for pid in descendants(child.pid) if parent_of(pid) == child.pid] or [child.pid]
+
+
+def deliver(pids, signum):
+    for pid in pids:
+        try:
+            os.kill(pid, signum)
+        except OSError:
+            pass
+
+
+def kill_command(child):
+    """SIGKILL everything under bwrap and then bwrap itself, as the
+    misplacement path ends a child that did not stop.  Never the process
+    group: the child shares the runner's."""
+    deliver(descendants(child.pid), signal.SIGKILL)
+    try:
+        child.kill()
+    except OSError:
+        pass
 
 
 def monitor(child, db_dir, local_root, status, timeout, result, placed_event=None, exit_event=None):
@@ -1692,9 +1761,11 @@ class Checkpointer(object):
         self.last_generation = None
         self.pending_sync = None        # published, but its directory entry's sync failed: not acknowledged yet
         self.inflight = None
+        self.last_flight = None         # generation, trigger and class of the most recent flight, whether or not it is still in flight
         self.inflight_lock = threading.Lock()
         self.last_started = time.monotonic()
         self.errors = 0
+        self.drain = None               # the Drain the scheduler polls for ``drain.request``, set by run()
         self.stop_event = threading.Event()
         self.thread = threading.Thread(target=self.loop)
         self.thread.daemon = True
@@ -1732,6 +1803,8 @@ class Checkpointer(object):
             log("checkpoint scheduler error: %s: %s" % (type(exc).__name__, exc))
         while not self.stop_event.is_set():
             try:
+                if self.drain is not None:
+                    self.drain.poll()
                 trigger = None
                 if os.path.exists(self.request_path):
                     try:
@@ -1764,9 +1837,16 @@ class Checkpointer(object):
             self.status.note(checkpoint=self.view("stuck"))
 
     def begin(self, trigger, cls, final_pass=False, budget=None):
-        """Start one capture unless one is in flight.  ``budget`` is the final
-        capture's remaining share of the shutdown deadline; otherwise a capture
-        gets the full timeout."""
+        """Start one capture unless one is in flight: its thread, or None.
+        ``budget`` is the final capture's remaining share of the shutdown
+        deadline; otherwise a capture gets the full timeout."""
+        flight = self.start_flight(trigger, cls, final_pass, budget)
+        return None if flight is None else flight["thread"]
+
+    def start_flight(self, trigger, cls, final_pass=False, budget=None):
+        """``begin`` returning the flight record (generation, thread, trigger,
+        class, deadline) instead of the thread alone, for a caller that must
+        know which generation it started."""
         with self.inflight_lock:
             self.last_started = time.monotonic()
             if self.inflight is not None:
@@ -1784,13 +1864,26 @@ class Checkpointer(object):
                 flight = {"thread": worker, "deadline": deadline, "generation": generation, "trigger": trigger,
                           "class": cls, "stuck": False, "started": time.time()}
                 self.inflight = flight
+                self.last_flight = {"generation": generation, "trigger": trigger, "class": cls}
         if flight is None:
             log("checkpoint trigger %s dropped: capture %s is in flight" % (trigger, blocker))
             self.status.note(checkpoint=self.view(None))
             return None
         self.status.note(checkpoint=self.view("capturing"))
         flight["thread"].start()
-        return flight["thread"]
+        return flight
+
+    def result_of(self, name):
+        """(published record, reason) for the capture of generation ``name``
+        after its worker has ended: the record when it is the acknowledged
+        last generation, else None and why not."""
+        with self.inflight_lock:
+            last, pending, outcome, reason = self.last_generation, self.pending_sync, self.last_outcome, self.reason
+        if last is not None and last["name"] == name:
+            return last, None
+        if pending is not None and pending["name"] == name:
+            return None, "generation %s is published but not acknowledged: the sync of %s failed" % (name, self.generations)
+        return None, "capture %s %s: %s" % (name, outcome, reason or "no generation was published")
 
     def view(self, state):
         with self.inflight_lock:
@@ -2160,7 +2253,10 @@ class Checkpointer(object):
         flight spends from it, the final capture gets what remains, and when
         nothing remains it is skipped.  Release is never blocked: nothing here
         touches the durable side itself (the final capture's worker retries an
-        unsynced generation's directory sync, under the deadline)."""
+        unsynced generation's directory sync, under the deadline).  Returns
+        None when the final capture's worker ended within the deadline (its
+        outcome is then the checkpointer's last), else one line saying why
+        there is no final generation, for a drain acknowledgement."""
         self.stop_event.set()
         if self.thread.is_alive():
             self.thread.join(2.0)
@@ -2175,7 +2271,7 @@ class Checkpointer(object):
         if flight is not None:
             log("final %s capture skipped: capture %s is still in flight; last durable generation: %s%s" % (
                 cls, flight["generation"], self.describe_last(), self.describe_unsynced()))
-            return
+            return "the final capture was skipped: capture %s was still in flight at the shutdown deadline" % flight["generation"]
         with self.inflight_lock:
             listed = self.seq is not None
         if not listed:
@@ -2183,20 +2279,363 @@ class Checkpointer(object):
             # durable side is not answering, and the exit path does not ask it.
             log("final %s capture skipped: the durable generations listing never completed, so nothing could be published; "
                 "last durable generation: %s%s" % (cls, self.describe_last(), self.describe_unsynced()))
-            return
+            return "the final capture was skipped: the durable generations listing never completed"
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             log("final %s capture skipped: the %ds shutdown budget was spent waiting for the capture in flight; last durable "
                 "generation: %s%s" % (cls, self.timeout, self.describe_last(), self.describe_unsynced()))
-            return
+            return "the final capture was skipped: the %ds shutdown budget was spent waiting for the capture in flight" % self.timeout
         worker = self.begin("final", cls, final_pass=True, budget=remaining)
         if worker is None:
-            return
+            return "the final capture could not start: another capture was in flight"
         worker.join(max(0.0, deadline + 2.0 - time.monotonic()))
         if worker.is_alive():
             log("final %s capture still running after its %.1fs share of the %ds shutdown budget; exiting without it; last durable "
                 "generation: %s" % (cls, remaining, self.timeout, self.describe_last()))
             self.status.note(checkpoint=self.view("stuck"))
+            return "the final capture was still running after its %.1fs share of the %ds shutdown budget" % (remaining, self.timeout)
+        return None
+
+
+# ----------------------------------------------------------------- drain
+
+DRAIN_NONCE = re.compile(r"^[0-9a-f]{8,64}$")
+DRAIN_MODES = ("release", "renew")
+GENERATION_FIELDS = ("name", "class", "manifest_sha256", "path")
+
+
+def terminal_mode(unattended):
+    """Who owns the terminal, decided once at launch: ``tty`` when a person
+    may sit at it (stdin and stdout are a terminal and the launch is not
+    --unattended), else ``none`` (an app-server, exec, remote control, or an
+    unattended launch)."""
+    if unattended:
+        return "none"
+    try:
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            return "tty"
+    except (AttributeError, ValueError, OSError):
+        pass
+    return "none"
+
+
+def parse_drain_request(text):
+    """The request's fields, or ValueError saying what is wrong with it."""
+    try:
+        data = json.loads(text)
+    except ValueError as exc:
+        raise ValueError("not JSON: %s" % exc)
+    if not isinstance(data, dict):
+        raise ValueError("not a JSON object")
+    nonce, mode = data.get("nonce"), data.get("mode")
+    if not isinstance(nonce, str) or DRAIN_NONCE.fullmatch(nonce) is None:
+        raise ValueError("nonce must be 8-64 lowercase hex characters")
+    if not isinstance(mode, str) or mode not in DRAIN_MODES:
+        raise ValueError("mode must be one of %s" % ", ".join(DRAIN_MODES))
+    requested_at = data.get("requested_at")
+    if requested_at is not None and (isinstance(requested_at, bool) or not isinstance(requested_at, (int, float))):
+        raise ValueError("requested_at must be a number")
+    requester = data.get("requester")
+    if requester is not None and not isinstance(requester, str):
+        raise ValueError("requester must be a string")
+    return {"nonce": nonce, "mode": mode, "requested_at": requested_at, "requester": requester}
+
+
+def generation_fields(record):
+    return dict((key, record.get(key)) for key in GENERATION_FIELDS)
+
+
+class Drain(object):
+    """``<run>/drain.request`` and its acknowledgement ``<run>/drain.ack``,
+    both on local disk in the run directory.
+
+    The requester (the launcher's release path) writes the request
+    atomically: ``{"nonce": <8-64 lowercase hex>, "mode": "release" |
+    "renew", "requested_at": <epoch>, "requester": <text>}``.  The
+    checkpointer's scheduler polls it every second (``poll``) and consumes
+    it; a malformed one is renamed ``drain.request.rejected-<time>`` and
+    logged once, and stops nothing.
+
+    What a request does depends on who owns the terminal, decided once at
+    launch (``terminal`` in owner.json).  With ``none`` Codex is stopped the
+    way a forwarded SIGTERM stops it (the sandboxed command is signalled,
+    SIGKILL after the checkpoint timeout) and the ordinary exit path takes
+    the final capture, sealed on a zero exit with no descriptor holder left
+    and a crash candidate otherwise.  With ``tty`` a person may be mid-turn,
+    so Codex is not signalled: a warm generation is captured now (trigger
+    ``drain``) and acknowledged as ``warm_only``, and the final capture on
+    the person's own exit updates the acknowledgement under the same nonce.
+
+    The acknowledgement (also ``status.json["drain_ack"]``) carries the
+    nonce and mode, the outcome (``sealed`` or ``crash`` from the final
+    generation's class, ``warm_only``, or ``failed`` with a ``reason``), the
+    generation's name, class, manifest hash and path (or null), Codex's exit
+    code (null while it runs), the child's pid and start time as recorded at
+    launch, ``stopped`` (true only when no process with exactly that pid and
+    start time exists), and when it was acknowledged.  A nonce already
+    acknowledged by this runner is answered with a log line, the
+    acknowledgement standing; a new nonce while one request is being served
+    is logged and dropped (request again after the acknowledgement).  After
+    Codex has exited a request is answered from the final result."""
+
+    def __init__(self, run_dir, child, child_info, terminal, status, checkpointer, timeout, scope, run_id):
+        self.request_path = os.path.join(run_dir, "drain.request")
+        self.ack_path = os.path.join(run_dir, "drain.ack")
+        self.child = child
+        self.child_info = child_info          # {"pid", "starttime"} as recorded at launch
+        self.terminal = terminal
+        self.status = status
+        self.checkpointer = checkpointer
+        self.timeout = timeout
+        self.scope = scope
+        self.run_id = run_id
+        self.lock = threading.Lock()
+        self.active = None          # the request being served
+        self.flight = None          # the tty request's warm capture
+        self.pending_final = None   # a tty request acknowledged warm_only, updated by the final capture
+        self.answered = {}          # nonce -> outcome of the acknowledgement written
+        self.result = None          # the final capture's result once Codex has exited (settle)
+        self.closed = False         # settled: the scheduler side writes nothing after it
+        self.ack = None
+        self.read_errors = set()
+
+    # -- the request file
+
+    def read_request(self):
+        """The request, consumed, or None: absent, unreadable (logged once per
+        error) or rejected."""
+        try:
+            with open(self.request_path, "r") as handle:
+                text = handle.read()
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            message = "%s: %s" % (type(exc).__name__, exc)
+            if message not in self.read_errors:
+                self.read_errors.add(message)
+                log("drain.request cannot be read (%s); nothing is drained until it can be" % message)
+            return None
+        try:
+            request = parse_drain_request(text)
+        except ValueError as exc:
+            self.reject(str(exc))
+            return None
+        try:
+            os.unlink(self.request_path)
+        except OSError:
+            pass
+        request["received_at"] = time.time()
+        return request
+
+    def reject(self, reason):
+        kept = "%s.rejected-%.3f" % (self.request_path, time.time())
+        try:
+            os.rename(self.request_path, kept)
+        except OSError:
+            try:
+                os.unlink(self.request_path)
+            except OSError:
+                pass
+            kept = "removed"
+        log("drain request rejected (%s); kept as %s; nothing is stopped" % (reason, kept))
+
+    # -- while Codex runs (the checkpoint scheduler's thread)
+
+    def poll(self):
+        request = self.read_request()
+        if request is not None:
+            self.receive(request)
+        self.advance()
+
+    def receive(self, request):
+        nonce, mode = request["nonce"], request["mode"]
+        with self.lock:
+            settled = self.closed
+            done = None if settled else self.answered.get(nonce)
+            busy = None if done is not None or self.active is None else self.active["nonce"]
+            if not settled and done is None and busy is None:
+                self.active = request
+        if settled:
+            self.answer_late(request)       # consumed after the exit path settled: answered from the final result, never eaten
+            return
+        if done is not None:
+            log("drain request %s (%s) is already acknowledged (%s); the acknowledgement stands" % (nonce, mode, done))
+            return
+        if busy is not None:
+            log("drain request %s (%s) ignored: request %s is still being served; request again after its acknowledgement" % (nonce, mode, busy))
+            return
+        origin = "" if not request["requester"] else ", from %s" % request["requester"]
+        if self.terminal == "tty":
+            self.status.update("drain_pending", drain=dict(request))
+            log("drain request %s (%s%s): a person may be at the terminal, so Codex is not signalled; a warm generation is captured now "
+                "and the final capture on Codex's own exit seals" % (nonce, mode, origin))
+            self.advance()
+            return
+        self.status.update("draining", drain=dict(request))
+        if self.child.poll() is not None:
+            # Reaped already (a recycled pid must never be signalled): the
+            # exit path settles this request from the final capture.
+            log("drain request %s (%s%s): Codex has already exited; the exit path acknowledges it" % (nonce, mode, origin))
+            return
+        log("drain request %s (%s%s): stopping Codex gracefully (SIGTERM to the sandboxed command, SIGKILL after %ds); the final "
+            "capture follows" % (nonce, mode, origin, self.timeout))
+        deliver(command_pids(self.child), signal.SIGTERM)
+        enforcer = threading.Thread(target=self.enforce)
+        enforcer.daemon = True
+        enforcer.start()
+
+    def enforce(self):
+        """The bound on the graceful stop: SIGKILL when Codex is still there
+        after the checkpoint timeout.  Polls like the monitor does; the main
+        thread is in ``child.wait()``."""
+        deadline = time.monotonic() + self.timeout
+        while self.child.poll() is None and not overdue(deadline):
+            time.sleep(0.1)
+        if self.child.poll() is None:
+            log("Codex has not exited %ds after the drain's SIGTERM; killing it" % self.timeout)
+            kill_command(self.child)
+
+    def advance(self):
+        """The tty request's warm capture: started when none is in flight
+        (retried every poll otherwise), acknowledged ``warm_only`` once its
+        worker has ended, or ``failed`` with the capture's reason."""
+        with self.lock:
+            request, flight = self.active, self.flight
+            if request is None or self.terminal != "tty" or self.closed:
+                return
+        if flight is None:
+            with self.checkpointer.inflight_lock:
+                busy = self.checkpointer.inflight is not None
+            if busy:
+                return                      # retried next poll, without a dropped-trigger line per second
+            flight = self.checkpointer.start_flight("drain", "warm")
+            with self.lock:
+                if self.active is request:
+                    self.flight = flight
+            return
+        if flight["thread"].is_alive():
+            return
+        record, reason = self.checkpointer.result_of(flight["generation"])
+        outcome = "warm_only" if record is not None else "failed"
+        with self.lock:
+            if self.closed or self.active is not request:
+                return
+            self.write_ack(request, outcome, None if record is None else generation_fields(record), None, reason)
+            self.answered[request["nonce"]] = outcome
+            self.pending_final = request
+            self.active = self.flight = None
+
+    # -- after Codex has exited (the main thread)
+
+    def final_result(self, code, skipped):
+        """What the final capture made of the exit: the final generation's
+        class and record, or ``failed`` with the reason (and the last durable
+        generation, for the operator)."""
+        cp = self.checkpointer
+        with cp.inflight_lock:
+            flight, last = cp.last_flight, cp.last_generation
+        record = None
+        if skipped is not None:
+            reason = skipped
+        elif flight is None or flight["trigger"] != "final":
+            reason = "no final capture ran"
+        else:
+            record, reason = cp.result_of(flight["generation"])
+        result = {"exit": code, "outcome": "failed", "generation": None, "reason": reason, "last_durable": None}
+        if record is not None:
+            result.update({"outcome": record["class"], "generation": generation_fields(record), "reason": None})
+        elif last is not None:
+            result["last_durable"] = generation_fields(last)
+        return result
+
+    def settle(self, code, skipped):
+        """The exit path, after the final capture: the acknowledgement for the
+        request being served (or for the tty request acknowledged warm_only
+        earlier, updated under its nonce), then a request that arrived too
+        late for the scheduler, answered from the same result.  Returns the
+        request whose mode decides what the runner does next, or None."""
+        self.result = self.final_result(code, skipped)
+        with self.lock:
+            self.closed = True
+            request = self.active or self.pending_final
+            self.active = self.pending_final = self.flight = None
+            if request is not None:
+                self.acknowledge(request)
+        late = self.read_request()
+        if late is not None and self.answer_late(late) and request is None:
+            request = late
+        return request
+
+    def acknowledge(self, request):
+        """Under the lock, with the final result known."""
+        result = self.result
+        self.write_ack(request, result["outcome"], result["generation"], result["exit"], result["reason"], result["last_durable"])
+        self.answered[request["nonce"]] = result["outcome"]
+
+    def answer_late(self, request):
+        """A request read after Codex exited (on the exit path or while
+        holding drained): answered from the final result under its own nonce.
+        True when an acknowledgement was written."""
+        with self.lock:
+            done = self.answered.get(request["nonce"])
+            if done is None:
+                self.acknowledge(request)
+        if done is not None:
+            log("drain request %s (%s) is already acknowledged (%s); the acknowledgement stands" % (request["nonce"], request["mode"], done))
+            return False
+        return True
+
+    def write_ack(self, request, outcome, generation, exit_code, reason, last_durable=None):
+        now = time.time()
+        ack = {"nonce": request["nonce"], "mode": request["mode"], "outcome": outcome, "generation": generation, "exit": exit_code,
+               "child": dict(self.child_info), "stopped": process_gone(self.child_info["pid"], self.child_info["starttime"]),
+               "acknowledged_at": now, "acknowledged_at_iso": utc_iso(now), "requested_at": request["requested_at"],
+               "requester": request["requester"], "terminal": self.terminal, "scope": self.scope, "run": self.run_id}
+        if reason:
+            ack["reason"] = reason
+        if last_durable:
+            ack["last_durable"] = last_durable
+        self.ack = ack
+        try:
+            write_json(self.ack_path, ack)
+        except OSError as exc:
+            log("drain.ack cannot be written (%s: %s); the acknowledgement is in status.json only" % (type(exc).__name__, exc))
+        self.status.note(drain_ack=ack)
+        log("drain %s acknowledged: %s%s; generation %s; Codex stopped: %s" % (
+            request["nonce"], outcome, " (%s)" % reason if reason else "", generation["name"] if generation else "none",
+            "yes" if ack["stopped"] else "no"))
+
+
+def hold_drained(drain, status, request):
+    """Mode ``renew`` after the acknowledgement: the runner stays alive,
+    holding ``startup.lock`` with the replicator and checkpointer stopped, so
+    no restart in this allocation can invalidate the acknowledgement, until
+    SIGTERM, SIGHUP or SIGINT (a ``released`` transition, exit 0) or a
+    ``release``-mode drain.request with a new nonce, acknowledged from the
+    drained result first.  Nothing durable is touched while holding."""
+    released = threading.Event()
+    how = {}
+
+    def release(signum, frame):
+        how["by"] = "signal %d" % signum
+        released.set()
+    for signum in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        signal.signal(signum, release)
+    since = time.time()
+    status.update("drained", hold={"since": since, "nonce": request["nonce"], "runner_pid": os.getpid(),
+                                   "release": "SIGTERM, SIGHUP or SIGINT to the runner, or a drain.request with mode release"})
+    log("drained for request %s (renew): holding startup.lock so no restart in this allocation can invalidate the acknowledgement; "
+        "release with kill -TERM %d (SIGHUP and Ctrl-C work too) or a drain.request with mode release; nothing durable is touched "
+        "while holding" % (request["nonce"], os.getpid()))
+    while not released.is_set():
+        released.wait(1.0)
+        late = drain.read_request()
+        if late is not None and drain.answer_late(late) and late["mode"] == "release":
+            how["by"] = "drain request %s (release)" % late["nonce"]
+            break
+    by = how.get("by", "signal")
+    status.update("released", released_by=by)
+    log("released (%s) after holding %.0fs; exiting 0" % (by, time.time() - since))
 
 
 # ----------------------------------------------------------------- the run
@@ -2204,6 +2643,7 @@ class Checkpointer(object):
 def run(args):
     status = None
     staging = None
+    terminal = terminal_mode(args.unattended)    # before anything else owns the terminal
     try:
         if shutil.which("bwrap") is None:
             raise Refused("bwrap is not installed on this node; managed placement is unavailable and SuCoder will not fall back to shared SQLite")
@@ -2314,7 +2754,7 @@ def run(args):
                 "durable_root": durable_base, "durable": durable_run,
                 "bound": [{"local": l, "target": t} for l, t in binds], "skipped": skipped,
                 "runner_pid": os.getpid(), "started": time.time(), "command": elide(command),
-                "reused_run": mode == "reuse", "restored_from": restored, "pending_work": pending,
+                "reused_run": mode == "reuse", "restored_from": restored, "pending_work": pending, "terminal": terminal,
             }
             if owner_before is not None:
                 previous = list(owner_before.get("previous") or [])
@@ -2338,7 +2778,8 @@ def run(args):
                 attempt.rollback()
             raise Refused("%s failed while %s: %s: %s" % (launch, step, type(exc).__name__, exc))
         fields = {"scope": args.scope, "run": run_id, "db": db_dir, "durable": durable_run, "bound": [t for _, t in binds],
-                  "skipped": skipped, "mode": mode, "reused_run": mode == "reuse", "restored_from": restored, "pending_work": pending}
+                  "skipped": skipped, "mode": mode, "reused_run": mode == "reuse", "restored_from": restored, "pending_work": pending,
+                  "terminal": terminal}
         if restore_ignored:
             fields["restore_ignored"] = restore_ignored
         status.update("starting", **fields)
@@ -2381,21 +2822,12 @@ def run(args):
     LOG_FILE["quiet"] = sys.stderr.isatty()
     child = subprocess.Popen(argv, env=env)
     owner["child_pid"] = child.pid
+    owner["child_starttime"] = read_starttime(child.pid)    # with the pid, one process incarnation: the drain's proof of a stop
     write_json(os.path.join(local, "owner.json"), owner)
-    status.update("launched", child_pid=child.pid)
+    status.update("launched", child_pid=child.pid, child_starttime=owner["child_starttime"])
 
     def forward(signum, frame):
-        # bwrap stays alive as the parent of the sandboxed command and does
-        # not relay signals; delivered to bwrap itself, SIGTERM would end it
-        # and --die-with-parent would then SIGKILL Codex before it could
-        # shut down.  Signal the command instead, and bwrap propagates its
-        # exit status.  Fall back to bwrap only when no child is visible.
-        targets = [pid for pid in descendants(child.pid) if parent_of(pid) == child.pid] or [child.pid]
-        for pid in targets:
-            try:
-                os.kill(pid, signum)
-            except OSError:
-                pass
+        deliver(command_pids(child), signum)
     for signum in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(signum, forward)
 
@@ -2413,6 +2845,9 @@ def run(args):
                                 args.checkpoint_minutes, args.checkpoint_timeout, placed)
     if unsynced_before is not None:
         checkpointer.adopt_unsynced(unsynced_before)
+    drain = Drain(local, child, {"pid": child.pid, "starttime": owner["child_starttime"]}, terminal, status, checkpointer,
+                  args.checkpoint_timeout, args.scope, run_id)
+    checkpointer.drain = drain
     checkpointer.start()
     while True:
         try:
@@ -2438,14 +2873,26 @@ def run(args):
             cls = "crash"
             log("pids %s still hold descriptors under %s after Codex exited; the final generation is a crash candidate, not sealed" % (
                 ", ".join(str(pid) for pid in holders[:4]), db_dir))
-    checkpointer.final(cls)
+    skipped = checkpointer.final(cls)
+    request = drain.settle(code, skipped)
+    if request is not None and request["mode"] == "renew":
+        hold_drained(drain, status, request)
+        return EXIT_MISPLACED if misplaced else 0
     if misplaced:
         return EXIT_MISPLACED
     return code
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="SuCoder managed Codex state runner")
+    parser = argparse.ArgumentParser(
+        description="SuCoder managed Codex state runner",
+        epilog="Drain: a requester writes <run>/drain.request atomically as JSON {nonce: 8-64 lowercase hex, mode: release|renew, "
+               "requested_at: epoch, requester: text} and the runner stops Codex gracefully and seals on exit, or, when a person may be "
+               "at the terminal (owner.json terminal: tty), takes a warm generation without signalling it and seals when the person exits. "
+               "The acknowledgement <run>/drain.ack (also status.json drain_ack) carries the same nonce, the outcome (sealed, crash, "
+               "warm_only, or failed with a reason), the generation's name, class, manifest hash and path, Codex's exit code, the child's "
+               "pid and start time with whether that exact process is gone, and in mode renew the runner then holds startup.lock, "
+               "drained, until SIGTERM, SIGHUP or SIGINT or a release-mode drain.request with a new nonce (exit 0).")
     parser.add_argument("--scope", required=True, help="stable scope digest from the launcher")
     parser.add_argument("--placeholder", default=PLACEHOLDER_DEFAULT)
     parser.add_argument("--codex-home", default=None)

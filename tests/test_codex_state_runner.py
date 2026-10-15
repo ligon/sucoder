@@ -12,7 +12,8 @@ from another inode), ``thread`` starts a second thread whose rollout holds only 
 session_meta line, ``drop projection`` drops the projection table from the
 history store, ``goal <status>`` and ``queue add`` write the rows the gate
 checks, ``extra`` opens an unclassified store, ``quit`` exits 0, SIGTERM
-exits 37 -- and, like
+exits 37 (``FAKE_SIGTERM_EXIT`` overrides the code, so a drained fake can
+seal) -- and, like
 Codex, it continues the thread it finds in the stores it is handed (the
 recorded rollout path, the projection's ordinal), reporting what it found on
 a ``FAKE_SEES`` line so a test can assert that restored state was read by the
@@ -35,6 +36,7 @@ import subprocess
 import sys
 import threading
 import time
+import tty
 from pathlib import Path
 
 import pytest
@@ -110,7 +112,7 @@ else:
     rollout.write((json.dumps({"type": "session_meta", "payload": {"id": tid}}) + "\n").encode())
     state.execute("insert or replace into threads values (?, ?, ?)", (tid, rollout_path, "0.162.1"))
     ordinal = turn = 0
-signal.signal(signal.SIGTERM, lambda s, f: os._exit(37))
+signal.signal(signal.SIGTERM, lambda s, f: os._exit(int(os.environ.get("FAKE_SIGTERM_EXIT", "37"))))
 sys.stdout.write("FAKE_SEES " + json.dumps(sees, sort_keys=True) + "\n")
 sys.stdout.write("FAKE_READY %d %s\n" % (os.getpid(), tid))
 sys.stdout.flush()
@@ -253,19 +255,32 @@ def _manifest(status):
 
 
 class Managed:
-    """The runner with the scriptable fake under it, placed and ready."""
+    """The runner with the scriptable fake under it, placed and ready.  With
+    ``tty`` the runner's stdin and stdout are the slave of a pty in raw mode
+    (no echo, no newline translation), so ``isatty()`` is true for it and for
+    the fake, and the test speaks through the master; stderr stays a pipe so
+    the runner's own lines can be read."""
 
-    def __init__(self, home, python=None, timeout=30.0, extra=(), env=None):
+    def __init__(self, home, python=None, timeout=30.0, extra=(), env=None, tty=False):
         python = python or sys.executable
         self.home = home
         argv = [python, str(RUNNER), "--scope", home["scope"], "--durable-root", str(home["durable"]),
                 "--checkpoint-timeout", str(timeout), *extra, "--",
                 python, str(home["fake"]), "-c", f'sqlite_home="{PLACEHOLDER}"', "app-server"]
-        self.proc = subprocess.Popen(argv, env=_env(home, **(env or {})), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                     stderr=subprocess.PIPE, text=True)
+        self.master = None
+        self.buffer = b""
+        if tty:
+            self.master, slave = os.openpty()
+            _setraw(slave)
+            self.proc = subprocess.Popen(argv, env=_env(home, **(env or {})), stdin=slave, stdout=slave, stderr=subprocess.PIPE,
+                                         text=True)
+            os.close(slave)
+        else:
+            self.proc = subprocess.Popen(argv, env=_env(home, **(env or {})), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                         stderr=subprocess.PIPE, text=True)
         self.sees = None            # what the fake found in the stores it was handed
         while True:
-            line = self.proc.stdout.readline()
+            line = self._readline()
             words = line.split()
             if words[:1] == ["FAKE_SEES"]:
                 self.sees = json.loads(line.split(" ", 1)[1])
@@ -285,10 +300,31 @@ class Managed:
         self.local_rollout = self.run_dir / "home" / "sessions" / self.relative
         self.replica = self.durable_run / "rollouts" / f"{self.tid}.jsonl"
 
+    def _readline(self):
+        if self.master is None:
+            return self.proc.stdout.readline()
+        while b"\n" not in self.buffer:
+            try:
+                chunk = os.read(self.master, 4096)
+            except OSError:                 # EIO once every holder of the slave has gone
+                chunk = b""
+            if not chunk:
+                line, self.buffer = self.buffer, b""
+                return line.decode()
+            self.buffer += chunk
+        line, _, self.buffer = self.buffer.partition(b"\n")
+        return line.decode() + "\n"
+
+    def _write(self, text):
+        if self.master is None:
+            self.proc.stdin.write(text)
+            self.proc.stdin.flush()
+        else:
+            os.write(self.master, text.encode())
+
     def cmd(self, line):
-        self.proc.stdin.write(line + "\n")
-        self.proc.stdin.flush()
-        reply = self.proc.stdout.readline().strip()
+        self._write(line + "\n")
+        reply = self._readline().strip()
         assert reply.startswith("ok"), reply
         return reply
 
@@ -303,14 +339,20 @@ class Managed:
         return _wait(self.home, synced, "the replica to catch up", timeout)[0]
 
     def quit(self, timeout=40):
-        self.proc.stdin.write("quit\n")
-        self.proc.stdin.flush()
+        self._write("quit\n")
         return self.proc.wait(timeout=timeout)
 
     def close(self):
         if self.proc.poll() is None:
             self.proc.kill()
             self.proc.wait(timeout=10)
+        if self.master is not None:
+            os.close(self.master)
+            self.master = None
+
+
+def _setraw(fd):
+    tty.setraw(fd)
 
 
 # ----------------------------------------------------------------- replication and generations
@@ -2721,3 +2763,319 @@ def test_adopt_unsynced_judges_the_record_alone_and_the_retry_checks_the_generat
     h.cp.retry_sync()
     assert h.cp.pending_sync is None and h.cp.last_generation["name"] == record["name"] and "sync_warning" not in h.cp.last_generation
     assert h.status_json()["last_generation"]["name"] == record["name"] and h.status_json()["unsynced_generation"] is None
+
+
+# ----------------------------------------------------------------- drain requests (Slice 3c)
+
+def _drain_request(run_dir, nonce, mode="release", **extra):
+    """Written the way the launcher will: a temporary file renamed into place."""
+    data = {"nonce": nonce, "mode": mode, "requested_at": time.time(), "requester": "test"}
+    data.update(extra)
+    tmp = run_dir / "drain.request.tmp"
+    tmp.write_text(json.dumps(data))
+    os.rename(tmp, run_dir / "drain.request")
+
+
+def _ack(run_dir):
+    return json.loads((run_dir / "drain.ack").read_text())
+
+
+def _starttime(pid):
+    return int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19])
+
+
+def _wait_log(run_dir, needle, timeout=10):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        text = (run_dir / "runner.log").read_text()
+        if needle in text:
+            return text
+        time.sleep(0.1)
+    raise AssertionError(f"{needle!r} never appeared in runner.log:\n{(run_dir / 'runner.log').read_text()}")
+
+
+def _fields(record):
+    return {key: record[key] for key in ("name", "class", "manifest_sha256", "path")}
+
+
+@needs_bwrap
+@pytest.mark.parametrize("python", INTERPRETERS)
+def test_a_release_drain_stops_codex_seals_and_acknowledges(home, python):
+    """3c (a) and (e), under both interpreters: with no terminal (stdin is a
+    pipe) the request stops the fake the way a forwarded SIGTERM does, the
+    ordinary exit path seals, the acknowledgement names the generation and
+    proves the stop with the pid and start time recorded at launch, and the
+    runner exits with the child's code."""
+    nonce = "a1" * 8
+    m = Managed(home, python=python, env={"FAKE_SIGTERM_EXIT": "0"})
+    try:
+        m.cmd("turn 200")
+        m.wait_synced()
+        _wait_idle(home)
+        owner = json.loads((m.run_dir / "owner.json").read_text())
+        assert owner["terminal"] == "none" and owner["child_pid"] != m.pid, "bwrap's pid, with its start time"
+        assert owner["child_starttime"] == _starttime(owner["child_pid"]) > 0
+        assert m.status()["child_starttime"] == owner["child_starttime"] and m.status()["terminal"] == "none"
+        _drain_request(m.run_dir, nonce, "release")
+        assert m.proc.wait(timeout=40) == 0
+        status = m.status()
+        assert [t["state"] for t in status["transitions"]][-2:] == ["draining", "exited"]
+        assert status["drain"]["nonce"] == nonce and status["drain"]["mode"] == "release" and status["drain"]["requester"] == "test"
+        last = status["last_generation"]
+        assert last["class"] == "sealed" and last["trigger"] == "final"
+        ack = _ack(m.run_dir)
+        assert ack == status["drain_ack"]
+        assert ack["nonce"] == nonce and ack["mode"] == "release" and ack["outcome"] == "sealed" and "reason" not in ack
+        assert ack["generation"] == _fields(last) and ack["exit"] == 0 and ack["stopped"] is True
+        assert ack["child"] == {"pid": owner["child_pid"], "starttime": owner["child_starttime"]}
+        assert ack["run"] == m.run_dir.name and ack["scope"] == home["scope"] and ack["terminal"] == "none"
+        assert ack["requested_at"] == status["drain"]["requested_at"] and ack["acknowledged_at"] >= ack["requested_at"]
+        assert not (m.run_dir / "drain.request").exists(), "consumed"
+        log = (m.run_dir / "runner.log").read_text()
+        assert f"drain request {nonce} (release, from test): stopping Codex gracefully" in log
+        assert f"drain {nonce} acknowledged: sealed; generation {last['name']}; Codex stopped: yes" in log
+        assert "Codex exited with 0" in log and "killing it" not in log
+    finally:
+        m.close()
+
+
+@needs_bwrap
+def test_a_renew_drain_holds_the_startup_lock_until_the_runner_is_released(home):
+    """3c (b): after the acknowledgement the runner stays alive in state
+    drained, the scope's startup.lock held so a second runner refuses; the
+    same nonce again is idempotent, a new nonce is answered from the drained
+    result, nothing durable changes while holding, and SIGTERM releases it
+    with exit 0."""
+    nonce = "b2" * 8
+    m = Managed(home, env={"FAKE_SIGTERM_EXIT": "0"})
+    try:
+        m.cmd("turn 200")
+        m.wait_synced()
+        _wait_idle(home)
+        _drain_request(m.run_dir, nonce, "renew")
+        status, _ = _wait(home, lambda st: st["state"] == "drained", "the drained hold")
+        assert m.proc.poll() is None
+        assert [t["state"] for t in status["transitions"]][-3:] == ["draining", "exited", "drained"]
+        assert status["hold"]["nonce"] == nonce and status["hold"]["runner_pid"] == m.proc.pid
+        ack = _ack(m.run_dir)
+        assert ack["outcome"] == "sealed" and ack["mode"] == "renew" and ack["stopped"] is True and ack["exit"] == 0
+        assert ack["generation"] == _fields(status["last_generation"]) and status["last_generation"]["class"] == "sealed"
+        durable_before = sorted(os.listdir(m.generations)), m.replica.read_bytes()
+
+        proc = _attempt(home)
+        assert proc.returncode == 70 and "another managed Codex server for this scope is running in this allocation" in proc.stderr
+
+        _drain_request(m.run_dir, nonce, "renew")
+        log = _wait_log(m.run_dir, f"drain request {nonce} (renew) is already acknowledged (sealed); the acknowledgement stands")
+        assert _ack(m.run_dir) == ack and log.count(f"drain {nonce} acknowledged") == 1
+
+        _drain_request(m.run_dir, "c3" * 8, "renew")
+        _wait_log(m.run_dir, "drain c3c3c3c3c3c3c3c3 acknowledged: sealed")
+        again = _ack(m.run_dir)
+        assert again["nonce"] == "c3" * 8 and again["outcome"] == "sealed" and again["generation"] == ack["generation"]
+        assert again["stopped"] is True and again["exit"] == 0 and again["acknowledged_at"] > ack["acknowledged_at"]
+        assert m.proc.poll() is None and m.status()["state"] == "drained", "a renew request does not end the hold"
+        assert (sorted(os.listdir(m.generations)), m.replica.read_bytes()) == durable_before
+
+        os.kill(m.proc.pid, signal.SIGTERM)
+        assert m.proc.wait(timeout=20) == 0
+        status = m.status()
+        assert status["state"] == "released" and status["released_by"] == "signal 15"
+        assert [t["state"] for t in status["transitions"]][-2:] == ["drained", "released"]
+        log = (m.run_dir / "runner.log").read_text()
+        assert f"drained for request {nonce} (renew): holding startup.lock" in log and f"kill -TERM {m.proc.pid}" in log
+        assert "released (signal 15)" in log
+        assert (sorted(os.listdir(m.generations)), m.replica.read_bytes()) == durable_before, "nothing durable touched while holding"
+    finally:
+        m.close()
+
+
+@needs_bwrap
+def test_a_release_request_with_a_new_nonce_ends_the_hold(home):
+    """3c (b), the other way out: a release-mode request while drained is
+    acknowledged from the drained result and ends the hold with exit 0."""
+    m = Managed(home)                       # the fake exits 37 on SIGTERM: a crash candidate, acknowledged as such
+    try:
+        m.cmd("turn 100")
+        m.wait_synced()
+        _wait_idle(home)
+        _drain_request(m.run_dir, "d4" * 8, "renew")
+        _wait(home, lambda st: st["state"] == "drained", "the drained hold")
+        ack = _ack(m.run_dir)
+        assert ack["outcome"] == "crash" and ack["exit"] == 37 and ack["stopped"] is True and ack["generation"]["class"] == "crash"
+        _drain_request(m.run_dir, "e5" * 8, "release")
+        assert m.proc.wait(timeout=20) == 0
+        status = m.status()
+        assert status["state"] == "released" and status["released_by"] == "drain request e5e5e5e5e5e5e5e5 (release)"
+        assert status["drain_ack"]["nonce"] == "e5" * 8 and status["drain_ack"]["outcome"] == "crash"
+        assert status["drain_ack"]["generation"] == ack["generation"]
+    finally:
+        m.close()
+
+
+@needs_bwrap
+def test_a_drain_at_a_tty_takes_a_warm_generation_and_seals_on_the_users_exit(home):
+    """3c (c): under a pty the runner records terminal tty; a release request
+    does not signal the fake, a warm generation with trigger drain is
+    acknowledged warm_only, and the final capture on the user's own exit
+    updates the acknowledgement to sealed under the same nonce."""
+    nonce = "f6" * 8
+    m = Managed(home, tty=True)
+    try:
+        m.cmd("turn 200")
+        m.wait_synced()
+        _wait_idle(home)
+        owner = json.loads((m.run_dir / "owner.json").read_text())
+        assert owner["terminal"] == "tty" and owner["child_starttime"] == _starttime(owner["child_pid"])
+        before = m.status()["checkpoint"]["count"]
+        _drain_request(m.run_dir, nonce, "release")
+        status, _ = _wait(home, lambda st: (st.get("drain_ack") or {}).get("nonce") == nonce, "the warm_only acknowledgement")
+        assert status["state"] == "drain_pending" and status["drain"]["nonce"] == nonce
+        ack = _ack(m.run_dir)
+        assert ack["outcome"] == "warm_only" and ack["stopped"] is False and ack["exit"] is None and "reason" not in ack
+        warm = status["last_generation"]
+        assert warm["trigger"] == "drain" and warm["class"] == "warm" and ack["generation"] == _fields(warm)
+        assert status["checkpoint"]["count"] == before + 1 and status["checkpoint"]["state"] == "idle"
+        os.kill(m.pid, 0)
+        m.cmd("turn 100")                   # the fake was never signalled and still serves
+        assert m.proc.poll() is None
+        log = (m.run_dir / "runner.log").read_text()
+        assert f"drain request {nonce} (release, from test): a person may be at the terminal, so Codex is not signalled" in log
+        assert f"drain {nonce} acknowledged: warm_only; generation {warm['name']}; Codex stopped: no" in log
+
+        assert m.quit() == 0
+        status = m.status()
+        final = status["last_generation"]
+        assert final["class"] == "sealed" and final["trigger"] == "final" and status["state"] == "exited"
+        ack = _ack(m.run_dir)
+        assert ack == status["drain_ack"]
+        assert ack["nonce"] == nonce and ack["mode"] == "release" and ack["outcome"] == "sealed" and ack["terminal"] == "tty"
+        assert ack["generation"] == _fields(final) and ack["exit"] == 0 and ack["stopped"] is True
+        assert ack["child"] == {"pid": owner["child_pid"], "starttime": owner["child_starttime"]}
+        assert (m.run_dir / "runner.log").read_text().count(f"drain {nonce} acknowledged") == 2
+    finally:
+        m.close()
+
+
+@needs_bwrap
+def test_a_malformed_drain_request_is_rejected_and_stops_nothing(home):
+    """3c (d): bad JSON, a bad nonce on a renew request and a bad mode are
+    each renamed drain.request.rejected-<time> and logged once; the fake runs
+    on and no acknowledgement exists."""
+    m = Managed(home)
+    try:
+        m.cmd("turn 100")
+        _wait_idle(home)
+        (m.run_dir / "drain.request").write_text("{not json")
+        _wait_log(m.run_dir, "drain request rejected (not JSON: ")
+        rejected = sorted(m.run_dir.glob("drain.request.rejected-*"))
+        assert len(rejected) == 1 and rejected[0].read_text() == "{not json"
+        _drain_request(m.run_dir, "XYZ", "renew")
+        _wait_log(m.run_dir, "drain request rejected (nonce must be 8-64 lowercase hex characters); kept as ")
+        _drain_request(m.run_dir, "a7" * 8, "stop")
+        _wait_log(m.run_dir, "drain request rejected (mode must be one of release, renew); kept as ")
+        (m.run_dir / "drain.request").write_text("[1, 2]")
+        log = _wait_log(m.run_dir, "drain request rejected (not a JSON object)")
+        time.sleep(1.5)                     # another scheduler pass: nothing is logged twice
+        log = (m.run_dir / "runner.log").read_text()
+        assert log.count("drain request rejected") == 4 and log.count("nothing is stopped") == 4
+        assert len(list(m.run_dir.glob("drain.request.rejected-*"))) == 4 and not (m.run_dir / "drain.request").exists()
+        os.kill(m.pid, 0)
+        m.cmd("turn 50")
+        status = m.status()
+        assert status["state"] == "placed" and "drain" not in status and "drain_ack" not in status
+        assert not (m.run_dir / "drain.ack").exists()
+        assert m.quit() == 0 and m.status()["state"] == "exited"
+    finally:
+        m.close()
+
+
+def test_the_drain_state_machine_in_process(runner, tmp_path):
+    """3c, driven by hand over a sleeping child: the ignored new nonce while a
+    request is served, the warm_only acknowledgement, idempotency on the
+    nonce, the final update under the same nonce, a failed final capture
+    with its reason and last durable generation, and the SIGKILL bound on a
+    child that ignores SIGTERM."""
+    h = InProcess(runner, tmp_path, timeout=5.0)
+    h.replicator.pass_once()                # the harness never starts the replicator: one pass makes the replica current
+    child = subprocess.Popen(["sleep", "60"])
+    try:
+        info = {"pid": child.pid, "starttime": runner.read_starttime(child.pid)}
+        assert info["starttime"] == _starttime(child.pid) and runner.process_gone(child.pid, info["starttime"]) is False
+        assert runner.process_gone(child.pid, info["starttime"] + 1) is True, "the same pid with another start time is another process"
+        d = runner.Drain(str(h.run_dir), child, info, "tty", h.status, h.cp, 5.0, h.scope, h.run_id)
+        h.cp.drain = d
+        d.poll()
+        assert d.active is None and d.flight is None and not (h.run_dir / "drain.ack").exists()
+        _drain_request(h.run_dir, "a" * 16, "renew", requester=None)
+        d.poll()
+        assert d.active["nonce"] == "a" * 16 and d.flight["trigger"] == "drain" and h.status.data["state"] == "drain_pending"
+        assert not (h.run_dir / "drain.request").exists()
+        _drain_request(h.run_dir, "b" * 16, "release")
+        d.poll()
+        assert "drain request bbbbbbbbbbbbbbbb (release) ignored: request aaaaaaaaaaaaaaaa is still being served" in _log(tmp_path)
+        assert not (h.run_dir / "drain.request").exists() and d.active["nonce"] == "a" * 16
+        d.flight["thread"].join(30)
+        d.poll()
+        ack = json.loads((h.run_dir / "drain.ack").read_text())
+        assert ack["outcome"] == "warm_only" and ack["stopped"] is False and ack["exit"] is None and ack["requester"] is None
+        assert ack["generation"]["class"] == "warm" and ack["generation"]["name"] == h.cp.last_generation["name"]
+        assert d.active is None and d.pending_final["nonce"] == "a" * 16 and h.status.data["drain_ack"] == ack
+        assert child.poll() is None, "never signalled"
+        _drain_request(h.run_dir, "a" * 16, "renew")
+        d.poll()
+        assert "drain request aaaaaaaaaaaaaaaa (renew) is already acknowledged (warm_only); the acknowledgement stands" in _log(tmp_path)
+        assert json.loads((h.run_dir / "drain.ack").read_text()) == ack
+
+        child.kill()
+        child.wait()
+        skipped = h.cp.final("sealed")
+        assert skipped is None and h.cp.last_generation["trigger"] == "final"
+        request = d.settle(0, skipped)
+        assert request["nonce"] == "a" * 16 and request["mode"] == "renew"
+        ack = json.loads((h.run_dir / "drain.ack").read_text())
+        assert ack["outcome"] == "sealed" and ack["stopped"] is True and ack["exit"] == 0 and "reason" not in ack
+        assert ack["generation"] == _fields(h.cp.last_generation) and d.pending_final is None
+        _drain_request(h.run_dir, "c" * 16, "renew")
+        d.poll()                            # consumed by a scheduler that outlived settle: answered from the final result, never eaten
+        late = json.loads((h.run_dir / "drain.ack").read_text())
+        assert not (h.run_dir / "drain.request").exists() and late["nonce"] == "c" * 16 and late["outcome"] == "sealed"
+        assert late["generation"] == ack["generation"] and late["stopped"] is True and d.active is None
+    finally:
+        child.kill()
+        child.wait()
+
+    # a failed final capture: the listing never completed, so final() skips; the acknowledgement says so
+    h2 = InProcess(runner, tmp_path / "two", timeout=1.0)
+    h2.replicator.pass_once()
+    assert h2.capture("request", "warm")[0] == "published"
+    warm = h2.cp.last_generation
+    h2.cp.seq = None
+    d2 = runner.Drain(str(h2.run_dir), child, info, "none", h2.status, h2.cp, 1.0, h2.scope, h2.run_id)
+    _drain_request(h2.run_dir, "d" * 16, "release")
+    assert d2.settle(3, h2.cp.final("crash"))["nonce"] == "d" * 16, "a request that arrived too late for the scheduler is answered on the exit path"
+    ack = json.loads((h2.run_dir / "drain.ack").read_text())
+    assert ack["outcome"] == "failed" and ack["generation"] is None and ack["exit"] == 3 and ack["stopped"] is True
+    assert ack["reason"] == "the final capture was skipped: the durable generations listing never completed"
+    assert ack["last_durable"] == _fields(warm)
+    assert d2.settle(3, None) is None, "nothing left to answer"
+
+    # terminal none: a child that ignores SIGTERM is killed after the bound
+    stubborn = subprocess.Popen([sys.executable, "-c", "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)"])
+    try:
+        h3 = InProcess(runner, tmp_path / "three", timeout=1.0)
+        d3 = runner.Drain(str(h3.run_dir), stubborn, {"pid": stubborn.pid, "starttime": runner.read_starttime(stubborn.pid)},
+                          "none", h3.status, h3.cp, 1.0, h3.scope, h3.run_id)
+        time.sleep(0.5)                     # the interpreter must have installed its handler
+        _drain_request(h3.run_dir, "e" * 16, "release")
+        started = time.monotonic()
+        d3.poll()
+        assert h3.status.data["state"] == "draining" and h3.status.data["drain"]["nonce"] == "e" * 16
+        assert stubborn.wait(timeout=10) == -signal.SIGKILL and 0.9 <= time.monotonic() - started < 5
+        assert "Codex has not exited 1s after the drain's SIGTERM; killing it" in _log(tmp_path)
+        assert d3.settle(137, None)["nonce"] == "e" * 16
+        ack = json.loads((h3.run_dir / "drain.ack").read_text())
+        assert ack["outcome"] == "failed" and ack["reason"] == "no final capture ran" and ack["stopped"] is True and ack["exit"] == 137
+    finally:
+        stubborn.kill()
+        stubborn.wait()
