@@ -243,7 +243,14 @@ def test_codex_model_receives_prelude_when_client_replaces_developer_instruction
             assert "PROJECT_INSTRUCTIONS" in model_input
             assert "GLOBAL_INSTRUCTIONS" in model_input
             assert "SERVER_VALUE_REPLACED_BY_CLIENT" not in model_input
-            assert request["instructions"]  # Preserve Codex's native base instructions.
+            # Codex's native base instructions must survive the override: a
+            # top-level ``instructions`` field through 0.161, the first developer
+            # message of ``input`` from 0.162.1 on.
+            base = request.get("instructions") or next(
+                (text for item in request["input"] if item.get("role") == "developer"
+                 for part in item.get("content", []) for text in [part.get("text", "")]
+                 if "Codex CLI" in text), "")
+            assert base, "Codex's native base instructions are missing from the request"
         finally:
             if process is not None:
                 process.terminate()
