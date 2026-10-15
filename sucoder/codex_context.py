@@ -1,10 +1,9 @@
 """Install mirror-scoped Codex instructions before starting a service (ledger 5).
 
 This module is also staged as a standalone script on the agent host. Keep it
-stdlib-only: the remote host need not have the SuCoder package installed.
+stdlib-only and compatible with Python 3.6: the remote host need not have the
+SuCoder package installed.
 """
-
-from __future__ import annotations
 
 import fcntl
 import hashlib
@@ -13,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import List
 
 
 CONTEXT_BEGIN = "<!-- sucoder:context:begin -->\n"
@@ -51,7 +51,7 @@ def _replace_block(text: str, begin: str, end: str, body: str) -> str:
 def _git_path(workspace: Path, name: str) -> Path:
     result = subprocess.run(
         ["git", "rev-parse", "--git-path", name], cwd=workspace,
-        check=True, capture_output=True, text=True,
+        check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
     )
     path = Path(result.stdout.strip())
     return path if path.is_absolute() else workspace / path
@@ -72,7 +72,7 @@ def install_context(workspace: Path, prelude: str) -> Path:
             raise ValueError("Cannot install SuCoder context into symlinked AGENTS.override.md.")
         tracked = subprocess.run(
             ["git", "ls-files", "--error-unmatch", "--", "AGENTS.override.md"],
-            cwd=workspace, capture_output=True,
+            cwd=workspace, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
         if tracked.returncode == 0:
             raise ValueError(
@@ -117,7 +117,7 @@ def install_context(workspace: Path, prelude: str) -> Path:
     return destination
 
 
-def run(prelude: str, command: list[str]) -> None:
+def run(prelude: str, command: List[str]) -> None:
     """Run in the final service cwd, after the existing local-tier preparation."""
     try:
         path = install_context(Path.cwd(), prelude)
