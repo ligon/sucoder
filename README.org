@@ -1112,10 +1112,15 @@ one exists and otherwise starts a new history, =--codex-state-from
 RUN/GENERATION= names an exact generation to continue from, and
 =--codex-state-fresh= insists on a new history (the two are mutually
 exclusive and apply only to a Codex launch with =codex_state= enabled;
-no generation is ever selected automatically across allocations).  The
-runner's restore of a named generation lands later in this slice; the
-transfer-fencing and retention protocol is Slice 3, so generations
-accumulate unpruned for now.
+no generation is ever selected automatically across allocations).  A
+restore stages and verifies the generation's stores locally, places
+each thread's rollout replica at its recorded path, refuses when the
+replica is shorter than the offset the databases record (the thread
+would show phantom turns), and reports active goals and queued items
+it finds rather than altering them.  The transfer-fencing and
+retention protocol is Slice 3, so generations accumulate unpruned for
+now, and archiving a managed thread fails until =archived_sessions=
+joins the bind set.
 
 #+begin_src yaml
     slurm:

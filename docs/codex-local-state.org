@@ -591,5 +591,56 @@ Compaction with a real model summary, remote control beyond the relay step, and 
 ** Slices, amended
 
 - Slice 1 :: placement and ownership through the runner above, with the typed =slurm.codex_state= configuration, no capture or replication yet.
-- Slice 2 :: replication, generations with the ordering and watermark rules, sealed capture, restore, status.
+- Slice 2 :: replication, generations with the ordering and watermark rules, sealed capture, restore, status; implemented 2026-10-15, see the Slice 2 record below.
 - Slice 3 and Slice 4 :: as above.
+
+* Slice 2 record (2026-10-15)
+
+What landed, what the implementation corrected in the record above, and what it leaves to Slice 3.
+The evidence is in the tests named here and in the commit messages; where this section conflicts with the sections above, this section applies.
+
+** What landed
+
+- Launcher (=270e9cb=) :: every managed launch hands the staged runner =--durable-root <BASE>=, =--checkpoint-minutes= and =--checkpoint-timeout=, and =--restore RUN/GENERATION= or =--fresh= when the operator selects a history through =--codex-state-from= or =--codex-state-fresh= on =agents-run= and =collaborate=.
+  =BASE= is =slurm.codex_state.durable_root= when set, else =.sucoder-state= next to the mirrors (the directory containing the resolved shared mirror path, a symlink onto Lustre on Savio); the launcher refuses a root that is, is inside, or contains the shared mirror repository, or that is under =local_disk=; the runner appends =codex/<scope>= and refuses a root whose realpath is under =SUCODER_LOCAL_ROOT=.
+  The selector is validated on the launcher (32 hex, slash, six digits, dash, 8 hex) so it can only ever name a generation.
+  Without a flag the runner reuses this allocation's run when one is intact and otherwise starts a fresh history; no generation is selected automatically across allocations.
+- Runner, replication and capture (=f074a5d=) :: a replicator thread follows every =rollout-*-<uuid>.jsonl= under =home/sessions= by growth and appends the new bytes with =fsync= to =DURABLE/runs/<run>/rollouts/<thread-id>.jsonl=.
+  The replica file's own size is the replicated offset, so a torn append can never double-write; a local rollout shorter than its replica is a "shrunk" anomaly that stops replication of that thread and fails later captures of it; durable errors stall only that thread and show as replica age and lag bytes in =status.json=.
+  A checkpointer thread runs single-flight captures (nonblocking =checkpoint.lock=) on placement, every interval by monotonic time, on a touched =checkpoint.request=, and once after Codex exits; triggers during a capture are dropped and counted, never queued.
+  Each store is backed up through the SQLite backup API, or the =sqlite3= CLI where the interpreter lacks it (Python 3.6), never a file copy; the destination is switched to =journal_mode=DELETE=, =quick_check=ed, closed, then hashed.
+  The ordering rule is implemented in its monotone form, which amends the statement under "Checkpoint protocol, amended": the backup is taken first, each thread's local rollout size is measured right after the copies complete (and its =next_rollout_byte_offset= read from the copy of =thread_history_1=), and the capture then waits, within its budget, until that thread's replica is at least that long; only then is the manifest written and the bundle published.
+  Because the watermark equals the rollout size at every completed turn (next subsection), waiting for the local size subsumes the offset check and also covers a thread whose rollout the replicator has not discovered yet; =f074a5d= waited for the copy's offset only, and the review follow-up below strengthens it to the local size.
+  Checking the replica before the backup would leave a window in which a turn completes between the check and the copy and the copy's watermark passes the replica.
+  A candidate whose replicas do not catch up in budget stays local-only and is never acknowledged.
+  Publication is =.incoming-<uuid>= with the copies hash-verified after =fsync=, the manifest written last, one rename into =generations/<seq>-<hex8>= and a directory =fsync=; a failure leaves the incoming directory and does not advance =last_generation=.
+  The class is =warm= while Codex runs; after exit it is =sealed= on a zero exit with no pid still holding a descriptor under =db/=, and =crash= otherwise; the final capture is bounded by the timeout and never delays the exit code.
+  The manifest records =format=, =scope=, =run=, =generation=, =parent=, =class=, =allocation=, =codex_home=, =codex_home_real=, =codex_version= (the highest =threads.cli_version= in the copy), =backup_method=, per-database =sha256=, =bytes= and =quick_check=, the absent optional stores, and per thread =relative_path=, =next_rollout_byte_offset=, =next_rollout_ordinal=, =replica_bytes= and =rollout_sha256_prefix= (the hash of the local rollout's first =replica_bytes= bytes, against which a restore verifies the replica).
+  =run.json= holds the immutable provenance; =status.json= gains =replica=, =checkpoint=, =last_generation= and =durable_age_seconds=; the startup line announcing the fresh, separate managed history is printed before Codex owns the terminal.
+- Runner, restore and reuse (=f92298b=) :: =--restore RUN/GENERATION= resolves =DURABLE/runs/RUN/generations/GENERATION= and validates before anything is created: the selector grammar (never a path; =.incoming-*= is never a candidate), the manifest (format 1, the same scope, the same run and generation, the same canonical =CODEX_HOME= because the stored rollout paths are absolute, a known class, no =not_durable= threads, only classified stores, usable relative rollout paths that carry the thread id) and every replica (at least as long as the recorded =next_rollout_byte_offset=, the database-ahead hazard, and hashing to the recorded prefix).
+  The stores are copied to =<run>/restore-staging/db/= and checked there (size, sha256, =quick_check=, no sidecar), the pending-work gate runs on those copies, each replica is copied whole in one read to =home/sessions/<relative path>= and to the new run's =rollouts/<thread-id>.jsonl= with both copies hashed back, and only then is the staging directory renamed into place as =db/=; =run.json= records the parent generation and later manifests carry it.
+  An explicit restore accepts sealed, warm and crash generations and says so in the startup line (warm and crash rows are consistent per database only); =--unattended= accepts sealed only.
+  Pending work is detected, never held by SQL: active rows in =thread_goals= and =queued_items= grouped by thread are reported in =status.json= and the startup line; under =--unattended= they refuse, as does an unreadable goals or queue table, because an active goal drives unprompted requests from the moment a thread resumes and a queued item executes once with no hold.
+  Without =--restore= or =--fresh= the runner reuses this allocation's latest run in place when it has =owner.json= and =db/= and its recorded runner and child pids are dead (a live pid refuses: a second writer on the same stores); the run id, local directory and durable run continue, bound files already present locally are kept, status transitions accumulate; =--restore= with an intact local run is ignored with a loud line and =restore_ignored= recorded, since within one allocation local state wins; =--fresh= always starts a new run.
+  Verified against the real build: two turns, stdin EOF, a sealed generation, a restore in another local root, =thread/resume=, and a third turn whose model request carries both earlier texts.
+- Real-Codex harness (=7f55e44=, =6acc531=) :: =tests/codex_app_server.py= drives the installed Codex as an app-server against a recording fake model, and =tests/test_codex_app_server.py= establishes on the real build the contracts the runner rests on (next subsection).
+
+** Corrections to the record
+
+- =threads.rollout_path= is stored canonicalized (the realpath), not as written: with =CODEX_HOME= given through a symlink the row holds the real path, and Codex rewrites it on =thread/resume= to the new canonical location.
+  The bind target is the realpath of the home, so the stored path resolves inside the namespace; a restore must place the rollout where the canonical path resolves.
+- =next_rollout_byte_offset= equals the rollout size at every =turn/completed= (42408, 49257 and 56106 bytes for three empty-output turns); the restore gate is offset less than or equal to replica length, never equality, and a longer replica is the tolerated "rollout ahead" case.
+- The database-ahead hazard needs a gap of several turns to reproduce: with a one-turn gap the next turn's append crosses the stale watermark and the projection resumes mid-record; with a three-turn gap the projection freezes and the resumed thread shows phantom turns, as the spike recorded.
+- =thread/goal/set= with =status: active= fires an unprompted turn within about ten milliseconds of the call; =paused= is a hold.
+  No protocol request queues a message; =codex queue --thread ID --message TEXT= with the server stopped leaves one =queued_items= row that executes once on resume.
+- Under the bind layout =thread/archive= fails atomically with =EXDEV=: Codex renames the rollout from =sessions/= to a flat =archived_sessions/= and has no copy-and-delete fallback, so with =archived_sessions= unbound the move crosses devices, the row is untouched and the thread keeps working.
+  Archiving a managed thread is therefore a known limitation until =archived_sessions= joins the bind set and replication, capture and restore cover it (an archived thread's path lies outside =sessions/=, and restoring one needs =thread/unarchive= before =thread/resume=).
+- The staged context installer was not valid for Python 3.6 and failed inside the runner on such node images; =96a77a4= makes it 3.6-clean with a test that runs the staged form under =/usr/bin/python3.6=.
+- Python 3.6's =sqlite3= module has no backup API and its library (3.26) has no =VACUUM INTO=; the runner's CLI fallback depends on the =sqlite3= binary being on the node image, and a capture without either fails rather than copying files.
+
+** Deferred to Slice 3
+
+- Transfer fencing, lineage pins and retention: generations accumulate unpruned under each run (a few hundred kilobytes per capture at the sizes seen here); only the local =snapshots/= bundles are pruned to the newest three.
+- Timer checkpoint requests from =slurm_timer.py=, =RemoteSession= metadata and renewal with acknowledged handoff.
+- Warm generations remain per-database consistent only; the gate for unattended continuation stands.
+- =archived_sessions= in the bind set, as above.
