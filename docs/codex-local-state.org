@@ -525,3 +525,71 @@ The main unresolved capability decisions are complete SQLite redirection, indepe
 If a capability fails, revise the relevant contract before implementing around it.
 
 Prepared by Sue.
+
+* Revision after Slice 0 (2026-10-15)
+
+This section records what the Slice 0 spike changed and governs where it conflicts with the sections above; the measurements are in [[file:codex-local-state-spike.org][the spike record]].
+The concern it answers is not Lustre's median latency but its episodes, when every operation takes minutes, so the measure that matters is the number of synchronous Lustre operations inside a turn, and the target is zero data operations.
+
+** What the spike established
+
+- All six databases follow =sqlite_home=; =-c= beats =config.toml=, which beats =CODEX_SQLITE_HOME=; a relative value resolves against the cwd; a missing directory is created with =0777= masked by umask; an unwritable one fails the launch with exit 1 and no fallback.
+- The rollout JSONL in =CODEX_HOME/sessions/= is the authoritative conversation; the SQLite thread history is a projection of it with a byte watermark (=thread_history_projection_state=), every history read fails without the file, and the path is stored as written, absolute and not canonicalized.
+- A per-process bind mount (=bwrap --unshare-user= with the caller's own ids) of local directories over subdirectories of the shared home leaves the home untouched for every other process, keeps the stored path valid, and lets Codex's own sandbox run nested; with =sessions=, =.tmp=, =tmp=, =thread-writer-locks=, =shell_snapshots=, a copy of =skills/= and the =AGENTS.md=, =AGENTS.override.md= and =history.jsonl= files bound, a turn contains no Lustre data operation and 1.7 metadata calls.
+- Appending the rollout's new bytes to a replica on Lustre after each turn costs 13 ms outside Codex's path and is byte-identical at the next =turn/start=; a database generation two intervals old plus the replica resumes fully.
+- A rollout ahead of the database is rebuilt into the projection; a rollout truncated mid-line is tolerated; a database ahead of the rollout leaves the SQLite history permanently wrong while the model's context stays correct.
+- A queued message executes once on unattended =thread/resume=; an active goal drives about twenty model requests per second until stopped; a goal set to =paused= is a usable hold and the queue has none.
+- Two servers with different homes on one =sqlite_home= are two writers with no refusal from Codex.
+- Stdin EOF leaves all data in WAL files; the backup API reads through them.
+
+** Layout
+
+Where the earlier layout conflicts, this one applies:
+
+#+begin_example
+LOCAL = <local root>/state/codex/<scope>/<run>
+  db/                         sqlite_home: the six databases and sidecars
+  home/sessions/              bound over CODEX_HOME/sessions for the managed server only
+  home/.tmp/  home/tmp/  home/thread-writer-locks/  home/shell_snapshots/  home/app-server-control/
+  home/skills/                a copy taken at launch, bound over CODEX_HOME/skills
+  home/AGENTS.md  home/AGENTS.override.md  home/history.jsonl    file binds, only when the file exists in the home
+  replica.json                per-thread replicated byte offsets
+  snapshots/<generation>/     completed local bundles, as before
+  startup.lock  owner.json  status.json  checkpoint.lock          as before
+
+DURABLE adds, under runs/<run>/:
+  rollouts/<thread-id>.jsonl   the append-only replica of each thread's rollout
+  generations/<generation>/manifest.json records, per thread, next_rollout_byte_offset and the replica length at capture
+#+end_example
+
+=CODEX_HOME=, authentication, configuration and hook trust stay where they are; the managed server reads them through the bind namespace and nothing in the shared home is created, moved or rewritten.
+A bind target that does not exist in the home is skipped and recorded, never created: =bwrap= would otherwise create an empty file or directory in the shared home.
+
+** Launch
+
+- The launcher inserts =-c sqlite_home= with a placeholder at the argv stage, before any nvm or context-installer wrapping, and stages a stdlib runner the way it stages the native context installer; the runner runs outermost as =python3 <runner> -- <command>= and must be clean for the oldest =python3= a node image offers (3.6 was found), because the staged installer is not.
+- At run time the runner resolves =SUCODER_LOCAL_ROOT= (exported before tmux in both launch flows), creates the layout with mode 0700, takes =startup.lock=, resolves =CODEX_HOME=, substitutes the placeholder with the absolute =db= path and refuses a path containing anything outside =[A-Za-z0-9/_.-]=.
+- It refuses to launch when =bwrap= is unavailable, when the caller's argv, =CODEX_SQLITE_HOME= or =config.toml= already set =sqlite_home=, or when the home or local root is missing; it never falls back to shared placement.
+- It launches =bwrap --dev-bind / / <binds> --unshare-user --uid <own> --gid <own> --die-with-parent -- <command>= as a child in the same process group, ignores =SIGINT= (Codex handles it), forwards =SIGTERM= and =SIGHUP=, and exits with the child's code.
+- It verifies placement through =/proc= with three outcomes: every =.sqlite= descriptor under =db/= is placed; any =.sqlite= descriptor elsewhere is misplaced, and the runner stops the child and fails with a specific error; a child that exits before opening a store reports "no stores opened".
+- =owner.json= and =status.json= record scope, run, allocation, the effective paths, the bound and skipped entries and every transition.
+
+** Checkpoint protocol, amended
+
+- Replication :: a watcher in the runner follows each rollout under =home/sessions= by file growth, independent of launch mode, and appends new bytes to =DURABLE/runs/<run>/rollouts/<thread-id>.jsonl= with =fsync=, recording the replicated offset in =replica.json=.
+  Replication lag is tolerated and shown as replica age; a Lustre episode slows replication, never the conversation.
+- Generation ordering :: a database generation is captured only after every thread's replica is confirmed byte-identical to the local rollout at that instant; the manifest records each thread's =next_rollout_byte_offset= and the replica length.
+- Restore :: a generation is restored together with the replicas, placed at the same relative paths under =home/sessions= and bound again; restore refuses any generation whose recorded offset exceeds the replica it would be paired with, because the projection would then skip real turns and show phantom ones.
+- Sealed :: a backup-API copy taken after the owned server has stopped; a zero exit alone is not sealed.
+- Unattended continuation :: before =thread/resume= without a client, the runner refuses when =goals_1= holds an active goal or =queue_1= holds rows for the thread, and offers =paused= as the hold for goals.
+
+** Residue and limits
+
+The 1.7 remaining metadata calls per turn are the path-component lookups of =CODEX_HOME= (one per component, a depth-10 path today) and an occasional =auth.json= read; the =skills= calls were shown not to be load-bearing, the others were not failure-tested, and a shallower home path shortens the chain.
+Compaction with a real model summary, remote control beyond the relay step, and behavior during an actual Lustre episode remain unmeasured.
+
+** Slices, amended
+
+- Slice 1 :: placement and ownership through the runner above, with the typed =slurm.codex_state= configuration, no capture or replication yet.
+- Slice 2 :: replication, generations with the ordering and watermark rules, sealed capture, restore, status.
+- Slice 3 and Slice 4 :: as above.
