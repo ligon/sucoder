@@ -46,14 +46,20 @@ What it does, per ``docs/codex-local-state.org`` ("Revision after Slice 0"):
   ``CODEX_HOME``, class), every replica against the recorded projection
   offset and hash, the stores are copied into ``restore-staging/db/`` and
   verified there (size, sha256, ``quick_check``), the pending-work gate runs
-  on the copies, and only then the directory is renamed into ``db/`` and each
-  replica is placed whole at its recorded relative path under
-  ``home/sessions`` and copied byte-identically to the new run's
-  ``rollouts/<thread-id>.jsonl``.  Nothing verifies, nothing is placed and
-  Codex does not start;
+  on the copies, each replica is staged whole at its recorded relative path
+  under ``restore-staging/sessions`` and copied byte-identically to the new
+  run's ``rollouts/.incoming-<thread-id>.jsonl``, ``run.json`` is written,
+  and only then is everything activated by renames (the replicas to their
+  final names, the sessions tree under ``home/``, the stores into ``db/``).
+  A refusal at any point removes what the attempt created and nothing else;
+  a durable side that does not answer within the restore deadline leaves the
+  launch ``blocked``.  Nothing verifies, nothing is placed and Codex does
+  not start;
 - reuses this allocation's latest run in place when it still has its
-  databases and nobody holds them (recorded pids dead): same run, same local
-  directory, same durable run, history and generation numbering continuing;
+  databases and nobody holds them (recorded pids dead, unknown ownership
+  refuses), under the same canonical ``CODEX_HOME`` and the same durable run
+  it was created for: same run, same local directory, same durable run,
+  history and generation numbering continuing;
   local state wins over ``--restore``, ``--fresh`` starts a new run;
 - detects pending work (active goals in ``goals_1``, queued items in
   ``queue_1``) in the stores it is about to hand to Codex and records it; it
@@ -75,6 +81,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import uuid
 
 PLACEHOLDER_DEFAULT = "__SUCODER_CODEX_STATE_DB__"
@@ -95,12 +102,29 @@ CHUNK = 1 << 20
 
 def replication_interval():
     """Seconds between replication passes: 1.0, or the environment's override
-    (tests pin the pass timing with it); anything unusable is the default."""
+    (tests pin the pass timing with it) when it is a finite number in
+    (0, 3600]; anything else is the default (``Event.wait`` overflows on an
+    infinite or huge wait, and the loop would die outside its handler)."""
     try:
         value = float(os.environ.get("SUCODER_CODEX_STATE_REPLICATION_INTERVAL") or 1.0)
     except ValueError:
         return 1.0
-    return value if value > 0 else 1.0
+    if value != value or value <= 0 or value > 3600:     # NaN, non-positive, infinite or huge
+        return 1.0
+    return value
+
+
+def restore_timeout(checkpoint_timeout):
+    """Seconds a restore may spend before the launch is reported blocked:
+    max(120, 4 x --checkpoint-timeout), or SUCODER_CODEX_STATE_RESTORE_TIMEOUT
+    when it is a positive finite number.  Read at call time."""
+    try:
+        value = float(os.environ.get("SUCODER_CODEX_STATE_RESTORE_TIMEOUT") or 0)
+    except ValueError:
+        value = 0.0
+    if value > 0 and value != float("inf"):
+        return value
+    return max(120.0, 4.0 * checkpoint_timeout)
 
 
 REPLICATION_INTERVAL = replication_interval()
@@ -113,6 +137,10 @@ GENERATION_CLASSES = ("sealed", "warm", "crash")
 
 class Refused(Exception):
     """The launch cannot proceed under managed placement; nothing was started."""
+
+
+class Blocked(Refused):
+    """The durable side did not answer within the restore deadline; nothing was started."""
 
 
 class CaptureFailed(Exception):
@@ -329,7 +357,7 @@ def gate_unattended(pending, where):
 # ----------------------------------------------------------------- restore
 
 def parse_selector(value):
-    match = RESTORE_SELECTOR.match(value or "")
+    match = RESTORE_SELECTOR.fullmatch(value or "")
     if match is None:
         if ".incoming" in (value or ""):
             raise Refused("--restore %s names an incomplete publication (.incoming-*), which is never a candidate; "
@@ -339,24 +367,37 @@ def parse_selector(value):
     return match.group(1), match.group(2)
 
 
+def selector_paths(durable, selector):
+    """(name, source run directory, generation directory) of a parsed selector."""
+    run, generation = selector
+    source_run = os.path.join(durable, "runs", run)
+    return run + "/" + generation, source_run, os.path.join(source_run, "generations", generation)
+
+
 def load_manifest(gen_dir, name):
+    """The manifest parsed from one read of its bytes, with the sha256 of
+    those same bytes: a second read could describe a file that changed in
+    between."""
     manifest_path = os.path.join(gen_dir, "manifest.json")
     if not os.path.isdir(gen_dir):
         raise Refused("generation %s does not exist under %s" % (name, os.path.dirname(os.path.dirname(gen_dir))))
     if not os.path.isfile(manifest_path):
         raise Refused("generation %s has no manifest.json; it was never completely published" % name)
     try:
-        with open(manifest_path, "r") as handle:
-            manifest = json.load(handle)
+        with open(manifest_path, "rb") as handle:
+            raw = handle.read()
+        manifest = json.loads(raw.decode("utf-8"))
     except (OSError, ValueError) as exc:
         raise Refused("generation %s: manifest.json is unreadable: %s" % (name, exc))
     if not isinstance(manifest, dict):
         raise Refused("generation %s: manifest.json is not an object" % name)
-    return manifest, sha256_file(manifest_path)[0]
+    return manifest, hashlib.sha256(raw).hexdigest()
 
 
 def check_manifest(manifest, name, run, generation, scope, codex_home, codex_home_real, unattended):
-    """The manifest against this launch: reads only, every refusal specific."""
+    """The manifest against this launch: reads only, every refusal specific.
+    ``threads`` is normalized in place (absent or null becomes {}), so every
+    later step reads the same dict."""
     try:
         if manifest.get("format") != 1:
             raise Refused("generation %s: manifest format %r is not 1; this runner does not claim compatibility with it" % (name, manifest.get("format")))
@@ -385,17 +426,21 @@ def check_manifest(manifest, name, run, generation, scope, codex_home, codex_hom
                 raise Refused("generation %s lists an unclassified store %s" % (name, store))
             int(record["bytes"])
             str(record["sha256"])
-        threads = manifest.get("threads") or {}
+        threads = manifest.get("threads")
+        if threads is None:
+            threads = {}
         if not isinstance(threads, dict):
             raise Refused("generation %s: threads is not an object" % name)
+        manifest["threads"] = threads
         for tid, entry in threads.items():
             int(entry["next_rollout_byte_offset"])
             int(entry["replica_bytes"])
             str(entry["rollout_sha256_prefix"])
             relative = entry["relative_path"]
-            match = ROLLOUT_NAME.match(os.path.basename(relative))
-            if (not isinstance(relative, str) or os.path.isabs(relative) or ".." in relative.split("/")
-                    or not SAFE_PATH.match(relative) or match is None):
+            if not isinstance(relative, str):
+                raise Refused("generation %s: thread %s records an unusable rollout path %r" % (name, tid, relative))
+            match = ROLLOUT_NAME.fullmatch(os.path.basename(relative))
+            if os.path.isabs(relative) or ".." in relative.split("/") or not SAFE_PATH.fullmatch(relative) or match is None:
                 raise Refused("generation %s: thread %s records an unusable rollout path %r" % (name, tid, relative))
             if match.group(1) != tid:
                 raise Refused("generation %s: thread %s: its rollout name %s does not carry the thread id; replicas are keyed by it" % (
@@ -407,8 +452,8 @@ def check_manifest(manifest, name, run, generation, scope, codex_home, codex_hom
 def check_replicas(manifest, name, source_run):
     """Every thread's replica at least as long as the projection offset the
     generation records (equality passes; longer is the rollout-ahead case
-    Codex rebuilds) and hashing to the recorded prefix.  Reads only.
-    Returns {tid: (replica path, size, exists)}."""
+    Codex rebuilds) and hashing to the recorded prefix, the empty prefix
+    included.  Reads only.  Returns {tid: (replica path, size, exists)}."""
     sources = {}
     for tid, entry in sorted(manifest["threads"].items()):
         replica = os.path.join(source_run, "rollouts", tid + ".jsonl")
@@ -420,24 +465,39 @@ def check_replicas(manifest, name, source_run):
             raise Refused("generation %s: thread %s: its replica %s holds %d bytes but the generation's history projection "
                           "records next_rollout_byte_offset %d; restoring it would skip real turns below that offset and show "
                           "phantom ones (the database-ahead hazard)" % (name, tid, replica, size, offset))
+        if hashed_bytes > size:
+            raise Refused("generation %s: thread %s: the manifest records %d replicated bytes but its replica %s holds %d" % (
+                name, tid, hashed_bytes, replica, size))
         if hashed_bytes:
             digest, hashed = sha256_file(replica, hashed_bytes)
-            if hashed != hashed_bytes or digest != entry["rollout_sha256_prefix"]:
-                raise Refused("generation %s: thread %s: the first %d bytes of its replica %s do not hash to the manifest's "
-                              "rollout_sha256_prefix; the generation was captured against different rollout bytes" % (name, tid, hashed_bytes, replica))
+        else:
+            digest, hashed = hashlib.sha256(b"").hexdigest(), 0
+        if hashed != hashed_bytes or digest != entry["rollout_sha256_prefix"]:
+            raise Refused("generation %s: thread %s: the first %d bytes of its replica %s do not hash to the manifest's "
+                          "rollout_sha256_prefix; the generation was captured against different rollout bytes" % (name, tid, hashed_bytes, replica))
         sources[tid] = (replica, size, exists)
     return sources
 
 
 def stage_databases(manifest, name, gen_dir, staging_db):
     """The generation's stores copied into the local staging directory and
-    verified there: size and sha256 against the manifest, quick_check read-only,
-    no sidecar.  Returns the bytes copied."""
+    verified there: the inventory reconciled with the manifest (an unlisted
+    store refuses), size and sha256 against the manifest, quick_check
+    read-only, no sidecar.  Returns the bytes copied."""
+    db_source = os.path.join(gen_dir, "db")
+    try:
+        present = sorted(n for n in os.listdir(db_source) if n.endswith(".sqlite"))
+    except OSError as exc:
+        raise Refused("generation %s: cannot list %s: %s" % (name, db_source, exc))
+    unlisted = [n for n in present if n not in manifest["databases"]]
+    if unlisted:
+        raise Refused("generation %s: %s holds unlisted store(s) %s that its manifest does not describe; the generation was "
+                      "altered after publication" % (name, db_source, ", ".join(unlisted)))
     total = 0
     for store, record in sorted(manifest["databases"].items()):
-        source = os.path.join(gen_dir, "db", store)
+        source = os.path.join(db_source, store)
         if not os.path.isfile(source):
-            raise Refused("generation %s: %s is listed in the manifest but missing from %s" % (name, store, os.path.join(gen_dir, "db")))
+            raise Refused("generation %s: %s is listed in the manifest but missing from %s" % (name, store, db_source))
         for sidecar in ("-wal", "-shm", "-journal"):
             if os.path.exists(source + sidecar):
                 raise Refused("generation %s: %s has a %s sidecar; a published generation never does" % (name, store, sidecar))
@@ -461,85 +521,211 @@ def stage_databases(manifest, name, gen_dir, staging_db):
     return total
 
 
-def place_replicas(manifest, name, sources, sessions, rollouts):
-    """Each replica, whole, to its recorded relative path under the local
-    ``sessions`` (0700 parents, 0600 file) and to the new run's durable replica,
-    from one read; both copies hashed back before launch.  Returns the bytes placed."""
+def stage_replicas(manifest, name, sources, staging_sessions, rollouts, attempt):
+    """Each replica, whole, from one read, to its recorded relative path under
+    the staging sessions tree (0700 parents, 0600 file) and to the new run's
+    rollouts directory as ``.incoming-<thread id>.jsonl``; both copies hashed
+    back.  Nothing is at its final name yet.  Returns the bytes staged."""
     total = 0
-    placed = 0
     for tid, entry in sorted(manifest["threads"].items()):
         source, size, exists = sources[tid]
         if not exists:
             log("thread %s has no replica to place (the generation recorded none); Codex will find no rollout for it" % tid)
             continue
-        local = os.path.join(sessions, entry["relative_path"])
-        replica = os.path.join(rollouts, tid + ".jsonl")
+        local = os.path.join(staging_sessions, entry["relative_path"])
+        incoming = os.path.join(rollouts, ".incoming-" + tid + ".jsonl")
+        ensure_private_tree(os.path.dirname(local), staging_sessions)
+        attempt.incoming.append(incoming)
         try:
-            ensure_private_tree(os.path.dirname(local), sessions)
-            digest, head, copied = copy_whole(source, [local, replica], int(entry["replica_bytes"]))
+            digest, head, copied = copy_whole(source, [local, incoming], int(entry["replica_bytes"]))
         except OSError as exc:
-            raise Refused("generation %s: cannot place the rollout of thread %s: %s" % (name, tid, exc))
-        if copied < int(entry["next_rollout_byte_offset"]) or (int(entry["replica_bytes"]) and head != entry["rollout_sha256_prefix"]):
+            raise Refused("generation %s: cannot stage the rollout of thread %s: %s" % (name, tid, exc))
+        if copied < int(entry["next_rollout_byte_offset"]) or head != entry["rollout_sha256_prefix"]:
             raise Refused("generation %s: the replica of thread %s changed while it was being copied" % (name, tid))
-        for path in (local, replica):
+        for path in (local, incoming):
             check, length = sha256_file(path)
             if length != copied or check != digest:
-                raise Refused("generation %s: the placed copy %s does not hash to its source" % (name, path))
+                raise Refused("generation %s: the staged copy %s does not hash to its source" % (name, path))
         total += copied
-        placed += 1
-    if placed:
-        try:
-            fsync_path(rollouts)        # the new replicas' names, not only their bytes
-        except OSError as exc:
-            raise Refused("generation %s: cannot sync %s after placing the replicas: %s" % (name, rollouts, exc))
     return total
 
 
-def restore_generation(selector, durable, durable_base, scope, codex_home, codex_home_real, unattended, local, home_local, durable_run):
-    """``--restore RUN/GENERATION``: validate on the durable side, stage the
-    stores locally, gate, place the replicas, install ``db/``.  Every refusal
-    leaves ``db/`` absent and ``home/sessions`` empty; the source generation is
-    never touched.  Returns (restored_from, pending_work)."""
-    run, generation = selector
-    name = run + "/" + generation
-    source_run = os.path.join(durable, "runs", run)
-    gen_dir = os.path.join(source_run, "generations", generation)
-    manifest, manifest_sha = load_manifest(gen_dir, name)
-    check_manifest(manifest, name, run, generation, scope, codex_home, codex_home_real, unattended)
-    sources = check_replicas(manifest, name, source_run)
-    db_dir = os.path.join(local, "db")
-    if os.path.exists(db_dir):
-        raise Refused("run directory %s already has db/; a restore never overwrites local databases" % local)
-    staging = os.path.join(local, "restore-staging")
-    if os.path.isdir(staging):
-        shutil.rmtree(staging)
-    mkdir_private(staging)
-    staging_db = os.path.join(staging, "db")
-    mkdir_private(staging_db)
-    expected_db = sum(int(record["bytes"]) for record in manifest["databases"].values())
-    expected_rollouts = sum(size for _, size, _ in sources.values())
-    started = time.monotonic()
-    log("restoring generation %s (%s, captured %s): reading %d database(s), %d bytes, and %d replica(s), %d bytes, from %s" % (
-        name, manifest["class"], manifest.get("captured_at_iso"), len(manifest["databases"]), expected_db, len(sources), expected_rollouts, source_run))
-    db_bytes = stage_databases(manifest, name, gen_dir, staging_db)
-    pending = pending_work(staging_db)
-    if unattended:
-        gate_unattended(pending, "generation " + name)
-    ensure_durable_run(durable_run, durable_base)
-    rollout_bytes = place_replicas(manifest, name, sources, os.path.join(home_local, "sessions"), os.path.join(durable_run, "rollouts"))
-    os.rename(staging_db, db_dir)
+def activate_restore(name, attempt, staging, db_dir, rollouts):
+    """The last step, after run.json: each staged replica renamed to its final
+    name and ``rollouts/`` synced, the staged sessions tree renamed under
+    ``home/``, then the staged stores renamed into ``db/``.  Every rename
+    stays within one directory or one local filesystem."""
+    while attempt.incoming:
+        incoming = attempt.incoming[0]
+        final = os.path.join(rollouts, os.path.basename(incoming)[len(".incoming-"):])
+        if os.path.lexists(final):
+            raise Refused("generation %s: %s already exists; a restore never overwrites a replica of the new run" % (name, final))
+        os.rename(incoming, final)
+        attempt.placed.append(final)
+        attempt.incoming.pop(0)
+    if attempt.placed:
+        fsync_path(rollouts)        # the final names, not only the bytes
+    staged_sessions = os.path.join(staging, "sessions")
+    if os.path.isdir(staged_sessions):
+        os.rename(staged_sessions, attempt.sessions)
+        attempt.sessions_installed = True
+    os.rename(os.path.join(staging, "db"), db_dir)
     try:
         os.rmdir(staging)
     except OSError:
         pass
+
+
+class RestoreAttempt(object):
+    """What one restore attempt has created, so a refusal after its first
+    durable write removes exactly that and nothing else: the staging tree,
+    the ``.incoming-*`` replicas (or the replicas renamed from them), the
+    durable run directory when this attempt created it, the two run.json
+    copies, and the sessions tree it renamed under ``home/``."""
+
+    def __init__(self, local, home_local, durable_run):
+        self.step = "validating the selector"
+        self.staging = os.path.join(local, "restore-staging")
+        self.local_meta = os.path.join(local, "run.json")
+        self.durable_meta = os.path.join(durable_run, "run.json")
+        self.sessions = os.path.join(home_local, "sessions")
+        self.durable_run = durable_run
+        self.durable_created = False
+        self.meta_written = False
+        self.sessions_installed = False
+        self.incoming = []
+        self.placed = []
+
+    def rollback(self):
+        removed, kept = [], []
+
+        def tree(path):
+            if os.path.lexists(path):
+                shutil.rmtree(path, ignore_errors=True)
+                (kept if os.path.lexists(path) else removed).append(path)
+
+        def unlink(path):
+            try:
+                os.unlink(path)
+                removed.append(path)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                kept.append(path)
+
+        tree(self.staging)
+        if self.sessions_installed:
+            tree(self.sessions)
+        if self.meta_written:
+            unlink(self.local_meta)
+            unlink(self.local_meta + ".tmp")
+        if self.durable_created:
+            tree(self.durable_run)
+        else:
+            for path in self.incoming + self.placed:
+                unlink(path)
+            if self.meta_written:
+                unlink(self.durable_meta)
+                unlink(self.durable_meta + ".tmp")
+        if removed or kept:
+            log("restore rolled back: removed %s%s" % (", ".join(removed) or "nothing",
+                                                       "; could not remove " + ", ".join(kept) if kept else ""))
+
+
+def restore_generation(selector, durable, durable_base, scope, meta, unattended, local, home_local, durable_run, status, attempt):
+    """``--restore RUN/GENERATION``: validate on the durable side, stage the
+    stores and the replicas (locally, and the durable replicas under their
+    ``.incoming-`` names), gate, write run.json, activate last.  A refusal at
+    any step leaves ``db/`` and ``home/sessions`` absent and removes what this
+    attempt created (``attempt.rollback``), never the source generation; an
+    OSError or sqlite error is a refusal naming the step.  Fills
+    ``meta["parent"]``.  Returns (restored_from, pending_work)."""
+    name, source_run, gen_dir = selector_paths(durable, selector)
+    run, generation = selector
+    db_dir = os.path.join(local, "db")
+    rollouts = os.path.join(durable_run, "rollouts")
+    staging = attempt.staging
+    staging_db = os.path.join(staging, "db")
+    try:
+        attempt.step = "reading the manifest"
+        manifest, manifest_sha = load_manifest(gen_dir, name)
+        check_manifest(manifest, name, run, generation, scope, meta["codex_home"], meta["codex_home_real"], unattended)
+        attempt.step = "checking the replicas"
+        sources = check_replicas(manifest, name, source_run)
+        if os.path.exists(db_dir):
+            raise Refused("run directory %s already has db/; a restore never overwrites local databases" % local)
+        if os.path.exists(attempt.sessions):
+            raise Refused("run directory %s already has home/sessions; a restore places the rollouts into an empty run directory" % local)
+        attempt.step = "staging the databases"
+        if os.path.isdir(staging):
+            shutil.rmtree(staging)
+        mkdir_private(staging)
+        mkdir_private(staging_db)
+        expected_db = sum(int(record["bytes"]) for record in manifest["databases"].values())
+        expected_rollouts = sum(size for _, size, _ in sources.values())
+        started = time.monotonic()
+        log("restoring generation %s (%s, captured %s): reading %d database(s), %d bytes, and %d replica(s), %d bytes, from %s" % (
+            name, manifest["class"], manifest.get("captured_at_iso"), len(manifest["databases"]), expected_db, len(sources), expected_rollouts, source_run))
+        db_bytes = stage_databases(manifest, name, gen_dir, staging_db)
+        attempt.step = "reading the pending work"
+        pending = pending_work(staging_db)
+        status.note(pending_work=pending)      # recorded before the gate, so a refusal keeps it
+        if unattended:
+            gate_unattended(pending, "generation " + name)
+        attempt.step = "creating the durable run directory"
+        attempt.durable_created = not os.path.isdir(durable_run)
+        ensure_durable_run(durable_run, durable_base)
+        attempt.step = "staging the replicas"
+        rollout_bytes = stage_replicas(manifest, name, sources, os.path.join(staging, "sessions"), rollouts, attempt)
+        attempt.step = "writing run.json"
+        meta["parent"] = {"run": run, "generation": generation, "class": manifest["class"], "manifest_sha256": manifest_sha}
+        attempt.meta_written = True
+        write_run_meta(meta, local, durable_run)
+        attempt.step = "activating"
+        activate_restore(name, attempt, staging, db_dir, rollouts)
+    except Refused:
+        attempt.rollback()
+        raise
+    except (OSError, sqlite3.Error) as exc:
+        attempt.rollback()
+        raise Refused("restore of %s failed while %s: %s: %s" % (name, attempt.step, type(exc).__name__, exc))
+    except Exception as exc:
+        log("restore of %s failed while %s:\n%s" % (name, attempt.step, traceback.format_exc()))
+        attempt.rollback()
+        raise Refused("restore of %s failed while %s: %s: %s" % (name, attempt.step, type(exc).__name__, exc))
     log("placed %d database(s) (%d bytes) under %s and %d rollout(s) (%d bytes) under %s, replicas copied to %s, in %.1fs" % (
-        len(manifest["databases"]), db_bytes, db_dir, len(sources), rollout_bytes, os.path.join(home_local, "sessions"),
-        os.path.join(durable_run, "rollouts"), time.monotonic() - started))
+        len(manifest["databases"]), db_bytes, db_dir, len(sources), rollout_bytes, attempt.sessions, rollouts, time.monotonic() - started))
     restored = {"run": run, "generation": generation, "class": manifest["class"], "manifest_sha256": manifest_sha,
                 "threads": len(manifest["threads"]), "bytes": db_bytes + rollout_bytes,
                 "database_bytes": db_bytes, "rollout_bytes": rollout_bytes,
                 "captured_at_iso": manifest.get("captured_at_iso"), "codex_version": manifest.get("codex_version")}
     return restored, pending
+
+
+def restore_bounded(timeout, attempt, *args):
+    """``restore_generation`` on a daemon thread, joined with the deadline: a
+    durable side that does not answer (an episode on the shared filesystem)
+    blocks that thread, which is abandoned, and the launch reports blocked
+    instead of hanging; nothing was started.  The normal path is the same
+    call on another thread."""
+    outcome = {}
+
+    def work():
+        try:
+            outcome["result"] = restore_generation(*args)
+        except BaseException as exc:
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=work, name="codex-state-restore")
+    worker.daemon = True
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive():
+        raise Blocked("the durable side has not answered in %ds while %s; the restore is blocked, nothing is in use and Codex did not "
+                      "start. Retry when the durable filesystem answers, or pass --fresh for a new, empty history" % (timeout, attempt.step))
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["result"]
 
 
 # ----------------------------------------------------------------- reuse in place
@@ -554,7 +740,7 @@ def reusable_run(scope_dir):
             run_id = handle.read().strip()
     except OSError:
         return None, None
-    if not RUN_ID.match(run_id):
+    if not RUN_ID.fullmatch(run_id):
         return None, None
     local = os.path.join(scope_dir, run_id)
     owner_path = os.path.join(local, "owner.json")
@@ -568,11 +754,15 @@ def reusable_run(scope_dir):
     except (OSError, ValueError) as exc:
         raise Refused("this allocation's latest run %s has local databases but an unreadable owner.json (%s); its ownership "
                       "is unknown, so nothing is reused, deleted or started" % (run_id, exc))
-    for key in ("child_pid", "runner_pid"):
+    for key in ("runner_pid", "child_pid"):      # both known before either is judged dead
         pid = owner.get(key)
-        if pid_alive(pid):
+        if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+            raise Refused("this allocation's latest run %s has local databases but its owner.json records no usable %s (%r); its "
+                          "ownership is unknown, so nothing is reused, deleted or started" % (run_id, key, pid))
+    for key in ("runner_pid", "child_pid"):
+        if pid_alive(owner[key]):
             raise Refused("this allocation's latest run %s records a live %s %d; a second writer on the same stores is "
-                          "forbidden, so nothing starts until it has exited" % (run_id, key, pid))
+                          "forbidden, so nothing starts until it has exited" % (run_id, key, owner[key]))
     return run_id, owner
 
 
@@ -588,6 +778,22 @@ def load_run_meta(local, durable_run, run_id, scope):
             return meta
     raise Refused("run %s cannot be reused: neither %s nor %s holds its run.json, so its provenance is unknown" % (
         run_id, os.path.join(local, "run.json"), os.path.join(durable_run, "run.json")))
+
+
+def check_reusable(meta, owner, run_id, codex_home, codex_home_real, durable_base, durable_run):
+    """A run is reused only under the canonical home it was created under
+    (its stored rollout paths are absolute under that home) and the durable
+    run its replicas and generations live in."""
+    recorded_home = meta.get("codex_home_real")
+    if recorded_home != codex_home_real:
+        raise Refused("run %s cannot be reused under CODEX_HOME %s (%s): it was created under %s (%s), and its stored rollout "
+                      "paths are absolute under that home; relaunch with that CODEX_HOME, or pass --fresh for a new history" % (
+                          run_id, codex_home, codex_home_real, meta.get("codex_home"), recorded_home))
+    recorded_durable = (owner or {}).get("durable")
+    if recorded_durable != durable_run:
+        raise Refused("run %s cannot be reused under --durable-root %s: its replicas and generations are recorded under %s, "
+                      "not %s; relaunch with the durable root it was created under, or pass --fresh for a new history" % (
+                          run_id, durable_base, recorded_durable, durable_run))
 
 
 def ensure_durable_run(durable_run, durable_base):
@@ -733,6 +939,11 @@ def ensure_private_tree(path, base):
     path = os.path.normpath(path)
     if path != base and not path.startswith(base + "/"):
         raise Refused("%s is not under %s" % (path, base))
+    above = os.path.dirname(base)
+    if above and not os.path.isdir(above):
+        # The operator's filesystem above the base: a configured root may be
+        # new, so its missing ancestors are created and not judged.
+        os.makedirs(above, 0o700, exist_ok=True)
     current = base
     ensure_private_dir(current, parent_is_ours=False)
     if path != base:
@@ -747,7 +958,7 @@ def resolve_local_root():
         raise Refused("SUCODER_LOCAL_ROOT is not set; managed placement needs local-disk tiering")
     if not os.path.isdir(root):
         raise Refused("SUCODER_LOCAL_ROOT=%s is not a directory" % root)
-    if not SAFE_PATH.match(root):
+    if not SAFE_PATH.fullmatch(root):
         raise Refused("SUCODER_LOCAL_ROOT=%s contains characters the placeholder substitution cannot carry" % root)
     return root
 
@@ -756,7 +967,7 @@ def resolve_durable_base(base, local_root):
     """The configured durable root: absolute, plain characters, not allocation-local."""
     if not os.path.isabs(base):
         raise Refused("--durable-root %s is not an absolute path" % base)
-    if not SAFE_PATH.match(base):
+    if not SAFE_PATH.fullmatch(base):
         raise Refused("--durable-root %s contains characters outside [A-Za-z0-9/_.-]" % base)
     base = os.path.normpath(base)
     real, local_real = os.path.realpath(base), os.path.realpath(local_root)
@@ -807,9 +1018,19 @@ def check_conflicts(command, placeholder, codex_home_real):
 
 
 def substitute(command, placeholder, db_dir):
-    if not SAFE_PATH.match(db_dir):
+    if not SAFE_PATH.fullmatch(db_dir):
         raise Refused("database path %s contains characters the substitution cannot carry" % db_dir)
     return [arg.replace(placeholder, db_dir) for arg in command]
+
+
+def check_bind_targets(codex_home_real):
+    """The entries managed placement needs in the shared home, checked before
+    anything is created: ``prepare_binds`` runs after a restore has activated,
+    where this refusal would come too late."""
+    for name in REQUIRED_DIRS:
+        target = os.path.join(codex_home_real, name)
+        if not (os.path.isdir(target) and not os.path.islink(target)):
+            raise Refused("%s does not exist in CODEX_HOME; managed placement needs it and will not create entries in the shared home" % target)
 
 
 def prepare_binds(codex_home_real, home_local, keep_existing=False):
@@ -1075,7 +1296,7 @@ class Replicator(object):
                 if not (name.startswith("rollout-") and name.endswith(".jsonl")):
                     continue
                 relative = os.path.relpath(os.path.join(dirpath, name), self.sessions)
-                match = ROLLOUT_NAME.match(name)
+                match = ROLLOUT_NAME.fullmatch(name)
                 if match is None:
                     if relative not in self.unrecognized:
                         self.unrecognized.append(relative)
@@ -1112,19 +1333,29 @@ class Replicator(object):
             return
         local_path = os.path.join(self.sessions, relative)
         try:
-            local_bytes = os.path.getsize(local_path)
+            st = os.stat(local_path)
         except OSError:
             return
+        local_bytes = st.st_size
+        identity = [st.st_dev, st.st_ino]
         observed = entry["local_bytes"]
         if local_bytes != observed:
             entry["local_bytes"] = local_bytes
             self.dirty = True
-        if local_bytes < observed:
+        if entry.get("identity") is None:
+            entry["identity"] = identity
+            self.dirty = True
+        if entry["identity"] != identity:
+            # Another file at the rollout's path: whatever its length, its bytes
+            # beyond the replica are not the ones that followed the replica.
+            self.anomaly(tid, entry, "replaced", "was replaced by another file (device:inode %d:%d, was %d:%d; %d bytes, %d replicated)" % (
+                identity[0], identity[1], entry["identity"][0], entry["identity"][1], local_bytes, entry["replicated_bytes"]))
+        elif local_bytes < observed:
             # Shorter than at the previous pass: the bytes beyond the replica are
             # not the ones that followed it, whatever the replica's length.
-            self.anomaly(tid, entry, local_bytes, observed, "than it was at the previous pass")
+            self.shrunk(tid, entry, local_bytes, observed, "than it was at the previous pass")
         elif local_bytes < entry["replicated_bytes"]:
-            self.anomaly(tid, entry, local_bytes, entry["replicated_bytes"], "than its replica")
+            self.shrunk(tid, entry, local_bytes, entry["replicated_bytes"], "than its replica")
         elif local_bytes > entry["replicated_bytes"] or entry.get("error") or tid not in self.dir_synced:
             try:
                 self.append(tid, entry, local_path, local_bytes)
@@ -1137,12 +1368,15 @@ class Replicator(object):
                     log("replication of %s stalled: %s" % (tid, text))
             self.dirty = True
 
-    def anomaly(self, tid, entry, local_bytes, previous, than):
-        entry["anomaly"] = "shrunk"
+    def anomaly(self, tid, entry, kind, detail):
+        entry["anomaly"] = kind
         entry["anomaly_at"] = time.time()
         self.dirty = True
-        log("rollout of %s shrank to %d bytes, shorter %s (%d bytes; %d replicated); replication of this thread stops" % (
-            tid, local_bytes, than, previous, entry["replicated_bytes"]))
+        log("rollout of %s %s; replication of this thread stops" % (tid, detail))
+
+    def shrunk(self, tid, entry, local_bytes, previous, than):
+        self.anomaly(tid, entry, "shrunk", "shrank to %d bytes, shorter %s (%d bytes; %d replicated)" % (
+            local_bytes, than, previous, entry["replicated_bytes"]))
 
     def append(self, tid, entry, local_path, local_bytes):
         fd = os.open(entry["replica_path"], os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
@@ -1150,7 +1384,7 @@ class Replicator(object):
             size = os.fstat(fd).st_size
             if size > local_bytes:
                 entry["replicated_bytes"] = size
-                self.anomaly(tid, entry, local_bytes, size, "than its replica")
+                self.shrunk(tid, entry, local_bytes, size, "than its replica")
                 return
             with open(local_path, "rb") as local:
                 local.seek(size)
@@ -1163,14 +1397,18 @@ class Replicator(object):
                         view = view[os.write(fd, view):]
                     size += len(chunk)
             os.fsync(fd)
-            entry["replicated_bytes"] = os.fstat(fd).st_size
+            size = os.fstat(fd).st_size
         finally:
             os.close(fd)
         if tid not in self.dir_synced:
             # The file's bytes are durable; its name is not until the directory
-            # is.  Once per thread, retried (as an error) until it succeeds.
+            # is, and the publication gate reads replicated_bytes, so the name
+            # is synced before the count advances.  A failed sync leaves the
+            # count as it was (the replica's own size is the truth): the next
+            # pass re-enters here, writes nothing new, and retries the sync.
             fsync_path(self.rollouts)
             self.dir_synced.add(tid)
+        entry["replicated_bytes"] = size
 
     def snapshot(self):
         # dict() is one C-level copy per entry: follow() adds keys to entries
@@ -1361,6 +1599,7 @@ class Checkpointer(object):
         self.last_outcome = None
         self.reason = None
         self.last_generation = None
+        self.pending_sync = None        # published, but its directory entry's sync failed: not acknowledged yet
         self.inflight = None
         self.inflight_lock = threading.Lock()
         self.last_started = time.monotonic()
@@ -1377,7 +1616,7 @@ class Checkpointer(object):
             except OSError:
                 continue
             for name in names:
-                match = re.match(r"^(\d{6})-[0-9a-f]{8}$", name)
+                match = re.fullmatch(r"^(\d{6})-[0-9a-f]{8}$", name)
                 if match:
                     highest = max(highest, int(match.group(1)))
         return highest
@@ -1500,6 +1739,7 @@ class Checkpointer(object):
                 return
             if final_pass:
                 self.replicator.pass_once()
+            self.retry_sync()
             staging = os.path.join(self.snapshots, generation)
             manifest = self.bundle(generation, trigger, cls, deadline, staging)
             published = self.publish(generation, manifest, staging, deadline)
@@ -1524,8 +1764,14 @@ class Checkpointer(object):
             with self.inflight_lock:
                 self.last_outcome, self.reason = outcome, reason
                 if published is not None:
-                    self.last_generation = published
-                    self.status.durable_at = time.monotonic()
+                    if published.get("sync_warning"):
+                        # The rename succeeded but generations/ is not known to be
+                        # durable: no acknowledgement until a later sync succeeds.
+                        self.pending_sync = published
+                    else:
+                        self.last_generation = published
+                        self.pending_sync = None    # the same directory sync covered an earlier unsynced one
+                        self.status.durable_at = time.monotonic()
                 flight, self.inflight = self.inflight, None
             self.status.note_latest(self.acknowledgement)
             self.report(generation, trigger, cls, outcome, reason, time.monotonic() - started, flight)
@@ -1536,9 +1782,35 @@ class Checkpointer(object):
         fields = {"checkpoint": self.view(None)}
         with self.inflight_lock:
             last = self.last_generation
+            fields["unsynced_generation"] = self.pending_sync
         if last is not None:
             fields["last_generation"] = last
         return fields
+
+    def retry_sync(self):
+        """A generation published but whose directory entry's sync failed is
+        acknowledged only once ``generations/`` syncs: retried before every
+        later capture and at the exit, and promoted to the last generation."""
+        with self.inflight_lock:
+            pending = self.pending_sync
+        if pending is None:
+            return
+        try:
+            fsync_path(self.generations)
+        except OSError as exc:
+            log("generation %s is still not acknowledged: the sync of %s failed again (%s: %s)" % (
+                pending["name"], self.generations, type(exc).__name__, exc))
+            return
+        record = dict(pending)
+        record.pop("sync_warning", None)
+        record["synced_at"] = time.time()
+        with self.inflight_lock:
+            if self.pending_sync is pending:
+                self.pending_sync = None
+                self.last_generation = record
+                self.status.durable_at = time.monotonic()
+        log("generation %s acknowledged: %s synced on retry" % (record["name"], self.generations))
+        self.status.note_latest(self.acknowledgement)
 
     def report(self, generation, trigger, cls, outcome, reason, elapsed, flight):
         prefix = "stuck " if flight is not None and flight["stuck"] else ""
@@ -1728,7 +2000,7 @@ class Checkpointer(object):
 
     def prune_local(self):
         try:
-            names = sorted(n for n in os.listdir(self.snapshots) if re.match(r"^\d{6}-[0-9a-f]{8}$", n))
+            names = sorted(n for n in os.listdir(self.snapshots) if re.fullmatch(r"^\d{6}-[0-9a-f]{8}$", n))
         except OSError:
             return
         for name in names[:-LOCAL_BUNDLES_KEPT]:
@@ -1768,6 +2040,7 @@ class Checkpointer(object):
             log("final %s capture skipped: the %ds shutdown budget was spent waiting for the capture in flight; last durable "
                 "generation: %s" % (cls, self.timeout, self.describe_last()))
             return
+        self.retry_sync()
         worker = self.begin("final", cls, final_pass=True, budget=remaining)
         if worker is None:
             return
@@ -1789,6 +2062,7 @@ def run(args):
         local_root = resolve_local_root()
         codex_home, codex_home_real = resolve_codex_home(args.codex_home)
         check_conflicts(args.command, args.placeholder, codex_home_real)
+        check_bind_targets(codex_home_real)
         durable_base = resolve_durable_base(args.durable_root, local_root)
         selector = parse_selector(args.restore) if args.restore else None    # a bad selector touches nothing
         scope_dir = os.path.join(local_root, "state", "codex", args.scope)
@@ -1819,9 +2093,7 @@ def run(args):
         if mode == "reuse":
             status.load()
         LOG_FILE["path"] = os.path.join(local, "runner.log")
-        binds, skipped = prepare_binds(codex_home_real, home_local, keep_existing=(mode == "reuse"))
         command = substitute(args.command, args.placeholder, db_dir)
-        argv = bwrap_argv(binds, command)
         env = dict(os.environ)
         env["CODEX_HOME"] = codex_home
         env["SUCODER_CODEX_STATE_RUN"] = local
@@ -1834,34 +2106,46 @@ def run(args):
                 restore_ignored = args.restore
                 log("IGNORING --restore %s: this allocation already holds run %s with its local databases, and within one "
                     "allocation local state takes precedence over every archived generation" % (args.restore, run_id))
-            meta = load_run_meta(local, durable_run, run_id, args.scope)
-            ensure_durable_run(durable_run, durable_base)
-            pending = pending_work(db_dir)
-            if args.unattended:
-                gate_unattended(pending, "this allocation's run %s" % run_id)
+            step = "reading run.json"
+            try:
+                meta = load_run_meta(local, durable_run, run_id, args.scope)
+                check_reusable(meta, owner_before, run_id, codex_home, codex_home_real, durable_base, durable_run)
+                step = "creating the durable run directory"
+                ensure_durable_run(durable_run, durable_base)
+                step = "reading the pending work"
+                pending = pending_work(db_dir)
+                status.note(pending_work=pending)      # recorded before the gate, so a refusal keeps it
+                if args.unattended:
+                    gate_unattended(pending, "this allocation's run %s" % run_id)
+            except (OSError, sqlite3.Error) as exc:
+                raise Refused("run %s cannot be reused: %s failed: %s: %s" % (run_id, step, type(exc).__name__, exc))
             restored = (status.data.get("restored_from") if isinstance(status.data.get("restored_from"), dict)
                         else (owner_before or {}).get("restored_from"))
         else:
             if args.fresh and os.path.isfile(os.path.join(scope_dir, "latest-run")):
                 log("--fresh: starting a new run although this allocation holds an earlier run for the scope; that run stays on disk and is not reused")
-            if mode == "restore":
-                staging = os.path.join(local, "restore-staging")
-                restored, pending = restore_generation(selector, durable, durable_base, args.scope, codex_home, codex_home_real,
-                                                      args.unattended, local, home_local, durable_run)
-                parent = {"run": restored["run"], "generation": restored["generation"], "class": restored["class"],
-                          "manifest_sha256": restored["manifest_sha256"]}
-            else:
-                ensure_durable_run(durable_run, durable_base)    # refused before anything local is created
-                mkdir_private(db_dir)
-                parent = None
             created = time.time()
             meta = {
-                "format": 1, "scope": args.scope, "run": run_id, "parent": parent,
+                "format": 1, "scope": args.scope, "run": run_id, "parent": None,
                 "allocation": {"job": os.environ.get("SLURM_JOB_ID"), "node": os.uname()[1]},
                 "codex_home": codex_home, "codex_home_real": codex_home_real,
                 "created": created, "created_iso": utc_iso(created),
             }
-            write_run_meta(meta, local, durable_run)
+            if mode == "restore":
+                attempt = RestoreAttempt(local, home_local, durable_run)
+                staging = attempt.staging
+                name, _, gen_dir = selector_paths(durable, selector)
+                status.update("restoring", restore=name, source=gen_dir)    # before the first durable read
+                restored, pending = restore_bounded(restore_timeout(args.checkpoint_timeout), attempt, selector, durable, durable_base,
+                                                    args.scope, meta, args.unattended, local, home_local, durable_run, status, attempt)
+            else:
+                ensure_durable_run(durable_run, durable_base)    # refused before anything local is created
+                mkdir_private(db_dir)
+                write_run_meta(meta, local, durable_run)
+        # The binds last: a restore has renamed its sessions tree under home/
+        # by now, so nothing created the directory before it.
+        binds, skipped = prepare_binds(codex_home_real, home_local, keep_existing=(mode == "reuse"))
+        argv = bwrap_argv(binds, command)
         owner = {
             "scope": args.scope, "run": run_id, "local": local, "db": db_dir, "codex_home": codex_home,
             "codex_home_real": codex_home_real, "job": meta["allocation"]["job"], "node": meta["allocation"]["node"],
@@ -1904,6 +2188,12 @@ def run(args):
                 "replicas and generations continue under %s; pending work: %s" % (run_id[:8], rollouts, local, durable_run, describe_pending(pending)))
         else:
             log("the managed Codex history for this mirror starts empty and is separate from the shared history in %s; rollout replicas and database generations go to %s" % (codex_home, durable))
+    except Blocked as exc:
+        # The restore thread may still be mid-write: nothing is cleaned from here.
+        log("restore blocked: %s" % exc)
+        if status is not None:
+            status.update("blocked", reason=str(exc))
+        return EXIT_REFUSED
     except Refused as exc:
         log("refusing to launch: %s" % exc)
         if staging is not None and os.path.isdir(staging):
@@ -1996,8 +2286,11 @@ def main(argv=None):
     parser.add_argument("--restore", default=None, metavar="RUN/GENERATION",
                         help="continue from a published generation of this scope (RUN: 32 hex characters, GENERATION: NNNNNN-hhhhhhhh, "
                              "under ABS_BASE/codex/<scope>/runs): its stores are staged and verified locally, its rollout replicas placed "
-                             "at their recorded paths, and Codex starts on them; refused with exit 70 when anything does not verify. "
-                             "Ignored when this allocation already holds an intact run for the scope, which is reused in place instead")
+                             "at their recorded paths, and Codex starts on them; refused with exit 70 when anything does not verify, "
+                             "with nothing of the attempt left behind. A durable side that does not answer within max(120 s, 4 x "
+                             "--checkpoint-timeout) (SUCODER_CODEX_STATE_RESTORE_TIMEOUT overrides, in seconds) leaves the launch "
+                             "blocked, exit 70: retry, or pass --fresh. Ignored when this allocation already holds an intact run for "
+                             "the scope, which is reused in place instead")
     parser.add_argument("--fresh", action="store_true",
                         help="start a new, empty managed history even when this allocation holds a run for the scope "
                              "(which is otherwise reused in place); exclusive with --restore")
@@ -2013,7 +2306,7 @@ def main(argv=None):
         parser.error("no command given after --")
     if args.restore and args.fresh:
         parser.error("--restore and --fresh are mutually exclusive")
-    if not re.match(r"^[0-9a-f]{8,64}$", args.scope):
+    if not re.fullmatch(r"^[0-9a-f]{8,64}$", args.scope):
         parser.error("--scope must be a hex digest")
     if args.checkpoint_minutes <= 0 or args.checkpoint_timeout <= 0:
         parser.error("--checkpoint-minutes and --checkpoint-timeout must be positive")

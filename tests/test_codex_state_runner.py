@@ -7,7 +7,8 @@ Self-contained on purpose (the launcher-side module is edited separately):
 the fake Codex here is scriptable over stdin -- ``turn N`` grows the rollout
 by about N bytes and advances the history projection the way Codex does,
 ``shrink N`` truncates the rollout (the append-only contract broken on
-purpose), ``thread`` starts a second thread whose rollout holds only its
+purpose), ``replace`` renames a copy of the rollout over it (the same bytes
+from another inode), ``thread`` starts a second thread whose rollout holds only its
 session_meta line, ``drop projection`` drops the projection table from the
 history store, ``goal <status>`` and ``queue add`` write the rows the gate
 checks, ``extra`` opens an unclassified store, ``quit`` exits 0, SIGTERM
@@ -148,6 +149,16 @@ while True:
         reply = "ok"
     elif words[0] == "shrink":
         os.ftruncate(rollout.fileno(), int(words[1]))
+        reply = "ok %d" % os.path.getsize(rollout_path)
+    elif words[0] == "replace":
+        # another file with the same bytes renamed over the rollout: a new inode at the path
+        with open(rollout_path, "rb") as current:
+            data = current.read()
+        with open(rollout_path + ".new", "wb") as fresh:
+            fresh.write(data)
+        os.rename(rollout_path + ".new", rollout_path)
+        rollout.close()
+        rollout = open(rollout_path, "ab", buffering=0)
         reply = "ok %d" % os.path.getsize(rollout_path)
     elif words[0] == "thread":
         other = str(uuid.uuid4())
@@ -933,6 +944,11 @@ def test_restore_refusals_place_nothing_and_never_start_codex(home, tmp_path):
     _assert_refused(proc, alloc, "unattended continuation refused: generation " + busy,
                     f"an active goal on thread(s) {p.tid}", f"2 queued item(s) on thread {p.tid}",
                     "pause it in Codex", "executes once on resume")
+    refused_runs = [d for d in (alloc["local"] / "state" / "codex" / home["scope"]).iterdir() if d.is_dir()]
+    assert len(refused_runs) == 1
+    refused_status = json.loads((refused_runs[0] / "status.json").read_text())
+    assert refused_status["pending_work"] == {"active_goals": [p.tid], "queued": {p.tid: 2}}, "the pending work found is recorded by the refusal"
+    assert [t["state"] for t in refused_status["transitions"]] == ["restoring", "refused"]
     # attended, the same generation restores; the pending work is reported and handed over untouched
     q = Managed(_allocation(home, tmp_path, "alloc-attended"), extra=("--restore", busy))
     try:
@@ -1007,7 +1023,14 @@ def test_reuse_in_place_continues_the_run_and_refuses_a_live_owner(home, tmp_pat
     assert (scope_dir / "latest-run").read_text().strip() == a.run_dir.name and (a.run_dir / "db" / "goals_1.sqlite").exists()
     assert json.loads((a.run_dir / "owner.json").read_text()) == first_owner, "a refusal rewrites no ownership"
     assert sorted(p.name for p in scope_dir.iterdir() if p.is_dir()) == [a.run_dir.name]
+    refused = json.loads((a.run_dir / "status.json").read_text())
+    assert refused["state"] == "refused" and refused["pending_work"] == {"active_goals": [a.tid], "queued": {}}, "the refusal records what it found"
 
+    agents = a.run_dir / "home" / "AGENTS.md"
+    assert agents.read_text() == "GLOBAL\n", "the bound copy of the shared file"
+    agents.write_text("GLOBAL\nlocal marker\n")
+    run_json_before = (a.run_dir / "run.json").read_text()
+    assert run_json_before == (a.durable_run / "run.json").read_text()
     b = Managed(home)
     try:
         assert b.run_dir == a.run_dir and b.tid == a.tid and b.durable_run == a.durable_run
@@ -1024,9 +1047,9 @@ def test_reuse_in_place_continues_the_run_and_refuses_a_live_owner(home, tmp_pat
         assert owner["previous"] == [{"runner_pid": first_owner["runner_pid"], "child_pid": first_owner["child_pid"], "started": first_owner["started"]}]
         assert owner["child_pid"] != first_owner["child_pid"] and owner["first_started"] == first_owner["started"]
         assert history.read_text() == 'shared\n{"marker": "between runs"}\n', "reuse never overwrites the managed history"
-        assert (b.run_dir / "home" / "AGENTS.md").read_text() == "GLOBAL\n"
+        assert agents.read_text() == "GLOBAL\nlocal marker\n", "the local AGENTS copy is kept, not recopied from the shared home"
         assert b.sees["projection"] == {a.tid: [size_a, 1]}
-        assert json.loads((b.run_dir / "run.json").read_text()) == json.loads((b.durable_run / "run.json").read_text())
+        assert (b.run_dir / "run.json").read_text() == run_json_before == (b.durable_run / "run.json").read_text(), "provenance is never rewritten"
         b.cmd("turn 450")
         b.wait_synced()
         assert b.local_rollout.stat().st_size > size_a and b.replica.read_bytes() == b.local_rollout.read_bytes()
@@ -1422,11 +1445,13 @@ def test_new_replica_files_and_durable_directories_are_followed_by_a_directory_f
         raise OSError(5, "Input/output error")
     monkeypatch.setattr(runner, "fsync_path", failing)
     rep.pass_once()
-    assert synced[-1] == str(run / "rollouts") and rep.threads[tid2]["replicated_bytes"] == 6
+    assert synced[-1] == str(run / "rollouts") and (run / "rollouts" / f"{tid2}.jsonl").read_bytes() == b"three\n"
+    assert rep.threads[tid2]["replicated_bytes"] == 0, "the bytes are in the file but do not count until its name is durable"
     assert "Input/output error" in rep.view()["errors"][tid2] and tid2 not in rep.dir_synced
     monkeypatch.setattr(runner, "fsync_path", recording)
     rep.pass_once()
     assert synced[-1] == str(run / "rollouts") and tid2 in rep.dir_synced and rep.view()["errors"] == {}
+    assert rep.threads[tid2]["replicated_bytes"] == 6
     assert f"replication of {tid2} resumed at 6 bytes" in _log(tmp_path)
 
 
@@ -1643,24 +1668,506 @@ def test_a_symlinked_or_writable_durable_component_refuses_before_anything_is_cr
         m.close()
 
 
-def test_a_failed_sync_after_the_rename_is_published_with_a_warning(runner, tmp_path, monkeypatch):
-    """Finding 11: the rename succeeded and the manifest is complete, so the
-    generation is acknowledged, with the sync failure recorded on it."""
+def test_a_failed_sync_after_the_rename_is_not_acknowledged_until_the_sync_succeeds(runner, tmp_path, monkeypatch):
+    """Finding 11, amended by addendum C: the rename succeeded and the manifest
+    is complete, but the directory entry is not known to be durable, so the
+    generation is recorded as unsynced and is not the last generation until a
+    retry of the directory sync (before a later capture, or at the exit)
+    succeeds; a later publication's successful sync covers it as well."""
     h = InProcess(runner, tmp_path)
     h.replicator.pass_once()
     real = runner.fsync_path
+    failing = {"on": True}
 
-    def failing(path):
-        if path == str(h.generations):
+    def maybe_failing(path):
+        if failing["on"] and path == str(h.generations):
             raise OSError(5, "Input/output error")
         real(path)
-    monkeypatch.setattr(runner, "fsync_path", failing)
+    monkeypatch.setattr(runner, "fsync_path", maybe_failing)
     assert h.capture() == ("published", None)
-    last = h.cp.last_generation
-    assert last["sync_warning"] == "OSError: [Errno 5] Input/output error"
-    assert Path(last["path"]).parent == h.generations and (Path(last["path"]) / "manifest.json").exists()
+    a = h.cp.pending_sync
+    assert a is not None and a["sync_warning"] == "OSError: [Errno 5] Input/output error"
+    assert h.cp.last_generation is None and h.status.durable_at is None, "no durable acknowledgement"
+    assert Path(a["path"]).parent == h.generations and (Path(a["path"]) / "manifest.json").exists()
     assert not list(h.durable_run.glob(".incoming-*"))
-    assert h.status_json()["last_generation"] == last and h.status_json()["checkpoint"]["last_outcome"] == "published"
+    status = h.status_json()
+    assert status["unsynced_generation"] == a and "last_generation" not in status and status["durable_age_seconds"] is None
+    assert status["checkpoint"]["last_outcome"] == "published"
     log = _log(tmp_path)
-    assert f"generation {last['name']} is published but the sync of {h.generations} failed" in log
-    assert f"generation {last['name']} published (warm, request" in log
+    assert f"generation {a['name']} is published but the sync of {h.generations} failed" in log
+    assert f"generation {a['name']} published (warm, request" in log
+    # a second capture while the sync still fails: the retry fails too, and the newer one is the unsynced one
+    assert h.capture() == ("published", None)
+    b = h.cp.pending_sync
+    assert b["name"] != a["name"] and h.cp.last_generation is None
+    assert f"generation {a['name']} is still not acknowledged: the sync of {h.generations} failed again (OSError" in _log(tmp_path)
+    assert h.status_json()["unsynced_generation"] == b
+    # the retry succeeds: acknowledged, without the warning
+    failing["on"] = False
+    h.cp.retry_sync()
+    last = h.cp.last_generation
+    assert last["name"] == b["name"] and "sync_warning" not in last and last["synced_at"] > 0 and h.cp.pending_sync is None
+    assert h.status.durable_at is not None
+    status = h.status_json()
+    assert status["last_generation"] == last and status["unsynced_generation"] is None and status["durable_age_seconds"] is not None
+    assert f"generation {b['name']} acknowledged: {h.generations} synced on retry" in _log(tmp_path)
+    # a later publication whose own sync succeeds covers an unsynced one (same directory)
+    failing["on"] = True
+    assert h.capture() == ("published", None)
+    c = h.cp.pending_sync
+    assert c is not None and c["name"] != b["name"] and h.cp.last_generation == last
+    failing["on"] = False
+    assert h.capture() == ("published", None)
+    d = h.cp.last_generation
+    assert d["name"] != c["name"] and h.cp.pending_sync is None and h.status_json()["unsynced_generation"] is None
+    assert sorted(os.listdir(h.generations)) == sorted([a["name"], b["name"], c["name"], d["name"]])
+    # the exit retries as well, before the final capture
+    failing["on"] = True
+    assert h.capture() == ("published", None)
+    e = h.cp.pending_sync
+    assert e is not None
+    failing["on"] = False
+    h.cp.begin = lambda *args, **kwargs: None      # the final capture itself is not the point here
+    h.cp.final("sealed")
+    assert h.cp.last_generation["name"] == e["name"] and h.cp.pending_sync is None
+
+
+# ----------------------------------------------------------------- review follow-ups on the second half
+
+def _published(runner, tmp_path, active_goal=False):
+    """A sealed generation published by the in-process harness, as a restore
+    source: (harness, selector).  With ``active_goal`` the stores carry a
+    goals_1 row with status active for the harness thread."""
+    h = InProcess(runner, tmp_path.resolve())
+    if active_goal:
+        goals = sqlite3.connect(str(h.db_dir / "goals_1.sqlite"))
+        goals.execute("create table thread_goals (thread_id TEXT PRIMARY KEY NOT NULL, goal_id TEXT NOT NULL, status TEXT NOT NULL)")
+        goals.execute("insert into thread_goals values (?, ?, ?)", (TID, "goal-1", "active"))
+        goals.commit()
+        goals.close()
+    h.replicator.pass_once()
+    assert h.capture(trigger="final", cls="sealed") == ("published", None)
+    return h, f"{h.run_id}/{h.cp.last_generation['name']}"
+
+
+def _restore_in_process(runner, h, local_root, monkeypatch, *flags):
+    """``runner.main`` in this process against the harness's durable root, so
+    a step can be failed by monkeypatch; a refusal returns before anything is
+    launched.  Returns (exit code, the run directories left under the scope)."""
+    local_root.mkdir(exist_ok=True)
+    local_root = local_root.resolve()
+    monkeypatch.setenv("SUCODER_LOCAL_ROOT", str(local_root))
+    monkeypatch.setenv("CODEX_HOME", str(h.codex_home))
+    monkeypatch.delenv("CODEX_SQLITE_HOME", raising=False)
+    runner.LOG_FILE["path"] = str(local_root.parent / "runner.log")        # until the attempt has a run directory
+    code = runner.main(["--scope", h.scope, "--durable-root", str(h.durable_base), *flags,
+                        "--", "codex", "-c", f'sqlite_home="{PLACEHOLDER}"'])
+    scope_dir = local_root / "state" / "codex" / h.scope
+    runs = sorted(p for p in scope_dir.iterdir() if p.is_dir()) if scope_dir.is_dir() else []
+    return code, runs
+
+
+def _tree(path):
+    """A digest of every file under ``path``: relative names, modes and bytes."""
+    digest = hashlib.sha256()
+    for dirpath, dirnames, filenames in os.walk(str(path)):
+        dirnames.sort()
+        for name in sorted(filenames):
+            full = Path(dirpath) / name
+            digest.update(str(full.relative_to(path)).encode())
+            digest.update(oct(full.stat().st_mode).encode())
+            digest.update(full.read_bytes())
+    return digest.hexdigest()
+
+
+def _assert_rolled_back(run_dir, h, *needles):
+    """Exit 70's aftermath: status refused with the reason; no db/, no staging,
+    no home/sessions, no run.json; no durable run directory for the new id."""
+    status = json.loads((run_dir / "status.json").read_text())
+    assert status["state"] == "refused", status
+    for needle in needles:
+        assert needle in status["reason"], (needle, status["reason"])
+    assert not (run_dir / "db").exists() and not (run_dir / "restore-staging").exists() and not (run_dir / "run.json").exists()
+    assert not (run_dir / "home" / "sessions").exists() and not list((run_dir / "home").rglob("*"))
+    assert os.listdir(h.durable_base / "codex" / h.scope / "runs") == [h.run_id], "no durable run directory for the refused run"
+
+
+@needs_bwrap
+def test_a_refused_restore_rolls_back_everything_the_attempt_created(runner, tmp_path, monkeypatch):
+    """Findings 1 and 4: a failure while staging the replicas, while writing
+    run.json, while checking the replicas (before any durable write) and in
+    the middle of the activation each exits 70 with the step named, leaves no
+    db/, no home/sessions, no run.json and no durable run directory for the
+    new run id, and the source run (generation and replica) untouched."""
+    h, selector = _published(runner, tmp_path)
+    before = _tree(h.durable_run)
+    real_copy_whole, real_sha256_file, real_write_json, real_rename = runner.copy_whole, runner.sha256_file, runner.write_json, os.rename
+
+    # a torn replica copy: the targets exist, the read failed
+    def failing_copy(source, targets, prefix=0):
+        for target in targets:
+            Path(target).write_bytes(b"torn")
+        raise OSError(5, "Input/output error")
+    monkeypatch.setattr(runner, "copy_whole", failing_copy)
+    code, runs = _restore_in_process(runner, h, tmp_path / "local-1", monkeypatch, "--restore", selector)
+    assert code == 70 and len(runs) == 1
+    _assert_rolled_back(runs[0], h, f"generation {selector}: cannot stage the rollout of thread {TID}: [Errno 5] Input/output error")
+    log = (runs[0] / "runner.log").read_text()
+    assert "restore rolled back: removed" in log and str(runs[0] / "restore-staging") in log
+    assert str(h.durable_base / "codex" / h.scope / "runs" / runs[0].name) in log, "the new run's durable directory was removed"
+    assert _tree(h.durable_run) == before
+    monkeypatch.setattr(runner, "copy_whole", real_copy_whole)
+
+    # the durable run.json cannot be written, after the replicas were staged
+    def no_space(path, data):
+        if path.endswith("run.json") and path.startswith(str(h.durable_base)):
+            raise OSError(28, "No space left on device")
+        real_write_json(path, data)
+    monkeypatch.setattr(runner, "write_json", no_space)
+    code, runs = _restore_in_process(runner, h, tmp_path / "local-2", monkeypatch, "--restore", selector)
+    assert code == 70 and len(runs) == 1
+    new_durable = h.durable_base / "codex" / h.scope / "runs" / runs[0].name
+    _assert_rolled_back(runs[0], h, f"cannot write {new_durable / 'run.json'}: [Errno 28] No space left on device")
+    assert _tree(h.durable_run) == before
+    monkeypatch.setattr(runner, "write_json", real_write_json)
+
+    # an I/O error while hashing a source replica: before any durable write, so nothing to roll back
+    def failing_hash(path, limit=None):
+        if path.startswith(str(h.rollouts)):
+            raise OSError(5, "Input/output error")
+        return real_sha256_file(path, limit)
+    monkeypatch.setattr(runner, "sha256_file", failing_hash)
+    code, runs = _restore_in_process(runner, h, tmp_path / "local-3", monkeypatch, "--restore", selector)
+    assert code == 70 and len(runs) == 1
+    _assert_rolled_back(runs[0], h, f"restore of {selector} failed while checking the replicas: OSError: [Errno 5] Input/output error")
+    assert "restore rolled back" not in (runs[0] / "runner.log").read_text(), "nothing had been created yet"
+    monkeypatch.setattr(runner, "sha256_file", real_sha256_file)
+
+    # the last rename (staging/db into db/) fails: the replicas renamed and the sessions tree installed are taken back
+    def failing_rename(src, dst, *args, **kwargs):
+        if str(src).endswith("restore-staging/db"):
+            raise OSError(5, "Input/output error")
+        return real_rename(src, dst, *args, **kwargs)
+    monkeypatch.setattr(runner.os, "rename", failing_rename)
+    try:
+        code, runs = _restore_in_process(runner, h, tmp_path / "local-4", monkeypatch, "--restore", selector)
+    finally:
+        monkeypatch.setattr(runner.os, "rename", real_rename)
+    assert code == 70 and len(runs) == 1
+    _assert_rolled_back(runs[0], h, f"restore of {selector} failed while activating: OSError: [Errno 5] Input/output error")
+    log = (runs[0] / "runner.log").read_text()
+    assert str(runs[0] / "home" / "sessions") in log and "could not remove" not in log
+    assert _tree(h.durable_run) == before
+    assert h.replica.read_bytes() == h.local_rollout.read_bytes()
+
+
+@needs_bwrap
+def test_unknown_ownership_refuses_reuse(home):
+    """Finding 3: a latest run with db/ whose owner.json carries no usable
+    pids is of unknown ownership: refused, never treated as dead."""
+    scope_dir = home["local"] / "state" / "codex" / home["scope"]
+    run_id = "e" * 32
+    run_dir = scope_dir / run_id
+    (run_dir / "db").mkdir(parents=True)
+    (scope_dir / "latest-run").write_text(run_id + "\n")
+    for owner, needle in (({}, "runner_pid (None)"), ({"runner_pid": 1, "child_pid": "x"}, "child_pid ('x')"),
+                          ({"runner_pid": True, "child_pid": 1}, "runner_pid (True)"), ({"runner_pid": 1, "child_pid": 0}, "child_pid (0)")):
+        (run_dir / "owner.json").write_text(json.dumps(owner))
+        proc = _attempt(home)
+        assert proc.returncode == 70 and "FAKE_READY" not in proc.stdout, (proc.returncode, proc.stderr)
+        assert f"this allocation's latest run {run_id} has local databases but its owner.json records no usable {needle}" in proc.stderr
+        assert "ownership is unknown, so nothing is reused, deleted or started" in proc.stderr
+        assert sorted(p.name for p in scope_dir.iterdir() if p.is_dir()) == [run_id] and (run_dir / "db").is_dir()
+        assert (scope_dir / "latest-run").read_text().strip() == run_id
+
+
+@needs_bwrap
+def test_reuse_refuses_another_home_or_durable_root(home, tmp_path):
+    """Finding 2: the same allocation relaunched under another CODEX_HOME or
+    another --durable-root does not continue the run: its stored rollout
+    paths are absolute under the recorded home, and its replicas and
+    generations live under the recorded durable run."""
+    scope_dir = home["local"] / "state" / "codex" / home["scope"]
+    a = Managed(home)
+    try:
+        a.cmd("turn 200")
+        a.wait_synced()
+        assert a.quit() == 0
+    finally:
+        a.close()
+    owner_before = (a.run_dir / "owner.json").read_text()
+    home2 = tmp_path / "home2"
+    for d in ("sessions", "thread-writer-locks", "skills"):
+        (home2 / d).mkdir(parents=True)
+    (home2 / "config.toml").write_text('model = "x"\n')
+    proc = _attempt(dict(home, codex_home=home2))
+    assert proc.returncode == 70 and "FAKE_READY" not in proc.stdout, (proc.returncode, proc.stderr)
+    assert (f"run {a.run_dir.name} cannot be reused under CODEX_HOME {home2} ({os.path.realpath(home2)}): it was created under "
+            f"{home['codex_home']} ({os.path.realpath(home['codex_home'])}), and its stored rollout paths are absolute under that home") in proc.stderr
+    assert not list((home2 / "sessions").iterdir())
+    durable2 = tmp_path / "durable2"
+    durable2.mkdir()
+    proc = _attempt(dict(home, durable=durable2))
+    assert proc.returncode == 70 and "FAKE_READY" not in proc.stdout, (proc.returncode, proc.stderr)
+    assert (f"run {a.run_dir.name} cannot be reused under --durable-root {durable2}: its replicas and generations are recorded under "
+            f"{a.durable_run}, not {durable2 / 'codex' / home['scope'] / 'runs' / a.run_dir.name}") in proc.stderr
+    assert not (durable2 / "codex").exists(), "nothing was created under the other durable root"
+    assert (scope_dir / "latest-run").read_text().strip() == a.run_dir.name
+    assert (a.run_dir / "owner.json").read_text() == owner_before and (a.run_dir / "db" / "state_5.sqlite").exists()
+    assert sorted(p.name for p in scope_dir.iterdir() if p.is_dir()) == [a.run_dir.name], "no run directory was created"
+    status = json.loads((a.run_dir / "status.json").read_text())
+    assert status["state"] == "refused" and "cannot be reused under --durable-root" in status["reason"]
+
+
+@needs_bwrap
+def test_restore_reports_blocked_when_the_durable_side_does_not_answer(runner, tmp_path, monkeypatch):
+    """Finding 5: status says restoring (selector and source) before the first
+    durable read; a manifest read that never returns leaves the launch
+    blocked within the restore deadline, exit 70, the step named and the
+    operator told to retry or pass --fresh; the thread is abandoned."""
+    assert runner.restore_timeout(30.0) == 120.0 and runner.restore_timeout(60.0) == 240.0
+    for raw in ("inf", "abc", "0", "-5"):
+        monkeypatch.setenv("SUCODER_CODEX_STATE_RESTORE_TIMEOUT", raw)
+        assert runner.restore_timeout(30.0) == 120.0, raw
+    h, selector = _published(runner, tmp_path)
+    release, entered = threading.Event(), threading.Event()
+
+    def blocking(gen_dir, name):
+        entered.set()
+        release.wait(30)
+        raise runner.Refused("released")       # the abandoned thread ends without restoring anything
+    monkeypatch.setattr(runner, "load_manifest", blocking)
+    monkeypatch.setenv("SUCODER_CODEX_STATE_RESTORE_TIMEOUT", "1")
+    started = time.monotonic()
+    code, runs = _restore_in_process(runner, h, tmp_path / "local-b", monkeypatch, "--restore", selector)
+    elapsed = time.monotonic() - started
+    assert code == 70 and 1.0 <= elapsed < 5.0, elapsed
+    assert entered.is_set() and len(runs) == 1
+    status = json.loads((runs[0] / "status.json").read_text())
+    assert [t["state"] for t in status["transitions"]] == ["restoring", "blocked"]
+    assert status["state"] == "blocked" and status["restore"] == selector
+    assert status["source"] == str(h.generations / selector.split("/")[1])
+    assert "the durable side has not answered in 1s while reading the manifest" in status["reason"]
+    assert "Retry when the durable filesystem answers, or pass --fresh" in status["reason"]
+    log = (runs[0] / "runner.log").read_text()
+    assert "restore blocked: the durable side has not answered" in log and "refusing to launch" not in log
+    assert not (runs[0] / "db").exists() and not (runs[0] / "restore-staging").exists() and not (runs[0] / "home" / "sessions").exists()
+    assert os.listdir(h.durable_base / "codex" / h.scope / "runs") == [h.run_id]
+    workers = [t for t in threading.enumerate() if t.name == "codex-state-restore"]
+    assert len(workers) == 1 and workers[0].daemon and workers[0].is_alive(), "abandoned, still blocked"
+    release.set()
+    workers[0].join(10)
+    assert not workers[0].is_alive()
+
+
+@needs_bwrap
+def test_restore_validation_gaps_refuse(runner, tmp_path, monkeypatch):
+    """Finding 6: a null threads entry is normalized once (check_replicas reads
+    the same dict), a zero-length prefix is still hashed, a selector or scope
+    with a trailing newline is not accepted, and a store present in the
+    generation's db/ but unlisted refuses."""
+    h, selector = _published(runner, tmp_path)
+    generation = selector.split("/")[1]
+    gen_dir = h.generations / generation
+    manifest_path = gen_dir / "manifest.json"
+    pristine = manifest_path.read_bytes()
+    launch = (selector, h.run_id, generation, h.scope, str(h.codex_home), str(h.codex_home), False)
+
+    nulled = dict(json.loads(pristine), threads=None)
+    runner.check_manifest(nulled, *launch)
+    assert nulled["threads"] == {}, "normalized in the manifest itself"
+    assert runner.check_replicas(nulled, selector, str(h.durable_run)) == {}
+
+    zero = json.loads(pristine)
+    zero["threads"][TID].update({"replica_bytes": 0, "next_rollout_byte_offset": 0, "rollout_sha256_prefix": hashlib.sha256(b"").hexdigest()})
+    runner.check_manifest(zero, *launch)
+    assert TID in runner.check_replicas(zero, selector, str(h.durable_run)), "the empty prefix hashes to the hash of nothing"
+    zero["threads"][TID]["rollout_sha256_prefix"] = "00" * 32
+    manifest_path.write_bytes(json.dumps(zero).encode())
+    code, runs = _restore_in_process(runner, h, tmp_path / "local-1", monkeypatch, "--restore", selector)
+    assert code == 70 and len(runs) == 1
+    _assert_rolled_back(runs[0], h, f"thread {TID}: the first 0 bytes of its replica", "do not hash to the manifest's rollout_sha256_prefix")
+    manifest_path.write_bytes(pristine)
+
+    code, runs = _restore_in_process(runner, h, tmp_path / "local-2", monkeypatch, "--restore", selector + "\n")
+    assert code == 70 and runs == [] and not (tmp_path / "local-2" / "state").exists()
+    assert "is not RUN/GENERATION" in _log(tmp_path)
+    with pytest.raises(SystemExit) as exit_info:
+        _restore_in_process(runner, h, tmp_path / "local-2", monkeypatch, "--scope", h.scope + "\n")
+    assert exit_info.value.code == 2
+
+    (gen_dir / "db" / "memories_1.sqlite").write_bytes(b"")
+    code, runs = _restore_in_process(runner, h, tmp_path / "local-3", monkeypatch, "--restore", selector)
+    assert code == 70 and len(runs) == 1
+    _assert_rolled_back(runs[0], h, f"{gen_dir / 'db'} holds unlisted store(s) memories_1.sqlite", "altered after publication")
+
+
+def test_load_manifest_hashes_the_bytes_it_parsed(runner, tmp_path, monkeypatch):
+    """Finding 7: one read; the recorded sha256 is of the parsed bytes, with
+    no second open of the file (which could see different bytes)."""
+    gen_dir = tmp_path / "gen"
+    gen_dir.mkdir()
+    raw = b'{"format": 1, "threads": null}\n'
+    (gen_dir / "manifest.json").write_bytes(raw)
+
+    def no_second_read(path, limit=None):
+        raise AssertionError("manifest.json must not be read a second time: %s" % path)
+    monkeypatch.setattr(runner, "sha256_file", no_second_read)
+    manifest, digest = runner.load_manifest(str(gen_dir), "r/g")
+    assert manifest == {"format": 1, "threads": None} and digest == hashlib.sha256(raw).hexdigest()
+    (gen_dir / "manifest.json").write_bytes(b"\xff\xfe not json")
+    with pytest.raises(runner.Refused, match="manifest.json is unreadable"):
+        runner.load_manifest(str(gen_dir), "r/g")
+
+
+@needs_bwrap
+def test_an_unattended_refusal_records_the_pending_work_it_found(runner, tmp_path, monkeypatch):
+    """Finding 8: the pending work is written to status.json before the gate,
+    so a refused unattended restore shows what it found, not only the reason."""
+    h, selector = _published(runner, tmp_path, active_goal=True)
+    code, runs = _restore_in_process(runner, h, tmp_path / "local-1", monkeypatch, "--restore", selector, "--unattended")
+    assert code == 70 and len(runs) == 1
+    _assert_rolled_back(runs[0], h, f"unattended continuation refused: generation {selector} holds an active goal on thread(s) {TID}")
+    status = json.loads((runs[0] / "status.json").read_text())
+    assert status["pending_work"] == {"active_goals": [TID], "queued": {}}
+    assert [t["state"] for t in status["transitions"]] == ["restoring", "refused"]
+    assert "restore rolled back: removed" in (runs[0] / "runner.log").read_text(), "the staged stores were removed"
+
+
+@needs_bwrap
+def test_reuse_keeps_a_restored_runs_provenance_and_local_edits(home, tmp_path):
+    """Finding 9: a run that was itself restored is reused with its run.json
+    (parent included) byte-identical to the pre-restart copies, its
+    restored_from carried, and a local edit of the bound AGENTS copy kept."""
+    a = Managed(home)
+    try:
+        a.cmd("turn 300")
+        a.wait_synced()
+        assert a.quit() == 0
+    finally:
+        a.close()
+    gen = a.status()["last_generation"]
+    selector = f"{a.run_dir.name}/{gen['name']}"
+    other = _allocation(home, tmp_path, "local-b")
+    b = Managed(other, extra=("--restore", selector))
+    try:
+        assert b.tid == a.tid
+        assert b.quit() == 0
+    finally:
+        b.close()
+    parent = {"run": a.run_dir.name, "generation": gen["name"], "class": "sealed", "manifest_sha256": gen["manifest_sha256"]}
+    before = (b.run_dir / "run.json").read_text()
+    assert json.loads(before)["parent"] == parent and before == (b.durable_run / "run.json").read_text()
+    agents = b.run_dir / "home" / "AGENTS.md"
+    agents.write_text("GLOBAL\nedited after the restore\n")
+    restored_before = b.status()["restored_from"]
+    size_b = b.local_rollout.stat().st_size
+    c = Managed(other)
+    try:
+        assert c.run_dir == b.run_dir and c.tid == a.tid
+        status = c.status()
+        assert status["mode"] == "reuse" and status["restored_from"] == restored_before
+        assert (c.run_dir / "run.json").read_text() == before == (c.durable_run / "run.json").read_text()
+        assert agents.read_text() == "GLOBAL\nedited after the restore\n"
+        assert c.sees["projection"] == {a.tid: [size_b, 1]}
+        c.cmd("turn 100")
+        c.wait_synced()
+        assert _manifest(_request(other))["parent"] == parent
+        assert c.quit() == 0
+    finally:
+        c.close()
+
+
+# ----------------------------------------------------------------- addendum: confirmation pass over the first fix pass
+
+def test_a_replica_counts_only_after_its_name_is_durable(runner, tmp_path, monkeypatch):
+    """Addendum A: replicated_bytes advances only once the first sync of
+    rollouts/ has succeeded; while it fails the bytes are in the file but not
+    counted, a capture in between is not durable, and the retry on the next
+    pass counts them without writing anything new."""
+    h = InProcess(runner, tmp_path, timeout=1.0)
+    real = runner.fsync_path
+    failures = []
+
+    def failing_once(path):
+        if path == str(h.rollouts) and not failures:
+            failures.append(path)
+            raise OSError(5, "Input/output error")
+        real(path)
+    monkeypatch.setattr(runner, "fsync_path", failing_once)
+    h.replicator.pass_once()
+    entry = h.replicator.threads[TID]
+    assert h.replica.read_bytes() == h.local_rollout.read_bytes(), "the bytes are in the file"
+    assert entry["replicated_bytes"] == 0 and "Input/output error" in entry["error"] and TID not in h.replicator.dir_synced
+    assert h.replicator.view()["lag_bytes"] == h.local_rollout.stat().st_size
+    outcome, reason = h.capture()
+    assert outcome == "not_durable" and f"{TID} has 0 replicated bytes" in reason
+    mtime = h.replica.stat().st_mtime_ns
+    h.replicator.pass_once()
+    assert entry["replicated_bytes"] == h.replica.stat().st_size and TID in h.replicator.dir_synced and "error" not in entry
+    assert h.replica.stat().st_mtime_ns == mtime and failures == [str(h.rollouts)], "nothing was written on the retry"
+    assert h.capture() == ("published", None)
+
+
+@needs_bwrap
+def test_a_rollout_replaced_by_another_file_is_an_anomaly(home):
+    """Addendum B: the same bytes at the same path from another inode: the
+    anomaly "replaced", nothing appended after it, later captures of the
+    thread fail."""
+    m = Managed(home)
+    try:
+        m.cmd("turn 300")
+        m.wait_synced()
+        first = _wait_idle(home)["last_generation"]
+        replicated = m.replica.stat().st_size
+        m.cmd("replace")
+        m.cmd("turn 200")
+        status = _wait(home, lambda st: st["replica"]["anomalies"].get(m.tid) == "replaced", "the anomaly")[0]
+        assert m.local_rollout.stat().st_size > replicated
+        assert m.replica.stat().st_size == replicated and m.replica.read_bytes() == m.local_rollout.read_bytes()[:replicated]
+        assert status["replica"]["threads"][m.tid]["replicated_bytes"] == replicated
+        status = _request(home)
+        assert status["checkpoint"]["last_outcome"] == "failed" and f"thread {m.tid}: its rollout replaced" in status["checkpoint"]["reason"]
+        assert status["last_generation"] == first and m.replica.stat().st_size == replicated
+        log = (m.run_dir / "runner.log").read_text()
+        assert f"rollout of {m.tid} was replaced by another file (device:inode " in log and "replication of this thread stops" in log
+    finally:
+        m.close()
+
+
+@needs_bwrap
+def test_a_durable_root_below_absent_directories_is_created(home, tmp_path):
+    """Addendum D: a --durable-root two levels below a directory that does not
+    exist yet launches; the ancestors are created, the base and everything
+    below it 0700."""
+    durable = tmp_path / "absent" / "deeper" / "state"
+    assert not (tmp_path / "absent").exists()
+    m = Managed(dict(home, durable=durable))
+    try:
+        assert m.durable_run.is_dir() and (m.durable_run / "rollouts").is_dir()
+        assert all(oct(p.stat().st_mode & 0o777) == "0o700" for p in (durable, durable / "codex", m.durable_run))
+        m.cmd("turn 100")
+        m.wait_synced()
+        assert m.quit() == 0
+    finally:
+        m.close()
+    assert m.status()["last_generation"]["class"] == "sealed"
+
+
+@needs_bwrap
+def test_an_unusable_replication_interval_falls_back_to_one_second(runner, home, monkeypatch):
+    """Addendum E: inf, NaN, zero, negative, huge or non-numeric overrides are
+    the 1.0 default (Event.wait overflows on inf and the loop would die); a
+    sane value is taken; under inf replication still runs."""
+    for raw, expected in (("inf", 1.0), ("-inf", 1.0), ("nan", 1.0), ("0", 1.0), ("-1", 1.0), ("3601", 1.0), ("1e9", 1.0),
+                          ("abc", 1.0), ("", 1.0), ("0.5", 0.5), ("3600", 3600.0)):
+        monkeypatch.setenv("SUCODER_CODEX_STATE_REPLICATION_INTERVAL", raw)
+        assert runner.replication_interval() == expected, raw
+    m = Managed(home, env={"SUCODER_CODEX_STATE_REPLICATION_INTERVAL": "inf"})
+    try:
+        m.cmd("turn 300")
+        m.wait_synced(timeout=10)
+        assert "replication pass failed" not in (m.run_dir / "runner.log").read_text()
+        assert m.quit() == 0
+    finally:
+        m.close()
