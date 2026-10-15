@@ -145,23 +145,39 @@ def _state_manager(tmp_path, monkeypatch, *, enabled=True, local_disk_root="/loc
     ctx.settings.remote.slurm.codex_state = CodexStateConfig(enabled=enabled)
     manager.executor.local_disk_root = local_disk_root
     manager.executor.agent_user = "coder"
+    monkeypatch.setattr(manager, "_resolve_remote_path", lambda ctx: "/global/scratch/u/mirrors/sample")
     confined = Mock(return_value=0)
     monkeypatch.setattr(manager, "_launch_confined", confined)
     return manager, ctx, confined
 
 
-@pytest.mark.parametrize("command", [["codex", "remote-control"], ["codex"]])
-def test_launch_wraps_codex_in_the_staged_runner_with_the_placeholder_after_codex(tmp_path, monkeypatch, command):
+@pytest.mark.parametrize("command, remote_control", [
+    (["codex", "remote-control"], None), (["codex"], None), (["codex"], "terminal"), (["codex"], "server"),
+])
+def test_launch_wraps_codex_in_the_staged_runner_with_the_placeholder_after_codex(tmp_path, monkeypatch, command, remote_control):
     manager, ctx, confined = _state_manager(tmp_path, monkeypatch)
     ctx.settings.agent_launcher = AgentLauncher(command=["claude"])
-    manager.launch_agent(ctx, sync=False, command_override=command, supports_inline_prompt=True, detached=True)
+    manager.launch_agent(ctx, sync=False, command_override=command, supports_inline_prompt=True, detached=True,
+                         codex_remote_control=remote_control)
     launched = confined.call_args.args[1]
     assert launched[0] == "python3" and re.search(r"codex-state-runner-sample-[0-9a-f]{16}\.py$", launched[1])
-    assert launched[2:6] == ["--scope", scope_id("cluster", "coder", str(ctx.remote_mirror_path)), "--placeholder", PLACEHOLDER]
+    assert launched[2:6] == ["--scope", scope_id("cluster", "coder", "/global/scratch/u/mirrors/sample"), "--placeholder", PLACEHOLDER]
     assert launched[6] == "--"
     inner = launched[7:]
-    codex_at = inner.index("codex")
-    assert inner[codex_at + 1:codex_at + 3] == ["-c", f'sqlite_home="{PLACEHOLDER}"']
+    marker = f'sqlite_home="{PLACEHOLDER}"'
+    if remote_control is None:
+        assert inner.count(marker) == 1
+        codex_at = inner.index("codex")
+        assert inner[codex_at + 1:codex_at + 3] == ["-c", marker]
+    else:
+        # The remote-control supervisor carries two Codex invocations, the
+        # app-server and the terminal client; both run inside the runner's
+        # namespace and both must carry the placeholder.
+        at = inner.index("sucoder-codex-remote")
+        count = int(inner[at + 2])
+        server, client = inner[at + 3:at + 3 + count], inner[at + 3 + count:]
+        assert server[:3] == ["codex", "app-server", "--remote-control"] and server[3:5] == ["-c", marker]
+        assert client[:3] == ["codex", "-c", marker]
     if command == ["codex", "remote-control"]:
         assert inner[0] == "python3" and inner[1].endswith(".txt")   # the context installer stays inside
     staged = [c for c in manager.executor.run_agent.call_args_list if c.kwargs.get("input") == runner_source()]
@@ -255,6 +271,7 @@ def test_runner_places_databases_and_rollout_locally_and_forwards_sigterm(home):
         assert sorted(status["skipped"]) == sorted([".tmp", "tmp", "shell_snapshots", "app-server-control", "AGENTS.override.md", "history.jsonl"])
         owner = json.loads((run_dir / "owner.json").read_text())
         assert {b["target"] for b in owner["bound"]} == {str(home["codex_home"] / d) for d in ("sessions", "thread-writer-locks", "skills", "AGENTS.md")}
+        assert (run_dir / "runner.log").read_text().count("SUCODER codex-state") >= 2
         assert oct((run_dir / "db").stat().st_mode & 0o777) == "0o700"
         proc.send_signal(signal.SIGTERM)
         assert proc.wait(timeout=15) == 37, proc.stderr.read()
@@ -283,7 +300,7 @@ def test_runner_reports_a_child_that_exits_before_opening_a_store(home):
 
 
 @needs_bwrap
-@pytest.mark.parametrize("case", ["env", "config", "argv", "no_sessions", "no_placeholder"])
+@pytest.mark.parametrize("case", ["env", "config", "profile", "argv", "no_sessions", "no_placeholder"])
 def test_runner_refuses_conflicts_and_missing_prerequisites(home, case):
     env = _env(home)
     placeholder = True
@@ -291,6 +308,13 @@ def test_runner_refuses_conflicts_and_missing_prerequisites(home, case):
         env["CODEX_SQLITE_HOME"] = "/x"
     elif case == "config":
         (home["codex_home"] / "config.toml").write_text('sqlite_home = "/x"\n')
+    elif case == "profile":
+        (home["codex_home"] / "fast.config.toml").write_text('sqlite_home = "/x"\n')
+        proc = subprocess.Popen([sys.executable, str(RUNNER), "--scope", home["scope"], "--",
+                                 sys.executable, str(home["fake"]), "--profile", "fast", "-c", f'sqlite_home="{PLACEHOLDER}"'],
+                                env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        assert proc.wait(timeout=30) == 70 and "fast.config.toml" in proc.stderr.read()
+        return
     elif case == "argv":
         placeholder = False
     elif case == "no_sessions":

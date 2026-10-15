@@ -317,9 +317,19 @@ Slice 1 implemented, 2026-10-15 (Sue): `sucoder/codex_state_runner.py`,
   descriptor shows the mount-point path from outside the namespace, so
   placement is verified by `st_dev` of `/proc/<pid>/fd/<n>`.
 - Pre-existing hazard, not fixed here: the staged context installer
-  (`codex_context.py`) uses `list[str]` annotations and fails to compile on
-  Python 3.6, which is the default `python3` on some node images (n0038);
-  the state runner is kept 3.6-clean and compile-checked in its tests.
+  (`codex_context.py`) starts with `from __future__ import annotations`
+  (3.7+) and fails to compile on Python 3.6, which is the default `python3`
+  on some node images (n0038); the state runner is kept 3.6-clean and
+  compile-checked in its tests.
+- Checked after wiring: the TUI runs under the runner in a tmux pane (prompt
+  executed, state placed, rollout local, `/quit` exits 0); Codex installs its
+  own SIGINT handler, so the runner's inherited ignore is harmless; the real
+  home has every bind directory and `history.jsonl`, and lacks `AGENTS.md`
+  and `AGENTS.override.md`, which the runner skips. The runner logs to
+  `runner.log` once Codex may own the terminal. The scope digests the
+  resolved mirror path (`_resolve_remote_path`), one SSH round trip.
+  In remote-control modes the supervisor's server and client invocations
+  both carry the placeholder; the runner's placement check covers both.
 - Baseline failure, not fixed here: `tests/test_codex_context.py::
   test_codex_model_receives_prelude_when_client_replaces_developer_instructions`
   asserts a top-level `instructions` field that Codex 0.162.1 no longer

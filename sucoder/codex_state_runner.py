@@ -56,9 +56,21 @@ class Refused(Exception):
     """The launch cannot proceed under managed placement; nothing was started."""
 
 
+LOG_FILE = {"path": None, "quiet": False}
+
+
 def log(message):
-    sys.stderr.write("SUCODER codex-state: " + message + "\n")
-    sys.stderr.flush()
+    """To stderr until Codex owns the terminal, to the run's log file always."""
+    line = "SUCODER codex-state: " + message + "\n"
+    if LOG_FILE["path"]:
+        try:
+            with open(LOG_FILE["path"], "a") as handle:
+                handle.write(time.strftime("%Y-%m-%dT%H:%M:%S ") + line)
+        except OSError:
+            pass
+    if not LOG_FILE["quiet"]:
+        sys.stderr.write(line)
+        sys.stderr.flush()
 
 
 def write_json(path, data):
@@ -106,6 +118,17 @@ def resolve_codex_home(explicit):
     return home, real
 
 
+def profile_names(command):
+    """``-p NAME`` / ``--profile NAME`` / ``--profile=NAME`` in the Codex argv."""
+    names = []
+    for i, arg in enumerate(command):
+        if arg in ("-p", "--profile") and i + 1 < len(command):
+            names.append(command[i + 1])
+        elif arg.startswith("--profile="):
+            names.append(arg.split("=", 1)[1])
+    return names
+
+
 def check_conflicts(command, placeholder, codex_home_real):
     if os.environ.get("CODEX_SQLITE_HOME"):
         raise Refused("CODEX_SQLITE_HOME is set in the launch environment; managed placement would silently win over it. Unset it or disable codex_state.")
@@ -118,12 +141,14 @@ def check_conflicts(command, placeholder, codex_home_real):
                 raise Refused("the command already sets sqlite_home (%s); managed placement refuses to override an explicit choice" % arg[:80])
     if seen == 0:
         raise Refused("the command carries no sqlite_home placeholder; the launcher did not prepare it for managed placement")
-    config = os.path.join(codex_home_real, "config.toml")
-    if os.path.isfile(config):
-        with open(config, "r") as handle:
-            for line in handle:
-                if re.match(r"^\s*sqlite_home\s*=", line):
-                    raise Refused("%s sets sqlite_home; managed placement would win over it. Remove that line or disable codex_state." % config)
+    configs = [os.path.join(codex_home_real, "config.toml")]
+    configs += [os.path.join(codex_home_real, name + ".config.toml") for name in profile_names(command)]
+    for config in configs:
+        if os.path.isfile(config):
+            with open(config, "r") as handle:
+                for line in handle:
+                    if re.match(r"^\s*sqlite_home\s*=", line):
+                        raise Refused("%s sets sqlite_home; managed placement would win over it. Remove that line or disable codex_state." % config)
 
 
 def substitute(command, placeholder, db_dir):
@@ -251,6 +276,17 @@ def classify(files, db_dir, db_dev, local_dev):
     return placed, misplaced
 
 
+def elide(command):
+    """The argv for owner.json without transcripts: long values become a length marker."""
+    out = []
+    for arg in command:
+        if len(arg) > 200:
+            out.append("<%d bytes elided>" % len(arg))
+        else:
+            out.append(arg)
+    return out
+
+
 def monitor(child, db_dir, local_root, status, timeout, result):
     db_dev = os.stat(db_dir).st_dev
     local_dev = os.stat(local_root).st_dev
@@ -285,7 +321,7 @@ def monitor(child, db_dir, local_root, status, timeout, result):
             status.update("unverified", note="no store descriptor appeared within %ds" % timeout)
             log("no state descriptor appeared within %ds; placement unverified" % timeout)
             return
-        time.sleep(0.5)
+        time.sleep(5.0 if reported else 0.5)   # keep watching for a later misplacement, cheaply
     if not reported and "outcome" not in result:
         result["outcome"] = "no_stores_opened"
         status.update("no_stores_opened")
@@ -316,6 +352,7 @@ def run(args):
         for path in (local, db_dir, home_local, os.path.join(local, "snapshots")):
             mkdir_private(path)
         status = Status(os.path.join(local, "status.json"))
+        LOG_FILE["path"] = os.path.join(local, "runner.log")
         binds, skipped = prepare_binds(codex_home_real, home_local)
         command = substitute(args.command, args.placeholder, db_dir)
         argv = bwrap_argv(binds, command)
@@ -326,7 +363,7 @@ def run(args):
             "scope": args.scope, "run": run_id, "local": local, "db": db_dir, "codex_home": codex_home,
             "codex_home_real": codex_home_real, "job": os.environ.get("SLURM_JOB_ID"), "node": os.uname()[1],
             "bound": [{"local": l, "target": t} for l, t in binds], "skipped": skipped,
-            "runner_pid": os.getpid(), "started": time.time(), "command": command,
+            "runner_pid": os.getpid(), "started": time.time(), "command": elide(command),
         }
         write_json(os.path.join(local, "owner.json"), owner)
         with open(os.path.join(scope_dir, "latest-run"), "w") as handle:
@@ -340,6 +377,10 @@ def run(args):
         return EXIT_REFUSED
 
     signal.signal(signal.SIGINT, signal.SIG_IGN)
+    # From here Codex may own the terminal (the TUI draws on it); keep the
+    # runner's own lines in runner.log and speak on stderr again only after
+    # the child has exited.
+    LOG_FILE["quiet"] = sys.stderr.isatty()
     child = subprocess.Popen(argv, env=env)
     owner["child_pid"] = child.pid
     write_json(os.path.join(local, "owner.json"), owner)
@@ -371,6 +412,7 @@ def run(args):
         except InterruptedError:
             continue
     watcher.join(timeout=5)
+    LOG_FILE["quiet"] = False
     if code < 0:
         code = 128 - code
     if result.get("outcome") == "misplaced":

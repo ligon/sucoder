@@ -3611,7 +3611,9 @@ class MirrorManager:
                 "will not fall back to shared placement. Enable local_disk or disable codex_state."
             )
         user = getattr(remote, "remote_user", None) or getattr(self.executor, "agent_user", None) or ""
-        return _state_scope_id(remote.gateway, user, str(ctx.remote_mirror_path))
+        # The resolved shared mirror path (``~`` expanded on the target), so two
+        # targets spelling the same storage differently share a scope.
+        return _state_scope_id(remote.gateway, user, self._resolve_remote_path(ctx))
 
     def _stage_codex_state_runner(self, ctx: MirrorContext) -> str:
         """Stage the state runner on the target, private and unique per launch."""
