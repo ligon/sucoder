@@ -24,6 +24,12 @@ from .agent_mode import (
     SERVICE_LAUNCH_PROBE_SH, codex_remote_command, config_override,
     service_launch, service_marker,
 )
+from .codex_state import (
+    runner_command as _state_runner_command,
+    runner_source as _state_runner_source,
+    scope_id as _state_scope_id,
+    with_sqlite_home_placeholder as _with_sqlite_home_placeholder,
+)
 from .codex_remote import build_remote_command
 
 
@@ -3325,6 +3331,12 @@ class MirrorManager:
         remote_enabled = remote_mode in ("terminal", "server")
         if remote_enabled and self._detected_agent_type != AgentType.CODEX:
             raise MirrorError("Remote control requires --harness codex (or --agent codex).")
+        # Managed Codex state (docs/codex-local-state.org): decided here, applied
+        # at two points below -- the sqlite_home placeholder at the argv stage,
+        # before nvm/installer wrapping, and the staged runner outermost.
+        state_scope = (
+            self._codex_state_scope(ctx) if self._detected_agent_type == AgentType.CODEX else None
+        )
 
         model_for_flag, provider_env = self._provider_launch_environment(
             effective_model, self._detected_agent_type,
@@ -3372,6 +3384,11 @@ class MirrorManager:
             command = self._apply_agent_flag_templates(
                 command, ctx, launcher, templates, model=model_for_flag,
             )
+        if state_scope is not None:
+            try:
+                command = _with_sqlite_home_placeholder(command)
+            except ValueError as exc:
+                raise MirrorError(str(exc)) from exc
 
         # Inject system prompt via native flag if available, otherwise
         # trailing text.
@@ -3459,6 +3476,13 @@ class MirrorManager:
 
         if service_context:
             command = self._wrap_codex_service_context(ctx, command, service_context)
+        if state_scope is not None:
+            # Outermost: the runner owns the process, resolves the node-local
+            # root at run time, substitutes the placeholder and verifies
+            # placement; it refuses rather than fall back.
+            command = _state_runner_command(
+                self._stage_codex_state_runner(ctx), state_scope, command,
+            )
 
         # Environment values may include API keys resolved from pass. Stage
         # them over stdin in an agent-owned 0600 file, then source and unlink
@@ -3567,6 +3591,42 @@ class MirrorManager:
         source += f"\nrun({ascii(prelude)}, sys.argv[1:])\n"
         path = self._write_context_prelude_file(ctx, source)
         return ["python3", path, *command]
+
+    def _codex_state_scope(self, ctx: MirrorContext) -> Optional[str]:
+        """The managed-state scope digest, or None when the target has it off.
+
+        Enabled state without local-disk tiering on this launch is an error:
+        the databases need the node-local root the working clone uses, and
+        the design forbids a silent fall back to shared placement.
+        """
+        remote = ctx.settings.remote
+        slurm = remote.slurm if remote is not None else None
+        state = slurm.codex_state if slurm is not None else None
+        if state is None or not state.enabled:
+            return None
+        if not getattr(self.executor, "local_disk_root", None):
+            raise MirrorError(
+                "slurm.codex_state is enabled for this target but local-disk tiering is "
+                "off for this launch; managed Codex state needs the node-local root and "
+                "will not fall back to shared placement. Enable local_disk or disable codex_state."
+            )
+        user = getattr(remote, "remote_user", None) or getattr(self.executor, "agent_user", None) or ""
+        return _state_scope_id(remote.gateway, user, str(ctx.remote_mirror_path))
+
+    def _stage_codex_state_runner(self, ctx: MirrorContext) -> str:
+        """Stage the state runner on the target, private and unique per launch."""
+        safe = re.sub(r"[^A-Za-z0-9._-]", "_", ctx.settings.name)
+        home = self._resolve_remote_home(ctx)
+        path = f"{home}/.cache/sucoder/codex-state-runner-{safe}-{secrets.token_hex(8)}.py"
+        self.executor.run_agent(
+            [
+                "sh", "-c",
+                'umask 077 && mkdir -p "$(dirname "$1")" && cat > "$1"',
+                "sucoder-codex-state", path,
+            ],
+            input=_state_runner_source(), check=True, capture_output=True,
+        )
+        return path
 
     def _remote_control_flags(
         self, command: Sequence[str], launcher: AgentLauncher, model: Optional[str],
