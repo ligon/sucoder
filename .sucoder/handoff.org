@@ -1,4 +1,4 @@
-#+TITLE: Codex node-local SQLite state: Slice 0 spike complete; implementation next
+#+TITLE: Codex node-local state: Slice 1 implemented; Slice 2 next
 #+DATE: 2026-10-15
 #+STATUS: COMPLETE
 #+AUTHOR: Sue
@@ -6,42 +6,38 @@
 
 * Completed phase
 
-Slice 0 of [[file:../docs/codex-local-state.org][the design]] is done as far as it can be without the runner: the read-only inventory and outcomes 1--2 on the confined slice (job 39969504, n0033.savio4), then outcomes 3, 4, 7 and the Codex side of 5 on a disposable =co_carleton= job (39975196, n0038.savio4, 6 min 57 s, released on exit).
-Outcome 6 and the protocol half of outcome 5 exercise transfer, claim and publication machinery that does not exist yet; they belong to Slices 2--3.
-Branch =main=; no runtime source under =sucoder/= or =tests/= changed.
-The previous handoffs are preserved in [[file:handoffs/2026-10-15-slice0-inventory.org]] and [[file:handoffs/2026-10-15-codex-local-state-design.org]].
+The human agreed to the bind-mount layout with per-turn rollout replication and asked to proceed.
+The design now carries a governing "Revision after Slice 0" section, and Slice 1 (placement and process ownership) is implemented on =main=: a staged, Python 3.6-clean runner that owns the Codex process, the launcher-side helpers, the typed =slurm.codex_state= option, the wiring in =launch_agent=, and tests that exercise the runner against a fake =codex= and the real Codex app-server on this node.
+No real mirror has the option enabled; it is off by default and applies only to Codex launches on targets with local-disk tiering.
+The previous handoffs are preserved in [[file:handoffs/2026-10-15-slice0-spike.org]], [[file:handoffs/2026-10-15-slice0-inventory.org]] and [[file:handoffs/2026-10-15-codex-local-state-design.org]].
 
 * Artifacts
 
-- [[file:../docs/codex-local-state-spike.org][Spike record]] :: both phases; the final section holds the outcome tables, findings, a second set of design consequences, limits and next actions.
-- [[file:../scripts/codex_sqlite_placement_spike.py][Placement harness]], [[file:../scripts/codex_sqlite_placement_matrix.sh][its matrix]], [[file:../scripts/codex_state_outcomes.py][outcome drivers]] and [[file:../scripts/codex_state_outcomes_sbatch.sh][the burst job]] :: standalone, stdlib-only, isolated homes and a loopback fake model; nothing touches the real account.
-- [[file:../.coder/ledger.md][Ledger]] :: prior art (the 2026-10-01 live cutover tools under the real home), inventory results, outcome results.
-- Evidence :: =/global/scratch/fsa/fc_jevons/ligon/.sucoder-state-spike/job39969504/= (mode 0700): =evidence/= for the inventory cases, =evidence-outcomes/job39975196/= for the outcomes, Slurm outputs beside them, plus =smoke/= and =outcomes-job39975196/= scratch state that can be deleted.
-
-* Findings that change the design
-
-- For thread history the generation does not determine what resumes; the rollout does: the server rebuilds the SQLite history from the rollout at the absolute path in =threads.path=, fails every history read without it, and overrides a restored database with whatever the file holds (12 of 20 warm restores showed more turns than their capture).
-  The design must either bring the rollout into the generation, which on this build is possible without touching the shared home through a per-process =bwrap= bind mount of a local directory over =CODEX_HOME/sessions= (the stored path is not canonicalized; =symlink= and =bind= sub-tests), or drop the history-consistency guarantee and document it as "whatever the shared rollout contains".
-  With the full bind set a turn contains no Lustre data operation and 1.7 metadata calls, none load-bearing; a per-turn tail replication of the rollout to Lustre costs 13 ms outside Codex's path and is byte-identical at the next =turn/start=; rollout skew in either direction keeps the model's context correct, but a database newer than the replica leaves the SQLite history permanently wrong (the projection watermark sits past the end of the file: phantom turns shown, real turns missing), so the generation is captured after the replica is confirmed and restore refuses a generation whose watermark exceeds the rollout.
-  TUI and remote-control start under =bwrap=; compaction appends to the rollout.
-  The record's episode-test section has the numbers; the human decides.
-- Unattended =thread/resume= executes a queued message once and, with an =active= goal, issues about twenty model requests per second until stopped; =paused= is a usable hold for goals and the queue has none.
-  The runner must check =goals_1= and =queue_1= before resuming unattended.
-- Two servers with different homes on one =sqlite_home= are two writers with no refusal from Codex; lineage exclusivity stays the runner's job.
-- Median turn 0.51 s with everything on Lustre, 0.21 s with the databases local, 0.042 s with the home local as well: the rollout traffic is most of what remains after the databases move.
-- 20/20 seeded abrupt-stop interleavings restored every completed turn from warm and post-crash captures; cross-database skew at a crash remains unmeasured because =state_5= holds only the preview.
-- From the inventory phase: all six databases follow =sqlite_home= (=-c= over =config.toml= over =CODEX_SQLITE_HOME=); locks, =sessions/= and =history.jsonl= stay in =CODEX_HOME=; no silent fallback; stdin EOF leaves data in WAL.
-
-* Next phase
-
-Implementation can start at Slice 1 of the design against the measured contracts: absolute =sqlite_home= pre-created 0700, placement verified through =/proc/<pid>/fd=, rollout path and size in the manifest, goal and queue checks before unattended resume, one owner per lineage, sealed meaning a checkpointed close or a backup-API copy.
-Before production opt-in, repeat outcome 4 once with a real-model thread (a paused goal, a queued message) to confirm the hold is not an artifact of empty replies, and decide separately whether =sessions/= should move with the databases.
-Use =~/.sucoder/bulletin.org= (absent on this host; create it with a dated entry) before any infrastructure diagnosis.
+- [[file:../docs/codex-local-state.org][Design]] :: the "Revision after Slice 0" section governs where it conflicts with earlier sections.
+- [[file:../sucoder/codex_state_runner.py][Runner]] and [[file:../sucoder/codex_state.py][helpers]] :: see the commit messages for the contract; =status.json= and =owner.json= under =<local root>/state/codex/<scope>/<run>/= record what happened.
+- [[file:../tests/test_codex_state.py][Tests]] :: 31 cases; the real-Codex case and the bwrap cases skip where those are absent.
+- [[file:../.coder/ledger.md][Ledger]] :: Slice 1 entry with the reuse, the measured bwrap signal behavior, the Python 3.6 hazard in the existing installer, the baseline test failure and the GitNexus situation.
+- Spike records and evidence :: unchanged, see the archived handoffs.
 
 * Verification
 
-=git diff --check=, an ASCII scan, a =file:= link check and Emacs =org-lint= (0 findings) passed on the record and this handoff.
-The drivers were smoke-tested on job 39969504 before the burst; the burst's first submission (39975179) found the system Python 3.6 on n0038 and did nothing, and the batch script now resolves an interpreter explicitly.
-pytest was not rerun because no runtime path changed; =.gitnexus/= is absent from this clone, so =detect_changes= could not be run.
+=tests/test_codex_state.py= passes here (31), and the full suite is 1203 passed with one baseline failure in =tests/test_codex_context.py= against Codex 0.162.1 (no top-level =instructions= field), untouched by this work.
+=mypy --follow-imports=silent= is clean on the two new modules; the runner compiles under =/usr/bin/python3.6=.
+A ten-second =fc_jevons= job on n0038 confirmed =bwrap=, user namespaces and a working bind on that node image too.
+GitNexus cannot load on this node image (=libssl.so.3=); callers were grepped by hand and listed in the wiring commit.
+
+* Next phase: Slice 2
+
+Replication, generations and restore, per the revision section of the design:
+
+1. A watcher in the runner follows each rollout under =home/sessions= by file growth and appends new bytes with =fsync= to =DURABLE/runs/<run>/rollouts/<thread-id>.jsonl=, recording offsets in =replica.json= and the replica age in =status.json=; never in Codex's path.
+2. Database generations through the SQLite backup API, captured only after every replica is confirmed byte-identical to its local file; the manifest records each thread's =next_rollout_byte_offset= (from =thread_history_projection_state=) and the replica length.
+3. Restore as generation plus replicas placed at the same relative paths and rebound, refusing any generation whose recorded offset exceeds the replica; sealed means a backup after the owned server stopped.
+4. Before an unattended =thread/resume=, refuse when =goals_1= holds an active goal or =queue_1= holds rows for the thread.
+5. The timer's checkpoint requests, =RemoteSession= metadata and renewal integration are Slice 3; do not start them in Slice 2.
+
+Use =fc_jevons= for normal-priority burst jobs; =co_carleton= is preemptible.
+The existing context installer fails on Python 3.6 node images and should be made 3.6-clean in its own change.
+This slice (job 39969504) is still held; release it when no work is pending.
 
 Recorded by Sue.

@@ -301,3 +301,29 @@ on n0033.savio4 (4 cores, confined cgroup):
   refusal; the same home refuses the second with "already has an active writer".
   Median turn 0.51 s all-Lustre, 0.21 s databases-local, 0.042 s home-local too.
   Outcome 6 and the protocol half of 5 need the runner and were not run.
+
+Slice 1 implemented, 2026-10-15 (Sue): `sucoder/codex_state_runner.py`,
+`sucoder/codex_state.py`, `slurm.codex_state` in `config.py`, wiring in
+`mirror.py:launch_agent`, `tests/test_codex_state.py`.
+
+- Reused: the staged-Python pattern of `_wrap_codex_service_context`
+  (`python3 <staged> <command>`), `local_tier.cache_exports_sh` for the
+  runtime `SUCODER_LOCAL_ROOT`, `config_override` for the `-c` value, and
+  `_write_context_prelude_file`'s staging transport.
+- Measured while implementing: bwrap stays alive as the parent of the
+  sandboxed command and does not relay signals (SIGTERM to bwrap exits -15
+  and `--die-with-parent` then SIGKILLs the command; SIGTERM to its child
+  runs the handler and bwrap propagates the code); a bound file's
+  descriptor shows the mount-point path from outside the namespace, so
+  placement is verified by `st_dev` of `/proc/<pid>/fd/<n>`.
+- Pre-existing hazard, not fixed here: the staged context installer
+  (`codex_context.py`) uses `list[str]` annotations and fails to compile on
+  Python 3.6, which is the default `python3` on some node images (n0038);
+  the state runner is kept 3.6-clean and compile-checked in its tests.
+- Baseline failure, not fixed here: `tests/test_codex_context.py::
+  test_codex_model_receives_prelude_when_client_replaces_developer_instructions`
+  asserts a top-level `instructions` field that Codex 0.162.1 no longer
+  sends; everything else passes (1203).
+- GitNexus cannot run on this node image (`libssl.so.3` missing for its
+  native database); impact was checked by grepping callers and is listed
+  in the wiring commit.
