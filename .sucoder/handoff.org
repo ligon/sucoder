@@ -21,7 +21,7 @@ The previous handoff is preserved in [[file:handoffs/2026-10-15-codex-local-stat
 
 * Findings that change the design
 
-- All six databases follow =sqlite_home=; =-c= beats =CODEX_SQLITE_HOME= beats =config.toml=; a relative value resolves against the cwd; a missing directory is created with =0777= masked by umask; an unwritable one fails the launch with exit 1 and no fallback.
+- All six databases follow =sqlite_home=; =-c= beats =config.toml= beats =CODEX_SQLITE_HOME= (cases c3, c4, c10); a relative value resolves against the cwd; a missing directory is created with =0777= masked by umask; an unwritable one fails the launch with exit 1 and no fallback.
 - Thread-writer locks, =installation_id=, plugin and arg0 locks, the =sessions/= rollout JSONL and the TUI's =history.jsonl= stay in =CODEX_HOME=; the rollout is written and re-read, so it is an external transcript dependency the generation must address.
 - The app-server and the TUI own their database descriptors with no daemon socket; =remote-control --no-daemon= opens its stores under the override, creates =/tmp/codex-daemon-<uid>/<hash>= and a startup lock in =CODEX_HOME/app-server-control/=, then needs credentials.
 - A zero exit after stdin EOF leaves all data in WAL; "sealed" must check WAL state or use the backup API.

@@ -264,7 +264,7 @@ on n0033.savio4 (4 cores, confined cgroup):
   `/local/job39919092/`) runs on another node; nothing in this spike talks to
   it, and no `daemon`/`doctor` command is run against the real home.
 - Results (same day): all six databases follow `-c sqlite_home`, which beats
-  `CODEX_SQLITE_HOME`, which beats `config.toml`; a relative value resolves
+  `config.toml`, which beats `CODEX_SQLITE_HOME` (cases c3, c4, c10); a relative value resolves
   against the cwd; a missing directory is created `0777` masked by umask; an
   unwritable one fails the launch with exit 1 and no fallback. Thread-writer
   locks, `installation_id`, plugin and arg0 locks, the `sessions/` rollout

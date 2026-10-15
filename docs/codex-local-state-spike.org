@@ -46,7 +46,7 @@ Neither was cited in the design or the ledger before this phase; the ledger now 
 
 * Method
 
-- Harness :: [[file:../scripts/codex_sqlite_placement_spike.py][=scripts/codex_sqlite_placement_spike.py=]] runs one case; [[file:../scripts/codex_sqlite_placement_matrix.sh][=scripts/codex_sqlite_placement_matrix.sh=]] runs the nine cases after the hand-run first case.
+- Harness :: [[file:../scripts/codex_sqlite_placement_spike.py][=scripts/codex_sqlite_placement_spike.py=]] runs one case; [[file:../scripts/codex_sqlite_placement_matrix.sh][=scripts/codex_sqlite_placement_matrix.sh=]] runs the other ten cases; the first (c1) and the last (c10, added after review found the env-versus-file link untested) were run by hand.
   The harness imports =sucoder.agent_mode.config_override= to encode the =sqlite_home= argument, as design step 7 requires, and reuses the isolated-home, loopback fake-model app-server pattern of =tests/test_codex_context.py:158=.
 - Per case :: fresh =codex-home/=, =user-home/=, =workspace/= (a =git init= directory) and =tmp/= under the spike root, created with umask 077.
   The isolated =config.toml= trusts the workspace and, for one case, sets =sqlite_home=.
@@ -73,10 +73,10 @@ Exact case commands (the first by hand, the rest through the matrix script; =$R=
 #+begin_src shell
 export SUCODER_REPO=/local/job39969504/mirrors/SuCoder SPIKE_ROOT=/local/job39969504/spike-codex-state
 python3 -I scripts/codex_sqlite_placement_spike.py --case c1-cfg --sqlite-config $R/c1-cfg/sqlite-cfg
-scripts/codex_sqlite_placement_matrix.sh    # c0-default ... c9-tui, see the table below
+scripts/codex_sqlite_placement_matrix.sh    # c0-default ... c10-env-vs-toml, see the table below
 #+end_src
 
-Raw evidence (per case =result.json=, =strace.log=, =stderr.log=, =stdout.log=; the inventory and matrix logs; the scripts as run) is preserved outside the job at =/global/scratch/fsa/fc_jevons/ligon/.sucoder-state-spike/job39969504/evidence/= (mode 0700, 34 files).
+Raw evidence (per case =result.json=, =strace.log=, =stderr.log=, =stdout.log=; the inventory and matrix logs; the scripts as run) is preserved outside the job at =/global/scratch/fsa/fc_jevons/ligon/.sucoder-state-spike/job39969504/evidence/= (mode 0700, 37 files).
 The =/local= case directories, including the 67 MB plugin clones, die with the job.
 
 * Results
@@ -96,6 +96,7 @@ The mount facts are in the Environment table; =local_lock=none= on =/global/home
 | c2-env         | =CODEX_SQLITE_HOME=<abs>=             | app-server                 | the env directory                                   | 0, EOF              |
 | c3-env-vs-cfg  | env =X=, =-c= =Y=                     | app-server                 | =Y=: configuration beats the environment            | 0, EOF              |
 | c4-toml-vs-cfg | =config.toml= =X=, =-c= =Y=           | app-server                 | =Y=: the command line beats =config.toml=           | 0, EOF              |
+| c10-env-vs-toml | env =X=, =config.toml= =Y=           | app-server                 | =Y=: =config.toml= beats the environment            | 0, EOF              |
 | c5-relative    | =-c sqlite_home="rel-sqlite"=         | app-server                 | =<cwd>/rel-sqlite=, inside the Git workspace        | 0, EOF              |
 | c6-missing     | =-c= absolute, directory absent       | app-server                 | created by Codex (=mkdir 0777= masked by umask)     | 0, EOF              |
 | c7-unwritable  | =-c= absolute, directory mode 0500    | app-server                 | none: exit 1 before any database or thread          | 1                   |
@@ -145,7 +146,7 @@ An authenticated remote-control launch cannot be exercised with a synthetic home
 
 ** Shutdown and WAL state
 
-- app-server, stdin closed :: exit 0 within twelve seconds in eight of nine cases, but every main database file stayed at 4096 bytes with all content, including the marker, in the =-wal= files.
+- app-server, stdin closed :: exit 0 within twelve seconds in eight of nine cases, but five of the six main database files stayed at 4096 bytes (=logs_2.sqlite= reached 49152) with all thread content, including the marker, in the =-wal= files.
   The connections were not closed before exit, so nothing was checkpointed.
   A file copy of =*.sqlite= taken after such an exit would be empty; the design's choice of the SQLite backup API, which reads through the WAL, is the correct one, and "sealed" must mean a close that checkpoints, or a backup-API copy, not merely a zero exit.
 - app-server, c0 :: stdin EOF did not end the process within twelve seconds because the plugin marketplace =git clone= was still running; SIGINT ended it.
@@ -188,7 +189,8 @@ The =rollout_migration_*= tables and the =codex migrate-rollouts= subcommand sho
 3. The runner must pass an absolute =sqlite_home=: a relative value resolves against the process cwd and lands inside the managed clone.
    It must pre-create the directory with mode 0700 rather than let Codex create it with =0777= masked by umask, and verify effective placement through =/proc/<pid>/fd= as the Oct 1 =cutover.py= did.
    A launch whose location is unusable fails with exit 1 and the error text above; that is the loud failure the design wants, and there is no silent fallback to repair.
-4. Precedence is =-c= over =CODEX_SQLITE_HOME= over =config.toml=, so an explicit =-c= from the runner is sufficient and a user's =config.toml= value cannot defeat it; the conflict rule in the design should compare against both the environment and the file.
+4. Precedence is =-c= over =config.toml= over =CODEX_SQLITE_HOME= (cases c3, c4 and c10), as the official reference the design cites states.
+   An explicit =-c= from the runner is therefore sufficient, and an environment export alone is defeated by a user's =config.toml= value, exactly as the design predicted; the conflict rule should compare the runner's path against both the environment and the file.
 5. "Sealed" needs a definition that checks WAL state: after an app-server stdin EOF the data is entirely in WAL, and after a TUI =/quit= only the history store was checkpointed.
    The backup API reads committed WAL content, so warm captures are unaffected; the sealed profile must either close through a path that checkpoints or accept the backup-API copy as the sealed artifact.
 6. In remote-control mode the embedded server creates a per-host control socket and lock under =/tmp/codex-daemon-<uid>/=, and a startup lock in =CODEX_HOME/app-server-control/=; the independent-ownership check must cover both, and an authenticated test is still required.

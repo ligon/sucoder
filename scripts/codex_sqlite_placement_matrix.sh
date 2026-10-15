@@ -15,6 +15,7 @@ run c0-default
 run c2-env            --sqlite-env    $R/c2-env/sqlite-env
 run c3-env-vs-cfg     --sqlite-env    $R/c3-env-vs-cfg/sqlite-env    --sqlite-config $R/c3-env-vs-cfg/sqlite-cfg
 run c4-toml-vs-cfg    --sqlite-toml   $R/c4-toml-vs-cfg/sqlite-toml  --sqlite-config $R/c4-toml-vs-cfg/sqlite-cfg
+run c10-env-vs-toml   --sqlite-env    $R/c10-env-vs-toml/sqlite-env  --sqlite-toml   $R/c10-env-vs-toml/sqlite-toml
 run c5-relative       --sqlite-config rel-sqlite
 run c6-missing        --sqlite-config $R/c6-missing/does-not-exist/sqlite --no-create
 run c7-unwritable     --sqlite-config $R/c7-unwritable/sqlite-ro --unwritable
