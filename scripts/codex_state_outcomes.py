@@ -766,6 +766,48 @@ def writers(args, root, evidence):
     return write_result(evidence, "writers", result)
 
 
+# ---------------------------------------------------------------- sessions symlink
+
+def sessions_symlink(args, root, evidence):
+    """Is the rollout path stored as written (through a CODEX_HOME/sessions symlink)?"""
+    base = pathlib.Path(root) / "symlink"
+    w = make_workspace(base / "w")
+    h = Home(base / "h", trusted=[w])
+    target = base / "sessions-local-1"
+    target.mkdir(mode=0o700)
+    (h.codex_home / "sessions").symlink_to(target)
+    result = {"started_utc": utc(), "symlink": str(h.codex_home / "sessions"), "target_1": str(target)}
+    s = Server("symlink", h, base / "sqlite", w)
+    tid, _ = s.start_thread()
+    s.turn(tid, "SPKM_sym_0")
+    listed = s.rpc("thread/list", {"limit": 10, "useStateDbOnly": True})
+    path = [t["path"] for t in listed["data"] if t["id"] == tid][0]
+    result["stored_path"] = path
+    result["stored_through_symlink"] = str(h.codex_home / "sessions") in path
+    result["stored_canonical"] = str(target) in path
+    result["stop_1"] = s.stop()
+    copy = base / "sessions-local-2"
+    shutil.copytree(target, copy)
+    (h.codex_home / "sessions").unlink()
+    (h.codex_home / "sessions").symlink_to(copy)
+    shutil.rmtree(target)
+    result["target_2"] = str(copy)
+    s2 = Server("symlink-retargeted", h, base / "sqlite", w)
+    try:
+        r = s2.rpc("thread/resume", {"threadId": tid})
+        result["resume_after_retarget"] = {"ok": True, "turns": len(r["thread"]["turns"])}
+        t = s2.turn(tid, "SPKM_sym_1")
+        time.sleep(0.5)
+        result["follow_up_ok"] = t["ok"]
+        result["history_to_model"] = [m for m in s2.model_markers() if m != "SPKM_sym_1"]
+    except Exception as error:  # noqa: BLE001
+        result["resume_after_retarget"] = {"ok": False, "error": str(error)[:300]}
+    result["stop_2"] = s2.stop()
+    print(f"  symlink: stored through symlink={result['stored_through_symlink']} canonical={result['stored_canonical']} "
+          f"resume after retarget={result['resume_after_retarget']} history_to_model={result.get('history_to_model')}", flush=True)
+    return write_result(evidence, "sessions_symlink", result)
+
+
 # ---------------------------------------------------------------- outcome 7
 
 def latency(args, root, evidence):
@@ -867,7 +909,7 @@ def latency(args, root, evidence):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("tests", nargs="+", choices=["restore", "interleave", "replay", "writers", "latency", "all"])
+    parser.add_argument("tests", nargs="+", choices=["restore", "interleave", "replay", "writers", "latency", "symlink", "all"])
     parser.add_argument("--root", default=os.environ.get("SPIKE_ROOT") or os.path.join(os.environ.get("SUCODER_LOCAL_ROOT", "/tmp"), "spike-codex-outcomes"))
     parser.add_argument("--evidence", required=True, help="durable directory for per-test result.json files")
     parser.add_argument("--lustre-root", default=os.environ.get("SUCODER_SHARED_STATE_TEST_ROOT"))
@@ -891,13 +933,13 @@ def main():
         "host": os.uname().nodename, "job": os.environ.get("SLURM_JOB_ID"), "utc": utc(), "codex": CODEX,
         "codex_version": subprocess.run([CODEX, "--version"], capture_output=True, text=True).stdout.strip(),
         "args": vars(args), "root": str(root)}, indent=1) + "\n")
-    tests = ["restore", "interleave", "replay", "writers", "latency"] if "all" in args.tests else args.tests
+    tests = ["restore", "interleave", "replay", "writers", "symlink", "latency"] if "all" in args.tests else args.tests
     for name in tests:
         print(f"== {name} {utc()}", flush=True)
         t0 = now()
         try:
             path = {"restore": restore_matrix, "interleave": interleavings, "replay": replay,
-                    "writers": writers, "latency": latency}[name](args, root, evidence)
+                    "writers": writers, "latency": latency, "symlink": sessions_symlink}[name](args, root, evidence)
             print(f"== {name} done in {now() - t0:.0f}s -> {path}", flush=True)
         except Exception as error:  # noqa: BLE001
             import traceback

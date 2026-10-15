@@ -348,10 +348,13 @@ Findings:
 1. For thread history, the generation does not determine what resumes; the rollout does.
    On resume the server rebuilds the SQLite history projection from the rollout at the absolute path in =threads.path=: without the file every history read fails, and with it a restored database is overridden by whatever the file holds (12 of 20 warm restores showed more turns than their captured database).
    A generation's consistency claim therefore covers goals, queue, memories, logs and the non-history parts of state; for the conversation itself the recovery point is the shared rollout, not the generation.
-   The design must choose: either the rollout joins the generation, captured and restored with it, which requires =sessions/= to be relocatable, and on this build it is not (the path is absolute, and a copy at the =CODEX_HOME=-relative path is not found); or the history-consistency guarantee is dropped and documented as "whatever the shared rollout contains".
-   This record names the choice and does not make it; rewriting =threads.path= remains the guessed fix the design forbids.
+   The design must choose: either the rollout joins the generation, captured and restored with it, or the history-consistency guarantee is dropped and documented as "whatever the shared rollout contains".
+   The first is possible on this build: the binary has no setting for the sessions directory, but it stores the rollout path as written rather than canonicalized, so with =CODEX_HOME/sessions= a symlink to a local directory the stored path stays =CODEX_HOME/sessions/...=, and after retargeting the symlink to a copy and deleting the original, =thread/resume= and a follow-up turn with full history succeed (the =symlink= sub-test; evidence under =evidence-outcomes/job39969504-symlink/=).
+   A copy at the =CODEX_HOME=-relative path without the symlink is not found, and rewriting =threads.path= remains the guessed fix the design forbids.
+   The symlink would have to live in the =CODEX_HOME= the managed server uses; in the shared home it would redirect every other Codex process using that home, so taking this path means a per-scope private home, which the design currently excludes.
+   This record names the choice and does not make it.
 2. The rollout is also where the latency is: with the databases local and the home on Lustre a turn took 0.21 s at the median, against 0.51 s with everything on Lustre and 0.042 s with everything on =/local=.
-   The design's choice to move only the databases buys part of the improvement; moving =sessions/= as well is blocked on the same absolute-path dependency, because relocating it needs either the =threads.path= rewrite the design forbids or an upstream relocation setting this build does not expose.
+   The design's choice to move only the databases buys part of the improvement; moving =sessions/= as well is possible only through the symlink described in consequence 1, with the private-home cost that goes with it.
 3. Unattended continuation must check =goals_1= and =queue_1= before =thread/resume=: refuse or require explicit confirmation when the thread has an =active= goal or queued rows, and offer =paused= as the hold for goals.
    The design's fallback, that unattended recovery of such a profile is unsupported, is the measured outcome for queued work.
 4. Lineage exclusivity cannot be delegated to Codex: two homes on one =sqlite_home= are two writers.
@@ -370,7 +373,7 @@ Findings:
 
 - Implementation (Slice 1 onward) can proceed against these contracts: absolute =sqlite_home=, pre-created 0700, placement verified through =/proc=, rollout recorded in the manifest, goal and queue checks before unattended resume, single owner per lineage.
 - Before production opt-in, repeat outcome 4 with a real-model thread once (a paused goal, a queued message) to confirm the hold behavior is not an artifact of empty replies.
-- Resolve the rollout choice in consequence 1 before Slice 2 defines what a generation promises; check newer Codex builds for a supported way to relocate or reference =sessions/=.
+- Resolve the rollout choice in consequence 1 before Slice 2 defines what a generation promises; check newer Codex builds for a supported way to relocate =sessions/= and for the paginated-history migration that would remove the dependency.
 
 * Local document checks
 

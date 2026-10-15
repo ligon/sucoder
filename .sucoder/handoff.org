@@ -21,7 +21,7 @@ The previous handoffs are preserved in [[file:handoffs/2026-10-15-slice0-invento
 * Findings that change the design
 
 - For thread history the generation does not determine what resumes; the rollout does: the server rebuilds the SQLite history from the rollout at the absolute path in =threads.path=, fails every history read without it, and overrides a restored database with whatever the file holds (12 of 20 warm restores showed more turns than their capture).
-  The design must either bring the rollout into the generation, which needs =sessions/= to be relocatable and on this build it is not, or drop the history-consistency guarantee and document it as "whatever the shared rollout contains"; the record names the choice without making it.
+  The design must either bring the rollout into the generation, which on this build is possible through a =CODEX_HOME/sessions= symlink (the stored path is not canonicalized; verified by the =symlink= sub-test) at the cost of a per-scope private home, or drop the history-consistency guarantee and document it as "whatever the shared rollout contains"; the record names the choice without making it.
 - Unattended =thread/resume= executes a queued message once and, with an =active= goal, issues about twenty model requests per second until stopped; =paused= is a usable hold for goals and the queue has none.
   The runner must check =goals_1= and =queue_1= before resuming unattended.
 - Two servers with different homes on one =sqlite_home= are two writers with no refusal from Codex; lineage exclusivity stays the runner's job.
