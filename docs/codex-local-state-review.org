@@ -1,0 +1,146 @@
+#+TITLE: Review of the Codex node-local state design
+#+DATE: 2026-10-15
+#+AUTHOR: Sue
+#+STATUS: Reviewed for a disposable Savio capability spike; runtime gates open
+#+OPTIONS: toc:2 num:nil
+
+* Scope and method
+
+The user requested a detailed design followed by review, before considering development on Savio.
+The reviewed artifact is [[file:codex-local-state.org][Codex SQLite on node-local disk, with durable recovery]], grounded in [[file:../.coder/ledger.md][the prior-art ledger]] and main =ffd0447=.
+Two independent GPT-6 reviewer contexts examined storage/recovery and SuCoder lifecycle integration respectively, using the code-reviewer checklist and the workshop skill's independent-skeptic step.
+Neither reviewer edited files, ran Codex services, allocated cluster jobs, or ran runtime tests.
+Sue incorporated the findings and requested confirmation passes.
+
+Initial draft SHA-256: =43ae3fd8d52ec6039dd4c48b8a8527457c3903855acaea4bd82138eefa306707=.
+Original line numbers in reviewer reports referred to that draft; the dispositions below link to the revised sections.
+Review establishes written-contract readiness, not proof that the unmeasured Codex or filesystem capabilities exist.
+
+* Storage and recovery findings
+
+** P1: historical sealing did not fence later writers
+
+A sealed manifest showed that capture happened after shutdown, but did not prevent the predecessor from restarting or two successors from restoring the same history.
+Lost acknowledgements could incorrectly be treated as valid transfers merely because the generation existed.
+
+Disposition: accepted.
+[[file:codex-local-state.org::*Transfer fencing and parent pins][Transfer fencing]] now requires durable offered/claimed/revoked records, one short metadata critical section, nonce/generation/hash binding and revocation before reopening predecessor writers.
+Ordinary clean-exit checkpoints follow the same rule.
+Unresolved successor startup blocks predecessor restart.
+
+** P1: process exit did not prove application consistency
+
+A crash between related commits in different databases could leave a quiescent but inconsistent set, which the draft could label sealed.
+
+Disposition: accepted.
+[[file:codex-local-state.org::*Two consistency classes][Consistency classes]] now require profile-verified successful graceful shutdown/quiescence for sealed status.
+Abnormal, forced or unknown exits remain crash candidates subject to application recovery gates, including in-place restart policy.
+The spike must interrupt cross-store updates and verify that later capture cannot silently upgrade that state.
+
+** P1: restored forks could share upstream thread identities
+
+A new SuCoder run UUID did not change copied Codex thread IDs or embedded external transcript paths.
+Two local databases could still write the same shared assets.
+
+Disposition: accepted.
+Concurrent restored forks are deferred until upstream identity and external-file isolation is established.
+Independent fresh histories remain supported.
+
+** P1: parent preservation raced retention
+
+A child could select a parent between the publisher's reference check and deletion, leaving a missing recovery generation.
+
+Disposition: accepted.
+Parent validation, durable pin creation and child provenance publication share the metadata critical section with retention's retiring transition.
+Database copying and file deletion happen outside that section.
+Failed child setup leaves a conservative pin until positively reconciled.
+
+** P2: diagnostic-log classification contradicted itself
+
+The inventory table excluded logs immediately while a later clause required evidence that they were disposable.
+
+Disposition: accepted.
+The inventory now preserves logs until the storage profile proves they can be omitted.
+
+** Confirmation refinements
+
+The storage reviewer confirmed the five original findings were addressed, then identified two narrower ambiguities.
+Both were accepted: claims enforce exclusivity over a complete lineage even when they select different generations, and an ordinary-exit offer may leave its successor unbound until a single serialized claim binds it.
+Dedicated race cases are included in the validation plan.
+
+* Lifecycle findings
+
+** P1: confined renewal could adopt and cancel its predecessor
+
+=_relaunch_session= clears YAML allocation fields at =sucoder/cli.py:3421=, but =_launch_confined= rediscovers the still-live same-target job at =sucoder/mirror.py:3058=.
+The generic loop could then receive the old job ID as the replacement and cancel it at =sucoder/renew.py:253=.
+
+Disposition: accepted as a required integration change, not repaired in this documentation change.
+[[file:codex-local-state.org::*Planned renewal sequence][Renewal]] now carries explicit replacement authorization excluding only the verified drained predecessor, retains normal duplicate-job protection, and requires a different new allocation identity.
+The plan includes a regression that drives the real confined adoption branch.
+
+** P1: failed replacement lost predecessor provenance
+
+The current relaunch path clears old allocation metadata before attempting the replacement.
+An exception after submission can also leave a pending new job that must not be submitted again.
+
+Disposition: accepted.
+The design retains old and pending-new identities in a durable attempt record and requires typed pending/ready/failed/unknown outcomes and exact-attempt reconciliation.
+
+** P1: a published generation did not prove current handoff validity
+
+This independently confirmed the storage review's fencing finding.
+Delayed or lost acknowledgements must be reconciled against current transfer authority as well as the immutable generation.
+
+Disposition: accepted through the shared fencing protocol.
+
+** P1: tmux existence was insufficient replacement readiness
+
+The confined readiness check at =sucoder/mirror.py:3233= observes tmux, but its surviving shell can remain after Codex or the state runner fails.
+
+Disposition: accepted.
+[[file:codex-local-state.org::*Startup and placement][Startup]] requires a managed runtime handshake naming scope/run, exact parent/hash, allocation, effective SQLite placement and independently owned foreground server.
+Renewal rechecks it before predecessor cancellation.
+
+** P2: managed TUI launch selection was not preserved
+
+=RemoteSession.service_launch= validates only remote-control commands; an ordinary CLI-selected Codex TUI could renew into a different configured default harness.
+
+Disposition: accepted.
+The design adds a validated managed-owner descriptor retaining original Codex command/model for both supported modes, while preserving nonmanaged renewal behavior.
+The test plan includes configured Claude with a CLI-selected managed Codex TUI.
+
+** Sibling detach
+
+The reviewer requested an explicit save for the departing owner on sibling-detach release.
+The revised design drains only that owner before stopping its tmux session, preserving sibling owners and their allocation.
+Client-only detachment leaves the owner active and cannot create a sealed checkpoint.
+
+* Verdict and remaining gates
+
+The lifecycle confirmation found all five findings and the sibling-detach note addressed, with no remaining blocking written lifecycle contradiction.
+The storage confirmation found its original findings addressed and judged the design ready for a disposable capability spike; its two final clarifications were incorporated and explicitly confirmed in a final pass.
+
+The design is ready to guide that isolated spike.
+Runtime implementation and production opt-in remain conditional on evidence for:
+
+- Complete SQLite and maintenance-lock redirection on the actual Savio Codex build.
+- Independent foreground-server ownership in both supported launch modes.
+- Successful graceful shutdown and portable conversation resume after cwd/allocation changes.
+- Safe queue/goal replay control and the absence of duplicated actions.
+- Application-level warm/crash recovery across all required stores, or continued sealed-only automatic restore.
+- Lustre publication/metadata primitives and measured checkpoint cost.
+
+No claim of a ten-minute guaranteed recovery window or complete elimination of shared-home I/O is made.
+No runtime source, live cluster state or user history was changed by this design review.
+
+* Local document checks
+
+=git diff --check= passed.
+Emacs =org-lint= returned no findings for the design, review record and active handoff.
+Additional checks verified ASCII source, matching source/example block delimiters, and local file/heading link targets.
+Source function anchors were checked against the Python AST at the stated baseline.
+GitNexus staged-change detection is required before each documentation commit as well.
+No Python runtime paths were changed, so pytest was not rerun for this documentation-only phase.
+
+Recorded by Sue.

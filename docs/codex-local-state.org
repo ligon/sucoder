@@ -1,0 +1,527 @@
+#+TITLE: Codex SQLite on node-local disk, with durable recovery
+#+DATE: 2026-10-15
+#+AUTHOR: Sue
+#+STATUS: Independently reviewed for a disposable capability spike; production gates open
+#+OPTIONS: toc:2 num:nil
+#+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Decision and scope
+
+Extend SuCoder's local-disk tiering with an opt-in Codex state runner.
+Keep active SQLite databases outside the working clone, on node-local disk, and publish immutable recovery generations to private shared storage.
+Keep =CODEX_HOME=, authentication, global configuration, skills and hook trust at their existing locations.
+Use Codex's =sqlite_home= override at server startup, with a version-specific compatibility check.
+
+This document specifies a design and the experiments needed before implementation and rollout.
+No proposed setting or command below is currently implemented.
+The existing architecture and test anchors are recorded in [[file:../.coder/ledger.md][the prior-art ledger]], sections 2--5.
+
+The first production scope is SuCoder-managed Codex TUI and remote-control launches on Slurm targets with =local_disk= enabled.
+One service owns one state run, initially associated with one mirror.
+Connected clients may start several conversations in that service; they share its state run.
+Attaching a different client does not create a new database or change its placement.
+
+Moving all agent homes, eliminating all shared-home access, migrating account-wide history automatically, merging independent conversation histories, and resuming an interrupted model request automatically are outside this change.
+Package caches and Git working trees already have their own local-tier mechanisms.
+Conversation recovery and Git WIP recovery are independent, with separate success reports.
+
+** Completion criteria for this design phase
+
+- Specify scope, identities, paths, startup, checkpoint publication, restore, shutdown, renewal, failures and retention.
+- Tie integration points to existing source and tests rather than introducing another allocation supervisor.
+- Identify claims that need an installed-Codex or Savio experiment.
+- Obtain independent storage and lifecycle reviews, record findings and dispositions, and revise the design.
+- Leave a runnable validation plan and handoff without starting a live cluster allocation.
+
+* Evidence and limits
+
+** Repository facts at main =ffd0447=
+
+- =sucoder/local_tier.py:37= derives the allocation-local root; =:57= exports cache and temporary paths, leaving agent state unchanged.
+- =sucoder/mirror.py:2416= builds the confined batch body; =:2480= prepares the local clone before starting its dedicated tmux server.
+- =sucoder/mirror.py:2572= prepares the equivalent unconfined local clone.
+- =sucoder/slurm_timer.py:204= is the existing warning/snapshot loop; =sucoder/timer_lifecycle.py:9= deliberately puts ownership locks on node-local storage.
+- =sucoder/session.py:84= saves launcher records atomically; those records are useful provenance, not authoritative evidence that a process is alive.
+- =sucoder/renew.py:244= starts the replacement before =:253= cancels the old allocation.
+- =sucoder/cli.py:3601= writes a cooperative checkpoint sentinel; it does not acknowledge that Codex has stopped or that its databases are durable.
+- =sucoder/cli.py:2932= releases allocations and may retire Git WIP refs; a conversation checkpoint must survive that retirement.
+
+The measurements in [[file:local-disk-tiering.org][the existing tiering note]] distinguish NFS home, Lustre mirror storage and node-local ext4 on Savio.
+Those measurements were made on 2026-09-09; this design session has not remeasured the cluster.
+In particular, SQLite's lock primitives must be tested directly; a successful =flock= probe is insufficient evidence for all SQLite modes.
+
+** Codex facts and compatibility gates
+
+The [[https://learn.chatgpt.com/docs/config-file/environment-variables][official environment reference]] documents =CODEX_SQLITE_HOME= separately from =CODEX_HOME=, and says the =sqlite_home= configuration value takes precedence.
+The [[https://learn.chatgpt.com/docs/config-file/config-reference][configuration reference]] documents =sqlite_home= for SQLite-backed runtime state.
+The launcher therefore supplies an absolute =-c= override; an environment export alone could be defeated by existing configuration.
+
+Local inspection on this development host found Codex =0.162.1= and these database filenames under its current home:
+
+| Observed file            | Initial treatment                       |
+|--------------------------+-----------------------------------------|
+| state_5.sqlite           | Preserve; runtime metadata              |
+| thread_history_1.sqlite  | Preserve; conversation history          |
+| goals_1.sqlite           | Preserve; verify continuation semantics |
+| queue_1.sqlite           | Preserve; verify replay semantics       |
+| memories_1.sqlite        | Preserve; verify scope                  |
+| logs_2.sqlite            | Preserve until profile proves disposable|
+
+Filename presence is evidence of the storage inventory, not proof that all these files follow =sqlite_home= or that restoring them together is supported.
+The inventory is illustrative, not a hard-coded promise about every Codex version.
+The associated maintenance lock, possible additional databases, legacy rollout files, attachments and external paths must be included in the on-cluster inventory.
+An unclassified SQLite file disables recovery publication and makes the run visibly degraded until the compatibility profile is updated.
+
+Installed =codex --help= and =codex remote-control --help= describe a shared background server and =--no-daemon=.
+The current adapter, =sucoder/agent_mode.py:46=, removes =start= without adding that flag.
+The earlier ledger's Codex =0.154.0= foreground assumption is not sufficient for this version.
+Managed state requires an independently owned foreground server: use a supported =--no-daemon= form and verify its actual PID, database paths and process lifetime.
+An existing daemon must never be stopped, retargeted or silently reused to satisfy this requirement.
+
+* Identities and layout
+
+** Stable scope, allocation and run
+
+- Scope :: A SHA-256 digest of a canonical tuple: cluster identity, remote agent user, resolved shared mirror path, and service slot (initially =default=).
+  Hash the unsanitized tuple; a display token is not a collision-resistant identity.
+  Target aliases for the same storage must map to the same canonical scope; different clusters or users must not collide.
+- Allocation :: Cluster, Slurm job ID, node, and scheduler start/submit identity when available.
+  A numeric job ID can be reused and is not a durable primary key.
+- Run :: A random UUID for one independently writable state history.
+  The same run may restart in place within one allocation after its owner exits.
+  A new allocation receives a new run UUID and records its exact parent generation when continuing earlier work.
+- Lineage :: A UUID assigned to a fresh independent history and inherited by every sequential successor.
+  At most one writer or unresolved successor attempt may own a lineage, regardless of which generation or transfer nonce it selected.
+- Generation :: A monotonically increasing sequence within a run, plus a random suffix.
+  A generation is immutable after publication and never overwrites a different run's generation.
+
+Derive paths at runtime after =SLURM_JOB_ID= and the final cwd are known.
+Use the existing local-tier root helpers rather than concatenating job paths in several launchers.
+
+#+begin_example
+LOCAL = /local/job<ID>/state/codex/<scope>/<run>
+  db/                         active SQLite databases and sidecars
+  snapshots/<generation>/     completed local backup bundles
+  control.sock                private runner control endpoint
+  owner.json                  allocation, run, PID/start identity
+  status.json                 local state and last durable generation
+  checkpoint.lock             local single-flight checkpoint lock
+
+DURABLE = <shared-mirror-root>/.sucoder-state/codex/<scope>
+  metadata.lock/              short atomic-mkdir critical section
+  lineages/<lineage>.json      current owner/attempt authority, not a heartbeat
+  transfers/<nonce>.json      offered/claimed/revoked transfer state
+  pins/<parent-run>/<generation>/<child-run>.json
+  runs/<run>/run.json          immutable origin/parent provenance
+  runs/<run>/generations/<generation>/
+    manifest.json
+    db/<classified database files>
+  runs/<run>/.incoming-<uuid>/  incomplete publication; never restorable
+#+end_example
+
+=shared-mirror-root= means the directory containing mirrors, not a repository's working tree.
+The default state root is therefore a sibling of all mirror repositories on the same durable filesystem.
+Reject a configured durable root inside any managed clone, inside its shared mirror repository, or under allocation-local storage.
+Do not infer a durable location from =~/.cache= or place the state root on NFS merely because it is reachable there.
+Savio's proposed durable root is on the Lustre mirror filesystem; its exact path is confirmed in the spike.
+
+Create agent-owned directories with mode =0700= and files with mode =0600=.
+Refuse unsafe ownership, symlinked managed directories, path traversal and mismatched scope/run metadata.
+Resolve the configured root once and anchor filesystem operations to validated directory descriptors; never follow a changed root symlink during publication or restore.
+Validate ownership and permissions without chmod/chown of existing user directories; only newly generated private paths receive the required modes.
+Database bundles may contain private prompts and tool output even though credentials are excluded.
+No credential, auth file or wholesale copy of =CODEX_HOME= belongs in a generation.
+
+* Startup and placement
+
+1. Recognize a supported Codex launch before wrappers obscure the executable; management commands and already-connected clients are not new state owners.
+2. Reuse local-tier preparation and native instruction installation, resolving runtime paths inside the allocation and its existing cgroup.
+3. Acquire a local startup lock and inspect the existing run directory.
+   If the same healthy owner exists, attach through the existing lifecycle; never reseed its database.
+   A held lock with inconsistent metadata is an error, not permission to delete or kill anything.
+4. If local databases exist after a stopped owner, reuse them in place under the profile's supported restart/recovery policy; never replace them with an older shared snapshot.
+   Validate identity and supported storage version first.
+   Revoke outstanding transfer authority before reopening any writers, and refuse restart while a successor claim is unresolved.
+5. Otherwise select an exact predecessor under the restore rules below, or create an explicitly fresh run.
+6. Stage and validate the complete bundle locally, then atomically install the =db/= directory before starting Codex.
+7. Pass =sqlite_home=<absolute LOCAL/db>= using the existing =config_override= TOML encoder, to the actual foreground server before it opens databases.
+8. Record the actual run and placement in local owner/status files and pane metadata; persist provenance in =RemoteSession= when the runtime identity is available.
+   Confined job IDs are not known at script-render time, so the runtime record must be discoverable even if the launcher disconnects.
+9. Start the initial checkpoint promptly after Codex initializes its classified database set, without waiting a full checkpoint interval.
+
+A managed launch becomes ready only when the runtime handshake names the requested scope/run, exact restored parent/hash, actual allocation/node, effective SQLite placement, and a healthy independently owned foreground Codex server.
+The handshake must distinguish initializing, pending allocation, ready and failed states and permit a live recheck before predecessor cancellation.
+Do not equate a returned launcher exit status or an existing tmux session with readiness: the existing surviving shell can keep tmux alive after the runner fails.
+
+Keep user model, permission, prompt, global-home and hook settings intact.
+Opt-in managed placement conflicts with a caller's different explicit =sqlite_home=; report that conflict before launch rather than silently change either policy.
+The implementation must inspect user/CLI overrides and managed requirements and verify effective placement.
+If placement cannot be established, fail the opted-in launch with a specific error; never fall back to shared SQLite silently.
+Manual restarts from the surviving shell must go through the staged runner so they preserve placement and ownership.
+Exporting a hint can help, but it does not replace the runner or override effective Codex configuration.
+
+* Checkpoint protocol
+
+** Two consistency classes
+
+- Warm generation :: Each classified database is copied using SQLite's online backup API while Codex continues running.
+  Each backup is individually consistent, but the bundle spans a capture interval.
+  SQLite does not make transactions across separate databases atomic as a set.
+- Sealed generation :: A profile-verified graceful shutdown/quiescence has completed successfully, the owned Codex server and all its database writers have stopped, the runtime refuses new starts, and all classified databases are backed up before that run is reopened.
+  The bundle represents a quiescent application state and carries an acknowledged handoff token when used for renewal.
+
+An abnormal, forced or unknown exit creates a crash candidate even when every process is now stopped.
+Stopping writers alone cannot repair an application interrupted between commits to related databases.
+Such a candidate needs the same application recovery gate as a warm bundle and cannot acquire sealed status merely by being copied after exit.
+
+The [[https://www.sqlite.org/backup.html][SQLite backup API]] supports live per-database snapshots.
+The [[https://www.sqlite.org/wal.html][WAL documentation]] explains the sidecars and the limits on cross-database atomicity.
+Do not copy live =.sqlite=, =-wal= and =-shm= files independently, force checkpoints on the running source as a backup substitute, or open shared copies as live databases.
+The backup API reads the source's committed state, including WAL content, into independent local destination databases.
+Set destination journal mode deliberately and close all destination connections before hashing or publishing; no required destination WAL may be omitted.
+
+Initially only sealed generations from a supported shutdown/replay profile are eligible for automatic continuation.
+Warm generations are retained for explicit recovery experiments and are labelled =per-database=, not application-consistent.
+Promotion of warm generations to unattended recovery requires a version-specific test of state/history/goal/queue relationships and crash recovery.
+If those tests cannot establish safe recovery, add an upstream-supported export/quiescence mechanism or retain this restriction; do not paper over it with =quick_check=.
+Until that gate passes, a ten-minute capture interval is not a ten-minute guaranteed recovery window.
+
+** Capture and publication
+
+1. Coalesce timer, deadline, manual and shutdown requests under one local nonblocking =checkpoint.lock=.
+   Permit one capture/publication worker per run; never queue an unbounded backlog.
+2. Discover the classified database set and reject unclassified SQLite files.
+   An optional database absent before first use is explicitly recorded as absent; a previously present required store disappearing is a failure.
+3. Back up each required database into a new private local staging directory, with bounded busy retries and an overall capture budget.
+   A single failed required database invalidates that whole candidate.
+4. Close destinations, verify =PRAGMA quick_check=, and calculate file sizes and SHA-256 hashes.
+   For sealed generations, verify the owned server remains stopped throughout capture and publication.
+5. Write a local manifest containing format version, scope, run, lineage, allocation identity, parent generation, Codex version/build, storage profile, consistency class, per-database capture times, absent stores, sizes and hashes.
+   Record the source cwd and external-file requirements without rewriting upstream database rows.
+6. Create =.incoming-<uuid>= under the destination run; copy only the completed local files.
+   Use exclusive creation and file/directory synchronization appropriate to Lustre, then verify destination hashes.
+7. Write the manifest last, synchronize it and the staging directory, and atomically rename the directory to its unique final generation name on that same filesystem.
+   Synchronize the containing directory where supported; the Savio spike must establish the filesystem's publication/durability contract.
+8. Only after success update local =status.json= with the durable generation and emit an acknowledgement carrying its identity and manifest hash.
+   Lost publication acknowledgement is resolved by inspecting that exact generation, not by assuming it failed or selecting some other latest file.
+   Transfer authority additionally requires the current durable transfer record below; a manifest alone cannot authorize continuation.
+
+There is no shared mutable database and no cross-run =latest= pointer.
+The generation manifest is the commit record; directories under =.incoming-= are never candidates.
+A manifest's timestamp is explanatory, not a concurrency or ownership primitive.
+
+** Transfer fencing and parent pins
+
+Use one short scope-wide metadata critical section for offer/claim/revoke, parent pinning and retention decisions.
+Acquire it by atomic creation of =metadata.lock/= on the tested durable filesystem, with an immutable owner/attempt record; never use an NFS =flock= or a time-based lease.
+An acquisition that fails or returns an uncertain result does not grant ownership.
+Do not steal the lock because its timestamp is old; uncertain or abandoned ownership blocks metadata changes until explicit operator reconciliation proves that exact owner and operation can no longer run.
+Keep capture, hashing, upload, database opening and model work outside this section.
+Brief metadata writes still need the same synchronization/atomic-replace guarantees tested for publication.
+
+After a graceful drain and complete sealed publication, create an =offered= transfer record naming source run/lineage, exact generation/hash, source ownership identity, nonce and intended successor attempt if already known.
+Ordinary clean-exit offers may leave the successor unbound; bind it exactly once under the claim critical section.
+Issue a transferable acknowledgement only after that record is durable.
+The old runner keeps its local start barrier and checks the durable record after any restart.
+Under the critical section, a successor claims the offer exactly once, binding its new run/allocation/attempt identity and pinning the exact parent generation before its database writers may open.
+Publish the child's immutable =run.json= and parent pin under that same section.
+If the child allocation ID is not yet assigned, claim to its attempt UUID first and bind the actual job identity before accepting runtime readiness.
+Duplicate requests for the same exact attempt are idempotent; a different attempt cannot consume a claimed offer.
+
+Before the predecessor restarts, it must atomically revoke an unclaimed offer.
+It cannot revoke a claimed offer or reopen writers while successor startup is pending or unknown.
+Recovery after a failed claim requires positive evidence that the exact successor never opened writers or has stopped, then explicit transfer reconciliation; node unreachability is not sufficient.
+The same fencing applies to an ordinary clean-exit checkpoint selected for continuation while its old allocation still exists.
+Historical sealed metadata remains a valid snapshot description after restart, but no longer grants implicit continuation authority.
+Lost handoff acknowledgements are reconciled against both the exact generation and current offer/claim/revoke state.
+
+An ended-allocation recovery choice also records a successor claim under this critical section, so two launchers cannot silently continue the same parent at once.
+Enforce exclusivity over the entire lineage, not only an offer or parent generation: different historical generations must not grant separate simultaneous owners of the same upstream thread identities.
+Reject ancestor recovery while any descendant owner or startup attempt is active or unknown.
+Update the lineage authority record together with the claim and parent pin; it records who is authorized, while scheduler/runtime evidence establishes liveness.
+Missing provenance, multiple valid children or an incomplete claimed attempt requires explicit reconciliation, not arbitrary last-writer-wins selection.
+The first version does not offer concurrent forks of a saved Codex history: copying a database into a new run UUID does not change upstream thread identities or external transcript paths.
+Fresh independent histories remain supported; a future fork feature needs its own upstream-identity and external-file isolation contract.
+
+Retention validates pins and marks an unpinned generation =retiring= under the same critical section before deleting its files outside it.
+A new parent pin cannot be acquired after that transition.
+Failed child setup conservatively leaves its pin; remove it only after proving that no restore or writer can still depend on it.
+Deletion interruption leaves a non-restorable retiring record and does not grant permission to select a missing parent.
+
+** Scheduling and outages
+
+Extend the existing timer to enqueue requests using a nonblocking local control path.
+Do not perform backup, checksumming, shared metadata access or upload inline in =slurm_timer.py='s warning loop.
+The runner services requests and owns its single-flight worker; tmux/Slurm remain the allocation supervisor.
+Use elapsed monotonic time for cadence rather than counting successful scheduler polls.
+The initial proposal is one capture every ten minutes plus existing deadline thresholds and clean shutdown.
+
+A timeout is a budget for waiting and escalation, not proof that a stalled filesystem syscall can be killed immediately.
+Keep at most one in-flight worker, mark it stuck when overdue, and allow deadline reporting and the agent to continue.
+Never start replacement workers while the old one retains its local single-flight lock.
+Keep the last completed local candidate for a retry after a failed upload; bound local staging to that candidate and any active worker.
+Local-only candidates are explicitly not durable.
+Display the age of the last successful durable checkpoint; during a shared-storage outage the recovery window grows without a finite guarantee.
+
+* Restore and history selection
+
+** Normal continuation
+
+Persist a validated managed-owner descriptor alongside the existing =RemoteSession.service_launch=: Codex mode, requested command/model before generated overrides, scope, last run, requested parent generation, and durable root identity.
+The existing =service_launch= validator accepts only remote-control; it cannot represent a CLI-selected Codex TUI whose configured default harness is different.
+Managed TUI renewal must preserve the selected Codex command/model explicitly, without changing nonmanaged TUI renewal behavior.
+Do not save credentials or a transient allocation path as the durable identity.
+Keep backward-compatible defaults for older session records and heal missing records from actual runtime/pane metadata as existing service discovery does.
+
+Within one allocation, local state takes precedence over every archived generation.
+Across allocations, prefer the explicitly recorded predecessor or a caller-selected exact generation.
+The source must meet the applicable consistency/replay policy and obtain a successor claim: either through a currently valid offered transfer from a drained service or recovery from an allocation proved ended by the scheduler.
+An unanswered scheduler query, unreachable node, stale PID or old heartbeat is unknown state.
+Do not infer that a service stopped because its tmux session exists or because a launcher record vanished.
+
+If session provenance is lost, list compatible runs and their ancestry.
+Offer automatic selection only when there is exactly one eligible terminal lineage; multiple independent histories require an explicit selection or an explicitly fresh run.
+Never merge SQLite rows or let the newest wall-clock timestamp decide between unrelated histories.
+Independent concurrent jobs may start fresh runs, with separate run UUIDs and upstream conversation identities.
+Concurrent restored forks are deferred until their external-file and thread-identity isolation is proved.
+
+** Validation and compatibility
+
+Restore only complete published generations matching scope, format, storage profile and checksums.
+Copy into a new local staging directory and verify every required store before activation.
+If the selected generation is incomplete, incompatible or corrupt, preserve it, report the exact failure, and require explicit fallback; never silently create an empty history.
+Codex upgrades may migrate only the disposable local copy after a pre-upgrade generation exists; a downgrade cannot automatically consume a newer storage profile.
+Unsupported builds stay opted out until their storage and process behavior are tested.
+
+Cross-node cwd changes are an explicit test case: use supported Codex resume/cwd APIs or flags.
+Do not SQL-rewrite old cwd or rollout-path columns as a guessed portability fix.
+Verify external transcripts and attachments are still available; if SQLite redirection leaves them under shared =CODEX_HOME=, state that dependency in the manifest and operational output.
+SQLite relocation does not promise a complete offline copy of every conversation asset.
+
+Restoring persisted queue entries, goals or background jobs must not duplicate actions or paid requests.
+Before production recovery, establish the installed build's replay behavior and a supported way to hold pending work for operator resumption.
+If no safe hold exists, unattended restoration of that profile is unsupported.
+Checking database integrity alone is not an application-level recovery test.
+
+** First opt-in and older history
+
+Do not automatically seed a repo-local run from account-wide shared databases that may still have writers on another node.
+First opt-in either starts a clearly announced empty managed history or uses an explicitly selected compatible import prepared while its source writers are stopped.
+The existing shared Codex history remains untouched and accessible through its original placement.
+A future import facility must identify all dependent stores and account for unrelated repositories and private data; filtering unknown schemas is not part of this implementation.
+Report this change of history scope before a user begins a managed conversation.
+
+* Shutdown, release and overlapping renewal
+
+** Owned process and local control
+
+The state runner remains alive while its owned foreground Codex process runs, forwards terminal signals appropriately, and preserves Codex's exit status.
+It may stop only the process/group it created and verified; never use process-name killing or stale recorded PIDs.
+TTY job control, Ctrl-C, local app-server ownership and remote-control reconnect behavior require actual subprocess tests.
+Do not let a background daemon escape the run's ownership barrier.
+
+The runner's private local control endpoint accepts status, checkpoint and drain requests carrying scope, run and nonce.
+Reach it through the existing executor/in-allocation =srun --overlap= route for confined targets, not compute-node SSH outside the cgroup.
+An acknowledgement includes the same nonce, a sealed generation and manifest hash, plus proof that the owned service has stopped.
+The runner holds its local startup barrier while drained, so a manual restart cannot invalidate that acknowledgement.
+
+** Clean exit and explicit release
+
+After a profile-verified graceful Codex exit, take a sealed checkpoint and publish its fenced continuation offer before returning to the existing surviving shell.
+After an abnormal/unknown exit, retain local state and capture a crash candidate without upgrading its consistency class.
+If publication fails, retain local state and show the previous durable checkpoint; do not report a successful save.
+A deliberate restart in that still-live allocation reuses local state through the runner.
+
+Before =sucoder release= cancels an allocation, request a bounded drain/checkpoint from each managed state owner affected by that cancellation.
+Keep existing sibling-allocation protection: detaching one mirror must not drain or cancel its siblings.
+If sibling-detach stops this mirror's managed owner, drain/checkpoint only that departing owner before stopping its tmux session; the shared allocation and other owners remain live.
+If an operation merely detaches a client and leaves its owner running, take at most a warm checkpoint and keep its run active rather than issuing a false sealed acknowledgement.
+Explicit release remains the user's cancellation instruction even if state publication fails; print the failure and last durable generation before proceeding.
+Never retire the last conversation checkpoint merely because a Git WIP ref is retired.
+SIGKILL, OOM, admin cancellation and node failure may bypass the clean-exit path; periodic recovery and its stated limits cover those cases.
+
+** Planned renewal sequence
+
+1. Preserve the existing cooperative handoff sentinel for repository work.
+2. Ask the old runner to drain, stopping new conversation work and its owned server, then publish a sealed generation.
+   No unimplemented Codex application-drain API is assumed: the initial mechanism is an explicit graceful server shutdown, with active-chat disruption reported to connected clients.
+3. Require its nonce-matched acknowledgement before treating the state as transferable.
+   If draining or publication is unconfirmed, defer automatic continuation while time remains; never start a replacement from unknown live state.
+4. Persist a replacement-attempt record retaining old allocation/node/run, offered token, new attempt/run UUID and pending/new job identity before allocation starts.
+   Pass an explicit replacement authorization through launcher setup, excluding only the verified drained predecessor from the confined scheduler-adoption probe.
+   The current =_launch_confined= at =mirror.py:3058= rediscovers and adopts a still-live same-target job even after YAML is cleared; clearing =RemoteSession.slurm_job_id= alone cannot authorize overlap.
+   Keep normal duplicate-job prevention and do not ignore any unrelated live job.
+   Claim the exact sealed parent and launch the replacement according to the transfer protocol.
+   The old allocation can remain alive, holding its drained startup barrier, even though its Codex service has exited.
+5. Require a different new job identity and the managed runtime readiness handshake, then recheck its run/parent/server liveness before cancelling the old allocation as the existing overlapping renewal loop does.
+   =tmux has-session= alone is not readiness and must not trigger cancellation.
+6. If replacement allocation or launch fails, keep the old local databases and released-service barrier intact, and report the resumable old allocation.
+   Keep pending/submitted replacement jobs in the attempt record and probe/adopt that exact attempt before retrying; a timeout must not leak a second replacement.
+   A controlled restart of the old service requires the durable revoke/reconciliation protocol before its writers reopen; a later attempt must drain and seal again.
+
+The generic renewal loop currently has a =request_checkpoint() -> None= hook and launches regardless of checkpoint success.
+Its extension needs typed drain and launch outcomes for managed Codex (ready, pending, retryable failure, or lost/unknown owner), with existing behavior retained for other harnesses.
+The current =_relaunch_session= at =cli.py:3421= clears the old allocation fields before attempting a launch; retain old and pending-new records throughout the transaction rather than replacing old provenance early.
+If walltime overtakes a failed handoff, classify the old run as lost and apply the crash-recovery policy explicitly.
+Starting a replacement service does not automatically resume active chats or attach clients; recovered conversations become available for a supported explicit resume.
+
+* Proposed configuration and operator surface
+
+Keep the feature off by default, separately from Git local-disk tiering.
+Proposed target =slurm= keys, to be implemented together with parser tests, =README.org= and =config.example.yaml=:
+
+#+begin_example
+slurm:
+  local_disk: true
+  codex_state:
+    enabled: true
+    checkpoint_minutes: 10
+    checkpoint_timeout_seconds: 30
+    durable_root: null
+#+end_example
+
+=durable_root: null= derives the private sibling directory under the resolved shared mirror root.
+=checkpoint_minutes= must be a positive integer and =checkpoint_timeout_seconds= a positive bounded duration; booleans are not accepted as integers.
+Reject enabled state without Slurm/local-disk support or without a supported owned-server launch.
+Require an explicit compatibility profile before enabling recovery for a Codex build; do not infer support solely from a version string.
+Use the same interval for periodic state capture and a separate configured Git WIP cadence where required; their outcomes remain independent.
+
+Minimum operator surface: display scope/run, active path, last durable generation/class/age, selected predecessor, and degraded reason at launch and in session status.
+Expose exact-generation selection and an explicit fresh-history choice; propose =--codex-state-from RUN/GENERATION= and =--codex-state-fresh= as mutually exclusive launch options.
+Those options select history, never a free-form shell command or arbitrary database path.
+Provide a status/checkpoint operation through the staged helper so the cluster spike and operators can request a save without terminal-input injection.
+Log status transitions once and periodic degraded heartbeats; do not print SQL rows, transcript contents or credentials.
+
+* Retention and storage cost
+
+Keep the newest three completed warm generations and the newest sealed generation per run; never delete a generation referenced as another run's parent.
+Prune only after a new generation is fully published, and only within that writer's run, using the serialized parent-pin/retiring protocol above.
+Partial upload cleanup requires proving no active writer owns that exact attempt; age alone is not that proof.
+The first version performs no automatic whole-run deletion across allocations.
+Expose per-scope bytes/run counts so operators can see accumulated histories; a later explicit retirement command must preserve pinned parents and require reliable ownership evidence.
+This differs deliberately from Git WIP retirement: cleanly ended conversations still have value.
+
+Full database backups may grow with conversation history and are not assumed cheap.
+Measure capture time, bytes published, metadata operations and restore time with realistic state sizes before accepting a ten-minute default on Savio.
+If cost is excessive, change cadence, compression or a supported export strategy; never replace the correctness protocol with live-file =rsync=.
+Exclude diagnostic =logs_2.sqlite= only after the version-specific profile proves it is disposable and independent of recovery.
+
+* Failure contract
+
+| Event | Required behavior |
+|-------+-------------------|
+| Same allocation, Codex restarts | Reuse current local state; do not overwrite it from archive |
+| Shared storage unavailable at restore | Report blocked restore; require explicit fresh-history choice |
+| Shared storage fails while running | Continue locally; keep last durable generation and show growing age |
+| Worker stalls in filesystem I/O | One in-flight worker; watchdog and conversation remain independent |
+| Local disk fills | Report failure before new writes where possible; never fall back to shared SQLite |
+| Capture, checksum or upload fails | No new durable acknowledgement; preserve previous generations |
+| Crash during upload | Ignore incoming directory; use an eligible completed generation |
+| Cross-database warm recovery unproven | No unattended warm restore; retain recovery candidate for explicit tests |
+| Unknown predecessor ownership | No automatic continuation or destructive cleanup |
+| Two jobs share a mirror | Separate run directories and histories; no last-writer-wins pointer |
+| Renewal handoff unacknowledged | Defer continuity; do not restore potentially active state |
+| Queue replay cannot be held safely | Profile cannot enable unattended recovery |
+| Codex storage layout changes | Stop claiming compatibility; preserve evidence and update the profile |
+| Explicit release after save failure | Print failure/last durable checkpoint; honor cancellation |
+
+* Implementation slices and validation
+
+** Slice 0: capability spike on Savio
+
+Move development to an existing or explicitly allocated short Savio job after design review.
+Use a disposable mirror, synthetic conversation markers, an isolated test Codex home, and a private state root; do not relocate an active account's files.
+Read =~/.sucoder/bulletin.org= before diagnosing an infrastructure failure and append observations before attempting infrastructure repair.
+Do not acquire or cancel another agent's allocation.
+
+Run these read-only inventory commands inside the test allocation and capture host, UTC time, job identity and exit status:
+
+#+begin_src shell
+hostname
+date -u
+codex --version
+codex --help
+codex remote-control --help
+findmnt -T "$HOME"
+findmnt -T "$SUCODER_LOCAL_ROOT"
+findmnt -T "$SUCODER_SHARED_STATE_TEST_ROOT"
+#+end_src
+
+The test launcher must set =SUCODER_LOCAL_ROOT= and =SUCODER_SHARED_STATE_TEST_ROOT= to verified private directories before these commands.
+Use =/proc/<owned-pid>/fd= and, if available, =strace= in the synthetic test process to inventory every SQLite file, WAL, shared-memory file and maintenance lock actually opened.
+Exercise both =sqlite_home= and conflicting environment/config values and record the effective result.
+Verify the shared Codex home receives no SQLite writes from that managed process.
+Record non-SQLite accesses separately; retaining shared configuration does not eliminate them.
+
+Use the fake-model app-server pattern in =tests/test_codex_context.py:158= to create deterministic threads without paid model calls.
+Keep its fixtures' credentials/configuration isolated from the real account.
+Create a thread containing distinct known markers before and after capture; exercise compaction/history, a persisted goal and a queued action.
+Never test replay with a real external action or real credentials.
+
+Required spike outcomes:
+
+1. Inventory and redirect every required SQLite store and maintenance lock to local disk in both TUI and remote-control modes.
+2. Prove each mode owns an independent foreground server and cannot reuse a peer daemon.
+3. Back up while history changes, stop the synthetic process abruptly at varied capture points, and restore into a different allocation path.
+   Verify thread listing and actual supported resume expose all markers covered by the declared recovery generation, with no dangling history dependency.
+4. Verify queue/goal recovery does not duplicate or automatically execute test actions; establish a supported recovery hold or keep unattended recovery disabled.
+5. Drain and seal while the old allocation stays live, restore on the replacement, then test failed replacement and controlled restart of the old owner.
+   Race two claims, delay acknowledgements, crash the old runner, and verify that token revocation or an unknown successor prevents reopening two writers.
+6. Inject upload failures, incomplete generations, scheduler errors, missing parent provenance and a lost acknowledgement; verify the failure contract.
+7. Compare shared-placement and local-placement synthetic workloads using identical build, seeded data, workload and concurrency.
+   Record p50/p95 operation latency, failures, capture/upload size and duration, restore duration, and time since last durable generation.
+   Do not generate cluster-wide contention deliberately or claim a speedup from an uncontended single run.
+
+Use at least twenty randomized abrupt-stop/capture interleavings per supported storage profile with the seed recorded, plus deterministic failures at each publication boundary.
+This is targeted regression evidence, not a proof of cross-database atomicity.
+Review the upstream storage/recovery contract as well; if it remains unsupported, keep warm restoration manual.
+Interrupt between related database commits, then capture after all processes stop, to verify that post-crash capture never acquires sealed status.
+Archive scripts, exact commands, version/build, schema inventory, marker assertions and results with the design handoff.
+
+** Slice 1: placement and process ownership
+
+Add a stdlib-only =sucoder/codex_state.py= runner/helper, private local paths and locking, supported-server launch adaptation, and typed configuration.
+Wire it after existing clone preparation and before Codex opens state; retain native context delivery.
+Use a fresh synthetic history for early tests; do not enable managed placement for valuable conversations before persistence exists.
+Tests must check actual database paths and owned-process lifetime, not merely generated argv strings.
+
+** Slice 2: generations and sequential continuation
+
+Implement capture, complete publication, manifest verification, same-allocation reuse, sealed restore, status and bounded worker scheduling.
+Use real SQLite WAL writers, not mocked file copies, in targeted tests.
+Verify mid-capture failure, destination WAL handling, corrupt/missing files, unsafe paths, unknown stores, version mismatch, and no advance after failed publication.
+Race parent pinning against retention and test retiring records, abandoned metadata locks, partial claims and idempotent same-attempt retries.
+Race claims against different generations of the same lineage, reject ancestor restore with an unresolved descendant, and bind an ordinary-exit offer with no preselected successor.
+Test warm recovery eligibility separately and leave it disabled if its gate remains open.
+
+** Slice 3: lifecycle integration
+
+Extend timer requests, =RemoteSession= serialization, live metadata discovery, release, and renewal with acknowledged state handoff.
+Exercise confined runtime job-ID expansion, unconfined placement, reattachment, two fresh runs sharing a mirror, duplicate starters, lost records, active predecessors, pending/recycled job IDs and failed replacement.
+Drive the real confined scheduler-adoption branch during renewal: a specifically authorized predecessor may be excluded, unrelated jobs may not, the new job must differ, and a surviving shell after runner failure must fail readiness.
+Verify renewal of a CLI-selected managed Codex TUI when the configured default harness is Claude.
+Verify unrelated harnesses retain existing renewal and release behavior and the Git snapshotter's index-preservation tests still pass.
+Run =pytest= from the SuCoder mirror root; document baseline environment failures rather than fixing unrelated paths here.
+Run GitNexus impact before editing runtime symbols and =detect_changes= before each implementation commit.
+
+** Slice 4: pilot and acceptance
+
+Enable on one disposable Savio mirror first, then one deliberately selected real mirror after recovery gates pass.
+Demonstrate a clean turnover and recovery on a different allocation/node, last-checkpoint status during an upload failure, and independent histories for overlapping jobs.
+Promote only when all mandatory storage/process/replay gates pass and the measured snapshot cost supports the chosen cadence.
+Documentation must state any remaining external-file dependency, recovery restriction and interval limitation.
+
+Rollback disables managed state on the next launch and leaves archives intact.
+It must not point ordinary Codex at a partly restored database or overwrite the original shared history.
+A user who needs the managed history after rollback selects a validated generation explicitly.
+
+* Review record and remaining decisions
+
+Independent review findings and their dispositions will be recorded in [[file:codex-local-state-review.org][the design review]].
+Review readiness is distinct from production readiness: the Savio capability and recovery gates above remain open until measured.
+
+Proposed defaults for review are a ten-minute capture interval, a thirty-second waiting budget, explicit first opt-in history scope, and sealed-only automatic continuation until warm recovery is established.
+The main unresolved capability decisions are complete SQLite redirection, independent server ownership, portable resume, queue replay control, and warm-bundle recovery.
+If a capability fails, revise the relevant contract before implementing around it.
+
+Prepared by Sue.

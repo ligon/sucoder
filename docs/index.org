@@ -17,6 +17,7 @@ Unix-user sandboxing for AI coding agents.  One account per agent, filesystem-en
 - [[file:skills-architecture.html][Skills Architecture]] --- agent-agnostic discovery, write control, and compliance auditing.
 - [[file:persistent-presence.html][Persistent Presence]] --- a standing condo slice on a shared HTC partition: renew, turnover, and handoff.
 - [[file:local-disk-tiering.html][Local-disk Tiering]] --- design note: disposable working tree on node-local disk, git as the sync, WIP snapshots (spike-verified).
+- [[file:codex-local-state.html][Codex Local State]] --- proposed SQLite placement, durable recovery, lifecycle handoff, and Savio validation gates.
 
 ** Examples
 

@@ -1,69 +1,51 @@
-#+title: Why a confined job waits, and --time for one launch
-#+date: 2026-10-14
-#+status: COMPLETE
-#+author: Sue
-#+property: header-args :eval never-export :tangle no :results output :exports code
+#+TITLE: Reviewed design for Codex node-local SQLite state
+#+DATE: 2026-10-15
+#+STATUS: COMPLETE
+#+AUTHOR: Sue
+#+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
-* Mission
+* Completed phase
 
-A =sucoder -T carleton-htc collaborate= sat at "waiting for RUNNING..."
-printing one =squeue= progress line per 15s poll and saying nothing
-about why; after ten minutes it would have given up with "still
-PENDING".  The likely cause was a BRC maintenance reservation that the
-target's =--time=12-00:00:00= could not clear.  Previous handoff:
-[[file:handoffs/2026-09-22-retention-sweep-and-messaging.org]].
+The user requested a detailed design and independent review before considering development on Savio.
+This phase delivered documentation only on branch =design/codex-local-state=, based on =main= at =ffd0447=.
+No runtime source, configuration parser, live cluster state or user Codex history was changed.
+The previous handoff is preserved in [[file:handoffs/2026-10-14-pending-poll-reason.org]].
 
-* What landed
+* Artifacts
 
-Branch =fix/pending-poll-reason=, two commits on local =main=
-(df2f7b4).  The =coder= account cannot push (the =github= remote has no
-credentials here; =ligon= is =no_push=), so the push and the PR are the
-human's.
+- [[file:../docs/codex-local-state.org][Detailed design]] :: placement, identities, durable generations, transfer fencing, restore, release/renewal, failure contracts and validation slices.
+- [[file:../docs/codex-local-state-review.org][Independent review and dispositions]] :: two GPT-6 reviewer contexts, storage and lifecycle; original findings and confirmation passes.
+- [[file:../.coder/ledger.md][Prior-art ledger]] :: existing machinery/tests and current design invariants, with historical remote-control evidence retained.
 
-1. 3070daf :: =_poll_confined_node= (sucoder/mirror.py:2801) asks
-   =squeue= for =%T|%N|%r|%S=, logs the pending reason and estimated
-   start once and again on change, heartbeats about every 2 min, prints
-   a progress line for the first probe only (the 52379fa rule), and puts
-   the reason in the timeout error.  =_pending_hint=
-   (sucoder/mirror.py:278) names the =--time= request and the two
-   ways to shorten it when the reason is =ReqNodeNotAvail= or a QOS
-   wall-duration limit.
-2. 5ff2791 :: =sucoder --time LIMIT= on the main callback
-   (sucoder/cli.py:1747), validated against SLURM's time grammar
-   (=_SLURM_TIME_RE=, sucoder/cli.py:1385), refused without a SLURM
-   target, applied in =_build_executor= (sucoder/cli.py:684) to the
-   target's =SlurmConfig= before anything is submitted.  README
-   documents it beside the slurm target keys.
+* Important choices
 
-* Verified, and not
+- Keep =CODEX_HOME= and authentication in place; set absolute =sqlite_home= on the independently owned server.
+- Keep state outside the clone and Git, with private shared recovery generations and local active databases.
+- Installed Codex =0.162.1= has six observed SQLite databases, including separate thread history; test every required store and maintenance lock on Savio.
+- A warm per-database backup is not automatically an application-consistent bundle.
+Sealed status requires profile-verified graceful shutdown; crash candidates do not acquire that status merely because writers stopped.
+- Durable offer/claim/revoke records, lineage exclusivity and serialized parent pins prevent duplicate history owners and retention races.
+- Renewal keeps the old allocation alive after draining its service, launches a specifically authorized replacement, verifies real Codex readiness, then cancels the old allocation.
+The current confined adoption path can otherwise rediscover the old job even after session YAML is cleared (=sucoder/mirror.py:3058=).
+- Preserve both old and pending-new attempt records; a surviving tmux shell is not replacement readiness.
+- Concurrent restored forks are deferred until upstream thread/external-file isolation is established.
 
-- Full suite under =.venv/bin/python=: 1072 pass.  Six failures in
-  =tests/test_direct_remote.py= and =tests/test_timer_lifecycle.py= are
-  environmental under this account (umask 0007: directories come out
-  0750 where the tests expect 0755; =ssh -G= rejects the pytest tmpdir's
-  =ssh_config= for "Bad owner or permissions").  Not touched.
-- *Not run live*: no warm ControlMaster under =coder=, so the cluster
-  was not queried; the maintenance-reservation diagnosis is inferred
-  from the 12-day request and the human's recollection of a notice.
-  On first live use, =squeue --job 39917554 -o '%T %r %S'= on a login
-  node should show the reason the new poll would have printed.
+* Next phase
 
-* Constraints learned
+Use the design's Slice 0 for a disposable Savio capability spike before runtime implementation.
+The reviewers found no remaining written storage/lifecycle contradiction blocking that isolated spike.
+Production recovery still depends on complete redirection, independent server ownership, graceful shutdown, changed-cwd resume, safe queue/goal replay, cross-store recovery, and Lustre publication measurements.
 
-- =git worktree add= fails here: =.mcp.json= carries a git-crypt smudge
-  filter and =coder= holds no key.  Compare against =main= with
-  =git show main:<path>= instead.
-- =detect_changes= on pure insertions names every line-shifted
-  neighbour as "touched" and rates the diff critical; read the hunk
-  headers (=git diff -U0 | grep '^@@'=) before believing it.
+The conversation did not start or reserve a cluster allocation.
+Use a specifically authorized disposable allocation and synthetic Codex home/history; never move an active account's files or stop a peer daemon to run the spike.
+Read =~/.sucoder/bulletin.org= before diagnosing infrastructure failure; append observations before a repair.
+Record build/version, filesystem identity, exact commands, seeds, marker assertions and latency/backup measurements with the resulting handoff.
+Do not treat the ten-minute proposed capture interval as a guaranteed recovery bound.
 
-* Next
+* Verification
 
-- Push =fix/pending-poll-reason= and open the PR (two commits, no issue
-  references).
-- Job 39917554 is still recorded for AggregationWithLimitedCommitment
-  on carleton-htc: either =scontrol update jobid=39917554
-  TimeLimit=<d-hh:mm:ss>= so it fits before the reservation, or
-  =sucoder release= and relaunch with =--time=.
-- =slurm.time= is unvalidated at config load; =_SLURM_TIME_RE= could
-  move to =config.py= and check both the key and the flag.
+Documentation links, source/example block pairs, ASCII source and Org lint are checked locally; see the review record for final results.
+No Python runtime behavior changed, so the full pytest suite was not rerun in this documentation phase.
+Implementation must add targeted real-SQLite/process tests, run pytest from the mirror root, and apply GitNexus impact/detect_changes as required by AGENTS.md.
+
+Recorded by Sue.
