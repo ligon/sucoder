@@ -635,6 +635,10 @@ The evidence is in the tests named here and in the commit messages; where this s
   Launches without a selection keep every path as it was, including the unselected service script's prefix matching.
 - Real-Codex harness (=7f55e44=, =6acc531=) :: =tests/codex_app_server.py= drives the installed Codex as an app-server against a recording fake model, and =tests/test_codex_app_server.py= establishes on the real build the contracts the runner rests on (next subsection).
 
+- Slice 3a, timer requests (=18a3cab=) :: the Slurm deadline timer touches the run's =checkpoint.request= at the 30-, 15- and 5-minute warnings, after the WIP snapshot, through a best-effort shell function that creates nothing but that file and never touches the durable side; =build_timer_script= takes the scope digest and the local-disk root, and =launch_agent= passes the scope it already decided.
+  Gap: an unconfined managed launch's timer is started from =cli._start_slurm_timer=, which does not know the scope yet.
+- Slice 3b, status surface (=a9fa6ec=) :: =sucoder codex-state-status <mirror> [--json]= reads the recorded allocation's =latest-run=, =status.json= and =owner.json= with one =cat= each, inside the allocation through =srun --jobid --overlap= on a confined target (never compute-node SSH), and prints one line per fact: mode and run, state, replica age and lag and anomalies, last durable generation with class and age and any unsynced generation, checkpoint state, pending work per thread, the restore origin, and the refusal or blocked reason; a refused or never-placed launch, which writes no =latest-run=, is reported as no managed run recorded.
+
 ** Corrections to the record
 
 - =threads.rollout_path= is stored canonicalized (the realpath), not as written: with =CODEX_HOME= given through a symlink the row holds the real path, and Codex rewrites it on =thread/resume= to the new canonical location.
@@ -651,7 +655,7 @@ The evidence is in the tests named here and in the commit messages; where this s
 ** Deferred to Slice 3
 
 - Transfer fencing, lineage pins and retention: generations accumulate unpruned under each run (a few hundred kilobytes per capture at the sizes seen here); only the local =snapshots/= bundles are pruned to the newest three.
-- Timer checkpoint requests from =slurm_timer.py=, =RemoteSession= metadata and renewal with acknowledged handoff.
+- =RemoteSession= metadata and renewal with acknowledged handoff (timer checkpoint requests landed in Slice 3a; a drain request with a sealed acknowledgement is Slice 3c).
 - Warm generations remain per-database consistent only; the gate for unattended continuation stands.
 - Archiving a managed thread. Measured for Slice 3: binding =archived_sessions= as a second bind does not help, because each =bwrap --bind= is its own vfsmount and =rename(2)= across two mounts fails with =EXDEV= even for sibling directories on one filesystem; an archive succeeds only when =sessions/= and =archived_sessions/= share one mount (the whole home in one bind, or no bind), where it is a same-inode rename to a flat =archived_sessions/<basename>= with =rollout_path= rewritten and =archived=1=, the file immutable while archived, =thread/resume= refused until =thread/unarchive= moves it back.
   Under the managed layout =thread/archive= therefore remains an atomic, state-consistent failure whose only side effect is the dropped writer lock (re-created on the next resume); supporting it needs a single-mount layout or an upstream copy-and-delete fallback, and a replicator that follows a thread across the two directories by thread id with the manifest recording =archived=, =archived_at= and the archived path.
