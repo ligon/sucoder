@@ -1,6 +1,6 @@
 #+TITLE: Codex node-local state: Slice 2 reviewed; Slice 3a-3c landed; 3d-3e next
 #+DATE: 2026-10-15
-#+STATUS: IN PROGRESS
+#+STATUS: COMPLETE
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
@@ -29,7 +29,7 @@ The earlier handoffs are preserved under [[file:handoffs/]]; the Slice 1 one is 
 - =18a3cab= :: Slice 3a, the deadline timer touches the run's =checkpoint.request= at the 30/15/5-minute warnings. WARNING: this commit's =sucoder/mirror.py= does not import (IndentationError at line 3606) because it was staged from a region split of a file two agents had edited concurrently; =a9fa6ec= restores a consistent tree. Never check out =18a3cab= alone.
 - =a9fa6ec= :: Slice 3b, =sucoder codex-state-status <mirror> [--json]=. Its commit message was mangled by a shell quoting error; =54b1541= (empty) carries the intended message.
 - =a97674a= :: Slice 3c runner half, =drain.request= / =drain.ack= (see the design record); =7cdbca1=, =a5f4b89= docs.
-- Slice 3c launcher half (=sucoder release= drains the managed owner first; =sucoder codex-state-drain=) :: see the entry below this list if it landed; otherwise it was in flight when this note was written and its working tree is covered by the WIP snapshot.
+- =e25d592= :: Slice 3c launcher half: =sucoder release= drains the managed owner first (bounded; =--no-drain=, =--drain-timeout=) and =sucoder codex-state-drain= exposes the request; 54 tests. Its message was mangled like =a9fa6ec='s; the empty commit after it carries the intended one.
 
 * Review loop and where it stopped
 
@@ -69,6 +69,7 @@ Accepted residuals, by design, documented in the design record: the prefix hash 
 - GitNexus cannot load on this node image (=libssl.so.3=); callers are grepped by hand and listed in commit messages.
 - =~/.sucoder/bulletin.org= still does not exist on this host.
 - Lesson from this session: never let two agents edit one file concurrently and then split the result by region; stage whole files, or serialize the agents. =18a3cab= is what the split produced.
-- This slice (job 39969504) is held; release with =sucoder release= when the 3c launcher half has landed and no further Slice 3 work starts in this session.
+- Second lesson: never nest a here-document inside a =git commit -F -= here-document in one shell command; bash assigns the bodies in order and the commit message swallows the script (=a9fa6ec=, =e25d592=). One here-document per command.
+- This slice (job 39969504) is held with no work pending; release with =sucoder release= unless Slice 3d starts in this session.
 
 Recorded by Sue.
