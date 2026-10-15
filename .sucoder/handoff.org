@@ -1,12 +1,12 @@
-#+TITLE: Codex node-local state: Slice 2 implemented; review fixes and Slice 3 next
+#+TITLE: Codex node-local state: Slice 2 implemented and reviewed; Slice 3 next
 #+DATE: 2026-10-15
-#+STATUS: IN PROGRESS
+#+STATUS: COMPLETE
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
 * Where things stand
 
-Branch =main=, last commit =f99a246=, shared mirror in sync.
+Branch =main=, last commit =1e69fb8= (docs) on top of =930eae4= (code), shared mirror in sync, tree clean.
 Slice 2 of [[file:../docs/codex-local-state.org][the design]] is implemented and published; its record is the "Slice 2 record" section at the end of the design, which governs where it conflicts with the sections above it.
 Nothing is enabled on any real mirror: =slurm.codex_state= is off by default.
 The human approved spending Codex credits for reviews and trials in this session ("codex credits are less expensive than claude credits").
@@ -21,18 +21,22 @@ The earlier handoffs are preserved under [[file:handoffs/]]; the Slice 1 one is 
 - =7f55e44=, =6acc531= :: real-Codex app-server harness (=tests/codex_app_server.py=) and the contracts measured on 0.162.1, including =thread/archive= failing with =EXDEV= under the bind layout.
 - =f92298b= :: runner restores a named generation, gates pending work (detect only), reuses a run in place.
 - =f99a246= :: design record and README.
+- =f6e460f=, =4298140=, =3ff3608=, =930eae4= :: four runner review-fix passes, each from a read-only Codex review or confirmation run through the managed runner itself; details in the design's Slice 2 record ("Review fixes").
+- =c2efc73=, =d0d469e= :: launcher review fixes: a history selection refused over a live session at the preflight and at every reuse decision; =//= roots; relative roots; exact =tmux has-session -t =name=.
+- =9765ca7=, =525e2be=, =61dae0e=, =e9a9c58=, =41fd29e=, =1e69fb8= :: docs for the above (=9c8bc7c= was a duplicate insertion, removed by =525e2be=); =d147480= corrects the spike record's rollout_path claim; =6e4efb2= the previous handoff.
 
-* In flight when this note was written
+* Review loop and where it stopped
 
-- A review-fix pass on the runner (an agent working on =sucoder/codex_state_runner.py= and =tests/test_codex_state_runner.py=) for the eleven findings of Codex's read-only review of =f074a5d=: shrink during replication lag appended as growth; projection-table read failure degrading to watermark 0; replica directory entries not fsynced; ack ordering (=inflight= cleared before =last_generation= written); status-write errors derailing capture; all required stores vanishing reported as a skip; durable =getsize= under the snapshot lock; the ordering rule strengthened to wait for the local rollout size at backup; =holders_of= statting every fd and two shutdown timeouts; existing durable directories unchecked for symlinks/ownership/mode; dir-fsync failure after a successful rename.
-  If that work is uncommitted when you arrive, review the diff and the tests, then commit it as one change.
-- A second list, from Codex's review of =f92298b=, not yet assigned (same file, so it waits for the first pass): a refusal after =place_replicas= begins leaves partial files locally and under the new run's durable =rollouts/=, and =write_run_meta= can refuse after =db/= is installed (stage replicas too, write provenance before activation, roll back on failure); reuse in place does not check that the canonical home and durable root match the recorded provenance; an =owner.json= without pids counts as dead ownership; =OSError= during restore escapes the exit-70 contract; restore has no bound against stalled Lustre reads and writes no status before them; validation gaps (=threads= null crashes =check_replicas=, zero =replica_bytes= skips the prefix check, =match= with =$= accepts a trailing newline, unlisted stores in a generation ignored); manifest hashed on a second read; =pending_work= not persisted on refusal; three test assertions that can pass vacuously.
+Six read-only Codex sessions (gpt-6-astra, =codex exec --sandbox read-only=, each run under the newest committed runner) reviewed the runner halves and the launcher, then confirmed each fix pass; four runner passes and two launcher passes resulted, every finding confirmed against the code before it was fixed and every fix carrying a test.
+The launcher side closed with "all resolved, no new defects" (confirmation of =d0d469e=).
+The runner side closed with the fourth pass (=930eae4=); its confirmation was still running when this note was written and its outcome is recorded in the scratchpad of the session (=codex-confirm6.md=) and, if it found anything, in a follow-up commit or in the list below.
+Accepted residuals, by design, documented in the design record: the prefix hash is computed from the local rollout and verified against the durable replica at restore; a thread whose rollout has 0 bytes passes without a replica; a restore fsyncs =rollouts/= after renaming, so the replicator may seed those lengths on first sight; the sync of the durable base's own parent is best effort; a blocked restore whose thread never wakes leaves files under an abandoned run id that no selector names; an explicit =launch_mode: exec= cannot intercept a duplicate tmux session; the unselected service script keeps tmux prefix matching.
 
 * Verification
 
-- =tests/test_codex_state.py= + =tests/test_codex_state_runner.py=: 101 passed in 65 s at =f92298b= (bwrap, codex 0.162.1 and python3.6 all present on this node, no skips); =tests/test_codex_app_server.py=: 8 passed in 15 s; =tests/test_codex_context.py=: 14 passed.
-- Full suite at =270e9cb=: 1258 passed, 1 failed (the test fixed in =a95522e=); 81 s serially.
-- =/usr/bin/python3.6 -m py_compile= and =mypy --follow-imports=silent= clean on the runner; mypy on cli/mirror/config/codex_state: 69 errors, all baseline in =cli.py=, none introduced.
+- Full suite at =930eae4= in a clean worktree: 1348 passed, 0 failed, 209 s serially (1258 passed, 1 failed at =270e9cb= when the session began).
+- =tests/test_codex_state_runner.py=: 48 cases in 116 s; =tests/test_codex_state.py=: 118; =tests/test_codex_app_server.py=: 8 in 15 s; =tests/test_codex_context.py=: 14; all with bwrap, codex 0.162.1 and python3.6 present on this node, no skips.
+- =/usr/bin/python3.6 -m py_compile= and =mypy --follow-imports=silent= clean on the runner; mypy on cli/mirror/config/codex_state: 69 errors before and after (67 in =cli.py=, 2 in =mirror.py=, all pre-existing).
 - Real traffic under the Slice 2 runner: a nine-minute gpt-6-astra review session with tool calls, ten warm generations at the one-minute cadence (0.3-0.5 s each) and a sealed final one; the 1.1 MB rollout replicated with offset = replica = local size; 12 MB on Lustre for the run; the shared Codex home untouched (your own concurrent VS Code session on job 39919092 was the only writer there).
 - Real-model restore: that run's sealed generation =000011-4f2b18e6= (run =effbc1a47d31420f9fae86f24f840ddd=, scope =bb3bdae6...=, durable root =/global/scratch/fsa/fc_jevons/ligon/.sucoder-state-trial=) restored under =SUCODER_LOCAL_ROOT=/local/job39969504/trial-root2= (a simulated second allocation) with =codex exec resume <thread>=: 6 stores and the 1.1 MB rollout placed and verified, Codex resumed the thread under its original id and sent 123k tokens of restored history; the first attempt died on an upstream 503 (model at capacity; the final generation correctly came out =crash=), the retry reused the run in place (=--restore= ignored loudly), and gpt-6-astra answered from the restored history alone, naming the commit it had reviewed and its own top finding; sealed final generation on exit 0.
 
@@ -45,10 +49,10 @@ The earlier handoffs are preserved under [[file:handoffs/]]; the Slice 1 one is 
 
 * Next concrete actions
 
-1. Land the two review-fix passes (above), re-run both runner test modules and the full suite, and ask Codex to confirm each of its findings is resolved over =f074a5d..HEAD= (plain =codex exec= with the diff; =review --uncommitted= rejects a custom prompt).
-2. Refresh this note and the design record with the fix commit ids.
-3. Slice 3 per the design: timer checkpoint requests through =checkpoint.request=, =RemoteSession= metadata, renewal with acknowledged handoff, fencing, pins, retention.
-4. Clean-up candidates when done: the trial durable root above, =/local/job39969504/state/codex/= trial scopes, =/local/job39969504/trial-root2=, and the git worktrees under this session's scratchpad (=git worktree prune= after removing them).
+1. Read =codex-confirm6.md= in this session's scratchpad if it still exists (or re-run the confirmation: a plain =codex exec --sandbox read-only= asked to confirm the three items of =930eae4=); fix anything P1, otherwise stop the review loop here.
+2. Slice 3 per the design, in this order: (a) =slurm_timer.py= touches the run's =checkpoint.request= at the 30/15/5-minute warnings (the runner already honours the file); (b) a status surface (=sucoder= subcommand reading =status.json= through the executor: scope, run, replica age, last generation and class, pending work); (c) =RemoteSession= metadata and renewal with acknowledged handoff; (d) fencing, pins, retention; (e) =archived_sessions= in the bind set with replication, capture and restore covering it.
+3. Slice 4 pilot: enable =slurm.codex_state= on one disposable mirror first; the human's laptop config is where the flag lives.
+4. Clean-up when the human agrees: the trial durable root =/global/scratch/fsa/fc_jevons/ligon/.sucoder-state-trial= (about 50 MB: one real run with 35 generations plus the restore runs), the trial scopes under =/local/job39969504/state/codex/= and =/local/job39969504/trial-root2= (wiped with the job anyway), and the git worktrees under this session's scratchpad (=git worktree prune= after removing them).
 
 * Operational notes
 
@@ -56,6 +60,6 @@ The earlier handoffs are preserved under [[file:handoffs/]]; the Slice 1 one is 
 - Use =fc_jevons= for burst jobs; the full suite needs no burst (81 s serially here).
 - GitNexus cannot load on this node image (=libssl.so.3=); callers are grepped by hand and listed in commit messages.
 - =~/.sucoder/bulletin.org= still does not exist on this host.
-- This slice (job 39969504) is held; release with =sucoder release= when the review passes are done, unless Slice 3 starts.
+- This slice (job 39969504) is held with no work pending once the last confirmation is read; release with =sucoder release= unless Slice 3 starts in this session.
 
 Recorded by Sue.
