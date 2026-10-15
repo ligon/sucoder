@@ -1,4 +1,4 @@
-#+TITLE: Reviewed design for Codex node-local SQLite state
+#+TITLE: tmux placement for collaborate, agents-run and attach
 #+DATE: 2026-10-15
 #+STATUS: COMPLETE
 #+AUTHOR: Sue
@@ -6,46 +6,45 @@
 
 * Completed phase
 
-The user requested a detailed design and independent review before considering development on Savio.
-This phase delivered documentation only on branch =design/codex-local-state=, based on =main= at =ffd0447=.
-No runtime source, configuration parser, live cluster state or user Codex history was changed.
-The previous handoff is preserved in [[file:handoffs/2026-10-14-pending-poll-reason.org]].
+The human reported two mirror-image annoyances: a local =sucoder collaborate= started outside tmux is hard to manage, and a remote =sucoder -T savio collaborate= started inside tmux nests two tmuxes.
+This session added an early =$TMUX= check to =collaborate=, =agents-run= and =attach=, before any ssh or allocation, on branch =feat/tmux-nesting-check= cut from =ligon/main= at =cd1eb8f=.
+The previous handoff is preserved in [[file:handoffs/2026-10-15-codex-local-state-design.org]].
 
-* Artifacts
+* What changed
 
-- [[file:../docs/codex-local-state.org][Detailed design]] :: placement, identities, durable generations, transfer fencing, restore, release/renewal, failure contracts and validation slices.
-- [[file:../docs/codex-local-state-review.org][Independent review and dispositions]] :: two GPT-6 reviewer contexts, storage and lifecycle; original findings and confirmation passes.
-- [[file:../.coder/ledger.md][Prior-art ledger]] :: existing machinery/tests and current design invariants, with historical remote-control evidence retained.
+- [[file:../sucoder/tmux_env.py][sucoder/tmux_env.py]] (new) :: =detect()= reads =$TMUX= and asks the outer server for its session name and prefix; argv builders for =new-session=, =attach-session= and =switch-client=; the two warning texts.
+  Probes drop =$TMUX= from their environment so they always address the default server, and targets carry the ~=~ exact-match prefix.
+- =sucoder/cli.py:2227= =_tmux_launch_preamble= :: called first in =agents-run= (=cli.py:2425=) and =collaborate= (=cli.py:2560=).
+  Remote target inside tmux: one stderr note, then continue.
+  Local mirror outside tmux: =os.execvp= of =tmux new-session -s sucoder-<mirror> -c <cwd> "<the same command line>"=; the inner =sucoder= sees =$TMUX= and launches as before.
+  An existing session is attached rather than duplicated.
+  Non-TTY, =TERM=dumb=, no tmux, or =--no-tmux= (new flag on both commands) leave the launch in place with a one-line note; =--dry-run= describes the re-exec and stays.
+- =sucoder/cli.py:2300= =_attach_local= :: =attach= on a local mirror (=cli.py:2866=) switches the client when inside tmux on the default server, attaches otherwise, and explains when no session exists.
+  A remote =attach= inside tmux prints the nesting note before the ssh (=cli.py:2911=).
+- =README.org:370= :: new subsection /Where the agent session lives/; the =attach= table row and feature bullet updated.
+  No configuration keys were added, so =config.example.yaml= is unchanged.
 
 * Important choices
 
-- Keep =CODEX_HOME= and authentication in place; set absolute =sqlite_home= on the independently owned server.
-- Keep state outside the clone and Git, with private shared recovery generations and local active databases.
-- Installed Codex =0.162.1= has six observed SQLite databases, including separate thread history; test every required store and maintenance lock on Savio.
-- A warm per-database backup is not automatically an application-consistent bundle.
-Sealed status requires profile-verified graceful shutdown; crash candidates do not acquire that status merely because writers stopped.
-- Durable offer/claim/revoke records, lineage exclusivity and serialized parent pins prevent duplicate history owners and retention races.
-- Renewal keeps the old allocation alive after draining its service, launches a specifically authorized replacement, verifies real Codex readiness, then cancels the old allocation.
-The current confined adoption path can otherwise rediscover the old job even after session YAML is cleared (=sucoder/mirror.py:3058=).
-- Preserve both old and pending-new attempt records; a surviving tmux shell is not replacement readiness.
-- Concurrent restored forks are deferred until upstream thread/external-file isolation is established.
-
-* Next phase
-
-Use the design's Slice 0 for a disposable Savio capability spike before runtime implementation.
-The reviewers found no remaining written storage/lifecycle contradiction blocking that isolated spike.
-Production recovery still depends on complete redirection, independent server ownership, graceful shutdown, changed-cwd resume, safe queue/goal replay, cross-store recovery, and Lustre publication measurements.
-
-The conversation did not start or reserve a cluster allocation.
-Use a specifically authorized disposable allocation and synthetic Codex home/history; never move an active account's files or stop a peer daemon to run the spike.
-Read =~/.sucoder/bulletin.org= before diagnosing infrastructure failure; append observations before a repair.
-Record build/version, filesystem identity, exact commands, seeds, marker assertions and latency/backup measurements with the resulting handoff.
-Do not treat the ten-minute proposed capture interval as a guaranteed recovery bound.
+- The local launch is re-executed inside tmux rather than wrapping the agent command in tmux: the session then belongs to the human's own tmux server, and the launch itself (=sudo=, TTY, post-session hooks) is untouched.
+- The nested remote case is structural: the remote tmux is what survives disconnects and what =message=, =peek= and =renew= address.
+  The note names the outer session and prefix, and says =C-b C-b d= detaches the remote while =C-b d= detaches the local one; the README mentions the =key-table off= binding for people who nest often.
+- A bare =tmux has-session -t sucoder-Foo= is a prefix match and answers for =sucoder-FooBar= (checked on tmux 3.5a), hence the ~=~ prefix everywhere.
+- =switch-client= needs a current client, so it is only used when =detect()= says the outer tmux is the default server.
 
 * Verification
 
-Documentation links, source/example block pairs, ASCII source and Org lint are checked locally; see the review record for final results.
-No Python runtime behavior changed, so the full pytest suite was not rerun in this documentation phase.
-Implementation must add targeted real-SQLite/process tests, run pytest from the mirror root, and apply GitNexus impact/detect_changes as required by AGENTS.md.
+- =tests/test_tmux_env.py= (15 tests) and the tmux block at the end of =tests/test_cli.py= (13 tests) pass under =.venv/bin/python -m pytest=; the host =python= has no =typer=, so use the venv.
+- Full suite: 1195 passed, 6 failed; the same six fail on a scratch worktree of =ligon/main= at =cd1eb8f= and are environmental (pytest tmp-dir ownership for =ssh -G=, a umask-dependent mode assertion, an upstream =KeyError= in =test_codex_context=).
+  A worktree of this repository needs =git -c filter.git-crypt.smudge=cat -c filter.git-crypt.required=false worktree add=, because =.mcp.json= is git-crypt encrypted and the key is not unlocked under the coder account.
+- tmux semantics (exact match, =-c= start directory, =switch-client= outside a client) were smoke-tested on a private socket; the live re-exec from a real terminal was not exercised in this session, which had no TTY.
+- GitNexus =impact= on =collaborate= and =attach= resolved no callers; =detect_changes= attributed one hunk to =audit= from a stale index, and the diff hunks sit only in the two commands, =attach=, and the helper block.
+
+* Next phase
+
+- Try =sucoder collaborate <local mirror>= from a plain terminal: expect the "Starting the agent in local tmux session" note, the agent inside =sucoder-<mirror>=, and =sucoder attach <mirror>= to return to it.
+- Try =sucoder -T savio collaborate= from inside tmux: expect the nesting note before any ssh output.
+- =sessions=, =message= and =peek= still sweep clusters only and do not enumerate local =sucoder-<mirror>= sessions; adding the local server to the sweep is the natural follow-up.
+- The local session inherits the tmux server's environment, so a variable exported in the launching shell after that server started is not seen; if that bites, =tmux new-session -e= (tmux >= 3.2) could carry a chosen set.
 
 Recorded by Sue.
