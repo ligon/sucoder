@@ -1,0 +1,44 @@
+#+TITLE: Codex node-local SQLite state: Slice 0 spike complete; implementation next
+#+DATE: 2026-10-15
+#+STATUS: COMPLETE
+#+AUTHOR: Sue
+#+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Completed phase
+
+Slice 0 of [[file:../docs/codex-local-state.org][the design]] is done as far as it can be without the runner: the read-only inventory and outcomes 1--2 on the confined slice (job 39969504, n0033.savio4), then outcomes 3, 4, 7 and the Codex side of 5 on a disposable =co_carleton= job (39975196, n0038.savio4, 6 min 57 s, released on exit).
+Outcome 6 and the protocol half of outcome 5 exercise transfer, claim and publication machinery that does not exist yet; they belong to Slices 2--3.
+Branch =main=; no runtime source under =sucoder/= or =tests/= changed.
+The previous handoffs are preserved in [[file:handoffs/2026-10-15-slice0-inventory.org]] and [[file:handoffs/2026-10-15-codex-local-state-design.org]].
+
+* Artifacts
+
+- [[file:../docs/codex-local-state-spike.org][Spike record]] :: both phases; the final section holds the outcome tables, findings, a second set of design consequences, limits and next actions.
+- [[file:../scripts/codex_sqlite_placement_spike.py][Placement harness]], [[file:../scripts/codex_sqlite_placement_matrix.sh][its matrix]], [[file:../scripts/codex_state_outcomes.py][outcome drivers]] and [[file:../scripts/codex_state_outcomes_sbatch.sh][the burst job]] :: standalone, stdlib-only, isolated homes and a loopback fake model; nothing touches the real account.
+- [[file:../.coder/ledger.md][Ledger]] :: prior art (the 2026-10-01 live cutover tools under the real home), inventory results, outcome results.
+- Evidence :: =/global/scratch/fsa/fc_jevons/ligon/.sucoder-state-spike/job39969504/= (mode 0700): =evidence/= for the inventory cases, =evidence-outcomes/job39975196/= for the outcomes, Slurm outputs beside them, plus =smoke/= and =outcomes-job39975196/= scratch state that can be deleted.
+
+* Findings that change the design
+
+- =thread/resume= needs the rollout JSONL at the absolute path stored in =threads.path=; without it every history read fails, and the SQLite thread history is a projection the server rebuilds from the file.
+  The generation must record the rollout path and size, and restore must verify it; moving the home or rewriting the path stays out of scope.
+- Unattended =thread/resume= executes a queued message once and, with an =active= goal, issues about twenty model requests per second until stopped; =paused= is a usable hold for goals and the queue has none.
+  The runner must check =goals_1= and =queue_1= before resuming unattended.
+- Two servers with different homes on one =sqlite_home= are two writers with no refusal from Codex; lineage exclusivity stays the runner's job.
+- Median turn 0.51 s with everything on Lustre, 0.21 s with the databases local, 0.042 s with the home local as well: the rollout traffic is most of what remains after the databases move.
+- 20/20 seeded abrupt-stop interleavings restored every completed turn from warm and post-crash captures; cross-database skew at a crash remains unmeasured because =state_5= holds only the preview.
+- From the inventory phase: all six databases follow =sqlite_home= (=-c= over =config.toml= over =CODEX_SQLITE_HOME=); locks, =sessions/= and =history.jsonl= stay in =CODEX_HOME=; no silent fallback; stdin EOF leaves data in WAL.
+
+* Next phase
+
+Implementation can start at Slice 1 of the design against the measured contracts: absolute =sqlite_home= pre-created 0700, placement verified through =/proc/<pid>/fd=, rollout path and size in the manifest, goal and queue checks before unattended resume, one owner per lineage, sealed meaning a checkpointed close or a backup-API copy.
+Before production opt-in, repeat outcome 4 once with a real-model thread (a paused goal, a queued message) to confirm the hold is not an artifact of empty replies, and decide separately whether =sessions/= should move with the databases.
+Use =~/.sucoder/bulletin.org= (absent on this host; create it with a dated entry) before any infrastructure diagnosis.
+
+* Verification
+
+=git diff --check=, an ASCII scan, a =file:= link check and Emacs =org-lint= (0 findings) passed on the record and this handoff.
+The drivers were smoke-tested on job 39969504 before the burst; the burst's first submission (39975179) found the system Python 3.6 on n0038 and did nothing, and the batch script now resolves an interpreter explicitly.
+pytest was not rerun because no runtime path changed; =.gitnexus/= is absent from this clone, so =detect_changes= could not be run.
+
+Recorded by Sue.
