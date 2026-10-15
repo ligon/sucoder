@@ -224,7 +224,7 @@ Release = =scancel=.
    collaborate must show "PENDING / waiting for the scheduler".
 
 ** Must-keep fixes from the review (any in-cgroup launch)
-- =tmux new-session -A -d= (idempotent), not bare =-d=.
+- =tmux new-session -A -d= (idempotent), not bare =-d=; the one exception is a managed Codex launch with a history selection (=--codex-state-from= / =--codex-state-fresh=), which drops =-A= so that an existing session fails the launch instead of silently attaching and discarding the selection (see =docs/codex-local-state.org=, Slice 2 record).
 - Sanitize the tmux session name (only the prelude filename is today).
 - Bound every poll; log the *agent's* stderr, not just the launcher's.
 - Drop the =|| tmux new-session= attach fallback for =confined= targets.
