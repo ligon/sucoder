@@ -34,9 +34,21 @@ git clone -q --branch "${BRANCH:-main}" "$MIRROR" "$SUCODER_LOCAL_ROOT/mirrors/S
 cd "$SUCODER_LOCAL_ROOT/mirrors/SuCoder" || exit 1
 git log -1 --format='commit=%h %s'
 codex --version
-python3 --version
+# Node images differ: ~/.local/bin/python3 -> /usr/bin/python3.12 dangles on
+# some nodes and PATH then falls through to the system 3.6.  Resolve a usable
+# interpreter explicitly; the global-software build is reachable everywhere.
+PY=
+for cand in /usr/bin/python3.12 /usr/bin/python3.11 \
+    /global/software/rocky-8.x86_64/gcc/linux-rocky8-x86_64/gcc-8.5.0/python-3.11.6-jitbcnrgutxjywtsrijww5lahxpwak2c/bin/python3; do
+  if [ -x "$cand" ] && "$cand" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' 2>/dev/null; then
+    PY=$cand
+    break
+  fi
+done
+if [ -z "$PY" ]; then echo "no python >= 3.8 found"; exit 1; fi
+echo "python=$PY $("$PY" --version)"
 export SUCODER_REPO=$PWD SPIKE_ROOT=$SUCODER_LOCAL_ROOT/spike-codex-outcomes
-python3 -I scripts/codex_state_outcomes.py all --evidence "$EV" \
+"$PY" -I scripts/codex_state_outcomes.py all --evidence "$EV" \
   --turns "${TURNS:-6}" --runs "${RUNS:-20}" --reps "${REPS:-3}" --concurrency 2 \
   --latency-turns "${LATENCY_TURNS:-30}" --placements local,lustre,local_home \
   --watch "${WATCH:-30}" --seed 20261015 --lustre-root "$SUCODER_SHARED_STATE_TEST_ROOT" 2>&1 | tee "$EV/driver.log"
