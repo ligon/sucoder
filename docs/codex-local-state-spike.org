@@ -1,13 +1,13 @@
 #+title: Codex node-local SQLite state: Slice 0 inventory on Savio
 #+date: 2026-10-15
-#+status: Inventory and outcomes 1--2 complete; outcomes 3--7 open
+#+status: Inventory, outcomes 1--4 and 7, and the Codex side of 5 complete; outcome 6 and the protocol side of 5 await the runner
 #+author: Sue
 #+property: header-args :eval never-export :tangle no :results output :exports code
 
 * Scope and authorization
 
 This record covers the read-only inventory part of Slice 0 in [[file:codex-local-state.org][the design]] (its "Slice 0" section) together with spike outcomes 1 and 2: which SQLite stores and locks follow =sqlite_home= on the installed Savio build, and whether each launch mode owns an independent foreground server.
-The human authorized this part on the existing confined allocation; outcomes 3--7 (abrupt stops and restores, queue and goal replay, drain-and-seal races, injected failures, shared-versus-local latency) were not run and need a separate disposable allocation.
+The human authorized this part on the existing confined allocation; outcomes 3--7 were then run on a separate disposable allocation and are recorded in the final section.
 Read-only here means: every Codex launch used an isolated =HOME= and =CODEX_HOME= under a private spike root, a loopback fake model, and no credentials; nothing under the real Codex home was opened by the harness, and the strace classification below is the evidence that Codex did not open it either.
 No =daemon=, =doctor= or =remote-control= management command was run against the real home.
 The live managed daemon (pid 3630696, started 2026-10-14 20:56, working under =/local/job39919092/=) runs on another node and was left alone.
@@ -196,7 +196,7 @@ The =rollout_migration_*= tables and the =codex migrate-rollouts= subcommand sho
 6. In remote-control mode the embedded server creates a per-host control socket and lock under =/tmp/codex-daemon-<uid>/=, and a startup lock in =CODEX_HOME/app-server-control/=; the independent-ownership check must cover both, and an authenticated test is still required.
 7. Shared-home plugin and skill synchronization is the dominant non-SQLite I/O and is unaffected by placement; it belongs in the shared-home I/O budget, not the recovery generation.
 
-* Limits of this phase
+* Limits of the inventory phase
 
 - Single, uncontended runs; no latency, size or duration claim is made.
 - No abrupt stop, restore into another allocation, claim race, failure injection or replay test was run.
@@ -204,15 +204,176 @@ The =rollout_migration_*= tables and the =codex migrate-rollouts= subcommand sho
 - The =/tmp/codex-daemon= name derivation and the TUI's two warnings were not resolved.
 - Which component re-reads the rollout file, and whether resume depends on it, was not characterized.
 
-* Next actions
+* Outcomes 3--7 on a disposable allocation
 
-Run outcomes 3--7 from the design on a disposable =co_carleton= allocation, cloning this branch from the shared mirror into that job's own =/local=, with the test state root above as =SUCODER_SHARED_STATE_TEST_ROOT=.
-Start with outcome 3 restricted to the question raised in consequence 2: restore the six databases, with and without the rollout file, into a fresh home and check =thread/list= and =thread/resume= for the marker.
-Keep the harness's isolation rules; never point a case at the real home.
+** Scope and method
+
+The human authorized a separate =co_carleton= allocation for the remaining Slice 0 outcomes; it ran as Slurm job 39975196 on n0038.savio4 (4 cores, 16 GB, =--no-requeue=) between 14:04 and 14:11 UTC, cloning =main= at 944c156 from the shared mirror into its own =/local=.
+Outcome 6 and the protocol half of outcome 5 (claims, revocation, acknowledgements, pins, upload failures, scheduler errors) exercise the runner's transfer protocol, which does not exist yet; they are out of scope here and belong to Slices 2--3.
+What this job measured is Codex's own behavior with relocated state: outcome 3 (restore and the rollout dependency; abrupt-stop and capture interleavings), outcome 4 (queue and goal replay after resume), the Codex-facing half of outcome 5 (restart in place; two servers on one =sqlite_home=), and outcome 7 (placement latency).
+
+- Drivers :: [[file:../scripts/codex_state_outcomes.py][=scripts/codex_state_outcomes.py=]] (one sub-test per outcome, each writing =result.json= to the Lustre evidence directory as it completes) and [[file:../scripts/codex_state_outcomes_sbatch.sh][=scripts/codex_state_outcomes_sbatch.sh=]] (the job).
+  The driver reuses the fake model, process helpers and option builder of the placement harness, and its capture is the SQLite online-backup pattern of the 2026-10-01 =recovery-tools/snapshot.py= (per-database backup, =quick_check=, sha256, manifest); it never copies live database files.
+- Isolation :: every launch uses its own =HOME= and =CODEX_HOME= under the job's =/local= or the private Lustre test root, the loopback fake model and no credentials; the live daemon and the real home were not touched.
+- Deviations from the inventory runs :: =features.plugins=false= and =features.remote_plugin=false= suppress the 25 MB marketplace clone per fresh home (verified: no =.tmp/plugins-clone-*= appeared); the fake model answers every request with an empty completed response, which matters for outcome 4.
+- Parameters :: restore and interleaving threads of 6 turns; 20 interleavings from seed 20261015; replay watch 30 s; latency 30 timed turns per run, 3 repetitions per arm, concurrency 2; arms local, lustre, local_home.
+- Evidence :: =/global/scratch/fsa/fc_jevons/ligon/.sucoder-state-spike/job39969504/evidence-outcomes/job39975196/= (per-test =result.json=, =environment.json=, =driver.log=, the Slurm output one level up).
+  Smoke runs with tiny parameters on job 39969504 preceded submission; only the full-scale job's evidence is kept there.
+
+** Restore and the rollout dependency (outcome 3)
+
+One source server wrote a thread of 6 marker turns under =-c sqlite_home=A=; a warm capture was taken while it ran and a sealed capture after stdin EOF.
+Each cell restores one capture into a fresh directory and starts a new server, with the rollout JSONL either left at the absolute path recorded in the database, copied into a fresh home at the =CODEX_HOME=-relative path with the original hidden, or hidden entirely.
+Every cell then sends a follow-up turn and records which earlier markers the fake model received.
+
+| Cell | Home | Rollout at recorded path | =thread/list= | =thread/list= (state DB only) | =thread/read= | =thread/resume= | =thread/items/list= | =thread/turns/list= | History to model |
+|------+------+--------------------------+---------------+-------------------------------+---------------+-----------------+---------------------+--------------------+------------------|
+| original home sealed | original | present | found | found | ok | ok | ok | ok | 6/6 |
+| original home warm | original | present | found | found | ok | ok | ok | ok | 6/6 |
+| original home new cwd | original | present | found | found | ok | ok | ok | ok | 6/6 |
+| fresh home rollout at db path | fresh | present | not found | found | ok | ok | ok | ok | 6/6 |
+| fresh home rollout copied relative | fresh | hidden | found | not found | error | error | error | error | 0/6 |
+| fresh home rollout absent | fresh | hidden | not found | not found | error | error | error | error | 0/6 |
+| original home rollout absent | original | hidden | not found | not found | error | error | error | error | 0/6 |
+
+Findings:
+
+- The rollout file is required and the SQLite history is a projection of it.
+  With the file gone from the path stored in =threads.path=, =thread/resume= fails with "no rollout found for thread id", and =thread/read=, =thread/items/list= and =thread/turns/list= fail with "invalid paginated history lineage"; no history reaches the model.
+  That holds in the original home as well as a fresh one, and a copy at the =CODEX_HOME=-relative path does not help: the dependency is on the absolute path.
+  (The =thread_history_projection_state= table and the =rollout_migration_*= tables in =state_5= say the same thing from the schema side.)
+- With the file at its recorded path, a fresh =CODEX_HOME= resumes fully, including a different cwd on =thread/resume= and a follow-up turn whose model request carries the whole earlier conversation.
+  Default =thread/list= does not find the thread in a fresh home because it scans =CODEX_HOME/sessions=; =useStateDbOnly= finds it from the restored database.
+- Warm and sealed captures restore identically here; the difference between them is not visible through thread history because the server rebuilds the projection from the rollout on resume.
+- In the smoke runs the rollout accumulated follow-up turns from earlier cells, and every later cell saw them: a resumed thread shows whatever the rollout holds, not what the restored database holds.
+
+** Abrupt stops and captures (outcome 3, interleavings)
+
+20 seeded runs (base seed 20261015; per-run seed =base * 1000 + i=), each a fresh home and thread of 6 marker turns on =/local=, a warm capture started at a random fraction of a random turn, SIGKILL of the process group at a random fraction of a random later turn, then a post-crash capture from the files the killed process left.
+For each capture a fresh server restores it in the same home, with the rollout reset to its post-kill bytes, and the harness records the markers visible through =thread/resume= and =thread/items/list=, whether =thread/turns/list= agrees with =thread/items/list=, a byte search of the captured =thread_history_1.sqlite= and =state_5.sqlite= for markers, and a follow-up turn.
+A warm restore passes when every turn whose =turn/completed= preceded the start of the =thread_history= backup is visible and nothing not sent appears; a crash restore passes when nothing not sent appears and the follow-up turn works.
+
+All 20 warm captures and all 20 post-crash captures completed with =quick_check= ok on every database, opened read-only, in 11--24 ms each for 520 KB; all 20 of 20 runs passed both restores, and =thread/turns/list= agreed with =thread/items/list= in every restore.
+Every run was killed with a turn in flight.
+
+| Run | Seed | Capture at turn | Kill at turn | Completed before capture | Completed after | In flight at kill | In-flight message in crash capture | Warm restore | Crash restore | Visible after warm restore / in warm capture |
+|-----+------+-----------------+--------------+--------------------------+-----------------+-------------------+------------------------------------+--------------+---------------+----------------------------------------------|
+| 0 | 20261015000 | 2 | 4 | 2 | 2 | 2 | no | pass | pass | 4 / 2 |
+| 1 | 20261015001 | 3 | 3 | 3 | 0 | 3 | no | pass | pass | 3 / 3 |
+| 2 | 20261015002 | 3 | 5 | 3 | 2 | 1 | no | pass | pass | 5 / 4 |
+| 3 | 20261015003 | 0 | 0 | 3 | 1 | 2 | yes | pass | pass | 5 / 4 |
+| 4 | 20261015004 | 0 | 1 | 0 | 1 | 5 | no | pass | pass | 1 / 1 |
+| 5 | 20261015005 | 1 | 3 | 1 | 2 | 3 | yes | pass | pass | 4 / 2 |
+| 6 | 20261015006 | 2 | 5 | 2 | 3 | 1 | yes | pass | pass | 6 / 3 |
+| 7 | 20261015007 | 0 | 2 | 1 | 2 | 3 | no | pass | pass | 3 / 2 |
+| 8 | 20261015008 | 0 | 4 | 2 | 2 | 2 | yes | pass | pass | 5 / 2 |
+| 9 | 20261015009 | 4 | 4 | 5 | 0 | 1 | no | pass | pass | 5 / 5 |
+| 10 | 20261015010 | 0 | 4 | 3 | 1 | 2 | yes | pass | pass | 5 / 4 |
+| 11 | 20261015011 | 2 | 5 | 2 | 3 | 1 | yes | pass | pass | 6 / 3 |
+| 12 | 20261015012 | 3 | 5 | 4 | 1 | 1 | no | pass | pass | 5 / 4 |
+| 13 | 20261015013 | 0 | 0 | 2 | 0 | 4 | yes | pass | pass | 3 / 3 |
+| 14 | 20261015014 | 2 | 4 | 2 | 3 | 1 | no | pass | pass | 5 / 3 |
+| 15 | 20261015015 | 5 | 5 | 5 | 0 | 1 | yes | pass | pass | 6 / 6 |
+| 16 | 20261015016 | 3 | 3 | 3 | 0 | 3 | yes | pass | pass | 4 / 4 |
+| 17 | 20261015017 | 5 | 5 | 5 | 0 | 1 | yes | pass | pass | 6 / 6 |
+| 18 | 20261015018 | 5 | 5 | 5 | 0 | 1 | yes | pass | pass | 6 / 6 |
+| 19 | 20261015019 | 2 | 4 | 2 | 2 | 2 | no | pass | pass | 4 / 3 |
+
+Findings:
+
+- No completed turn was missing after any restore, warm or crash, and no unsent marker appeared.
+- In 12 of 20 runs the warm restore exposed more turns than its own =thread_history= capture contained (last column): the server rebuilt the projection from the rollout, which had kept growing after the capture.
+  The SQLite generation therefore fixes nothing by itself about which turns a resumed thread shows; the rollout does.
+- The byte search of the captured files is the only view of what the SQLite capture alone contained, because the server rebuilds thread history from the rollout on resume.
+  Every completed turn was present in every crash capture's =thread_history_1.sqlite=, and in 11 of the 20 runs the user message of the turn in flight at SIGKILL was already there too; after restore such a turn shows as a turn without completion.
+  =state_5.sqlite= holds only the thread's preview, so this search cannot measure skew between the databases; cross-database consistency of goals, queue and state rows at a crash remains unmeasured, and the design's warm-recovery gate stays open on that point.
+- These are 20 interleavings of a one-writer fake-model workload on ext4; they are regression evidence for this build, not a proof of cross-database atomicity.
+
+** Queue and goal replay (outcome 4)
+
+Four variants, each a fresh thread with one turn: a message queued with =codex queue= while the server was stopped; an active goal set with =thread/goal/set=; both; and a goal set active and then =paused= before the stop.
+After capture and restore, a fresh server received =thread/resume= and nothing else for 30 seconds.
+
+| Variant | =thread/resume= | Unprompted turns in 30 s | Model requests in 30 s | Requests per second, first five seconds | Queue rows before, after | Goal status after | Requests caused by the next client turn |
+|---------+-----------------+--------------------------+------------------------+------------------------------------------+--------------------------+-------------------+-----------------------------------------|
+| queue only | ok | 1 | 1 | 1, 0, 0, 0, 0 | 1, 0 | none | 1 |
+| goal only | ok | 448 | 447 | 28, 27, 21, 18, 18 | 0, 0 | active | 25 |
+| queue and goal | ok | 449 | 449 | 26, 27, 21, 20, 18 | 1, 0 | active | 25 |
+| goal paused | ok | 0 | 0 | 0, 0, 0, 0, 0 | 0, 0 | paused | 1 |
+
+Findings:
+
+- A persisted queue entry executes once, unprompted, on =thread/resume=: a =turn/started= and one model request carrying the queued text, and the =queued_items= row is consumed.
+- An active goal drives unprompted turns continuously after =thread/resume=: about twenty model requests per second for the whole watch window, each carrying the goal objective, with the goal still =active= afterwards and the next client turn itself producing dozens of requests.
+  With the fake model every reply is empty, so the goal loop never sees progress; with a real model each of those requests is paid.
+- A goal set to =paused= before the stop produced no unprompted activity at all after resume, and the next client turn produced one request: pausing is a usable hold for goals.
+- There is no comparable hold for the queue in the protocol; unattended resume of a thread with queued rows executes them.
+  A runner that resumes unattended must therefore either refuse while =queued_items= has rows for the thread, or accept the single execution; it must not resume a thread with an active goal unattended.
+
+** Restart in place and two writers (outcome 5, Codex side)
+
+- Restart in place :: a second server on the same =CODEX_HOME= and =sqlite_home= after a clean stop resumes the thread and the model receives the earlier history.
+- Same home, same databases, two servers :: the second =thread/resume= is refused with "thread <id> already has an active writer" (the =thread-writer-locks/<id>.lock= =flock=), and its =turn/start= fails with "thread not found"; the databases stay consistent.
+- Different homes, same databases, two servers :: both resume, both complete turns, =quick_check= stays =ok=, and both markers appear in the history afterwards.
+  Nothing in Codex prevents two writers when the per-thread lock lives in two different homes; that is the hazard the design's lineage exclusivity exists to prevent, measured.
+
+** Placement latency (outcome 7)
+
+Three arms with identical build, seeded fake-model workload and sequence: =local= (databases on =/local=, =CODEX_HOME= on Lustre, as the design proposes), =lustre= (both on Lustre, as production runs today), and =local_home= (both on =/local=, to show what the rollout traffic costs).
+Each run: start the server, one warm-up turn, 30 timed turns, stop, capture, restore into a new directory, restart and time the first =thread/list= and =thread/resume=.
+Arms alternate within each repetition so time-of-day drift cannot masquerade as a placement effect; two concurrent servers per arm follow the single runs.
+No strace was used in these runs.
+
+| Arm | Databases | =CODEX_HOME= | Concurrent servers | Runs | Turn p50 (s) | Turn p95 (s) | Startup (s) | =thread/start= (s) | Capture (s) | Capture bytes | Restart to first =thread/list= (s) | =thread/resume= (s) |
+|-----+-----------+--------------+--------------------+------+--------------+--------------+-------------+--------------------+-------------+---------------+-------------------------------------+---------------------|
+| local | /local | Lustre | 1 | 3 | 0.210 | 0.240 | 1.26 | 0.592 | 0.03 | 1822720 | 0.64 | 0.896 |
+| local | /local | Lustre | 2 | 2 | 0.198 | 0.222 | 1.24 | 0.596 | 0.03 | 1818624 | 0.58 | 0.867 |
+| lustre | Lustre | Lustre | 1 | 3 | 0.510 | 0.620 | 5.31 | 0.756 | 0.60 | 1789952 | 1.30 | 1.535 |
+| lustre | Lustre | Lustre | 2 | 2 | 0.501 | 0.563 | 5.25 | 0.722 | 0.73 | 1804288 | 1.31 | 1.526 |
+| local home | /local | /local | 1 | 3 | 0.042 | 0.050 | 0.37 | 0.043 | 0.03 | 1835008 | 0.31 | 0.072 |
+| local home | /local | /local | 2 | 2 | 0.048 | 0.065 | 0.33 | 0.026 | 0.02 | 1837056 | 0.27 | 0.051 |
+
+Medians over the runs in each row; no turn failed in any run.
+
+Findings:
+
+- Moving only the databases to =/local= took the median turn from 0.51 s to 0.21 s, server startup from 5.3 s to 1.3 s, the capture from 0.60 s to 0.03 s, restart to first =thread/list= from 1.3 s to 0.6 s and =thread/resume= from 1.5 s to 0.9 s.
+- Moving the home as well took the median turn to 0.042 s, startup to 0.37 s and =thread/resume= to 0.07 s: of the 0.47 s per turn between all-Lustre and all-local, the databases account for 0.30 s and the rest of the home, chiefly the rollout append and re-reads, for 0.17 s.
+- Two concurrent servers changed none of the medians by more than a few hundredths of a second in any arm; this workload does not contend with itself at that level.
+- Per-turn p95 stayed within 25 percent of p50 in every row except the two-server local-home runs (35 percent, a 17 ms spread); in absolute terms the Lustre runs were the most variable, with a 0.11 s gap between p50 and p95.
+- These are single-node samples between 14:08 and 14:11 UTC under whatever load =/global/scratch= carried at the time; they are not a speedup claim and the design should not quote them as one.
+
+** Consequences for the design, second set
+
+1. The recovery generation is incomplete without the thread's rollout file: resume needs it at the absolute path recorded in =threads.path=.
+   Since =CODEX_HOME= stays shared and constant in the design, the file is already durable by location; what the generation must record is the rollout path and its size or hash at capture time, and restore must verify that the file is present and at least that long before claiming the generation resumable.
+   Moving =CODEX_HOME= itself, or restoring into a different home path, would require rewriting =threads.path=, which the design rightly forbids as a guessed fix; it stays out of scope.
+2. The rollout is also where the latency is: with the databases local and the home on Lustre a turn took 0.21 s at the median, against 0.51 s with everything on Lustre and 0.042 s with everything on =/local=.
+   The design's choice to move only the databases buys part of the improvement; the rest needs the sessions directory somewhere with cheap appends, which is a separate decision with its own durability questions.
+3. Unattended continuation must check =goals_1= and =queue_1= before =thread/resume=: refuse or require explicit confirmation when the thread has an =active= goal or queued rows, and offer =paused= as the hold for goals.
+   The design's fallback, that unattended recovery of such a profile is unsupported, is the measured outcome for queued work.
+4. Lineage exclusivity cannot be delegated to Codex: two homes on one =sqlite_home= are two writers.
+   The runner's single-owner rule and its placement check through =/proc/<pid>/fd= remain necessary.
+5. Cross-database consistency at a crash remains unmeasured: =state_5= holds only the thread preview, so the byte search of the captures cannot see skew, and the protocol hides it by rebuilding history from the rollout.
+   The sealed-only rule for automatic continuation stands until a recovery test covers goals, queue and state rows, which have no rollout to rebuild from.
+
+** Limits
+
+- Fake-model workloads only; no tool calls, approvals, attachments or compaction were exercised, so the inventory of rollout-dependent features is a lower bound.
+- The latency arms are one node, one afternoon, two concurrency levels.
+- Interleavings cover one writer and 20 seeds.
+- Remote control was not exercised beyond the inventory phase.
+
+** Next actions
+
+- Implementation (Slice 1 onward) can proceed against these contracts: absolute =sqlite_home=, pre-created 0700, placement verified through =/proc=, rollout recorded in the manifest, goal and queue checks before unattended resume, single owner per lineage.
+- Before production opt-in, repeat outcome 4 with a real-model thread once (a paused goal, a queued message) to confirm the hold behavior is not an artifact of empty replies.
+- Decide separately whether the sessions directory should move with the databases.
 
 * Local document checks
 
-Recorded with the commit: =git diff --check=, Emacs =org-lint= on this file, an ASCII scan, and a check that every =file:= link target exists.
-No Python runtime path changed, so pytest was not rerun; GitNexus is not installed in this clone (=.gitnexus/= is generated and absent), so =detect_changes= could not be run and the change set is documentation and standalone scripts only.
+Recorded with each commit: =git diff --check=, Emacs =org-lint= on this file, an ASCII scan, and a check that every =file:= link target exists.
+The outcome drivers were smoke-tested with tiny parameters on job 39969504 before the burst job ran them at full scale.
+No Python runtime path under =sucoder/= changed, so pytest was not rerun; GitNexus is not installed in this clone (=.gitnexus/= is generated and absent), so =detect_changes= could not be run and the change set is documentation and standalone scripts only.
 
 Recorded by Sue.

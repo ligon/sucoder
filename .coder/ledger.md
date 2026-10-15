@@ -273,3 +273,15 @@ on n0033.savio4 (4 cores, confined cgroup):
   `--no-daemon` server creates `/tmp/codex-daemon-<uid>/<hash>` and needs
   credentials to go further. Stdin EOF leaves all data in WAL. Full record:
   `docs/codex-local-state-spike.org`.
+- Outcomes 3-7 (same day, job 39975196 on n0038.savio4, `scripts/codex_state_outcomes.py`,
+  record section "Outcomes 3--7"): `thread/resume` needs the rollout JSONL at the
+  absolute path in `threads.path`; without it every history read fails and the
+  SQLite history is only a projection that the server rebuilds from the file.
+  20/20 seeded abrupt-stop interleavings restored every completed turn from both
+  warm and post-crash captures. Unattended `thread/resume` executes a queued
+  message once and, with an active goal, issues ~20 model requests per second
+  indefinitely; a goal set to `paused` is a usable hold, the queue has none. Two
+  servers with different homes on one `sqlite_home` are two writers with no
+  refusal; the same home refuses the second with "already has an active writer".
+  Median turn 0.51 s all-Lustre, 0.21 s databases-local, 0.042 s home-local too.
+  Outcome 6 and the protocol half of 5 need the runner and were not run.
