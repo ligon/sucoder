@@ -176,6 +176,41 @@ def skew(args, root, lustre, evidence):
         cell["rollout_before"] = before
         cell["rollout_after"] = {"rollout_bytes": (sessions / rel).stat().st_size, "rollout_sha": sha(sessions / rel), "changed": sha(sessions / rel) != before["rollout_sha"]}
         cell["new_files_in_sessions"] = sorted(str(p.relative_to(sessions)) for p in sessions.rglob("*") if p.is_file() and p != sessions / rel)
+
+    # database ahead, extended: does the projection ever catch up, and what does it hold afterwards?
+    def projection(sqlite_dir):
+        c = sqlite3.connect(f"{(pathlib.Path(sqlite_dir) / 'thread_history_1.sqlite').as_uri()}?mode=ro", uri=True, timeout=5)
+        row = c.execute("select next_rollout_byte_offset, next_rollout_ordinal from thread_history_projection_state where thread_id = ?", (tid,)).fetchone()
+        turns = c.execute("select count(*) from thread_turns").fetchone()[0]
+        c.close()
+        return {"next_rollout_byte_offset": row[0] if row else None, "next_rollout_ordinal": row[1] if row else None, "thread_turns": turns}
+    sessions = b.local / "sessions-db_ahead_extended"
+    (sessions / rel).parent.mkdir(parents=True, mode=0o700)
+    shutil.copyfile(b.local / f"rollout-after-{N - 2}.jsonl", sessions / rel)
+    o.restore(b.local / f"backup-after-{N}", b.local / "sqlite-db_ahead_extended")
+    ext = {"rollout_bytes_restored": (sessions / rel).stat().st_size, "steps": []}
+    bb = b.rebind(sessions)
+    s = bb.server("db_ahead_extended", b.local / "sqlite-db_ahead_extended")
+    s.rpc("thread/resume", {"threadId": tid})
+    ext["steps"].append({"step": "after resume", **projection(b.local / "sqlite-db_ahead_extended"), "rollout_bytes": (sessions / rel).stat().st_size})
+    for k in (10, 11, 12):
+        t = s.turn(tid, f"SPKM_dbx_{k}")
+        time.sleep(0.3)
+        ext["steps"].append({"step": f"after turn {k}", "ok": t["ok"], "model_markers": sorted(s.model_seen[-1]["markers"]) if s.model_seen else None,
+                             **projection(b.local / "sqlite-db_ahead_extended"), "rollout_bytes": (sessions / rel).stat().st_size})
+    s.stop()
+    s2 = bb.server("db_ahead_extended_restart", b.local / "sqlite-db_ahead_extended")
+    s2.rpc("thread/resume", {"threadId": tid})
+    t = s2.turn(tid, "SPKM_dbx_13")
+    time.sleep(0.5)
+    ins = s2.inspect(tid)
+    ext["after_restart"] = {"turn_ok": t["ok"], "model_markers": sorted(s2.model_seen[-1]["markers"]) if s2.model_seen else None,
+                            "read_paths": {k: sorted(v.get("markers", [])) for k, v in ins.items() if k in ("resume", "items", "turns", "read")},
+                            **projection(b.local / "sqlite-db_ahead_extended")}
+    s2.stop()
+    result["db_ahead_extended"] = ext
+    print("  db_ahead_extended:", [(x["step"], x["thread_turns"], x["next_rollout_byte_offset"], x["rollout_bytes"]) for x in ext["steps"]],
+          "| after restart: model", ext["after_restart"]["model_markers"], "| items", ext["after_restart"]["read_paths"]["items"], flush=True)
     return o.write_result(evidence, "skew", result)
 
 
@@ -279,8 +314,10 @@ def tui(args, root, lustre, evidence):
     result = {"started_utc": o.utc(), "pane": subprocess.run([*tmux, "capture-pane", "-p", "-t", "c"], capture_output=True, text=True).stdout,
               "procs": [(p["comm"], len([x for x in p["paths"] if ".sqlite" in x or ".jsonl" in x])) for p in procs],
               "fd_paths": sorted({x for p in procs for x in p["paths"] if ".sqlite" in x or ".jsonl" in x or ".lock" in x})}
-    subprocess.run([*tmux, "send-keys", "-t", "c", "SPKM_tui_2", "Enter"], capture_output=True)
-    time.sleep(6)
+    subprocess.run([*tmux, "send-keys", "-t", "c", "SPKM_tui_2"], capture_output=True)
+    time.sleep(1)
+    subprocess.run([*tmux, "send-keys", "-t", "c", "Enter"], capture_output=True)
+    time.sleep(10)
     t1 = time.time()
     result["pane_after_second_prompt"] = subprocess.run([*tmux, "capture-pane", "-p", "-t", "c"], capture_output=True, text=True).stdout
     for keys, wait in ((["/quit", "Enter"], 5), (["C-c"], 2), (["C-c"], 2)):
