@@ -1,0 +1,69 @@
+#+title: Why a confined job waits, and --time for one launch
+#+date: 2026-10-14
+#+status: COMPLETE
+#+author: Sue
+#+property: header-args :eval never-export :tangle no :results output :exports code
+
+* Mission
+
+A =sucoder -T carleton-htc collaborate= sat at "waiting for RUNNING..."
+printing one =squeue= progress line per 15s poll and saying nothing
+about why; after ten minutes it would have given up with "still
+PENDING".  The likely cause was a BRC maintenance reservation that the
+target's =--time=12-00:00:00= could not clear.  Previous handoff:
+[[file:handoffs/2026-09-22-retention-sweep-and-messaging.org]].
+
+* What landed
+
+Branch =fix/pending-poll-reason=, two commits on local =main=
+(df2f7b4).  The =coder= account cannot push (the =github= remote has no
+credentials here; =ligon= is =no_push=), so the push and the PR are the
+human's.
+
+1. 3070daf :: =_poll_confined_node= (sucoder/mirror.py:2801) asks
+   =squeue= for =%T|%N|%r|%S=, logs the pending reason and estimated
+   start once and again on change, heartbeats about every 2 min, prints
+   a progress line for the first probe only (the 52379fa rule), and puts
+   the reason in the timeout error.  =_pending_hint=
+   (sucoder/mirror.py:278) names the =--time= request and the two
+   ways to shorten it when the reason is =ReqNodeNotAvail= or a QOS
+   wall-duration limit.
+2. 5ff2791 :: =sucoder --time LIMIT= on the main callback
+   (sucoder/cli.py:1747), validated against SLURM's time grammar
+   (=_SLURM_TIME_RE=, sucoder/cli.py:1385), refused without a SLURM
+   target, applied in =_build_executor= (sucoder/cli.py:684) to the
+   target's =SlurmConfig= before anything is submitted.  README
+   documents it beside the slurm target keys.
+
+* Verified, and not
+
+- Full suite under =.venv/bin/python=: 1072 pass.  Six failures in
+  =tests/test_direct_remote.py= and =tests/test_timer_lifecycle.py= are
+  environmental under this account (umask 0007: directories come out
+  0750 where the tests expect 0755; =ssh -G= rejects the pytest tmpdir's
+  =ssh_config= for "Bad owner or permissions").  Not touched.
+- *Not run live*: no warm ControlMaster under =coder=, so the cluster
+  was not queried; the maintenance-reservation diagnosis is inferred
+  from the 12-day request and the human's recollection of a notice.
+  On first live use, =squeue --job 39917554 -o '%T %r %S'= on a login
+  node should show the reason the new poll would have printed.
+
+* Constraints learned
+
+- =git worktree add= fails here: =.mcp.json= carries a git-crypt smudge
+  filter and =coder= holds no key.  Compare against =main= with
+  =git show main:<path>= instead.
+- =detect_changes= on pure insertions names every line-shifted
+  neighbour as "touched" and rates the diff critical; read the hunk
+  headers (=git diff -U0 | grep '^@@'=) before believing it.
+
+* Next
+
+- Push =fix/pending-poll-reason= and open the PR (two commits, no issue
+  references).
+- Job 39917554 is still recorded for AggregationWithLimitedCommitment
+  on carleton-htc: either =scontrol update jobid=39917554
+  TimeLimit=<d-hh:mm:ss>= so it fits before the reservation, or
+  =sucoder release= and relaunch with =--time=.
+- =slurm.time= is unvalidated at config load; =_SLURM_TIME_RE= could
+  move to =config.py= and check both the key and the flag.
