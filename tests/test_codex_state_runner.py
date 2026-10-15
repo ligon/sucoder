@@ -2427,7 +2427,10 @@ def test_a_reused_run_takes_over_its_unsynced_generation(runner, tmp_path, home)
     generation is reused with that record as the pending sync, so the first
     capture's retry acknowledges it (in process: adopt, then retry); the
     wiring in run() is exercised by a relaunch under the subprocess harness.
-    A record that names no generation directory under this run is ignored."""
+    A record not shaped like this run's published record (its keys, a
+    generation name, this run's generations/<name> as the path) is ignored;
+    whether the generation is still there is the retry's business (see
+    test_adopt_unsynced_judges_the_record_alone_and_the_retry_checks_the_generation)."""
     h = InProcess(runner, tmp_path)
     h.replicator.pass_once()
     assert h.capture() == ("published", None)
@@ -2496,3 +2499,225 @@ def test_manifest_counts_must_be_integers(runner, tmp_path):
         with pytest.raises(runner.Refused, match="malformed \\(TypeError: databases\\[state_5.sqlite\\].bytes is"):
             runner.check_manifest(bad, *launch)
     assert runner.require_int(0, "x") == 0 and runner.require_int(7, "x") == 7
+
+
+def _bounded_restore(runner, h, selector, local_root, run_id):
+    """``restore_bounded``'s arguments for a new run under ``local_root``
+    against the harness's durable root, as run() builds them: (local run
+    directory, durable run directory, attempt, args)."""
+    local = local_root / "state" / "codex" / h.scope / run_id
+    home_local = local / "home"
+    for directory in (local, home_local, local / "snapshots"):
+        directory.mkdir(parents=True)
+    durable = h.durable_base / "codex" / h.scope
+    durable_run = durable / "runs" / run_id
+    created = time.time()
+    meta = {"format": 1, "scope": h.scope, "run": run_id, "parent": None, "allocation": {"job": None, "node": "test"},
+            "codex_home": str(h.codex_home), "codex_home_real": str(h.codex_home), "created": created, "created_iso": runner.utc_iso(created)}
+    status = runner.Status(str(local / "status.json"))
+    attempt = runner.RestoreAttempt(str(local), str(home_local), str(durable_run))
+    args = (runner.parse_selector(selector), str(durable), str(h.durable_base), h.scope, meta, False,
+            str(local), str(home_local), str(durable_run), status, attempt)
+    return local, durable_run, attempt, args
+
+
+def test_the_fence_and_the_activation_exclude_each_other(runner, tmp_path, monkeypatch):
+    """Residual 1: the restore deadline passes while the thread is activating.
+    Fence first (the thread parked just before the activation's lock, at the
+    rollouts sync): Blocked, and the thread, waking up, refuses at the lock
+    and rolls back everything, db/ included.  Activation first (the thread
+    parked inside the lock, mid-rename, until restore_bounded waits for the
+    lock): the renames complete under the lock, restore_bounded finds db/
+    installed, does not fence and returns the result; nothing is both
+    reported blocked and installed."""
+    h, selector = _published(runner, tmp_path)
+    before = _tree(h.durable_run)
+    generation = selector.split("/")[1]
+
+    # -- fence first
+    local, durable_run, attempt, args = _bounded_restore(runner, h, selector, tmp_path / "local-a", "a" * 32)
+    release, parked = threading.Event(), threading.Event()
+    real_fsync = runner.fsync_path
+
+    def parking_fsync(path):
+        if path == str(durable_run / "rollouts"):     # activate_restore, after the last pre-lock fence check
+            parked.set()
+            release.wait(30)
+        real_fsync(path)
+    monkeypatch.setattr(runner, "fsync_path", parking_fsync)
+    started = time.monotonic()
+    with pytest.raises(runner.Blocked) as blocked:
+        runner.restore_bounded(1.0, attempt, *args)
+    assert 1.0 <= time.monotonic() - started < 5.0
+    assert "the durable side has not answered in 1s while activating" in str(blocked.value)
+    assert parked.is_set() and attempt.fenced and not attempt.db_installed and not attempt.sessions_installed
+    assert (durable_run / "rollouts" / f"{TID}.jsonl").exists(), "the replica had been renamed to its final name before the park"
+    workers = [t for t in threading.enumerate() if t.name == "codex-state-restore"]
+    assert len(workers) == 1 and workers[0].is_alive()
+    release.set()
+    workers[0].join(30)
+    assert not workers[0].is_alive()
+    monkeypatch.setattr(runner, "fsync_path", real_fsync)
+    assert not (local / "db").exists() and not (local / "home" / "sessions").exists() and not (local / "run.json").exists()
+    assert not (local / "restore-staging").exists() and not durable_run.exists()
+    assert attempt.db_installed is False and attempt.sessions_installed is False
+    log = _log(tmp_path)
+    assert "the abandoned restore thread ended: fenced: the launch already reported this restore blocked" in log
+    assert "restore rolled back: removed" in log and str(local / "restore-staging") in log and str(durable_run) in log
+    assert "the launch takes the result" not in log and _tree(h.durable_run) == before
+
+    # -- activation first
+    local2, durable_run2, attempt2, args2 = _bounded_restore(runner, h, selector, tmp_path / "local-b", "b" * 32)
+
+    class Instrumented:
+        """The attempt's lock, telling the parked thread when restore_bounded is waiting for it."""
+
+        def __init__(self, lock):
+            self.lock = lock
+            self.waiting = threading.Event()
+
+        def __enter__(self):
+            if threading.current_thread().name != "codex-state-restore":
+                self.waiting.set()
+            self.lock.acquire()
+
+        def __exit__(self, *exc):
+            self.lock.release()
+    attempt2.lock = Instrumented(attempt2.lock)
+    parked2 = threading.Event()
+    real_rename = os.rename
+
+    def parking_rename(src, dst, *more, **kwargs):
+        if str(src).endswith("restore-staging/db"):       # inside the lock, past its fence check
+            parked2.set()
+            assert attempt2.lock.waiting.wait(30), "restore_bounded never came for the lock"
+        return real_rename(src, dst, *more, **kwargs)
+    monkeypatch.setattr(runner.os, "rename", parking_rename)
+    started = time.monotonic()
+    try:
+        restored, pending = runner.restore_bounded(1.0, attempt2, *args2)
+    finally:
+        monkeypatch.setattr(runner.os, "rename", real_rename)
+    assert 1.0 <= time.monotonic() - started < 5.0
+    assert parked2.is_set() and attempt2.db_installed and attempt2.sessions_installed and not attempt2.fenced
+    assert restored["generation"] == generation and restored["run"] == h.run_id and pending == {"active_goals": [], "queued": {}}
+    assert (local2 / "db" / "state_5.sqlite").is_file() and (local2 / "home" / "sessions" / h.relative).is_file()
+    assert (local2 / "run.json").is_file() and (durable_run2 / "run.json").is_file() and not (local2 / "restore-staging").exists()
+    assert (durable_run2 / "rollouts" / f"{TID}.jsonl").read_bytes() == h.replica.read_bytes()
+    assert not [t for t in threading.enumerate() if t.name == "codex-state-restore"], "joined: the result is complete"
+    log = _log(tmp_path)
+    assert "the restore deadline of 1s passed after the activation had landed; the launch takes the result" in log
+    assert log.count("rolled back") == 1 and "fenced" not in log.split("the launch takes the result")[1]
+    assert _tree(h.durable_run) == before
+
+
+def test_a_created_ancestors_parent_must_sync(runner, tmp_path, monkeypatch):
+    """Residual 2: while creating the missing ancestors above the durable
+    base, a failing sync is tolerated only for a parent that existed before
+    the call (the operator's directory); the sync of a parent this call
+    created raises Refused naming it, for the ancestors and for the base
+    alike."""
+    real = runner.fsync_path
+    failing = set()
+
+    def refusing(path):
+        if path in failing:
+            raise OSError(5, "Input/output error")
+        real(path)
+    monkeypatch.setattr(runner, "fsync_path", refusing)
+
+    # the parent of a created ancestor, created by this call as well
+    base = tmp_path / "p" / "q" / "r" / "durable"
+    failing.add(str(tmp_path / "p" / "q"))
+    with pytest.raises(runner.Refused) as refused:
+        runner.ensure_durable_run(str(base / "codex" / "ab" / "runs" / "11"), str(base))
+    assert str(refused.value) == (f"created {tmp_path / 'p' / 'q' / 'r'} but could not sync its parent directory {tmp_path / 'p' / 'q'} "
+                                  "(OSError: [Errno 5] Input/output error), which this launch created as well; a durable tree below it "
+                                  "would depend on an unsynced name")
+    assert (tmp_path / "p" / "q" / "r").is_dir() and not base.exists(), "stopped at the failed sync"
+
+    # the base's own parent, created by this call
+    failing.clear()
+    failing.add(str(tmp_path / "s"))
+    base2 = tmp_path / "s" / "durable"
+    with pytest.raises(runner.Refused, match="cannot create the durable run directory .*: \\[Errno 5\\] Input/output error"):
+        runner.ensure_durable_run(str(base2 / "codex" / "ab" / "runs" / "11"), str(base2))
+    assert not (base2 / "codex").exists()
+
+    # the pre-existing parent of the first created ancestor: tolerated, logged
+    failing.clear()
+    failing.add(str(tmp_path))
+    base3 = tmp_path / "t" / "u" / "durable"
+    runner.ensure_durable_run(str(base3 / "codex" / "ab" / "runs" / "11"), str(base3))
+    assert (base3 / "codex" / "ab" / "runs" / "11" / "generations").is_dir()
+    assert f"created {tmp_path / 't'} but could not sync its parent directory (OSError: [Errno 5] Input/output error); the parent is the operator's and the launch goes on" in _log(tmp_path)
+    assert "created %s but could not sync" % (tmp_path / "t" / "u") not in _log(tmp_path), "t was created and synced fine"
+
+
+def test_adopt_unsynced_judges_the_record_alone_and_the_retry_checks_the_generation(runner, tmp_path, monkeypatch):
+    """Residual 3: adopt_unsynced runs in run() before child.wait(), so it
+    touches no filesystem: a record is taken over when it has the published
+    record's keys, a generation name and exactly this run's generations/<name>
+    as its path ({"name": "/tmp", "path": "/tmp"} is not).  retry_sync, on the
+    capture's worker, drops a record whose generation directory or
+    manifest.json is gone instead of acknowledging it, and keeps one whose
+    stat fails otherwise for the next retry."""
+    h = InProcess(runner, tmp_path)
+    h.replicator.pass_once()
+    assert h.capture() == ("published", None)
+    published = h.cp.last_generation
+    record = dict(published, sync_warning="OSError: [Errno 5] Input/output error")
+    gone = dict(record, name="000009-00000000", path=str(h.generations / "000009-00000000"))
+    h.cp.last_generation = None
+
+    def touched(*args, **kwargs):
+        raise AssertionError("adopt_unsynced touched the filesystem: %r" % (args,))
+    with monkeypatch.context() as m:
+        for name in ("isdir", "isfile", "exists", "lexists", "realpath"):
+            m.setattr(runner.os.path, name, touched)
+        for name in ("stat", "lstat", "listdir"):
+            m.setattr(runner.os, name, touched)
+        for bad in ({"name": "/tmp", "path": "/tmp"},
+                    dict(record, path="/tmp"),
+                    dict(record, path=str(h.generations.parent / "elsewhere" / published["name"])),
+                    dict(record, name="../" + published["name"], path=str(h.generations / ".." / published["name"])),
+                    dict(record, name=published["name"] + "0", path=str(h.generations / (published["name"] + "0"))),
+                    dict((k, v) for k, v in record.items() if k != "trigger"),
+                    dict(record, name=["x"], path=str(h.generations / "x"))):
+            assert h.cp.adopt_unsynced(bad) is False and h.cp.pending_sync is None, bad
+        assert h.cp.adopt_unsynced(gone) is True and h.cp.pending_sync is gone, "well shaped, whether or not it still exists"
+    assert "status.json records an unusable unsynced_generation ({'name': '/tmp', 'path': '/tmp'}); it is not taken over" in _log(tmp_path)
+    assert "generation 000009-00000000 of the reused run is not acknowledged yet" in _log(tmp_path)
+
+    # the retry finds no such generation directory: dropped, not acknowledged
+    h.cp.retry_sync()
+    assert h.cp.pending_sync is None and h.cp.last_generation is None
+    assert f"generation 000009-00000000 is dropped, not acknowledged: {h.generations / '000009-00000000'} or its manifest.json is gone" in _log(tmp_path)
+    assert h.status_json()["unsynced_generation"] is None and h.status_json()["last_generation"] == published, "not promoted"
+
+    # a directory without its manifest.json is gone as well
+    (h.generations / "000009-00000000").mkdir()
+    assert h.cp.adopt_unsynced(gone) is True
+    h.cp.retry_sync()
+    assert h.cp.pending_sync is None and h.cp.last_generation is None
+    assert _log(tmp_path).count("is dropped, not acknowledged") == 2
+
+    # a stat that fails otherwise keeps the record for the next retry
+    assert h.cp.adopt_unsynced(record) is True and h.cp.pending_sync is record
+    real_stat = os.stat
+
+    def failing_stat(path, *more, **kwargs):
+        if str(path) == record["path"]:
+            raise OSError(5, "Input/output error")
+        return real_stat(path, *more, **kwargs)
+    with monkeypatch.context() as m:
+        m.setattr(runner.os, "stat", failing_stat)
+        h.cp.retry_sync()
+    assert h.cp.pending_sync is record and h.cp.last_generation is None
+    assert (f"generation {record['name']} is still not acknowledged: {record['path']} cannot be checked (OSError: [Errno 5] Input/output error); "
+            "retried before the next capture") in _log(tmp_path)
+
+    # and acknowledged once the generation is seen and generations/ syncs
+    h.cp.retry_sync()
+    assert h.cp.pending_sync is None and h.cp.last_generation["name"] == record["name"] and "sync_warning" not in h.cp.last_generation
+    assert h.status_json()["last_generation"]["name"] == record["name"] and h.status_json()["unsynced_generation"] is None

@@ -55,8 +55,10 @@ What it does, per ``docs/codex-local-state.org`` ("Revision after Slice 0"):
   included) removes what the attempt created and nothing else; a durable
   side that does not answer within the restore deadline leaves the launch
   ``blocked`` (the abandoned restore thread is fenced: it writes nothing
-  more and rolls back if it wakes up).  Nothing verifies, nothing is placed
-  and Codex does not start;
+  more and rolls back if it wakes up; a deadline that passes once the
+  activation's local renames have landed does not fence, the launch takes
+  the result).  Nothing verifies, nothing is placed and Codex does not
+  start;
 - reuses this allocation's latest run in place when it still has its
   databases and nobody holds them (recorded pids dead, unknown ownership
   refuses), under the same canonical ``CODEX_HOME`` and the same durable run
@@ -137,6 +139,9 @@ LOCAL_BUNDLES_KEPT = 3
 # ``--restore RUN/GENERATION`` names history under DURABLE/runs, never a path.
 RESTORE_SELECTOR = re.compile(r"^([0-9a-f]{32})/([0-9]{6}-[0-9a-f]{8})$")
 RUN_ID = re.compile(r"^[0-9a-f]{32}$")
+GENERATION_NAME = re.compile(r"^[0-9]{6}-[0-9a-f]{8}$")
+# The keys of the record ``Checkpointer.publish`` returns (status.json's last_generation and unsynced_generation).
+PUBLISHED_RECORD_KEYS = ("name", "class", "published_at", "manifest_sha256", "path", "trigger")
 GENERATION_CLASSES = ("sealed", "warm", "crash")
 
 
@@ -567,9 +572,15 @@ def stage_replicas(manifest, name, sources, staging_sessions, rollouts, attempt)
 
 def activate_restore(name, attempt, staging, db_dir, rollouts):
     """The last step, after run.json: each staged replica renamed to its final
-    name and ``rollouts/`` synced, the staged sessions tree renamed under
-    ``home/``, then the staged stores renamed into ``db/``.  Every rename
-    stays within one directory or one local filesystem."""
+    name and ``rollouts/`` synced, then, under the attempt's lock, the staged
+    sessions tree renamed under ``home/`` and the staged stores renamed into
+    ``db/``.  Every rename stays within one directory or one local
+    filesystem.  ``restore_bounded`` fences under the same lock, so the fence
+    and the local renames exclude each other: a fence that lands first
+    refuses here and nothing is installed; a deadline that passes once
+    ``db_installed`` is set does not fence, the launch takes the result.
+    Only local renames run under the lock; the durable ones above it are
+    fenced one by one, so a stalled durable side never holds the lock."""
     attempt.check_fence()
     while attempt.incoming:
         incoming = attempt.incoming[0]
@@ -582,13 +593,14 @@ def activate_restore(name, attempt, staging, db_dir, rollouts):
         attempt.incoming.pop(0)
     if attempt.placed:
         fsync_path(rollouts)        # the final names, not only the bytes
-    attempt.check_fence()
     staged_sessions = os.path.join(staging, "sessions")
-    if os.path.isdir(staged_sessions):
-        os.rename(staged_sessions, attempt.sessions)
-        attempt.sessions_installed = True
-    os.rename(os.path.join(staging, "db"), db_dir)
-    attempt.db_installed = True
+    with attempt.lock:
+        attempt.check_fence()
+        if os.path.isdir(staged_sessions):
+            os.rename(staged_sessions, attempt.sessions)
+            attempt.sessions_installed = True
+        os.rename(os.path.join(staging, "db"), db_dir)
+        attempt.db_installed = True
     try:
         os.rmdir(staging)
     except OSError:
@@ -604,11 +616,15 @@ class RestoreAttempt(object):
     installed (from its staging, or created empty by a fresh launch).  The
     transaction lasts until owner.json and latest-run are written: the
     fresh path records its creations here too.  ``fenced`` is set by the
-    launch when it has reported the restore blocked: from then on every
-    durable write of the abandoned restore thread refuses and rolls back."""
+    launch, under ``lock``, when it reports the restore blocked: from then on
+    every durable write of the abandoned restore thread refuses and rolls
+    back.  The activation's local renames hold the same lock, so the fence
+    either precedes them (nothing is installed) or finds ``db_installed``
+    set and is not applied: the launch takes the result instead."""
 
     def __init__(self, local, home_local, durable_run, label="restore"):
         self.label = label
+        self.lock = threading.Lock()
         self.step = "validating the selector"
         self.staging = os.path.join(local, "restore-staging")
         self.local_meta = os.path.join(local, "run.json")
@@ -743,12 +759,15 @@ def restore_bounded(timeout, attempt, *args):
     durable side that does not answer (an episode on the shared filesystem)
     blocks that thread, which is abandoned, and the launch reports blocked
     instead of hanging; nothing was started.  The abandoned thread is fenced
-    first: should it wake up later, its next durable write refuses and it
-    rolls back what it had created instead of activating a restore the
-    launch has already reported blocked (a thread past its last fence check
-    still finishes that activation; nothing reuses the result, since no
-    owner.json is written for it).  The normal path is the same call on
-    another thread."""
+    first, under the attempt's lock: should it wake up later, its next
+    durable write (the activation included) refuses and it rolls back what it
+    had created instead of installing a restore the launch has already
+    reported blocked.  The activation's local renames hold the same lock, so
+    a thread that has installed ``db/`` by the time the deadline is enforced
+    is past every durable write and is not fenced: the launch takes its
+    result (joined: only local work remains) rather than reporting as
+    blocked a restore that is installed.  The normal path is the same call
+    on another thread."""
     outcome = {}
 
     def work():
@@ -764,9 +783,15 @@ def restore_bounded(timeout, attempt, *args):
     worker.start()
     worker.join(timeout)
     if worker.is_alive():
-        attempt.fenced = True
-        raise Blocked("the durable side has not answered in %ds while %s; the restore is blocked, nothing is in use and Codex did not "
-                      "start. Retry when the durable filesystem answers, or pass --fresh for a new, empty history" % (timeout, attempt.step))
+        with attempt.lock:
+            installed = attempt.db_installed
+            if not installed:
+                attempt.fenced = True
+        if not installed:
+            raise Blocked("the durable side has not answered in %ds while %s; the restore is blocked, nothing is in use and Codex did not "
+                          "start. Retry when the durable filesystem answers, or pass --fresh for a new, empty history" % (timeout, attempt.step))
+        log("the restore deadline of %ds passed after the activation had landed; the launch takes the result" % timeout)
+        worker.join()
     if "error" in outcome:
         raise outcome["error"]
     return outcome["result"]
@@ -980,8 +1005,11 @@ def ensure_private_tree(path, base):
     exists, created when it does not.  Components above ``base`` are the
     operator's filesystem and are not judged; the missing ones are created
     one by one from the first missing component down, each one's parent
-    synced (best effort there: logged when it fails), so a generation under
-    a brand-new durable root never depends on a name that was not synced."""
+    synced, so a generation under a brand-new durable root never depends on
+    a name that was not synced.  Only the sync of a parent that existed
+    before this call (the operator's directory: traversable, perhaps not
+    readable) is best effort and logged when it fails; a parent this call
+    created must sync, or the launch is refused."""
     base = os.path.normpath(base)
     path = os.path.normpath(path)
     if path != base and not path.startswith(base + "/"):
@@ -991,18 +1019,24 @@ def ensure_private_tree(path, base):
     while above and above != "/" and not os.path.isdir(above):
         missing.append(above)
         above = os.path.dirname(above)
+    created = set()
     for directory in reversed(missing):
         try:
             os.mkdir(directory, 0o700)
         except FileExistsError:
             continue
+        created.add(directory)
+        parent = os.path.dirname(directory)
         try:
-            fsync_path(os.path.dirname(directory))
+            fsync_path(parent)
         except OSError as exc:
+            if parent in created:
+                raise Refused("created %s but could not sync its parent directory %s (%s: %s), which this launch created as well; "
+                              "a durable tree below it would depend on an unsynced name" % (directory, parent, type(exc).__name__, exc))
             log("created %s but could not sync its parent directory (%s: %s); the parent is the operator's and the launch goes on" % (
                 directory, type(exc).__name__, exc))
     current = base
-    ensure_private_dir(current, parent_is_ours=False)
+    ensure_private_dir(current, parent_is_ours=os.path.dirname(base) in created)
     if path != base:
         for component in path[len(base) + 1:].split("/"):
             current = os.path.join(current, component)
@@ -1846,12 +1880,18 @@ class Checkpointer(object):
 
     def adopt_unsynced(self, record):
         """A reused run's outstanding unsynced generation, from the status.json
-        the earlier launch left: taken over when it names a generation
-        directory that exists under this durable run, so the next capture's
-        retry acknowledges it; anything else is ignored with a log line.
-        Before the scheduler starts, so no lock."""
-        usable = (isinstance(record, dict) and isinstance(record.get("name"), str) and isinstance(record.get("path"), str)
-                  and record["path"] == os.path.join(self.generations, record["name"]) and os.path.isdir(record["path"]))
+        the earlier launch left: taken over when it is shaped like a record
+        this runner publishes (the published record's keys, a generation
+        name, and exactly this run's ``generations/<name>`` as its path), so
+        the next capture's retry acknowledges it; anything else is ignored
+        with a log line.  Judged on the record alone, without touching the
+        filesystem: this runs in run() before child.wait(), where a stalled
+        durable stat would hold the runner.  Whether the generation is still
+        there is the retry's business, on the capture's own worker.  Before
+        the scheduler starts, so no lock."""
+        usable = (isinstance(record, dict) and all(key in record for key in PUBLISHED_RECORD_KEYS)
+                  and isinstance(record["name"], str) and GENERATION_NAME.fullmatch(record["name"]) is not None
+                  and isinstance(record["path"], str) and record["path"] == os.path.join(self.generations, record["name"]))
         if not usable:
             log("status.json records an unusable unsynced_generation (%r); it is not taken over" % (record,))
             return False
@@ -1865,10 +1905,31 @@ class Checkpointer(object):
         acknowledged only once ``generations/`` syncs: retried at the start
         of every later capture (the final one included, under its deadline on
         its own worker; never on the exit path itself, where a blocked sync
-        would hang the exit) and promoted to the last generation."""
+        would hang the exit) and promoted to the last generation.  The
+        generation directory and its manifest.json must still be there (a
+        record taken over from an earlier launch may name one that is gone):
+        a missing one is dropped, not acknowledged; a stat that fails
+        otherwise (the durable side not answering) keeps the record for the
+        next retry."""
         with self.inflight_lock:
             pending = self.pending_sync
         if pending is None:
+            return
+        try:
+            present = (stat.S_ISDIR(os.stat(pending["path"]).st_mode)
+                       and stat.S_ISREG(os.stat(os.path.join(pending["path"], "manifest.json")).st_mode))
+        except (FileNotFoundError, NotADirectoryError):
+            present = False
+        except OSError as exc:
+            log("generation %s is still not acknowledged: %s cannot be checked (%s: %s); retried before the next capture" % (
+                pending["name"], pending["path"], type(exc).__name__, exc))
+            return
+        if not present:
+            with self.inflight_lock:
+                if self.pending_sync is pending:
+                    self.pending_sync = None
+            log("generation %s is dropped, not acknowledged: %s or its manifest.json is gone" % (pending["name"], pending["path"]))
+            self.status.note_latest(self.acknowledgement)
             return
         try:
             fsync_path(self.generations)
