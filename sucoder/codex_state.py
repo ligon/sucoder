@@ -40,6 +40,18 @@ class CodexStateLaunch:
     restore: Optional[str] = None   # ``RUN/GENERATION`` to continue from
     fresh: bool = False             # start a new independent history
 
+    @property
+    def selection(self) -> Optional[str]:
+        """The history selection as the operator spelled it, or None.
+
+        A selection rides in the argv of the command that starts the runner,
+        so a launch that would attach to a running session instead refuses
+        and names it with this text.
+        """
+        if self.restore is not None:
+            return f"--codex-state-from {self.restore}"
+        return "--codex-state-fresh" if self.fresh else None
+
 
 def scope_id(cluster: str, user: str, mirror_path: str, slot: str = "default") -> str:
     """SHA-256 of the canonical, unsanitized identity tuple (design: Identities)."""

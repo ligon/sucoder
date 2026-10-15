@@ -28,11 +28,11 @@ from typer.testing import CliRunner
 
 from sucoder import cli, codex_state
 from sucoder.codex_state import (
-    PLACEHOLDER, check_durable_root, durable_root_for, runner_command, runner_source, scope_id,
-    validate_restore_selector, with_sqlite_home_placeholder,
+    PLACEHOLDER, CodexStateLaunch, check_durable_root, durable_root_for, runner_command, runner_source,
+    scope_id, validate_restore_selector, with_sqlite_home_placeholder,
 )
 from sucoder.config import AgentLauncher, CodexStateConfig, ConfigError, _parse_slurm_config
-from sucoder.mirror import MirrorError
+from sucoder.mirror import MirrorError, MirrorManager
 from tests.test_cli import _write_config
 from tests.test_remote_control import _manager
 
@@ -396,7 +396,10 @@ def test_launch_refuses_a_selection_over_a_live_session_before_staging_anything(
         _launch(manager, ctx, **selection)
     assert not confined.called
     assert not any(c.kwargs.get("input") for c in manager.executor.run_agent.call_args_list)   # nothing staged
-    assert all(c.args[0][:2] in (["tmux", "has-session"],) for c in manager.executor.run_agent.call_args_list)
+    # The only command run is the probe, and it asks for the exact session
+    # name: a bare -t target also matches by prefix (sucoder-sample-other).
+    assert all(c.args[0] == ["tmux", "has-session", "-t", "=sucoder-sample"]
+               for c in manager.executor.run_agent.call_args_list)
 
 
 @pytest.mark.parametrize("how", ["record", "squeue"])
@@ -415,8 +418,143 @@ def test_launch_with_a_selection_starts_the_tui_session_when_none_exists(tmp_pat
         returncode=1 if list(args)[:2] == ["tmux", "has-session"] else 0, stdout="", stderr="")
     _launch(manager, ctx, codex_state_fresh=True)
     launched = manager.executor.run_agent.call_args.args[0]
-    assert launched[:4] == ["tmux", "new-session", "-A", "-d"] and "--fresh -- " in launched[-1]
-    assert not confined.called
+    # No -A: the session must be this launch's own, so one that exists by
+    # now fails loudly (duplicate session) instead of attaching and dropping
+    # the argv that carries the selection.
+    assert launched[:5] == ["tmux", "new-session", "-d", "-s", "sucoder-sample"] and "--fresh -- " in launched[-1]
+    assert "-A" not in launched and not confined.called
+
+
+def test_tmux_launch_command_drops_attach_or_create_only_for_a_selection():
+    build = MirrorManager._build_tmux_launch_command
+    assert build("sucoder-sample", "cmd", detached=False) == ["tmux", "new-session", "-A", "-s", "sucoder-sample", "cmd"]
+    assert build("sucoder-sample", "cmd", detached=True) == ["tmux", "new-session", "-A", "-d", "-s", "sucoder-sample", "cmd"]
+    assert build("sucoder-sample", "cmd", detached=False, selection="--codex-state-fresh") == [
+        "tmux", "new-session", "-s", "sucoder-sample", "cmd"]
+    assert build("sucoder-sample", "cmd", detached=True, selection="--codex-state-fresh") == [
+        "tmux", "new-session", "-d", "-s", "sucoder-sample", "cmd"]
+
+
+def test_codex_state_launch_names_its_selection_as_spelled():
+    base = dict(scope="s", durable_root="/d", checkpoint_minutes=1, checkpoint_timeout_seconds=1)
+    assert CodexStateLaunch(**base).selection is None
+    assert CodexStateLaunch(**base, restore=SELECTOR).selection == "--codex-state-from " + SELECTOR
+    assert CodexStateLaunch(**base, fresh=True).selection == "--codex-state-fresh"
+
+
+# The pre-staging probe can be raced or fooled (squeue --name answering empty,
+# a session created a moment later).  Each decision that would attach instead
+# of starting the runner carries the selection and refuses on its own.
+
+@pytest.mark.parametrize("selection, spelled", [
+    ({"codex_state_from": SELECTOR}, "--codex-state-from " + SELECTOR), ({"codex_state_fresh": True}, "--codex-state-fresh"),
+])
+@pytest.mark.parametrize("how", ["record", "squeue"])
+def test_launch_refuses_a_selection_at_the_reuse_decision_when_the_probe_missed_the_job(
+        tmp_path, monkeypatch, selection, spelled, how):
+    from sucoder.session import RemoteSession
+
+    manager, ctx, _ = _state_manager(tmp_path, monkeypatch)
+    # The fixture mocks _launch_confined out; this test needs its reuse decision.
+    monkeypatch.setattr(manager, "_launch_confined", MirrorManager._launch_confined.__get__(manager, MirrorManager))
+    attach = Mock(return_value=0)
+    monkeypatch.setattr(manager, "_attach_confined", attach)
+    if how == "record":          # the probe sees the recorded job gone, the decision sees it live
+        RemoteSession("sample", slurm_job_id=4242).save()
+        states = iter([None, "RUNNING"])
+        monkeypatch.setattr(manager, "_confined_job_state", lambda job_id: next(states))
+        job_id = 4242
+    else:                        # squeue --name failed (empty) for the probe, then listed the job
+        listings = iter([[], [(4343, "RUNNING", "p", "a", "")]])
+        monkeypatch.setattr(manager, "_confined_jobs_by_name", lambda name: next(listings))
+        monkeypatch.setattr(manager, "_job_matches_this_target", lambda ctx, partition, account, qos: True)
+        job_id = 4343
+    with pytest.raises(MirrorError, match=re.escape(
+            f"a history selection ({spelled}) applies to a new managed launch only; "
+            f"sample already has a running session (job {job_id}): release it first")):
+        _launch(manager, ctx, **selection)           # detached=True: the refusal precedes the detached early return
+    assert "sbatch" not in [c.args[0][0] for c in manager.executor.run_agent.call_args_list]
+    assert not attach.called
+    # The adopted job is recorded before the refusal, so `sucoder release` can reach it.
+    assert RemoteSession.load("sample").slurm_job_id == job_id
+
+
+def _unconfined_service_launch(tmp_path, monkeypatch, *, created):
+    """An unconfined target whose service script reports *created* (or a kept session)."""
+    manager, ctx, confined = _state_manager(tmp_path, monkeypatch)
+    ctx.settings.remote.slurm.confined = False
+    monkeypatch.setattr(manager, "_prepare_local_tier", lambda ctx, root: (tmp_path, "export SUCODER_LOCAL_ROOT=/local"))
+    scripts = []
+
+    def run_agent(args, **kw):
+        if list(args)[:2] == ["tmux", "has-session"]:        # the pre-staging probe: nothing there
+            return SimpleNamespace(returncode=1, stdout="", stderr="")
+        if list(args)[:2] == ["bash", "-c"] and "new-session" in args[2]:
+            scripts.append(args[2])
+            return SimpleNamespace(returncode=0, stdout="SUCODER_CREATED\n" if created else "", stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    manager.executor.run_agent.side_effect = run_agent
+    return manager, ctx, confined, scripts
+
+
+@pytest.mark.parametrize("created", [False, True])
+def test_launch_with_a_selection_refuses_a_service_session_it_did_not_create(tmp_path, monkeypatch, created):
+    from sucoder.session import RemoteSession
+
+    manager, ctx, confined, scripts = _unconfined_service_launch(tmp_path, monkeypatch, created=created)
+    if created:
+        assert _launch(manager, ctx, ["codex", "remote-control"], codex_state_from=SELECTOR) == 0
+        assert RemoteSession.load("sample").service_launch == manager._service_launch
+    else:
+        with pytest.raises(MirrorError, match=r"already has a running session \(tmux sucoder-sample\)"):
+            _launch(manager, ctx, ["codex", "remote-control"], codex_state_from=SELECTOR)
+        assert RemoteSession.load("sample").service_launch is None
+    assert len(scripts) == 1 and not confined.called
+    # Exact session name on both existence checks (before the create and on
+    # the recheck after a create another launcher won); the create is exact by nature.
+    assert scripts[0].count("tmux has-session -t =sucoder-sample") == 2
+    assert "tmux new-session -d -s sucoder-sample " in scripts[0] and "--restore " + SELECTOR in scripts[0]
+
+
+def test_launch_without_a_selection_keeps_the_service_script_as_it_was(tmp_path, monkeypatch):
+    manager, ctx, confined, scripts = _unconfined_service_launch(tmp_path, monkeypatch, created=False)
+    assert _launch(manager, ctx, ["codex", "remote-control"]) == 0          # a kept session is the reuse that path is for
+    assert len(scripts) == 1 and "=sucoder" not in scripts[0]
+    assert scripts[0].startswith("if tmux has-session -t sucoder-sample 2>/dev/null; then :; elif tmux new-session -d -s sucoder-sample ")
+
+
+@pytest.mark.parametrize("new_session_rc, exists_after, expected, probed", [
+    # tmux refused to create ("duplicate session", its exit 1) and the session is there: name it.
+    (1, True, r"applies to a new managed launch only; sample already has a running session \(tmux sucoder-sample\)", 2),
+    # tmux failed for another reason and nothing is there: the plain exit-code error.
+    (1, False, "Agent command exited with code 1 for mirror sample", 2),
+    # ssh dropped (its 255) after a successful create: our own session is up
+    # with the selected history, so no probe and no misleading refusal.
+    (255, True, "Agent command exited with code 255 for mirror sample", 1),
+])
+def test_launch_with_a_selection_surfaces_a_duplicate_tui_session_instead_of_attaching(
+        tmp_path, monkeypatch, new_session_rc, exists_after, expected, probed):
+    manager, ctx, confined = _state_manager(tmp_path, monkeypatch)
+    ctx.settings.remote.slurm.confined = False
+    monkeypatch.setattr(manager, "_prepare_local_tier", lambda ctx, root: (tmp_path, "export SUCODER_LOCAL_ROOT=/local"))
+    has_session = iter([1, 0 if exists_after else 1])     # the pre-staging probe finds nothing
+    probes = []
+
+    def run_agent(args, **kw):
+        if list(args)[:2] == ["tmux", "has-session"]:
+            probes.append(list(args))
+            return SimpleNamespace(returncode=next(has_session), stdout="", stderr="")
+        if list(args)[:2] == ["tmux", "new-session"]:
+            return SimpleNamespace(returncode=new_session_rc, stdout="", stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    manager.executor.run_agent.side_effect = run_agent
+    with pytest.raises(MirrorError, match=expected):
+        _launch(manager, ctx, codex_state_fresh=True)
+    launched = [c.args[0] for c in manager.executor.run_agent.call_args_list if c.args[0][:2] == ["tmux", "new-session"]]
+    assert len(launched) == 1 and "-A" not in launched[0] and launched[0][2:5] == ["-d", "-s", "sucoder-sample"]
+    assert probes == [["tmux", "has-session", "-t", "=sucoder-sample"]] * probed and not confined.called
 
 
 def test_launch_refuses_a_relative_resolved_mirror_path_before_staging_anything(tmp_path, monkeypatch):
@@ -443,6 +581,23 @@ def test_dry_run_keeps_the_unexpanded_home_in_the_durable_root(tmp_path, monkeyp
     monkeypatch.setattr(manager, "_resolve_remote_path", lambda ctx: "~/mirrors/sample")
     _launch(manager, ctx)
     assert _runner_argv(confined)[4:6] == ["--durable-root", "~/mirrors/.sucoder-state"]
+
+
+@pytest.mark.parametrize("selection, expected", [
+    ({"codex_state_from": SELECTOR}, ["--restore", SELECTOR]), ({"codex_state_fresh": True}, ["--fresh"]),
+])
+def test_bootstrap_forwards_the_selection_to_the_real_launch(tmp_path, monkeypatch, selection, expected):
+    # The CLI tests below stub bootstrap and launch_agent both; this is the
+    # real hand-off between them, with the remote preparation steps stubbed
+    # the way tests/test_mirror.py::test_bootstrap_invokes_steps stubs the local ones.
+    manager, ctx, confined = _state_manager(tmp_path, monkeypatch)
+    steps = []
+    monkeypatch.setattr(manager, "ensure_remote_clone", lambda c: steps.append("clone") or True)
+    monkeypatch.setattr(manager, "_configure_target_remote", lambda c: steps.append("configure"))
+    assert manager.bootstrap(ctx, sync=False, command_override=["codex"], supports_inline_prompt=True, **selection) == 0
+    assert steps == ["clone", "configure"]
+    assert _runner_argv(confined)[-len(expected):] == expected
+    assert confined.call_args.kwargs["detached"] is False
 
 
 def _cli_launch(tmp_path, monkeypatch, subcommand, flags):

@@ -344,6 +344,21 @@ def _build_sbatch_command(slurm, *, job_name, log_path, script_path, nodelist=No
     return parts
 
 
+def _selection_over_live_session(mirror_name: str, selection: str, live: str) -> MirrorError:
+    """The refusal a managed Codex history selection gets over a running session.
+
+    ``selection`` is the option as the operator spelled it
+    (:attr:`CodexStateLaunch.selection`); ``live`` names what is running
+    (``job N`` or ``tmux sucoder-<mirror>``).  One constructor, so the early
+    probe and every later decision point word it identically.
+    """
+    return MirrorError(
+        f"a history selection ({selection}) applies to a new managed launch only; "
+        f"{mirror_name} already has a running session ({live}): "
+        "release it first, or launch without a selection to attach."
+    )
+
+
 class MirrorManager:
     """Perform operations against configured mirrors."""
 
@@ -2210,15 +2225,26 @@ class MirrorManager:
         return result.stdout.strip()
 
     @staticmethod
-    def _build_tmux_launch_command(tmux_name, agent_cmd_str, *, detached):
+    def _build_tmux_launch_command(
+        tmux_name: str, agent_cmd_str: str, *, detached: bool,
+        selection: Optional[str] = None,
+    ) -> List[str]:
         """Build the ``tmux new-session`` command that wraps the agent.
 
         ``-A`` attaches-or-creates the session; the auto-renew loop adds
         ``-d`` (detached) to relaunch on a fresh node WITHOUT attaching a
         terminal, leaving a session the human can ``sucoder attach`` to.
         ``-A -d`` is idempotent when the session already exists.
+
+        A managed Codex history ``selection`` drops ``-A``: the selection
+        rides in this command's argv, and attaching to a session that
+        already exists would silently discard it.  Without ``-A`` tmux
+        refuses with ``duplicate session`` (exit 1) instead, which
+        :meth:`launch_agent` turns into the refusal that names the session.
         """
-        session_flags = ["-A", "-d"] if detached else ["-A"]
+        session_flags = [] if selection is not None else ["-A"]
+        if detached:
+            session_flags.append("-d")
         return [
             "tmux", "new-session", *session_flags,
             "-s", tmux_name, agent_cmd_str,
@@ -2774,15 +2800,28 @@ class MirrorManager:
         return match_target(row, {name: remote}, [name]) == name
 
     def _reuse_confined_job(
-        self, job_id: int, state: str, session_name: str, socket: str,
-        detached: bool,
+        self, ctx: MirrorContext, job_id: int, state: str, session_name: str,
+        socket: str, detached: bool, *, selection: Optional[str] = None,
     ) -> int:
         """Attach to an already-live confined job instead of submitting one.
 
         Shared by both reuse paths -- the one that reads the job id from the
         session record and the one that recovers it from ``squeue`` when the
         record has lost it -- so they cannot drift apart.
+
+        A managed Codex history ``selection`` is refused here, never
+        attached: it rides only in the argv of a launch that starts the
+        runner, and this job is already running something.  The refusal
+        precedes the detached early return on purpose: a selected
+        ``detached=True`` launch would otherwise report success without the
+        runner ever starting.  :meth:`_refuse_selection_over_live_session`
+        asks the same question before anything is staged; this is the
+        decision itself, so a probe that failed or raced there (``squeue
+        --name`` answering empty, a job that appeared in between) cannot end
+        in a silent reuse.
         """
+        if selection is not None:
+            raise _selection_over_live_session(ctx.settings.name, selection, f"job {job_id}")
         if detached:
             return 0
         if state != "RUNNING":
@@ -3034,6 +3073,7 @@ class MirrorManager:
         prelude_sentinel: str,
         env: Optional[Mapping[str, str]],
         detached: bool,
+        selection: Optional[str] = None,
     ) -> int:
         """Submit + (for interactive) attach a confined sbatch launch.
 
@@ -3041,6 +3081,11 @@ class MirrorManager:
         wrap) -> stage batch script to NFS -> ``sbatch`` -> persist id
         IMMEDIATELY -> bounded RUNNING-poll -> persist node -> confirm the
         tmux session -> attach (interactive) or return (detached / renew).
+
+        ``selection`` (a managed Codex history selection, as spelled on the
+        command line) makes both reuse paths refuse instead of attach -- the
+        selection rides in ``command`` and only a job this launch submits
+        runs it; see :meth:`_reuse_confined_job`.
 
         Post-session hooks (``_auto_commit_agent_skills`` / ``_maybe_run_audit``)
         are intentionally NOT run: detaching tmux returns rc=0 while the
@@ -3063,7 +3108,8 @@ class MirrorManager:
                     sess.slurm_job_id, state, ctx.settings.name,
                 )
                 return self._reuse_confined_job(
-                    sess.slurm_job_id, state, session_name, socket, detached,
+                    ctx, sess.slurm_job_id, state, session_name, socket, detached,
+                    selection=selection,
                 )
 
         # Second line of defence, keyed on the scheduler rather than on the
@@ -3099,7 +3145,8 @@ class MirrorManager:
             sess.service_launch = None  # Adopted job's mode is discovered from tmux.
             sess.save()
             return self._reuse_confined_job(
-                job_id, state, session_name, socket, detached,
+                ctx, job_id, state, session_name, socket, detached,
+                selection=selection,
             )
 
         # Build the in-tmux command and wrap in `bash -lc` so the agent
@@ -3349,8 +3396,16 @@ class MirrorManager:
         state = self._codex_state_launch(
             ctx, restore=codex_state_from, fresh=codex_state_fresh,
         )
-        if state is not None and (state.restore is not None or state.fresh):
-            self._refuse_selection_over_live_session(ctx)
+        # The history selection as the operator spelled it, or None.  It
+        # rides in the argv of the command this launch starts, so every
+        # decision below that would attach to a running session instead of
+        # starting one carries it and refuses: the confined reuse paths
+        # (_reuse_confined_job), the service path (_launch_remote_service)
+        # and the TUI's tmux new-session, built without -A.  The probe here
+        # is the early, read-only form of the same refusal.
+        selection = state.selection if state is not None else None
+        if selection is not None:
+            self._refuse_selection_over_live_session(ctx, selection)
 
         model_for_flag, provider_env = self._provider_launch_environment(
             effective_model, self._detected_agent_type,
@@ -3512,6 +3567,9 @@ class MirrorManager:
             command = self._wrap_with_environment_file(command, environment_path)
             env_to_use = None
 
+        # The TUI tmux session a selected launch must create itself (its
+        # new-session runs without -A); None on every other path.
+        exclusive_tmux: Optional[str] = None
         if ctx.is_remote:
             if ctx.confined:
                 # A confined target launches via ``sbatch`` so the agent runs
@@ -3530,6 +3588,7 @@ class MirrorManager:
                     prelude_sentinel=prelude_sentinel,
                     env=None,
                     detached=detached,
+                    selection=selection,
                 )
 
             # Wrap in tmux so the session survives SSH disconnects, with the
@@ -3554,10 +3613,13 @@ class MirrorManager:
             if self._service_launch is not None:
                 return self._launch_remote_service(
                     ctx, tmux_name, agent_cmd_str, launch_cwd, detached=detached,
+                    selection=selection,
                 )
             command = self._build_tmux_launch_command(
-                tmux_name, agent_cmd_str, detached=detached,
+                tmux_name, agent_cmd_str, detached=detached, selection=selection,
             )
+            if selection is not None:
+                exclusive_tmux = tmux_name
 
         self.logger.info("Starting agent command: %s", shlex.join(command))
 
@@ -3577,6 +3639,27 @@ class MirrorManager:
                 env=env_to_use,
                 capture_output=False,
             )
+
+            if result.returncode == 1 and exclusive_tmux is not None:
+                # new-session without -A: exit 1 is tmux's own status for
+                # refusing to create (``duplicate session``), never the
+                # agent's (the client exits 0 on detach and on session end),
+                # and the executor passes the remote status through -- a
+                # transport drop after a successful create is ssh's 255 and
+                # keeps the plain exit-code error below.  tmux's stderr went
+                # to the terminal, so ask whether the session exists now:
+                # then another launch won the race the pre-staging probe
+                # cannot close.  ``=`` asks for the exact name; a bare
+                # target also matches by prefix.
+                probe = self.executor.run_agent(
+                    ["tmux", "has-session", "-t", f"={exclusive_tmux}"],
+                    check=False, capture_output=True,
+                )
+                if probe.returncode == 0:
+                    assert selection is not None   # exclusive_tmux is set only with one
+                    raise _selection_over_live_session(
+                        ctx.settings.name, selection, f"tmux {exclusive_tmux}",
+                    )
 
             # Post-session hooks belong to an *ended* attached session.
             # A detached relaunch (auto-renew) leaves the agent running,
@@ -3700,8 +3783,8 @@ class MirrorManager:
             "to an absolute path."
         )
 
-    def _refuse_selection_over_live_session(self, ctx: MirrorContext) -> None:
-        """A history selection applies to a new managed launch only.
+    def _refuse_selection_over_live_session(self, ctx: MirrorContext, selection: str) -> None:
+        """Refuse a history selection early, before anything is staged.
 
         ``--codex-state-from`` and ``--codex-state-fresh`` reach the runner
         through the argv of the command this launch starts, and every remote
@@ -3712,7 +3795,15 @@ class MirrorManager:
         TUI's ``tmux new-session -A`` attaches when the session exists.  Each
         would discard that argv and the operator would silently get the
         running history (or an idle shell).  So probe here, before anything
-        is staged, and refuse.  The renew loop passes no selection and is
+        is staged, and refuse.
+
+        This is the courtesy form of the refusal, not the guard: each of
+        those decision points carries ``selection`` and refuses on its own
+        (``_reuse_confined_job``, ``_launch_remote_service``, and the TUI
+        launch, whose ``new-session`` runs without ``-A``), so a probe that
+        fails or races here -- ``squeue --name`` answering empty, a session
+        created between this probe and ``new-session`` -- still cannot end
+        in a silent attach.  The renew loop passes no selection and is
         unaffected.  A probe failure on the confined path raises as it does
         for the reuse-probe itself: an unknown state is not "no session".
         """
@@ -3734,18 +3825,16 @@ class MirrorManager:
         elif ctx.is_remote and not self.executor.dry_run:
             # A dry run answers every command with success, which would read
             # as "exists"; it executes nothing, so there is nothing to protect.
+            # ``=`` asks for the exact name: a bare target also matches by
+            # prefix, so sucoder-sample-other alone would refuse sample.
             tmux_name = f"sucoder-{ctx.settings.name}"
             result = self.executor.run_agent(
-                ["tmux", "has-session", "-t", tmux_name], check=False, capture_output=True,
+                ["tmux", "has-session", "-t", f"={tmux_name}"], check=False, capture_output=True,
             )
             if result.returncode == 0:
                 live = f"tmux {tmux_name}"
         if live is not None:
-            raise MirrorError(
-                "a history selection applies to a new managed launch only; "
-                f"{ctx.settings.name} already has a running session ({live}): "
-                "release it first, or launch without a selection to attach."
-            )
+            raise _selection_over_live_session(ctx.settings.name, selection, live)
 
     def _stage_codex_state_runner(self, ctx: MirrorContext) -> str:
         """Stage the state runner on the target, private and unique per launch."""
@@ -3784,20 +3873,29 @@ class MirrorManager:
 
     def _launch_remote_service(
         self, ctx: MirrorContext, tmux_name: str, command: str, cwd: Path,
-        *, detached: bool,
+        *, detached: bool, selection: Optional[str] = None,
     ) -> int:
         """Start/reuse a service, record the actual pane, then optionally attach.
 
         Starting detached first lets renewal retain a CLI command override while
         the initial terminal is still attached. An existing session owns its
         metadata; requesting a service must not relabel an existing TUI.
+
+        A managed Codex history ``selection`` rides in ``command``, so a
+        session this call did not create -- found before the create, or by
+        the recheck after a create another launcher won -- is refused rather
+        than kept, and the existence check then asks for the exact name
+        (``=``; a bare target also matches by prefix).  Without a selection
+        the script is unchanged.
         """
         from .session import RemoteSession
 
         # `new-session -A -d` attaches when a session exists, requiring a TTY.
         # Create without -A and distinguish creation from reuse in one round
         # trip. Recheck after a failed create in case another launcher won.
-        exists = shlex.join(["tmux", "has-session", "-t", tmux_name])
+        exists = shlex.join([
+            "tmux", "has-session", "-t", f"={tmux_name}" if selection is not None else tmux_name,
+        ])
         create = shlex.join(["tmux", "new-session", "-d", "-s", tmux_name, command])
         script = (
             f"if {exists} 2>/dev/null; then :; "
@@ -3814,6 +3912,12 @@ class MirrorManager:
             )
         if not self.executor.dry_run:
             created = "SUCODER_CREATED" in (result.stdout or "").splitlines()
+            if selection is not None and not created:
+                # rc 0 without the marker: the script kept a session this
+                # launch did not create, so the runner never started.
+                raise _selection_over_live_session(
+                    ctx.settings.name, selection, f"tmux {tmux_name}",
+                )
             probe = None if created else self.executor.run_agent(
                 ["bash", "-c", SERVICE_LAUNCH_PROBE_SH, "_", tmux_name, ""],
                 check=False, capture_output=True,
