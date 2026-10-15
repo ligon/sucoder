@@ -29,7 +29,7 @@ The earlier handoffs are preserved under [[file:handoffs/]]; the Slice 1 one is 
 
 Six read-only Codex sessions (gpt-6-astra, =codex exec --sandbox read-only=, each run under the newest committed runner) reviewed the runner halves and the launcher, then confirmed each fix pass; four runner passes and two launcher passes resulted, every finding confirmed against the code before it was fixed and every fix carrying a test.
 The launcher side closed with "all resolved, no new defects" (confirmation of =d0d469e=).
-The runner side closed with the fourth pass (=930eae4=); its confirmation was still running when this note was written and its outcome is recorded in the scratchpad of the session (=codex-confirm6.md=) and, if it found anything, in a follow-up commit or in the list below.
+The runner side closed with the fourth pass (=930eae4=): its confirmation found all three items resolved, judged the one deliberate choice (a deadline passing after the local activation landed lets the launch take the completed result) sound, and introduced no new defect.
 Accepted residuals, by design, documented in the design record: the prefix hash is computed from the local rollout and verified against the durable replica at restore; a thread whose rollout has 0 bytes passes without a replica; a restore fsyncs =rollouts/= after renaming, so the replicator may seed those lengths on first sight; the sync of the durable base's own parent is best effort; a blocked restore whose thread never wakes leaves files under an abandoned run id that no selector names; an explicit =launch_mode: exec= cannot intercept a duplicate tmux session; the unselected service script keeps tmux prefix matching.
 
 * Verification
@@ -49,11 +49,10 @@ Accepted residuals, by design, documented in the design record: the prefix hash 
 
 * Next concrete actions
 
-1. Read =codex-confirm6.md= in this session's scratchpad if it still exists (or re-run the confirmation: a plain =codex exec --sandbox read-only= asked to confirm the three items of =930eae4=); fix anything P1, otherwise stop the review loop here.
-2. Slice 3 per the design, in this order: (a) =slurm_timer.py= touches the run's =checkpoint.request= at the 30/15/5-minute warnings (the runner already honours the file); (b) a status surface (=sucoder= subcommand reading =status.json= through the executor: scope, run, replica age, last generation and class, pending work); (c) =RemoteSession= metadata and renewal with acknowledged handoff; (d) fencing, pins, retention; (e) =archived_sessions= in the bind set with replication, capture and restore covering it.
-3. Slice 4 pilot: enable =slurm.codex_state= on one disposable mirror first; the human's laptop config is where the flag lives.
-4. The real default durable root, =~/mirrors/.sucoder-state= (=/global/scratch/fsa/fc_jevons/ligon/mirrors/.sucoder-state=), was never created this session: every trial used the sibling =.sucoder-state-trial= and trial scopes, so a pilot starts clean.
-5. Clean-up when the human agrees: the trial durable root =/global/scratch/fsa/fc_jevons/ligon/.sucoder-state-trial= (143 MB: one real run with 35 one-minute generations plus the restore and confirmation runs), the trial scopes under =/local/job39969504/state/codex/= and =/local/job39969504/trial-root2= (wiped with the job anyway), and the git worktrees under this session's scratchpad (=git worktree prune= after removing them).
+1. Slice 3 per the design, in this order: (a) =slurm_timer.py= touches the run's =checkpoint.request= at the 30/15/5-minute warnings (the runner already honours the file); (b) a status surface (=sucoder= subcommand reading =status.json= through the executor: scope, run, replica age, last generation and class, pending work); (c) =RemoteSession= metadata and renewal with acknowledged handoff; (d) fencing, pins, retention; (e) =archived_sessions= in the bind set with replication, capture and restore covering it.
+2. Slice 4 pilot: enable =slurm.codex_state= on one disposable mirror first; the human's laptop config is where the flag lives.
+3. The real default durable root, =~/mirrors/.sucoder-state= (=/global/scratch/fsa/fc_jevons/ligon/mirrors/.sucoder-state=), was never created this session: every trial used the sibling =.sucoder-state-trial= and trial scopes, so a pilot starts clean.
+4. Clean-up when the human agrees: the trial durable root =/global/scratch/fsa/fc_jevons/ligon/.sucoder-state-trial= (143 MB: one real run with 35 one-minute generations plus the restore and confirmation runs), the trial scopes under =/local/job39969504/state/codex/= and =/local/job39969504/trial-root2= (wiped with the job anyway), and the git worktrees under this session's scratchpad (=git worktree prune= after removing them).
 
 * Operational notes
 
