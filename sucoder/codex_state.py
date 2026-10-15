@@ -71,6 +71,18 @@ def validate_restore_selector(value: str) -> str:
     return value
 
 
+def _normalize(path: str) -> str:
+    """``normpath`` with any run of leading slashes collapsed to one.
+
+    POSIX lets ``//x`` differ from ``/x``, so ``normpath`` preserves exactly
+    two leading slashes; without this ``//g/mirrors/sample`` compares unequal
+    to ``/g/mirrors/sample`` and slips past every refusal below.  Every path
+    the refusals compare goes through here.  No realpath: symlinks are the
+    operator's choice (``~/mirrors`` onto Lustre).
+    """
+    return posixpath.normpath(re.sub(r"^/+", "/", path))
+
+
 def durable_root_for(mirror_path: str, configured: Optional[str]) -> str:
     """The durable root: configured, else ``<dir containing the mirrors>/.sucoder-state``.
 
@@ -80,12 +92,12 @@ def durable_root_for(mirror_path: str, configured: Optional[str]) -> str:
     ``codex/<scope>`` itself.
     """
     if configured:
-        return posixpath.normpath(configured)
-    return posixpath.join(posixpath.dirname(posixpath.normpath(mirror_path)), DURABLE_ROOT_NAME)
+        return _normalize(configured)
+    return posixpath.join(posixpath.dirname(_normalize(mirror_path)), DURABLE_ROOT_NAME)
 
 
 def _within(path: str, parent: str) -> bool:
-    parent = posixpath.normpath(parent)
+    parent = _normalize(parent)
     return path == parent or path.startswith(parent.rstrip("/") + "/")
 
 
@@ -97,8 +109,8 @@ def check_durable_root(durable_root: str, mirror_path: str, local_disk_root: Opt
     root (publication and retention walk that tree), and allocation-local
     storage is not durable.  Returns the normalized root.
     """
-    root = posixpath.normpath(durable_root)
-    mirror = posixpath.normpath(mirror_path)
+    root = _normalize(durable_root)
+    mirror = _normalize(mirror_path)
     if root == mirror:
         raise ValueError(
             f"slurm.codex_state.durable_root {durable_root!r} is the shared mirror "

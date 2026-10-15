@@ -131,10 +131,29 @@ def test_durable_root_is_configured_or_the_sibling_of_the_mirrors():
     ("/g", "contains the shared mirror repository"),
     ("/local/state", "allocation-local storage is not durable"),
     ("/local", "allocation-local storage is not durable"),
+    # POSIX keeps exactly two leading slashes distinct and so does normpath;
+    # the refusals must not, or ``//`` spells a way around every one of them.
+    ("//g/mirrors/sample", "is the shared mirror repository itself"),
+    ("//g/mirrors/sample/", "is the shared mirror repository itself"),
+    ("//g/mirrors/sample/.sucoder-state", "is inside the shared mirror repository"),
+    ("//g/mirrors", "contains the shared mirror repository"),
+    ("//local/state", "allocation-local storage is not durable"),
 ])
 def test_durable_root_rejections(root, message):
     with pytest.raises(ValueError, match=message):
         check_durable_root(root, "/g/mirrors/sample", "/local")
+
+
+def test_durable_root_collapses_leading_slashes_on_every_side_of_the_comparison():
+    assert check_durable_root("//g/mirrors/.sucoder-state", "/g/mirrors/sample", "/local") == "/g/mirrors/.sucoder-state"
+    assert durable_root_for("//g/mirrors/sample", None) == "/g/mirrors/.sucoder-state"
+    assert durable_root_for("/g/mirrors/sample", "///g/state/") == "/g/state"
+    with pytest.raises(ValueError, match="is inside the shared mirror repository /g/mirrors/sample"):
+        check_durable_root("/g/mirrors/sample/.sucoder-state", "//g/mirrors/sample", "/local")
+    with pytest.raises(ValueError, match="contains the shared mirror repository"):
+        check_durable_root("/g/mirrors", "//g/mirrors/sample", "/local")
+    with pytest.raises(ValueError, match="allocation-local storage is not durable"):
+        check_durable_root("/local/state", "/g/mirrors/sample", "//local")
 
 
 def test_durable_root_accepts_siblings_and_prefix_lookalikes():
@@ -206,6 +225,8 @@ def _state_manager(tmp_path, monkeypatch, *, enabled=True, local_disk_root="/loc
     ctx.settings.remote.slurm.codex_state = CodexStateConfig(enabled=enabled)
     manager.executor.local_disk_root = local_disk_root
     manager.executor.agent_user = "coder"
+    manager.executor.run_agent.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+    monkeypatch.setattr("sucoder.session._session_dir", lambda: tmp_path / "sessions")
     monkeypatch.setattr(manager, "_resolve_remote_path", lambda ctx: "/global/scratch/u/mirrors/sample")
     confined = Mock(return_value=0)
     monkeypatch.setattr(manager, "_launch_confined", confined)
@@ -318,7 +339,7 @@ def test_launch_rejects_a_bad_selector_before_staging_anything(tmp_path, monkeyp
     with pytest.raises(MirrorError, match="expected RUN/GENERATION"):
         _launch(manager, ctx, codex_state_from=value)
     assert not confined.called
-    assert not any(c.kwargs.get("input") == runner_source() for c in manager.executor.run_agent.call_args_list)
+    assert not manager.executor.run_agent.called          # no staging of any kind, not just no runner
 
 
 def test_launch_passes_fresh(tmp_path, monkeypatch):
@@ -348,18 +369,98 @@ def test_launch_rejects_a_selection_without_managed_state(tmp_path, monkeypatch,
     assert not confined.called
 
 
+def _live_session(manager, ctx, monkeypatch, how):
+    """Make one of the reuse/attach paths active; return the text the refusal names."""
+    from sucoder.session import RemoteSession
+
+    if how == "record":          # _launch_confined -> _reuse_confined_job from the session record
+        RemoteSession("sample", slurm_job_id=4242).save()
+        monkeypatch.setattr(manager, "_confined_job_state", lambda job_id: "RUNNING")
+        return r"\(job 4242\)"
+    if how == "squeue":          # _launch_confined -> _reuse_confined_job by --job-name (issue 19)
+        monkeypatch.setattr(manager, "_confined_jobs_by_name", lambda name: [(4343, "RUNNING", "p", "a", "")])
+        monkeypatch.setattr(manager, "_job_matches_this_target", lambda ctx, partition, account, qos: True)
+        return r"\(job 4343\)"
+    # Unconfined: ``tmux new-session -A`` (and the service's has-session) would
+    # attach; the fixture's rc 0 answers ``tmux has-session`` as "exists".
+    ctx.settings.remote.slurm.confined = False
+    return r"\(tmux sucoder-sample\)"
+
+
+@pytest.mark.parametrize("selection", [{"codex_state_from": SELECTOR}, {"codex_state_fresh": True}])
+@pytest.mark.parametrize("how", ["record", "squeue", "tmux"])
+def test_launch_refuses_a_selection_over_a_live_session_before_staging_anything(tmp_path, monkeypatch, selection, how):
+    manager, ctx, confined = _state_manager(tmp_path, monkeypatch)
+    named = _live_session(manager, ctx, monkeypatch, how)
+    with pytest.raises(MirrorError, match="applies to a new managed launch only.*already has a running session " + named):
+        _launch(manager, ctx, **selection)
+    assert not confined.called
+    assert not any(c.kwargs.get("input") for c in manager.executor.run_agent.call_args_list)   # nothing staged
+    assert all(c.args[0][:2] in (["tmux", "has-session"],) for c in manager.executor.run_agent.call_args_list)
+
+
+@pytest.mark.parametrize("how", ["record", "squeue"])
+def test_launch_without_a_selection_still_reuses_a_live_session(tmp_path, monkeypatch, how):
+    manager, ctx, confined = _state_manager(tmp_path, monkeypatch)
+    _live_session(manager, ctx, monkeypatch, how)
+    _launch(manager, ctx)
+    assert confined.called and "--restore" not in _runner_argv(confined) and "--fresh" not in _runner_argv(confined)
+
+
+def test_launch_with_a_selection_starts_the_tui_session_when_none_exists(tmp_path, monkeypatch):
+    manager, ctx, confined = _state_manager(tmp_path, monkeypatch)
+    ctx.settings.remote.slurm.confined = False
+    monkeypatch.setattr(manager, "_prepare_local_tier", lambda ctx, root: (tmp_path, "export SUCODER_LOCAL_ROOT=/local"))
+    manager.executor.run_agent.side_effect = lambda args, **kw: SimpleNamespace(
+        returncode=1 if list(args)[:2] == ["tmux", "has-session"] else 0, stdout="", stderr="")
+    _launch(manager, ctx, codex_state_fresh=True)
+    launched = manager.executor.run_agent.call_args.args[0]
+    assert launched[:4] == ["tmux", "new-session", "-A", "-d"] and "--fresh -- " in launched[-1]
+    assert not confined.called
+
+
+def test_launch_refuses_a_relative_resolved_mirror_path_before_staging_anything(tmp_path, monkeypatch):
+    manager, ctx, confined = _state_manager(tmp_path, monkeypatch)
+    monkeypatch.setattr(manager, "_resolve_remote_path", lambda ctx: "mirrors/sample")
+    with pytest.raises(MirrorError, match="absolute shared mirror path for mirror sample, got 'mirrors/sample'"):
+        _launch(manager, ctx)
+    assert not confined.called and not manager.executor.run_agent.called
+
+
+def test_launch_refuses_a_relative_durable_root_before_staging_anything(tmp_path, monkeypatch):
+    manager, ctx, confined = _state_manager(tmp_path, monkeypatch)
+    ctx.settings.remote.slurm.codex_state = CodexStateConfig(enabled=True, durable_root="state")   # the parser forbids this; the launcher must too
+    with pytest.raises(MirrorError, match="absolute durable root for mirror sample, got 'state'"):
+        _launch(manager, ctx)
+    assert not confined.called and not manager.executor.run_agent.called
+
+
+def test_dry_run_keeps_the_unexpanded_home_in_the_durable_root(tmp_path, monkeypatch):
+    # A dry run cannot expand ~ on the target and executes nothing (see
+    # _resolve_remote_path); the printed root stays ~/mirrors/.sucoder-state.
+    manager, ctx, confined = _state_manager(tmp_path, monkeypatch)
+    manager.executor.dry_run = True
+    monkeypatch.setattr(manager, "_resolve_remote_path", lambda ctx: "~/mirrors/sample")
+    _launch(manager, ctx)
+    assert _runner_argv(confined)[4:6] == ["--durable-root", "~/mirrors/.sucoder-state"]
+
+
 def _cli_launch(tmp_path, monkeypatch, subcommand, flags):
     path = _write_config(tmp_path, skills_entry=tmp_path / "skills")
     monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **k: None)
-    calls = []
+    bootstrap_calls, launch_calls = [], []
     manager = SimpleNamespace(
         context_for=lambda name: name,
-        bootstrap=lambda *a, **kw: calls.append(kw),
-        launch_agent=lambda *a, **kw: calls.append(kw),
+        bootstrap=lambda *a, **kw: bootstrap_calls.append(kw),
+        launch_agent=lambda *a, **kw: launch_calls.append(kw),
     )
     monkeypatch.setattr(cli, "_build_manager_for_mirror", lambda *a, **kw: manager)
     result = CliRunner().invoke(cli.app, ["--config", str(path), subcommand, "sample", "--agent", "codex", *flags])
-    return result, calls
+    return result, bootstrap_calls, launch_calls
+
+
+# ``collaborate`` goes through bootstrap, ``agents-run`` straight to launch_agent.
+_CLI_METHOD = {"collaborate": "bootstrap", "agents-run": "launch_agent"}
 
 
 @pytest.mark.parametrize("subcommand", ["collaborate", "agents-run"])
@@ -369,18 +470,23 @@ def _cli_launch(tmp_path, monkeypatch, subcommand, flags):
     (["--codex-state-fresh"], {"codex_state_from": None, "codex_state_fresh": True}),
 ])
 def test_cli_forwards_codex_state_selection(tmp_path, monkeypatch, subcommand, flags, expected):
-    result, calls = _cli_launch(tmp_path, monkeypatch, subcommand, flags)
+    result, bootstrap_calls, launch_calls = _cli_launch(tmp_path, monkeypatch, subcommand, flags)
     assert result.exit_code == 0, (result.output, result.exception)
-    assert {key: calls[0][key] for key in expected} == expected
-    assert calls[0]["command_override"] == ["codex"]
+    calls = {"bootstrap": bootstrap_calls, "launch_agent": launch_calls}
+    other = "launch_agent" if _CLI_METHOD[subcommand] == "bootstrap" else "bootstrap"
+    assert len(calls[_CLI_METHOD[subcommand]]) == 1 and calls[other] == []
+    kwargs = calls[_CLI_METHOD[subcommand]][0]
+    assert {key: kwargs[key] for key in expected} == expected
+    assert kwargs["command_override"] == ["codex"]
 
 
 @pytest.mark.parametrize("subcommand", ["collaborate", "agents-run"])
 def test_cli_rejects_both_codex_state_selections_before_touching_anything(tmp_path, monkeypatch, subcommand):
-    result, calls = _cli_launch(tmp_path, monkeypatch, subcommand, ["--codex-state-from", SELECTOR, "--codex-state-fresh"])
-    assert result.exit_code == 2 and calls == []
-    with pytest.raises(Exception, match="conflicts"):
-        cli._codex_state_selection(SELECTOR, True)
+    result, bootstrap_calls, launch_calls = _cli_launch(
+        tmp_path, monkeypatch, subcommand, ["--codex-state-from", SELECTOR, "--codex-state-fresh"])
+    assert result.exit_code == 2, (result.output, result.exception)
+    assert "--codex-state-fresh conflicts with --codex-state-from" in result.output
+    assert bootstrap_calls == [] and launch_calls == []
 
 
 # ----------------------------------------------------------------- the runner, on this node

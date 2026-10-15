@@ -3349,6 +3349,8 @@ class MirrorManager:
         state = self._codex_state_launch(
             ctx, restore=codex_state_from, fresh=codex_state_fresh,
         )
+        if state is not None and (state.restore is not None or state.fresh):
+            self._refuse_selection_over_live_session(ctx)
 
         model_for_flag, provider_env = self._provider_launch_environment(
             effective_model, self._detected_agent_type,
@@ -3661,9 +3663,13 @@ class MirrorManager:
             # The resolved shared mirror path (``~`` expanded on the target, not
             # realpath'd), so two targets spelling the same storage differently
             # share a scope and the derived durable root is its sibling.
-            mirror_path = self._resolve_remote_path(ctx)
-            durable_root = _state_check_durable_root(
-                _state_durable_root_for(mirror_path, state.durable_root), mirror_path, local_disk_root,
+            mirror_path = self._absolute_for_codex_state(
+                ctx, "shared mirror path", self._resolve_remote_path(ctx),
+            )
+            durable_root = self._absolute_for_codex_state(
+                ctx, "durable root", _state_check_durable_root(
+                    _state_durable_root_for(mirror_path, state.durable_root), mirror_path, local_disk_root,
+                ),
             )
         except ValueError as exc:
             raise MirrorError(str(exc)) from exc
@@ -3675,6 +3681,71 @@ class MirrorManager:
             restore=restore,
             fresh=fresh,
         )
+
+    def _absolute_for_codex_state(self, ctx: MirrorContext, what: str, value: str) -> str:
+        """``value`` as given when it starts with ``/``; a MirrorError otherwise.
+
+        The remote config accepts a relative ``mirror_root`` and
+        ``_resolve_remote_path`` passes it through, so the launcher could
+        dispatch ``--durable-root mirrors/.sucoder-state``; the runner refuses
+        a relative root (exit 70), but the launcher must never emit one.  A
+        dry run cannot expand ``~`` on the target and executes nothing, so an
+        unexpanded ``~`` is tolerated there only.
+        """
+        if value.startswith("/") or (self.executor.dry_run and value.startswith("~")):
+            return value
+        raise MirrorError(
+            f"Managed Codex state needs an absolute {what} for mirror {ctx.settings.name}, "
+            f"got {value!r}; set remote.mirror_root (and slurm.codex_state.durable_root) "
+            "to an absolute path."
+        )
+
+    def _refuse_selection_over_live_session(self, ctx: MirrorContext) -> None:
+        """A history selection applies to a new managed launch only.
+
+        ``--codex-state-from`` and ``--codex-state-fresh`` reach the runner
+        through the argv of the command this launch starts, and every remote
+        launch path prefers an existing session over starting one:
+        ``_launch_confined`` reuses a live job named by the session record or
+        found by ``squeue --name`` (``_reuse_confined_job``),
+        ``_launch_remote_service`` keeps an existing service session, and the
+        TUI's ``tmux new-session -A`` attaches when the session exists.  Each
+        would discard that argv and the operator would silently get the
+        running history (or an idle shell).  So probe here, before anything
+        is staged, and refuse.  The renew loop passes no selection and is
+        unaffected.  A probe failure on the confined path raises as it does
+        for the reuse-probe itself: an unknown state is not "no session".
+        """
+        from .session import RemoteSession
+
+        live: Optional[str] = None
+        if ctx.confined:
+            session_name, _socket = confined_tmux_target(ctx.settings.name)
+            sess = RemoteSession.load(ctx.settings.name, target_name=self.target_name)
+            if sess.slurm_job_id and self._confined_job_state(sess.slurm_job_id) is not None:
+                live = f"job {sess.slurm_job_id}"
+            else:
+                for job_id, _state, partition, account, qos in self._confined_jobs_by_name(session_name):
+                    if job_id == sess.slurm_job_id:
+                        continue          # ruled out above: it is not live
+                    if self._job_matches_this_target(ctx, partition, account, qos):
+                        live = f"job {job_id}"
+                        break
+        elif ctx.is_remote and not self.executor.dry_run:
+            # A dry run answers every command with success, which would read
+            # as "exists"; it executes nothing, so there is nothing to protect.
+            tmux_name = f"sucoder-{ctx.settings.name}"
+            result = self.executor.run_agent(
+                ["tmux", "has-session", "-t", tmux_name], check=False, capture_output=True,
+            )
+            if result.returncode == 0:
+                live = f"tmux {tmux_name}"
+        if live is not None:
+            raise MirrorError(
+                "a history selection applies to a new managed launch only; "
+                f"{ctx.settings.name} already has a running session ({live}): "
+                "release it first, or launch without a selection to attach."
+            )
 
     def _stage_codex_state_runner(self, ctx: MirrorContext) -> str:
         """Stage the state runner on the target, private and unique per launch."""
