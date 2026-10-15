@@ -395,10 +395,12 @@ def home(tmp_path):
     (codex_home / "config.toml").write_text('model = "x"\n')
     local = tmp_path / "local"
     local.mkdir()
+    durable = tmp_path / "durable"      # the runner's --durable-root; never under the local root
+    durable.mkdir()
     fake = tmp_path / "fake_codex.py"
     fake.write_text(FAKE_CODEX)
     fake.chmod(0o700)
-    return {"codex_home": codex_home, "local": local, "fake": fake, "scope": "ab" * 32}
+    return {"codex_home": codex_home, "local": local, "durable": durable, "fake": fake, "scope": "ab" * 32}
 
 
 def _env(home, **extra):
@@ -411,7 +413,7 @@ def _env(home, **extra):
 def _runner(home, env, placeholder=True):
     arg = f'sqlite_home="{PLACEHOLDER}"' if placeholder else 'sqlite_home="/elsewhere"'
     return subprocess.Popen(
-        [sys.executable, str(RUNNER), "--scope", home["scope"], "--",
+        [sys.executable, str(RUNNER), "--scope", home["scope"], "--durable-root", str(home["durable"]), "--",
          sys.executable, str(home["fake"]), "-c", arg, "app-server"],
         env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
@@ -487,7 +489,7 @@ def test_runner_refuses_conflicts_and_missing_prerequisites(home, case):
         (home["codex_home"] / "config.toml").write_text('sqlite_home = "/x"\n')
     elif case == "profile":
         (home["codex_home"] / "fast.config.toml").write_text('sqlite_home = "/x"\n')
-        proc = subprocess.Popen([sys.executable, str(RUNNER), "--scope", home["scope"], "--",
+        proc = subprocess.Popen([sys.executable, str(RUNNER), "--scope", home["scope"], "--durable-root", str(home["durable"]), "--",
                                  sys.executable, str(home["fake"]), "--profile", "fast", "-c", f'sqlite_home="{PLACEHOLDER}"'],
                                 env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         assert proc.wait(timeout=30) == 70 and "fast.config.toml" in proc.stderr.read()
@@ -497,7 +499,7 @@ def test_runner_refuses_conflicts_and_missing_prerequisites(home, case):
     elif case == "no_sessions":
         shutil.rmtree(home["codex_home"] / "sessions")
     if case == "no_placeholder":
-        proc = subprocess.Popen([sys.executable, str(RUNNER), "--scope", home["scope"], "--",
+        proc = subprocess.Popen([sys.executable, str(RUNNER), "--scope", home["scope"], "--durable-root", str(home["durable"]), "--",
                                  sys.executable, str(home["fake"]), "app-server"],
                                 env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     else:
@@ -548,7 +550,7 @@ def test_runner_places_a_real_codex_app_server(home, tmp_path):
     (tmp_path / "user-home").mkdir()
     env = {"PATH": os.environ["PATH"], "HOME": str(tmp_path / "user-home"), "NO_PROXY": "127.0.0.1", "RUST_LOG": "error",
            "SUCODER_LOCAL_ROOT": str(home["local"]), "CODEX_HOME": str(home["codex_home"]), "TMPDIR": str(tmp_path)}
-    proc = subprocess.Popen([sys.executable, str(RUNNER), "--scope", home["scope"], "--", *command],
+    proc = subprocess.Popen([sys.executable, str(RUNNER), "--scope", home["scope"], "--durable-root", str(home["durable"]), "--", *command],
                             env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
         proc.stdin.write(json.dumps({"id": 1, "method": "initialize", "params": {
