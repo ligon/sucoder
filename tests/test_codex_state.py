@@ -20,15 +20,23 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from typer.testing import CliRunner
 
-from sucoder import codex_state
-from sucoder.codex_state import PLACEHOLDER, runner_command, runner_source, scope_id, with_sqlite_home_placeholder
+from sucoder import cli, codex_state
+from sucoder.codex_state import (
+    PLACEHOLDER, check_durable_root, durable_root_for, runner_command, runner_source, scope_id,
+    validate_restore_selector, with_sqlite_home_placeholder,
+)
 from sucoder.config import AgentLauncher, CodexStateConfig, ConfigError, _parse_slurm_config
 from sucoder.mirror import MirrorError
+from tests.test_cli import _write_config
 from tests.test_remote_control import _manager
+
+SELECTOR = "0123456789abcdef0123456789abcdef/000412-0a1b2c3d"
 
 RUNNER = Path(codex_state.__file__).with_name("codex_state_runner.py")
 FAKE_CODEX = r'''#!/usr/bin/env python3
@@ -94,9 +102,62 @@ def test_placeholder_survives_shell_quoting_and_substitution_keeps_the_argv():
 
 
 def test_runner_command_is_outermost_and_passes_the_command_after_a_separator():
-    assert runner_command("/h/.cache/sucoder/r.py", "ab" * 32, ["python3", "/i.py", "codex"]) == [
-        "python3", "/h/.cache/sucoder/r.py", "--scope", "ab" * 32, "--placeholder", PLACEHOLDER,
-        "--", "python3", "/i.py", "codex"]
+    kwargs = dict(durable_root="/g/mirrors/.sucoder-state", checkpoint_minutes=10, checkpoint_timeout_seconds=30)
+    prefix = ["python3", "/h/.cache/sucoder/r.py", "--scope", "ab" * 32, "--placeholder", PLACEHOLDER,
+              "--durable-root", "/g/mirrors/.sucoder-state", "--checkpoint-minutes", "10", "--checkpoint-timeout", "30"]
+    assert runner_command("/h/.cache/sucoder/r.py", "ab" * 32, ["python3", "/i.py", "codex"], **kwargs) == [
+        *prefix, "--", "python3", "/i.py", "codex"]
+    assert runner_command("/h/.cache/sucoder/r.py", "ab" * 32, ["codex"], restore=SELECTOR, **kwargs) == [
+        *prefix, "--restore", SELECTOR, "--", "codex"]
+    assert runner_command("/h/.cache/sucoder/r.py", "ab" * 32, ["codex"], fresh=True, **kwargs) == [
+        *prefix, "--fresh", "--", "codex"]
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        runner_command("/h/.cache/sucoder/r.py", "ab" * 32, ["codex"], restore=SELECTOR, fresh=True, **kwargs)
+    with pytest.raises(ValueError, match="expected RUN/GENERATION"):
+        runner_command("/h/.cache/sucoder/r.py", "ab" * 32, ["codex"], restore="latest", **kwargs)
+
+
+def test_durable_root_is_configured_or_the_sibling_of_the_mirrors():
+    assert durable_root_for("/global/home/users/ligon/mirrors/SuCoder", None) == "/global/home/users/ligon/mirrors/.sucoder-state"
+    assert durable_root_for("/global/home/users/ligon/mirrors/SuCoder/", None) == "/global/home/users/ligon/mirrors/.sucoder-state"
+    assert durable_root_for("/global/home/users/ligon/mirrors/SuCoder", "/global/scratch/ligon/state/") == "/global/scratch/ligon/state"
+
+
+@pytest.mark.parametrize("root, message", [
+    ("/g/mirrors/sample", "is the shared mirror repository itself"),
+    ("/g/mirrors/sample/", "is the shared mirror repository itself"),
+    ("/g/mirrors/sample/.sucoder-state", "is inside the shared mirror repository"),
+    ("/g/mirrors", "contains the shared mirror repository"),
+    ("/g", "contains the shared mirror repository"),
+    ("/local/state", "allocation-local storage is not durable"),
+    ("/local", "allocation-local storage is not durable"),
+])
+def test_durable_root_rejections(root, message):
+    with pytest.raises(ValueError, match=message):
+        check_durable_root(root, "/g/mirrors/sample", "/local")
+
+
+def test_durable_root_accepts_siblings_and_prefix_lookalikes():
+    assert check_durable_root("/g/mirrors/.sucoder-state", "/g/mirrors/sample", "/local") == "/g/mirrors/.sucoder-state"
+    assert check_durable_root("/g/mirrors/sample2", "/g/mirrors/sample", "/local") == "/g/mirrors/sample2"
+    assert check_durable_root("/g/mirrors/sample-state", "/g/mirrors/sample", "/local") == "/g/mirrors/sample-state"
+    assert check_durable_root("/localdisk/state", "/g/mirrors/sample", "/local") == "/localdisk/state"
+    assert check_durable_root("/local/state", "/g/mirrors/sample", None) == "/local/state"
+
+
+@pytest.mark.parametrize("value", [SELECTOR, "a" * 32 + "/000001-deadbeef"])
+def test_restore_selector_accepts_run_slash_generation(value):
+    assert validate_restore_selector(value) == value
+
+
+@pytest.mark.parametrize("value", [
+    "", "latest", "a" * 32, "000412-0a1b2c3d", "a" * 31 + "/000001-deadbeef", SELECTOR.upper(),
+    "a" * 32 + "/1-deadbeef", "a" * 32 + "/000001-deadbee", SELECTOR + "\n", " " + SELECTOR,
+    "../" + SELECTOR, "/global/x/" + SELECTOR, SELECTOR + "/db", SELECTOR + "; rm -rf /", "$(id)",
+])
+def test_restore_selector_rejects_everything_else(value):
+    with pytest.raises(ValueError, match="expected RUN/GENERATION"):
+        validate_restore_selector(value)
 
 
 def test_runner_source_is_the_staged_file_and_stays_valid_for_python_3_6():
@@ -161,9 +222,11 @@ def test_launch_wraps_codex_in_the_staged_runner_with_the_placeholder_after_code
                          codex_remote_control=remote_control)
     launched = confined.call_args.args[1]
     assert launched[0] == "python3" and re.search(r"codex-state-runner-sample-[0-9a-f]{16}\.py$", launched[1])
-    assert launched[2:6] == ["--scope", scope_id("cluster", "coder", "/global/scratch/u/mirrors/sample"), "--placeholder", PLACEHOLDER]
-    assert launched[6] == "--"
-    inner = launched[7:]
+    assert launched[2:12] == [
+        "--scope", scope_id("cluster", "coder", "/global/scratch/u/mirrors/sample"), "--placeholder", PLACEHOLDER,
+        "--durable-root", "/global/scratch/u/mirrors/.sucoder-state", "--checkpoint-minutes", "10", "--checkpoint-timeout", "30"]
+    assert launched[12] == "--"
+    inner = launched[13:]
     marker = f'sqlite_home="{PLACEHOLDER}"'
     if remote_control is None:
         assert inner.count(marker) == 1
@@ -204,6 +267,120 @@ def test_launch_leaves_other_cases_alone(tmp_path, monkeypatch, enabled, command
     manager.launch_agent(ctx, sync=False, command_override=command, supports_inline_prompt=True, detached=True)
     launched = confined.call_args.args[1]
     assert "codex-state-runner" not in " ".join(launched) and PLACEHOLDER not in " ".join(launched)
+
+
+def _runner_argv(confined):
+    """The staged runner's own options: after its path, before the separator."""
+    launched = confined.call_args.args[1]
+    return launched[2:launched.index("--")]
+
+
+def _launch(manager, ctx, command=("codex",), **kwargs):
+    return manager.launch_agent(ctx, sync=False, command_override=list(command), supports_inline_prompt=True,
+                                detached=True, **kwargs)
+
+
+def test_launch_honours_a_configured_durable_root_and_cadence(tmp_path, monkeypatch):
+    manager, ctx, confined = _state_manager(tmp_path, monkeypatch)
+    ctx.settings.remote.slurm.codex_state = CodexStateConfig(
+        enabled=True, checkpoint_minutes=3, checkpoint_timeout_seconds=45, durable_root="/global/scratch/u/state/")
+    _launch(manager, ctx)
+    assert _runner_argv(confined)[2:] == [
+        "--placeholder", PLACEHOLDER, "--durable-root", "/global/scratch/u/state",
+        "--checkpoint-minutes", "3", "--checkpoint-timeout", "45"]
+
+
+@pytest.mark.parametrize("root, message", [
+    ("/global/scratch/u/mirrors/sample", "is the shared mirror repository itself"),
+    ("/global/scratch/u/mirrors/sample/.sucoder-state", "inside the shared mirror repository"),
+    ("/global/scratch/u/mirrors", "contains the shared mirror repository"),
+    ("/local/codex-state", "allocation-local storage is not durable"),
+])
+def test_launch_refuses_a_durable_root_nested_with_the_mirror_or_on_local_disk(tmp_path, monkeypatch, root, message):
+    manager, ctx, confined = _state_manager(tmp_path, monkeypatch)
+    ctx.settings.remote.slurm.codex_state = CodexStateConfig(enabled=True, durable_root=root)
+    with pytest.raises(MirrorError, match=message):
+        _launch(manager, ctx)
+    assert not confined.called
+
+
+def test_launch_passes_a_valid_selector_as_restore(tmp_path, monkeypatch):
+    manager, ctx, confined = _state_manager(tmp_path, monkeypatch)
+    _launch(manager, ctx, codex_state_from=SELECTOR)
+    argv = _runner_argv(confined)
+    assert argv[-2:] == ["--restore", SELECTOR] and "--fresh" not in argv
+
+
+@pytest.mark.parametrize("value", ["latest", "../x/000001-deadbeef", "/global/x/" + SELECTOR, SELECTOR + "; rm -rf /",
+                                   SELECTOR.upper(), SELECTOR + "/db"])
+def test_launch_rejects_a_bad_selector_before_staging_anything(tmp_path, monkeypatch, value):
+    manager, ctx, confined = _state_manager(tmp_path, monkeypatch)
+    with pytest.raises(MirrorError, match="expected RUN/GENERATION"):
+        _launch(manager, ctx, codex_state_from=value)
+    assert not confined.called
+    assert not any(c.kwargs.get("input") == runner_source() for c in manager.executor.run_agent.call_args_list)
+
+
+def test_launch_passes_fresh(tmp_path, monkeypatch):
+    manager, ctx, confined = _state_manager(tmp_path, monkeypatch)
+    _launch(manager, ctx, codex_state_fresh=True)
+    argv = _runner_argv(confined)
+    assert argv[-1] == "--fresh" and "--restore" not in argv
+
+
+def test_launch_rejects_restore_and_fresh_together(tmp_path, monkeypatch):
+    manager, ctx, confined = _state_manager(tmp_path, monkeypatch)
+    with pytest.raises(MirrorError, match="mutually exclusive"):
+        _launch(manager, ctx, codex_state_from=SELECTOR, codex_state_fresh=True)
+    assert not confined.called
+
+
+@pytest.mark.parametrize("selection", [{"codex_state_from": SELECTOR}, {"codex_state_fresh": True}])
+@pytest.mark.parametrize("enabled, command, message", [
+    (False, ["codex"], "not enabled for this target"),
+    (True, ["claude"], "apply to a Codex launch only"),
+])
+def test_launch_rejects_a_selection_without_managed_state(tmp_path, monkeypatch, selection, enabled, command, message):
+    manager, ctx, confined = _state_manager(tmp_path, monkeypatch, enabled=enabled)
+    ctx.settings.agent_launcher = AgentLauncher(command=["claude"])
+    with pytest.raises(MirrorError, match=message):
+        _launch(manager, ctx, command, **selection)
+    assert not confined.called
+
+
+def _cli_launch(tmp_path, monkeypatch, subcommand, flags):
+    path = _write_config(tmp_path, skills_entry=tmp_path / "skills")
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **k: None)
+    calls = []
+    manager = SimpleNamespace(
+        context_for=lambda name: name,
+        bootstrap=lambda *a, **kw: calls.append(kw),
+        launch_agent=lambda *a, **kw: calls.append(kw),
+    )
+    monkeypatch.setattr(cli, "_build_manager_for_mirror", lambda *a, **kw: manager)
+    result = CliRunner().invoke(cli.app, ["--config", str(path), subcommand, "sample", "--agent", "codex", *flags])
+    return result, calls
+
+
+@pytest.mark.parametrize("subcommand", ["collaborate", "agents-run"])
+@pytest.mark.parametrize("flags, expected", [
+    ([], {"codex_state_from": None, "codex_state_fresh": False}),
+    (["--codex-state-from", SELECTOR], {"codex_state_from": SELECTOR, "codex_state_fresh": False}),
+    (["--codex-state-fresh"], {"codex_state_from": None, "codex_state_fresh": True}),
+])
+def test_cli_forwards_codex_state_selection(tmp_path, monkeypatch, subcommand, flags, expected):
+    result, calls = _cli_launch(tmp_path, monkeypatch, subcommand, flags)
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert {key: calls[0][key] for key in expected} == expected
+    assert calls[0]["command_override"] == ["codex"]
+
+
+@pytest.mark.parametrize("subcommand", ["collaborate", "agents-run"])
+def test_cli_rejects_both_codex_state_selections_before_touching_anything(tmp_path, monkeypatch, subcommand):
+    result, calls = _cli_launch(tmp_path, monkeypatch, subcommand, ["--codex-state-from", SELECTOR, "--codex-state-fresh"])
+    assert result.exit_code == 2 and calls == []
+    with pytest.raises(Exception, match="conflicts"):
+        cli._codex_state_selection(SELECTOR, True)
 
 
 # ----------------------------------------------------------------- the runner, on this node

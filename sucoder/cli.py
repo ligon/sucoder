@@ -2223,6 +2223,12 @@ def _codex_remote_mode(enabled: Optional[bool], server_only: bool) -> Optional[s
     return None if enabled is None else "terminal" if enabled else "off"
 
 
+def _codex_state_selection(from_generation: Optional[str], fresh: bool) -> None:
+    """Catch the conflicting pair before any session state is touched."""
+    if from_generation is not None and fresh:
+        raise typer.BadParameter("--codex-state-fresh conflicts with --codex-state-from.")
+
+
 @app.command("agents-run")
 def agents_run(
     ctx: typer.Context,
@@ -2272,6 +2278,14 @@ def agents_run(
         False, "--remote-control-only",
         help="Start a Codex remote-control server without the terminal UI.",
     ),
+    codex_state_from: Optional[str] = typer.Option(
+        None, "--codex-state-from", metavar="RUN/GENERATION",
+        help="Continue managed Codex state from this exact generation (slurm.codex_state).",
+    ),
+    codex_state_fresh: bool = typer.Option(
+        False, "--codex-state-fresh",
+        help="Start managed Codex state as a new history instead of reusing this allocation's run.",
+    ),
     agent_command: Optional[str] = typer.Option(
         None,
         "--agent-command",
@@ -2305,6 +2319,7 @@ def agents_run(
 ) -> None:
     """Launch the configured agent inside the mirror working tree."""
     remote_mode = _codex_remote_mode(remote_control, remote_control_only)
+    _codex_state_selection(codex_state_from, codex_state_fresh)
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
@@ -2326,6 +2341,8 @@ def agents_run(
             env_override=env_override,
             supports_inline_prompt=inline_prompt_flag,
             codex_remote_control=remote_mode,
+            codex_state_from=codex_state_from,
+            codex_state_fresh=codex_state_fresh,
         )
     except MirrorError as exc:
         typer.echo(str(exc), err=True)
@@ -2391,6 +2408,14 @@ def collaborate(
         False, "--remote-control-only",
         help="Start a Codex remote-control server without the terminal UI.",
     ),
+    codex_state_from: Optional[str] = typer.Option(
+        None, "--codex-state-from", metavar="RUN/GENERATION",
+        help="Continue managed Codex state from this exact generation (slurm.codex_state).",
+    ),
+    codex_state_fresh: bool = typer.Option(
+        False, "--codex-state-fresh",
+        help="Start managed Codex state as a new history instead of reusing this allocation's run.",
+    ),
     agent_command: Optional[str] = typer.Option(
         None,
         "--agent-command",
@@ -2432,6 +2457,7 @@ def collaborate(
 ) -> None:
     """Prepare canonical, ensure the mirror exists, and launch the agent in one step."""
     remote_mode = _codex_remote_mode(remote_control, remote_control_only)
+    _codex_state_selection(codex_state_from, codex_state_fresh)
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
@@ -2484,6 +2510,8 @@ def collaborate(
             env_override=env_override,
             supports_inline_prompt=inline_prompt_flag,
             codex_remote_control=remote_mode,
+            codex_state_from=codex_state_from,
+            codex_state_fresh=codex_state_fresh,
             skip_lfs=not lfs,
         )
     except MirrorError as exc:

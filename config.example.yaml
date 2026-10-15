@@ -159,7 +159,9 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #       #   enabled: true         # local_disk; Codex launches only; refuses to
 #       #   checkpoint_minutes: 10            # launch rather than fall back to the
 #       #   checkpoint_timeout_seconds: 30    # shared home).  docs/codex-local-state.org
-#       #   durable_root: null    # null: private sibling of the mirror root
+#       #   durable_root: null    # null: <dir of the mirrors>/.sucoder-state; a
+#       #                         # root inside/around a mirror or under
+#       #                         # local_disk is refused
 
 # Mirrors are optional when using zero-config repo detection.
 mirrors:

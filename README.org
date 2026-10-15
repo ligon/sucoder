@@ -1085,10 +1085,37 @@ unchanged.  It is off by default, applies only to Codex launches, needs
 =local_disk=, and refuses to launch (rather than fall back to shared
 placement) when =bwrap= is missing, when =sqlite_home= is already set in
 the command, =CODEX_SQLITE_HOME= or =config.toml=, or when Codex opens a
-database anywhere else.  Capture and recovery of that state across
-allocations are not implemented yet; the design and the measurements
-behind it are in [[file:docs/codex-local-state.org][docs/codex-local-state.org]] and
+database anywhere else.  The design and the measurements behind it are
+in [[file:docs/codex-local-state.org][docs/codex-local-state.org]] and
 [[file:docs/codex-local-state-spike.org][docs/codex-local-state-spike.org]].
+
+The runner also carries that state across allocations.  It appends each
+thread's rollout, as it grows, to =DURABLE/runs/<run>/rollouts/<thread-id>.jsonl=,
+and every =checkpoint_minutes= it captures the databases into a
+generation under =DURABLE/runs/<run>/generations/<generation>/= with a
+=manifest.json= that records, per thread, the rollout offset the
+databases correspond to.  A generation is /warm/ when taken while Codex
+runs, /sealed/ when taken after the owned server has stopped cleanly,
+and /crash/ when taken after an abnormal or unknown exit (kept for
+explicit recovery, never promoted to sealed); nothing in the shared home
+is moved or rewritten, and no credential or copy of =CODEX_HOME= is
+included.  =DURABLE= is =durable_root= when set, else
+=.sucoder-state= next to the mirrors (the directory containing the
+resolved shared mirror path: =~/mirrors/<name>= gives
+=~/mirrors/.sucoder-state=, which on Savio is on the Lustre mirror
+filesystem); the runner keeps its files under =codex/<scope>= below it.
+The launcher refuses a =durable_root= that is, is inside, or contains
+the shared mirror repository, or that is under =local_disk=.  Two launch
+flags select which history the runner is told to continue: without
+either it reuses the run already on this allocation's local disk when
+one exists and otherwise starts a new history, =--codex-state-from
+RUN/GENERATION= names an exact generation to continue from, and
+=--codex-state-fresh= insists on a new history (the two are mutually
+exclusive and apply only to a Codex launch with =codex_state= enabled;
+no generation is ever selected automatically across allocations).  The
+runner's restore of a named generation lands later in this slice; the
+transfer-fencing and retention protocol is Slice 3, so generations
+accumulate unpruned for now.
 
 #+begin_src yaml
     slurm:
@@ -1098,9 +1125,9 @@ behind it are in [[file:docs/codex-local-state.org][docs/codex-local-state.org]]
       local_disk: true
       codex_state:
         enabled: true
-        checkpoint_minutes: 10            # periodic capture cadence (reserved)
+        checkpoint_minutes: 10            # periodic capture cadence
         checkpoint_timeout_seconds: 30    # bounded wait for a capture or drain
-        durable_root: null                # null: a private sibling of the mirror root
+        durable_root: null                # null: <dir of the mirrors>/.sucoder-state
 #+end_src
 
 - the launch clones =~/mirrors/<name>= to

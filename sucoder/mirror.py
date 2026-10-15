@@ -25,9 +25,13 @@ from .agent_mode import (
     service_launch, service_marker,
 )
 from .codex_state import (
+    CodexStateLaunch as _CodexStateLaunch,
+    check_durable_root as _state_check_durable_root,
+    durable_root_for as _state_durable_root_for,
     runner_command as _state_runner_command,
     runner_source as _state_runner_source,
     scope_id as _state_scope_id,
+    validate_restore_selector as _state_validate_restore_selector,
     with_sqlite_home_placeholder as _with_sqlite_home_placeholder,
 )
 from .codex_remote import build_remote_command
@@ -3276,6 +3280,8 @@ class MirrorManager:
         env_override: Optional[Mapping[str, str]] = None,
         supports_inline_prompt: Optional[bool] = None,
         codex_remote_control: Optional[str] = None,
+        codex_state_from: Optional[str] = None,
+        codex_state_fresh: bool = False,
         detached: bool = False,
     ) -> int:
         """Launch the configured agent command within the mirror working tree.
@@ -3284,6 +3290,12 @@ class MirrorManager:
         agent is started in a *detached* tmux session and this returns
         immediately instead of attaching a terminal; post-session hooks
         are skipped because the agent is still running.
+
+        ``codex_state_from`` (``RUN/GENERATION``) and ``codex_state_fresh``
+        select which managed Codex state history the staged runner continues
+        (docs/codex-local-state.org); they are mutually exclusive and only
+        meaningful for a Codex launch on a target with ``slurm.codex_state``
+        enabled.
         """
         launcher = ctx.agent_launcher
         base_command = list(command_override) if command_override else list(launcher.command)
@@ -3334,8 +3346,8 @@ class MirrorManager:
         # Managed Codex state (docs/codex-local-state.org): decided here, applied
         # at two points below -- the sqlite_home placeholder at the argv stage,
         # before nvm/installer wrapping, and the staged runner outermost.
-        state_scope = (
-            self._codex_state_scope(ctx) if self._detected_agent_type == AgentType.CODEX else None
+        state = self._codex_state_launch(
+            ctx, restore=codex_state_from, fresh=codex_state_fresh,
         )
 
         model_for_flag, provider_env = self._provider_launch_environment(
@@ -3384,7 +3396,7 @@ class MirrorManager:
             command = self._apply_agent_flag_templates(
                 command, ctx, launcher, templates, model=model_for_flag,
             )
-        if state_scope is not None:
+        if state is not None:
             try:
                 command = _with_sqlite_home_placeholder(command)
             except ValueError as exc:
@@ -3476,12 +3488,17 @@ class MirrorManager:
 
         if service_context:
             command = self._wrap_codex_service_context(ctx, command, service_context)
-        if state_scope is not None:
+        if state is not None:
             # Outermost: the runner owns the process, resolves the node-local
-            # root at run time, substitutes the placeholder and verifies
-            # placement; it refuses rather than fall back.
+            # root at run time, substitutes the placeholder, verifies
+            # placement, replicates rollouts and captures generations under
+            # the durable root; it refuses rather than fall back.
             command = _state_runner_command(
-                self._stage_codex_state_runner(ctx), state_scope, command,
+                self._stage_codex_state_runner(ctx), state.scope, command,
+                durable_root=state.durable_root,
+                checkpoint_minutes=state.checkpoint_minutes,
+                checkpoint_timeout_seconds=state.checkpoint_timeout_seconds,
+                restore=state.restore, fresh=state.fresh,
             )
 
         # Environment values may include API keys resolved from pass. Stage
@@ -3592,28 +3609,72 @@ class MirrorManager:
         path = self._write_context_prelude_file(ctx, source)
         return ["python3", path, *command]
 
-    def _codex_state_scope(self, ctx: MirrorContext) -> Optional[str]:
-        """The managed-state scope digest, or None when the target has it off.
+    def _codex_state_launch(
+        self, ctx: MirrorContext, *, restore: Optional[str] = None, fresh: bool = False,
+    ) -> Optional[_CodexStateLaunch]:
+        """What the staged runner is told, or None when this launch is unmanaged.
 
-        Enabled state without local-disk tiering on this launch is an error:
-        the databases need the node-local root the working clone uses, and
-        the design forbids a silent fall back to shared placement.
+        Unmanaged: the target has ``slurm.codex_state`` off, or the detected
+        agent is not Codex; a history selection in either case is an error
+        rather than silently ignored.  Enabled state without local-disk
+        tiering on this launch is an error too: the databases need the
+        node-local root the working clone uses, and the design forbids a
+        silent fall back to shared placement.  The durable root is the
+        configured one or the private sibling of the shared mirror root, and
+        it may neither nest with the mirror repository nor sit on local disk.
         """
+        if restore is not None and fresh:
+            raise MirrorError(
+                "--codex-state-from and --codex-state-fresh are mutually exclusive: "
+                "choose one generation to continue from or a fresh history, not both."
+            )
+        selected = restore is not None or fresh
         remote = ctx.settings.remote
         slurm = remote.slurm if remote is not None else None
         state = slurm.codex_state if slurm is not None else None
         if state is None or not state.enabled:
+            if selected:
+                raise MirrorError(
+                    "--codex-state-from/--codex-state-fresh select managed Codex state, "
+                    f"which is not enabled for this target (slurm.codex_state on {ctx.settings.name})."
+                )
             return None
-        if not getattr(self.executor, "local_disk_root", None):
+        if self._detected_agent_type != AgentType.CODEX:
+            if selected:
+                raise MirrorError(
+                    "--codex-state-from/--codex-state-fresh apply to a Codex launch only "
+                    "(use --harness codex or --agent codex)."
+                )
+            return None
+        assert remote is not None
+        local_disk_root = getattr(self.executor, "local_disk_root", None) or None
+        if not local_disk_root:
             raise MirrorError(
                 "slurm.codex_state is enabled for this target but local-disk tiering is "
                 "off for this launch; managed Codex state needs the node-local root and "
                 "will not fall back to shared placement. Enable local_disk or disable codex_state."
             )
-        user = getattr(remote, "remote_user", None) or getattr(self.executor, "agent_user", None) or ""
-        # The resolved shared mirror path (``~`` expanded on the target), so two
-        # targets spelling the same storage differently share a scope.
-        return _state_scope_id(remote.gateway, user, self._resolve_remote_path(ctx))
+        try:
+            if restore is not None:
+                restore = _state_validate_restore_selector(restore)
+            user = getattr(remote, "remote_user", None) or getattr(self.executor, "agent_user", None) or ""
+            # The resolved shared mirror path (``~`` expanded on the target, not
+            # realpath'd), so two targets spelling the same storage differently
+            # share a scope and the derived durable root is its sibling.
+            mirror_path = self._resolve_remote_path(ctx)
+            durable_root = _state_check_durable_root(
+                _state_durable_root_for(mirror_path, state.durable_root), mirror_path, local_disk_root,
+            )
+        except ValueError as exc:
+            raise MirrorError(str(exc)) from exc
+        return _CodexStateLaunch(
+            scope=_state_scope_id(remote.gateway, user, mirror_path),
+            durable_root=durable_root,
+            checkpoint_minutes=state.checkpoint_minutes,
+            checkpoint_timeout_seconds=state.checkpoint_timeout_seconds,
+            restore=restore,
+            fresh=fresh,
+        )
 
     def _stage_codex_state_runner(self, ctx: MirrorContext) -> str:
         """Stage the state runner on the target, private and unique per launch."""
@@ -4059,6 +4120,8 @@ class MirrorManager:
         env_override: Optional[Mapping[str, str]] = None,
         supports_inline_prompt: Optional[bool] = None,
         codex_remote_control: Optional[str] = None,
+        codex_state_from: Optional[str] = None,
+        codex_state_fresh: bool = False,
         skip_lfs: bool = True,
     ) -> int:
         """One-shot helper to prepare canonical, ensure clone, and launch the agent."""
@@ -4095,6 +4158,8 @@ class MirrorManager:
             env_override=env_override,
             supports_inline_prompt=supports_inline_prompt,
             codex_remote_control=codex_remote_control,
+            codex_state_from=codex_state_from,
+            codex_state_fresh=codex_state_fresh,
         )
 
     def _get_merged_templates(
