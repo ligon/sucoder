@@ -34,9 +34,12 @@ What it does, per ``docs/codex-local-state.org`` ("Revision after Slice 0"):
   once placement is verified, one per ``--checkpoint-minutes``, one per
   ``<run>/checkpoint.request``, and a final sealed or crash one after Codex
   exits.  A generation is published only after every thread's replica has
-  reached the rollout offset the copied history projection records, as an
+  reached the greater of the rollout offset the copied history projection
+  records and the local rollout's length right after the copies (a thread
+  the replicator has not discovered yet waits for its discovery), as an
   atomically renamed ``DURABLE/runs/<run>/generations/<generation>/`` whose
-  ``manifest.json`` is written last.
+  ``manifest.json`` is written last.  ``status.json`` is best effort and
+  never stops replication, capture or reporting.
 
 - restores a published generation (``--restore RUN/GENERATION``): the
   manifest is checked against this launch (format, scope, the same
@@ -67,6 +70,7 @@ import re
 import shutil
 import signal
 import sqlite3
+import stat
 import subprocess
 import sys
 import threading
@@ -86,8 +90,20 @@ EXIT_MISPLACED = 71
 REQUIRED_STORES = ("state_5.sqlite", "thread_history_1.sqlite")
 OPTIONAL_STORES = ("goals_1.sqlite", "queue_1.sqlite", "memories_1.sqlite", "logs_2.sqlite")
 ROLLOUT_NAME = re.compile(r"^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$")
-REPLICATION_INTERVAL = 1.0
 CHUNK = 1 << 20
+
+
+def replication_interval():
+    """Seconds between replication passes: 1.0, or the environment's override
+    (tests pin the pass timing with it); anything unusable is the default."""
+    try:
+        value = float(os.environ.get("SUCODER_CODEX_STATE_REPLICATION_INTERVAL") or 1.0)
+    except ValueError:
+        return 1.0
+    return value if value > 0 else 1.0
+
+
+REPLICATION_INTERVAL = replication_interval()
 LOCAL_BUNDLES_KEPT = 3
 # ``--restore RUN/GENERATION`` names history under DURABLE/runs, never a path.
 RESTORE_SELECTOR = re.compile(r"^([0-9a-f]{32})/([0-9]{6}-[0-9a-f]{8})$")
@@ -450,6 +466,7 @@ def place_replicas(manifest, name, sources, sessions, rollouts):
     ``sessions`` (0700 parents, 0600 file) and to the new run's durable replica,
     from one read; both copies hashed back before launch.  Returns the bytes placed."""
     total = 0
+    placed = 0
     for tid, entry in sorted(manifest["threads"].items()):
         source, size, exists = sources[tid]
         if not exists:
@@ -458,7 +475,7 @@ def place_replicas(manifest, name, sources, sessions, rollouts):
         local = os.path.join(sessions, entry["relative_path"])
         replica = os.path.join(rollouts, tid + ".jsonl")
         try:
-            ensure_private_tree(os.path.dirname(local))
+            ensure_private_tree(os.path.dirname(local), sessions)
             digest, head, copied = copy_whole(source, [local, replica], int(entry["replica_bytes"]))
         except OSError as exc:
             raise Refused("generation %s: cannot place the rollout of thread %s: %s" % (name, tid, exc))
@@ -469,10 +486,16 @@ def place_replicas(manifest, name, sources, sessions, rollouts):
             if length != copied or check != digest:
                 raise Refused("generation %s: the placed copy %s does not hash to its source" % (name, path))
         total += copied
+        placed += 1
+    if placed:
+        try:
+            fsync_path(rollouts)        # the new replicas' names, not only their bytes
+        except OSError as exc:
+            raise Refused("generation %s: cannot sync %s after placing the replicas: %s" % (name, rollouts, exc))
     return total
 
 
-def restore_generation(selector, durable, scope, codex_home, codex_home_real, unattended, local, home_local, durable_run):
+def restore_generation(selector, durable, durable_base, scope, codex_home, codex_home_real, unattended, local, home_local, durable_run):
     """``--restore RUN/GENERATION``: validate on the durable side, stage the
     stores locally, gate, place the replicas, install ``db/``.  Every refusal
     leaves ``db/`` absent and ``home/sessions`` empty; the source generation is
@@ -502,7 +525,7 @@ def restore_generation(selector, durable, scope, codex_home, codex_home_real, un
     pending = pending_work(staging_db)
     if unattended:
         gate_unattended(pending, "generation " + name)
-    ensure_durable_run(durable_run)
+    ensure_durable_run(durable_run, durable_base)
     rollout_bytes = place_replicas(manifest, name, sources, os.path.join(home_local, "sessions"), os.path.join(durable_run, "rollouts"))
     os.rename(staging_db, db_dir)
     try:
@@ -567,9 +590,12 @@ def load_run_meta(local, durable_run, run_id, scope):
         run_id, os.path.join(local, "run.json"), os.path.join(durable_run, "run.json")))
 
 
-def ensure_durable_run(durable_run):
+def ensure_durable_run(durable_run, durable_base):
+    """``<BASE>/codex/<scope>/runs/<run>/{rollouts,generations}``: every component
+    that exists from the base down is checked (a real directory, ours, not
+    group- or world-writable), the rest are created 0700."""
     try:
-        ensure_private_tree(durable_run)
+        ensure_private_tree(durable_run, durable_base)
         ensure_private_dir(os.path.join(durable_run, "rollouts"))
         ensure_private_dir(os.path.join(durable_run, "generations"))
     except OSError as exc:
@@ -596,6 +622,7 @@ class Status(object):
         self.data = {"transitions": []}
         self.lock = threading.Lock()
         self.durable_at = None     # monotonic time of the last durable generation
+        self.write_errors = set()  # error texts already logged: status.json is best effort
 
     def update(self, state, **fields):
         with self.lock:
@@ -608,6 +635,16 @@ class Status(object):
         """Merge fields without a state transition."""
         with self.lock:
             self.data.update(fields)
+            self._write()
+
+    def note_latest(self, compute):
+        """Merge the fields ``compute()`` returns, evaluated under the status
+        lock right before the write: a writer delayed past a later completion
+        then records the current acknowledgement, never its own stale one.
+        ``compute`` may take the checkpointer's lock; nothing takes the two
+        locks in the other order."""
+        with self.lock:
+            self.data.update(compute())
             self._write()
 
     def load(self):
@@ -628,9 +665,17 @@ class Status(object):
         return True
 
     def _write(self):
+        """Best effort: a status.json that cannot be written is logged once per
+        distinct error and never stops replication, capture or reporting."""
         age = None if self.durable_at is None else round(time.monotonic() - self.durable_at, 1)
         self.data["durable_age_seconds"] = age
-        write_json(self.path, self.data)
+        try:
+            write_json(self.path, self.data)
+        except OSError as exc:
+            text = "%s: %s" % (type(exc).__name__, exc)
+            if text not in self.write_errors:
+                self.write_errors.add(text)
+                log("status.json not written (%s); the run continues without it until the write succeeds again" % text)
 
 
 def mkdir_private(path):
@@ -640,29 +685,60 @@ def mkdir_private(path):
     os.chmod(path, 0o700)
 
 
-def ensure_private_dir(path):
-    """The durable tier: create with 0700 when missing, never chmod a directory we did not create."""
-    if os.path.isdir(path):
-        return False
+def check_private_dir(path):
+    """An existing component of a tree this runner writes into must be a real
+    directory (no symlink: it would redirect durable writes, possibly onto local
+    disk), ours, and writable by nobody else.  Refuses otherwise; 0755 passes."""
+    st = os.lstat(path)
+    if stat.S_ISLNK(st.st_mode):
+        raise Refused("%s is a symbolic link; the durable and session trees accept real directories only, because a link "
+                      "would redirect this run's writes elsewhere. Replace it with a directory" % path)
+    if not stat.S_ISDIR(st.st_mode):
+        raise Refused("%s exists and is not a directory" % path)
+    if st.st_uid != os.getuid():
+        raise Refused("%s is owned by uid %d, not by this user (uid %d); this runner writes only into directories it owns" % (
+            path, st.st_uid, os.getuid()))
+    if st.st_mode & 0o022:
+        raise Refused("%s is writable by its group or by everyone (mode %s); another writer could replace this run's state. "
+                      "Fix it with: chmod g-w,o-w %s" % (path, oct(st.st_mode & 0o777), path))
+
+
+def ensure_private_dir(path, parent_is_ours=True):
+    """The durable tier: an existing directory is checked (never chmod'ed); a
+    missing one is created with 0700 and its parent's entry synced, so a crash
+    cannot lose the name of a directory a generation depends on.  The parent
+    of the base is the operator's filesystem (it may be traversable but not
+    readable, so its sync may be refused): that sync is best effort."""
     try:
         os.mkdir(path, 0o700)
     except FileExistsError:
+        check_private_dir(path)
         return False
     os.chmod(path, 0o700)
+    try:
+        fsync_path(os.path.dirname(path))
+    except OSError as exc:
+        if parent_is_ours:
+            raise
+        log("created %s but could not sync its parent directory (%s: %s); the parent is the operator's and the launch goes on" % (
+            path, type(exc).__name__, exc))
     return True
 
 
-def ensure_private_tree(path):
-    missing = []
-    current = path
-    while not os.path.isdir(current):
-        missing.append(current)
-        parent = os.path.dirname(current)
-        if parent == current:
-            break
-        current = parent
-    for directory in reversed(missing):
-        ensure_private_dir(directory)
+def ensure_private_tree(path, base):
+    """Every component of ``path`` from ``base`` downward: checked when it
+    exists, created when it does not.  Components above ``base`` are the
+    operator's filesystem and are not judged."""
+    base = os.path.normpath(base)
+    path = os.path.normpath(path)
+    if path != base and not path.startswith(base + "/"):
+        raise Refused("%s is not under %s" % (path, base))
+    current = base
+    ensure_private_dir(current, parent_is_ours=False)
+    if path != base:
+        for component in path[len(base) + 1:].split("/"):
+            current = os.path.join(current, component)
+            ensure_private_dir(current)
 
 
 def resolve_local_root():
@@ -794,11 +870,11 @@ def descendants(root_pid):
             continue
         try:
             with open("/proc/%s/stat" % name) as handle:
-                stat = handle.read()
+                text = handle.read()
         except OSError:
             continue
         try:
-            ppid = int(stat.rsplit(")", 1)[1].split()[1])
+            ppid = int(text.rsplit(")", 1)[1].split()[1])
         except (IndexError, ValueError):
             continue
         children.setdefault(ppid, []).append(int(name))
@@ -843,9 +919,29 @@ def open_files(pids):
 
 
 def holders_of(directory):
-    """Pids (readable to us) with a descriptor open under the directory."""
-    pids = [int(name) for name in os.listdir("/proc") if name.isdigit()]
-    return sorted(set(pid for pid, link, _ in open_files(pids) if link.startswith(directory + "/")))
+    """Pids (readable to us) with a descriptor open under the directory, by
+    the link text alone: no stat of any descriptor (a stat follows the link
+    onto whatever filesystem the file is on, and a Lustre file in an episode
+    would block the exit).  A deleted store still held counts."""
+    prefix = directory + "/"
+    holders = set()
+    for name in os.listdir("/proc"):
+        if not name.isdigit():
+            continue
+        fd_dir = "/proc/%s/fd" % name
+        try:
+            entries = os.listdir(fd_dir)
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                link = os.readlink(os.path.join(fd_dir, entry))
+            except OSError:
+                continue
+            if link.startswith(prefix):
+                holders.add(int(name))
+                break
+    return sorted(holders)
 
 
 def classify(files, db_dir, db_dev, local_dev):
@@ -931,11 +1027,12 @@ class Replicator(object):
 
     The replica file's own size is the truth for the replicated offset (a
     partial write or a failed fsync must never double-append).  A local file
-    shorter than its replica is a "shrunk" anomaly that stops replication of
-    that thread: the rollout is append-only on this build and a shrink is
-    never replicated.  Errors on the durable side (a slow or unwritable
-    filesystem) are retried on the next pass and shown as replica age and
-    lag; they block this thread only.
+    shorter than it was at the previous pass, or shorter than its replica, is
+    a "shrunk" anomaly that stops replication of that thread: the rollout is
+    append-only on this build, so after a shrink the unreplicated bytes are no
+    longer the bytes that followed the replicated prefix.  Errors on the
+    durable side (a slow or unwritable filesystem) are retried on the next
+    pass and shown as replica age and lag; they block this thread only.
     """
 
     def __init__(self, sessions, rollouts, state_path, status):
@@ -944,6 +1041,7 @@ class Replicator(object):
         self.state_path = state_path
         self.status = status
         self.threads = {}
+        self.dir_synced = set()     # threads whose replica's directory entry has been fsynced since this start
         self.unrecognized = []
         self.state_lock = threading.Lock()     # the dicts, for snapshots
         self.pass_lock = threading.Lock()      # one pass at a time: the final pass waits for a stuck one
@@ -1000,14 +1098,15 @@ class Replicator(object):
     def follow(self, tid, relative):
         with self.state_lock:
             entry = self.threads.get(tid)
-            if entry is None:
-                entry = {"relative_path": relative, "local_bytes": 0, "replicated_bytes": 0,
-                         "replica_path": os.path.join(self.rollouts, tid + ".jsonl")}
-                try:
-                    entry["replicated_bytes"] = os.path.getsize(entry["replica_path"])   # a replica placed before this run
-                except OSError:
-                    pass
-                self.threads[tid] = entry
+        if entry is None:
+            replica_path = os.path.join(self.rollouts, tid + ".jsonl")
+            try:
+                replicated = os.path.getsize(replica_path)   # a replica placed before this run; durable, so not under the lock
+            except OSError:
+                replicated = 0
+            entry = {"relative_path": relative, "local_bytes": 0, "replicated_bytes": replicated, "replica_path": replica_path}
+            with self.state_lock:
+                entry = self.threads.setdefault(tid, entry)
                 self.dirty = True
         if entry.get("anomaly"):
             return
@@ -1016,12 +1115,17 @@ class Replicator(object):
             local_bytes = os.path.getsize(local_path)
         except OSError:
             return
-        if local_bytes != entry["local_bytes"]:
+        observed = entry["local_bytes"]
+        if local_bytes != observed:
             entry["local_bytes"] = local_bytes
             self.dirty = True
-        if local_bytes < entry["replicated_bytes"]:
-            self.anomaly(tid, entry, local_bytes)
-        elif local_bytes > entry["replicated_bytes"] or entry.get("error"):
+        if local_bytes < observed:
+            # Shorter than at the previous pass: the bytes beyond the replica are
+            # not the ones that followed it, whatever the replica's length.
+            self.anomaly(tid, entry, local_bytes, observed, "than it was at the previous pass")
+        elif local_bytes < entry["replicated_bytes"]:
+            self.anomaly(tid, entry, local_bytes, entry["replicated_bytes"], "than its replica")
+        elif local_bytes > entry["replicated_bytes"] or entry.get("error") or tid not in self.dir_synced:
             try:
                 self.append(tid, entry, local_path, local_bytes)
                 if entry.pop("error", None) is not None:
@@ -1033,11 +1137,12 @@ class Replicator(object):
                     log("replication of %s stalled: %s" % (tid, text))
             self.dirty = True
 
-    def anomaly(self, tid, entry, local_bytes):
+    def anomaly(self, tid, entry, local_bytes, previous, than):
         entry["anomaly"] = "shrunk"
         entry["anomaly_at"] = time.time()
         self.dirty = True
-        log("rollout of %s shrank to %d bytes below its %d-byte replica; replication of this thread stops" % (tid, local_bytes, entry["replicated_bytes"]))
+        log("rollout of %s shrank to %d bytes, shorter %s (%d bytes; %d replicated); replication of this thread stops" % (
+            tid, local_bytes, than, previous, entry["replicated_bytes"]))
 
     def append(self, tid, entry, local_path, local_bytes):
         fd = os.open(entry["replica_path"], os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
@@ -1045,7 +1150,7 @@ class Replicator(object):
             size = os.fstat(fd).st_size
             if size > local_bytes:
                 entry["replicated_bytes"] = size
-                self.anomaly(tid, entry, local_bytes)
+                self.anomaly(tid, entry, local_bytes, size, "than its replica")
                 return
             with open(local_path, "rb") as local:
                 local.seek(size)
@@ -1061,6 +1166,11 @@ class Replicator(object):
             entry["replicated_bytes"] = os.fstat(fd).st_size
         finally:
             os.close(fd)
+        if tid not in self.dir_synced:
+            # The file's bytes are durable; its name is not until the directory
+            # is.  Once per thread, retried (as an error) until it succeeds.
+            fsync_path(self.rollouts)
+            self.dir_synced.add(tid)
 
     def snapshot(self):
         # dict() is one C-level copy per entry: follow() adds keys to entries
@@ -1244,7 +1354,7 @@ class Checkpointer(object):
         self.timeout = timeout
         self.grace = max(2.0, 0.1 * timeout)    # a capture honouring its own deadline is not stuck
         self.placed = placed
-        self.seq = self.highest_seq()
+        self.seq = None                 # the highest published sequence: listed lazily, off run()'s path to child.wait()
         self.seen = set()
         self.count = 0
         self.dropped = 0
@@ -1272,6 +1382,12 @@ class Checkpointer(object):
                     highest = max(highest, int(match.group(1)))
         return highest
 
+    def ensure_seq(self):
+        """The durable ``generations/`` listing, once, from the scheduler thread
+        (or from the first ``begin`` when that comes first)."""
+        if self.seq is None:
+            self.seq = self.highest_seq()
+
     def start(self):
         self.thread.start()
 
@@ -1279,6 +1395,11 @@ class Checkpointer(object):
 
     def loop(self):
         initial_done = False
+        try:
+            self.ensure_seq()
+        except Exception as exc:
+            self.errors += 1
+            log("checkpoint scheduler error: %s: %s" % (type(exc).__name__, exc))
         while not self.stop_event.is_set():
             try:
                 trigger = None
@@ -1312,7 +1433,10 @@ class Checkpointer(object):
                 flight["generation"], flight["trigger"], self.grace, self.timeout))
             self.status.note(checkpoint=self.view("stuck"))
 
-    def begin(self, trigger, cls, final_pass=False):
+    def begin(self, trigger, cls, final_pass=False, budget=None):
+        """Start one capture unless one is in flight.  ``budget`` is the final
+        capture's remaining share of the shutdown deadline; otherwise a capture
+        gets the full timeout."""
         with self.inflight_lock:
             self.last_started = time.monotonic()
             if self.inflight is not None:
@@ -1320,10 +1444,11 @@ class Checkpointer(object):
                 blocker = self.inflight["generation"]
                 flight = None
             else:
+                self.ensure_seq()
                 self.count += 1
                 self.seq += 1
                 generation = "%06d-%s" % (self.seq, uuid.uuid4().hex[:8])
-                deadline = time.monotonic() + self.timeout
+                deadline = time.monotonic() + (self.timeout if budget is None else budget)
                 worker = threading.Thread(target=self.capture, args=(generation, trigger, cls, deadline, final_pass))
                 worker.daemon = True
                 flight = {"thread": worker, "deadline": deadline, "generation": generation, "trigger": trigger,
@@ -1391,17 +1516,29 @@ class Checkpointer(object):
         finally:
             if lock is not None:
                 lock.close()
-            self.last_outcome, self.reason = outcome, reason
+            # The acknowledgement is complete before the next capture may
+            # begin: outcome, reason and the generation under the same lock
+            # that clears in-flight.  The status write happens outside it and
+            # records whatever is current at that moment (note_latest), so a
+            # slow writer never overwrites a later acknowledgement.
             with self.inflight_lock:
+                self.last_outcome, self.reason = outcome, reason
+                if published is not None:
+                    self.last_generation = published
+                    self.status.durable_at = time.monotonic()
                 flight, self.inflight = self.inflight, None
-            fields = {}
-            if published is not None:
-                self.last_generation = published
-                self.status.durable_at = time.monotonic()
-                fields["last_generation"] = published
-            fields["checkpoint"] = self.view(None)
-            self.status.note(**fields)
+            self.status.note_latest(self.acknowledgement)
             self.report(generation, trigger, cls, outcome, reason, time.monotonic() - started, flight)
+
+    def acknowledgement(self):
+        """The status fields of the current checkpoint state: evaluated by
+        ``Status.note_latest`` under its lock, right before the write."""
+        fields = {"checkpoint": self.view(None)}
+        with self.inflight_lock:
+            last = self.last_generation
+        if last is not None:
+            fields["last_generation"] = last
+        return fields
 
     def report(self, generation, trigger, cls, outcome, reason, elapsed, flight):
         prefix = "stuck " if flight is not None and flight["stuck"] else ""
@@ -1416,15 +1553,15 @@ class Checkpointer(object):
 
     def bundle(self, generation, trigger, cls, deadline, staging):
         names = sorted(n for n in os.listdir(self.db_dir) if n.endswith(".sqlite"))
-        if not names:
-            raise CaptureSkipped("nothing to capture: no store under %s" % self.db_dir)
         unclassified = [n for n in names if n not in REQUIRED_STORES and n not in OPTIONAL_STORES]
         if unclassified:
             raise CaptureFailed("unclassified store under db: %s" % ", ".join(unclassified))
         self.seen.update(n for n in REQUIRED_STORES if n in names)
         gone = sorted(n for n in self.seen if n not in names)
-        if gone:
+        if gone:                      # before the empty-directory shortcut: every store vanishing is the worst case of this
             raise CaptureFailed("required store disappeared: %s" % ", ".join(gone))
+        if not names:
+            raise CaptureSkipped("nothing to capture: no store under %s" % self.db_dir)
         method = backup_method()
         absent = sorted(n for n in REQUIRED_STORES + OPTIONAL_STORES if n not in names)
         if os.path.isdir(staging):
@@ -1435,7 +1572,7 @@ class Checkpointer(object):
             databases = {}
             for name in names:
                 databases[name] = backup_store(name, os.path.join(self.db_dir, name), os.path.join(staging, "db", name), method, deadline)
-            threads, version, notes = self.inspect(os.path.join(staging, "db"), names, deadline)
+            threads, version, required = self.inspect(os.path.join(staging, "db"), names, deadline)
         except Exception:
             shutil.rmtree(staging, ignore_errors=True)
             raise
@@ -1447,45 +1584,37 @@ class Checkpointer(object):
             "codex_version": version, "captured_at": captured, "captured_at_iso": utc_iso(captured),
             "backup_method": method, "databases": databases, "absent": absent, "threads": threads, "trigger": trigger,
         }
-        if notes:
-            manifest["notes"] = notes
-        lagging = self.wait_for_replicas(threads, deadline)
+        lagging = self.wait_for_replicas(threads, required, deadline)
         if lagging:
             manifest["not_durable"] = lagging
             write_json(os.path.join(staging, "manifest.json"), manifest)
             first = sorted(lagging.items())[0]
-            raise NotDurable("%d thread(s) not replicated to their projection offset in %ds: %s has %d replicated bytes, the projection needs %d" % (
-                len(lagging), self.timeout, first[0], first[1]["replica_bytes"], first[1]["next_rollout_byte_offset"]))
+            raise NotDurable("%d thread(s) not replicated to their rollout's length at capture in %ds: %s has %d replicated bytes, "
+                             "the projection needs %d and the rollout held %d" % (
+                                 len(lagging), self.timeout, first[0], first[1]["replica_bytes"],
+                                 first[1]["next_rollout_byte_offset"], first[1]["local_bytes"]))
         write_json(os.path.join(staging, "manifest.json"), manifest)
         return manifest
 
     def inspect(self, db_copy, names, deadline):
-        """Threads from the copies: projection offsets, rollout paths, the Codex version."""
-        threads, paths, notes, version = {}, {}, [], None
+        """Threads from the copies: projection offsets, rollout paths, the Codex
+        version, and per thread the bytes its replica must reach (the greater of
+        the copy's watermark and the local rollout's length right now, just
+        after the copies: the watermark never exceeds the rollout's length at a
+        completed turn, and a thread the replicator has not discovered yet is
+        covered by its length too).  A copy whose table cannot be read is a
+        storage layout this runner does not know: the capture fails rather
+        than publishing a generation without its watermarks."""
+        threads, paths, required, version = {}, {}, {}, None
         if "state_5.sqlite" in names:
-            conn = connect_copy(os.path.join(db_copy, "state_5.sqlite"), deadline)
-            try:
-                try:
-                    rows = conn.execute("select id, rollout_path, cli_version from threads").fetchall()
-                except sqlite3.OperationalError as exc:
-                    notes.append("state_5.sqlite: %s" % exc)
-                    rows = []
-            finally:
-                conn.close()
+            rows = self.read_copy(db_copy, "state_5.sqlite", "select id, rollout_path, cli_version from threads", deadline)
             for tid, path, cli in rows:
                 paths[tid] = path
                 if cli and (version is None or version_key(cli) > version_key(version)):
                     version = cli
         if "thread_history_1.sqlite" in names:
-            conn = connect_copy(os.path.join(db_copy, "thread_history_1.sqlite"), deadline)
-            try:
-                try:
-                    rows = conn.execute("select thread_id, next_rollout_byte_offset, next_rollout_ordinal from thread_history_projection_state").fetchall()
-                except sqlite3.OperationalError as exc:
-                    notes.append("thread_history_1.sqlite: %s" % exc)
-                    rows = []
-            finally:
-                conn.close()
+            rows = self.read_copy(db_copy, "thread_history_1.sqlite",
+                                  "select thread_id, next_rollout_byte_offset, next_rollout_ordinal from thread_history_projection_state", deadline)
             for tid, offset, ordinal in rows:
                 threads[tid] = {"next_rollout_byte_offset": int(offset), "next_rollout_ordinal": int(ordinal)}
         for tid in paths:
@@ -1505,19 +1634,39 @@ class Checkpointer(object):
             if replica is not None and replica.get("anomaly"):
                 raise CaptureFailed("thread %s: its rollout %s, so its replica is not faithful" % (tid, replica["anomaly"]))
             entry["relative_path"] = relative
-        return threads, version, notes
+            try:
+                local_bytes = os.path.getsize(os.path.join(self.sessions, relative))
+            except OSError:
+                local_bytes = 0
+            required[tid] = {"bytes": max(entry["next_rollout_byte_offset"], local_bytes), "local_bytes": local_bytes}
+        return threads, version, required
 
-    def wait_for_replicas(self, threads, deadline):
-        """The ordering invariant: every thread's replica at or past the offset
-        its copied projection records, within the budget.  Records the replica
-        length and the local rollout's hash up to it; returns the lagging ones."""
+    @staticmethod
+    def read_copy(db_copy, name, sql, deadline):
+        conn = connect_copy(os.path.join(db_copy, name), deadline)
+        try:
+            return conn.execute(sql).fetchall()
+        except sqlite3.Error as exc:
+            raise CaptureFailed("%s: cannot read %s (%s: %s); this copy passed quick_check, so its storage layout is not the "
+                                "one this runner knows and no generation is published from it" % (
+                                    name, sql.split(" from ", 1)[-1], type(exc).__name__, exc))
+        finally:
+            conn.close()
+
+    def wait_for_replicas(self, threads, required, deadline):
+        """The ordering invariant: every thread's replica at or past the bytes
+        ``inspect`` required of it (the copy's watermark or the rollout's length
+        at capture, whichever is greater), within the budget.  Records the
+        replica length and the local rollout's hash up to it; returns the
+        lagging ones."""
         while True:
             replicas = self.replicator.snapshot()
             lagging = {}
             for tid, entry in threads.items():
                 have = replicas[tid]["replicated_bytes"] if tid in replicas else 0
-                if have < entry["next_rollout_byte_offset"]:
-                    lagging[tid] = {"replica_bytes": have, "next_rollout_byte_offset": entry["next_rollout_byte_offset"]}
+                if have < required[tid]["bytes"]:
+                    lagging[tid] = {"replica_bytes": have, "next_rollout_byte_offset": entry["next_rollout_byte_offset"],
+                                    "local_bytes": required[tid]["local_bytes"]}
             if not lagging or overdue(deadline):
                 break
             time.sleep(0.2)
@@ -1563,10 +1712,19 @@ class Checkpointer(object):
             raise CaptureFailed("publication overdue before the rename")
         final = os.path.join(self.generations, generation)
         os.rename(incoming, final)
-        fsync_path(self.generations)
         published = time.time()
-        return {"name": generation, "class": manifest["class"], "published_at": published, "published_at_iso": utc_iso(published),
-                "manifest_sha256": manifest_sha, "path": final, "trigger": manifest["trigger"]}
+        record = {"name": generation, "class": manifest["class"], "published_at": published, "published_at_iso": utc_iso(published),
+                  "manifest_sha256": manifest_sha, "path": final, "trigger": manifest["trigger"]}
+        try:
+            fsync_path(self.generations)
+        except OSError as exc:
+            # The rename succeeded and the manifest is complete (a restore
+            # verifies by hash), so the generation is published; only its
+            # directory entry is not yet known to be durable.
+            record["sync_warning"] = "%s: %s" % (type(exc).__name__, exc)
+            log("generation %s is published but the sync of %s failed (%s); its directory entry may not survive a crash of the "
+                "filesystem until the next successful sync" % (generation, self.generations, record["sync_warning"]))
+        return record
 
     def prune_local(self):
         try:
@@ -1579,8 +1737,10 @@ class Checkpointer(object):
     # -- after Codex exits
 
     def final(self, cls):
-        """One last replication pass and the sealed or crash capture, bounded:
-        a capture still in flight or one that overruns never delays the exit."""
+        """One last replication pass and the sealed or crash capture under one
+        shutdown deadline of the checkpoint timeout: waiting for a capture in
+        flight spends from it, the final capture gets what remains, and when
+        nothing remains it is skipped.  Release is never blocked."""
         self.stop_event.set()
         if self.thread.is_alive():
             self.thread.join(2.0)
@@ -1595,12 +1755,26 @@ class Checkpointer(object):
         if flight is not None:
             log("final %s capture skipped: capture %s is still in flight; last durable generation: %s" % (cls, flight["generation"], self.describe_last()))
             return
-        worker = self.begin("final", cls, final_pass=True)
+        with self.inflight_lock:
+            listed = self.seq is not None
+        if not listed:
+            # The scheduler never got its listing of generations/ back: the
+            # durable side is not answering, and the exit path does not ask it.
+            log("final %s capture skipped: the durable generations listing never completed, so nothing could be published; "
+                "last durable generation: %s" % (cls, self.describe_last()))
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            log("final %s capture skipped: the %ds shutdown budget was spent waiting for the capture in flight; last durable "
+                "generation: %s" % (cls, self.timeout, self.describe_last()))
+            return
+        worker = self.begin("final", cls, final_pass=True, budget=remaining)
         if worker is None:
             return
-        worker.join(self.timeout + 2.0)
+        worker.join(max(0.0, deadline + 2.0 - time.monotonic()))
         if worker.is_alive():
-            log("final %s capture still running after %ds; exiting without it; last durable generation: %s" % (cls, self.timeout, self.describe_last()))
+            log("final %s capture still running after its %.1fs share of the %ds shutdown budget; exiting without it; last durable "
+                "generation: %s" % (cls, remaining, self.timeout, self.describe_last()))
             self.status.note(checkpoint=self.view("stuck"))
 
 
@@ -1661,7 +1835,7 @@ def run(args):
                 log("IGNORING --restore %s: this allocation already holds run %s with its local databases, and within one "
                     "allocation local state takes precedence over every archived generation" % (args.restore, run_id))
             meta = load_run_meta(local, durable_run, run_id, args.scope)
-            ensure_durable_run(durable_run)
+            ensure_durable_run(durable_run, durable_base)
             pending = pending_work(db_dir)
             if args.unattended:
                 gate_unattended(pending, "this allocation's run %s" % run_id)
@@ -1672,13 +1846,13 @@ def run(args):
                 log("--fresh: starting a new run although this allocation holds an earlier run for the scope; that run stays on disk and is not reused")
             if mode == "restore":
                 staging = os.path.join(local, "restore-staging")
-                restored, pending = restore_generation(selector, durable, args.scope, codex_home, codex_home_real,
+                restored, pending = restore_generation(selector, durable, durable_base, args.scope, codex_home, codex_home_real,
                                                       args.unattended, local, home_local, durable_run)
                 parent = {"run": restored["run"], "generation": restored["generation"], "class": restored["class"],
                           "manifest_sha256": restored["manifest_sha256"]}
             else:
+                ensure_durable_run(durable_run, durable_base)    # refused before anything local is created
                 mkdir_private(db_dir)
-                ensure_durable_run(durable_run)
                 parent = None
             created = time.time()
             meta = {

@@ -6,8 +6,12 @@ node-side runner.
 Self-contained on purpose (the launcher-side module is edited separately):
 the fake Codex here is scriptable over stdin -- ``turn N`` grows the rollout
 by about N bytes and advances the history projection the way Codex does,
-``goal <status>`` and ``queue add`` write the rows the gate checks, ``extra``
-opens an unclassified store, ``quit`` exits 0, SIGTERM exits 37 -- and, like
+``shrink N`` truncates the rollout (the append-only contract broken on
+purpose), ``thread`` starts a second thread whose rollout holds only its
+session_meta line, ``drop projection`` drops the projection table from the
+history store, ``goal <status>`` and ``queue add`` write the rows the gate
+checks, ``extra`` opens an unclassified store, ``quit`` exits 0, SIGTERM
+exits 37 -- and, like
 Codex, it continues the thread it finds in the stores it is handed (the
 recorded rollout path, the projection's ordinal), reporting what it found on
 a ``FAKE_SEES`` line so a test can assert that restored state was read by the
@@ -20,6 +24,7 @@ Everything needs ``bwrap``; the real Codex cases need ``codex`` and use
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import shutil
@@ -141,6 +146,22 @@ while True:
         conn.commit()
         held.append(conn)
         reply = "ok"
+    elif words[0] == "shrink":
+        os.ftruncate(rollout.fileno(), int(words[1]))
+        reply = "ok %d" % os.path.getsize(rollout_path)
+    elif words[0] == "thread":
+        other = str(uuid.uuid4())
+        day = os.path.join(home, "sessions", "2026", "10", "15")
+        os.makedirs(day, exist_ok=True)
+        other_path = os.path.join(day, "rollout-2026-10-15T00-00-00-%s.jsonl" % other)
+        other_rollout = open(other_path, "ab", buffering=0)
+        other_rollout.write((json.dumps({"type": "session_meta", "payload": {"id": other}}) + "\n").encode())
+        held.append(other_rollout)
+        state.execute("insert or replace into threads values (?, ?, ?)", (other, other_path, "0.162.1"))
+        reply = "ok %s %s" % (other, other_path)
+    elif words[0] == "drop":
+        history.execute("drop table thread_history_projection_state")
+        reply = "ok"
     else:
         reply = "error: unknown command " + words[0]
     sys.stdout.write(reply + "\n")
@@ -223,13 +244,13 @@ def _manifest(status):
 class Managed:
     """The runner with the scriptable fake under it, placed and ready."""
 
-    def __init__(self, home, python=None, timeout=30.0, extra=()):
+    def __init__(self, home, python=None, timeout=30.0, extra=(), env=None):
         python = python or sys.executable
         self.home = home
         argv = [python, str(RUNNER), "--scope", home["scope"], "--durable-root", str(home["durable"]),
                 "--checkpoint-timeout", str(timeout), *extra, "--",
                 python, str(home["fake"]), "-c", f'sqlite_home="{PLACEHOLDER}"', "app-server"]
-        self.proc = subprocess.Popen(argv, env=_env(home), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        self.proc = subprocess.Popen(argv, env=_env(home, **(env or {})), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE, text=True)
         self.sees = None            # what the fake found in the stores it was handed
         while True:
@@ -1200,3 +1221,446 @@ def test_a_real_codex_thread_resumes_from_a_restored_generation(tmp_path):
         assert thread_b["next_rollout_ordinal"] > thread_a["next_rollout_ordinal"]
         assert thread_b["next_rollout_byte_offset"] <= thread_b["replica_bytes"] == placed.stat().st_size
         assert json.loads((run_b / "run.json").read_text())["parent"] == manifest_b["parent"]
+
+
+# ----------------------------------------------------------------- review follow-ups on the first half
+
+TID = "0f0f0f0f-0f0f-0f0f-0f0f-0f0f0f0f0f0f"
+
+
+@pytest.fixture
+def runner(tmp_path):
+    """The runner as a module of its own (it is a staged file, not a package
+    module), fresh per test so monkeypatches and its log never leak."""
+    spec = importlib.util.spec_from_file_location("codex_state_runner_under_test", RUNNER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.LOG_FILE["path"] = str(tmp_path / "runner.log")
+    module.LOG_FILE["quiet"] = True
+    return module
+
+
+def _log(tmp_path):
+    return (tmp_path / "runner.log").read_text()
+
+
+class InProcess:
+    """A Checkpointer over real stores, a real rollout and a real Replicator
+    whose passes the test drives by hand; nothing is started, a capture is
+    begun and joined explicitly."""
+
+    def __init__(self, runner, tmp_path, timeout=5.0, rollout=b'{"type": "session_meta"}\n'):
+        self.runner = runner
+        self.scope = "ab" * 32
+        self.run_id = "1" * 32
+        self.codex_home = tmp_path / "codex-home"
+        (self.codex_home / "sessions").mkdir(parents=True)
+        self.run_dir = tmp_path / "local" / "state" / "codex" / self.scope / self.run_id
+        self.db_dir = self.run_dir / "db"
+        self.sessions = self.run_dir / "home" / "sessions"
+        for d in (self.db_dir, self.sessions, self.run_dir / "snapshots"):
+            d.mkdir(parents=True)
+        self.relative = f"2026/10/15/rollout-2026-10-15T00-00-00-{TID}.jsonl"
+        self.local_rollout = self.sessions / self.relative
+        self.local_rollout.parent.mkdir(parents=True)
+        self.local_rollout.write_bytes(rollout)
+        self.durable_base = tmp_path / "durable"
+        self.durable_run = self.durable_base / "codex" / self.scope / "runs" / self.run_id
+        runner.ensure_durable_run(str(self.durable_run), str(self.durable_base))
+        self.rollouts = self.durable_run / "rollouts"
+        self.generations = self.durable_run / "generations"
+        self.replica = self.rollouts / f"{TID}.jsonl"
+        state = sqlite3.connect(str(self.db_dir / "state_5.sqlite"))
+        state.execute("create table threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL, cli_version TEXT NOT NULL DEFAULT '')")
+        state.execute("insert into threads values (?, ?, ?)", (TID, str(self.codex_home / "sessions" / self.relative), "0.162.1"))
+        state.commit()
+        state.close()
+        history = sqlite3.connect(str(self.db_dir / "thread_history_1.sqlite"))
+        history.execute("create table thread_history_projection_state (thread_id TEXT PRIMARY KEY, "
+                        "next_rollout_byte_offset INTEGER NOT NULL, next_rollout_ordinal INTEGER NOT NULL)")
+        history.execute("insert into thread_history_projection_state values (?, ?, ?)", (TID, len(rollout), 1))
+        history.commit()
+        history.close()
+        self.status = runner.Status(str(self.run_dir / "status.json"))
+        self.replicator = runner.Replicator(str(self.sessions), str(self.rollouts), str(self.run_dir / "replica.json"), self.status)
+        placed = threading.Event()
+        placed.set()
+        meta = {"scope": self.scope, "run": self.run_id, "parent": None, "allocation": {"job": None, "node": "test"},
+                "codex_home": str(self.codex_home), "codex_home_real": str(self.codex_home)}
+        self.cp = runner.Checkpointer(str(self.run_dir), str(self.db_dir), str(self.sessions), str(self.durable_run),
+                                      self.replicator, self.status, meta, 10.0, timeout, placed)
+        self.cp.ensure_seq()            # the scheduler thread's first act, done here since it is never started
+
+    def capture(self, trigger="request", cls="warm", timeout=30):
+        worker = self.cp.begin(trigger, cls)
+        assert worker is not None
+        worker.join(timeout)
+        assert not worker.is_alive()
+        return self.cp.last_outcome, self.cp.reason
+
+    def status_json(self):
+        return json.loads((self.run_dir / "status.json").read_text())
+
+
+@needs_bwrap
+def test_a_rollout_that_shrinks_while_replication_lags_is_an_anomaly_not_growth(home):
+    """Finding 1: local 1200 -> 600 with 400 replicated.  The old check (local
+    shorter than the replica) does not fire; the bytes beyond 400 are no longer
+    the ones that followed the replicated prefix, so nothing may be appended."""
+    m = Managed(home, timeout=3)
+    try:
+        m.cmd("turn 400")
+        m.wait_synced()
+        replicated = m.replica.stat().st_size
+        rollouts = m.durable_run / "rollouts"
+        os.chmod(rollouts, 0)           # replication stalls while the rollout grows
+        try:
+            m.cmd("turn 800")
+            grown = m.local_rollout.stat().st_size
+            _wait(home, lambda st: st["replica"]["threads"][m.tid]["local_bytes"] == grown and m.tid in st["replica"]["errors"],
+                  "the pass that observed the growth")
+            target = (replicated + grown) // 2
+            assert replicated < target < grown
+            assert m.cmd(f"shrink {target}") == f"ok {target}"
+            status = _wait(home, lambda st: st["replica"]["anomalies"].get(m.tid) == "shrunk", "the anomaly")[0]
+        finally:
+            os.chmod(rollouts, 0o700)
+        assert status["replica"]["threads"][m.tid]["local_bytes"] == target
+        status = _request(home)         # a capture, and at least one more replication pass with the durable side back
+        assert status["checkpoint"]["last_outcome"] == "failed" and "its rollout shrunk" in status["checkpoint"]["reason"]
+        assert m.replica.stat().st_size == replicated, "nothing was appended after the shrink"
+        assert m.replica.read_bytes() == m.local_rollout.read_bytes()[:replicated]
+        assert status["replica"]["threads"][m.tid]["replicated_bytes"] == replicated
+        assert status["replica"]["anomalies"] == {m.tid: "shrunk"} and status["replica"]["lag_bytes"] == 0
+        log = (m.run_dir / "runner.log").read_text()
+        assert (f"rollout of {m.tid} shrank to {target} bytes, shorter than it was at the previous pass ({grown} bytes; "
+                f"{replicated} replicated); replication of this thread stops") in log
+    finally:
+        m.close()
+
+
+@needs_bwrap
+def test_an_unreadable_projection_table_fails_the_capture_instead_of_publishing_without_watermarks(home):
+    """Finding 2: the copy exists and passes quick_check but has no projection
+    table: a storage layout this runner does not know, never zero watermarks."""
+    m = Managed(home)
+    try:
+        m.cmd("turn 200")
+        first = _request(home)["last_generation"]
+        m.cmd("drop projection")
+        status = _request(home)
+        checkpoint = status["checkpoint"]
+        assert checkpoint["last_outcome"] == "failed" and checkpoint["state"] == "failed"
+        assert "thread_history_1.sqlite: cannot read thread_history_projection_state" in checkpoint["reason"]
+        assert "no such table" in checkpoint["reason"] and "storage layout is not the one this runner knows" in checkpoint["reason"]
+        assert status["last_generation"] == first and sorted(os.listdir(m.generations))[-1] == first["name"]
+        assert not list(m.durable_run.glob(".incoming-*"))
+        assert "notes" not in _manifest(status)
+    finally:
+        m.close()
+
+
+def test_new_replica_files_and_durable_directories_are_followed_by_a_directory_fsync(runner, tmp_path, monkeypatch):
+    """Finding 3: a created directory's parent is synced, a new replica's
+    directory is synced once after the file's first fsync, and a directory sync
+    that fails is retried until it succeeds."""
+    synced = []
+    real = runner.fsync_path
+
+    def recording(path):
+        synced.append(path)
+        real(path)
+    monkeypatch.setattr(runner, "fsync_path", recording)
+    base = tmp_path / "durable"
+    run = base / "codex" / "ab" / "runs" / "11"
+    runner.ensure_durable_run(str(run), str(base))
+    created = [base, base / "codex", base / "codex" / "ab", base / "codex" / "ab" / "runs", run, run / "rollouts", run / "generations"]
+    assert synced == [str(d.parent) for d in created], "each mkdir is followed by an fsync of the parent"
+    assert all(oct(d.stat().st_mode & 0o777) == "0o700" for d in created)
+    synced.clear()
+    runner.ensure_durable_run(str(run), str(base))
+    assert synced == [], "existing directories are checked, not re-synced"
+    # the base's parent is the operator's filesystem: its sync is best effort; below the base it is not
+    unreadable = {str(tmp_path / "other")}
+
+    def refusing(path):
+        synced.append(path)
+        if path in unreadable:
+            raise PermissionError(13, "Permission denied")
+        real(path)
+    monkeypatch.setattr(runner, "fsync_path", refusing)
+    base2 = tmp_path / "other" / "durable"
+    (tmp_path / "other").mkdir()
+    runner.ensure_durable_run(str(base2 / "codex" / "ab" / "runs" / "11"), str(base2))
+    assert (base2 / "codex" / "ab" / "runs" / "11" / "generations").is_dir()
+    assert f"created {base2} but could not sync its parent directory (PermissionError" in _log(tmp_path)
+    unreadable.add(str(base2 / "codex"))
+    with pytest.raises(runner.Refused, match="cannot create the durable run directory .*Permission denied"):
+        runner.ensure_durable_run(str(base2 / "codex" / "cd" / "runs" / "11"), str(base2))
+    assert not (base2 / "codex" / "cd" / "runs").exists()
+    monkeypatch.setattr(runner, "fsync_path", recording)
+    synced.clear()
+
+    sessions = tmp_path / "sessions"
+    rollout = sessions / "2026" / f"rollout-2026-10-15T00-00-00-{TID}.jsonl"
+    rollout.parent.mkdir(parents=True)
+    rollout.write_bytes(b"one\n")
+    status = runner.Status(str(tmp_path / "status.json"))
+    rep = runner.Replicator(str(sessions), str(run / "rollouts"), str(tmp_path / "replica.json"), status)
+    rep.pass_once()
+    assert synced == [str(run / "rollouts")] and (run / "rollouts" / f"{TID}.jsonl").read_bytes() == b"one\n"
+    rollout.write_bytes(b"one\ntwo\n")
+    rep.pass_once()
+    assert synced == [str(run / "rollouts")], "the directory is synced once per replica file"
+    assert (run / "rollouts" / f"{TID}.jsonl").read_bytes() == b"one\ntwo\n"
+
+    tid2 = TID.replace("0f", "1e")
+    (sessions / "2026" / f"rollout-2026-10-15T00-00-00-{tid2}.jsonl").write_bytes(b"three\n")
+
+    def failing(path):
+        synced.append(path)
+        raise OSError(5, "Input/output error")
+    monkeypatch.setattr(runner, "fsync_path", failing)
+    rep.pass_once()
+    assert synced[-1] == str(run / "rollouts") and rep.threads[tid2]["replicated_bytes"] == 6
+    assert "Input/output error" in rep.view()["errors"][tid2] and tid2 not in rep.dir_synced
+    monkeypatch.setattr(runner, "fsync_path", recording)
+    rep.pass_once()
+    assert synced[-1] == str(run / "rollouts") and tid2 in rep.dir_synced and rep.view()["errors"] == {}
+    assert f"replication of {tid2} resumed at 6 bytes" in _log(tmp_path)
+
+
+def test_a_delayed_acknowledgement_never_overwrites_a_newer_generation(runner, tmp_path):
+    """Finding 4: the first capture's status write is held back until a second
+    capture has begun, completed and been acknowledged; the first write then
+    records the second generation, not its own."""
+    h = InProcess(runner, tmp_path)
+    h.replicator.pass_once()
+    hold, release = threading.Event(), threading.Event()
+    real = h.status.note_latest
+    calls = []
+
+    def delayed(compute):
+        calls.append(compute)
+        if len(calls) == 1:
+            hold.set()
+            assert release.wait(30)
+        real(compute)
+    h.status.note_latest = delayed
+    first = h.cp.begin("request", "warm")
+    assert hold.wait(30)
+    a = h.cp.last_generation["name"]
+    assert h.cp.inflight is None and h.cp.last_outcome == "published", "acknowledged in memory before the status write"
+    second = h.cp.begin("request", "warm")
+    assert second is not None, "the first capture no longer blocks a second"
+    second.join(30)
+    b = h.cp.last_generation["name"]
+    assert b != a and int(b[:6]) == int(a[:6]) + 1
+    release.set()
+    first.join(30)
+    status = h.status_json()
+    assert status["last_generation"]["name"] == b and h.cp.last_generation["name"] == b
+    assert status["checkpoint"]["state"] == "idle" and status["checkpoint"]["count"] == 2 and status["checkpoint"]["last_outcome"] == "published"
+    assert sorted(os.listdir(h.generations)) == [a, b]
+
+
+def test_status_write_failures_are_logged_once_and_never_stop_a_capture(runner, tmp_path):
+    """Finding 5: status.json is best effort; begin, the capture's finally and
+    report all go through, the error is logged once per distinct text."""
+    h = InProcess(runner, tmp_path)
+    h.replicator.pass_once()
+    real = runner.write_json
+
+    def no_space(path, data):
+        if path.endswith("status.json"):
+            raise OSError(28, "No space left on device")
+        real(path, data)
+    runner.write_json = no_space
+    assert h.capture() == ("published", None)
+    assert h.capture() == ("published", None)
+    log = _log(tmp_path)
+    assert log.count("status.json not written") == 1 and "No space left on device" in log
+    assert log.count("published (warm, request") == 2 and len(os.listdir(h.generations)) == 2
+    assert "last_generation" not in h.status_json(), "the file is the replication pass's, stale"
+    runner.write_json = real
+    h.status.note(x=1)
+    assert h.status_json()["last_generation"]["name"] == h.cp.last_generation["name"], "the acknowledgement lands with the next successful write"
+
+    def denied(path, data):
+        if path.endswith("status.json"):
+            raise OSError(13, "Permission denied")
+        real(path, data)
+    runner.write_json = denied
+    h.status.note(y=2)
+    h.status.note(y=3)
+    log = _log(tmp_path)
+    assert log.count("status.json not written") == 2 and "Permission denied" in log
+
+
+@needs_bwrap
+def test_every_required_store_disappearing_is_a_failure_not_a_skip(home):
+    """Finding 6: with db/ empty after the stores were seen, the capture fails
+    naming them instead of reporting nothing to capture."""
+    m = Managed(home)
+    try:
+        m.cmd("turn 200")
+        first = _request(home)["last_generation"]
+        for path in (m.run_dir / "db").iterdir():
+            path.unlink()
+        status = _request(home)
+        assert status["checkpoint"]["last_outcome"] == "failed"
+        assert "required store disappeared: state_5.sqlite, thread_history_1.sqlite" in status["checkpoint"]["reason"]
+        assert status["last_generation"] == first and sorted(os.listdir(m.generations))[-1] == first["name"]
+    finally:
+        m.close()
+
+
+@needs_bwrap
+def test_a_thread_discovered_after_the_backup_waits_for_its_replica(home):
+    """Finding 8: a thread whose rollout exists at capture but which the
+    replicator has not discovered yet is not durable until its replica reaches
+    the rollout's length at capture; then it publishes with that length."""
+    m = Managed(home, timeout=2, env={"SUCODER_CODEX_STATE_REPLICATION_INTERVAL": "8"})
+    try:
+        m.cmd("turn 300")
+        m.wait_synced(timeout=30)       # right after a pass: the next one is eight seconds away
+        reply = m.cmd("thread")
+        tid2 = reply.split()[1]
+        local2 = m.run_dir / "home" / "sessions" / f"2026/10/15/rollout-2026-10-15T00-00-00-{tid2}.jsonl"
+        size2 = local2.stat().st_size
+        assert size2 > 0
+        status = _request(home)
+        checkpoint = status["checkpoint"]
+        assert checkpoint["last_outcome"] == "not_durable", checkpoint
+        assert f"{tid2} has 0 replicated bytes, the projection needs 0 and the rollout held {size2}" in checkpoint["reason"]
+        assert tid2 not in status["replica"]["threads"], "not discovered yet when the capture ended"
+        local_only = sorted(os.listdir(m.run_dir / "snapshots"))[-1]
+        kept = json.loads((m.run_dir / "snapshots" / local_only / "manifest.json").read_text())
+        assert kept["not_durable"] == {tid2: {"replica_bytes": 0, "next_rollout_byte_offset": 0, "local_bytes": size2}}
+        assert kept["threads"][tid2]["replica_bytes"] == 0 and kept["threads"][tid2]["next_rollout_ordinal"] == 0
+        assert kept["threads"][m.tid]["replica_bytes"] >= kept["threads"][m.tid]["next_rollout_byte_offset"] > 0
+
+        def discovered(st):
+            entry = st["replica"]["threads"].get(tid2)
+            return entry is not None and entry["replicated_bytes"] == entry["local_bytes"] == size2
+        _wait(home, discovered, "the second thread's replica", timeout=30)
+        status = _request(home)
+        assert status["checkpoint"]["last_outcome"] == "published"
+        thread = _manifest(status)["threads"][tid2]
+        assert thread["replica_bytes"] == size2 and thread["next_rollout_byte_offset"] == 0
+        assert (m.durable_run / "rollouts" / f"{tid2}.jsonl").read_bytes() == local2.read_bytes()
+        assert thread["rollout_sha256_prefix"] == _sha256(local2)
+    finally:
+        m.close()
+
+
+def test_holders_of_reads_the_links_and_stats_nothing(runner, tmp_path, monkeypatch):
+    """Finding 9: a stat of a descriptor follows the link onto its filesystem;
+    holders are found by the link text alone, deleted stores included."""
+    db_dir = tmp_path / "db"
+    db_dir.mkdir()
+    store = db_dir / "state_5.sqlite"
+    store.write_bytes(b"")
+
+    def no_stat(*args, **kwargs):
+        raise AssertionError("holders_of must not stat anything: %r" % (args,))
+    monkeypatch.setattr(runner.os, "stat", no_stat)
+    monkeypatch.setattr(runner.os, "lstat", no_stat)
+    assert runner.holders_of(str(db_dir)) == []
+    with open(str(store), "rb"):
+        assert runner.holders_of(str(db_dir)) == [os.getpid()]
+        os.unlink(str(store))
+        assert runner.holders_of(str(db_dir)) == [os.getpid()], "a deleted store still held is still held"
+    assert runner.holders_of(str(db_dir)) == []
+
+
+def test_final_shares_one_shutdown_deadline_with_a_capture_in_flight(runner, tmp_path):
+    """Finding 9: one budget of --checkpoint-timeout for the exit.  A capture in
+    flight that overruns it skips the final capture within that budget; one
+    that ends early leaves the remainder to the final capture."""
+    h = InProcess(runner, tmp_path, timeout=1.0)
+    begun = []
+    h.cp.begin = lambda *args, **kwargs: begun.append((args, kwargs))
+    h.cp.inflight = {"thread": None, "deadline": time.monotonic() + 1.0, "generation": "000007-deadbeef", "trigger": "request",
+                     "class": "warm", "stuck": False, "started": time.time()}
+    started = time.monotonic()
+    h.cp.final("sealed")
+    elapsed = time.monotonic() - started
+    assert 0.9 <= elapsed < 2.0 and begun == [], elapsed
+    assert "final sealed capture skipped: capture 000007-deadbeef is still in flight" in _log(tmp_path)
+
+    h2 = InProcess(runner, tmp_path / "two", timeout=1.0)
+    h2.cp.inflight = dict(h.cp.inflight)
+    threading.Timer(0.4, lambda: setattr(h2.cp, "inflight", None)).start()
+    deadlines = []
+    h2.cp.capture = lambda generation, trigger, cls, deadline, final_pass: deadlines.append((time.monotonic(), deadline, final_pass))
+    started = time.monotonic()
+    h2.cp.final("sealed")
+    elapsed = time.monotonic() - started
+    assert len(deadlines) == 1 and deadlines[0][2] is True
+    begun_at, deadline = deadlines[0][0] - started, deadlines[0][1] - started
+    assert 0.4 <= begun_at <= 0.7, begun_at
+    assert 0.95 <= deadline <= 1.05, "the final capture's deadline is the one shutdown deadline, not a second timeout: %.2f" % deadline
+    assert elapsed < 1.5 and h2.cp.count == 1     # the stubbed capture ends at once; the real one clears in-flight in its finally
+
+    # the scheduler never got its listing of generations/ back: the exit path does not ask the durable side itself
+    h3 = InProcess(runner, tmp_path / "three", timeout=1.0)
+    h3.cp.seq = None
+    h3.cp.highest_seq = lambda: pytest.fail("final() must not list the durable generations directory")
+    started = time.monotonic()
+    h3.cp.final("sealed")
+    assert time.monotonic() - started < 0.5 and h3.cp.count == 0
+    assert "final sealed capture skipped: the durable generations listing never completed" in _log(tmp_path)
+
+
+@needs_bwrap
+def test_a_symlinked_or_writable_durable_component_refuses_before_anything_is_created(home, tmp_path):
+    """Finding 10: an existing component under the durable base must be a real
+    directory, ours, not group- or world-writable; 0755 passes."""
+    scope_dir = home["durable"] / "codex" / home["scope"]
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    scope_dir.parent.mkdir(parents=True)
+    scope_dir.symlink_to(elsewhere)
+    alloc = _allocation(home, tmp_path, "alloc-symlink")
+    _assert_refused(_attempt(alloc), alloc, f"{scope_dir} is a symbolic link", "real directories only")
+    assert os.listdir(elsewhere) == [] and not (scope_dir / "runs").exists()
+    scope_dir.unlink()
+    scope_dir.mkdir()
+    for mode in (0o777, 0o775):
+        scope_dir.chmod(mode)
+        alloc = _allocation(home, tmp_path, "alloc-%s" % oct(mode))
+        _assert_refused(_attempt(alloc), alloc, f"{scope_dir} is writable by its group or by everyone (mode {oct(mode)})",
+                        f"chmod g-w,o-w {scope_dir}")
+        assert os.listdir(scope_dir) == []
+    scope_dir.chmod(0o755)
+    m = Managed(home)
+    try:
+        assert (scope_dir / "runs" / m.run_dir.name / "generations").is_dir()
+        assert oct((scope_dir / "runs").stat().st_mode & 0o777) == "0o700"
+        assert m.quit() == 0
+    finally:
+        m.close()
+
+
+def test_a_failed_sync_after_the_rename_is_published_with_a_warning(runner, tmp_path, monkeypatch):
+    """Finding 11: the rename succeeded and the manifest is complete, so the
+    generation is acknowledged, with the sync failure recorded on it."""
+    h = InProcess(runner, tmp_path)
+    h.replicator.pass_once()
+    real = runner.fsync_path
+
+    def failing(path):
+        if path == str(h.generations):
+            raise OSError(5, "Input/output error")
+        real(path)
+    monkeypatch.setattr(runner, "fsync_path", failing)
+    assert h.capture() == ("published", None)
+    last = h.cp.last_generation
+    assert last["sync_warning"] == "OSError: [Errno 5] Input/output error"
+    assert Path(last["path"]).parent == h.generations and (Path(last["path"]) / "manifest.json").exists()
+    assert not list(h.durable_run.glob(".incoming-*"))
+    assert h.status_json()["last_generation"] == last and h.status_json()["checkpoint"]["last_outcome"] == "published"
+    log = _log(tmp_path)
+    assert f"generation {last['name']} is published but the sync of {h.generations} failed" in log
+    assert f"generation {last['name']} published (warm, request" in log
