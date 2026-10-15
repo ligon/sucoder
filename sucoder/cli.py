@@ -2215,6 +2215,14 @@ def worktrees(
         _display()
 
 
+def _codex_remote_mode(enabled: Optional[bool], server_only: bool) -> Optional[str]:
+    if server_only:
+        if enabled is False:
+            raise typer.BadParameter("--remote-control-only conflicts with --no-remote-control.")
+        return "server"
+    return None if enabled is None else "terminal" if enabled else "off"
+
+
 @app.command("agents-run")
 def agents_run(
     ctx: typer.Context,
@@ -2256,6 +2264,14 @@ def agents_run(
         "-m",
         help="LLM model to use, independently of the selected harness.",
     ),
+    remote_control: Optional[bool] = typer.Option(
+        None, "--remote-control/--no-remote-control",
+        help="Enable Codex remote control alongside its terminal UI (overrides config).",
+    ),
+    remote_control_only: bool = typer.Option(
+        False, "--remote-control-only",
+        help="Start a Codex remote-control server without the terminal UI.",
+    ),
     agent_command: Optional[str] = typer.Option(
         None,
         "--agent-command",
@@ -2288,6 +2304,7 @@ def agents_run(
     ),
 ) -> None:
     """Launch the configured agent inside the mirror working tree."""
+    remote_mode = _codex_remote_mode(remote_control, remote_control_only)
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
@@ -2308,6 +2325,7 @@ def agents_run(
             model_override=model,
             env_override=env_override,
             supports_inline_prompt=inline_prompt_flag,
+            codex_remote_control=remote_mode,
         )
     except MirrorError as exc:
         typer.echo(str(exc), err=True)
@@ -2365,6 +2383,14 @@ def collaborate(
         "-m",
         help="LLM model to use, independently of the selected harness.",
     ),
+    remote_control: Optional[bool] = typer.Option(
+        None, "--remote-control/--no-remote-control",
+        help="Enable Codex remote control alongside its terminal UI (overrides config).",
+    ),
+    remote_control_only: bool = typer.Option(
+        False, "--remote-control-only",
+        help="Start a Codex remote-control server without the terminal UI.",
+    ),
     agent_command: Optional[str] = typer.Option(
         None,
         "--agent-command",
@@ -2405,6 +2431,7 @@ def collaborate(
     ),
 ) -> None:
     """Prepare canonical, ensure the mirror exists, and launch the agent in one step."""
+    remote_mode = _codex_remote_mode(remote_control, remote_control_only)
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
@@ -2456,6 +2483,7 @@ def collaborate(
             model_override=model,
             env_override=env_override,
             supports_inline_prompt=inline_prompt_flag,
+            codex_remote_control=remote_mode,
             skip_lfs=not lfs,
         )
     except MirrorError as exc:
