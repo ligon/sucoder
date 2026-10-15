@@ -14,6 +14,8 @@ import hashlib
 import json
 import posixpath
 import re
+import secrets
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
@@ -352,3 +354,127 @@ def format_status(status: Mapping[str, Any], *, run: str, owner: Optional[Mappin
     if status.get("reason"):
         lines.append(f"reason: {status['reason']}")
     return "\n".join(lines)
+
+
+# ----------------------------------------------------------------- drain request and acknowledgement
+
+DRAIN_MODES = ("release", "renew")
+DRAIN_REQUEST = "drain.request"
+DRAIN_ACK = "drain.ack"
+DRAIN_POLL_SECONDS = 2.0
+# States in which no runner is left to read a request: a refused or blocked
+# launch never started Codex, and ``released`` is the end of a renew hold.
+# ``exited`` is among them only once the final generation has been
+# published (a sealed or crash ``last_generation``): the exit path writes
+# ``exited``, takes the final capture, then reads a late request once, so a
+# run that has exited with only a warm generation may still be mid-capture
+# and is asked like any other.
+DRAIN_NO_OWNER_STATES = ("refused", "blocked", "released")
+DRAIN_EXITED_STATES = ("exited", "stopped_misplaced")
+DRAIN_FINAL_CLASSES = ("sealed", "crash")
+DRAIN_TERMINAL_OUTCOMES = ("sealed", "crash", "warm_only", "failed")
+
+
+def new_drain_nonce() -> str:
+    """Sixteen lowercase hex characters, within the runner's 8-64 grammar."""
+    return secrets.token_hex(8)
+
+
+def drain_request_text(nonce: str, mode: str, requested_at: float, requester: str) -> str:
+    """The request as the runner parses it (``parse_drain_request``): one JSON object."""
+    return json.dumps({"nonce": nonce, "mode": mode, "requested_at": requested_at, "requester": requester},
+                      sort_keys=True, separators=(",", ":"))
+
+
+def drain_request_script(run_dir: str, nonce: str, text: str) -> str:
+    """The one shell command that places the request atomically.
+
+    The runner consumes ``<run>/drain.request`` whole and rejects a torn one,
+    so the text goes to ``drain.request.tmp-<nonce>`` first and a ``mv``
+    inside the run directory (a rename on one filesystem) publishes it.
+    ``printf '%s\\n'`` takes the text as an argument, so no character in it
+    is interpreted; every word is shell-quoted, and the executor's own
+    ``shlex.join`` of the ``sh -c`` argv re-quotes the whole script for the
+    remote shell, so a quote inside the requester text survives both.
+    """
+    tmp = f"{run_dir}/{DRAIN_REQUEST}.tmp-{nonce}"
+    final = f"{run_dir}/{DRAIN_REQUEST}"
+    return (f"umask 077 && printf '%s\\n' {shlex.quote(text)} > {shlex.quote(tmp)} "
+            f"&& mv -f {shlex.quote(tmp)} {shlex.quote(final)}")
+
+
+def _generation_label(record: Any) -> str:
+    """``<name> (<manifest sha prefix>)`` for an acknowledgement's generation record."""
+    name = _name_of(record) or "unknown"
+    sha = record.get("manifest_sha256") if isinstance(record, Mapping) else None
+    return f"{name} ({str(sha)[:12]})" if isinstance(sha, str) and sha else name
+
+
+def describe_drain_ack(ack: Mapping[str, Any], last_durable: Any = None) -> str:
+    """The one-line outcome of an acknowledgement the runner wrote.
+
+    ``warm_only`` is final for the requester: a person holds the terminal,
+    Codex was not signalled, and the runner updates the acknowledgement under
+    the same nonce when they exit.  ``failed`` names the runner's reason and
+    the last durable generation it knew (``last_durable`` in the
+    acknowledgement, else the caller's ``status.json`` reading).
+    """
+    outcome = ack.get("outcome")
+    generation = ack.get("generation")
+    if outcome == "sealed":
+        return f"drained: sealed generation {_generation_label(generation)}"
+    if outcome == "warm_only":
+        return (f"drained: warm generation {_name_of(generation) or 'unknown'} only "
+                "(a person holds the terminal; it seals when they exit)")
+    if outcome == "crash":
+        return (f"drained: crash generation {_generation_label(generation)}; Codex exited {ack.get('exit')}, "
+                "kept for recovery, not sealed")
+    last = _name_of(ack.get("last_durable")) or _name_of(last_durable) or "none"
+    if outcome == "failed":
+        return f"drain failed: {ack.get('reason') or 'no reason recorded'}; last durable generation {last}"
+    return f"drain acknowledged with an unknown outcome {outcome!r}; last durable generation {last}"
+
+
+@dataclass(frozen=True)
+class CodexStateDrain:
+    """What one drain request came to.
+
+    ``run`` is None when ``latest-run`` is absent (no managed run, nothing
+    written).  ``requested`` says whether ``drain.request`` was placed;
+    ``ack`` is the acknowledgement that matched this request's nonce and
+    run, or None (a stale acknowledgement from an earlier request never
+    counts).  ``outcome`` is the one line the operator reads.
+    ``last_durable`` is the last durable generation known at the end, from
+    the acknowledgement or from ``status.json``.  ``commands`` lists every
+    command sent, or on a dry run the ones that would be.
+    """
+
+    job_id: int
+    scope: str
+    mode: str
+    nonce: str
+    commands: List[List[str]]
+    outcome: str
+    run: Optional[str] = None
+    requested: bool = False
+    ack: Optional[Dict[str, Any]] = None
+    last_durable: Optional[Dict[str, Any]] = None
+    waited_seconds: float = 0.0
+    timeout_seconds: float = 0.0
+    dry_run: bool = False
+
+    @property
+    def acknowledged(self) -> bool:
+        return self.ack is not None
+
+    @property
+    def settled(self) -> bool:
+        """Codex stopped and its state published: sealed or crash, with the process gone."""
+        return self.ack is not None and self.ack.get("outcome") in ("sealed", "crash") and bool(self.ack.get("stopped"))
+
+    def as_json(self) -> Dict[str, Any]:
+        return {
+            "job_id": self.job_id, "scope": self.scope, "mode": self.mode, "nonce": self.nonce, "run": self.run,
+            "requested": self.requested, "outcome": self.outcome, "ack": self.ack, "last_durable": self.last_durable,
+            "waited_seconds": self.waited_seconds, "timeout_seconds": self.timeout_seconds, "commands": self.commands,
+        }

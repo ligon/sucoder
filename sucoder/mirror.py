@@ -15,7 +15,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Literal, Mapping, NamedTuple, NoReturn, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Literal, Mapping, NamedTuple, NoReturn, Optional, Sequence, Tuple
 
 import yaml
 
@@ -25,11 +25,22 @@ from .agent_mode import (
     service_launch, service_marker,
 )
 from .codex_state import (
+    DRAIN_ACK as _STATE_DRAIN_ACK,
+    DRAIN_EXITED_STATES as _STATE_DRAIN_EXITED_STATES,
+    DRAIN_FINAL_CLASSES as _STATE_DRAIN_FINAL_CLASSES,
+    DRAIN_MODES as _STATE_DRAIN_MODES,
+    DRAIN_NO_OWNER_STATES as _STATE_DRAIN_NO_OWNER_STATES,
+    DRAIN_POLL_SECONDS as _STATE_DRAIN_POLL_SECONDS,
     RUN_ID as _STATE_RUN_ID,
     STATUS_FILES as _STATE_STATUS_FILES,
+    CodexStateDrain as _CodexStateDrain,
     CodexStateLaunch as _CodexStateLaunch,
     CodexStateStatus as _CodexStateStatus,
     check_durable_root as _state_check_durable_root,
+    describe_drain_ack as _state_describe_drain_ack,
+    drain_request_script as _state_drain_request_script,
+    drain_request_text as _state_drain_request_text,
+    new_drain_nonce as _state_new_drain_nonce,
     durable_root_for as _state_durable_root_for,
     local_scope_dir as _state_local_scope_dir,
     runner_command as _state_runner_command,
@@ -361,6 +372,62 @@ def _selection_over_live_session(mirror_name: str, selection: str, live: str) ->
         f"{mirror_name} already has a running session ({live}): "
         "release it first, or launch without a selection to attach."
     )
+
+
+
+class _CodexStateRoute:
+    """How the launcher reaches one allocation's managed Codex state files.
+
+    One command per file, inside the allocation: on a confined target
+    through ``srun --jobid=J --overlap`` (the route attach, release and the
+    session probes take; never compute-node SSH outside the cgroup),
+    otherwise through the executor, which already targets the compute
+    node.  ``commands`` records every argv sent, in order, for the report.
+    """
+
+    def __init__(self, executor: CommandExecutor, job_id: int, *, confined: bool) -> None:
+        self.executor = executor
+        self.job_id = job_id
+        self.confined = confined
+        self.commands: List[List[str]] = []
+
+    def argv_for(self, command: Sequence[str]) -> List[str]:
+        if self.confined:
+            return ["srun", f"--jobid={self.job_id}", "--overlap", *command]
+        return list(command)
+
+    def run(self, command: Sequence[str], *, what: str) -> CommandResult:
+        """Run *command* on the route; a failure to run it, or a non-zero exit, is a MirrorError naming *what*."""
+        argv = self.argv_for(command)
+        self.commands.append(argv)
+        try:
+            result = self.executor.run_agent(argv, check=False, capture_output=True)
+        except (CommandError, OSError) as exc:
+            raise MirrorError(f"Could not {what} for job {self.job_id}: {exc}") from exc
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            raise MirrorError(
+                f"Could not {what} for job {self.job_id} (exit {result.returncode}): {stderr or 'no error output'}"
+            )
+        return result
+
+    def read(self, path: str) -> Optional[str]:
+        """The file's text; None when it does not exist; MirrorError otherwise."""
+        argv = self.argv_for(["cat", path])
+        self.commands.append(argv)
+        try:
+            result = self.executor.run_agent(argv, check=False, capture_output=True)
+        except (CommandError, OSError) as exc:
+            raise MirrorError(f"Could not read {path} for job {self.job_id}: {exc}") from exc
+        if result.returncode == 0:
+            return str(result.stdout or "")
+        stderr = (result.stderr or "").strip()
+        if "No such file or directory" in stderr:
+            return None
+        raise MirrorError(
+            f"Could not read {path} for job {self.job_id} (exit {result.returncode}): "
+            f"{stderr or 'no error output'}"
+        )
 
 
 class MirrorManager:
@@ -3814,30 +3881,10 @@ class MirrorManager:
         # _codex_state_launch has already refused an unset local-disk root.
         local_disk_root = str(getattr(self.executor, "local_disk_root", None) or "")
         scope_dir = _state_local_scope_dir(local_disk_root, job_id, launch.scope)
-        commands: List[List[str]] = []
-
-        def argv_for(path: str) -> List[str]:
-            if ctx.confined:
-                return ["srun", f"--jobid={job_id}", "--overlap", "cat", path]
-            return ["cat", path]
-
-        def read(path: str) -> Optional[str]:
-            """The file's text; None when it does not exist; MirrorError otherwise."""
-            argv = argv_for(path)
-            commands.append(argv)
-            try:
-                result = self.executor.run_agent(argv, check=False, capture_output=True)
-            except (CommandError, OSError) as exc:
-                raise MirrorError(f"Could not read {path} for job {job_id}: {exc}") from exc
-            if result.returncode == 0:
-                return str(result.stdout or "")
-            stderr = (result.stderr or "").strip()
-            if "No such file or directory" in stderr:
-                return None
-            raise MirrorError(
-                f"Could not read {path} for job {job_id} (exit {result.returncode}): "
-                f"{stderr or 'no error output'}"
-            )
+        route = _CodexStateRoute(self.executor, job_id, confined=ctx.confined)
+        commands = route.commands
+        argv_for = route.argv_for
+        read = route.read
 
         def parse(path: str, text: str) -> dict:
             try:
@@ -3852,7 +3899,7 @@ class MirrorManager:
         latest = read(latest_path)
         if self.executor.dry_run:
             for name in _STATE_STATUS_FILES:
-                commands.append(argv_for(f"{scope_dir}/<run>/{name}"))
+                commands.append(argv_for(["cat", f"{scope_dir}/<run>/{name}"]))
             return _CodexStateStatus(
                 job_id=job_id, scope=launch.scope, scope_dir=scope_dir, commands=commands, dry_run=True,
             )
@@ -3878,6 +3925,117 @@ class MirrorManager:
             job_id=job_id, scope=launch.scope, scope_dir=scope_dir, commands=commands,
             run=run, status=status, owner=owner,
         )
+
+    def codex_state_drain(
+        self, ctx: MirrorContext, job_id: int, *, mode: str, timeout_seconds: float, requester: str,
+        sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
+    ) -> _CodexStateDrain:
+        """Ask *job_id*'s managed runner to drain and wait, bounded, for its acknowledgement.
+
+        The request side of the runner's drain protocol (``codex_state_runner
+        --help``): the run is found the way :meth:`codex_state_status` finds
+        it (``latest-run``, then ``status.json`` for the last durable
+        generation), ``<run>/drain.request`` is placed atomically -- one
+        shell command writes ``drain.request.tmp-<nonce>`` and ``mv``s it
+        into place -- and ``<run>/drain.ack`` is read every
+        ``DRAIN_POLL_SECONDS`` until an acknowledgement carrying this
+        request's nonce *and* run appears (an earlier request's
+        acknowledgement is ignored) or ``timeout_seconds`` has elapsed on the
+        monotonic clock.  Every command takes the status reads' route: inside
+        the allocation through ``srun --jobid --overlap`` on a confined
+        target, the executor's compute node otherwise.
+
+        ``mode`` is ``release`` (the runner lets Codex's exit end it) or
+        ``renew`` (the runner stays, holding the scope's startup lock, until
+        SIGTERM or a release-mode request).  Nothing here signals or cancels
+        anything: the runner does the stopping, and the outcome line says
+        what it did -- sealed, warm only (a person at the terminal), crash,
+        failed with its reason, or unacknowledged in time, each with the
+        last durable generation where it matters.  A run whose ``state`` is
+        refused, blocked or released, or that has exited with its final
+        generation (sealed or crash) already published, has no runner left
+        to answer and gets no request: the common release after a clean
+        Codex exit reports that generation at once instead of waiting out
+        the bound.  Without ``latest-run`` nothing is written.  A dry run
+        lists the commands and does not wait.  ``sleep`` and ``clock`` are
+        the test seams.
+        """
+        if mode not in _STATE_DRAIN_MODES:
+            raise MirrorError(f"Drain mode must be one of {', '.join(_STATE_DRAIN_MODES)}, not {mode!r}.")
+        if timeout_seconds < 0:
+            raise MirrorError("The drain timeout cannot be negative.")
+        nonce = _state_new_drain_nonce()
+        report = self.codex_state_status(ctx, job_id)
+        route = _CodexStateRoute(self.executor, job_id, confined=ctx.confined)
+        commands = list(report.commands)
+        timeout = float(timeout_seconds)
+
+        def done(outcome: str, **fields: Any) -> _CodexStateDrain:
+            return _CodexStateDrain(
+                job_id=job_id, scope=report.scope, mode=mode, nonce=nonce, timeout_seconds=timeout,
+                commands=commands, outcome=outcome, **fields,
+            )
+
+        if report.dry_run:
+            run_dir = f"{report.scope_dir}/<run>"
+            text = _state_drain_request_text(nonce, mode, time.time(), requester)
+            commands.append(route.argv_for(["sh", "-c", _state_drain_request_script(run_dir, nonce, text)]))
+            commands.append(route.argv_for(["cat", f"{run_dir}/{_STATE_DRAIN_ACK}"]))
+            return done("dry run: nothing requested", dry_run=True)
+        if report.run is None:
+            return done("no managed run recorded")
+        run = report.run
+        run_dir = f"{report.scope_dir}/{run}"
+        status = report.status or {}
+        last = status.get("last_generation")
+        last = last if isinstance(last, dict) else None
+        last_name = str(last.get("name")) if last and last.get("name") else "none"
+        state = status.get("state")
+        if state in _STATE_DRAIN_NO_OWNER_STATES:
+            return done(f"no managed owner to drain: run {run} is {state}; last durable generation {last_name}",
+                        run=run, last_durable=last)
+        if state in _STATE_DRAIN_EXITED_STATES and last is not None and last.get("class") in _STATE_DRAIN_FINAL_CLASSES:
+            return done(f"no managed owner to drain: run {run} exited (exit {status.get('exit')}) and its final "
+                        f"generation {last_name} is {last.get('class')}", run=run, last_durable=last)
+
+        text = _state_drain_request_text(nonce, mode, time.time(), requester)
+        script = _state_drain_request_script(run_dir, nonce, text)
+        route.run(["sh", "-c", script], what=f"write {run_dir}/drain.request")
+        commands.extend(route.commands)
+        del route.commands[:]
+
+        ack_path = f"{run_dir}/{_STATE_DRAIN_ACK}"
+        started = clock()
+        ack: Optional[Dict[str, object]] = None
+        problem: Optional[str] = None
+        while True:
+            remaining = timeout - (clock() - started)
+            sleep(max(0.0, min(_STATE_DRAIN_POLL_SECONDS, remaining)))
+            ack_text = route.read(ack_path)
+            if ack_text is not None:
+                try:
+                    data = json.loads(ack_text)
+                except ValueError as exc:
+                    problem = f"drain.ack is not readable JSON: {exc}"
+                else:
+                    problem = None
+                    if isinstance(data, dict) and data.get("nonce") == nonce and data.get("run") == run:
+                        ack = data
+                        break
+            if clock() - started >= timeout:
+                break
+        waited = clock() - started
+        commands.extend(route.commands)
+        if ack is not None:
+            ack_last = ack.get("last_durable")
+            outcome = _state_describe_drain_ack(ack, last)
+            last_durable = ack_last if isinstance(ack_last, dict) else last
+        else:
+            outcome = f"drain unacknowledged after {waited:.0f} s; last durable generation {last_name}"
+            if problem:
+                outcome += f" ({problem})"
+            last_durable = last
+        return done(outcome, run=run, requested=True, ack=ack, last_durable=last_durable, waited_seconds=waited)
 
     def _absolute_for_codex_state(self, ctx: MirrorContext, what: str, value: str) -> str:
         """``value`` as given when it starts with ``/``; a MirrorError otherwise.

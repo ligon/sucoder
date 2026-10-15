@@ -1149,6 +1149,37 @@ confined target nothing is allocated either; an unconfined target builds
 its executor as every command there does, which re-allocates a node when
 the recorded job has ended).
 
+=sucoder release= asks that owner to drain before it cancels anything:
+it places a release-mode =drain.request= in the run's directory
+(atomically, by the route the status reads take), waits at most
+=checkpoint_timeout_seconds + 30= seconds (=--drain-timeout= overrides)
+for the acknowledgement carrying its own nonce, prints one line, and
+then proceeds with the cancellation in every case, because the release
+is the cancellation instruction.  The line reads "drained: sealed
+generation <name> (<sha>)" when Codex stopped and the final generation
+sealed; "drained: warm generation <name> only (a person holds the
+terminal; it seals when they exit)" when a TUI is in front of someone,
+so Codex was not signalled; "drained: crash generation ..." when Codex's
+exit was not clean; "drain failed: <reason>; last durable generation
+<name|none>" when the runner's final capture failed; "drain
+unacknowledged after N s; last durable generation ..." when nothing
+answered in time; "no managed run recorded"; or "no managed owner to
+drain: ..." when the run's runner is already gone (a refused launch, or
+a run that exited with its final generation published, the usual case
+after quitting Codex before releasing).  A sibling detach
+drains only the departing mirror's owner, before its tmux session is
+stopped, and a detach that stops nothing requests nothing; =--no-drain=
+skips the request; a mirror whose configured harness is not Codex is
+not asked unless =--harness codex= says a Codex TUI was launched (a
+service launch is recognised from the session record).  =sucoder
+codex-state-drain <mirror> [--mode release|renew] [--timeout S]
+[--json]= sends the same request on its own: =--json= prints the record
+with the acknowledgement (nonce, generation, manifest sha256, exit code,
+the child's pid and start time and whether that exact process is gone),
+and a renew-mode drain leaves the runner alive holding the allocation's
+startup lock until SIGTERM or a release-mode drain, which is what a
+renewal hands over.
+
 #+begin_src yaml
     slurm:
       partition: savio4_htc
