@@ -285,7 +285,13 @@ on n0033.savio4 (4 cores, confined cgroup):
   `thread-writer-locks`, `shell_snapshots`) leaves about ten metadata calls
   and no data I/O on Lustre per turn, with the shared home untouched and
   Codex's sandbox still working (`symlink` and `bind` sub-tests, 2026-10-15;
-  evidence under `evidence-outcomes/job39969504-bind/`).
+  evidence under `evidence-outcomes/job39969504-bind/`). Episode tests
+  (`scripts/codex_state_episode.py`, `evidence-outcomes/job39969504-episode/`):
+  rollout skew in either direction resumes (database ahead shows the client
+  turns the model lacks); per-turn tail replication 13 ms, identical at the
+  next turn/start; residue 1.7 metadata calls per turn with skills, AGENTS and
+  history.jsonl bound, not load-bearing; TUI and remote-control start under
+  bwrap; compaction appends to the rollout.
   20/20 seeded abrupt-stop interleavings restored every completed turn from both
   warm and post-crash captures. Unattended `thread/resume` executes a queued
   message once and, with an active goal, issues ~20 model requests per second

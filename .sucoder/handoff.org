@@ -22,8 +22,9 @@ The previous handoffs are preserved in [[file:handoffs/2026-10-15-slice0-invento
 
 - For thread history the generation does not determine what resumes; the rollout does: the server rebuilds the SQLite history from the rollout at the absolute path in =threads.path=, fails every history read without it, and overrides a restored database with whatever the file holds (12 of 20 warm restores showed more turns than their capture).
   The design must either bring the rollout into the generation, which on this build is possible without touching the shared home through a per-process =bwrap= bind mount of a local directory over =CODEX_HOME/sessions= (the stored path is not canonicalized; =symlink= and =bind= sub-tests), or drop the history-consistency guarantee and document it as "whatever the shared rollout contains".
-  With =sessions=, =.tmp=, =tmp=, =thread-writer-locks= and =shell_snapshots= bound locally a turn contains no Lustre data operation and about ten metadata calls, which is what the human's Lustre-episode concern needs; the cost is a crash window of one capture interval for the conversation unless the rollout tail is replicated per turn.
-  The record names the choice without making it.
+  With the full bind set a turn contains no Lustre data operation and 1.7 metadata calls, none load-bearing; a per-turn tail replication of the rollout to Lustre costs 13 ms outside Codex's path and is byte-identical at the next =turn/start=; rollout skew in either direction does not break resume, and a database newer than the replica only shows the client turns the model lacks, so the generation is captured after the replica is confirmed.
+  TUI and remote-control start under =bwrap=; compaction appends to the rollout.
+  The record's episode-test section has the numbers; the human decides.
 - Unattended =thread/resume= executes a queued message once and, with an =active= goal, issues about twenty model requests per second until stopped; =paused= is a usable hold for goals and the queue has none.
   The runner must check =goals_1= and =queue_1= before resuming unattended.
 - Two servers with different homes on one =sqlite_home= are two writers with no refusal from Codex; lineage exclusivity stays the runner's job.
