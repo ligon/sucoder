@@ -1,4 +1,10 @@
-# Prior-Art Ledger - Codex remote-control launches
+# Prior-Art Ledger - Codex launches and node-local SQLite state
+
+Current design task: node-local SQLite with durable checkpoints, 2026-10-15.
+Baseline: main `ffd0447`; design only, no runtime implementation.
+Search tier: GitNexus CLI query/context, source and named tests, installed Codex
+0.162.1 help and database filename inventory, and official OpenAI/SQLite docs.
+The earlier remote-control evidence below remains version-specific.
 
 Search tier: GitNexus query/context/impact, source and tests, installed Codex
 0.154.0 help, and official OpenAI command/configuration documentation.
@@ -14,6 +20,11 @@ retain model/permission settings,
 and distinguish the service from a terminal conversation in sessions, messaging,
 peek, and renewal. Keep ordinary harness launches compatible.
 
+Design an opt-in extension of local-disk tiering that runs Codex SQLite on the
+compute node, preserves state across allocations outside Git, and separates
+concurrent allocations. Deliver a reviewed design and Savio validation plan
+before implementation; see `docs/codex-local-state.org`.
+
 ## 2. Existing machinery
 
 | Machinery | Source at baseline | Tests | Decision |
@@ -27,6 +38,21 @@ peek, and renewal. Keep ordinary harness launches compatible.
 | Scheduler/tmux discovery and pane liveness | `sucoder/sessions_report.py:71`, `sucoder/cli.py:3911` | `tests/test_sessions_report.py`, session collection tests in `test_cli.py` | Extend live probes with a tmux mode marker; records are not the registry |
 | Message planning and pane reading | `sucoder/messaging.py:179`, `sucoder/cli.py:3799` | `tests/test_messaging.py`, message/peek tests in `test_cli.py` | Refuse service stdin even with `--force`; identify peek output as service logs |
 | Checkpoint sentinel and relaunch | `sucoder/cli.py:3340`, `sucoder/cli.py:3492`, `sucoder/renew.py:190` | `tests/test_renew.py` | Retain the sentinel; preserve service command/model and explain that it is not a chat delivery |
+
+Current baseline anchors for the state design:
+
+| Machinery | Source at ffd0447 | Tests inspected | Decision |
+|---|---|---|---|
+| Local clone, cache and temporary paths | `sucoder/local_tier.py:37`, `:57`, `:89` | `test_paths_runtime_job_id_expands_and_literal_is_quoted`, `test_cache_exports_cover_tools_and_tmpdir_but_not_installs` | Extend placement; keep state outside clone |
+| Confined runtime setup | `sucoder/mirror.py:2416`, `:2480` | `test_launch_confined_local_tier_stages_prepare_script`, `tests/test_batch_script.py` | Reuse in-job cwd and private tmux socket |
+| Unconfined preparation | `sucoder/mirror.py:2572` | `test_launch_agent_unconfined_local_tier_clones_then_launches_in_clone` | Reuse job-local root |
+| Timer and deadline snapshots | `sucoder/slurm_timer.py:82`, `:204`, `:261` | `test_watchdog_warns_and_snapshots_without_changing_index`, `test_scheduler_outage_does_not_suspend_periodic_snapshots` | Extend requests, keep SQLite I/O out of warning loop |
+| Node-local timer ownership | `sucoder/timer_lifecycle.py:9` | `test_concurrent_starters_create_one_timer`, `test_locks_work_when_home_does_not_support_flock` | Reuse local-lock and readiness pattern, not NFS locks |
+| Atomic launcher metadata | `sucoder/session.py:19`, `:84` | `test_service_session_roundtrip_and_legacy_defaults`, session-save tests in `tests/test_remote.py` | Extend with validated state provenance |
+| Overlapping renewal | `sucoder/renew.py:232`, `:244`, `:253`; `sucoder/cli.py:3391`, `:3601` | `test_loop_draining_relaunches_checkpoints_and_cancels_old`, `test_loop_relaunch_failure_backs_off` | Add acknowledged service drain before restoration |
+| Release and WIP retirement | `sucoder/cli.py:2932`, `:3130`, `:3176` | release cases in `tests/test_cli.py` | Preserve last state checkpoint independently of WIP retirement |
+| Native context and fake model protocol | `sucoder/codex_context.py:120`, `tests/test_codex_context.py:158` | `test_codex_model_receives_prelude_when_client_replaces_developer_instructions` | Reuse isolated protocol-testing approach for resume |
+| Confined adoption and readiness | `sucoder/mirror.py:3045`, `:3058`, `:3233` | scheduler-adoption cases in `tests/test_mirror.py` | Extend only for an authorized replacement; tmux alone is not state-owner readiness |
 
 ## 3. Definitions and conventions
 
@@ -43,6 +69,22 @@ peek, and renewal. Keep ordinary harness launches compatible.
   either launch spelling in the foreground so tmux owns the process.
 - Renewal already writes `~/.cache/sucoder/renew-requested`; it does not send
   terminal input. Reading that sentinel is cooperative, not an acknowledgement.
+- An allocation is not a Codex conversation: `/local/job<ID>` survives a Codex
+  restart inside the allocation and is discarded at allocation end
+  (`sucoder/local_tier.py:10`).
+- Renewal is explicitly overlapping: `run_renew_loop` calls `relaunch()` before
+  `scancel(old_job)` (`sucoder/renew.py:244`, `:253`). A design requiring the old
+  allocation to end before every restore contradicts the current lifecycle.
+- Git WIP snapshots exclude ignored files and are not SQLite backups
+  (`sucoder/slurm_timer.py:82`; `docs/local-disk-tiering.org`).
+- Official Codex configuration separates `sqlite_home` / `CODEX_SQLITE_HOME`
+  from `CODEX_HOME`; config takes precedence over the SQLite environment value.
+- Codex 0.162.1 local inventory contains `state_5`, `thread_history_1`, `goals_1`,
+  `queue_1`, `memories_1`, and `logs_2` SQLite files. Filename presence alone
+  does not prove their redirection or a cross-database recovery contract.
+- Installed 0.162.1 help describes a shared daemon and `--no-daemon` for both
+  the TUI and bare `remote-control`. The adapter at `agent_mode.py:46` only
+  removes `start`; its earlier foreground assumption needs revalidation.
 
 ## 4. Invariants and assumptions
 
@@ -64,6 +106,26 @@ peek, and renewal. Keep ordinary harness launches compatible.
 - Reuse the existing watchdog/snapshotter, atomic session save, and renewal loop.
   Do not add a second daemon supervisor or change allocation cancellation rules.
 - No live service, pairing action, or cluster allocation is part of local tests.
+- New state must be outside Git, private to the agent user, and isolated by
+  stable scope plus run UUID; job IDs alone are not durable identities.
+- A generation is durable only after complete publication and verification;
+  pending, failed and local-only copies do not advance recovery status.
+- Per-database online backups do not establish a single consistent instant
+  across separate SQLite databases. Warm restore eligibility is a release gate.
+- A still-running predecessor cannot be continued unless an acknowledged drain
+  proves the service stopped and published its sealed checkpoint. Scheduler
+  errors and stale PID/heartbeat records are unknown ownership.
+- A historical sealed manifest is not current transfer authority: offer,
+  single-successor claim, revoke and parent pin/prune operations need a short
+  durable metadata critical section. Never steal its lock by age.
+- Confined scheduler adoption must exclude only a specifically authorized
+  drained predecessor. Replacement readiness must identify a different job,
+  restored parent and owned Codex server before the old allocation is cancelled.
+- Failed/pending replacement metadata must retain the old allocation and run.
+  Managed TUI commands need their own validated renewal descriptor; the existing
+  `service_launch` accepts only remote-control, not all Codex launches.
+- State placement must not change `CODEX_HOME`, authentication or hook trust.
+  Existing shared state is never silently imported, overwritten or deleted.
 
 ## 5. Reuse decisions
 
@@ -87,7 +149,36 @@ peek, and renewal. Keep ordinary harness launches compatible.
   private-socket probe showed `new-session -A -d` tries to attach to an existing
   session and fails without a TTY; the ordinary terminal path is unchanged.
 
+State design decisions (proposed, not implemented):
+
+- Extend existing launch staging with a stdlib-only state runner after the
+  final cwd is known. Reuse `config_override` for an absolute `sqlite_home`.
+- Extend the existing timer to enqueue local checkpoint requests; use one
+  single-flight worker per state run, never inline shared-storage I/O.
+- New immutable filesystem generations hold SQLite backups and provenance;
+  Git refs, WIP retention and shared mutable database files do not fit.
+- Extend session metadata and renewal with acknowledged drain/checkpoint
+  handoff. New allocation may coexist with the old allocation after the old
+  service stops; an unacknowledged handoff never pretends to be continuity.
+- New durable offer/claim/revoke and parent-pin records use one short
+  atomic-mkdir metadata lock per scope. Capture/upload never hold it.
+  No concurrent same-history forks in the first version; upstream thread IDs
+  and external files must be isolated before forks can be supported.
+- Enforce one owner/unresolved successor per lineage even when claims name
+  different historical generations. Ordinary clean-exit offers may be unbound
+  until a claim binds their successor exactly once.
+- Keep version-specific storage inventory and warm recovery as explicit
+  compatibility gates. Unknown databases and external transcript dependencies
+  must be resolved on Savio before production opt-in.
+
 ## 6. Open questions
+
+Current state-design gates: determine which databases and maintenance locks
+actually follow `sqlite_home` on Savio; prove cross-database warm recovery and
+resuming with a changed cwd; establish queue/job replay behavior; verify that
+each managed launch owns an independent foreground server. No cluster was
+queried or changed in this design session. Proposed configuration belongs only
+in the design until parser, README and example can be changed together.
 
 Scope is each SuCoder mirror, as assumed while the optional scope question was
 unanswered. No host-wide Codex settings are changed. Native instructions apply
