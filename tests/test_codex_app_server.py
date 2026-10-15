@@ -318,62 +318,115 @@ def test_stdin_eof_stops_cleanly_and_quick_check_passes(root, workspace, model):
 # ----------------------------------------------------------------- 7
 
 
-@pytest.mark.parametrize("bound", [
-    pytest.param(True, id="sessions-bound",
-                 marks=pytest.mark.skipif(not codex_available(need_bwrap=True), reason="bwrap not installed")),
-    pytest.param(False, id="control"),
+needs_bwrap = pytest.mark.skipif(not codex_available(need_bwrap=True), reason="bwrap not installed")
+
+
+def _bwrap(binds):
+    """The runner's layout (``codex_state_runner.bwrap_argv``), spelled out so
+    this test does not import a module that is still moving."""
+    argv = ["bwrap", "--dev-bind", "/", "/"]
+    for local, target in binds:
+        argv += ["--bind", str(local), str(target)]
+    return argv + ["--unshare-user", "--uid", str(os.getuid()), "--gid", str(os.getgid()), "--die-with-parent", "--"]
+
+
+def _listed(server, thread_id, **params):
+    """``thread/list`` hits for ``thread_id`` -> that entry's ``path`` (or None)."""
+    for entry in server.rpc("thread/list", {"limit": 100, **params}).get("data", []):
+        if entry.get("id") == thread_id:
+            return entry.get("path")
+    return None
+
+
+@pytest.mark.parametrize("layout", [
+    pytest.param("control", id="control"),
+    pytest.param("sessions", id="sessions-bound", marks=needs_bwrap),
+    pytest.param("both", id="sessions-and-archived-bound", marks=needs_bwrap),
+    pytest.param("whole-home", id="whole-home-bound", marks=needs_bwrap),
 ])
-def test_archive_moves_the_rollout_and_fails_with_exdev_across_the_sessions_bind(root, workspace, model, bound):
+def test_archive_renames_the_rollout_and_fails_with_exdev_across_bind_mounts(root, workspace, model, layout):
     """``thread/archive`` renames the rollout into ``CODEX_HOME/archived_sessions``.
 
-    Control: the file moves from ``sessions/YYYY/MM/DD/`` to a flat
-    ``archived_sessions/``, ``threads.rollout_path`` follows, ``archived`` is
-    set, ``thread/resume`` is refused until ``thread/unarchive`` moves it back.
-    Under the runner's layout (only ``sessions`` bind-mounted, as
-    ``bwrap_argv`` builds it), the rename crosses a mount boundary: Codex
-    reports EXDEV, does not fall back to copy+delete, leaves the rollout and
-    the row untouched, and the thread stays usable.
+    Control and a single bind covering the whole home: the file is renamed
+    (same inode) from ``sessions/YYYY/MM/DD/`` to a flat ``archived_sessions/``,
+    ``threads.rollout_path`` follows, ``archived`` is set, the writer lock is
+    removed, the file is immutable while archived, ``thread/resume`` and
+    ``turn/start`` are refused, default ``thread/list`` hides it and
+    ``archived: true`` shows it, and ``thread/unarchive`` renames it back and
+    resets the row.  With ``sessions`` bound alone *or* with
+    ``archived_sessions`` bound as a second mount, the rename crosses a
+    vfsmount boundary: Codex reports EXDEV, does not fall back to copy+delete,
+    leaves the rollout and the row untouched (but has already dropped the
+    writer lock), and the thread stays usable.
     """
     codex_home = root / "codex-home"
     home = Home(root, codex_home=codex_home, trusted=[workspace])
     local = root / "local"
-    (local / "sessions").mkdir(parents=True)
-    (codex_home / "sessions").mkdir()
-    # The runner's layout (codex_state_runner.bwrap_argv), spelled out so this
-    # test does not import a module that is still moving.
-    prefix = ["bwrap", "--dev-bind", "/", "/", "--bind", str(local / "sessions"), str(codex_home / "sessions"),
-              "--unshare-user", "--uid", str(os.getuid()), "--gid", str(os.getgid()), "--die-with-parent", "--"] if bound else []
     stores = root / "sqlite"
-    where = local if bound else codex_home          # where the rollout is visible from outside
+    if layout == "control":
+        prefix, where = [], codex_home
+    elif layout == "whole-home":
+        where = local / "home"
+        for d in ("sessions", "archived_sessions"):
+            (where / d).mkdir(parents=True)
+        shutil.copyfile(codex_home / "config.toml", where / "config.toml")
+        prefix = _bwrap([(where, codex_home)])
+    else:
+        where = local
+        binds = ["sessions"] if layout == "sessions" else ["sessions", "archived_sessions"]
+        for d in binds:
+            (local / d).mkdir(parents=True)
+            (codex_home / d).mkdir()
+        prefix = _bwrap([(local / d, codex_home / d) for d in binds])
+    archive_works = layout in ("control", "whole-home")
+
     with AppServer(home, model, workspace, sqlite_home=stores, prefix=prefix) as server:
         thread_id = server.thread_start()
         for i in range(2):
             assert server.turn(thread_id, f"MARK7_{i}").ok
         settled_projection(stores, thread_id)
         rollout = rollout_of(where, thread_id)
+        inode, size, before = rollout.stat().st_ino, rollout.stat().st_size, rollout.read_bytes()
         recorded = thread_row(stores, thread_id)["rollout_path"]
         assert recorded == str(codex_home / "sessions" / rollout.relative_to(where / "sessions"))
+        lock = where / "thread-writer-locks" / f"{thread_id}.lock" if layout == "whole-home" else codex_home / "thread-writer-locks" / f"{thread_id}.lock"
+        assert lock.exists()
 
-        if bound:
-            with pytest.raises(RuntimeError, match="Cross-device link"):
+        if not archive_works:
+            with pytest.raises(RuntimeError, match="Cross-device link \\(os error 18\\)"):
                 server.rpc("thread/archive", {"threadId": thread_id})
-            assert rollout.exists() and not list(codex_home.glob("archived_sessions/*"))
+            assert rollout.stat().st_ino == inode and rollout.read_bytes() == before
+            assert not list((where / "archived_sessions").glob("*")) and not list(codex_home.glob("archived_sessions/*"))
             row = thread_row(stores, thread_id)
             assert (row["rollout_path"], row["archived"], row["archived_at"]) == (recorded, 0, None)
+            assert not lock.exists(), "the failed archive has already released the writer lock"
+            assert _listed(server, thread_id) == recorded and _listed(server, thread_id, archived=True) is None
             assert len(server.thread_resume(thread_id)["thread"]["turns"]) == 2
+            assert lock.exists()
         else:
             assert server.rpc("thread/archive", {"threadId": thread_id}) == {}
-            archived = codex_home / "archived_sessions" / rollout.name
+            archived = where / "archived_sessions" / rollout.name          # flat: no YYYY/MM/DD
             assert archived.is_file() and not rollout.exists()
+            assert archived.stat().st_ino == inode and archived.read_bytes() == before, "a rename, not a copy"
+            assert not lock.exists()
+            recorded_archived = str(codex_home / "archived_sessions" / rollout.name)
             row = thread_row(stores, thread_id)
-            assert (row["rollout_path"], row["archived"]) == (str(archived), 1) and row["archived_at"]
+            assert (row["rollout_path"], row["archived"]) == (recorded_archived, 1) and row["archived_at"]
+            assert _listed(server, thread_id) is None and _listed(server, thread_id, archived=True) == recorded_archived
+            assert _listed(server, thread_id, useStateDbOnly=True) is None
             assert len(server.thread_read(thread_id)["thread"]["turns"]) == 2
+            assert len(server.items_list(thread_id)) == 2 and len(server.turns_list(thread_id)) == 2
             with pytest.raises(RuntimeError, match="is archived"):
                 server.thread_resume(thread_id)
+            with pytest.raises(RuntimeError, match="thread not found"):
+                server.rpc("turn/start", {"threadId": thread_id, "input": [{"type": "text", "text": "MARK7_refused"}]})
+            assert (archived.stat().st_ino, archived.stat().st_size, archived.read_bytes()) == (inode, size, before), "immutable while archived"
             restored = server.rpc("thread/unarchive", {"threadId": thread_id})
             assert restored["thread"]["path"] == recorded and rollout.is_file() and not archived.exists()
+            assert rollout.stat().st_ino == inode and rollout.read_bytes() == before
             row = thread_row(stores, thread_id)
-            assert (row["rollout_path"], row["archived"]) == (recorded, 0)
+            assert (row["rollout_path"], row["archived"], row["archived_at"]) == (recorded, 0, None)
+            assert _listed(server, thread_id) == recorded and _listed(server, thread_id, archived=True) is None
             assert len(server.thread_resume(thread_id)["thread"]["turns"]) == 2
         result = server.turn(thread_id, "MARK7_after")
         assert _markers(model, result, "MARK7_") == ["MARK7_0", "MARK7_1", "MARK7_after"]
