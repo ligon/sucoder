@@ -313,3 +313,68 @@ def test_stdin_eof_stops_cleanly_and_quick_check_passes(root, workspace, model):
     assert set(backup_databases(stores, root / "backup").values()) == {"ok"}
     assert not any(p.name.endswith(("-wal", "-shm")) for p in (root / "backup").iterdir())
     assert not list(home.codex_home.glob("*.sqlite")), "no store in CODEX_HOME when sqlite_home is set"
+
+
+# ----------------------------------------------------------------- 7
+
+
+@pytest.mark.parametrize("bound", [
+    pytest.param(True, id="sessions-bound",
+                 marks=pytest.mark.skipif(not codex_available(need_bwrap=True), reason="bwrap not installed")),
+    pytest.param(False, id="control"),
+])
+def test_archive_moves_the_rollout_and_fails_with_exdev_across_the_sessions_bind(root, workspace, model, bound):
+    """``thread/archive`` renames the rollout into ``CODEX_HOME/archived_sessions``.
+
+    Control: the file moves from ``sessions/YYYY/MM/DD/`` to a flat
+    ``archived_sessions/``, ``threads.rollout_path`` follows, ``archived`` is
+    set, ``thread/resume`` is refused until ``thread/unarchive`` moves it back.
+    Under the runner's layout (only ``sessions`` bind-mounted, as
+    ``bwrap_argv`` builds it), the rename crosses a mount boundary: Codex
+    reports EXDEV, does not fall back to copy+delete, leaves the rollout and
+    the row untouched, and the thread stays usable.
+    """
+    codex_home = root / "codex-home"
+    home = Home(root, codex_home=codex_home, trusted=[workspace])
+    local = root / "local"
+    (local / "sessions").mkdir(parents=True)
+    (codex_home / "sessions").mkdir()
+    # The runner's layout (codex_state_runner.bwrap_argv), spelled out so this
+    # test does not import a module that is still moving.
+    prefix = ["bwrap", "--dev-bind", "/", "/", "--bind", str(local / "sessions"), str(codex_home / "sessions"),
+              "--unshare-user", "--uid", str(os.getuid()), "--gid", str(os.getgid()), "--die-with-parent", "--"] if bound else []
+    stores = root / "sqlite"
+    where = local if bound else codex_home          # where the rollout is visible from outside
+    with AppServer(home, model, workspace, sqlite_home=stores, prefix=prefix) as server:
+        thread_id = server.thread_start()
+        for i in range(2):
+            assert server.turn(thread_id, f"MARK7_{i}").ok
+        settled_projection(stores, thread_id)
+        rollout = rollout_of(where, thread_id)
+        recorded = thread_row(stores, thread_id)["rollout_path"]
+        assert recorded == str(codex_home / "sessions" / rollout.relative_to(where / "sessions"))
+
+        if bound:
+            with pytest.raises(RuntimeError, match="Cross-device link"):
+                server.rpc("thread/archive", {"threadId": thread_id})
+            assert rollout.exists() and not list(codex_home.glob("archived_sessions/*"))
+            row = thread_row(stores, thread_id)
+            assert (row["rollout_path"], row["archived"], row["archived_at"]) == (recorded, 0, None)
+            assert len(server.thread_resume(thread_id)["thread"]["turns"]) == 2
+        else:
+            assert server.rpc("thread/archive", {"threadId": thread_id}) == {}
+            archived = codex_home / "archived_sessions" / rollout.name
+            assert archived.is_file() and not rollout.exists()
+            row = thread_row(stores, thread_id)
+            assert (row["rollout_path"], row["archived"]) == (str(archived), 1) and row["archived_at"]
+            assert len(server.thread_read(thread_id)["thread"]["turns"]) == 2
+            with pytest.raises(RuntimeError, match="is archived"):
+                server.thread_resume(thread_id)
+            restored = server.rpc("thread/unarchive", {"threadId": thread_id})
+            assert restored["thread"]["path"] == recorded and rollout.is_file() and not archived.exists()
+            row = thread_row(stores, thread_id)
+            assert (row["rollout_path"], row["archived"]) == (recorded, 0)
+            assert len(server.thread_resume(thread_id)["thread"]["turns"]) == 2
+        result = server.turn(thread_id, "MARK7_after")
+        assert _markers(model, result, "MARK7_") == ["MARK7_0", "MARK7_1", "MARK7_after"]
+        assert server.stop().clean
