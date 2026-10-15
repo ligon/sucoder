@@ -42,6 +42,24 @@ class BranchPrefixes:
 
 
 @dataclass
+class CodexStateConfig:
+    """Managed Codex state on node-local disk (docs/codex-local-state.org).
+
+    Off by default and separate from Git local-disk tiering, which it
+    requires: the launcher stages a runner that owns the Codex process,
+    keeps its SQLite databases and session rollouts on local disk through a
+    per-process bind namespace over the shared ``CODEX_HOME``, and refuses
+    to launch rather than fall back to shared placement.
+    """
+
+    enabled: bool = False
+    checkpoint_minutes: int = 10            # periodic state capture cadence (Slice 2)
+    checkpoint_timeout_seconds: int = 30    # bounded wait for a capture/drain
+    durable_root: Optional[str] = None      # None: a private sibling of the
+                                            # shared mirror root (design: Identities)
+
+
+@dataclass
 class SlurmConfig:
     """SLURM job parameters for compute-node targets.
 
@@ -68,6 +86,8 @@ class SlurmConfig:
                                          # working tree to
                                          # refs/sucoder/wip-job/<mirror>/<jobid>
                                          # every N minutes; 0 disables
+    codex_state: Optional[CodexStateConfig] = None  # managed Codex state on
+                                         # local disk; needs local_disk
 
 
 @dataclass
@@ -516,6 +536,7 @@ class ConfigWarning(UserWarning):
 _VALID_SLURM_KEYS = frozenset({
     "partition", "account", "time", "qos",
     "cpus_per_task", "mem", "local_disk", "confined", "wip_snapshot_minutes",
+    "codex_state",
 })
 # Target-level options commonly misplaced under ``slurm:``; warned about
 # with a tailored "move it up a level" hint.
@@ -1368,6 +1389,8 @@ def _parse_slurm_config(raw: Any) -> Optional[SlurmConfig]:
             "(0 disables periodic snapshots) when provided."
         )
 
+    codex_state = _parse_codex_state(raw.get("codex_state"), local_disk)
+
     # Surface keys that the parser will ignore.  The common case is a
     # target-level option (notably ``system_prompt_extra``) indented one
     # level too deep, under ``slurm:`` instead of beside it -- which
@@ -1400,6 +1423,57 @@ def _parse_slurm_config(raw: Any) -> Optional[SlurmConfig]:
         local_disk=local_disk,
         confined=confined,
         wip_snapshot_minutes=wip_snapshot_minutes,
+        codex_state=codex_state,
+    )
+
+
+_VALID_CODEX_STATE_KEYS = frozenset({
+    "enabled", "checkpoint_minutes", "checkpoint_timeout_seconds", "durable_root",
+})
+
+
+def _parse_codex_state(raw: Any, local_disk: Optional[str]) -> Optional[CodexStateConfig]:
+    """``slurm.codex_state``: typed, strict, and only meaningful with local_disk."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ConfigError("`slurm.codex_state` must be a mapping when provided.")
+    unknown = sorted(set(raw) - _VALID_CODEX_STATE_KEYS)
+    if unknown:
+        raise ConfigError(
+            f"Unknown key(s) under `slurm.codex_state`: {', '.join(unknown)} "
+            f"(valid keys: {', '.join(sorted(_VALID_CODEX_STATE_KEYS))})."
+        )
+    enabled = raw.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ConfigError("`slurm.codex_state.enabled` must be a boolean when provided.")
+
+    def positive_int(key: str, default: int, maximum: int) -> int:
+        value = raw.get(key, default)
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0 or value > maximum:
+            raise ConfigError(
+                f"`slurm.codex_state.{key}` must be a positive integer no greater "
+                f"than {maximum} when provided."
+            )
+        return value
+
+    checkpoint_minutes = positive_int("checkpoint_minutes", 10, 24 * 60)
+    checkpoint_timeout_seconds = positive_int("checkpoint_timeout_seconds", 30, 3600)
+    durable_root = raw.get("durable_root")
+    if durable_root is not None and (not isinstance(durable_root, str) or not durable_root.strip()):
+        raise ConfigError("`slurm.codex_state.durable_root` must be an absolute path or null when provided.")
+    if durable_root is not None and not durable_root.startswith("/"):
+        raise ConfigError("`slurm.codex_state.durable_root` must be an absolute path or null when provided.")
+    if enabled and not local_disk:
+        raise ConfigError(
+            "`slurm.codex_state.enabled` requires `slurm.local_disk`: managed Codex "
+            "state lives on the node-local disk the working clone uses."
+        )
+    return CodexStateConfig(
+        enabled=enabled,
+        checkpoint_minutes=checkpoint_minutes,
+        checkpoint_timeout_seconds=checkpoint_timeout_seconds,
+        durable_root=durable_root,
     )
 
 

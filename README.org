@@ -1073,6 +1073,36 @@ This is /tiering/ (design and measurements in
 [[file:docs/local-disk-tiering.org][docs/local-disk-tiering.org]]), and it works the same way
 on =confined= (=sbatch=) and =salloc= targets:
 
+**** Managed Codex state
+
+With local-disk tiering on, =slurm.codex_state= additionally keeps a
+Codex launch's SQLite databases and session rollouts on the node-local
+disk: the launcher stages a runner that owns the Codex process, passes an
+absolute =sqlite_home=, and binds local directories over the write-heavy
+subdirectories of the shared =CODEX_HOME= in a per-process namespace
+(=bwrap=), so every other Codex process still sees the shared home
+unchanged.  It is off by default, applies only to Codex launches, needs
+=local_disk=, and refuses to launch (rather than fall back to shared
+placement) when =bwrap= is missing, when =sqlite_home= is already set in
+the command, =CODEX_SQLITE_HOME= or =config.toml=, or when Codex opens a
+database anywhere else.  Capture and recovery of that state across
+allocations are not implemented yet; the design and the measurements
+behind it are in [[file:docs/codex-local-state.org][docs/codex-local-state.org]] and
+[[file:docs/codex-local-state-spike.org][docs/codex-local-state-spike.org]].
+
+#+begin_src yaml
+    slurm:
+      partition: savio4_htc
+      account: fc_jevons
+      confined: true
+      local_disk: true
+      codex_state:
+        enabled: true
+        checkpoint_minutes: 10            # periodic capture cadence (reserved)
+        checkpoint_timeout_seconds: 30    # bounded wait for a capture or drain
+        durable_root: null                # null: a private sibling of the mirror root
+#+end_src
+
 - the launch clones =~/mirrors/<name>= to
   =/local/job<ID>/mirrors/<name>= and starts the agent there, with
   =UV_CACHE_DIR=, =PIP_CACHE_DIR=, =npm_config_cache=, and =TMPDIR=
