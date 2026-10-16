@@ -3172,13 +3172,14 @@ class MirrorManager:
         staged deadline timer uses it to request a capture from the runner
         at each warning (``slurm_timer.build_timer_script``).
 
-        ``replace_job`` (see :meth:`launch_agent`) is the drained
+        ``replace_job`` (see :meth:`launch_agent`) is the known
         predecessor a renewal replaces: it is skipped by the id-keyed reuse
         probe and the ``squeue --name`` adoption probe, and only it; the
         new job must differ from it and is recorded in the session's
         ``replacement`` attempt (``state: submitted``, then the node) rather
         than as the session's job, which keeps naming the old allocation
-        until the renewal has seen the successor ready.
+        until the renewal has seen the successor ready.  An unmanaged
+        relaunch has no attempt record and records the new job normally.
 
         Post-session hooks (``_auto_commit_agent_skills`` / ``_maybe_run_audit``)
         are intentionally NOT run: detaching tmux returns rc=0 while the
@@ -3484,15 +3485,17 @@ class MirrorManager:
         generations only and pending work refuses.
 
         ``replace_job`` is a renewal's replacement authorization: the
-        confined SLURM job whose managed owner has been drained and
-        acknowledged (``codex_state_drain`` in mode ``renew``).  Exactly
+        confined SLURM predecessor, drained and acknowledged for a managed
+        handoff (``codex_state_drain`` in mode ``renew``), or the known old
+        job for an unmanaged relaunch.  Exactly
         that job is excluded from the reuse and ``squeue --name`` adoption
         probes, which would otherwise hand the drained allocation back as
         "the" session; every other live job keeps blocking a second
         submission as before, the new job must differ, and the new job id
         is recorded in the session's replacement attempt rather than over
         the old allocation (``cli._relaunch_session`` promotes it once the
-        successor is ready).  Only ``_launch_confined`` adopts by scheduler
+        successor is ready).  Without an attempt record the new job is
+        recorded normally.  Only ``_launch_confined`` adopts by scheduler
         name, so the authorization has no effect on other paths.
         """
         launcher = ctx.agent_launcher
@@ -4098,12 +4101,21 @@ class MirrorManager:
         last = last if isinstance(last, dict) else None
         last_name = str(last.get("name")) if last and last.get("name") else "none"
         state = status.get("state")
+        exit_code = status.get("exit")
+        if isinstance(exit_code, bool) or not isinstance(exit_code, int):
+            exit_code = None
+        transitions = status.get("transitions")
+        exited_at = next((item.get("at") for item in reversed(transitions) if isinstance(item, dict)
+                          and item.get("state") in _STATE_DRAIN_EXITED_STATES), None) if isinstance(transitions, list) else None
+        if isinstance(exited_at, bool) or not isinstance(exited_at, (int, float)):
+            exited_at = None
         if state in _STATE_DRAIN_NO_OWNER_STATES:
             return done(f"no managed owner to drain: run {run} is {state}; last durable generation {last_name}",
-                        run=run, last_durable=last, state=state)
+                        run=run, last_durable=last, state=state, exit=exit_code, exited_at=exited_at)
         if state in _STATE_DRAIN_EXITED_STATES and last is not None and last.get("class") in _STATE_DRAIN_FINAL_CLASSES:
             return done(f"no managed owner to drain: run {run} exited (exit {status.get('exit')}) and its final "
-                        f"generation {last_name} is {last.get('class')}", run=run, last_durable=last, state=state)
+                        f"generation {last_name} is {last.get('class')}", run=run, last_durable=last, state=state,
+                        exit=exit_code, exited_at=exited_at)
 
         text = _state_drain_request_text(nonce, mode, time.time(), requester)
         script = _state_drain_request_script(run_dir, nonce, text)
@@ -4156,8 +4168,9 @@ class MirrorManager:
         shell exists, this reads the run's ``status.json`` through the
         status route and answers ready only for ``placed`` on exactly the
         token's run, generation and manifest hash
-        (:func:`codex_state.classify_readiness`).  A confined job that has
-        left the queue is a failure; one still queued is pending.  A failed
+        (:func:`codex_state.classify_readiness`), with the recorded Codex
+        process incarnation and its runner still present in /proc.  A
+        confined job that has left the queue is a failure; one still queued is pending.  A failed
         state answers at once.  Pending is polled every ``poll_seconds``
         until ``budget_seconds`` have passed on the monotonic clock, and the
         bound passing is still *pending*, never a failure: the caller keeps
@@ -4167,6 +4180,16 @@ class MirrorManager:
         unknown scheduler answer raises as the reuse probe does; the caller
         treats that as "ask again".
         """
+        route = _CodexStateRoute(self.executor, job_id, confined=ctx.confined)
+
+        def read_stat(pid: Any) -> Optional[str]:
+            if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+                return None
+            try:
+                return route.read(f"/proc/{pid}/stat")
+            except MirrorError:
+                return None
+
         started = clock()
         while True:
             state = self._confined_job_state(job_id) if ctx.confined else "RUNNING"
@@ -4181,6 +4204,20 @@ class MirrorManager:
                     result = _Readiness("pending", f"status not readable yet ({exc})")
                 else:
                     result = _state_classify_readiness(report.status, token)
+                    if result.ready:
+                        status = report.status or {}
+                        stat = read_stat(status.get("child_pid"))
+                        try:
+                            # comm (field 2) can itself contain spaces and ')'.
+                            starttime = int((stat or "").rsplit(")", 1)[1].split()[19])
+                        except (IndexError, ValueError):
+                            starttime = None
+                        expected = status.get("child_starttime")
+                        if (isinstance(expected, bool) or not isinstance(expected, int)
+                                or starttime != expected):
+                            return _Readiness("failed", "the successor's Codex process is gone")
+                        if read_stat((report.owner or {}).get("runner_pid")) is None:
+                            return _Readiness("failed", "the successor's runner is gone")
             if result.outcome != "pending":
                 return result
             elapsed = clock() - started

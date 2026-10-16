@@ -1434,7 +1434,8 @@ The prelude and credential environment are rebuilt for the replacement allocatio
 The checkpoint sentinel is not a chat message: checkpoint active work through the connected Codex client before turnover.
 
 A managed Codex owner (=slurm.codex_state= on; the session file records
-it as =managed_owner=, with the command and model as launched) is
+it as =managed_owner=, with the command, model and remote-control mode as launched,
+including an explicit =off=) is
 renewed on its own history, on a confined target: after the git
 sentinel and its grace, the loop asks the owner to drain in mode
 =renew= (the same request =sucoder codex-state-drain --mode renew=
@@ -1442,7 +1443,8 @@ sends) and takes the acknowledgement as its transfer token only when
 it names a *sealed* generation with the Codex process proven stopped;
 warm only (a person at the terminal), crash, failed and no answer in
 time defer the replacement to the next turn while time remains, and a
-run that had already exited cleanly with a sealed final generation
+run that had already exited with code 0 and a sealed final generation
+published at or after its most recent exit
 counts as drained.  The replacement is launched detached with
 =--codex-state-from RUN/GENERATION= on that token, unattended (sealed
 only; pending work refuses), authorized to replace exactly the
@@ -1450,18 +1452,25 @@ predecessor: that one job is excluded from the reuse and =squeue
 --name= adoption probes, every other live job under the mirror's name
 blocks the submission as before, and the new job must differ.  It
 becomes the session's job only once its =status.json= says =placed= on
-exactly that generation (=tmux has-session= is not readiness); until
+exactly that generation and its Codex process and runner are still present
+(=tmux has-session= is not readiness); until
 then the attempt -- old job and node, the token, the new job once
 =sbatch= answered -- lives in the session file as =replacement=, so a
 retry probes the recorded job rather than submitting another, a
 failure before submission leaves the old allocation reachable, and a
-replacement that fails readiness is cancelled (by id) and resubmitted
-on the next turn, three times at most; after that the loop submits no
+replacement that fails readiness stays recorded until its cancellation
+(by id) succeeds, then is resubmitted on the next turn, three times at most.
+Promotion keeps the record in state =ready=, naming the predecessor until
+its cancellation is confirmed; the next renewal reconciles that record
+before renewing the current job, and =release= cancels the recorded job too.
+After three failed replacements the loop submits no
 more, keeps watching, and says what to do (and falls back to a fresh
 history if the predecessor meanwhile ends).  A predecessor that vanished before it could be
 drained is relaunched with its command and a fresh managed history,
 and the log names where its generations are for an explicit
-=--codex-state-from=.  On an unconfined target, and on a dry run,
+=--codex-state-from=.  An unmanaged relaunch on a confined target also
+excludes its known predecessor from scheduler adoption, including the
+fallback when no managed run was recorded.  On an unconfined target, and on a dry run,
 a managed owner is renewed that way too.
 Renewal restarts the server; it does not automatically resume its chats.
 

@@ -456,8 +456,11 @@ class CodexStateDrain:
     the acknowledgement or from ``status.json``.  ``state`` is the run's
     recorded state when no request was written because no owner was left
     to answer one (refused, blocked, released, or exited with its final
-    generation published), else None.  ``commands`` lists every command
-    sent, or on a dry run the ones that would be.
+    generation published), else None.  ``exit`` and ``exited_at`` carry
+    the recorded exit code and newest exit transition's time in those
+    no-owner answers, so renewal can reject a seal from an earlier launch
+    of the same run.  ``commands`` lists every command sent, or on a dry
+    run the ones that would be.
     """
 
     job_id: int
@@ -474,6 +477,8 @@ class CodexStateDrain:
     timeout_seconds: float = 0.0
     dry_run: bool = False
     state: Optional[str] = None
+    exit: Optional[int] = None
+    exited_at: Optional[float] = None
 
     @property
     def acknowledged(self) -> bool:
@@ -488,7 +493,8 @@ class CodexStateDrain:
         return {
             "job_id": self.job_id, "scope": self.scope, "mode": self.mode, "nonce": self.nonce, "run": self.run,
             "requested": self.requested, "outcome": self.outcome, "ack": self.ack, "last_durable": self.last_durable,
-            "state": self.state, "waited_seconds": self.waited_seconds, "timeout_seconds": self.timeout_seconds,
+            "state": self.state, "exit": self.exit, "exited_at": self.exited_at,
+            "waited_seconds": self.waited_seconds, "timeout_seconds": self.timeout_seconds,
             "commands": self.commands,
         }
 
@@ -594,8 +600,10 @@ def transfer_token_from_exit(status: Mapping[str, Any], *, nonce: str) -> Transf
     A drain finds no owner to ask there (``codex_state_drain`` reports it
     without writing a request): Codex exited 0, the final capture sealed,
     and the runner is gone, so nothing can write to that history.  The
-    generation is as transferable as an acknowledged one; ``nonce`` is the
-    request's, labelling the attempt.
+    generation must have been published at or after ``exited_at``, the
+    newest exit transition's time; a reused run can retain an older seal
+    when its later captures fail.  ``nonce`` is the request's, labelling
+    the attempt.
     """
     if status.get("state") not in DRAIN_EXITED_STATES:
         raise ValueError(f"state is {status.get('state')!r}, not exited")
@@ -603,9 +611,16 @@ def transfer_token_from_exit(status: Mapping[str, Any], *, nonce: str) -> Transf
     if not isinstance(last, Mapping) or last.get("class") != "sealed":
         raise ValueError("the final generation is not sealed")
     exit_code = status.get("exit")
+    if isinstance(exit_code, bool) or not isinstance(exit_code, int) or exit_code != 0:
+        raise ValueError("the run did not record a clean exit (exit 0)")
+    published_at, exited_at = last.get("published_at"), status.get("exited_at")
+    if (isinstance(published_at, bool) or not isinstance(published_at, (int, float))
+            or isinstance(exited_at, bool) or not isinstance(exited_at, (int, float))):
+        raise ValueError("the final generation's publication or the last exit time is missing or invalid")
+    if not published_at >= exited_at:
+        raise ValueError("the sealed generation was not published after the last exit")
     return _transfer_token(nonce, status.get("run"), last.get("name"), last.get("manifest_sha256"),
-                           exit_code=exit_code if isinstance(exit_code, int) and not isinstance(exit_code, bool) else None,
-                           child=None)
+                           exit_code=exit_code, child=None)
 
 
 def transfer_token_from_drain(report: CodexStateDrain) -> TransferToken:
@@ -623,7 +638,8 @@ def transfer_token_from_drain(report: CodexStateDrain) -> TransferToken:
         return transfer_token_from_ack(report.ack, mode=report.mode)
     if report.run is not None and not report.requested and report.state in DRAIN_EXITED_STATES:
         return transfer_token_from_exit(
-            {"state": report.state, "run": report.run, "last_generation": report.last_durable}, nonce=report.nonce,
+            {"state": report.state, "run": report.run, "last_generation": report.last_durable,
+             "exit": report.exit, "exited_at": report.exited_at}, nonce=report.nonce,
         )
     raise ValueError(report.outcome)
 
@@ -639,8 +655,10 @@ class ReplacementAttempt:
     allocation reachable; neither replaces the old provenance early.
     ``state`` is ``drained`` (token held, nothing submitted), ``submitted``
     (new job recorded), ``ready`` (the successor run is placed on the
-    token's generation; the record is then retired).  ``failures`` keeps
-    the reasons of earlier tries of this attempt, newest last.
+    token's generation; the predecessor is retained until cancellation is
+    confirmed).  ``failures`` keeps the reasons of earlier tries of this
+    attempt, newest last; ``cancel:`` entries record cleanup retries and
+    do not count as further replacement submissions.
     """
 
     attempt: str
@@ -733,8 +751,8 @@ def classify_readiness(status: Optional[Mapping[str, Any]], token: TransferToken
     directory -- *and* ``restored_from`` naming exactly the token's run,
     generation and manifest hash: ``tmux has-session`` says a shell exists,
     this says the successor owns the history the predecessor sealed.  A run
-    reused in place (``restore_ignored``) or restored from anything else is
-    a failure, not a successor.  No status yet, or a state before
+    reused in place (``reused_run`` or ``restore_ignored``) or restored from
+    anything else is a failure, not a successor.  No status yet, or a state before
     ``placed``, is pending; every other state is a failure with the
     runner's reason where it recorded one.
     """
@@ -744,14 +762,14 @@ def classify_readiness(status: Optional[Mapping[str, Any]], token: TransferToken
     state = status.get("state")
     if not isinstance(state, str):
         return Readiness("failed", "status.json records no state")
+    if status.get("restore_ignored") or status.get("reused_run"):
+        return Readiness("failed", "the allocation already held a run for this scope and reused it in place; "
+                                   "the token's generation was not restored")
     if state in READINESS_PENDING_STATES:
         return Readiness("pending", f"state {state}")
     if state != READINESS_READY_STATE:
         reason = status.get("reason")
         return Readiness("failed", f"state {state}" + (f": {reason}" if isinstance(reason, str) and reason else ""))
-    if status.get("restore_ignored"):
-        return Readiness("failed", "the allocation already held a run for this scope and reused it in place; "
-                                   "the token's generation was not restored")
     origin = status.get("restored_from")
     if not isinstance(origin, Mapping):
         return Readiness("failed", f"placed, but not restored from {token.selector}: mode {status.get('mode')!r}")

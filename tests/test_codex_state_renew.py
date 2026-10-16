@@ -85,8 +85,8 @@ def test_token_refuses_a_bad_manifest_hash():
 
 
 def test_token_from_a_clean_exit_with_a_sealed_final_generation():
-    status = {"state": "exited", "exit": 0, "run": RUN,
-              "last_generation": {"name": GEN, "class": "sealed", "manifest_sha256": SHA}}
+    status = {"state": "exited", "exit": 0, "exited_at": 20.0, "run": RUN,
+              "last_generation": {"name": GEN, "class": "sealed", "manifest_sha256": SHA, "published_at": 20.0}}
     token = transfer_token_from_exit(status, nonce=NONCE)
     assert (token.run, token.generation, token.manifest_sha256, token.exit, token.child) == (RUN, GEN, SHA, 0, None)
     with pytest.raises(ValueError, match="not exited"):
@@ -141,6 +141,7 @@ def test_session_carries_the_managed_owner_and_the_attempt_and_loads_legacy_file
 
 def _placed(origin_run=RUN, origin_gen=GEN, origin_sha=SHA, **extra):
     status = {"state": "placed", "mode": "restore", "run": NEW_RUN, "reused_run": False,
+              "child_pid": 4321, "child_starttime": 123456,
               "restored_from": {"run": origin_run, "generation": origin_gen, "class": "sealed",
                                 "manifest_sha256": origin_sha, "threads": 2}}
     status.update(extra)
@@ -164,6 +165,8 @@ def test_readiness_is_placed_on_exactly_the_token_generation():
     ({"state": "drained"}, "failed", "state drained"),
     ({"mode": "fresh"}, "failed", "records no state"),
     (_placed(restore_ignored=f"{RUN}/{GEN}", reused_run=True), "failed", "reused it in place"),
+    (_placed(reused_run=True), "failed", "reused it in place"),
+    (_placed(state="launched", reused_run=True), "failed", "reused it in place"),
     ({"state": "placed", "mode": "fresh", "restored_from": None}, "failed", "not restored from"),
     (_placed(origin_gen="000012-00000000"), "failed", "restored from"),
     (_placed(origin_sha="cd" * 32), "failed", "restored from"),
@@ -188,8 +191,8 @@ def test_token_from_a_drain_report():
     from sucoder.codex_state import transfer_token_from_drain
     assert transfer_token_from_drain(_report()) == _token()
     exited = _report(outcome=f"no managed owner to drain: run {RUN} exited (exit 0) and its final generation {GEN} is sealed",
-                     requested=False, ack=None, state="exited",
-                     last_durable={"name": GEN, "class": "sealed", "manifest_sha256": SHA})
+                     requested=False, ack=None, state="exited", exit=0, exited_at=20.0,
+                     last_durable={"name": GEN, "class": "sealed", "manifest_sha256": SHA, "published_at": 21.0})
     assert transfer_token_from_drain(exited).selector == f"{RUN}/{GEN}"
     for report, why in [
         (_report(ack=None, outcome="drain unacknowledged after 60 s; last durable generation 000012-0a1b2c3d"), "unacknowledged"),
@@ -331,21 +334,33 @@ def test_launch_agent_hands_the_runner_unattended_and_the_authorization_to_the_c
 
 # ----------------------------------------------------------------- readiness through the manager
 
+def _proc_stat(pid, starttime):
+    # Field 2 has spaces and a ')' inside it; field 22 follows fields 3-21.
+    return f"{pid} (codex (x)) S " + " ".join(str(i) for i in range(4, 22)) + f" {starttime} 23\n"
+
+
 def test_readiness_polls_status_until_placed_on_the_token(tmp_path, monkeypatch):
     from types import SimpleNamespace
     from tests.test_codex_state import _state_manager
+    from tests.test_codex_state_release import _Node
     manager, ctx, _confined = _state_manager(tmp_path, monkeypatch)
     answers = [None, {"state": "restoring"}, {"state": "launched"}, _placed()]
     monkeypatch.setattr(manager, "_confined_job_state", lambda job: "RUNNING")
-    monkeypatch.setattr(manager, "codex_state_status", lambda c, job: SimpleNamespace(status=answers.pop(0)))
+    monkeypatch.setattr(manager, "codex_state_status",
+                        lambda c, job: SimpleNamespace(status=answers.pop(0), owner={"runner_pid": 1234}))
+    node = _Node({"/proc/4321/stat": _proc_stat(4321, 123456), "/proc/1234/stat": _proc_stat(1234, 654321)})
+    manager.executor.run_agent.side_effect = node.run_agent
     slept, clock = [], [0.0]
 
     def sleep(seconds):
         slept.append(seconds)
         clock[0] += seconds
-    result = manager.codex_state_readiness(ctx, 12345, _token(), budget_seconds=100.0, poll_seconds=10.0,
+    result = manager.codex_state_readiness(ctx, 4242, _token(), budget_seconds=100.0, poll_seconds=10.0,
                                            sleep=sleep, clock=lambda: clock[0])
     assert result.ready and slept == [10.0, 10.0, 10.0] and answers == []
+    assert [argv for argv, _ in node.calls] == [
+        ["srun", "--jobid=4242", "--overlap", "cat", "/proc/4321/stat"],
+        ["srun", "--jobid=4242", "--overlap", "cat", "/proc/1234/stat"]]
 
 
 def test_readiness_answers_a_failure_at_once_and_pending_at_the_budget(tmp_path, monkeypatch):
@@ -391,12 +406,18 @@ class _FakeManager:
     tmux gate failing after sbatch).
     """
 
-    def __init__(self, *, old_state="RUNNING", drain=None, readiness=(), launch="record"):
+    def __init__(self, *, old_state="RUNNING", drain=None, readiness=(), launch="record", cancel=(),
+                 confined=True, target_name=None):
         self.calls = []
         self.old_state = old_state
         self.drain_report = drain
         self.readiness_results = list(readiness)
         self.launch = launch
+        self.cancel_results = list(cancel)
+        self.cancel_sessions = []
+        self.confined = confined
+        self.target_name = target_name
+        self.drain_kwargs = []
         self.executor = type("E", (), {})()
         self.executor.run_agent = self._run_agent
         self.executor.local_disk_root = "/local"
@@ -404,11 +425,15 @@ class _FakeManager:
     def _run_agent(self, args, **kwargs):
         from types import SimpleNamespace
         self.calls.append(("run_agent", list(args)))
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+        self.cancel_sessions.append(RemoteSession.load("sample", target_name=self.target_name))
+        result = self.cancel_results.pop(0) if self.cancel_results else 0
+        if isinstance(result, Exception):
+            raise result
+        return SimpleNamespace(returncode=result, stdout="", stderr="scheduler unavailable" if result else "")
 
     def context_for(self, mirror):
         from types import SimpleNamespace
-        return SimpleNamespace(settings=SimpleNamespace(name=mirror), confined=True)
+        return SimpleNamespace(settings=SimpleNamespace(name=mirror), confined=self.confined)
 
     def _confined_job_state(self, job_id):
         self.calls.append(("job_state", job_id))
@@ -418,11 +443,12 @@ class _FakeManager:
 
     def codex_state_drain(self, ctx, job_id, **kwargs):
         self.calls.append(("drain", job_id, kwargs["mode"]))
+        self.drain_kwargs.append(kwargs)
         return self.drain_report
 
     def launch_agent(self, ctx, **kwargs):
         self.calls.append(("launch", kwargs))
-        session = RemoteSession.load("sample", target_name=None)
+        session = RemoteSession.load("sample", target_name=self.target_name)
         if self.launch in ("record", "record+raise"):
             session.replacement = dict(session.replacement, state="submitted", new_job=12345, new_node="n0001.savio4")
             session.save()
@@ -441,27 +467,31 @@ class _FakeManager:
 
 
 def _config(*, confined=True, enabled=True):
+    from pathlib import Path
     from types import SimpleNamespace
-    from sucoder.config import CodexStateConfig
-    slurm = SimpleNamespace(confined=confined, codex_state=CodexStateConfig(enabled=enabled))
-    return SimpleNamespace(mirrors={"sample": SimpleNamespace(remote=SimpleNamespace(slurm=slurm))})
+    from sucoder.config import BranchPrefixes, CodexStateConfig, MirrorSettings, RemoteConfig, SlurmConfig
+    slurm = SlurmConfig(partition="savio4_htc", account="fc_jevons", confined=confined,
+                        codex_state=CodexStateConfig(enabled=enabled))
+    return SimpleNamespace(mirrors={"sample": MirrorSettings(
+        name="sample", canonical_repo=Path("/repo"), mirror_name="sample", branch_prefixes=BranchPrefixes(),
+        remote=RemoteConfig(slurm=slurm))})
 
 
-def _managed_session(tmp_path, monkeypatch, *, replacement=None):
+def _managed_session(tmp_path, monkeypatch, *, replacement=None, remote_control=None, target_name=None):
     monkeypatch.setattr("sucoder.session._session_dir", lambda: tmp_path / "sessions")
-    session = RemoteSession(mirror_name="sample", target_name=None, slurm_job_id=4242, compute_node="n0033.savio4")
+    session = RemoteSession(mirror_name="sample", target_name=target_name, slurm_job_id=4242, compute_node="n0033.savio4")
     session.managed_owner = {"command": ["codex", "--model", "gpt-6-astra"], "model": None, "scope": "ab" * 32,
-                             "durable_root": "/g/.sucoder-state", "run": RUN}
+                             "durable_root": "/g/.sucoder-state", "run": RUN, "remote_control": remote_control}
     session.replacement = replacement
     session.save()
     return session
 
 
-def _relaunch(monkeypatch, fake, config=None):
+def _relaunch(monkeypatch, fake, config=None, ctx=None):
     import logging
     from sucoder import cli
     monkeypatch.setattr(cli, "_build_manager_for_mirror", lambda *a, **k: fake)
-    return cli._relaunch_session("sample", config or _config(), None, logging.getLogger("test-renew"), False)
+    return cli._relaunch_session("sample", config or _config(), ctx, logging.getLogger("test-renew"), False)
 
 
 def _ready():
@@ -479,15 +509,20 @@ def _failed(why="state refused: bwrap is not installed"):
     return Readiness("failed", why)
 
 
-def test_relaunch_drains_launches_on_the_token_and_promotes_the_ready_successor(tmp_path, monkeypatch):
-    _managed_session(tmp_path, monkeypatch)
+@pytest.mark.parametrize("remote_control", [None, "server", "off"])
+def test_relaunch_drains_launches_on_the_token_and_promotes_the_ready_successor(tmp_path, monkeypatch, remote_control):
+    _managed_session(tmp_path, monkeypatch, remote_control=remote_control)
     fake = _FakeManager(drain=_report(), readiness=[_ready()])
     assert _relaunch(monkeypatch, fake) == 12345
     kinds = [c[0] for c in fake.calls]
-    assert kinds == ["job_state", "drain", "launch", "readiness"]
+    assert kinds == ["job_state", "drain", "launch", "readiness", "run_agent"]
     launch = fake.calls[2][1]
     assert launch == {"sync": False, "detached": True, "codex_state_from": f"{RUN}/{GEN}", "codex_state_unattended": True,
-                      "replace_job": 4242, "command_override": ["codex", "--model", "gpt-6-astra"], "model_override": None}
+                      "replace_job": 4242, "command_override": ["codex", "--model", "gpt-6-astra"], "model_override": None,
+                      "codex_remote_control": remote_control}
+    assert fake.calls[-1] == ("run_agent", ["scancel", "4242"])
+    cancelling = fake.cancel_sessions[0]
+    assert cancelling.slurm_job_id == 12345 and cancelling.replacement["state"] == "ready"
     session = RemoteSession.load("sample", target_name=None)
     assert (session.slurm_job_id, session.compute_node, session.replacement) == (12345, "n0001.savio4", None)
     assert session.managed_owner["command"] == ["codex", "--model", "gpt-6-astra"]
@@ -511,7 +546,7 @@ def test_relaunch_keeps_a_pending_replacement_and_only_probes_it_next_turn(tmp_p
     attempt = ReplacementAttempt.from_json(session.replacement)
     assert (session.slurm_job_id, attempt.state, attempt.new_job) == (4242, "submitted", 12345)
     assert _relaunch(monkeypatch, fake) == 12345
-    assert [c[0] for c in fake.calls] == ["job_state", "drain", "launch", "readiness", "readiness"], (
+    assert [c[0] for c in fake.calls] == ["job_state", "drain", "launch", "readiness", "readiness", "run_agent"], (
         "the second turn neither drains nor launches: it asks about the recorded job")
     assert RemoteSession.load("sample", target_name=None).slurm_job_id == 12345
 
@@ -538,7 +573,7 @@ def test_relaunch_probes_a_job_recorded_before_the_launch_raised(tmp_path, monke
     _managed_session(tmp_path, monkeypatch)
     fake = _FakeManager(drain=_report(), readiness=[_ready()], launch="record+raise")
     assert _relaunch(monkeypatch, fake) == 12345
-    assert [c[0] for c in fake.calls] == ["job_state", "drain", "launch", "readiness"]
+    assert [c[0] for c in fake.calls] == ["job_state", "drain", "launch", "readiness", "run_agent"]
 
 
 def test_relaunch_records_a_launch_that_submitted_nothing(tmp_path, monkeypatch):
@@ -550,15 +585,17 @@ def test_relaunch_records_a_launch_that_submitted_nothing(tmp_path, monkeypatch)
     assert RemoteSession.load("sample", target_name=None).slurm_job_id == 4242
 
 
-def test_relaunch_of_a_lost_predecessor_without_a_token_is_unmanaged_with_the_owners_command(tmp_path, monkeypatch, caplog):
-    _managed_session(tmp_path, monkeypatch)
+@pytest.mark.parametrize("remote_control", [None, "server", "off"])
+def test_relaunch_of_a_lost_predecessor_without_a_token_is_unmanaged_with_the_owners_command(
+        tmp_path, monkeypatch, caplog, remote_control):
+    _managed_session(tmp_path, monkeypatch, remote_control=remote_control)
     fake = _FakeManager(old_state=None, launch="plain")
     with caplog.at_level("WARNING"):
         assert _relaunch(monkeypatch, fake) == 777
     assert [c[0] for c in fake.calls] == ["job_state", "launch"]
     launch = fake.calls[1][1]
     assert launch == {"sync": False, "detached": True, "command_override": ["codex", "--model", "gpt-6-astra"],
-                      "model_override": None}
+                      "model_override": None, "codex_remote_control": remote_control, "replace_job": 4242}
     assert f"/g/.sucoder-state/codex/{'ab' * 32}/runs/{RUN}" in caplog.text
 
 
@@ -567,7 +604,7 @@ def test_relaunch_of_a_lost_predecessor_with_a_token_continues_on_it(tmp_path, m
     _managed_session(tmp_path, monkeypatch, replacement=attempt.as_json())
     fake = _FakeManager(old_state=None, readiness=[_ready()])
     assert _relaunch(monkeypatch, fake) == 12345
-    assert [c[0] for c in fake.calls] == ["launch", "readiness"], "no probe, no drain: the token is held"
+    assert [c[0] for c in fake.calls] == ["launch", "readiness", "run_agent"], "no probe, no drain: the token is held"
     assert fake.calls[0][1]["codex_state_from"] == f"{RUN}/{GEN}"
 
 
@@ -576,11 +613,13 @@ def test_relaunch_without_a_managed_run_is_unmanaged(tmp_path, monkeypatch):
     fake = _FakeManager(drain=_report(run=None, requested=False, ack=None, outcome="no managed run recorded"), launch="plain")
     assert _relaunch(monkeypatch, fake) == 777
     assert [c[0] for c in fake.calls] == ["job_state", "drain", "launch"] and "codex_state_from" not in fake.calls[2][1]
+    assert fake.calls[2][1]["replace_job"] == 4242
 
 
 def test_relaunch_continues_a_cleanly_exited_sealed_run(tmp_path, monkeypatch):
     _managed_session(tmp_path, monkeypatch)
-    report = _report(requested=False, ack=None, state="exited", last_durable={"name": GEN, "class": "sealed", "manifest_sha256": SHA},
+    report = _report(requested=False, ack=None, state="exited", exit=0, exited_at=20.0,
+                     last_durable={"name": GEN, "class": "sealed", "manifest_sha256": SHA, "published_at": 21.0},
                      outcome=f"no managed owner to drain: run {RUN} exited (exit 0) and its final generation {GEN} is sealed")
     fake = _FakeManager(drain=report, readiness=[_ready()])
     assert _relaunch(monkeypatch, fake) == 12345
@@ -613,10 +652,11 @@ def test_relaunch_asks_again_when_the_scheduler_cannot_answer(tmp_path, monkeypa
 
 def test_relaunch_of_a_managed_owner_on_an_unconfined_target_is_unmanaged_with_its_command(tmp_path, monkeypatch, caplog):
     _managed_session(tmp_path, monkeypatch)
-    fake = _FakeManager(launch="plain")
+    fake = _FakeManager(launch="plain", confined=False)
     with caplog.at_level("WARNING"):
         assert _relaunch(monkeypatch, fake, config=_config(confined=False)) == 777
     assert fake.calls[0][1]["command_override"] == ["codex", "--model", "gpt-6-astra"]
+    assert "replace_job" not in fake.calls[0][1]
     assert "confined targets only" in caplog.text
 
 
@@ -671,6 +711,7 @@ def test_relaunch_after_the_failure_bound_falls_back_only_once_the_predecessor_i
         assert _relaunch(monkeypatch, fake) == 777
     assert [c[0] for c in fake.calls] == ["job_state", "launch"]
     assert fake.calls[1][1]["command_override"] == ["codex", "--model", "gpt-6-astra"] and "codex_state_from" not in fake.calls[1][1]
+    assert fake.calls[1][1]["replace_job"] == 4242
     loaded = RemoteSession.load("sample", target_name=None)
     assert loaded.slurm_job_id == 777 and loaded.replacement is None
     assert f"{RUN}/{GEN}" in caplog.text and "gone after 3 failed replacements" in caplog.text
@@ -707,3 +748,187 @@ def test_session_listings_name_a_pending_replacement_job(tmp_path, monkeypatch):
     assert RemoteSession.holders_of_job(4242) == ["sample--savio"]
     assert RemoteSession.holders_of_job(4242, exclude_key="sample--savio") == []
     assert RemoteSession.recorded_jobs() == {"other--savio": 4300, "sample--savio": 4242, "sample--savio (replacement)": 12345}
+    attempt.state = "ready"
+    session.slurm_job_id = 12345
+    session.replacement = attempt.as_json()
+    session.save()
+    assert RemoteSession.pending_replacement_job(session) == 4242
+    assert RemoteSession.holders_of_job(4242) == ["sample--savio"]
+    assert RemoteSession.holders_of_job(12345) == ["sample--savio"]
+    assert RemoteSession.recorded_jobs() == {"other--savio": 4300, "sample--savio": 12345, "sample--savio (replacement)": 4242}
+
+
+# ----------------------------------------------------------------- review regressions
+
+def test_relaunch_resolves_the_named_target_for_managed_routing_and_drain_timeout(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    _managed_session(tmp_path, monkeypatch, target_name="savio")
+    config = _config()
+    target = config.mirrors["sample"].remote
+    target.slurm.codex_state.checkpoint_timeout_seconds = 75
+    config.mirrors["sample"].remote = None
+    ctx = SimpleNamespace(obj={"target": target, "target_name": "savio"})
+    fake = _FakeManager(drain=_report(), readiness=[_ready()], target_name="savio")
+    assert _relaunch(monkeypatch, fake, config=config, ctx=ctx) == 12345
+    assert fake.calls[1] == ("drain", 4242, "renew")
+    assert fake.drain_kwargs[0]["timeout_seconds"] == 105.0
+    assert fake.calls[2][1]["codex_state_from"] == f"{RUN}/{GEN}"
+    assert config.mirrors["sample"].remote is None, "target resolution does not mutate the mirror settings"
+
+
+@pytest.mark.parametrize("confined", [True, False])
+def test_unmanaged_relaunch_excludes_the_predecessor_only_on_a_confined_target(tmp_path, monkeypatch, confined):
+    monkeypatch.setattr("sucoder.session._session_dir", lambda: tmp_path / "sessions")
+    RemoteSession(mirror_name="sample", slurm_job_id=4242, compute_node="n0033.savio4").save()
+    fake = _FakeManager(launch="plain", confined=confined)
+    assert _relaunch(monkeypatch, fake, config=_config(confined=confined)) == 777
+    assert fake.calls == [("launch", {"sync": False, "detached": True, **({"replace_job": 4242} if confined else {})})]
+
+
+@pytest.mark.parametrize("exit_code, published_at, exited_at, why", [
+    (0, 19.0, 20.0, "not published after the last exit"),
+    (1, 21.0, 20.0, "clean exit"),
+    (None, 21.0, 20.0, "clean exit"),
+    (False, 21.0, 20.0, "clean exit"),
+    (0, None, 20.0, "time is missing or invalid"),
+    (0, 21.0, None, "time is missing or invalid"),
+    (0, "21", 20.0, "time is missing or invalid"),
+])
+def test_exit_token_refuses_an_obsolete_seal_or_missing_clean_exit_proof(exit_code, published_at, exited_at, why):
+    from sucoder.codex_state import transfer_token_from_drain
+    status = {"state": "exited", "exit": exit_code, "run": RUN, "exited_at": exited_at,
+              "last_generation": {"name": GEN, "class": "sealed", "manifest_sha256": SHA, "published_at": published_at}}
+    with pytest.raises(ValueError, match=why):
+        transfer_token_from_exit(status, nonce=NONCE)
+    report = _report(requested=False, ack=None, state="exited", exit=exit_code, exited_at=exited_at,
+                     last_durable=status["last_generation"])
+    with pytest.raises(ValueError, match=why):
+        transfer_token_from_drain(report)
+
+
+@pytest.mark.parametrize("state", ["exited", "stopped_misplaced", "released"])
+@pytest.mark.parametrize("exit_code, published_at, transferable", [(0, 10.0, False), (1, 21.0, False), (0, 20.0, True)])
+def test_drain_reports_the_newest_exit_for_transfer_validation(tmp_path, monkeypatch, state, exit_code, published_at, transferable):
+    from sucoder.codex_state import transfer_token_from_drain
+    from tests.test_codex_state_release import _Node, _drain
+    from tests.test_codex_state_status import _recorded_run
+    status = {"state": state, "exit": exit_code, "run": RUN,
+              "transitions": [{"state": "exited", "at": 5.0}, {"state": "placed", "at": 15.0},
+                              {"state": "stopped_misplaced", "at": 20.0}, {"state": "released", "at": 22.0}],
+              "last_generation": {"name": GEN, "class": "sealed", "manifest_sha256": SHA, "published_at": published_at}}
+    node = _Node(_recorded_run(status=status))
+    report, _ = _drain(tmp_path, monkeypatch, node, mode="renew")
+    assert not report.requested and node.scripts == []
+    assert (report.exit, report.exited_at) == (exit_code, 20.0)
+    if transferable and state != "released":
+        assert transfer_token_from_drain(report).selector == f"{RUN}/{GEN}"
+    else:
+        with pytest.raises(ValueError):
+            transfer_token_from_drain(report)
+
+
+@pytest.mark.parametrize("confined", [True, False])
+@pytest.mark.parametrize("child_stat, runner_stat, why", [
+    (_proc_stat(4321, 123456), _proc_stat(1234, 654321), None),
+    (None, _proc_stat(1234, 654321), "Codex process is gone"),
+    (_proc_stat(4321, 123457), _proc_stat(1234, 654321), "Codex process is gone"),
+    ("malformed stat", _proc_stat(1234, 654321), "Codex process is gone"),
+    (_proc_stat(4321, 123456), None, "runner is gone"),
+])
+def test_readiness_checks_codex_incarnation_and_runner_through_the_status_route(
+        tmp_path, monkeypatch, confined, child_stat, runner_stat, why):
+    from types import SimpleNamespace
+    from tests.test_codex_state import _state_manager
+    from tests.test_codex_state_release import _Node
+    manager, ctx, _ = _state_manager(tmp_path, monkeypatch)
+    ctx.settings.remote.slurm.confined = confined
+    monkeypatch.setattr(manager, "_confined_job_state", lambda job: "RUNNING")
+    monkeypatch.setattr(manager, "codex_state_status", lambda c, job: SimpleNamespace(status=_placed(), owner={"runner_pid": 1234}))
+    files = {path: stat for path, stat in [("/proc/4321/stat", child_stat), ("/proc/1234/stat", runner_stat)] if stat is not None}
+    node = _Node(files)
+    manager.executor.run_agent.side_effect = node.run_agent
+    result = manager.codex_state_readiness(ctx, 4242, _token(), budget_seconds=0.0)
+    assert result.outcome == ("ready" if why is None else "failed")
+    if why is not None:
+        assert why in result.reason
+    prefix = ["srun", "--jobid=4242", "--overlap"] if confined else []
+    paths = ["/proc/4321/stat"] + (["/proc/1234/stat"] if child_stat == _proc_stat(4321, 123456) else [])
+    assert [argv for argv, _ in node.calls] == [prefix + ["cat", path] for path in paths]
+
+
+@pytest.mark.parametrize("cancel", [1, OSError("scheduler unreachable")])
+def test_failed_successor_stays_submitted_until_cancellation_succeeds(tmp_path, monkeypatch, caplog, cancel):
+    _managed_session(tmp_path, monkeypatch)
+    fake = _FakeManager(drain=_report(), readiness=[_failed()] * 5, cancel=[cancel] * 4 + [0])
+    for turn in range(4):
+        assert _relaunch(monkeypatch, fake) is None
+        session = RemoteSession.load("sample")
+        attempt = ReplacementAttempt.from_json(session.replacement)
+        assert (attempt.state, attempt.new_job, attempt.new_node) == ("submitted", 12345, "n0001.savio4")
+        assert session.slurm_job_id == 4242 and len(attempt.failures) == turn + 1
+        assert attempt.failures[-1].startswith("cancel:")
+    assert "retrying cancellation next turn" in caplog.text
+    assert _relaunch(monkeypatch, fake) is None
+    attempt = ReplacementAttempt.from_json(RemoteSession.load("sample").replacement)
+    assert (attempt.state, attempt.new_job, attempt.new_node) == ("drained", None, None)
+    assert [c[0] for c in fake.calls].count("launch") == 1
+    assert [c[1] for c in fake.calls if c[0] == "run_agent"] == [["scancel", "12345"]] * 5
+    # Cancel retries do not consume the bound on replacement submissions.
+    fake.readiness_results.append(_pending())
+    assert _relaunch(monkeypatch, fake) is None
+    assert [c[0] for c in fake.calls].count("launch") == 2
+
+
+@pytest.mark.parametrize("cancel", [1, OSError("scheduler unreachable")])
+def test_promotion_keeps_the_ready_record_until_predecessor_cancellation_is_confirmed(tmp_path, monkeypatch, caplog, cancel):
+    _managed_session(tmp_path, monkeypatch)
+    fake = _FakeManager(drain=_report(), readiness=[_ready()], cancel=[cancel])
+    assert _relaunch(monkeypatch, fake) == 12345
+    session = RemoteSession.load("sample")
+    attempt = ReplacementAttempt.from_json(session.replacement)
+    assert (session.slurm_job_id, session.compute_node, attempt.state) == (12345, "n0001.savio4", "ready")
+    assert RemoteSession.pending_replacement_job(session) == 4242
+    assert attempt.failures[-1].startswith("cancel: predecessor job 4242:")
+    assert "predecessor job 4242 is still allocated" in caplog.text
+    assert fake.cancel_sessions[0].replacement["state"] == "ready", "persist before issuing scancel"
+
+
+@pytest.mark.parametrize("old_state, cancel", [(None, ()), ("RUNNING", (0,)), ("RUNNING", (1,))])
+def test_next_renewal_finishes_the_ready_record_before_draining_the_current_job(tmp_path, monkeypatch, old_state, cancel):
+    attempt = ReplacementAttempt(attempt="00ff" * 4, old_job=4242, old_node="n0033.savio4", old_run=RUN, token=_token(),
+                                 state="ready", new_job=12345, new_node="n0001.savio4")
+    session = _managed_session(tmp_path, monkeypatch, replacement=attempt.as_json())
+    session.slurm_job_id, session.compute_node = 12345, "n0001.savio4"
+    session.save()
+    fake = _FakeManager(cancel=cancel, drain=_report(ack=_ack("warm_only", cls="warm")))
+
+    def job_state(job):
+        fake.calls.append(("job_state", job))
+        return old_state if job == 4242 else "RUNNING"
+
+    fake._confined_job_state = job_state
+    assert _relaunch(monkeypatch, fake) is None
+    loaded = RemoteSession.load("sample")
+    assert loaded.slurm_job_id == 12345
+    if cancel == (1,):
+        assert loaded.replacement["state"] == "ready"
+        assert fake.calls == [("job_state", 4242), ("run_agent", ["scancel", "4242"])]
+    else:
+        assert loaded.replacement is None
+        assert fake.calls == ([("job_state", 4242)] + ([("run_agent", ["scancel", "4242"])] if cancel else [])
+                              + [("job_state", 12345), ("drain", 12345, "renew")])
+
+
+def test_release_with_a_ready_record_cancels_the_predecessor(tmp_path, monkeypatch):
+    from tests.test_codex_state_release import _Cluster
+    yaml_text = (
+        "login_node: ln002\nslurm_job_id: 7654400\ncompute_node: n0032\n"
+        "replacement:\n  attempt: 00ff00ff00ff00ff\n  old_job: 7654321\n  state: ready\n  new_job: 7654400\n"
+    )
+    cluster = _Cluster(tmp_path, monkeypatch, session_yaml=yaml_text)
+    result = cluster.release("-f", "--no-drain")
+    assert result.exit_code == 0, (result.output, result.exception)
+    commands = [command for _host, command in cluster.captures]
+    assert commands[0].startswith("scancel 7654400") and commands[-1] == "scancel 7654321"
+    loaded = RemoteSession.load("sample", target_name="fake-slurm")
+    assert loaded.slurm_job_id is None and loaded.replacement is None

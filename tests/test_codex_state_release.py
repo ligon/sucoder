@@ -304,12 +304,14 @@ def test_the_record_serializes_for_json_output():
                              run=RUN, requested=True, ack=_ack(), waited_seconds=4.0, timeout_seconds=60.0)
     assert report.as_json() == {
         "job_id": 4242, "scope": SCOPE, "mode": "renew", "nonce": NONCE, "run": RUN, "requested": True, "outcome": "o",
-        "ack": _ack(), "last_durable": None, "state": None, "waited_seconds": 4.0, "timeout_seconds": 60.0,
+        "ack": _ack(), "last_durable": None, "state": None, "exit": None, "exited_at": None,
+        "waited_seconds": 4.0, "timeout_seconds": 60.0,
         "commands": [["cat", "x"]]}
     # The run's state rides along only when no owner was left to ask (Slice 3d reads it for a clean sealed exit).
     unasked = CodexStateDrain(job_id=4242, scope=SCOPE, mode="renew", nonce=NONCE, commands=[], outcome="o", run=RUN,
-                              state="exited")
+                              state="exited", exit=0, exited_at=20.0)
     assert unasked.as_json()["state"] == "exited" and not unasked.requested
+    assert unasked.as_json()["exit"] == 0 and unasked.as_json()["exited_at"] == 20.0
 
 
 # ----------------------------------------------------------------- ``release``

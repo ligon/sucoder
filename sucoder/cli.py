@@ -3418,10 +3418,9 @@ def release(
 
     job_id = session.slurm_job_id
     compute_node = session.compute_node or "<unknown>"
-    # A managed renewal in flight holds the job it submitted in the record
-    # (not as the session's job) until that job is ready; releasing the
-    # session cancels it too, after the allocation, or it would outlive
-    # the renewal that submitted it with nothing naming it.
+    # A managed renewal retains the submitted successor, or the predecessor
+    # still awaiting cancellation after promotion.  Release cancels that
+    # recorded job too, after the session's own allocation.
     pending_job = RemoteSession.pending_replacement_job(session)
     # Other sessions co-resident on this node share the same job id.
     # Releasing must not scancel the allocation out from under them.
@@ -3488,9 +3487,8 @@ def release(
         current.save()
 
     def _cancel_pending_replacement():
-        # After the allocation: the replacement was submitted by this
-        # session's renewal and is named nowhere else once the record is
-        # cleared.  scancel of a job that has already ended only warns.
+        # After the allocation: this job is named nowhere else once the
+        # record is cleared.  scancel of a job that has ended only warns.
         if pending_job is None:
             return
         result = _run_remote_capture(
@@ -3933,6 +3931,15 @@ _MANAGED_REPLACEMENT_MAX_FAILURES = 3
 _MANAGED_NO_STATUS_BOUND_SECONDS = 900.0
 
 
+def _renew_mirror_settings(mirror, config, ctx):
+    """The mirror settings with renew's active named target applied."""
+    from dataclasses import replace
+
+    settings = config.mirrors.get(mirror)
+    target = _get_active_target(ctx)
+    return replace(settings, remote=target) if target is not None and settings is not None else settings
+
+
 def _relaunch_session(mirror, config, ctx, logger, dry_run):
     """Re-allocate a fresh SLURM node and relaunch the agent detached.
 
@@ -3966,7 +3973,7 @@ def _relaunch_session(mirror, config, ctx, logger, dry_run):
     owner = session.managed_owner if isinstance(session.managed_owner, dict) else None
     overrides = {}
     if owner is not None:
-        settings = config.mirrors.get(mirror)
+        settings = _renew_mirror_settings(mirror, config, ctx)
         slurm = settings.remote.slurm if settings is not None and settings.remote is not None else None
         if slurm is not None and slurm.confined and not dry_run:
             return _relaunch_managed_session(mirror, config, ctx, logger, session, _tgt)
@@ -3978,7 +3985,8 @@ def _relaunch_session(mirror, config, ctx, logger, dry_run):
             "this is a dry run" if dry_run else "managed renewal is implemented for confined targets only",
             owner.get("durable_root"), owner.get("scope"),
         )
-        overrides = {"command_override": list(owner.get("command") or []), "model_override": owner.get("model")}
+        overrides = {"command_override": list(owner.get("command") or []), "model_override": owner.get("model"),
+                     "codex_remote_control": owner.get("remote_control")}
     try:
         launch = service_launch(session.service_launch)
     except ValueError as exc:
@@ -3993,8 +4001,9 @@ def _relaunch_unmanaged_session(mirror, config, ctx, logger, dry_run, session, o
     """The relaunch itself: a fresh allocation, the agent detached on it.
 
     The job and node are cleared first so ``_ensure_slurm_node`` does not
-    adopt the slice being replaced, and restored if the launch fails before
-    it records a job of its own, so ``attach`` and ``release`` still reach
+    adopt the slice being replaced; on a confined target ``replace_job``
+    also excludes it from scheduler-name adoption.  The fields are restored
+    if the launch fails before it records a job of its own, so ``attach`` and ``release`` still reach
     the old allocation (a launch that persisted a new id before failing
     keeps that id: the job is submitted and must stay findable).
     """
@@ -4008,8 +4017,11 @@ def _relaunch_unmanaged_session(mirror, config, ctx, logger, dry_run, session, o
         manager = _build_manager_for_mirror(
             config, logger, dry_run, mirror, cli_ctx=ctx,
         )
+        mctx = manager.context_for(mirror)
+        if old_job is not None and mctx.confined:
+            overrides = dict(overrides, replace_job=old_job)
         manager.launch_agent(
-            manager.context_for(mirror),
+            mctx,
             sync=False,
             detached=True,
             **overrides,
@@ -4035,8 +4047,8 @@ def _relaunch_managed_session(mirror, config, ctx, logger, session, target_name)
 
     1. A recorded replacement job is asked whether it is ready
        (``codex_state_readiness``: ``placed`` on exactly the token's
-       generation).  Ready promotes it to the session's job and retires the
-       record; the loop then cancels the old job.  Pending keeps both.
+       generation).  Ready promotes it to the session's job, keeping the
+       record until the old job's cancellation is confirmed.  Pending keeps both.
        Failed cancels that job -- ours, by id -- and keeps the token for a
        fresh submission next call, up to a bound.
     2. Without a record, the predecessor is drained in mode ``renew``.
@@ -4068,10 +4080,11 @@ def _relaunch_managed_session(mirror, config, ctx, logger, session, target_name)
 
     owner = session.managed_owner
     old_job = session.slurm_job_id
-    settings = config.mirrors.get(mirror)
+    settings = _renew_mirror_settings(mirror, config, ctx)
     state = settings.remote.slurm.codex_state
     drain_timeout = float((state.checkpoint_timeout_seconds if state is not None else 30) + 30)
-    overrides = {"command_override": list(owner.get("command") or []), "model_override": owner.get("model")}
+    overrides = {"command_override": list(owner.get("command") or []), "model_override": owner.get("model"),
+                 "codex_remote_control": owner.get("remote_control")}
 
     attempt = None
     if session.replacement is not None:
@@ -4083,7 +4096,12 @@ def _relaunch_managed_session(mirror, config, ctx, logger, session, target_name)
                 "until it is repaired or removed from the session file.", mirror, exc,
             )
             return None
-        if attempt.old_job != old_job:
+        if attempt.state == "ready":
+            if attempt.new_job != old_job:
+                logger.error("Mirror %s's ready replacement record names job %s but the session names job %s; "
+                             "not submitting until the record is reconciled.", mirror, attempt.new_job, old_job)
+                return None
+        elif attempt.old_job != old_job:
             logger.error(
                 "Mirror %s's replacement record names job %s as the predecessor but the session names "
                 "job %s; not submitting a replacement until the record is reconciled.",
@@ -4097,6 +4115,29 @@ def _relaunch_managed_session(mirror, config, ctx, logger, session, target_name)
         logger.warning("relaunch failed: %s", exc)
         return None
     mctx = manager.context_for(mirror)
+
+    # Finish a previous promotion before renewing the session's current job.
+    if attempt is not None and attempt.state == "ready":
+        try:
+            predecessor_state = manager._confined_job_state(attempt.old_job)
+        except MirrorError as exc:
+            logger.warning("Cannot tell whether predecessor job %s is still allocated (%s); asking again next turn.",
+                           attempt.old_job, exc)
+            return None
+        cancel_error = _cancel_managed_job(manager, attempt.old_job) if predecessor_state is not None else None
+        if cancel_error is not None:
+            attempt.failures.append(f"cancel: predecessor job {attempt.old_job}: {cancel_error}")
+            attempt.updated_at = now()
+            session.replacement = attempt.as_json()
+            session.save()
+            logger.warning("Predecessor job %s is still allocated (%s); retrying cancellation next turn.",
+                           attempt.old_job, cancel_error)
+            return None
+        logger.info("Predecessor job %s is gone or its cancellation is confirmed; retiring the ready record.",
+                    attempt.old_job)
+        session.replacement = None
+        session.save()
+        attempt = None
 
     # 1. A replacement already submitted: is it ready?  Never submit another.
     if attempt is not None and attempt.new_job is not None:
@@ -4147,7 +4188,8 @@ def _relaunch_managed_session(mirror, config, ctx, logger, session, target_name)
                     old_job, token.selector, token.nonce)
 
     # 3. Token held, nothing submitted: launch the replacement.
-    if len(attempt.failures) >= _MANAGED_REPLACEMENT_MAX_FAILURES:
+    failure_count = sum(not failure.startswith("cancel:") for failure in attempt.failures)
+    if failure_count >= _MANAGED_REPLACEMENT_MAX_FAILURES:
         try:
             old_state = manager._confined_job_state(old_job)
         except MirrorError as exc:
@@ -4162,7 +4204,7 @@ def _relaunch_managed_session(mirror, config, ctx, logger, session, target_name)
             logger.warning(
                 "Job %s is gone after %d failed replacements (%s): relaunching with the owner's command and a "
                 "fresh managed history.  Generation %s stays under %s/codex/%s/runs for an explicit "
-                "`--codex-state-from`.", old_job, len(attempt.failures), attempt.failures[-1],
+                "`--codex-state-from`.", old_job, failure_count, attempt.failures[-1],
                 attempt.token.selector, owner.get("durable_root"), owner.get("scope"),
             )
             session.replacement = None
@@ -4172,7 +4214,7 @@ def _relaunch_managed_session(mirror, config, ctx, logger, session, target_name)
             "Mirror %s: %d replacement attempts failed (%s); not submitting another.  Job %s stays "
             "allocated with its owner drained on generation %s: fix the cause and remove the replacement "
             "record from the session file, or `sucoder release` it.",
-            mirror, len(attempt.failures), attempt.failures[-1], old_job, attempt.token.selector,
+            mirror, failure_count, attempt.failures[-1], old_job, attempt.token.selector,
         )
         return None
     failure = None
@@ -4201,6 +4243,17 @@ def _relaunch_managed_session(mirror, config, ctx, logger, session, target_name)
 
     # 4. Submitted: readiness within this turn's budget.
     return _managed_replacement_turn(manager, mctx, session, attempt, logger)
+
+
+def _cancel_managed_job(manager, job_id):
+    """Cancel a recorded job; None confirms success, otherwise the reason to retry."""
+    try:
+        result = manager.executor.run_agent(["scancel", str(job_id)], check=False, capture_output=True)
+    except Exception as exc:  # noqa: BLE001 - keep the job recorded for another turn
+        return str(exc)
+    if result.returncode != 0:
+        return f"scancel returned {result.returncode}: {(result.stderr or '').strip() or 'no error output'}"
+    return None
 
 
 def _managed_replacement_turn(manager, mctx, session, attempt, logger, clock=time.time):
@@ -4235,10 +4288,22 @@ def _managed_replacement_turn(manager, mctx, session, attempt, logger, clock=tim
     if result.ready:
         session.slurm_job_id = new_job
         session.compute_node = attempt.new_node
-        session.replacement = None
+        attempt.state, attempt.updated_at = "ready", stamp
+        session.replacement = attempt.as_json()
         session.save()
-        logger.info("Replacement job %s owns the managed history now (%s); job %s is released by the renew loop.",
-                    new_job, result.reason, attempt.old_job)
+        cancel_error = _cancel_managed_job(manager, attempt.old_job)
+        if cancel_error is None:
+            session.replacement = None
+            session.save()
+            logger.info("Replacement job %s owns the managed history now (%s); job %s's cancellation is confirmed.",
+                        new_job, result.reason, attempt.old_job)
+        else:
+            attempt.failures.append(f"cancel: predecessor job {attempt.old_job}: {cancel_error}")
+            session.replacement = attempt.as_json()
+            session.save()
+            logger.warning("Replacement job %s owns the managed history now (%s); predecessor job %s is still "
+                           "allocated (%s).  Keeping the ready record for cancellation on the next renewal or release.",
+                           new_job, result.reason, attempt.old_job, cancel_error)
         return new_job
     if result.outcome == "pending":
         attempt.updated_at = stamp
@@ -4249,13 +4314,18 @@ def _managed_replacement_turn(manager, mctx, session, attempt, logger, clock=tim
         return None
     logger.warning(
         "Replacement job %s failed readiness: %s.  Cancelling it; generation %s stays sealed and durable, "
-        "and a new replacement is submitted next turn.", new_job, result.reason, attempt.token.selector,
+        "and a new replacement can be submitted once cancellation is confirmed.", new_job, result.reason, attempt.token.selector,
     )
     if not result.reason.startswith(f"job {new_job} left the queue"):
-        try:
-            manager.executor.run_agent(["scancel", str(new_job)], check=False, capture_output=True)
-        except Exception as exc:  # noqa: BLE001 - best effort
-            logger.warning("scancel of failed replacement job %s failed: %s", new_job, exc)
+        cancel_error = _cancel_managed_job(manager, new_job)
+        if cancel_error is not None:
+            attempt.failures.append(f"cancel: job {new_job}: {cancel_error}")
+            attempt.state, attempt.updated_at = "submitted", stamp
+            session.replacement = attempt.as_json()
+            session.save()
+            logger.warning("Failed replacement job %s is still allocated (%s); keeping it recorded and retrying "
+                           "cancellation next turn.", new_job, cancel_error)
+            return None
     attempt.failures.append(f"job {new_job}: {result.reason}")
     attempt.state, attempt.new_job, attempt.new_node, attempt.updated_at = "drained", None, None, stamp
     session.replacement = attempt.as_json()

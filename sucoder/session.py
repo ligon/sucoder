@@ -44,8 +44,8 @@ class RemoteSession:
     # root.  ``replacement``: the renewal transaction in flight
     # (``codex_state.ReplacementAttempt`` as JSON), retaining the old
     # allocation and the pending new one with the transfer token until the
-    # successor is ready or the attempt is given up.  Both absent on
-    # sessions written before this field existed.
+    # successor is ready and the predecessor's cancellation is confirmed.
+    # Both absent on sessions written before these fields existed.
     managed_owner: Optional[dict] = None
     replacement: Optional[dict] = None
 
@@ -136,18 +136,25 @@ class RemoteSession:
 
     @staticmethod
     def pending_replacement_job(data) -> Optional[int]:
-        """The replacement job a session record holds in flight, or None.
+        """The job the replacement record names beside the session's own, or None.
 
         A managed Codex renewal (``cli._relaunch_managed_session``) keeps
         the job it submitted under ``replacement.new_job`` until that job
-        is ready, while ``slurm_job_id`` still names the predecessor.  The
+        is ready, while ``slurm_job_id`` still names the predecessor.  A
+        ``ready`` record instead names ``old_job`` until its cancellation
+        is confirmed, while the session's job is the successor.  The
         listings and ``release`` read it here so the job is neither
         reported as unrecorded nor left running when the session is
         released.  *data* is a loaded record or a session.
         """
         record = data.replacement if isinstance(data, RemoteSession) else (
             data.get("replacement") if isinstance(data, dict) else None)
-        job = record.get("new_job") if isinstance(record, dict) else None
+        job = None
+        if isinstance(record, dict):
+            if record.get("state") == "submitted":
+                job = record.get("new_job")
+            elif record.get("state") == "ready":
+                job = record.get("old_job")
         return job if isinstance(job, int) and not isinstance(job, bool) and job > 0 else None
 
     @classmethod
