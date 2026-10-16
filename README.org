@@ -1374,8 +1374,8 @@ unreachable there until it is collected.
 
 *** Reconnecting
 
-If the SSH connection drops, the tmux session on the login node
-survives.  Reconnect with:
+If the SSH connection drops, the remote tmux session survives while its
+host or SLURM allocation remains available. Reconnect with:
 
 #+begin_src shell
 sucoder -T savio attach
@@ -1383,6 +1383,15 @@ sucoder -T savio attach
 
 If the ControlMaster socket expires (default 12 hours), =sucoder=
 detects the stale socket and re-prompts for authentication.
+
+For SLURM targets, a failed or timed-out scheduler probe reports the
+allocation as unknown/unreachable and preserves the session record.
+Check =sucoder -T savio tunnel status=, use =sucoder -T savio tunnel up=
+to restore the connection, then retry. Only a successful empty scheduler
+response or an explicit invalid-job-id reply establishes that the
+allocation has ended. Confined attach always joins the existing job via
+the login node and =srun --overlap=, using its dedicated tmux socket;
+it never creates a replacement tmux session.
 
 **** Orphaned sessions (SLURM)
 

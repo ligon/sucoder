@@ -33,7 +33,7 @@ from sucoder.codex_state import (
 )
 from sucoder.config import AgentLauncher, CodexStateConfig, ConfigError, _parse_slurm_config
 from sucoder.mirror import MirrorError, MirrorManager
-from tests.test_cli import _write_config
+from tests.test_cli import _plain_output, _write_config
 from tests.test_remote_control import _manager
 
 SELECTOR = "0123456789abcdef0123456789abcdef/000412-0a1b2c3d"
@@ -648,7 +648,7 @@ def test_cli_rejects_both_codex_state_selections_before_touching_anything(tmp_pa
     result, bootstrap_calls, launch_calls = _cli_launch(
         tmp_path, monkeypatch, subcommand, ["--codex-state-from", SELECTOR, "--codex-state-fresh"])
     assert result.exit_code == 2, (result.output, result.exception)
-    assert "--codex-state-fresh conflicts with --codex-state-from" in result.output
+    assert "--codex-state-fresh conflicts with --codex-state-from" in _plain_output(result)
     assert bootstrap_calls == [] and launch_calls == []
 
 
@@ -779,6 +779,7 @@ def test_runner_refuses_conflicts_and_missing_prerequisites(home, case):
     assert not (home["codex_home"] / "sessions" / "2026").exists()
 
 
+@needs_bwrap
 def test_runner_refuses_without_local_root(home):
     env = _env(home)
     env.pop("SUCODER_LOCAL_ROOT")

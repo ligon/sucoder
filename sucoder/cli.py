@@ -22,7 +22,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple, cast
+from typing import Any, Dict, List, NamedTuple, NoReturn, Optional, Set, Tuple, cast
 
 import click
 
@@ -380,7 +380,7 @@ def _mirror_completion(
     return items
 
 
-def _reconcile_login_node(remote, session, target_name, logger) -> bool:
+def _reconcile_login_node(remote, session, target_name, logger, *, persist: bool = True) -> bool:
     """Adopt the warm tunnel session's login node into a SLURM mirror session.
 
     sucoder keeps two independent login-node pins: the *mirror* session
@@ -395,6 +395,8 @@ def _reconcile_login_node(remote, session, target_name, logger) -> bool:
     works -- so prefer the node the tunnel infra keeps warm.  No-op for a
     non-SLURM session, where the agent tmux lives ON the login node and the
     pin is not a swappable hop.  Returns True if the pin changed.
+    ``persist=False`` lets attach use the warm route without changing the
+    saved session before it has verified the allocation.
     """
     if remote.slurm is None or not target_name:
         return False
@@ -404,7 +406,8 @@ def _reconcile_login_node(remote, session, target_name, logger) -> bool:
         return False
     old = session.login_node
     session.login_node = warm
-    session.save()
+    if persist:
+        session.save()
     logger.info(
         "Using warm tunnel login node %s (mirror session had %s) for %s.",
         warm, old or "no pin", session.mirror_name,
@@ -809,6 +812,50 @@ def _build_executor(
     )
 
 
+class _SlurmProbeError(RuntimeError):
+    """The scheduler could not establish whether an allocation exists."""
+
+
+def _probe_slurm_job(
+    control, host, job_id: int, *, output_format: str = "%T", debug: bool = False,
+) -> Optional[str]:
+    """Return scheduler output, None for confirmed absence, or raise.
+
+    Match MirrorManager._confined_job_state: only a successful empty
+    response or an explicit invalid-job-id error establishes absence.
+    Transport failures (including timeouts) must preserve the allocation.
+    """
+    if not host:
+        raise _SlurmProbeError("No login node is recorded for the scheduler probe.")
+    try:
+        result = _run_remote_capture(
+            control, host,
+            f"squeue --job {int(job_id)} --noheader -o {shlex.quote(output_format)}",
+            debug=debug, timeout=20,
+        )
+    except OSError as exc:
+        raise _SlurmProbeError(str(exc)) from exc
+    if result.returncode == 0:
+        return (result.stdout or "").strip() or None
+    stderr = (result.stderr or "").strip()
+    # SSH's own failures are never authoritative scheduler answers.
+    if result.returncode not in _SSH_TRANSPORT_RC and "invalid job id" in stderr.lower():
+        return None
+    raise _SlurmProbeError(f"scheduler probe exit {result.returncode}: {stderr or 'no error output'}")
+
+
+def _slurm_probe_failed(job_id, error, target_name) -> NoReturn:
+    """Report an unknown allocation without inviting replacement or release."""
+    command = f"sucoder -T {shlex.quote(target_name)}" if target_name else "sucoder"
+    typer.echo(
+        f"Could not verify SLURM job {job_id}; allocation state is unknown/unreachable.\n"
+        f"{error}\nSession record unchanged. Check `{command} tunnel status`; "
+        f"run `{command} tunnel up` to restore the connection, then retry.",
+        err=True,
+    )
+    raise typer.Exit(code=1)
+
+
 def _resolve_recorded_node(
     job_id, ln_control, login_node, logger,
     *, attempts: int = 5, delay: int = 3, sleep=time.sleep,
@@ -819,7 +866,7 @@ def _resolve_recorded_node(
 
     * ``("RUNNING", "n0123.savio3")`` -- the job holds a node; adopt it.
     * ``(state, None)`` -- the job is alive but not yet placed
-      (PENDING/CONFIGURING), or the probe failed.  Caller must NOT
+      (PENDING/CONFIGURING).  Caller must NOT
       reallocate: the id is live and reallocating leaks it.
     * ``(None, None)`` -- the job has LEFT the queue (terminal/invalid id).
       Safe to clear the id and allocate fresh.
@@ -840,29 +887,13 @@ def _resolve_recorded_node(
     contract as ``MirrorManager._poll_confined_node``, which does this over
     the executor for confined sbatch jobs; here we only have an ssh hop.)
     """
-    import subprocess as _sp
-
-    if not login_node:
-        return None, None
-    cmd = [
-        "ssh", *ln_control.ssh_options(with_fallback=True), login_node,
-        f"squeue --job {int(job_id)} --noheader -o '%T %N'",
-    ]
+    # An unknown response raises before any caller can clear the job id.
     last_state = None
     for attempt in range(1, max(1, attempts) + 1):
-        result = _sp.run(cmd, capture_output=True, text=True, check=False)
-        if result.returncode != 0:
-            stderr = (result.stderr or "").strip()
-            if "invalid job id" in stderr.lower():
-                return None, None  # squeue is certain: the job is gone.
-            # An ssh/squeue failure is NOT evidence the job is dead.  Say
-            # "unknown, still alive" so the caller refuses to reallocate.
-            logger.debug(
-                "node-query for job %s failed (%s); not assuming it is gone",
-                job_id, stderr,
-            )
-            return "UNKNOWN", None
-        parts = result.stdout.split()
+        output = _probe_slurm_job(
+            ln_control, login_node, job_id, output_format="%T %N",
+        )
+        parts = (output or "").split()
         if not parts:
             # Empty output from a successful squeue == the job left the
             # queue.  Terminal, and the only signal we accept as "gone".
@@ -965,9 +996,12 @@ def _ensure_slurm_node(
     # and refuse to do either while its fate is unknown -- reallocating on
     # a live id leaks a 24h job that `release` can no longer find.
     if session.slurm_job_id and not session.compute_node:
-        state, node = _resolve_recorded_node(
-            session.slurm_job_id, ln_control, session.login_node, logger,
-        )
+        try:
+            state, node = _resolve_recorded_node(
+                session.slurm_job_id, ln_control, session.login_node, logger,
+            )
+        except _SlurmProbeError as exc:
+            _slurm_probe_failed(session.slurm_job_id, exc, session.target_name)
         if node:
             session.compute_node = node
             session.save()
@@ -1001,13 +1035,13 @@ def _ensure_slurm_node(
 
     # Check whether a previous allocation is still running.
     if session.slurm_job_id and session.compute_node:
-        check_cmd = [
-            "ssh", *ln_control.ssh_options(with_fallback=True), session.login_node,
-            f"squeue --job {session.slurm_job_id} --noheader -o %T",
-        ]
-        result = _sp.run(check_cmd, capture_output=True, text=True, check=False)
-        state = result.stdout.strip()
-        if state in ("RUNNING", "PENDING"):
+        try:
+            state = _probe_slurm_job(
+                ln_control, session.login_node, session.slurm_job_id, debug=debug_ssh,
+            )
+        except _SlurmProbeError as exc:
+            _slurm_probe_failed(session.slurm_job_id, exc, session.target_name)
+        if state:
             logger.info(
                 "Reusing SLURM job %d on %s (state: %s)",
                 session.slurm_job_id, session.compute_node, state,
@@ -3154,23 +3188,6 @@ def attach(
         os.execvp("ssh", argv)
         return
 
-    # Ride the warm tunnel node rather than a stale mirror pin (SLURM only).
-    _reconcile_login_node(remote, session, _tgt_name, logger)
-
-    # Reuse ControlMaster if active; re-establish if expired.
-    control = SshControl(
-        gateway=remote.gateway,
-        **remote.ssh_control_kwargs(),
-        debug=debug_ssh,
-    )
-    try:
-        # Retry transient banner-phase closures; a real failure is
-        # swallowed (best-effort) and ssh will prompt directly if needed.
-        _connect_with_retry(control, remote.gateway, logger, config=config)
-    except Exception:
-        pass  # Best-effort; ssh will prompt directly if needed
-    control_opts = control.ssh_options() if control.is_active() else []
-
     # For SLURM targets, attach to the compute node (via login node).
     # --node overrides the session's compute_node.  --via-srun stays
     # on the login node and steps into the allocation with `srun
@@ -3201,10 +3218,10 @@ def attach(
         # the field: `attach` spawned an empty shell on the login node
         # while the real allocation was elsewhere / gone).
         if not session.slurm_job_id:
-            # No recorded job — likely a stale session from before the
+            # No recorded job -- likely a stale session from before the
             # allocation succeeded (or a crash that didn't persist it).
             typer.echo(
-                "No SLURM job recorded for this session — nothing to "
+                "No SLURM job recorded for this session -- nothing to "
                 "attach to.  Run `sucoder collaborate` to start one.",
                 err=True,
             )
@@ -3221,24 +3238,44 @@ def attach(
             )
             raise typer.Exit(code=1)
 
+    # Ride the warm tunnel node rather than a stale mirror pin (SLURM only).
+    _reconcile_login_node(remote, session, _tgt_name, logger, persist=False)
+
+    # Each destination must use its own mux. A gateway ControlPath on an
+    # ssh command addressed to the login/compute node executes on the
+    # gateway instead, regardless of -J.
+    gw_control = SshControl(
+        gateway=remote.gateway,
+        **remote.ssh_control_kwargs(),
+        debug=debug_ssh,
+    )
+    ln_control = SshControl(
+        gateway=session.login_node, **remote.ssh_control_kwargs(),
+        jump_host=remote.gateway, jump_control=gw_control, debug=debug_ssh,
+    )
+    try:
+        _connect_with_retry(gw_control, remote.gateway, logger, config=config)
+        _connect_with_retry(ln_control, session.login_node, logger)
+    except Exception as exc:
+        detail = f"{exc}\n{getattr(exc, 'stderr', '') or ''}".strip()
+        if remote.slurm is not None and session.slurm_job_id:
+            _slurm_probe_failed(session.slurm_job_id, detail, _tgt_name)
+        typer.echo(f"Failed to reach the login node: {detail}", err=True)
+        raise typer.Exit(code=1) from exc
+    attach_control = ln_control
+
+    if remote.slurm is not None:
         # Verify the SLURM allocation is still ours before routing to
         # the compute node, so we don't attach to a node that now
         # belongs to someone else's job.
-        import subprocess as _sp
-        check_cmd = [
-            "ssh", *control_opts, "-J", remote.gateway, session.login_node,
-            f"squeue --job {shlex.quote(str(session.slurm_job_id))} "
-            "--noheader -o %T 2>/dev/null",
-        ]
+        assert session.slurm_job_id is not None
         try:
-            check = _sp.run(
-                check_cmd, capture_output=True, text=True, check=False,
-                timeout=20,
+            job_state = _probe_slurm_job(
+                ln_control, session.login_node, session.slurm_job_id, debug=debug_ssh,
             )
-            state = check.stdout.strip()
-        except _sp.TimeoutExpired:
-            state = ""
-        if state in ("RUNNING", "PENDING"):
+        except _SlurmProbeError as exc:
+            _slurm_probe_failed(session.slurm_job_id, exc, _tgt_name)
+        if job_state in ("RUNNING", "PENDING"):
             if via_srun:
                 # Land on the login node; `srun --overlap` joins the
                 # existing allocation and drops us on the compute node
@@ -3246,7 +3283,6 @@ def attach(
                 # path for orphaned sessions and for clusters that
                 # block direct SSH to compute nodes.
                 attach_target = session.login_node
-                jump_chain = remote.gateway
                 # With X11 on, the ssh forward terminates on the login
                 # node; srun's native --x11 relays that DISPLAY into the
                 # job step on the compute node.  Explicit requests only:
@@ -3259,22 +3295,32 @@ def attach(
                     f"--overlap {srun_x11}--pty "
                 )
             else:
+                assert compute is not None
                 attach_target = compute
-                jump_chain = f"{remote.gateway},{session.login_node}"
-        else:
+                attach_control = SshControl(
+                    gateway=compute, **remote.ssh_control_kwargs(),
+                    jump_host=session.login_node, jump_control=ln_control, debug=debug_ssh,
+                )
+        elif job_state is None:
             where = compute or f"jobid {session.slurm_job_id}"
             typer.echo(
                 f"SLURM job {session.slurm_job_id} on {where} is "
-                f"{state or 'gone'} — the allocation has ended.\n"
+                "gone -- the allocation has ended.\n"
                 "Run `sucoder collaborate` to start a new one, or "
                 "`sucoder release` to clear the stale session record.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        else:
+            typer.echo(
+                f"SLURM job {session.slurm_job_id} is {job_state}; "
+                "it is still recorded by the scheduler but is not ready to attach. Retry later.",
                 err=True,
             )
             raise typer.Exit(code=1)
     else:
         # Genuine non-SLURM remote: attach on the login node.
         attach_target = session.login_node
-        jump_chain = remote.gateway
 
     if confined:
         # Confined attach: dedicated `-L` socket + sanitized session name,
@@ -3282,6 +3328,7 @@ def attach(
         # unconfined orphan on the login node).  `confined_attach_command`
         # already carries its own `srun --jobid --overlap --pty` prefix, so
         # `srun_prefix` is unused here.
+        assert session.slurm_job_id is not None
         session_name, socket = confined_tmux_target(mirror)
         attach_cmd = shlex.join(
             confined_attach_command(
@@ -3308,8 +3355,7 @@ def attach(
     os.execvp("ssh", [
         "ssh", "-t",
         *x11_opts,
-        *control_opts,
-        "-J", jump_chain,
+        *attach_control.ssh_options(with_fallback=True),
         attach_target,
         attach_cmd,
     ])
@@ -3811,11 +3857,14 @@ def _run_remote_capture(
             stdout = exc.stdout or ""
             if isinstance(stdout, bytes):
                 stdout = stdout.decode("utf-8", "replace")
+            stderr = exc.stderr or ""
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode("utf-8", "replace")
             result = subprocess.CompletedProcess(
                 ssh_cmd,
                 124,
                 stdout=stdout,
-                stderr=f"timed out after {timeout}s (wedged tunnel?)",
+                stderr=f"{stderr.strip()}\ntimed out after {timeout}s (wedged tunnel?)".strip(),
             )
         _LOG.debug(
             "%s: %s -> exit %s in %.1fs",

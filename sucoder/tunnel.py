@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shlex
 import socket
 import subprocess
 import sys
@@ -480,9 +481,7 @@ class SshControl:
                     "-o", f"ServerAliveInterval={self.keepalive_interval}",
                     "-o", f"ServerAliveCountMax={self.keepalive_count_max}",
                     "-o", "StrictHostKeyChecking=accept-new",
-                    "-o", f"ProxyCommand=ssh -o ControlMaster=auto "
-                          f"-o ControlPath={self.jump_control.socket_path} "
-                          f"-W %h:%p {self._format_host(self.jump_host)}",
+                    "-o", self._jump_proxy_command(),
                 ]
             else:
                 cmd.extend(["-J", self._format_host(self.jump_host)])
@@ -718,6 +717,20 @@ class SshControl:
         self._clear_debug_markers()
         logger.debug("ControlMaster to %s closed", self.gateway)
 
+    def _jump_proxy_command(self) -> str:
+        """Reuse the jump mux, retaining its route and identity if it expires."""
+        assert self.jump_host and self.jump_control is not None
+        # A nested ProxyCommand must expand its tokens in its own ssh,
+        # after this outer ssh has expanded -W for the current destination.
+        jump_options = [
+            option.replace("%", "%%")
+            for option in self.jump_control.ssh_options(with_fallback=True)
+        ]
+        return "ProxyCommand=" + shlex.join([
+            "ssh", *jump_options, "-o", "BatchMode=yes",
+            "-W", "%h:%p", self._format_host(self.jump_host),
+        ])
+
     def ssh_options(self, *, with_fallback: bool = False) -> List[str]:
         """Return the -o flags needed to reuse this ControlMaster.
 
@@ -756,9 +769,7 @@ class SshControl:
             if self.jump_host and self.jump_control is not None:
                 opts.extend([
                     "-o",
-                    "ProxyCommand=ssh -o ControlMaster=auto "
-                    f"-o ControlPath={self.jump_control.socket_path} "
-                    f"-W %h:%p {self._format_host(self.jump_host)}",
+                    self._jump_proxy_command(),
                 ])
             elif self.jump_host:
                 opts.extend(["-o", f"ProxyJump={self._format_host(self.jump_host)}"])

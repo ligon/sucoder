@@ -27,7 +27,7 @@ from sucoder.codex_state import (
     CodexStateDrain, describe_drain_ack, drain_request_script, drain_request_text,
 )
 from sucoder.mirror import MirrorError
-from tests.test_cli import _FakeSshControl
+from tests.test_cli import _FakeSshControl, _plain_output
 from tests.test_codex_state import _state_manager
 from tests.test_codex_state_status import RUN, SCOPE, SCOPE_DIR, _fresh_placed, _recorded_run, _refused, _srun
 
@@ -614,7 +614,7 @@ def test_drain_command_passes_mode_and_timeout_through_and_refuses_a_bad_mode(tm
     assert drain_calls[0][2]["mode"] == "renew" and drain_calls[0][2]["timeout_seconds"] == 5.0
     result, builder_calls, _ = _drain_cli(tmp_path, monkeypatch, ["--mode", "pause"])
     assert result.exit_code == 2 and builder_calls == []
-    assert "--mode must be one of release, renew" in result.output
+    assert "--mode must be one of release, renew" in _plain_output(result)
     result, builder_calls, _ = _drain_cli(tmp_path, monkeypatch, ["--timeout", "-1"])
     assert result.exit_code == 2 and builder_calls == []
 

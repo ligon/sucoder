@@ -763,6 +763,37 @@ def test_ssh_control_options_fallback_plain_proxyjump() -> None:
     assert not any(o.startswith("ProxyCommand=") for o in opts)
 
 
+def test_attach_probe_fallback_retains_gateway_identity_and_nested_route(tmp_path, monkeypatch) -> None:
+    import shlex
+
+    from sucoder.tunnel import SshControl
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cert = tmp_path / "gateway cert"
+    gw = SshControl(gateway="gw", cert_file=str(cert))
+    ln = SshControl(gateway="ln", jump_host="gw", jump_control=gw)
+    cn = SshControl(gateway="cn", jump_host="ln", jump_control=ln)
+    ln_options = ln.ssh_options(with_fallback=True)
+    proxy = next(opt.removeprefix("ProxyCommand=") for opt in ln_options if opt.startswith("ProxyCommand="))
+    inner = shlex.split(proxy)
+    assert f"ControlPath={gw.socket_path}" in inner
+    assert f"IdentityFile={cert}" in inner
+    assert f"CertificateFile={cert}-cert.pub" in inner
+    assert "IdentitiesOnly=yes" in inner
+    assert "BatchMode=yes" in inner
+    assert inner[-3:] == ["-W", "%h:%p", "gw"]
+    assert f"IdentityFile={cert}" not in ln_options
+    # The compute-node fallback carries the login-node route as well. Its
+    # inner tokens survive the outer ssh's percent expansion.
+    cn_proxy = next(opt.removeprefix("ProxyCommand=") for opt in cn.ssh_options(with_fallback=True) if opt.startswith("ProxyCommand="))
+    inner = shlex.split(cn_proxy)
+    assert f"ControlPath={ln.socket_path}" in inner
+    assert inner[-3:] == ["-W", "%h:%p", "ln"]
+    nested = next(opt.removeprefix("ProxyCommand=") for opt in inner if opt.startswith("ProxyCommand="))
+    assert shlex.split(nested)[-3:] == ["-W", "%%h:%%p", "gw"]
+    assert f"IdentityFile={cert}" in shlex.split(nested)
+
+
 def test_ssh_control_is_active_uses_batchmode(monkeypatch, tmp_path) -> None:
     """Regression: both is_active() probes must set BatchMode=yes and a
     wall-clock timeout.

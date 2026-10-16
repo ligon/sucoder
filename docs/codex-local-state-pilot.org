@@ -4,11 +4,13 @@
 
 How to run the first pilot of managed Codex state from a laptop against the =carleton-htc= target, what to expect at each step, and what to bring back.
 The design is [[file:codex-local-state.org][Codex Local State]]; its "Slice 4: pilot and acceptance" section is the gate this runbook serves.
-Everything here was exercised on Savio piecewise (the runner with real Codex, restore and resume on a simulated second allocation, the renewal against scripted schedulers) but never yet as one turnover from =collaborate= to a successor on another node; that is what the pilot establishes.
+The first pilot on 2026-10-16, using =9765aa1=, completed a cross-node turnover and recovered the conversation on successor job =40038356= on =n0037.savio4=.
+Normal =attach= and =attach --via-srun= falsely reported that running allocation as ended after an SSH probe failure (issue 47); the direct login-node route below completed the recovery check.
+The SSH failure's exact cause was not established during the pilot. Conversation recovery alone does not establish full Slice 4 acceptance; the restored thread's working directory also needed correction (issue 46).
 
 * Prerequisites
 
-- The laptop's SuCoder checkout at =main= =b925a15= or later (with the issue 46 fix for the cwd behaviour in step 5) (pull it from the shared mirror); reinstall if =sucoder= is installed as a tool rather than run from the checkout.
+- The laptop's SuCoder checkout at =main= =b925a15= or later, including the issue 46 cwd fix and the issue 47 attach probe correction (pull it from the shared mirror); reinstall if =sucoder= is installed as a tool rather than run from the checkout.
 - A throwaway git repository on the laptop; nothing in it matters, and it must not be a repository whose history you care about.
 - On the cluster, the state of this writing: Codex =0.162.1= from the nvm Node 20 install, =bwrap= and the =sqlite3= CLI on the =savio4_htc= node images, Python 3.6 as =/usr/bin/python3= (the runner is written for it).
   A newer Codex is not verified against the storage profile; the runner stops Codex if any store opens outside the managed directory, so a layout change fails loudly rather than silently.
@@ -81,7 +83,7 @@ The loop holds while more than twenty minutes remain.
 
 When =renew= logs "~20 min to --time; checkpointing then re-allocating" (the tmux status line flashes a warning at thirty minutes, and the deadline timer requests a capture at each warning), *exit Codex* in terminal A with =/exit=.
 This is the attended-TUI rule: while a person sits in the TUI the drain does not signal Codex, takes a warm generation and answers "warm only", and =renew= defers to its next turn; your clean exit seals the final generation and that seal is the transfer token.
-The pane drops to a shell afterwards, which is expected (the job keeps the allocation for =attach=).
+If the renewal drain request arrived first, the drained runner holds its startup lock until the predecessor is released; the pane need not drop to a shell. The pilot observed this hold.
 
 Expected in =renew='s log, in this order:
 
@@ -102,6 +104,17 @@ sucoder -T carleton-htc sessions                                  # only job M f
 sucoder -T carleton-htc attach throwaway                          # the successor's Codex TUI
 #+end_src
 
+Normal confined =attach= uses the login-node SSH control, verifies the scheduler response, then joins the existing allocation through =srun --overlap=.
+If it reports an unknown/unreachable allocation, keep the session record: check =sucoder -T carleton-htc tunnel status=, restore the connection with =sucoder -T carleton-htc tunnel up=, then retry.
+The direct route that worked during the pilot is below; replace =<login alias>=, =J= and =<mirror>= with the configured login-node alias (for example =carleton-htc-ln=), the independently verified job id and mirror name.
+The pilot used =ssh -S none -t carleton-htc-ln= to bypass the failing mux, then the same =srun= command. This joins the existing confined tmux session without creating a new one.
+
+#+begin_src sh
+ssh <login alias>
+squeue --job J --noheader -o '%i|%j|%T|%N'
+srun --jobid=J --overlap --pty tmux -L sucoder-<mirror> attach-session -t sucoder-<mirror>
+#+end_src
+
 In the successor's TUI use =/resume=: the earlier thread is listed; pick it and ask what you discussed.
 The answer must come from the restored history, not from =~/.codex= (which never saw this conversation).
 Then ask Codex to run =pwd=: it must print the successor's clone, =/local/job<M>/mirrors/<name>=.
@@ -116,6 +129,7 @@ sucoder -T carleton-htc release throwaway
 #+end_src
 
 =release= drains first (a sealed final generation, since you exit the TUI before it or it answers warm only and seals when you do), then cancels; if a replacement were still pending it would cancel that too.
+It asks for confirmation; the pilot used =release --force= only after independently verifying the successor's sealed final generation.
 Set =checkpoint_minutes= back to 10.
 The pilot's generations stay under =~/mirrors/.sucoder-state/codex/<scope>/runs/= (a few megabytes); remove that scope directory by hand if you want nothing left.
 
@@ -135,6 +149,7 @@ The design forbids silent fallback, so every failure is loud and local.
 
 | Symptom | Where to look | Meaning |
 |---------+---------------+---------|
+| =attach= says "the allocation has ended" | the scheduler response via the login-node control; independently check =squeue --job J= | With the issue 47 correction, this means a successful empty scheduler response or an explicit invalid-job-id reply. A failed/timeout SSH probe instead reports unknown/unreachable, preserves the session record, and directs you to =tunnel status= / =tunnel up=. On =9765aa1= the message could be false; use the direct route in step 5 before concluding the job is gone |
 | The launch exits with "managed placement is unavailable" or a =sqlite_home= conflict | the pane; =~/.cache/sucoder/job-throwaway-<jobid>.out= | =bwrap= missing on that node image, or your Codex config sets =sqlite_home=; nothing was started |
 | =codex-state-status= says =state: refused= with a reason | the same log | the runner refused before placing (durable root, lock, pending work); the reason names it |
 | =state: blocked= on the successor | =renew='s log, then =codex-state-status= | the durable side did not answer within two minutes; the replacement fails readiness, is cancelled, and is resubmitted next turn (three times at most) |
