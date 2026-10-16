@@ -18,6 +18,7 @@ Unix-user sandboxing for AI coding agents.  One account per agent, filesystem-en
 - [[file:llm-shadow-values.html][Standing Shadow Values for LLM Use]] --- approximate hourly resource prices for human task timing and SuCoder delegation.
 - [[file:llm-usage-collection.html][LLM Usage Collection]] --- practical design for quota, model-tagged usage, price/supply histories and coverage for rate estimation.
 - [[file:llm-usage-collection-review.html][LLM Usage Collection: Model Identification Review]] --- red-team findings and design response on Fable/Opus attribution and the minimum model-aware pilot.
+- [[file:llm-usage-implementation-charter.html][LLM Usage Implementation Charter]] --- proposed scope and acceptance criteria for a working model-aware collector.
 - [[file:persistent-presence.html][Persistent Presence]] --- a standing condo slice on a shared HTC partition: renew, turnover, and handoff.
 - [[file:local-disk-tiering.html][Local-disk Tiering]] --- design note: disposable working tree on node-local disk, git as the sync, WIP snapshots (spike-verified).
 - [[file:codex-local-state.html][Codex Local State]] --- proposed SQLite placement, durable recovery, lifecycle handoff, and Savio validation gates.
