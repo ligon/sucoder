@@ -153,7 +153,7 @@ def test_readiness_is_placed_on_exactly_the_token_generation():
 
 
 @pytest.mark.parametrize("status, outcome, why", [
-    (None, "pending", "no status.json yet"),
+    (None, "pending", "no managed run recorded yet"),
     ({"state": "starting"}, "pending", "state starting"),
     ({"state": "restoring", "restore": f"{RUN}/{GEN}"}, "pending", "state restoring"),
     ({"state": "launched"}, "pending", "state launched"),
@@ -628,3 +628,82 @@ def test_unmanaged_relaunch_restores_the_old_allocation_when_the_launch_fails_be
     assert _relaunch(monkeypatch, fake) is None
     loaded = RemoteSession.load("sample", target_name=None)
     assert (loaded.slurm_job_id, loaded.compute_node) == (4242, "n0033.savio4")
+
+
+def test_relaunch_fails_a_replacement_that_never_records_a_run_after_the_bound(tmp_path, monkeypatch):
+    """A runner that refuses before placing writes no latest-run, so its
+    status is never readable: bounded by the time since sbatch answered,
+    not pending forever with the allocation leaking."""
+    from sucoder import cli
+    from sucoder.codex_state import Readiness
+    import time as _time
+    submitted = _time.time() - 2000.0
+    attempt = ReplacementAttempt(attempt="00ff" * 4, old_job=4242, old_node="n0033.savio4", old_run=RUN, token=_token(),
+                                 state="submitted", new_job=12345, new_node="n0001.savio4", submitted_at=submitted)
+    _managed_session(tmp_path, monkeypatch, replacement=attempt.as_json())
+    nothing = Readiness("pending", "no managed run recorded yet; 360 s budget elapsed", no_status=True)
+    fake = _FakeManager(readiness=[nothing, nothing])
+    # Recently submitted: still pending, nothing cancelled.
+    monkeypatch.setattr(cli, "_MANAGED_NO_STATUS_BOUND_SECONDS", 3000.0)
+    assert _relaunch(monkeypatch, fake) is None
+    assert not any(c[0] == "run_agent" for c in fake.calls)
+    assert ReplacementAttempt.from_json(RemoteSession.load("sample", target_name=None).replacement).new_job == 12345
+    # Past the bound: failed, cancelled, the token kept for a fresh submission.
+    monkeypatch.setattr(cli, "_MANAGED_NO_STATUS_BOUND_SECONDS", 900.0)
+    assert _relaunch(monkeypatch, fake) is None
+    assert [c[1] for c in fake.calls if c[0] == "run_agent"] == [["scancel", "12345"]]
+    after = ReplacementAttempt.from_json(RemoteSession.load("sample", target_name=None).replacement)
+    assert after.new_job is None and after.state == "drained" and "never placed one" in after.failures[-1]
+
+
+def test_relaunch_after_the_failure_bound_falls_back_only_once_the_predecessor_is_gone(tmp_path, monkeypatch, caplog):
+    failures = ["job 1: state refused", "job 2: state refused", "job 3: state refused"]
+    attempt = ReplacementAttempt(attempt="00ff" * 4, old_job=4242, old_node="n0033.savio4", old_run=RUN, token=_token(),
+                                 failures=failures)
+    _managed_session(tmp_path, monkeypatch, replacement=attempt.as_json())
+    fake = _FakeManager(old_state="RUNNING")
+    with caplog.at_level("ERROR"):
+        assert _relaunch(monkeypatch, fake) is None
+    assert [c[0] for c in fake.calls] == ["job_state"] and "3 replacement attempts failed" in caplog.text
+    assert RemoteSession.load("sample", target_name=None).replacement is not None
+    fake = _FakeManager(old_state=None, launch="plain")
+    with caplog.at_level("WARNING"):
+        assert _relaunch(monkeypatch, fake) == 777
+    assert [c[0] for c in fake.calls] == ["job_state", "launch"]
+    assert fake.calls[1][1]["command_override"] == ["codex", "--model", "gpt-6-astra"] and "codex_state_from" not in fake.calls[1][1]
+    loaded = RemoteSession.load("sample", target_name=None)
+    assert loaded.slurm_job_id == 777 and loaded.replacement is None
+    assert f"{RUN}/{GEN}" in caplog.text and "gone after 3 failed replacements" in caplog.text
+
+
+def test_launch_confined_records_when_the_replacement_was_submitted(tmp_path, monkeypatch):
+    from tests.test_mirror import _THIS_TARGET, _confined_manager, _confined_responder
+    manager, ctx = _confined_manager(tmp_path, monkeypatch)
+    _replacing_session(tmp_path)
+    manager.executor.run_agent = _confined_responder([], live_state="RUNNING", by_name=f"4242|{_THIS_TARGET}")
+    import time as _time
+    before = _time.time()
+    manager._launch_confined(ctx, ["codex"], remote_prelude_text=None, prelude_sentinel="__X__", env=None,
+                             detached=True, replace_job=4242)
+    attempt = ReplacementAttempt.from_json(RemoteSession.load("sample", target_name=None).replacement)
+    assert attempt.submitted_at is not None and before <= attempt.submitted_at <= _time.time()
+    assert ReplacementAttempt.from_json(attempt.as_json()) == attempt
+
+
+# ----------------------------------------------------------------- the listings see a pending replacement
+
+def test_session_listings_name_a_pending_replacement_job(tmp_path, monkeypatch):
+    monkeypatch.setattr("sucoder.session._session_dir", lambda: tmp_path / "sessions")
+    attempt = ReplacementAttempt(attempt="00ff" * 4, old_job=4242, old_node="n0033.savio4", old_run=RUN, token=_token(),
+                                 state="submitted", new_job=12345, new_node="n0001.savio4")
+    session = RemoteSession(mirror_name="sample", target_name="savio", slurm_job_id=4242)
+    session.replacement = attempt.as_json()
+    session.save()
+    RemoteSession(mirror_name="other", target_name="savio", slurm_job_id=4300).save()
+    assert RemoteSession.pending_replacement_job(session) == 12345
+    assert RemoteSession.pending_replacement_job(RemoteSession.load("other", target_name="savio")) is None
+    assert RemoteSession.pending_replacement_job({"replacement": {"new_job": True}}) is None
+    assert RemoteSession.holders_of_job(12345) == ["sample--savio"]
+    assert RemoteSession.holders_of_job(4242) == ["sample--savio"]
+    assert RemoteSession.holders_of_job(4242, exclude_key="sample--savio") == []
+    assert RemoteSession.recorded_jobs() == {"other--savio": 4300, "sample--savio": 4242, "sample--savio (replacement)": 12345}

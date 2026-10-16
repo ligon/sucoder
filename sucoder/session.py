@@ -134,6 +134,22 @@ class RemoteSession:
             if tmp.exists():
                 tmp.unlink()
 
+    @staticmethod
+    def pending_replacement_job(data) -> Optional[int]:
+        """The replacement job a session record holds in flight, or None.
+
+        A managed Codex renewal (``cli._relaunch_managed_session``) keeps
+        the job it submitted under ``replacement.new_job`` until that job
+        is ready, while ``slurm_job_id`` still names the predecessor.  The
+        listings and ``release`` read it here so the job is neither
+        reported as unrecorded nor left running when the session is
+        released.  *data* is a loaded record or a session.
+        """
+        record = data.replacement if isinstance(data, RemoteSession) else (
+            data.get("replacement") if isinstance(data, dict) else None)
+        job = record.get("new_job") if isinstance(record, dict) else None
+        return job if isinstance(job, int) and not isinstance(job, bool) and job > 0 else None
+
     @classmethod
     def holders_of_job(cls, job_id, exclude_key: Optional[str] = None) -> list:
         """Return session keys that reference *job_id*.
@@ -142,7 +158,9 @@ class RemoteSession:
         Used by ``sucoder release`` to detect when a SLURM job is shared
         by several sessions (e.g. two mirrors co-resident on one node) so
         it can detach this mirror instead of cancelling a job the others
-        still need.  *exclude_key* omits the caller's own session.
+        still need.  *exclude_key* omits the caller's own session.  A
+        record names a job as its allocation or as the replacement it has
+        in flight (:meth:`pending_replacement_job`).
         """
         holders: list = []
         if job_id is None:
@@ -159,7 +177,8 @@ class RemoteSession:
                     data = yaml.safe_load(fh) or {}
             except (yaml.YAMLError, OSError):
                 continue
-            if isinstance(data, dict) and data.get("slurm_job_id") == job_id:
+            if isinstance(data, dict) and (
+                    data.get("slurm_job_id") == job_id or cls.pending_replacement_job(data) == job_id):
                 holders.append(stem)
         return holders
 
@@ -172,7 +191,8 @@ class RemoteSession:
         record name this job?" (an unnamed job is unreachable by every
         command), this one answers "does this record's job still exist?"
         (a record naming a dead job is what ``release`` should clear).
-        Neither direction subsumes the other.
+        Neither direction subsumes the other.  A replacement job a record
+        holds in flight is listed under ``<key> (replacement)``.
         """
         recorded: dict = {}
         directory = _session_dir()
@@ -186,6 +206,9 @@ class RemoteSession:
                 continue
             if isinstance(data, dict) and data.get("slurm_job_id"):
                 recorded[path.stem] = data["slurm_job_id"]
+            pending = cls.pending_replacement_job(data)
+            if pending is not None:
+                recorded[f"{path.stem} (replacement)"] = pending
         return recorded
 
     @classmethod

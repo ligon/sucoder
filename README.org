@@ -1456,8 +1456,9 @@ then the attempt -- old job and node, the token, the new job once
 retry probes the recorded job rather than submitting another, a
 failure before submission leaves the old allocation reachable, and a
 replacement that fails readiness is cancelled (by id) and resubmitted
-on the next turn, three times at most; after that the loop stops and
-says what to do.  A predecessor that vanished before it could be
+on the next turn, three times at most; after that the loop submits no
+more, keeps watching, and says what to do (and falls back to a fresh
+history if the predecessor meanwhile ends).  A predecessor that vanished before it could be
 drained is relaunched with its command and a fresh managed history,
 and the log names where its generations are for an explicit
 =--codex-state-from=.  On an unconfined target, and on a dry run,

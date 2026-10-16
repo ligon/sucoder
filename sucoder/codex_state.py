@@ -651,6 +651,7 @@ class ReplacementAttempt:
     state: str = "drained"
     new_job: Optional[int] = None
     new_node: Optional[str] = None
+    submitted_at: Optional[float] = None    # epoch seconds when sbatch answered: bounds "no status yet"
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
     failures: List[str] = field(default_factory=list)
@@ -658,7 +659,8 @@ class ReplacementAttempt:
     def as_json(self) -> Dict[str, Any]:
         return {"attempt": self.attempt, "old_job": self.old_job, "old_node": self.old_node, "old_run": self.old_run,
                 "token": self.token.as_json(), "state": self.state, "new_job": self.new_job, "new_node": self.new_node,
-                "created_at": self.created_at, "updated_at": self.updated_at, "failures": list(self.failures)}
+                "submitted_at": self.submitted_at, "created_at": self.created_at, "updated_at": self.updated_at,
+                "failures": list(self.failures)}
 
     @classmethod
     def from_json(cls, data: Any) -> "ReplacementAttempt":
@@ -680,10 +682,14 @@ class ReplacementAttempt:
         failures = data.get("failures") or []
         if not isinstance(failures, list) or not all(isinstance(item, str) for item in failures):
             raise ValueError("failures must be a list of strings")
+        submitted_at = data.get("submitted_at")
+        if submitted_at is not None and (isinstance(submitted_at, bool) or not isinstance(submitted_at, (int, float))):
+            raise ValueError(f"submitted_at {submitted_at!r} is not a time")
         return cls(
             attempt=attempt, old_job=old_job, old_node=_optional_str(data.get("old_node"), "old_node"),
             old_run=_optional_str(data.get("old_run"), "old_run"), token=TransferToken.from_json(data.get("token")),
             state=state, new_job=new_job, new_node=_optional_str(data.get("new_node"), "new_node"),
+            submitted_at=None if submitted_at is None else float(submitted_at),
             created_at=_optional_str(data.get("created_at"), "created_at"),
             updated_at=_optional_str(data.get("updated_at"), "updated_at"), failures=list(failures),
         )
@@ -702,10 +708,18 @@ def new_attempt_id() -> str:
 
 @dataclass(frozen=True)
 class Readiness:
-    """Whether a replacement run has become the managed owner: ``ready``, ``pending`` or ``failed``, with why."""
+    """Whether a replacement run has become the managed owner: ``ready``, ``pending`` or ``failed``, with why.
+
+    ``no_status`` marks the pending answer given because the job has no
+    ``status.json`` to read at all: a launch still cloning the mirror, or
+    one whose runner refused before placing a run, which writes no
+    ``latest-run`` and so never shows a state.  The caller bounds that
+    case by the time since submission, which this function cannot know.
+    """
 
     outcome: str
     reason: str
+    no_status: bool = False
 
     @property
     def ready(self) -> bool:
@@ -725,7 +739,8 @@ def classify_readiness(status: Optional[Mapping[str, Any]], token: TransferToken
     runner's reason where it recorded one.
     """
     if status is None:
-        return Readiness("pending", "no status.json yet (the job is cloning the mirror, then starting the runner)")
+        return Readiness("pending", "no managed run recorded yet (the job is cloning the mirror, then starting the runner)",
+                         no_status=True)
     state = status.get("state")
     if not isinstance(state, str):
         return Readiness("failed", "status.json records no state")

@@ -656,3 +656,23 @@ def test_drain_command_reports_a_lookup_failure_and_a_missing_job(tmp_path, monk
     result, builder_calls, _ = _drain_cli(tmp_path, monkeypatch, [], job=None)
     assert result.exit_code == 0 and builder_calls == []
     assert "No SLURM allocation recorded for mirror sample (target fake-slurm); no managed Codex run to drain." in result.output
+
+
+def test_release_cancels_a_pending_replacement_job_after_the_allocation(tmp_path, monkeypatch):
+    """A managed renewal in flight holds the job it submitted under
+    ``replacement.new_job`` (Slice 3d); releasing the session must not
+    leave that job running with nothing naming it."""
+    from sucoder.session import RemoteSession
+    yaml_text = (
+        "login_node: ln002\nslurm_job_id: 7654321\ncompute_node: n0032\n"
+        "replacement:\n  attempt: 00ff00ff00ff00ff\n  old_job: 7654321\n  state: submitted\n  new_job: 7654400\n"
+        f"  token: {{nonce: {NONCE}, run: {RUN}, generation: 000013-cafebabe, manifest_sha256: {'ab' * 32}}}\n"
+    )
+    cluster = _Cluster(tmp_path, monkeypatch, session_yaml=yaml_text)
+    result = cluster.release("-f", "--no-drain")
+    assert result.exit_code == 0, (result.output, result.exception)
+    commands = [command for _host, command in cluster.captures]
+    assert commands[0].startswith("scancel 7654321") and commands[-1] == "scancel 7654400"
+    assert "Cancelled the pending replacement job 7654400" in result.output
+    loaded = RemoteSession.load("sample", target_name="fake-slurm")
+    assert loaded.slurm_job_id is None and loaded.replacement is None

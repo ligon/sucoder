@@ -3418,6 +3418,11 @@ def release(
 
     job_id = session.slurm_job_id
     compute_node = session.compute_node or "<unknown>"
+    # A managed renewal in flight holds the job it submitted in the record
+    # (not as the session's job) until that job is ready; releasing the
+    # session cancels it too, after the allocation, or it would outlive
+    # the renewal that submitted it with nothing naming it.
+    pending_job = RemoteSession.pending_replacement_job(session)
     # Other sessions co-resident on this node share the same job id.
     # Releasing must not scancel the allocation out from under them.
     siblings = RemoteSession.holders_of_job(
@@ -3479,7 +3484,25 @@ def release(
         current = RemoteSession.load(mirror, target_name=_tgt_name)
         current.slurm_job_id = None
         current.compute_node = None
+        current.replacement = None
         current.save()
+
+    def _cancel_pending_replacement():
+        # After the allocation: the replacement was submitted by this
+        # session's renewal and is named nowhere else once the record is
+        # cleared.  scancel of a job that has already ended only warns.
+        if pending_job is None:
+            return
+        result = _run_remote_capture(
+            gw_control, remote.gateway, f"scancel {shlex.quote(str(pending_job))}", debug=debug_ssh,
+        )
+        if result.returncode != 0:
+            typer.echo(
+                f"Could not cancel the pending replacement job {pending_job} (scancel returned "
+                f"{result.returncode}: {result.stderr.strip()}); cancel it by hand.", err=True,
+            )
+            return
+        typer.echo(f"Cancelled the pending replacement job {pending_job} (a renewal in flight).")
 
     # Managed Codex state (docs/codex-local-state.org, "Clean exit and
     # explicit release"): both paths below stop the owner -- scancel ends
@@ -3564,6 +3587,7 @@ def release(
             f"Detached mirror {mirror} from SLURM job {job_id}; the "
             f"allocation stays alive for: {', '.join(siblings)}."
         )
+        _cancel_pending_replacement()
         return
 
     # No siblings: cancel the job.  Run `scancel` over the gateway
@@ -3598,6 +3622,7 @@ def release(
 
     _forget_allocation()
     typer.echo(f"Released SLURM job {job_id} on {compute_node}.")
+    _cancel_pending_replacement()
     for line in (result.stdout or "").splitlines():
         mark, _, what = line.partition("\t")
         if mark == _WIP_RETIRED_MARK:
@@ -3900,6 +3925,12 @@ _MANAGED_READINESS_BUDGET_SECONDS = 360.0
 # bound is what keeps a durable-side outage from leaking a stream of
 # allocations; the old one stays held, drained, for the operator.
 _MANAGED_REPLACEMENT_MAX_FAILURES = 3
+# A replacement whose runner refused before placing a run writes no
+# latest-run, so its status is never readable and readiness stays
+# pending; past this long after sbatch answered, "no status" is a
+# failure (the local-disk clone wait is bounded at five minutes and the
+# runner's placement at 90 s, so a healthy launch has shown a state).
+_MANAGED_NO_STATUS_BOUND_SECONDS = 900.0
 
 
 def _relaunch_session(mirror, config, ctx, logger, dry_run):
@@ -4117,6 +4148,26 @@ def _relaunch_managed_session(mirror, config, ctx, logger, session, target_name)
 
     # 3. Token held, nothing submitted: launch the replacement.
     if len(attempt.failures) >= _MANAGED_REPLACEMENT_MAX_FAILURES:
+        try:
+            old_state = manager._confined_job_state(old_job)
+        except MirrorError as exc:
+            logger.warning("Cannot tell whether job %s is still allocated (%s); asking again next turn.", old_job, exc)
+            return None
+        if old_state is None:
+            # The predecessor is gone and its sealed generation could not
+            # be continued: presence matters more than the history, which
+            # stays durable for an explicit continuation.  The record is
+            # retired first, or it would name a predecessor the session no
+            # longer does.
+            logger.warning(
+                "Job %s is gone after %d failed replacements (%s): relaunching with the owner's command and a "
+                "fresh managed history.  Generation %s stays under %s/codex/%s/runs for an explicit "
+                "`--codex-state-from`.", old_job, len(attempt.failures), attempt.failures[-1],
+                attempt.token.selector, owner.get("durable_root"), owner.get("scope"),
+            )
+            session.replacement = None
+            session.save()
+            return _relaunch_unmanaged_session(mirror, config, ctx, logger, False, session, overrides, target_name)
         logger.error(
             "Mirror %s: %d replacement attempts failed (%s); not submitting another.  Job %s stays "
             "allocated with its owner drained on generation %s: fix the cause and remove the replacement "
@@ -4152,9 +4203,17 @@ def _relaunch_managed_session(mirror, config, ctx, logger, session, target_name)
     return _managed_replacement_turn(manager, mctx, session, attempt, logger)
 
 
-def _managed_replacement_turn(manager, mctx, session, attempt, logger):
-    """Step 1 of :func:`_relaunch_managed_session`: the recorded replacement job's readiness."""
+def _managed_replacement_turn(manager, mctx, session, attempt, logger, clock=time.time):
+    """Step 1 of :func:`_relaunch_managed_session`: the recorded replacement job's readiness.
+
+    Pending with no status at all is bounded here by the time since
+    ``sbatch`` answered (``_MANAGED_NO_STATUS_BOUND_SECONDS``): a runner
+    that refused before placing a run writes no ``latest-run``, so its
+    job would otherwise read as pending on every turn and never be
+    cancelled.  ``clock`` is the test seam.
+    """
     import datetime as _dt
+    from .codex_state import Readiness
     from .mirror import MirrorError
 
     new_job = attempt.new_job
@@ -4165,6 +4224,13 @@ def _managed_replacement_turn(manager, mctx, session, attempt, logger):
     except MirrorError as exc:
         logger.warning("Cannot tell whether replacement job %s is ready (%s); asking again next turn.", new_job, exc)
         return None
+    if result.outcome == "pending" and result.no_status and attempt.submitted_at is not None:
+        age = clock() - attempt.submitted_at
+        if age >= _MANAGED_NO_STATUS_BOUND_SECONDS:
+            result = Readiness(
+                "failed", f"no managed run recorded {age:.0f} s after submission: the runner never placed one "
+                          "(a refused launch writes no latest-run); see the job's log under ~/.cache/sucoder",
+            )
     stamp = _dt.datetime.now(_dt.timezone.utc).isoformat()
     if result.ready:
         session.slurm_job_id = new_job

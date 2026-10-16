@@ -3393,7 +3393,8 @@ class MirrorManager:
             dict(sess.replacement) if replace_job is not None and isinstance(sess.replacement, dict) else None
         )
         if record is not None:
-            record.update(state="submitted", new_job=job_id, new_node=None, updated_at=_utc_now_iso())
+            record.update(state="submitted", new_job=job_id, new_node=None, submitted_at=time.time(),
+                          updated_at=_utc_now_iso())
             sess.replacement = record
         else:
             sess.slurm_job_id = job_id
@@ -3786,6 +3787,8 @@ class MirrorManager:
             )
             if selection is not None:
                 exclusive_tmux = tmux_name
+            if self._managed_owner is not None and not self.executor.dry_run:
+                self._record_managed_owner(ctx)
 
         self.logger.info("Starting agent command: %s", shlex.join(command))
 
@@ -3850,6 +3853,25 @@ class MirrorManager:
                 )
 
             return result.returncode
+
+    def _record_managed_owner(self, ctx: MirrorContext) -> None:
+        """Persist ``_managed_owner`` on the session an unconfined launch already holds.
+
+        The confined and service paths record it beside the job they
+        submit or create; the unconfined TUI path submits nothing (the
+        executor allocated the node before the launch), so it writes the
+        owner here, before the tmux command runs.  A launch that then fails
+        leaves a record naming an owner that never placed a run, which a
+        renewal reads as "no managed run recorded" and relaunches fresh.
+        """
+        from .session import RemoteSession
+
+        try:
+            session = RemoteSession.load(ctx.settings.name, target_name=self.target_name)
+            session.managed_owner = self._managed_owner
+            session.save()
+        except OSError as exc:
+            self.logger.warning("Could not record the managed Codex owner for renewal: %s", exc)
 
     def _wrap_codex_service_context(
         self, ctx: MirrorContext, command: Sequence[str], prelude: str,
@@ -4163,7 +4185,8 @@ class MirrorManager:
                 return result
             elapsed = clock() - started
             if elapsed >= budget_seconds:
-                return _Readiness("pending", f"{result.reason}; {budget_seconds:.0f} s budget elapsed")
+                return _Readiness("pending", f"{result.reason}; {budget_seconds:.0f} s budget elapsed",
+                                  no_status=result.no_status)
             sleep(max(0.0, min(poll_seconds, budget_seconds - elapsed)))
 
     def _absolute_for_codex_state(self, ctx: MirrorContext, what: str, value: str) -> str:
