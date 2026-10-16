@@ -1,0 +1,140 @@
+#+TITLE: Red-Team Review: Model Identification in LLM Usage Collection
+#+AUTHOR: Sue
+#+DATE: 2026-10-17
+#+DESCRIPTION: Findings on whether the proposed collector distinguishes Fable and Opus use and supports model-relative resource estimates.
+
+* Verdict
+
+The design needs revision before a pilot can claim to learn model-specific use or resource draw.
+Its first slice collects quota constraints, including a constraint applying to the Fable family, but does not require observations distinguishing Fable from Opus activity.
+The distinction between constraint applicability and model-attributed use is preserved correctly; the problem is that the scoped first deliverable falls short of the model-relative allocation objective.
+
+Pool-level quota collection can proceed as useful infrastructure.
+Approximate model quotes can still use declared priors, but they must not be described as rates learned from the proposed first-slice observations.
+Model-tagged capture should accompany the first pilot intended to improve those priors.
+
+Reviewed baseline: SuCoder =cc48d19= and llm-accounting =ed7c851=.
+The line references below identify that baseline.
+Two fresh independent reviewers examined identification and native telemetry sources; the earlier reviews primarily established storage and accounting consistency and missed the minimum model-data requirement.
+
+* What the current records distinguish
+
+- Shared Claude constraints :: The normalized five-hour and aggregate weekly quota trajectories are observable, subject to their recorded quality and window assumptions.
+- Fable-family constraint :: Its own weekly utilization and reset are observable where the source supplies them.
+- Fable versus Opus work :: Actual activity, token quantities and hourly use are not part of the mandatory first slice.
+- Contribution to shared draw :: The Fable-specific percentage and the shared percentage do not establish per-model shares of one common resource quantity.
+- Declared model quotes :: The price vector can distinguish model routes, even while the quantities demanded at those quotes remain unobserved.
+
+The accounting implementation explicitly sets quota observations' model dimensions to null in [[file:../../llm-accounting/src/llm_accounting/subscriptions.py::237][subscriptions.py:237-244]].
+Its [[file:../../llm-accounting/tests/test_model_limits_adversarial.py::333][model-usage rejection test]] protects that distinction.
+The [[file:../../llm-accounting/src/llm_accounting/subscriptions.py::93][Claude normalizer]] retains =five_hour=, =seven_day= and =weekly_fable=; it does not normalize an Opus consumption series or the raw weekly breakdown/share fields.
+That is deliberate source-contract behavior, not evidence that a provider breakdown could never be collected.
+
+* Findings
+
+** P1: The minimum milestone does not observe the model-use vector
+
+[[file:llm-usage-collection.org::18][Collection design:18-21]] defers counters and lifecycle observations to optional Slice B.
+The [[file:llm-shadow-values.org::29][economic design:29-34]] needs route-specific resource draw to translate shared scarcity into hourly model charges.
+Quota histories alone cannot supply that vector, and merely recording a distinct price for each route does not change what is observed.
+
+There is a practical source missing from the inventory.
+Claude's [[https://code.claude.com/docs/en/monitoring-usage#api-request-event][documented monitoring interface]] provides model-tagged request metadata and token/cost metrics, including request durations and subsystem attribution.
+The [[file:llm-usage-collection.org::234][proposed Claude adapter:234-244]] examines only status-line callbacks, whose token snapshots are a weaker source for this purpose.
+The documented telemetry interface is not yet a locally verified adapter, but it is sufficient evidence to design a prospective model-aware pilot rather than leave the source unspecified.
+
+Required revision: make a selected model-tagged metadata source and its coverage contract part of the minimum model-aware pilot.
+Keep the quota-only collector useful as a separate readiness level; do not make complete task attribution or a fitted demand model a prerequisite.
+
+** P1: Model-tagged activity still does not identify shared allowance weights automatically
+
+[[file:llm-usage-collection.org::280][Collection design:280-282]] correctly denies that quota trends establish per-model contributions.
+However, the implementation sequence has no explicit criterion for when a model-specific draw estimate becomes supported, as opposed to remaining a prior.
+
+Suppose each sampling interval contains one Fable agent-hour and one Opus agent-hour, while shared utilization rises two percentage points.
+Fable/Opus contributions of 1.5/0.5 points and 0.5/1.5 points produce the same data.
+Repeating the same activity mix cannot distinguish those explanations, even with perfectly recorded model-hours.
+Token observations add useful predictors, but they do not disclose the provider's quota weights or eliminate unobserved external activity.
+
+The Fable limit does not provide an Opus residual either.
+For illustration, assume compatible underlying resource units and no releases: shared allowance 100, shared utilization increasing two points, and Fable utilization increasing ten points.
+A Fable allowance of 10 implies one unit of Fable draw and one of other draw; a Fable allowance of 20 implies two units of Fable draw and zero other draw.
+The reported fractions are identical, and other use need not be Opus.
+Actual independent windows and opaque denominators introduce further ambiguity.
+
+Required revision: collect model-specific activity/usage, account coverage and context alongside quota trajectories; retain the model mix over each interval.
+An estimator can then learn a predictive relationship where variation and assumptions support it.
+It must report insufficient variation, unobserved background use and unidentified coefficients rather than treating the result as a measured provider debit.
+Declared coefficients remain a useful short-run fallback.
+
+** P2: A route label is not an execution-model observation
+
+The [[file:llm-usage-collection.org::260][design:260-269]] mentions switches and reroutes but does not define their identity evidence in the record contract.
+The replay's only usage counters have =route-fable= and =model_scope: single_declared_route=; it has no observed Opus counter, model switch or differently modeled child.
+
+Distinguish requested, configured, native-reported and served model identities, with null/mixed states and an explicit evidence basis.
+In installed Codex 0.162.1, =ThreadTokenUsageUpdatedNotification= contains thread/turn references but no model field; =Thread.model= describes configured/latest state rather than per-turn execution telemetry.
+Joining a token update to the latest thread setting can therefore invent model attribution.
+
+The [[https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback#what-the-response-contains][Claude API fallback contract]] also distinguishes the requested model, response model and per-attempt usage.
+The monitoring documentation does not establish how all such attempts are projected into one telemetry model label.
+This limits serving/billing claims; it does not prevent useful native-reported-model rates and does not justify collecting response bodies.
+
+Required revision: retain model identity basis and attribution scope, opaque session/turn/child lineage where observed, and counter inclusion scope.
+Unknown children, model switches, fallback and external sessions must produce mixed/unattributed coverage rather than being charged to the launch model.
+An adapter may establish one of these distinctions without establishing all of them.
+
+** P2: Telemetry needs source-specific deduplication and hour semantics
+
+The generic rules at [[file:llm-usage-collection.org::172][design:172-175]] are sound but do not yet define the prospective telemetry source's natural identity and stream epochs.
+[[https://opentelemetry.io/docs/specs/otlp/#duplicate-data][OTLP transport]] can redeliver data, and the [[https://opentelemetry.io/docs/specs/otel/metrics/data-model/#temporality][metrics data model]] distinguishes delta from cumulative intervals.
+Store original stream/process epochs, interval endpoints and temporality; a local receive timestamp is not a fresh unit of usage.
+Keep request events and metric totals as corroborating views, never additive copies of the same work.
+
+Use a named clock-hour denominator for the first model-tagged throughput series.
+Request waiting, session residence and open-turn time are different quantities and can overlap across subagents.
+Do not relabel one as another to produce an apparently comparable API cost per agent-hour.
+Record collection/export gaps and the instrumented population so absent telemetry is not an observed zero.
+
+Claude's native monetary figure may follow [[https://code.claude.com/docs/en/costs#report-spend-at-your-contracted-rates][managed pricing]], so preserve it separately from our published API-reference tariff.
+Missing billing detail can leave exact revaluation unavailable even when model-tagged token throughput is useful.
+
+Required revision: choose request events or compatible metrics as the primary quantity source for each adapter, document deduplication/coverage, and name the hour basis on every rate.
+
+** P2: The replay proves temporal joins, not model identification
+
+[[file:llm-usage-collection.org::309][Design:309-325]] includes a synthetic single-route cumulative counter and general future tests for model switches.
+That does not show that the minimum collector distinguishes two models, prevents parent/child double counting, or admits that a shared-draw model is unidentified.
+
+Required revision: add adversarial scenarios with the same quota observations but different Fable/Opus activity; independently varying model activity; a constant-proportion, unidentified mix; an Opus child under a Fable parent; switches/fallback; and a missing external source.
+Require measured, declared, mixed and unavailable outputs to remain distinct.
+For demand estimation later, also require a panel of the quote actually used, available alternatives and selected/deferred outcome; published quotes alone do not measure that behavior.
+
+* Minimum model-aware revision
+
+Retain the quota sampler and its storage/history rules.
+Add a prospective metadata-only Claude monitoring adapter alongside the first selected model pilot, with an allowlisted branch of an existing collector or a user-owned local receiver on the execution host.
+Do not enable it as part of this review.
+Preserve existing exporter configuration, keep content/raw-body/detailed tracing capture off, and filter before any durable queue or diagnostic write.
+
+The adapter's records should retain:
+
+- Identity :: Source/build, dataset-local account/access binding, process/export-stream epoch, pseudonymized native request/session references and observed child lineage.
+- Model evidence :: Requested/configured/native-reported/served identities where available, family-mapping version, attribution scope and unknown/mixed flags.
+- Quantities :: Source-native token categories and inclusion semantics, native cost estimate, interval/event times and duration with its time basis.
+- Context :: Main/subagent/auxiliary activity when observed, relevant price and supply publication references, instrumented-population coverage and export loss/gaps.
+
+Start with rates of observed model-tagged use per clock hour and declared API-reference assumptions.
+Add a clearly named exposure-hour measure where the source and lifecycle capture support one.
+Treat the mapping from model use to shared quota pressure as an estimated relationship with explicit priors, not a direct observation.
+This gets useful comparative data sooner while leaving unsupported exactness out of the output.
+
+* Review evidence and limits
+
+The independent identification reviewer verified offline that changing the fixture's Opus, weekly breakdown and share fields leaves the normalized Claude quota output unchanged.
+The parent verified both numerical observational-equivalence examples above with exact rational arithmetic.
+The native-source reviewer inspected official documentation and installed synthetic Codex schemas; the parent checked the relevant primary sources.
+Claude Code's installed version reports 2.1.300, but telemetry behavior has not been exercised in a live session.
+
+No credentials or conversations were inspected, telemetry enabled, inference requested or live account probes performed.
+The findings propose revisions and readiness criteria; they do not claim that a native adapter or estimator has been implemented or tested.

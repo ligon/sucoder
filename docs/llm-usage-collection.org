@@ -11,7 +11,7 @@ Its first result is a time series for every observed quota constraint, linked to
 That series supports comparisons of reset-adjusted depletion pressure without completed-task labels, transcript ingestion or a demand estimator.
 Native activity and usage counters add evidence for hourly API replacement costs and model attribution when a source supports them.
 
-This is a design proposal, grounded in the [[file:llm-usage-collection-ledger.org][prior-art ledger]].
+This is a design proposal, grounded in the [[file:llm-usage-collection-ledger.org][prior-art ledger]]; the [[file:llm-usage-collection-review.org][model-identification red team]] finds its first slice insufficient for model-specific rates.
 The economic objective and meaning of an agent-hour are in [[file:llm-shadow-values.org][Standing Shadow Values]].
 No collector, native hook or timer has been installed by this design work.
 
