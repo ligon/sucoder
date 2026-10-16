@@ -39,6 +39,8 @@ No conversation histories, credentials or live provider accounts were inspected.
   A future adapter needs an owning client's stream and counter-semantics fixtures; a separately started quota app-server does not observe other sessions.
 - Native Claude metadata :: [[https://code.claude.com/docs/en/statusline][Official status-line documentation]], checked 2026-10-17, distinguishes context/last-response token snapshots from an accumulated client-side session cost estimate and durations.
   This source is a candidate optional adapter, not an already implemented or complete token ledger.
+- Model-tagged Claude telemetry :: A subsequent red team found the [[https://code.claude.com/docs/en/monitoring-usage#api-request-event][documented monitoring interface]], which is a stronger prospective source for model-tagged usage than the status line.
+  Its native-reported model evidence and transport semantics still need adapter verification; it does not identify shared subscription metering weights by itself.
 
 * 3. Definitions in force
 
@@ -74,5 +76,6 @@ These limit interpretation or specific live adapters; they do not block writing 
 All 270 existing llm-accounting tests and its validator for three schemas/fourteen examples pass on the inspected baseline.
 Four accounting reports in the new replay pass the same schema and binding checks.
 Independent semantics and operations reviews accepted the final design after rechecking source-fact identity, knowledge snapshots, throttle fallback and descendant cleanup requirements.
+The subsequent [[file:llm-usage-collection-review.org][model-identification red team]] finds that this acceptance did not establish readiness to estimate Fable-versus-Opus use: the first slice lacks a required model-observation stream.
 Runnable artifact validation and review outcomes are recorded in [[file:llm-usage-collection.org][the collection design]].
 The design reuses the definitions in sections 2-4; the history/capture mechanisms in section 5 are specified as new work, not represented as existing tested machinery.
