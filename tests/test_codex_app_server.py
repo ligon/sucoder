@@ -17,7 +17,10 @@ What each test establishes:
    the SQLite projection while the model's context follows the rollout;
 4. goal rows (``thread/goal/set``) and queue rows (``codex queue``) as they
    appear in the stores;
-5. stdin EOF stops the server cleanly and every store passes ``quick_check``.
+5. stdin EOF stops the server cleanly and every store passes ``quick_check``;
+6. issue 46: a thread restored by the managed runner on another allocation
+   works in the successor's clone (recall and a ``pwd`` through
+   ``exec_command``), the runner having moved its cwd with ``thread/resume``.
 """
 
 from __future__ import annotations
@@ -26,10 +29,14 @@ import json
 import os
 import re
 import shutil
+import sys
+import time
 from pathlib import Path
 
 import pytest
 
+from sucoder.agent_mode import config_override
+from sucoder.codex_state import app_server_command
 from tests.codex_app_server import (
     DATABASES,
     AppServer,
@@ -38,6 +45,7 @@ from tests.codex_app_server import (
     backup_databases,
     codex_available,
     goal_rows,
+    model_options,
     projection,
     queue_rows,
     quick_check_all,
@@ -431,3 +439,137 @@ def test_archive_renames_the_rollout_and_fails_with_exdev_across_bind_mounts(roo
         result = server.turn(thread_id, "MARK7_after")
         assert _markers(model, result, "MARK7_") == ["MARK7_0", "MARK7_1", "MARK7_after"]
         assert server.stop().clean
+
+
+# ----------------------------------------------------------------- 6
+
+
+RUNNER = Path(__file__).resolve().parents[1] / "sucoder" / "codex_state_runner.py"
+PLACEHOLDER = "__SUCODER_CODEX_STATE_DB__"
+
+
+class _AllocationHome(Home):
+    """The private home, plus the allocation-local root the runner resolves."""
+
+    def __init__(self, root: Path, local_root: Path, **kwargs) -> None:
+        super().__init__(root, **kwargs)
+        self.local_root = local_root
+
+    def env(self, **extra):
+        extra.setdefault("SUCODER_LOCAL_ROOT", str(self.local_root))
+        return super().env(**extra)
+
+
+def _run_status(local_root, scope, predicate, what, timeout=60):
+    scope_dir = Path(local_root) / "state" / "codex" / scope
+    deadline = time.monotonic() + timeout
+    last = None
+    while time.monotonic() < deadline:
+        try:
+            run_dir = scope_dir / (scope_dir / "latest-run").read_text().strip()
+            last = json.loads((run_dir / "status.json").read_text())
+            if predicate(last):
+                return last, run_dir
+        except (OSError, ValueError, KeyError):
+            pass
+        time.sleep(0.1)
+    raise AssertionError(f"timed out waiting for {what}; last status: {last}")
+
+
+@pytest.mark.skipif(not codex_available(need_bwrap=True), reason="needs codex and bwrap")
+def test_a_restored_thread_works_in_the_successors_clone(root):
+    """Issue 46 on the real build, as the pilot ran it: run A (the managed
+    runner, allocation ``disk/job111``) holds a two-turn thread started in its
+    clone ``disk/job111/mirrors/tok`` and seals; that allocation's disk is
+    gone; run B restores the generation in ``disk/job222`` from its own clone
+    with ``--app-server``.  Before any client touches the thread its stored
+    cwd is B's clone; a plain ``thread/resume`` (what the TUI's "Use session
+    directory" does) and one turn then recall both earlier messages and run
+    ``pwd; ls`` in B's clone, and the restored rollout bytes are a prefix of
+    the resumed one."""
+    disk = root / "disk"
+    clone_a, clone_b = disk / "job111" / "mirrors" / "tok", disk / "job222" / "mirrors" / "tok"
+    for d in (clone_a, clone_b):
+        d.mkdir(parents=True)
+    (clone_b / "SUCCESSOR_CLONE").write_text("here\n")
+    codex_home = root / "codex-home"
+    durable = root / "durable"
+    durable.mkdir()
+    scope = "4e" * 32
+    placeholder = ["-c", config_override("sqlite_home", PLACEHOLDER)]
+
+    def prefix(*flags):
+        return [sys.executable, str(RUNNER), "--scope", scope, "--durable-root", str(durable),
+                "--checkpoint-timeout", "40", *flags, "--"]
+
+    def sealed(local_root):
+        return _run_status(local_root, scope, lambda st: st["state"] == "exited"
+                           and st["checkpoint"]["state"] in ("idle", "failed")
+                           and (st.get("last_generation") or {}).get("class") == "sealed", "the sealed generation")
+
+    home_a = _AllocationHome(root, disk / "job111", codex_home=codex_home, trusted=[clone_a, clone_b])
+    (codex_home / "sessions").mkdir()
+    with FakeModel(reply_text="noted", exec_on="RUN_PWD", exec_cmd="pwd; ls") as model:
+        server = AppServer(home_a, model, clone_a, prefix=prefix(), extra_options=placeholder, label="predecessor")
+        server.start()
+        try:
+            server.initialize()
+            tid = server.thread_start()
+            status, run_a = _run_status(disk / "job111", scope, lambda st: st["state"] in ("placed", "misplaced"), "placement")
+            assert status["state"] == "placed", status
+            assert server.turn(tid, "MARKR_0 remember the word heron").ok
+            assert server.turn(tid, "MARKR_1 and the number 46").ok
+            local_a = rollout_of(run_a / "home", tid)
+            assert thread_row(run_a / "db", tid)["cwd"] == str(clone_a)
+            stop = server.stop(timeout=60)
+            assert stop.clean, (stop.steps, stop.exit_code, server.stderr_text())
+        finally:
+            if server.running():
+                server.kill()
+        status_a, _ = sealed(disk / "job111")
+        source = local_a.read_bytes()
+        selector = f"{run_a.name}/{status_a['last_generation']['name']}"
+        shutil.rmtree(disk / "job111")      # the successor's node never had the predecessor's disk
+
+        # What the launcher derives from the launch's own argv: the executable,
+        # the placeholder and the config overrides (here the fake provider).
+        helper = json.dumps(app_server_command(["codex", *placeholder, *model_options(model.port), "--yolo"]))
+        assert json.loads(helper)[-1] == "app-server" and "--yolo" not in helper
+        (disk / "job222").mkdir(exist_ok=True)
+        home_b = _AllocationHome(root, disk / "job222", codex_home=codex_home, trusted=[clone_a, clone_b])
+        server = AppServer(home_b, model, clone_b, prefix=prefix("--restore", selector, "--app-server", helper),
+                           extra_options=placeholder, label="successor")
+        server.start()
+        try:
+            server.initialize()
+            status_b, run_b = _run_status(disk / "job222", scope, lambda st: st["state"] in ("launched", "placed")
+                                          and "thread_cwd" in st, "the restored run")
+            record = status_b["thread_cwd"]
+            assert record["moved_count"] == 1 and record["failed"] == [] and record["skipped"] is None, record
+            assert record["moved"][0] == {"thread": tid, "from": str(clone_a), "to": str(clone_b), "fallback": False}
+            assert thread_row(run_b / "db", tid)["cwd"] == str(clone_b), "moved before any client resumed it"
+            before = model.count()
+            resumed = server.thread_resume(tid)
+            assert (resumed.get("cwd") or resumed["thread"].get("cwd")) == str(clone_b)
+            assert len(resumed["thread"]["turns"]) == 2
+            assert model.wait_for_requests(before, 1, timeout=1.0) == [], "neither the pass nor the resume called the model"
+            result = server.turn(tid, "RUN_PWD what did I ask you to remember?", timeout=90)
+            assert result.ok, result.completed
+            requests = model.requests_since(result.requests_before)
+            assert len(requests) == 2, [FakeModel.user_texts(r) for r in requests]
+            recalled = [t for t in FakeModel.user_texts(requests[0]) if t.startswith("MARKR_")]
+            assert recalled == ["MARKR_0 remember the word heron", "MARKR_1 and the number 46"]
+            assert {FakeModel.environment_cwd(r) for r in requests} == {str(clone_b)}
+            outputs = FakeModel.tool_outputs(requests[1])
+            assert len(outputs) == 1 and "exited with code 0" in outputs[0], outputs
+            assert str(clone_b) in outputs[0] and "SUCCESSOR_CLONE" in outputs[0], outputs
+            placed = rollout_of(run_b / "home", tid)
+            assert placed.read_bytes()[:len(source)] == source and placed.stat().st_size > len(source)
+            assert not list((codex_home / "sessions").rglob("*.jsonl")), "the shared sessions directory stays empty"
+            stop = server.stop(timeout=60)
+            assert stop.clean, (stop.steps, stop.exit_code, server.stderr_text())
+        finally:
+            if server.running():
+                server.kill()
+        status_b, _ = sealed(disk / "job222")
+        assert status_b["thread_cwd"]["moved_count"] == 1

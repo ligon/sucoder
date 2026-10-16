@@ -8,7 +8,7 @@ Everything here was exercised on Savio piecewise (the runner with real Codex, re
 
 * Prerequisites
 
-- The laptop's SuCoder checkout at =main= =b925a15= or later (pull it from the shared mirror); reinstall if =sucoder= is installed as a tool rather than run from the checkout.
+- The laptop's SuCoder checkout at =main= =b925a15= or later (with the issue 46 fix for the cwd behaviour in step 5) (pull it from the shared mirror); reinstall if =sucoder= is installed as a tool rather than run from the checkout.
 - A throwaway git repository on the laptop; nothing in it matters, and it must not be a repository whose history you care about.
 - On the cluster, the state of this writing: Codex =0.162.1= from the nvm Node 20 install, =bwrap= and the =sqlite3= CLI on the =savio4_htc= node images, Python 3.6 as =/usr/bin/python3= (the runner is written for it).
   A newer Codex is not verified against the storage profile; the runner stops Codex if any store opens outside the managed directory, so a layout change fails loudly rather than silently.
@@ -104,6 +104,9 @@ sucoder -T carleton-htc attach throwaway                          # the successo
 
 In the successor's TUI use =/resume=: the earlier thread is listed; pick it and ask what you discussed.
 The answer must come from the restored history, not from =~/.codex= (which never saw this conversation).
+Then ask Codex to run =pwd=: it must print the successor's clone, =/local/job<M>/mirrors/<name>=.
+Before Codex started, the runner moved every restored thread recorded in the predecessor's clone into this one through Codex's own =thread/resume=; =codex-state-status= shows it as =thread cwd: 1 moved to /local/job<M>/mirrors/<name>=, and the TUI resumes the thread there without asking which directory to use.
+If that line says =NOT moved= instead, the conversation is still intact: when the TUI asks for the working directory choose "Use current directory" (the default, "Use session directory", is the predecessor's clone, absent on this node, and every tool call there fails).
 Note the successor's node in =sessions=; a different node from the predecessor's is the stronger result, but the same node is not a failure.
 
 ** 6. End
@@ -146,3 +149,6 @@ The design forbids silent fallback, so every failure is loud and local.
 - Archiving a thread inside the managed TUI fails with an =EXDEV= error and changes nothing; leave threads unarchived.
 - Continuity across turnover needs either a clean exit or an unattended launch; an attended TUI that is never exited is not drained, and when its allocation ends the successor starts a fresh history with the old generations named in the log for an explicit =--codex-state-from RUN/GENERATION=.
 - Generations are per-run; a fresh history on the successor is a new run, and the old run's generations remain for explicit continuation.
+- A restored thread works in the successor's clone only when it was recorded in the predecessor's clone of the same mirror (or a directory inside it); a thread started elsewhere keeps its recorded directory, and an archived thread or one with an active goal or queued item is not moved before launch (=codex-state-status= names each case).
+  Choose "Use current directory" when the TUI asks, or start it as =codex resume ID -C <clone>=.
+- The TUI's =/resume= list filters by directory; a thread recorded elsewhere appears only after =Right= switches the filter to All.

@@ -1156,7 +1156,13 @@ restore stages and verifies the generation's stores locally, places
 each thread's rollout replica at its recorded path, refuses when the
 replica is shorter than the offset the databases record (the thread
 would show phantom turns), and reports active goals and queued items
-it finds rather than altering them; a restore that the durable
+it finds rather than altering them.  Before Codex starts, a restore
+also moves each thread recorded in this mirror's clone on another
+allocation (=<local_disk>/job<N>/mirrors/<token>=, or a directory
+inside it) into this allocation's clone through Codex's own
+=thread/resume=, so the resumed thread works in the successor's clone;
+any other working directory, an archived thread and a thread with
+pending work stay as recorded and are reported.  A restore that the durable
 filesystem does not answer within =max(120 s, 4 x
 checkpoint_timeout_seconds)= (=SUCODER_CODEX_STATE_RESTORE_TIMEOUT=
 overrides, at most a day) is reported =blocked= and refused rather
@@ -1173,8 +1179,9 @@ age and lag in bytes, with any anomaly; the last durable generation with
 its class and age, and a generation still unsynced when there is one;
 the checkpoint state, last outcome and dropped-trigger count; the
 active goals and queued items pending on the stores; the generation a
-restore came from; and the reason when the launch was refused or
-blocked.  It reads =latest-run=, =status.json= and =owner.json= under
+restore came from; how many restored threads were moved into this
+clone and which were left as recorded; and the reason when the launch
+was refused or blocked.  It reads =latest-run=, =status.json= and =owner.json= under
 =<local_disk>/job<ID>/state/codex/<scope>/=, on a confined target
 inside the allocation through =srun --overlap= (never compute-node
 SSH); =--json= prints =status.json= as recorded, =--dry-run= prints the

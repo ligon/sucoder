@@ -76,6 +76,35 @@ def with_sqlite_home_placeholder(command: Sequence[str]) -> List[str]:
     return [command[0], "-c", config_override("sqlite_home", PLACEHOLDER), *command[1:]]
 
 
+def app_server_command(command: Sequence[str]) -> List[str]:
+    """The bare ``codex app-server`` the runner runs before a restored launch.
+
+    ``command`` is the launch's Codex argv right after
+    :func:`with_sqlite_home_placeholder` (``codex -c sqlite_home=... ...``).
+    The result keeps the executable and the placeholder and carries the
+    launch's global config overrides (``-c``/``--config``, ``--enable``,
+    ``--disable``), because ``thread/resume`` loads the configuration the
+    thread was recorded with (its model provider, for one) and fails when an
+    override that defined it is missing; subcommands, prompts and other flags
+    are not app-server options and stay out.
+    """
+    if len(command) < 3 or PLACEHOLDER not in command[2]:
+        raise ValueError("the command does not start with the sqlite_home placeholder")
+    carried: List[str] = []
+    rest = list(command[3:])
+    i = 0
+    while i < len(rest):
+        arg = rest[i]
+        if arg in ("-c", "--config", "--enable", "--disable") and i + 1 < len(rest):
+            carried += [arg, rest[i + 1]]
+            i += 2
+            continue
+        if arg.startswith(("--config=", "--enable=", "--disable=")):
+            carried.append(arg)
+        i += 1
+    return [*command[:3], *carried, "app-server"]
+
+
 def validate_restore_selector(value: str) -> str:
     """``RUN/GENERATION`` exactly, or ValueError; the runner resolves it."""
     if not isinstance(value, str) or not RESTORE_SELECTOR.fullmatch(value):
@@ -161,6 +190,7 @@ def runner_command(
     restore: Optional[str] = None,
     fresh: bool = False,
     unattended: bool = False,
+    app_server: Optional[Sequence[str]] = None,
     python: str = "python3",
 ) -> List[str]:
     """The outermost command: the staged runner owning everything after ``--``.
@@ -173,9 +203,17 @@ def runner_command(
     stores refuses rather than resumes.  Nothing is selected across
     allocations automatically; a renewal passes the generation its
     predecessor's drain acknowledgement named.
+
+    ``app_server`` is the Codex app-server command (wrapped the way the
+    launch's own command is, carrying the sqlite_home placeholder once).  On a
+    restore or reuse the runner runs it once, before Codex starts, to move
+    threads recorded in another allocation's clone of this mirror into this
+    launch's clone through ``thread/resume`` (issue 46).
     """
     if restore is not None and fresh:
         raise ValueError("restore and fresh are mutually exclusive")
+    if app_server is not None and sum(PLACEHOLDER in arg for arg in app_server) != 1:
+        raise ValueError("the app-server command must carry the sqlite_home placeholder exactly once")
     argv = [
         python, runner_path,
         "--scope", scope,
@@ -184,6 +222,8 @@ def runner_command(
         "--checkpoint-minutes", str(int(checkpoint_minutes)),
         "--checkpoint-timeout", str(int(checkpoint_timeout_seconds)),
     ]
+    if app_server is not None:
+        argv += ["--app-server", json.dumps(list(app_server), separators=(",", ":"))]
     if restore is not None:
         argv += ["--restore", validate_restore_selector(restore)]
     elif fresh:
@@ -277,6 +317,29 @@ def describe_pending_work(pending: Any) -> str:
     return "; ".join(parts) if parts else "none"
 
 
+def describe_thread_cwd(record: Mapping[str, Any]) -> str:
+    """One line for the runner's ``thread_cwd`` record (issue 46): how many
+    restored threads were moved into this allocation's clone, how many could
+    not be and why, and what was left as recorded."""
+    clone = record.get("clone") or "this clone"
+    moved = record.get("moved_count")
+    if not isinstance(moved, int):
+        moved = len(record.get("moved") or [])
+    failed = record.get("failed") or []
+    parts = []
+    if moved:
+        parts.append(f"{moved} moved to {clone}")
+    if failed:
+        first = failed[0].get("error") if isinstance(failed[0], Mapping) else None
+        why = record.get("skipped") or (record.get("helper") or {}).get("error") or first or "see thread-cwd.log"
+        parts.append(f"{len(failed)} NOT moved ({why}); resume with \"Use current directory\" or codex resume -C {clone}")
+    elif record.get("skipped"):
+        parts.append(f"unchanged ({record['skipped']})")
+    if record.get("kept_counts"):
+        parts.append(f"left as recorded: {record['kept_counts']}")
+    return "thread cwd: " + ("; ".join(parts) if parts else "nothing to move")
+
+
 def format_status(status: Mapping[str, Any], *, run: str, owner: Optional[Mapping[str, Any]] = None) -> str:
     """The operator's one-line-per-fact summary of a run's ``status.json``.
 
@@ -355,6 +418,9 @@ def format_status(status: Mapping[str, Any], *, run: str, owner: Optional[Mappin
         lines.append(text + ")")
     if status.get("restore_ignored"):
         lines.append(f"restore ignored: {status['restore_ignored']} (this allocation's run was reused instead)")
+    cwd = status.get("thread_cwd")
+    if isinstance(cwd, Mapping):
+        lines.append(describe_thread_cwd(cwd))
 
     durable = status.get("durable") or owner.get("durable")
     if durable:

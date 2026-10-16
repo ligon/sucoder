@@ -28,8 +28,8 @@ from typer.testing import CliRunner
 
 from sucoder import cli, codex_state
 from sucoder.codex_state import (
-    PLACEHOLDER, CodexStateLaunch, check_durable_root, durable_root_for, runner_command, runner_source,
-    scope_id, validate_restore_selector, with_sqlite_home_placeholder,
+    PLACEHOLDER, CodexStateLaunch, app_server_command, check_durable_root, describe_thread_cwd, durable_root_for,
+    format_status, runner_command, runner_source, scope_id, validate_restore_selector, with_sqlite_home_placeholder,
 )
 from sucoder.config import AgentLauncher, CodexStateConfig, ConfigError, _parse_slurm_config
 from sucoder.mirror import MirrorError, MirrorManager
@@ -246,9 +246,16 @@ def test_launch_wraps_codex_in_the_staged_runner_with_the_placeholder_after_code
     assert launched[2:12] == [
         "--scope", scope_id("cluster", "coder", "/global/scratch/u/mirrors/sample"), "--placeholder", PLACEHOLDER,
         "--durable-root", "/global/scratch/u/mirrors/.sucoder-state", "--checkpoint-minutes", "10", "--checkpoint-timeout", "30"]
-    assert launched[12] == "--"
-    inner = launched[13:]
     marker = f'sqlite_home="{PLACEHOLDER}"'
+    # The bare app-server the runner uses to move restored threads into this
+    # clone (issue 46): the same executable and placeholder, no subcommand
+    # or prompt of the launch, the launch's config overrides kept.
+    assert launched[12] == "--app-server"
+    app_server = json.loads(launched[13])
+    assert app_server[:3] == ["codex", "-c", marker] and app_server[-1] == "app-server"
+    assert "remote-control" not in app_server and all(not a.startswith("developer_instructions") for a in app_server)
+    assert launched[14] == "--"
+    inner = launched[15:]
     if remote_control is None:
         assert inner.count(marker) == 1
         codex_at = inner.index("codex")
@@ -306,9 +313,10 @@ def test_launch_honours_a_configured_durable_root_and_cadence(tmp_path, monkeypa
     ctx.settings.remote.slurm.codex_state = CodexStateConfig(
         enabled=True, checkpoint_minutes=3, checkpoint_timeout_seconds=45, durable_root="/global/scratch/u/state/")
     _launch(manager, ctx)
-    assert _runner_argv(confined)[2:] == [
+    assert _runner_argv(confined)[2:10] == [
         "--placeholder", PLACEHOLDER, "--durable-root", "/global/scratch/u/state",
         "--checkpoint-minutes", "3", "--checkpoint-timeout", "45"]
+    assert _runner_argv(confined)[10] == "--app-server" and len(_runner_argv(confined)) == 12
 
 
 @pytest.mark.parametrize("root, message", [
@@ -834,3 +842,44 @@ def test_runner_places_a_real_codex_app_server(home, tmp_path):
             proc.kill()
         server.shutdown()
         server.server_close()
+
+
+# ----------------------------------------------------------------- issue 46: the app-server for restored threads' cwd
+
+def test_app_server_command_keeps_the_executable_placeholder_and_config_overrides_only():
+    marker = f'sqlite_home="{PLACEHOLDER}"'
+    command = with_sqlite_home_placeholder(
+        ["/opt/codex", "-c", 'model_provider="corp"', "--config", "model_providers.corp={name='corp'}", "--model", "gpt-x",
+         "--enable", "goals", "--disable=apps", "--config=x=1", "--yolo", "remote-control", "a prompt with -c inside"])
+    assert app_server_command(command) == [
+        "/opt/codex", "-c", marker, "-c", 'model_provider="corp"', "--config", "model_providers.corp={name='corp'}",
+        "--enable", "goals", "--disable=apps", "--config=x=1", "app-server"]
+    assert app_server_command(with_sqlite_home_placeholder(["codex"])) == ["codex", "-c", marker, "app-server"]
+    with pytest.raises(ValueError, match="placeholder"):
+        app_server_command(["codex", "-c", 'model="x"'])
+
+
+def test_runner_command_passes_the_app_server_before_the_selection():
+    kwargs = dict(durable_root="/g/mirrors/.sucoder-state", checkpoint_minutes=10, checkpoint_timeout_seconds=30)
+    helper = ["bash", "-lc", f"exec codex -c 'sqlite_home=\"{PLACEHOLDER}\"' app-server"]
+    argv = runner_command("/r.py", "ab" * 32, ["codex"], restore=SELECTOR, unattended=True, app_server=helper, **kwargs)
+    sep = argv.index("--")
+    assert argv[sep - 5:sep] == ["--app-server", json.dumps(helper, separators=(",", ":")), "--restore", SELECTOR, "--unattended"]
+    assert json.loads(argv[sep - 4]) == helper
+    with pytest.raises(ValueError, match="exactly once"):
+        runner_command("/r.py", "ab" * 32, ["codex"], app_server=["codex", "app-server"], **kwargs)
+
+
+def test_format_status_reports_the_thread_cwd_placement():
+    moved = {"clone": "/local/job2/mirrors/tok", "moved_count": 2, "moved": [{"thread": "t"}], "failed": [],
+             "kept_counts": "1 external", "skipped": None}
+    assert "thread cwd: 2 moved to /local/job2/mirrors/tok; left as recorded: 1 external" in format_status(
+        {"state": "placed", "thread_cwd": moved}, run="r")
+    failed = {"clone": "/local/job2/mirrors/tok", "moved_count": 0, "failed": [{"thread": "t", "error": "error: thread/resume: boom"}],
+              "helper": {"exit": 0, "error": None}, "skipped": None, "kept_counts": ""}
+    line = describe_thread_cwd(failed)
+    assert line == ('thread cwd: 1 NOT moved (error: thread/resume: boom); resume with "Use current directory" or '
+                    'codex resume -C /local/job2/mirrors/tok')
+    assert describe_thread_cwd({"clone": "/c", "skipped": "the state store records no thread cwd", "failed": []}) == (
+        "thread cwd: unchanged (the state store records no thread cwd)")
+    assert "thread cwd" not in format_status({"state": "placed"}, run="r")
