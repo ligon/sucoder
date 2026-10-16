@@ -1,25 +1,24 @@
-#+TITLE: Codex node-local state: 3a gap and 3e runner half merged; 3d on its branch under a second review-fix pass
+#+TITLE: Codex node-local state: Slices 3a gap, 3d and 3e runner half merged; 3e transfer records next
 #+DATE: 2026-10-16
-#+STATUS: IN PROGRESS
+#+STATUS: COMPLETE
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
 * Where things stand
 
-=main= is =26d79c4=: the human's merge of Slices 0-3c (=3652d05=), the 3a gap (=fdb2de4=, merged as =97912f4=) and the Slice 3e runner half (=6fcf18e= by Codex, review fixes =178ee47= by Claude Opus, record =7e4054b=, merged as =26d79c4=); full suite on merged =main= 1525 passed.
-The design record (=docs/codex-local-state.org=, end of the Slice 2 record) carries the 3e entry with its residuals; transfer records (offer/claim/revoke) are deliberately not in it.
-
-=feat/codex-state-3d= (=c2fa924=) is Slice 3d, renewal with acknowledged handoff: =9f74f35= code, =b1adb60= three review gaps, =355fad8= Codex's fix pass for its own read-only review (F1-F4, F7, F8, F10), records =95e38fc= and =c2fa924=; full suite on the branch 1586 passed; mypy at the baseline (72, all pre-existing).
-A Codex confirmation review of =c2fa924= confirmed F1, F2, F3, F7 and F10 resolved, F4 and F8 partly, and found six remaining or new defects; a second Codex fix pass for all six is running in the worktree =/local/job40017774/mirrors/SuCoder-3d= as this note is written (brief: liveness probe errors must be pending not absence; zombie states and the runner's start time; =release= must cancel the second job before forgetting the record; a =ready= record reconciled during HOLD from the renew probe; the no-status bound measured from the first RUNNING observation; the unconfined attach must not overwrite the owner record).
-Merging 3d into =main= conflicts only in =docs/codex-local-state.org= (both branches insert their record entry before "** Corrections to the record"; keep both, 3d before 3e); =cli.py= auto-merges.
+=main= is =bb6242f=: the human's merge of Slices 0-3c (=3652d05=), then this session's three merges -- the 3a gap (=fdb2de4=, merged as =97912f4=), the Slice 3e runner half (=6fcf18e= by Codex, review fixes =178ee47= by Claude Opus, merged as =26d79c4=) and Slice 3d (=9f74f35=, =b1adb60=, Codex fix passes =355fad8= and =3ce05f3=, merged as =bb6242f=, the record conflict resolved by keeping the 3d entry before the 3e entry).
+Full suite on merged =main=: 1667 passed and one failure, =test_a_real_codex_thread_resumes_from_a_restored_generation=, which passes alone (3.9 s) and times out its 20 s status wait only when the shared node is loaded (load average 7 from other users' Codex processes during that run); the run before the 3d merge was 1525 passed, the 3d branch alone 1621 passed.
+The design record (=docs/codex-local-state.org=, end of the Slice 2 record) carries the 3d entry with its review-fix paragraphs and residuals, then the 3e entry with its residuals.
+Nothing is enabled on any real mirror; =slurm.codex_state= stays off by default.
+The feature branches are merged and published; their worktrees on this job's local disk were removed.
 
 * Next concrete actions
 
-1. When the second 3d pass reports: run the full suite on the worktree outside the sandbox, commit with its drafted =.codex-commit-msg.txt= plus the Codex attribution trailer, fill =<sha>= in the record, merge =main <- feat/codex-state-3d= (resolve the record conflict as above), full suite on merged =main=, then a Codex read-only confirmation if allowance permits.
-2. Slice 3e's second half: transfer records (offer at a renew-mode seal, claim at restore binding the attempt, revoke before a drained runner restarts) and =--attempt= through =runner_command=; the 3e residuals (startup-result file independent of =latest-run=; backfill of pins for children restored before 3e; retirement cap per cycle; per-allocation tmux socket for colocated jobs; attempt id in sbatch =--comment=).
-3. Slice 4 pilot, as before.
-4. Clean-up when the human agrees: the trial durable root =/global/scratch/fsa/fc_jevons/ligon/.sucoder-state-trial= (~160 MB).
-5. Release this slice (job 40017774) with =sucoder release= once 3d is merged; the worktrees are disposable (every commit is published; only an unfinished fix pass would be lost, and it is re-runnable from the briefs' content summarised above).
+1. Slice 3e's second half: transfer records (offer at a renew-mode seal, claim at restore binding the attempt, revoke before a drained runner restarts) and =--attempt= through =runner_command=; the 3d residuals recorded in the design (a startup-result file the runner writes independently of =latest-run=; the attempt id in sbatch =--comment= so a lost =sbatch= reply can be reconciled; a per-allocation tmux socket for two confined jobs of one mirror on one node) and the 3e residuals (backfill of pins for children restored before 3e; a retirement cap per cycle).
+2. Optionally one more Codex read-only confirmation of =3ce05f3= (the second fix pass was verified by tests, not re-reviewed); the first confirmation found two new P1s in the first pass, so a third look is cheap insurance before the pilot.
+3. Slice 4 pilot on one disposable mirror, as before; =sucoder renew= now drains and continues a managed owner, so the pilot can exercise a real turnover.
+4. Clean-up when the human agrees: the trial durable root =/global/scratch/fsa/fc_jevons/ligon/.sucoder-state-trial= (~160 MB, five dogfood runs added this session).
+5. Release this slice (job 40017774) with =sucoder release=: no work is pending here and every commit is published.
 
 * Dogfooding findings (also in the 3d record)
 
