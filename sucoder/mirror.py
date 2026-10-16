@@ -2897,11 +2897,38 @@ class MirrorManager:
             return 0
         if state != "RUNNING":
             # Queued but no node yet: an `srun --overlap` attach would
-            # block until it starts.  Surface and let the operator
-            # attach once it is up.
+            # block until it starts. Read the scheduler's actual time
+            # limit: today's config/--time may differ from the queued job.
+            details = (
+                f"  Check its pending reason and time limit with "
+                f"`squeue --job {job_id} -o '%i %T %l %R'`."
+            )
+            try:
+                result = self.executor.run_agent(
+                    ["squeue", "--job", str(job_id), "--noheader",
+                     "-o", "%r|%l|%S"],
+                    check=False, capture_output=True, show_progress=False,
+                )
+                fields = result.stdout.strip().split("|", 2)
+                if result.returncode == 0 and len(fields) == 3:
+                    reason = _pending_reason(fields[0])
+                    limit = fields[1].strip()
+                    start = _start_estimate(fields[2])
+                    details = (
+                        (f"  Pending reason: {reason}." if reason else "")
+                        + (f"  Queued job's time limit: {limit}." if limit else "")
+                        + (f"  Slurm estimates a start at {start}." if start else "")
+                        + _pending_hint(reason, limit or None, job_id)
+                    ) or details
+            except Exception:  # noqa: BLE001 -- diagnostics must not enable resubmission
+                pass
             raise MirrorError(
                 f"Confined SLURM job {job_id} is {state} "
-                "(queued, not yet running).  Attach once it starts "
+                "(queued, not yet running)."
+                + details
+                + "  Reusing an existing job leaves its time limit unchanged; "
+                "--time and config changes apply only to newly submitted jobs. "
+                " Attach once it starts "
                 "with `sucoder attach`."
             )
         # The agent may already have exited (the keeper holds the job

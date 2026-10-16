@@ -1836,6 +1836,78 @@ def test_launch_confined_reuse_pending_does_not_attach(tmp_path, monkeypatch):
     )
 
 
+@pytest.mark.parametrize("source", ["record", "scheduler"])
+@pytest.mark.parametrize("diagnostic", [
+    "ReqNodeNotAvail, Reserved for maintenance|12-00:00:00|Unknown",
+    "Priority|12:00:00|2026-10-20T08:00:00",
+    "None|12:00:00|N/A",
+    "malformed",
+    "failed",
+    "exception",
+])
+def test_reused_pending_job_explains_scheduler_block_and_unchanged_time(
+    tmp_path, monkeypatch, source, diagnostic,
+):
+    from sucoder.session import RemoteSession
+
+    manager, ctx = _confined_manager(tmp_path, monkeypatch)
+    # Today's override is 12 hours; the existing job can still ask for 12 days.
+    ctx.settings.remote.slurm.time = "12:00:00"
+    if source == "record":
+        sess = RemoteSession.load("sample")
+        sess.slurm_job_id = 4242
+        sess.save()
+    calls = []
+    responder = _confined_responder(
+        calls, live_state="PENDING" if source == "record" else "",
+        by_name="4242|PENDING|savio4_htc|co_carleton|carleton_htc4_normal",
+    )
+
+    def run_agent(args, **kwargs):
+        a = list(args)
+        if a == ["squeue", "--job", "4242", "--noheader", "-o", "%r|%l|%S"]:
+            calls.append({"args": a})
+            assert kwargs["check"] is False
+            assert kwargs["show_progress"] is False
+            if diagnostic == "exception":
+                raise OSError("SSH unavailable")
+            return CommandResult(
+                requested_args=a, executed_args=a, stdout=diagnostic,
+                stderr="SSH unavailable" if diagnostic == "failed" else "",
+                returncode=255 if diagnostic == "failed" else 0,
+            )
+        return responder(args, **kwargs)
+
+    manager.executor.run_agent = run_agent
+    with pytest.raises(MirrorError, match="queued, not yet running") as exc:
+        manager._launch_confined(
+            ctx, ["claude"], remote_prelude_text=None,
+            prelude_sentinel="__X__", env=None, detached=False,
+        )
+    message = str(exc.value)
+    assert "--time and config changes apply only to newly submitted jobs" in message
+    assert "sucoder attach" in message
+    if diagnostic.startswith("ReqNodeNotAvail"):
+        assert "Pending reason: ReqNodeNotAvail, Reserved for maintenance" in message
+        assert "Queued job's time limit: 12-00:00:00" in message
+        assert "maintenance reservation" in message
+        assert "scontrol update jobid=4242 TimeLimit=" in message
+        assert "Unknown" not in message
+    elif diagnostic.startswith("Priority"):
+        assert "Pending reason: Priority" in message
+        assert "Queued job's time limit: 12:00:00" in message
+        assert "Slurm estimates a start at 2026-10-20T08:00:00" in message
+        assert "maintenance" not in message
+    elif diagnostic.startswith("None"):
+        assert "Queued job's time limit: 12:00:00" in message
+        assert "Pending reason:" not in message
+        assert "N/A" not in message
+    else:
+        assert "squeue --job 4242" in message
+    assert RemoteSession.load("sample").slurm_job_id == 4242
+    assert not any(c["args"][0] in ("sbatch", "srun", "scontrol") for c in calls)
+
+
 def test_launch_confined_reuse_session_not_ready_still_attaches(tmp_path, monkeypatch):
     """Reusing a RUNNING job whose tmux session isn't up warns but still
     attaches (unlike a fresh launch, which raises) -- the agent may simply

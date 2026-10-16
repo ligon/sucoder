@@ -1301,7 +1301,11 @@ sucoder --time 5-00:00:00 -T carleton-htc collaborate SuCoder
 #+end_src
 
 It takes SLURM's own formats (=36:00:00=, =5-00=, =5-00:00:00=) and needs
-a SLURM target.  A job that is already queued can be shortened in place
+a SLURM target.  Reusing an existing job leaves its time limit unchanged:
+=--time= and config changes apply only to newly submitted jobs.  When
+reusing a pending confined job, the launcher reports its current time
+limit and pending reason, with advice for maintenance or wall-time limits.
+A job that is already queued can be shortened in place
 from a login node: =scontrol update jobid=<id> TimeLimit=5-00:00:00=.
 
 *** Deadline watchdog and WIP snapshots
