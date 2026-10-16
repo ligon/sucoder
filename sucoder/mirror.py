@@ -15,7 +15,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Literal, Mapping, NamedTuple, NoReturn, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Literal, Mapping, NamedTuple, NoReturn, Optional, Sequence, Tuple
 
 import yaml
 
@@ -23,6 +23,31 @@ from .remote_bootstrap import INITIALIZE_MIRROR_SH
 from .agent_mode import (
     SERVICE_LAUNCH_PROBE_SH, codex_remote_command, config_override,
     service_launch, service_marker,
+)
+from .codex_state import (
+    DRAIN_ACK as _STATE_DRAIN_ACK,
+    DRAIN_EXITED_STATES as _STATE_DRAIN_EXITED_STATES,
+    DRAIN_FINAL_CLASSES as _STATE_DRAIN_FINAL_CLASSES,
+    DRAIN_MODES as _STATE_DRAIN_MODES,
+    DRAIN_NO_OWNER_STATES as _STATE_DRAIN_NO_OWNER_STATES,
+    DRAIN_POLL_SECONDS as _STATE_DRAIN_POLL_SECONDS,
+    RUN_ID as _STATE_RUN_ID,
+    STATUS_FILES as _STATE_STATUS_FILES,
+    CodexStateDrain as _CodexStateDrain,
+    CodexStateLaunch as _CodexStateLaunch,
+    CodexStateStatus as _CodexStateStatus,
+    check_durable_root as _state_check_durable_root,
+    describe_drain_ack as _state_describe_drain_ack,
+    drain_request_script as _state_drain_request_script,
+    drain_request_text as _state_drain_request_text,
+    new_drain_nonce as _state_new_drain_nonce,
+    durable_root_for as _state_durable_root_for,
+    local_scope_dir as _state_local_scope_dir,
+    runner_command as _state_runner_command,
+    runner_source as _state_runner_source,
+    scope_id as _state_scope_id,
+    validate_restore_selector as _state_validate_restore_selector,
+    with_sqlite_home_placeholder as _with_sqlite_home_placeholder,
 )
 from .codex_remote import build_remote_command
 
@@ -332,6 +357,77 @@ def _build_sbatch_command(slurm, *, job_name, log_path, script_path, nodelist=No
         parts.append(f"--nodelist={nodelist}")
     parts.append(script_path)
     return parts
+
+
+def _selection_over_live_session(mirror_name: str, selection: str, live: str) -> MirrorError:
+    """The refusal a managed Codex history selection gets over a running session.
+
+    ``selection`` is the option as the operator spelled it
+    (:attr:`CodexStateLaunch.selection`); ``live`` names what is running
+    (``job N`` or ``tmux sucoder-<mirror>``).  One constructor, so the early
+    probe and every later decision point word it identically.
+    """
+    return MirrorError(
+        f"a history selection ({selection}) applies to a new managed launch only; "
+        f"{mirror_name} already has a running session ({live}): "
+        "release it first, or launch without a selection to attach."
+    )
+
+
+
+class _CodexStateRoute:
+    """How the launcher reaches one allocation's managed Codex state files.
+
+    One command per file, inside the allocation: on a confined target
+    through ``srun --jobid=J --overlap`` (the route attach, release and the
+    session probes take; never compute-node SSH outside the cgroup),
+    otherwise through the executor, which already targets the compute
+    node.  ``commands`` records every argv sent, in order, for the report.
+    """
+
+    def __init__(self, executor: CommandExecutor, job_id: int, *, confined: bool) -> None:
+        self.executor = executor
+        self.job_id = job_id
+        self.confined = confined
+        self.commands: List[List[str]] = []
+
+    def argv_for(self, command: Sequence[str]) -> List[str]:
+        if self.confined:
+            return ["srun", f"--jobid={self.job_id}", "--overlap", *command]
+        return list(command)
+
+    def run(self, command: Sequence[str], *, what: str) -> CommandResult:
+        """Run *command* on the route; a failure to run it, or a non-zero exit, is a MirrorError naming *what*."""
+        argv = self.argv_for(command)
+        self.commands.append(argv)
+        try:
+            result = self.executor.run_agent(argv, check=False, capture_output=True)
+        except (CommandError, OSError) as exc:
+            raise MirrorError(f"Could not {what} for job {self.job_id}: {exc}") from exc
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            raise MirrorError(
+                f"Could not {what} for job {self.job_id} (exit {result.returncode}): {stderr or 'no error output'}"
+            )
+        return result
+
+    def read(self, path: str) -> Optional[str]:
+        """The file's text; None when it does not exist; MirrorError otherwise."""
+        argv = self.argv_for(["cat", path])
+        self.commands.append(argv)
+        try:
+            result = self.executor.run_agent(argv, check=False, capture_output=True)
+        except (CommandError, OSError) as exc:
+            raise MirrorError(f"Could not read {path} for job {self.job_id}: {exc}") from exc
+        if result.returncode == 0:
+            return str(result.stdout or "")
+        stderr = (result.stderr or "").strip()
+        if "No such file or directory" in stderr:
+            return None
+        raise MirrorError(
+            f"Could not read {path} for job {self.job_id} (exit {result.returncode}): "
+            f"{stderr or 'no error output'}"
+        )
 
 
 class MirrorManager:
@@ -2200,15 +2296,26 @@ class MirrorManager:
         return result.stdout.strip()
 
     @staticmethod
-    def _build_tmux_launch_command(tmux_name, agent_cmd_str, *, detached):
+    def _build_tmux_launch_command(
+        tmux_name: str, agent_cmd_str: str, *, detached: bool,
+        selection: Optional[str] = None,
+    ) -> List[str]:
         """Build the ``tmux new-session`` command that wraps the agent.
 
         ``-A`` attaches-or-creates the session; the auto-renew loop adds
         ``-d`` (detached) to relaunch on a fresh node WITHOUT attaching a
         terminal, leaving a session the human can ``sucoder attach`` to.
         ``-A -d`` is idempotent when the session already exists.
+
+        A managed Codex history ``selection`` drops ``-A``: the selection
+        rides in this command's argv, and attaching to a session that
+        already exists would silently discard it.  Without ``-A`` tmux
+        refuses with ``duplicate session`` (exit 1) instead, which
+        :meth:`launch_agent` turns into the refusal that names the session.
         """
-        session_flags = ["-A", "-d"] if detached else ["-A"]
+        session_flags = [] if selection is not None else ["-A"]
+        if detached:
+            session_flags.append("-d")
         return [
             "tmux", "new-session", *session_flags,
             "-s", tmux_name, agent_cmd_str,
@@ -2764,15 +2871,28 @@ class MirrorManager:
         return match_target(row, {name: remote}, [name]) == name
 
     def _reuse_confined_job(
-        self, job_id: int, state: str, session_name: str, socket: str,
-        detached: bool,
+        self, ctx: MirrorContext, job_id: int, state: str, session_name: str,
+        socket: str, detached: bool, *, selection: Optional[str] = None,
     ) -> int:
         """Attach to an already-live confined job instead of submitting one.
 
         Shared by both reuse paths -- the one that reads the job id from the
         session record and the one that recovers it from ``squeue`` when the
         record has lost it -- so they cannot drift apart.
+
+        A managed Codex history ``selection`` is refused here, never
+        attached: it rides only in the argv of a launch that starts the
+        runner, and this job is already running something.  The refusal
+        precedes the detached early return on purpose: a selected
+        ``detached=True`` launch would otherwise report success without the
+        runner ever starting.  :meth:`_refuse_selection_over_live_session`
+        asks the same question before anything is staged; this is the
+        decision itself, so a probe that failed or raced there (``squeue
+        --name`` answering empty, a job that appeared in between) cannot end
+        in a silent reuse.
         """
+        if selection is not None:
+            raise _selection_over_live_session(ctx.settings.name, selection, f"job {job_id}")
         if detached:
             return 0
         if state != "RUNNING":
@@ -3024,6 +3144,8 @@ class MirrorManager:
         prelude_sentinel: str,
         env: Optional[Mapping[str, str]],
         detached: bool,
+        selection: Optional[str] = None,
+        codex_state_scope: Optional[str] = None,
     ) -> int:
         """Submit + (for interactive) attach a confined sbatch launch.
 
@@ -3031,6 +3153,16 @@ class MirrorManager:
         wrap) -> stage batch script to NFS -> ``sbatch`` -> persist id
         IMMEDIATELY -> bounded RUNNING-poll -> persist node -> confirm the
         tmux session -> attach (interactive) or return (detached / renew).
+
+        ``selection`` (a managed Codex history selection, as spelled on the
+        command line) makes both reuse paths refuse instead of attach -- the
+        selection rides in ``command`` and only a job this launch submits
+        runs it; see :meth:`_reuse_confined_job`.
+
+        ``codex_state_scope`` is the managed Codex state scope digest the
+        launch decided (``_codex_state_launch(ctx).scope``) or None; the
+        staged deadline timer uses it to request a capture from the runner
+        at each warning (``slurm_timer.build_timer_script``).
 
         Post-session hooks (``_auto_commit_agent_skills`` / ``_maybe_run_audit``)
         are intentionally NOT run: detaching tmux returns rc=0 while the
@@ -3053,7 +3185,8 @@ class MirrorManager:
                     sess.slurm_job_id, state, ctx.settings.name,
                 )
                 return self._reuse_confined_job(
-                    sess.slurm_job_id, state, session_name, socket, detached,
+                    ctx, sess.slurm_job_id, state, session_name, socket, detached,
+                    selection=selection,
                 )
 
         # Second line of defence, keyed on the scheduler rather than on the
@@ -3089,7 +3222,8 @@ class MirrorManager:
             sess.service_launch = None  # Adopted job's mode is discovered from tmux.
             sess.save()
             return self._reuse_confined_job(
-                job_id, state, session_name, socket, detached,
+                ctx, job_id, state, session_name, socket, detached,
+                selection=selection,
             )
 
         # Build the in-tmux command and wrap in `bash -lc` so the agent
@@ -3139,7 +3273,9 @@ class MirrorManager:
         # the first staged file is still the batch script.
         if local_disk_root:
             # Snapshot the working clone (runtime path: the job id is not
-            # known yet), not the shared mirror.
+            # known yet), not the shared mirror.  A managed Codex launch
+            # (scope given; managed state is local-disk only) also has
+            # each warning request a capture from the staged runner.
             timer_script = build_timer_script(
                 mirror_token=safe,
                 tmux_session=session_name,
@@ -3147,6 +3283,8 @@ class MirrorManager:
                 snapshot_dir_shell=work_path_shell(local_disk_root, safe),
                 snapshot_minutes=slurm.wip_snapshot_minutes,
                 timer_scope=timer_identity(ctx.settings.name, self.target_name),
+                codex_state_scope=codex_state_scope,
+                local_disk_root=local_disk_root,
             )
         else:
             timer_script = build_timer_script(
@@ -3270,6 +3408,8 @@ class MirrorManager:
         env_override: Optional[Mapping[str, str]] = None,
         supports_inline_prompt: Optional[bool] = None,
         codex_remote_control: Optional[str] = None,
+        codex_state_from: Optional[str] = None,
+        codex_state_fresh: bool = False,
         detached: bool = False,
     ) -> int:
         """Launch the configured agent command within the mirror working tree.
@@ -3278,6 +3418,12 @@ class MirrorManager:
         agent is started in a *detached* tmux session and this returns
         immediately instead of attaching a terminal; post-session hooks
         are skipped because the agent is still running.
+
+        ``codex_state_from`` (``RUN/GENERATION``) and ``codex_state_fresh``
+        select which managed Codex state history the staged runner continues
+        (docs/codex-local-state.org); they are mutually exclusive and only
+        meaningful for a Codex launch on a target with ``slurm.codex_state``
+        enabled.
         """
         launcher = ctx.agent_launcher
         base_command = list(command_override) if command_override else list(launcher.command)
@@ -3325,6 +3471,22 @@ class MirrorManager:
         remote_enabled = remote_mode in ("terminal", "server")
         if remote_enabled and self._detected_agent_type != AgentType.CODEX:
             raise MirrorError("Remote control requires --harness codex (or --agent codex).")
+        # Managed Codex state (docs/codex-local-state.org): decided here, applied
+        # at two points below -- the sqlite_home placeholder at the argv stage,
+        # before nvm/installer wrapping, and the staged runner outermost.
+        state = self._codex_state_launch(
+            ctx, restore=codex_state_from, fresh=codex_state_fresh,
+        )
+        # The history selection as the operator spelled it, or None.  It
+        # rides in the argv of the command this launch starts, so every
+        # decision below that would attach to a running session instead of
+        # starting one carries it and refuses: the confined reuse paths
+        # (_reuse_confined_job), the service path (_launch_remote_service)
+        # and the TUI's tmux new-session, built without -A.  The probe here
+        # is the early, read-only form of the same refusal.
+        selection = state.selection if state is not None else None
+        if selection is not None:
+            self._refuse_selection_over_live_session(ctx, selection)
 
         model_for_flag, provider_env = self._provider_launch_environment(
             effective_model, self._detected_agent_type,
@@ -3372,6 +3534,11 @@ class MirrorManager:
             command = self._apply_agent_flag_templates(
                 command, ctx, launcher, templates, model=model_for_flag,
             )
+        if state is not None:
+            try:
+                command = _with_sqlite_home_placeholder(command)
+            except ValueError as exc:
+                raise MirrorError(str(exc)) from exc
 
         # Inject system prompt via native flag if available, otherwise
         # trailing text.
@@ -3459,6 +3626,18 @@ class MirrorManager:
 
         if service_context:
             command = self._wrap_codex_service_context(ctx, command, service_context)
+        if state is not None:
+            # Outermost: the runner owns the process, resolves the node-local
+            # root at run time, substitutes the placeholder, verifies
+            # placement, replicates rollouts and captures generations under
+            # the durable root; it refuses rather than fall back.
+            command = _state_runner_command(
+                self._stage_codex_state_runner(ctx), state.scope, command,
+                durable_root=state.durable_root,
+                checkpoint_minutes=state.checkpoint_minutes,
+                checkpoint_timeout_seconds=state.checkpoint_timeout_seconds,
+                restore=state.restore, fresh=state.fresh,
+            )
 
         # Environment values may include API keys resolved from pass. Stage
         # them over stdin in an agent-owned 0600 file, then source and unlink
@@ -3469,6 +3648,9 @@ class MirrorManager:
             command = self._wrap_with_environment_file(command, environment_path)
             env_to_use = None
 
+        # The TUI tmux session a selected launch must create itself (its
+        # new-session runs without -A); None on every other path.
+        exclusive_tmux: Optional[str] = None
         if ctx.is_remote:
             if ctx.confined:
                 # A confined target launches via ``sbatch`` so the agent runs
@@ -3487,6 +3669,8 @@ class MirrorManager:
                     prelude_sentinel=prelude_sentinel,
                     env=None,
                     detached=detached,
+                    selection=selection,
+                    codex_state_scope=state.scope if state is not None else None,
                 )
 
             # Wrap in tmux so the session survives SSH disconnects, with the
@@ -3511,10 +3695,13 @@ class MirrorManager:
             if self._service_launch is not None:
                 return self._launch_remote_service(
                     ctx, tmux_name, agent_cmd_str, launch_cwd, detached=detached,
+                    selection=selection,
                 )
             command = self._build_tmux_launch_command(
-                tmux_name, agent_cmd_str, detached=detached,
+                tmux_name, agent_cmd_str, detached=detached, selection=selection,
             )
+            if selection is not None:
+                exclusive_tmux = tmux_name
 
         self.logger.info("Starting agent command: %s", shlex.join(command))
 
@@ -3534,6 +3721,27 @@ class MirrorManager:
                 env=env_to_use,
                 capture_output=False,
             )
+
+            if result.returncode == 1 and exclusive_tmux is not None:
+                # new-session without -A: exit 1 is tmux's own status for
+                # refusing to create (``duplicate session``), never the
+                # agent's (the client exits 0 on detach and on session end),
+                # and the executor passes the remote status through -- a
+                # transport drop after a successful create is ssh's 255 and
+                # keeps the plain exit-code error below.  tmux's stderr went
+                # to the terminal, so ask whether the session exists now:
+                # then another launch won the race the pre-staging probe
+                # cannot close.  ``=`` asks for the exact name; a bare
+                # target also matches by prefix.
+                probe = self.executor.run_agent(
+                    ["tmux", "has-session", "-t", f"={exclusive_tmux}"],
+                    check=False, capture_output=True,
+                )
+                if probe.returncode == 0:
+                    assert selection is not None   # exclusive_tmux is set only with one
+                    raise _selection_over_live_session(
+                        ctx.settings.name, selection, f"tmux {exclusive_tmux}",
+                    )
 
             # Post-session hooks belong to an *ended* attached session.
             # A detached relaunch (auto-renew) leaves the agent running,
@@ -3568,6 +3776,353 @@ class MirrorManager:
         path = self._write_context_prelude_file(ctx, source)
         return ["python3", path, *command]
 
+    def _codex_state_launch(
+        self, ctx: MirrorContext, *, restore: Optional[str] = None, fresh: bool = False,
+        agent_type: Optional[AgentType] = None,
+    ) -> Optional[_CodexStateLaunch]:
+        """What the staged runner is told, or None when this launch is unmanaged.
+
+        Unmanaged: the target has ``slurm.codex_state`` off, or the detected
+        agent is not Codex; a history selection in either case is an error
+        rather than silently ignored.  ``agent_type`` stands in for the
+        detected one when nothing is being launched (``codex_state_status``
+        asks about Codex state on a manager that has launched nothing, so
+        there is no detection to read).  Enabled state without local-disk
+        tiering on this launch is an error too: the databases need the
+        node-local root the working clone uses, and the design forbids a
+        silent fall back to shared placement.  The durable root is the
+        configured one or the private sibling of the shared mirror root, and
+        it may neither nest with the mirror repository nor sit on local disk.
+        """
+        if restore is not None and fresh:
+            raise MirrorError(
+                "--codex-state-from and --codex-state-fresh are mutually exclusive: "
+                "choose one generation to continue from or a fresh history, not both."
+            )
+        selected = restore is not None or fresh
+        remote = ctx.settings.remote
+        slurm = remote.slurm if remote is not None else None
+        state = slurm.codex_state if slurm is not None else None
+        if state is None or not state.enabled:
+            if selected:
+                raise MirrorError(
+                    "--codex-state-from/--codex-state-fresh select managed Codex state, "
+                    f"which is not enabled for this target (slurm.codex_state on {ctx.settings.name})."
+                )
+            return None
+        detected = agent_type if agent_type is not None else self._detected_agent_type
+        if detected != AgentType.CODEX:
+            if selected:
+                raise MirrorError(
+                    "--codex-state-from/--codex-state-fresh apply to a Codex launch only "
+                    "(use --harness codex or --agent codex)."
+                )
+            return None
+        assert remote is not None
+        local_disk_root = getattr(self.executor, "local_disk_root", None) or None
+        if not local_disk_root:
+            raise MirrorError(
+                "slurm.codex_state is enabled for this target but local-disk tiering is "
+                "off for this launch; managed Codex state needs the node-local root and "
+                "will not fall back to shared placement. Enable local_disk or disable codex_state."
+            )
+        try:
+            if restore is not None:
+                restore = _state_validate_restore_selector(restore)
+            user = getattr(remote, "remote_user", None) or getattr(self.executor, "agent_user", None) or ""
+            # The resolved shared mirror path (``~`` expanded on the target, not
+            # realpath'd), so two targets spelling the same storage differently
+            # share a scope and the derived durable root is its sibling.
+            mirror_path = self._absolute_for_codex_state(
+                ctx, "shared mirror path", self._resolve_remote_path(ctx),
+            )
+            durable_root = self._absolute_for_codex_state(
+                ctx, "durable root", _state_check_durable_root(
+                    _state_durable_root_for(mirror_path, state.durable_root), mirror_path, local_disk_root,
+                ),
+            )
+        except ValueError as exc:
+            raise MirrorError(str(exc)) from exc
+        return _CodexStateLaunch(
+            scope=_state_scope_id(remote.gateway, user, mirror_path),
+            durable_root=durable_root,
+            checkpoint_minutes=state.checkpoint_minutes,
+            checkpoint_timeout_seconds=state.checkpoint_timeout_seconds,
+            restore=restore,
+            fresh=fresh,
+        )
+
+    def codex_state_status(self, ctx: MirrorContext, job_id: int) -> _CodexStateStatus:
+        """What the managed runner recorded for *job_id*'s allocation.
+
+        The operator surface of docs/codex-local-state.org: ``latest-run``
+        under the scope directory names the run this allocation placed, and
+        that run's ``status.json`` and ``owner.json`` carry its mode, state,
+        replica, last durable generation, checkpoint and pending work.  One
+        ``cat`` per file: on a confined target inside the allocation through
+        ``srun --jobid=J --overlap`` (the route attach, release and the
+        session probes take; never compute-node SSH outside the cgroup),
+        otherwise through the executor, which already targets the compute
+        node.  A refused or never-placed launch writes no ``latest-run``,
+        reported as ``run=None`` rather than as an error; a ``status.json``
+        missing behind a present ``latest-run``, unreadable JSON, or a read
+        that fails is a MirrorError naming the path.  A dry run cannot learn
+        the run id: it sends the first read (the executor logs it) and
+        returns the two it would send with ``<run>`` in place.  The scope is
+        the launch's, so a target whose managed state is misconfigured is
+        refused here the way a launch is.
+        """
+        launch = self._codex_state_launch(ctx, agent_type=AgentType.CODEX)
+        if launch is None:
+            raise MirrorError(
+                f"slurm.codex_state is not enabled for mirror {ctx.settings.name}; "
+                "there is no managed Codex state to report."
+            )
+        # _codex_state_launch has already refused an unset local-disk root.
+        local_disk_root = str(getattr(self.executor, "local_disk_root", None) or "")
+        scope_dir = _state_local_scope_dir(local_disk_root, job_id, launch.scope)
+        route = _CodexStateRoute(self.executor, job_id, confined=ctx.confined)
+        commands = route.commands
+        argv_for = route.argv_for
+        read = route.read
+
+        def parse(path: str, text: str) -> dict:
+            try:
+                data = json.loads(text)
+            except ValueError as exc:
+                raise MirrorError(f"{path} for job {job_id} is not readable JSON: {exc}") from exc
+            if not isinstance(data, dict):
+                raise MirrorError(f"{path} for job {job_id} does not hold a JSON object.")
+            return data
+
+        latest_path = f"{scope_dir}/latest-run"
+        latest = read(latest_path)
+        if self.executor.dry_run:
+            for name in _STATE_STATUS_FILES:
+                commands.append(argv_for(["cat", f"{scope_dir}/<run>/{name}"]))
+            return _CodexStateStatus(
+                job_id=job_id, scope=launch.scope, scope_dir=scope_dir, commands=commands, dry_run=True,
+            )
+        if latest is None:
+            return _CodexStateStatus(job_id=job_id, scope=launch.scope, scope_dir=scope_dir, commands=commands)
+        run = latest.strip()
+        if not _STATE_RUN_ID.fullmatch(run):
+            raise MirrorError(
+                f"{latest_path} for job {job_id} names no run id ({run!r}); the managed run cannot be located."
+            )
+        run_dir = f"{scope_dir}/{run}"
+        status_path = f"{run_dir}/status.json"
+        status_text = read(status_path)
+        if status_text is None:
+            raise MirrorError(
+                f"{status_path} is missing although {latest_path} names run {run}; the run's record is incomplete."
+            )
+        status = parse(status_path, status_text)
+        owner_path = f"{run_dir}/owner.json"
+        owner_text = read(owner_path)
+        owner = None if owner_text is None else parse(owner_path, owner_text)
+        return _CodexStateStatus(
+            job_id=job_id, scope=launch.scope, scope_dir=scope_dir, commands=commands,
+            run=run, status=status, owner=owner,
+        )
+
+    def codex_state_drain(
+        self, ctx: MirrorContext, job_id: int, *, mode: str, timeout_seconds: float, requester: str,
+        sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
+    ) -> _CodexStateDrain:
+        """Ask *job_id*'s managed runner to drain and wait, bounded, for its acknowledgement.
+
+        The request side of the runner's drain protocol (``codex_state_runner
+        --help``): the run is found the way :meth:`codex_state_status` finds
+        it (``latest-run``, then ``status.json`` for the last durable
+        generation), ``<run>/drain.request`` is placed atomically -- one
+        shell command writes ``drain.request.tmp-<nonce>`` and ``mv``s it
+        into place -- and ``<run>/drain.ack`` is read every
+        ``DRAIN_POLL_SECONDS`` until an acknowledgement carrying this
+        request's nonce *and* run appears (an earlier request's
+        acknowledgement is ignored) or ``timeout_seconds`` has elapsed on the
+        monotonic clock.  Every command takes the status reads' route: inside
+        the allocation through ``srun --jobid --overlap`` on a confined
+        target, the executor's compute node otherwise.
+
+        ``mode`` is ``release`` (the runner lets Codex's exit end it) or
+        ``renew`` (the runner stays, holding the scope's startup lock, until
+        SIGTERM or a release-mode request).  Nothing here signals or cancels
+        anything: the runner does the stopping, and the outcome line says
+        what it did -- sealed, warm only (a person at the terminal), crash,
+        failed with its reason, or unacknowledged in time, each with the
+        last durable generation where it matters.  A run whose ``state`` is
+        refused, blocked or released, or that has exited with its final
+        generation (sealed or crash) already published, has no runner left
+        to answer and gets no request: the common release after a clean
+        Codex exit reports that generation at once instead of waiting out
+        the bound.  Without ``latest-run`` nothing is written.  A dry run
+        lists the commands and does not wait.  ``sleep`` and ``clock`` are
+        the test seams.
+        """
+        if mode not in _STATE_DRAIN_MODES:
+            raise MirrorError(f"Drain mode must be one of {', '.join(_STATE_DRAIN_MODES)}, not {mode!r}.")
+        if timeout_seconds < 0:
+            raise MirrorError("The drain timeout cannot be negative.")
+        nonce = _state_new_drain_nonce()
+        report = self.codex_state_status(ctx, job_id)
+        route = _CodexStateRoute(self.executor, job_id, confined=ctx.confined)
+        commands = list(report.commands)
+        timeout = float(timeout_seconds)
+
+        def done(outcome: str, **fields: Any) -> _CodexStateDrain:
+            return _CodexStateDrain(
+                job_id=job_id, scope=report.scope, mode=mode, nonce=nonce, timeout_seconds=timeout,
+                commands=commands, outcome=outcome, **fields,
+            )
+
+        if report.dry_run:
+            run_dir = f"{report.scope_dir}/<run>"
+            text = _state_drain_request_text(nonce, mode, time.time(), requester)
+            commands.append(route.argv_for(["sh", "-c", _state_drain_request_script(run_dir, nonce, text)]))
+            commands.append(route.argv_for(["cat", f"{run_dir}/{_STATE_DRAIN_ACK}"]))
+            return done("dry run: nothing requested", dry_run=True)
+        if report.run is None:
+            return done("no managed run recorded")
+        run = report.run
+        run_dir = f"{report.scope_dir}/{run}"
+        status = report.status or {}
+        last = status.get("last_generation")
+        last = last if isinstance(last, dict) else None
+        last_name = str(last.get("name")) if last and last.get("name") else "none"
+        state = status.get("state")
+        if state in _STATE_DRAIN_NO_OWNER_STATES:
+            return done(f"no managed owner to drain: run {run} is {state}; last durable generation {last_name}",
+                        run=run, last_durable=last)
+        if state in _STATE_DRAIN_EXITED_STATES and last is not None and last.get("class") in _STATE_DRAIN_FINAL_CLASSES:
+            return done(f"no managed owner to drain: run {run} exited (exit {status.get('exit')}) and its final "
+                        f"generation {last_name} is {last.get('class')}", run=run, last_durable=last)
+
+        text = _state_drain_request_text(nonce, mode, time.time(), requester)
+        script = _state_drain_request_script(run_dir, nonce, text)
+        route.run(["sh", "-c", script], what=f"write {run_dir}/drain.request")
+        commands.extend(route.commands)
+        del route.commands[:]
+
+        ack_path = f"{run_dir}/{_STATE_DRAIN_ACK}"
+        started = clock()
+        ack: Optional[Dict[str, object]] = None
+        problem: Optional[str] = None
+        while True:
+            remaining = timeout - (clock() - started)
+            sleep(max(0.0, min(_STATE_DRAIN_POLL_SECONDS, remaining)))
+            ack_text = route.read(ack_path)
+            if ack_text is not None:
+                try:
+                    data = json.loads(ack_text)
+                except ValueError as exc:
+                    problem = f"drain.ack is not readable JSON: {exc}"
+                else:
+                    problem = None
+                    if isinstance(data, dict) and data.get("nonce") == nonce and data.get("run") == run:
+                        ack = data
+                        break
+            if clock() - started >= timeout:
+                break
+        waited = clock() - started
+        commands.extend(route.commands)
+        if ack is not None:
+            ack_last = ack.get("last_durable")
+            outcome = _state_describe_drain_ack(ack, last)
+            last_durable = ack_last if isinstance(ack_last, dict) else last
+        else:
+            outcome = f"drain unacknowledged after {waited:.0f} s; last durable generation {last_name}"
+            if problem:
+                outcome += f" ({problem})"
+            last_durable = last
+        return done(outcome, run=run, requested=True, ack=ack, last_durable=last_durable, waited_seconds=waited)
+
+    def _absolute_for_codex_state(self, ctx: MirrorContext, what: str, value: str) -> str:
+        """``value`` as given when it starts with ``/``; a MirrorError otherwise.
+
+        The remote config accepts a relative ``mirror_root`` and
+        ``_resolve_remote_path`` passes it through, so the launcher could
+        dispatch ``--durable-root mirrors/.sucoder-state``; the runner refuses
+        a relative root (exit 70), but the launcher must never emit one.  A
+        dry run cannot expand ``~`` on the target and executes nothing, so an
+        unexpanded ``~`` is tolerated there only.
+        """
+        if value.startswith("/") or (self.executor.dry_run and value.startswith("~")):
+            return value
+        raise MirrorError(
+            f"Managed Codex state needs an absolute {what} for mirror {ctx.settings.name}, "
+            f"got {value!r}; set remote.mirror_root (and slurm.codex_state.durable_root) "
+            "to an absolute path."
+        )
+
+    def _refuse_selection_over_live_session(self, ctx: MirrorContext, selection: str) -> None:
+        """Refuse a history selection early, before anything is staged.
+
+        ``--codex-state-from`` and ``--codex-state-fresh`` reach the runner
+        through the argv of the command this launch starts, and every remote
+        launch path prefers an existing session over starting one:
+        ``_launch_confined`` reuses a live job named by the session record or
+        found by ``squeue --name`` (``_reuse_confined_job``),
+        ``_launch_remote_service`` keeps an existing service session, and the
+        TUI's ``tmux new-session -A`` attaches when the session exists.  Each
+        would discard that argv and the operator would silently get the
+        running history (or an idle shell).  So probe here, before anything
+        is staged, and refuse.
+
+        This is the courtesy form of the refusal, not the guard: each of
+        those decision points carries ``selection`` and refuses on its own
+        (``_reuse_confined_job``, ``_launch_remote_service``, and the TUI
+        launch, whose ``new-session`` runs without ``-A``), so a probe that
+        fails or races here -- ``squeue --name`` answering empty, a session
+        created between this probe and ``new-session`` -- still cannot end
+        in a silent attach.  The renew loop passes no selection and is
+        unaffected.  A probe failure on the confined path raises as it does
+        for the reuse-probe itself: an unknown state is not "no session".
+        """
+        from .session import RemoteSession
+
+        live: Optional[str] = None
+        if ctx.confined:
+            session_name, _socket = confined_tmux_target(ctx.settings.name)
+            sess = RemoteSession.load(ctx.settings.name, target_name=self.target_name)
+            if sess.slurm_job_id and self._confined_job_state(sess.slurm_job_id) is not None:
+                live = f"job {sess.slurm_job_id}"
+            else:
+                for job_id, _state, partition, account, qos in self._confined_jobs_by_name(session_name):
+                    if job_id == sess.slurm_job_id:
+                        continue          # ruled out above: it is not live
+                    if self._job_matches_this_target(ctx, partition, account, qos):
+                        live = f"job {job_id}"
+                        break
+        elif ctx.is_remote and not self.executor.dry_run:
+            # A dry run answers every command with success, which would read
+            # as "exists"; it executes nothing, so there is nothing to protect.
+            # ``=`` asks for the exact name: a bare target also matches by
+            # prefix, so sucoder-sample-other alone would refuse sample.
+            tmux_name = f"sucoder-{ctx.settings.name}"
+            result = self.executor.run_agent(
+                ["tmux", "has-session", "-t", f"={tmux_name}"], check=False, capture_output=True,
+            )
+            if result.returncode == 0:
+                live = f"tmux {tmux_name}"
+        if live is not None:
+            raise _selection_over_live_session(ctx.settings.name, selection, live)
+
+    def _stage_codex_state_runner(self, ctx: MirrorContext) -> str:
+        """Stage the state runner on the target, private and unique per launch."""
+        safe = re.sub(r"[^A-Za-z0-9._-]", "_", ctx.settings.name)
+        home = self._resolve_remote_home(ctx)
+        path = f"{home}/.cache/sucoder/codex-state-runner-{safe}-{secrets.token_hex(8)}.py"
+        self.executor.run_agent(
+            [
+                "sh", "-c",
+                'umask 077 && mkdir -p "$(dirname "$1")" && cat > "$1"',
+                "sucoder-codex-state", path,
+            ],
+            input=_state_runner_source(), check=True, capture_output=True,
+        )
+        return path
+
     def _remote_control_flags(
         self, command: Sequence[str], launcher: AgentLauncher, model: Optional[str],
     ) -> List[str]:
@@ -3590,20 +4145,29 @@ class MirrorManager:
 
     def _launch_remote_service(
         self, ctx: MirrorContext, tmux_name: str, command: str, cwd: Path,
-        *, detached: bool,
+        *, detached: bool, selection: Optional[str] = None,
     ) -> int:
         """Start/reuse a service, record the actual pane, then optionally attach.
 
         Starting detached first lets renewal retain a CLI command override while
         the initial terminal is still attached. An existing session owns its
         metadata; requesting a service must not relabel an existing TUI.
+
+        A managed Codex history ``selection`` rides in ``command``, so a
+        session this call did not create -- found before the create, or by
+        the recheck after a create another launcher won -- is refused rather
+        than kept, and the existence check then asks for the exact name
+        (``=``; a bare target also matches by prefix).  Without a selection
+        the script is unchanged.
         """
         from .session import RemoteSession
 
         # `new-session -A -d` attaches when a session exists, requiring a TTY.
         # Create without -A and distinguish creation from reuse in one round
         # trip. Recheck after a failed create in case another launcher won.
-        exists = shlex.join(["tmux", "has-session", "-t", tmux_name])
+        exists = shlex.join([
+            "tmux", "has-session", "-t", f"={tmux_name}" if selection is not None else tmux_name,
+        ])
         create = shlex.join(["tmux", "new-session", "-d", "-s", tmux_name, command])
         script = (
             f"if {exists} 2>/dev/null; then :; "
@@ -3620,6 +4184,12 @@ class MirrorManager:
             )
         if not self.executor.dry_run:
             created = "SUCODER_CREATED" in (result.stdout or "").splitlines()
+            if selection is not None and not created:
+                # rc 0 without the marker: the script kept a session this
+                # launch did not create, so the runner never started.
+                raise _selection_over_live_session(
+                    ctx.settings.name, selection, f"tmux {tmux_name}",
+                )
             probe = None if created else self.executor.run_agent(
                 ["bash", "-c", SERVICE_LAUNCH_PROBE_SH, "_", tmux_name, ""],
                 check=False, capture_output=True,
@@ -3997,6 +4567,8 @@ class MirrorManager:
         env_override: Optional[Mapping[str, str]] = None,
         supports_inline_prompt: Optional[bool] = None,
         codex_remote_control: Optional[str] = None,
+        codex_state_from: Optional[str] = None,
+        codex_state_fresh: bool = False,
         skip_lfs: bool = True,
     ) -> int:
         """One-shot helper to prepare canonical, ensure clone, and launch the agent."""
@@ -4033,6 +4605,8 @@ class MirrorManager:
             env_override=env_override,
             supports_inline_prompt=supports_inline_prompt,
             codex_remote_control=codex_remote_control,
+            codex_state_from=codex_state_from,
+            codex_state_fresh=codex_state_fresh,
         )
 
     def _get_merged_templates(

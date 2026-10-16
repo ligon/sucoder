@@ -230,3 +230,110 @@ Official references:
 - https://learn.chatgpt.com/docs/developer-commands?surface=cli#codex-remote-control
 - https://learn.chatgpt.com/docs/config-file/config-reference
 - https://learn.chatgpt.com/docs/agent-configuration/agents-md
+
+Spike evidence, 2026-10-15 (Sue), Slice 0 read-only inventory, job 39969504
+on n0033.savio4 (4 cores, confined cgroup):
+
+- Prior art not cited above: `$CODEX_HOME/sqlite-backups/n0140-job39450011/`
+  `recovery-tools/` (`RECOVERY.org`, `cutover.py`, `snapshot.py`,
+  `checkpoint.py`, `codex-local`), written 2026-10-01 in job 39450011 on
+  n0140 against the managed Codex 0.160.0 daemon. It stopped that daemon,
+  took SQLite online backups of the six shared databases, restarted it with
+  `CODEX_SQLITE_HOME` plus `-c sqlite_home=<local>`, and verified through
+  `/proc/<pid>/fd` that every open `.sqlite*` handle was under
+  `/local/job39450011/codex-sqlite/active`. A 15-minute loop then wrote
+  per-database online backups (`Connection.backup`, `quick_check`, sha256,
+  `SNAPSHOT.json`, keep last two) to the shared home. Its diagnosis counted
+  1299 database-locked warnings in a four-hour window on Lustre. It checked
+  `.sqlite*` handles only: lock files and sidecar directories, the TUI and
+  `--no-daemon` modes, override precedence and the current 0.162.1 build are
+  what this spike adds. `$CODEX_HOME/sqlite-lustre-moved-2026-10-14/` holds
+  a second manual relocation (databases plus `stale-writer-locks/`); no
+  accompanying note was found.
+- Reused here: `sucoder/agent_mode.py:config_override` encodes the
+  `sqlite_home` argument; `tests/test_codex_context.py:158` supplies the
+  isolated-home, loopback fake-model app-server driver.
+- `$HOME` (`/global/home`) is NFS mounted `local_lock=none`, which is why the
+  real Codex home is a symlink to `/global/scratch/fsa/fc_jevons/ligon/`
+  `codex-home` on Lustre (`flock`); `/local` is ext4. The npm `codex` 0.162.1
+  native binary and the managed daemon's `releases/0.162.1-*/bin/codex` have
+  the same sha256, so the spike's binary is the production binary.
+- The 0.162.1 binary names a seventh database, `agent_message_board_1.sqlite`,
+  absent from the design's inventory table (`docs/codex-local-state.org:60-67`).
+- The live daemon (pid 3630696, started 2026-10-14 20:56, working under
+  `/local/job39919092/`) runs on another node; nothing in this spike talks to
+  it, and no `daemon`/`doctor` command is run against the real home.
+- Results (same day): all six databases follow `-c sqlite_home`, which beats
+  `config.toml`, which beats `CODEX_SQLITE_HOME` (cases c3, c4, c10); a relative value resolves
+  against the cwd; a missing directory is created `0777` masked by umask; an
+  unwritable one fails the launch with exit 1 and no fallback. Thread-writer
+  locks, `installation_id`, plugin and arg0 locks, the `sessions/` rollout
+  JSONL and the TUI's `history.jsonl` stay in `CODEX_HOME`. The app-server and
+  TUI hold their own database descriptors with no daemon socket; the
+  `--no-daemon` server creates `/tmp/codex-daemon-<uid>/<hash>` and needs
+  credentials to go further. Stdin EOF leaves all data in WAL. Full record:
+  `docs/codex-local-state-spike.org`.
+- Outcomes 3-7 (same day, job 39975196 on n0038.savio4, `scripts/codex_state_outcomes.py`,
+  record section "Outcomes 3--7"): `thread/resume` needs the rollout JSONL at the
+  absolute path in `threads.path`; without it every history read fails, and
+  with it a restored database is overridden by the file on resume (12 of 20
+  warm restores showed more turns than their capture): for thread history the
+  generation does not determine what resumes, the shared rollout does.
+  `sessions/` is relocatable because the stored path is not canonicalized: a
+  symlink works but redirects every process; a per-process `bwrap` bind mount
+  of local disk over `CODEX_HOME/sessions` (and `.tmp`, `tmp`,
+  `thread-writer-locks`, `shell_snapshots`) leaves about ten metadata calls
+  and no data I/O on Lustre per turn, with the shared home untouched and
+  Codex's sandbox still working (`symlink` and `bind` sub-tests, 2026-10-15;
+  evidence under `evidence-outcomes/job39969504-bind/`). Episode tests
+  (`scripts/codex_state_episode.py`, `evidence-outcomes/job39969504-episode/`):
+  rollout skew in either direction keeps the model correct, but a database
+  ahead of the rollout leaves the SQLite history permanently wrong (projection
+  watermark past the file's end: phantom turns shown, real turns missing); per-turn tail replication 13 ms, identical at the
+  next turn/start; residue 1.7 metadata calls per turn with skills, AGENTS and
+  history.jsonl bound, not load-bearing; TUI and remote-control start under
+  bwrap; compaction appends to the rollout.
+  20/20 seeded abrupt-stop interleavings restored every completed turn from both
+  warm and post-crash captures. Unattended `thread/resume` executes a queued
+  message once and, with an active goal, issues ~20 model requests per second
+  indefinitely; a goal set to `paused` is a usable hold, the queue has none. Two
+  servers with different homes on one `sqlite_home` are two writers with no
+  refusal; the same home refuses the second with "already has an active writer".
+  Median turn 0.51 s all-Lustre, 0.21 s databases-local, 0.042 s home-local too.
+  Outcome 6 and the protocol half of 5 need the runner and were not run.
+
+Slice 1 implemented, 2026-10-15 (Sue): `sucoder/codex_state_runner.py`,
+`sucoder/codex_state.py`, `slurm.codex_state` in `config.py`, wiring in
+`mirror.py:launch_agent`, `tests/test_codex_state.py`.
+
+- Reused: the staged-Python pattern of `_wrap_codex_service_context`
+  (`python3 <staged> <command>`), `local_tier.cache_exports_sh` for the
+  runtime `SUCODER_LOCAL_ROOT`, `config_override` for the `-c` value, and
+  `_write_context_prelude_file`'s staging transport.
+- Measured while implementing: bwrap stays alive as the parent of the
+  sandboxed command and does not relay signals (SIGTERM to bwrap exits -15
+  and `--die-with-parent` then SIGKILLs the command; SIGTERM to its child
+  runs the handler and bwrap propagates the code); a bound file's
+  descriptor shows the mount-point path from outside the namespace, so
+  placement is verified by `st_dev` of `/proc/<pid>/fd/<n>`.
+- Pre-existing hazard, not fixed here: the staged context installer
+  (`codex_context.py`) starts with `from __future__ import annotations`
+  (3.7+) and fails to compile on Python 3.6, which is the default `python3`
+  on some node images (n0038); the state runner is kept 3.6-clean and
+  compile-checked in its tests.
+- Checked after wiring: the TUI runs under the runner in a tmux pane (prompt
+  executed, state placed, rollout local, `/quit` exits 0); Codex installs its
+  own SIGINT handler, so the runner's inherited ignore is harmless; the real
+  home has every bind directory and `history.jsonl`, and lacks `AGENTS.md`
+  and `AGENTS.override.md`, which the runner skips. The runner logs to
+  `runner.log` once Codex may own the terminal. The scope digests the
+  resolved mirror path (`_resolve_remote_path`), one SSH round trip.
+  In remote-control modes the supervisor's server and client invocations
+  both carry the placeholder; the runner's placement check covers both.
+- Baseline failure, not fixed here: `tests/test_codex_context.py::
+  test_codex_model_receives_prelude_when_client_replaces_developer_instructions`
+  asserts a top-level `instructions` field that Codex 0.162.1 no longer
+  sends; everything else passes (1203).
+- GitNexus cannot run on this node image (`libssl.so.3` missing for its
+  native database); impact was checked by grepping callers and is listed
+  in the wiring commit.

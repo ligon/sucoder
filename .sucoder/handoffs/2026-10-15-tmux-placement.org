@@ -1,0 +1,50 @@
+#+TITLE: tmux placement for collaborate, agents-run and attach
+#+DATE: 2026-10-15
+#+STATUS: COMPLETE
+#+AUTHOR: Sue
+#+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Completed phase
+
+The human reported two mirror-image annoyances: a local =sucoder collaborate= started outside tmux is hard to manage, and a remote =sucoder -T savio collaborate= started inside tmux nests two tmuxes.
+This session added an early =$TMUX= check to =collaborate=, =agents-run= and =attach=, before any ssh or allocation, on branch =feat/tmux-nesting-check= cut from =ligon/main= at =cd1eb8f=.
+The previous handoff is preserved in [[file:handoffs/2026-10-15-codex-local-state-design.org]].
+
+* What changed
+
+- [[file:../sucoder/tmux_env.py][sucoder/tmux_env.py]] (new) :: =detect()= reads =$TMUX= and asks the outer server for its session name and prefix; argv builders for =new-session=, =attach-session= and =switch-client=; the two warning texts.
+  Probes drop =$TMUX= from their environment so they always address the default server, and targets carry the ~=~ exact-match prefix.
+- =sucoder/cli.py:2227= =_tmux_launch_preamble= :: called first in =agents-run= (=cli.py:2425=) and =collaborate= (=cli.py:2560=).
+  Remote target inside tmux: one stderr note, then continue.
+  Local mirror outside tmux: =os.execvp= of =tmux new-session -s sucoder-<mirror> -c <cwd> "<the same command line>"=; the inner =sucoder= sees =$TMUX= and launches as before.
+  An existing session is attached rather than duplicated.
+  Non-TTY, =TERM=dumb=, no tmux, or =--no-tmux= (new flag on both commands) leave the launch in place with a one-line note; =--dry-run= describes the re-exec and stays.
+- =sucoder/cli.py:2300= =_attach_local= :: =attach= on a local mirror (=cli.py:2866=) switches the client when inside tmux on the default server, attaches otherwise, and explains when no session exists.
+  A remote =attach= inside tmux prints the nesting note before the ssh (=cli.py:2911=).
+- =README.org:370= :: new subsection /Where the agent session lives/; the =attach= table row and feature bullet updated.
+  No configuration keys were added, so =config.example.yaml= is unchanged.
+
+* Important choices
+
+- The local launch is re-executed inside tmux rather than wrapping the agent command in tmux: the session then belongs to the human's own tmux server, and the launch itself (=sudo=, TTY, post-session hooks) is untouched.
+- The nested remote case is structural: the remote tmux is what survives disconnects and what =message=, =peek= and =renew= address.
+  The note names the outer session and prefix, and says =C-b C-b d= detaches the remote while =C-b d= detaches the local one; the README mentions the =key-table off= binding for people who nest often.
+- A bare =tmux has-session -t sucoder-Foo= is a prefix match and answers for =sucoder-FooBar= (checked on tmux 3.5a), hence the ~=~ prefix everywhere.
+- =switch-client= needs a current client, so it is only used when =detect()= says the outer tmux is the default server.
+
+* Verification
+
+- =tests/test_tmux_env.py= (15 tests) and the tmux block at the end of =tests/test_cli.py= (13 tests) pass under =.venv/bin/python -m pytest=; the host =python= has no =typer=, so use the venv.
+- Full suite: 1195 passed, 6 failed; the same six fail on a scratch worktree of =ligon/main= at =cd1eb8f= and are environmental (pytest tmp-dir ownership for =ssh -G=, a umask-dependent mode assertion, an upstream =KeyError= in =test_codex_context=).
+  A worktree of this repository needs =git -c filter.git-crypt.smudge=cat -c filter.git-crypt.required=false worktree add=, because =.mcp.json= is git-crypt encrypted and the key is not unlocked under the coder account.
+- tmux semantics (exact match, =-c= start directory, =switch-client= outside a client) were smoke-tested on a private socket; the live re-exec from a real terminal was not exercised in this session, which had no TTY.
+- GitNexus =impact= on =collaborate= and =attach= resolved no callers; =detect_changes= attributed one hunk to =audit= from a stale index, and the diff hunks sit only in the two commands, =attach=, and the helper block.
+
+* Next phase
+
+- Try =sucoder collaborate <local mirror>= from a plain terminal: expect the "Starting the agent in local tmux session" note, the agent inside =sucoder-<mirror>=, and =sucoder attach <mirror>= to return to it.
+- Try =sucoder -T savio collaborate= from inside tmux: expect the nesting note before any ssh output.
+- =sessions=, =message= and =peek= still sweep clusters only and do not enumerate local =sucoder-<mirror>= sessions; adding the local server to the sweep is the natural follow-up.
+- The local session inherits the tmux server's environment, so a variable exported in the launching shell after that server started is not seen; if that bites, =tmux new-session -e= (tmux >= 3.2) could carry a chosen set.
+
+Recorded by Sue.

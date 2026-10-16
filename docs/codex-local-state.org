@@ -525,3 +525,144 @@ The main unresolved capability decisions are complete SQLite redirection, indepe
 If a capability fails, revise the relevant contract before implementing around it.
 
 Prepared by Sue.
+
+* Revision after Slice 0 (2026-10-15)
+
+This section records what the Slice 0 spike changed and governs where it conflicts with the sections above; the measurements are in [[file:codex-local-state-spike.org][the spike record]].
+The concern it answers is not Lustre's median latency but its episodes, when every operation takes minutes, so the measure that matters is the number of synchronous Lustre operations inside a turn, and the target is zero data operations.
+
+** What the spike established
+
+- All six databases follow =sqlite_home=; =-c= beats =config.toml=, which beats =CODEX_SQLITE_HOME=; a relative value resolves against the cwd; a missing directory is created with =0777= masked by umask; an unwritable one fails the launch with exit 1 and no fallback.
+- The rollout JSONL in =CODEX_HOME/sessions/= is the authoritative conversation; the SQLite thread history is a projection of it with a byte watermark (=thread_history_projection_state=), every history read fails without the file, and the path is stored absolute (canonicalized, as the Slice 2 record below corrects; the spike read it as "as written").
+- A per-process bind mount (=bwrap --unshare-user= with the caller's own ids) of local directories over subdirectories of the shared home leaves the home untouched for every other process, keeps the stored path valid, and lets Codex's own sandbox run nested; with =sessions=, =.tmp=, =tmp=, =thread-writer-locks=, =shell_snapshots=, a copy of =skills/= and the =AGENTS.md=, =AGENTS.override.md= and =history.jsonl= files bound, a turn contains no Lustre data operation and 1.7 metadata calls.
+- Appending the rollout's new bytes to a replica on Lustre after each turn costs 13 ms outside Codex's path and is byte-identical at the next =turn/start=; a database generation two intervals old plus the replica resumes fully.
+- A rollout ahead of the database is rebuilt into the projection; a rollout truncated mid-line is tolerated; a database ahead of the rollout leaves the SQLite history permanently wrong while the model's context stays correct.
+- A queued message executes once on unattended =thread/resume=; an active goal drives about twenty model requests per second until stopped; a goal set to =paused= is a usable hold and the queue has none.
+- Two servers with different homes on one =sqlite_home= are two writers with no refusal from Codex.
+- Stdin EOF leaves all data in WAL files; the backup API reads through them.
+
+** Layout
+
+Where the earlier layout conflicts, this one applies:
+
+#+begin_example
+LOCAL = <local root>/state/codex/<scope>/<run>
+  db/                         sqlite_home: the six databases and sidecars
+  home/sessions/              bound over CODEX_HOME/sessions for the managed server only
+  home/.tmp/  home/tmp/  home/thread-writer-locks/  home/shell_snapshots/  home/app-server-control/
+  home/skills/                a copy taken at launch, bound over CODEX_HOME/skills
+  home/AGENTS.md  home/AGENTS.override.md  home/history.jsonl    file binds, only when the file exists in the home
+  replica.json                per-thread replicated byte offsets
+  snapshots/<generation>/     completed local bundles, as before
+  startup.lock  owner.json  status.json  checkpoint.lock          as before
+
+DURABLE adds, under runs/<run>/:
+  rollouts/<thread-id>.jsonl   the append-only replica of each thread's rollout
+  generations/<generation>/manifest.json records, per thread, next_rollout_byte_offset and the replica length at capture
+#+end_example
+
+=CODEX_HOME=, authentication, configuration and hook trust stay where they are; the managed server reads them through the bind namespace and nothing in the shared home is created, moved or rewritten.
+A bind target that does not exist in the home is skipped and recorded, never created: =bwrap= would otherwise create an empty file or directory in the shared home.
+
+** Launch
+
+- The launcher inserts =-c sqlite_home= with a placeholder at the argv stage, before any nvm or context-installer wrapping, and stages a stdlib runner the way it stages the native context installer; the runner runs outermost as =python3 <runner> -- <command>= and must be clean for the oldest =python3= a node image offers (3.6 was found), because the staged installer is not.
+- At run time the runner resolves =SUCODER_LOCAL_ROOT= (exported before tmux in both launch flows), creates the layout with mode 0700, takes =startup.lock=, resolves =CODEX_HOME=, substitutes the placeholder with the absolute =db= path and refuses a path containing anything outside =[A-Za-z0-9/_.-]=.
+- It refuses to launch when =bwrap= is unavailable, when the caller's argv, =CODEX_SQLITE_HOME= or =config.toml= already set =sqlite_home=, or when the home or local root is missing; it never falls back to shared placement.
+- It launches =bwrap --dev-bind / / <binds> --unshare-user --uid <own> --gid <own> --die-with-parent -- <command>= as a child in the same process group, ignores =SIGINT= (Codex handles it), forwards =SIGTERM= and =SIGHUP=, and exits with the child's code.
+- It verifies placement through =/proc= with three outcomes: every =.sqlite= descriptor under =db/= is placed; any =.sqlite= descriptor elsewhere is misplaced, and the runner stops the child and fails with a specific error; a child that exits before opening a store reports "no stores opened".
+- =owner.json= and =status.json= record scope, run, allocation, the effective paths, the bound and skipped entries and every transition.
+
+** Checkpoint protocol, amended
+
+- Replication :: a watcher in the runner follows each rollout under =home/sessions= by file growth, independent of launch mode, and appends new bytes to =DURABLE/runs/<run>/rollouts/<thread-id>.jsonl= with =fsync=, recording the replicated offset in =replica.json=.
+  Replication lag is tolerated and shown as replica age; a Lustre episode slows replication, never the conversation.
+- Generation ordering :: a database generation is captured only after every thread's replica is confirmed byte-identical to the local rollout at that instant; the manifest records each thread's =next_rollout_byte_offset= and the replica length.
+- Restore :: a generation is restored together with the replicas, placed at the same relative paths under =home/sessions= and bound again; restore refuses any generation whose recorded offset exceeds the replica it would be paired with, because the projection would then skip real turns and show phantom ones.
+- Sealed :: a backup-API copy taken after the owned server has stopped; a zero exit alone is not sealed.
+- Unattended continuation :: before =thread/resume= without a client, the runner refuses when =goals_1= holds an active goal or =queue_1= holds rows for the thread, and offers =paused= as the hold for goals.
+
+** Residue and limits
+
+The 1.7 remaining metadata calls per turn are the path-component lookups of =CODEX_HOME= (one per component, a depth-10 path today) and an occasional =auth.json= read; the =skills= calls were shown not to be load-bearing, the others were not failure-tested, and a shallower home path shortens the chain.
+Compaction with a real model summary, remote control beyond the relay step, and behavior during an actual Lustre episode remain unmeasured.
+
+** Slices, amended
+
+- Slice 1 :: placement and ownership through the runner above, with the typed =slurm.codex_state= configuration, no capture or replication yet.
+- Slice 2 :: replication, generations with the ordering and watermark rules, sealed capture, restore, status; implemented 2026-10-15, see the Slice 2 record below.
+- Slice 3 and Slice 4 :: as above.
+
+* Slice 2 record (2026-10-15)
+
+What landed, what the implementation corrected in the record above, and what it leaves to Slice 3.
+The evidence is in the tests named here and in the commit messages; where this section conflicts with the sections above, this section applies.
+
+** What landed
+
+- Launcher (=270e9cb=) :: every managed launch hands the staged runner =--durable-root <BASE>=, =--checkpoint-minutes= and =--checkpoint-timeout=, and =--restore RUN/GENERATION= or =--fresh= when the operator selects a history through =--codex-state-from= or =--codex-state-fresh= on =agents-run= and =collaborate=.
+  =BASE= is =slurm.codex_state.durable_root= when set, else =.sucoder-state= next to the mirrors (the directory containing the resolved shared mirror path, a symlink onto Lustre on Savio); the launcher refuses a root that is, is inside, or contains the shared mirror repository, or that is under =local_disk=; the runner appends =codex/<scope>= and refuses a root whose realpath is under =SUCODER_LOCAL_ROOT=.
+  The selector is validated on the launcher (32 hex, slash, six digits, dash, 8 hex) so it can only ever name a generation.
+  Without a flag the runner reuses this allocation's run when one is intact and otherwise starts a fresh history; no generation is selected automatically across allocations.
+- Runner, replication and capture (=f074a5d=) :: a replicator thread follows every =rollout-*-<uuid>.jsonl= under =home/sessions= by growth and appends the new bytes with =fsync= to =DURABLE/runs/<run>/rollouts/<thread-id>.jsonl=.
+  The replica file's own size is the replicated offset, so a torn append can never double-write; a local rollout shorter than its replica is a "shrunk" anomaly that stops replication of that thread and fails later captures of it; durable errors stall only that thread and show as replica age and lag bytes in =status.json=.
+  A checkpointer thread runs single-flight captures (nonblocking =checkpoint.lock=) on placement, every interval by monotonic time, on a touched =checkpoint.request=, and once after Codex exits; triggers during a capture are dropped and counted, never queued.
+  Each store is backed up through the SQLite backup API, or the =sqlite3= CLI where the interpreter lacks it (Python 3.6), never a file copy; the destination is switched to =journal_mode=DELETE=, =quick_check=ed, closed, then hashed.
+  The ordering rule is implemented in its monotone form, which amends the statement under "Checkpoint protocol, amended": the backup is taken first, each thread's local rollout size is measured right after the copies complete (and its =next_rollout_byte_offset= read from the copy of =thread_history_1=), and the capture then waits, within its budget, until that thread's replica is at least that long; only then is the manifest written and the bundle published.
+  Because the watermark equals the rollout size at every completed turn (next subsection), waiting for the local size subsumes the offset check and also covers a thread whose rollout the replicator has not discovered yet; =f074a5d= waited for the copy's offset only, and the review follow-up below strengthens it to the local size.
+  Checking the replica before the backup would leave a window in which a turn completes between the check and the copy and the copy's watermark passes the replica.
+  A candidate whose replicas do not catch up in budget stays local-only and is never acknowledged.
+  Publication is =.incoming-<uuid>= with the copies hash-verified after =fsync=, the manifest written last, one rename into =generations/<seq>-<hex8>= and a directory =fsync=; a failure leaves the incoming directory and does not advance =last_generation=.
+  The class is =warm= while Codex runs; after exit it is =sealed= on a zero exit with no pid still holding a descriptor under =db/=, and =crash= otherwise; the final capture is bounded by the timeout and never delays the exit code.
+  The manifest records =format=, =scope=, =run=, =generation=, =parent=, =class=, =allocation=, =codex_home=, =codex_home_real=, =codex_version= (the highest =threads.cli_version= in the copy), =backup_method=, per-database =sha256=, =bytes= and =quick_check=, the absent optional stores, and per thread =relative_path=, =next_rollout_byte_offset=, =next_rollout_ordinal=, =replica_bytes= and =rollout_sha256_prefix= (the hash of the local rollout's first =replica_bytes= bytes, against which a restore verifies the replica).
+  =run.json= holds the immutable provenance; =status.json= gains =replica=, =checkpoint=, =last_generation= and =durable_age_seconds=; the startup line announcing the fresh, separate managed history is printed before Codex owns the terminal.
+- Runner, restore and reuse (=f92298b=) :: =--restore RUN/GENERATION= resolves =DURABLE/runs/RUN/generations/GENERATION= and validates before anything is created: the selector grammar (never a path; =.incoming-*= is never a candidate), the manifest (format 1, the same scope, the same run and generation, the same canonical =CODEX_HOME= because the stored rollout paths are absolute, a known class, no =not_durable= threads, only classified stores, usable relative rollout paths that carry the thread id) and every replica (at least as long as the recorded =next_rollout_byte_offset=, the database-ahead hazard, and hashing to the recorded prefix).
+  The stores are copied to =<run>/restore-staging/db/= and checked there (size, sha256, =quick_check=, no sidecar), the pending-work gate runs on those copies, each replica is copied whole in one read to =home/sessions/<relative path>= and to the new run's =rollouts/<thread-id>.jsonl= with both copies hashed back, and only then is the staging directory renamed into place as =db/=; =run.json= records the parent generation and later manifests carry it.
+  An explicit restore accepts sealed, warm and crash generations and says so in the startup line (warm and crash rows are consistent per database only); =--unattended= accepts sealed only.
+  Pending work is detected, never held by SQL: active rows in =thread_goals= and =queued_items= grouped by thread are reported in =status.json= and the startup line; under =--unattended= they refuse, as does an unreadable goals or queue table, because an active goal drives unprompted requests from the moment a thread resumes and a queued item executes once with no hold.
+  Without =--restore= or =--fresh= the runner reuses this allocation's latest run in place when it has =owner.json= and =db/= and its recorded runner and child pids are dead (a live pid refuses: a second writer on the same stores); the run id, local directory and durable run continue, bound files already present locally are kept, status transitions accumulate; =--restore= with an intact local run is ignored with a loud line and =restore_ignored= recorded, since within one allocation local state wins; =--fresh= always starts a new run.
+  Verified against the real build: two turns, stdin EOF, a sealed generation, a restore in another local root, =thread/resume=, and a third turn whose model request carries both earlier texts.
+  Verified with a real model as well: a nine-minute gpt-6-astra review session under the runner (ten warm generations at a one-minute cadence, a sealed final one, the 1.1 MB rollout replicated with offset = replica = local size), then its sealed generation restored under a different local root and resumed with =codex exec resume=, the model answering from the restored history alone; a retry after an upstream capacity error reused the run in place.
+  Cost, as the retention section asked to measure before accepting the ten-minute default: with six stores totalling 1.1 MB (=state_5= 0.28 MB, =thread_history_1= 0.65 MB) after a nine-minute real session, a warm capture took 0.3-0.6 s wall including publication to Lustre, the rollout's replication added 13 ms per turn off Codex's path, and the restore of that generation plus its 1.1 MB replica took 0.2 s; at the default cadence this is six captures and about 6 MB per hour per managed run, which supports the default and makes retention (Slice 3) a housekeeping matter rather than a cost one.
+- Review fixes (=f6e460f=, =4298140=, =3ff3608=, =930eae4=) :: two read-only reviews by Codex (gpt-6-astra), run through the managed runner itself, found twenty-three defects across the two runner halves, each confirmed against the code before it was fixed, each fixed with a test.
+  The ones that changed behaviour: a rollout that shrinks (or is replaced by another file at its path) while replication lags is an anomaly, never appended as growth; a copy whose =threads= or projection table cannot be read fails the capture instead of publishing watermark 0; a replica's bytes count as replicated only after its directory entry is synced; the acknowledgement of a generation is written under the in-flight lock and a generation whose =generations/= sync failed is held as =unsynced_generation= until a retry succeeds; =status.json= is best effort and never stops the machinery; the exit path stats nothing and shares one shutdown deadline; existing durable components must be real directories owned by this user with no group or other write bits.
+  On the restore side: a restore stages the stores and the replicas (the durable copies as =.incoming-<thread-id>.jsonl=), writes =run.json=, and activates last by renames, with a rollback that removes exactly what the attempt created; the status is =restoring= before the first durable read and =blocked= (exit 70) when the durable side does not answer within =max(120 s, 4 x checkpoint_timeout)=; reuse in place requires the recorded canonical home and durable run to match and refuses unknown ownership; validation fails closed (=fullmatch= everywhere, the empty prefix hash verified, unlisted stores refused, the manifest hashed from the bytes parsed).
+  The third pass extends the restore (and fresh-launch) transaction through bind preparation, =owner.json= and =latest-run=, so a failure there is rolled back too; fences the thread of a restore reported =blocked= at every durable write; creates and syncs missing ancestors above the durable base one by one; keeps the directory-sync retry inside the bounded final capture rather than on the exit path; clamps the restore timeout to one day; re-adopts a reused run's unsynced generation; and requires manifest counts to be integers.
+  The fourth pass makes the fence and the local activation mutually exclusive under a lock (a deadline that passes after the activation has landed lets the launch take the completed result), refuses when the parent of an ancestor this launch created cannot be synced, and has a reused run judge its recorded unsynced generation by shape alone, with the existence check moved onto the capture worker.
+  Accepted residuals: the prefix hash is computed from the local rollout and verified against the durable replica at restore; a thread whose rollout has 0 bytes passes without a replica; a blocked restore's abandoned thread rolls back when it wakes, so only a thread that never wakes leaves files under its run id, which no selector names; a restore fsyncs =rollouts/= after renaming its replicas, so the replicator may seed their lengths on first sight; the sync of the durable base's own parent is best effort.
+- Launcher review fixes (=c2efc73=, =d0d469e=) :: a history selection is refused when the launch would attach to or reuse a live session, because the selection travels only in the argv of a command those paths discard: a preflight probe refuses before anything is staged, and the selection also rides into each decision itself (=_reuse_confined_job= for the recorded or =squeue=-adopted job, the remote-service script when the session existed or won a race, and the TUI's =tmux new-session= built without =-A= so a duplicate fails instead of attaching), with =has-session -t =name= exact rather than by prefix; every path the durable-root refusals compare has its leading slashes collapsed (=normpath= keeps =//=); the resolved mirror path and the final root must be absolute, with an unexpanded =~= tolerated on a dry run only.
+  Launches without a selection keep every path as it was, including the unselected service script's prefix matching.
+- Real-Codex harness (=7f55e44=, =6acc531=) :: =tests/codex_app_server.py= drives the installed Codex as an app-server against a recording fake model, and =tests/test_codex_app_server.py= establishes on the real build the contracts the runner rests on (next subsection).
+
+- Slice 3a, timer requests (=18a3cab=) :: the Slurm deadline timer touches the run's =checkpoint.request= at the 30-, 15- and 5-minute warnings, after the WIP snapshot, through a best-effort shell function that creates nothing but that file and never touches the durable side; =build_timer_script= takes the scope digest and the local-disk root, and =launch_agent= passes the scope it already decided.
+  Gap: an unconfined managed launch's timer is started from =cli._start_slurm_timer=, which does not know the scope yet.
+- Slice 3b, status surface (=a9fa6ec=) :: =sucoder codex-state-status <mirror> [--json]= reads the recorded allocation's =latest-run=, =status.json= and =owner.json= with one =cat= each, inside the allocation through =srun --jobid --overlap= on a confined target (never compute-node SSH), and prints one line per fact: mode and run, state, replica age and lag and anomalies, last durable generation with class and age and any unsynced generation, checkpoint state, pending work per thread, the restore origin, and the refusal or blocked reason; a refused or never-placed launch, which writes no =latest-run=, is reported as no managed run recorded.
+
+- Slice 3c, drain and acknowledgement, runner half (=a97674a=) :: a requester writes =<run>/drain.request= atomically ({nonce, mode release|renew, requested_at, requester}); the runner consumes it on its one-second poll, rejects a malformed one by renaming it, answers a repeated nonce from the existing acknowledgement and drops a second nonce while one is served.
+  Who owns the terminal decides what a drain does, recorded once at launch as =owner.json= =terminal=: with =none= (an app-server, =exec=, remote control or =--unattended=) the runner stops Codex the way a forwarded SIGTERM does, with a SIGKILL bound at the checkpoint timeout, and the normal exit path seals (or records a crash); with =tty= a person may be mid-turn, so Codex is not signalled, a warm capture is taken now and acknowledged =warm_only=, and the final capture on the person's own exit updates the acknowledgement under the same nonce.
+  The acknowledgement =<run>/drain.ack= (mirrored in =status.json=) carries the nonce, mode, outcome (=sealed=, =crash=, =warm_only=, or =failed= with a reason and the last durable generation), the generation's name, class, manifest hash and path, Codex's exit code, and the child's pid with its =/proc= start time and whether that exact process is gone, which is the stop proof (a dead pid alone is not, under pid reuse).
+  After a release-mode acknowledgement the runner exits as before; after a renew-mode one it stays =drained=, holding =startup.lock= with nothing durable touched, until SIGTERM, SIGHUP, SIGINT or a release-mode request with a new nonce: that acknowledgement is the token Slice 3d's transfer record will carry.
+- Slice 3c, drain and acknowledgement, launcher half (=e25d592=) :: =sucoder release= requests a release-mode drain from the managed owner before it cancels the allocation (and, on a sibling detach that stops the departing mirror's tmux session, before that stop), writing =drain.request= atomically through the same =srun --jobid --overlap= route the status reads use and polling =drain.ack= every two seconds until the nonce and run match or the bound (=checkpoint_timeout_seconds= + 30 s, =--drain-timeout= overrides, =--no-drain= skips) elapses; it prints one outcome line (sealed, warm only because a person holds the terminal, crash kept for recovery, failed with the reason, unacknowledged, or no managed run) and proceeds with the release in every case, because an explicit release is the user's instruction.
+  A run that has already exited with a sealed or crash final generation, or that is refused, blocked or released, is answered without waiting; an unconfined job that is not running gets no request, because a release never allocates a node to ask.
+  =sucoder codex-state-drain <mirror> [--mode release|renew] [--timeout S] [--json]= exposes the same request for operators and for Slice 3d, whose renewal will use mode renew and read the acknowledgement as its transfer token.
+** Corrections to the record
+
+- =threads.rollout_path= is stored canonicalized (the realpath), not as written: with =CODEX_HOME= given through a symlink the row holds the real path, and Codex rewrites it on =thread/resume= to the new canonical location.
+  The bind target is the realpath of the home, so the stored path resolves inside the namespace; a restore must place the rollout where the canonical path resolves.
+- =next_rollout_byte_offset= equals the rollout size at every =turn/completed= (42408, 49257 and 56106 bytes for three empty-output turns); the restore gate is offset less than or equal to replica length, never equality, and a longer replica is the tolerated "rollout ahead" case.
+- The database-ahead hazard needs a gap of several turns to reproduce: with a one-turn gap the next turn's append crosses the stale watermark and the projection resumes mid-record; with a three-turn gap the projection freezes and the resumed thread shows phantom turns, as the spike recorded.
+- =thread/goal/set= with =status: active= fires an unprompted turn within about ten milliseconds of the call; =paused= is a hold.
+  No protocol request queues a message; =codex queue --thread ID --message TEXT= with the server stopped leaves one =queued_items= row that executes once on resume.
+- Under the bind layout =thread/archive= fails atomically with =EXDEV=: Codex renames the rollout from =sessions/= to a flat =archived_sessions/= and has no copy-and-delete fallback, so with =archived_sessions= unbound the move crosses devices, the row is untouched and the thread keeps working.
+  Archiving a managed thread is therefore a known limitation until =archived_sessions= joins the bind set and replication, capture and restore cover it (an archived thread's path lies outside =sessions/=, and restoring one needs =thread/unarchive= before =thread/resume=).
+- The staged context installer was not valid for Python 3.6 and failed inside the runner on such node images; =96a77a4= makes it 3.6-clean with a test that runs the staged form under =/usr/bin/python3.6=.
+- Python 3.6's =sqlite3= module has no backup API and its library (3.26) has no =VACUUM INTO=; the runner's CLI fallback depends on the =sqlite3= binary being on the node image, and a capture without either fails rather than copying files.
+
+** Deferred to Slice 3
+
+- Transfer fencing, lineage pins and retention: generations accumulate unpruned under each run (a few hundred kilobytes per capture at the sizes seen here); only the local =snapshots/= bundles are pruned to the newest three.
+- =RemoteSession= metadata and renewal with acknowledged handoff (timer checkpoint requests landed in Slice 3a; a drain request with a sealed acknowledgement is Slice 3c).
+- Warm generations remain per-database consistent only; the gate for unattended continuation stands.
+- Archiving a managed thread. Measured for Slice 3: binding =archived_sessions= as a second bind does not help, because each =bwrap --bind= is its own vfsmount and =rename(2)= across two mounts fails with =EXDEV= even for sibling directories on one filesystem; an archive succeeds only when =sessions/= and =archived_sessions/= share one mount (the whole home in one bind, or no bind), where it is a same-inode rename to a flat =archived_sessions/<basename>= with =rollout_path= rewritten and =archived=1=, the file immutable while archived, =thread/resume= refused until =thread/unarchive= moves it back.
+  Under the managed layout =thread/archive= therefore remains an atomic, state-consistent failure whose only side effect is the dropped writer lock (re-created on the next resume); supporting it needs a single-mount layout or an upstream copy-and-delete fallback, and a replicator that follows a thread across the two directories by thread id with the manifest recording =archived=, =archived_at= and the archived path.

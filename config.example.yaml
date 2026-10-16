@@ -155,6 +155,13 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #       #                           # N min; 0 = off.  .gitignore generated
 #       #                           # outputs: each snapshot is a new commit on
 #       #                           # the shared mirror.
+#       # codex_state:            # managed Codex state on local disk (needs
+#       #   enabled: true         # local_disk; Codex launches only; refuses to
+#       #   checkpoint_minutes: 10            # launch rather than fall back to the
+#       #   checkpoint_timeout_seconds: 30    # shared home).  docs/codex-local-state.org
+#       #   durable_root: null    # null: <dir of the mirrors>/.sucoder-state; a
+#       #                         # root inside/around a mirror or under
+#       #                         # local_disk is refused
 
 # Mirrors are optional when using zero-config repo detection.
 mirrors:

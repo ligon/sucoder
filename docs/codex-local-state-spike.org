@@ -1,0 +1,442 @@
+#+title: Codex node-local SQLite state: Slice 0 inventory on Savio
+#+date: 2026-10-15
+#+status: Inventory, outcomes 1--4 and 7, and the Codex side of 5 complete; outcome 6 and the protocol side of 5 await the runner
+#+author: Sue
+#+property: header-args :eval never-export :tangle no :results output :exports code
+
+* Scope and authorization
+
+This record covers the read-only inventory part of Slice 0 in [[file:codex-local-state.org][the design]] (its "Slice 0" section) together with spike outcomes 1 and 2: which SQLite stores and locks follow =sqlite_home= on the installed Savio build, and whether each launch mode owns an independent foreground server.
+The human authorized this part on the existing confined allocation; outcomes 3--7 were then run on a separate disposable allocation and are recorded in the final section.
+Read-only here means: every Codex launch used an isolated =HOME= and =CODEX_HOME= under a private spike root, a loopback fake model, and no credentials; nothing under the real Codex home was opened by the harness, and the strace classification below is the evidence that Codex did not open it either.
+No =daemon=, =doctor= or =remote-control= management command was run against the real home.
+The live managed daemon (pid 3630696, started 2026-10-14 20:56, working under =/local/job39919092/=) runs on another node and was left alone.
+
+* Environment
+
+| Item                 | Value                                                                 |
+|----------------------+-----------------------------------------------------------------------|
+| Host, job            | n0033.savio4, Slurm job 39969504 (co_carleton, savio4_htc)            |
+| Slice                | 4 cores, 24 GB, cgroup =slurmstepd.scope/job_39969504/step_batch=     |
+| Date                 | 2026-10-15, 13:19--13:25 UTC                                          |
+| Codex                | codex-cli 0.162.1 (npm package, native musl binary)                   |
+| Managed daemon       | =packages/app-server-daemon/current= -> =releases/0.162.1-*=          |
+| Binary identity      | npm and managed 0.162.1 binaries share sha256 =628e3548...0d92e1=     |
+| Node, Python         | v20.20.2, 3.12.13                                                     |
+| strace, tmux, sqlite | 5.18, 3.7c, =/usr/bin/sqlite3=; =ptrace_scope= 0                      |
+
+| Filesystem       | Mount                                   | Relevant options                        |
+|------------------+-----------------------------------------+-----------------------------------------|
+| =$HOME=          | =/global/home=, NFS v3                  | =local_lock=none=                       |
+| real Codex home  | =/global/scratch=, Lustre               | =flock,lazystatfs,encrypt=              |
+| =/local=         | =/dev/mapper/VGmain-local=, ext4        | =rw,relatime,discard=                   |
+| test state root  | =/global/scratch/.../.sucoder-state-spike/job39969504= | Lustre, mode 0700         |
+
+The real Codex home is =~/.codex -> /global/scratch/fsa/fc_jevons/ligon/codex-home=.
+The human explained the symlink: NFS =$HOME= does not support the locking SQLite needs, so the databases were moved to a Lustre partition that does, and that partition is often nearly unusable because of contention.
+Both halves are visible in the mount options and in the lock traffic measured below.
+
+** Prior art found during this phase
+
+=codex-home/sqlite-backups/n0140-job39450011/recovery-tools/= (2026-10-01, job 39450011 on n0140, Codex 0.160.0) already cut the live managed daemon over to =/local/job39450011/codex-sqlite/active= with =CODEX_SQLITE_HOME= plus =-c sqlite_home=, verified through =/proc/<pid>/fd= that every open =.sqlite*= handle was local, and ran a fifteen-minute per-database online-backup loop to the shared home.
+Its =RECOVERY.org= counted 1299 database-locked warnings in a four-hour window on Lustre.
+It inspected =.sqlite*= handles only; lock files, sidecar directories, the TUI and =--no-daemon= modes, override precedence and the current build are what this phase adds.
+=codex-home/sqlite-lustre-moved-2026-10-14/= holds a second manual relocation with a =stale-writer-locks/= directory and no accompanying note.
+Neither was cited in the design or the ledger before this phase; the ledger now records both.
+
+* Method
+
+- Harness :: [[file:../scripts/codex_sqlite_placement_spike.py][=scripts/codex_sqlite_placement_spike.py=]] runs one case; [[file:../scripts/codex_sqlite_placement_matrix.sh][=scripts/codex_sqlite_placement_matrix.sh=]] runs the other ten cases; the first (c1) and the last (c10, added after review found the env-versus-file link untested) were run by hand.
+  The harness imports =sucoder.agent_mode.config_override= to encode the =sqlite_home= argument, as design step 7 requires, and reuses the isolated-home, loopback fake-model app-server pattern of =tests/test_codex_context.py:158=.
+- Per case :: fresh =codex-home/=, =user-home/=, =workspace/= (a =git init= directory) and =tmp/= under the spike root, created with umask 077.
+  The isolated =config.toml= trusts the workspace and, for one case, sets =sqlite_home=.
+  The environment is =PATH=, =HOME=, =CODEX_HOME=, =TMPDIR=, =NO_PROXY=, =RUST_LOG=error=, =TERM=, =LANG= and, for the env cases, =CODEX_SQLITE_HOME=.
+  Every launch is wrapped in =strace -f -y -s 256 -e trace=%file,connect,bind,flock,fcntl=.
+- App-server driver :: JSON-RPC over stdio: =initialize=, =initialized=, =thread/start= with =cwd= and without =ephemeral=, =turn/start= carrying a unique marker string, wait for =turn/completed=, snapshot =/proc/<pid>/fd= of every descendant, =thread/list=, then close stdin and escalate through SIGINT, SIGTERM and SIGKILL only if the process survives twelve seconds.
+- Remote-control driver :: =codex ... remote-control --no-daemon= with no stdin, observed for twenty seconds with periodic fd snapshots, then stopped the same way.
+- TUI driver :: =tmux -L spike-<case>= on a private socket runs =codex ... --cd <workspace> <marker>=; after twenty-five seconds the pane pid's descendants are snapshotted, the pane text captured, and =/quit= then =C-c= sent.
+- Classification :: every path strace saw is assigned to the first matching root: the override targets, the isolated =CODEX_HOME=, =HOME=, workspace and temp directories, the real Codex home, the real =$HOME=, =/tmp/codex-daemon-<uid>=, =/tmp=, =/local=, =/global/scratch=, =/global/home=, the install directory, or system paths.
+  Tags record the syscall, write-open flags, mutations, =flock= and =fcntl(F_SETLK)=.
+- After each case :: a file tree of every root, =sqlite_master= tables plus =user_version= and =journal_mode= for every =*.sqlite= opened read-only, and a byte search for the marker across all roots.
+
+Exact inventory commands, with exit status captured per command:
+
+#+begin_src shell
+hostname; date -u; codex --version; codex --help; codex remote-control --help
+findmnt -T "$HOME"; findmnt -T "$SUCODER_LOCAL_ROOT"; findmnt -T "$SUCODER_SHARED_STATE_TEST_ROOT"
+node --version; cat /proc/self/cgroup; nproc; squeue --me -o "%i %P %T %L %C %m"
+sha256sum <npm codex binary> <managed releases/0.162.1-*/bin/codex>
+#+end_src
+
+Exact case commands (the first by hand, the rest through the matrix script; =$R= is the cases directory):
+
+#+begin_src shell
+export SUCODER_REPO=/local/job39969504/mirrors/SuCoder SPIKE_ROOT=/local/job39969504/spike-codex-state
+python3 -I scripts/codex_sqlite_placement_spike.py --case c1-cfg --sqlite-config $R/c1-cfg/sqlite-cfg
+scripts/codex_sqlite_placement_matrix.sh    # c0-default ... c10-env-vs-toml, see the table below
+#+end_src
+
+Raw evidence (per case =result.json=, =strace.log=, =stderr.log=, =stdout.log=; the inventory and matrix logs; the scripts as run) is preserved outside the job at =/global/scratch/fsa/fc_jevons/ligon/.sucoder-state-spike/job39969504/evidence/= (mode 0700, 37 files).
+The =/local= case directories, including the 67 MB plugin clones, die with the job.
+
+* Results
+
+** Inventory commands
+
+All commands exited 0.
+=nproc= reports 4 inside the job cgroup, so the slice is confined.
+The mount facts are in the Environment table; =local_lock=none= on =/global/home= is the configuration under which POSIX byte-range locks are not honoured locally, and =flock= on =/global/scratch= is the Lustre option that makes them work there.
+
+** Placement by case
+
+| Case           | Override                              | Mode                       | Six databases opened under                          | Exit, stop          |
+|----------------+---------------------------------------+----------------------------+-----------------------------------------------------+---------------------|
+| c0-default     | none                                  | app-server                 | =CODEX_HOME=                                        | 0, EOF then SIGINT  |
+| c1-cfg         | =-c sqlite_home=<abs>=                | app-server                 | the =-c= directory                                  | 0, EOF              |
+| c2-env         | =CODEX_SQLITE_HOME=<abs>=             | app-server                 | the env directory                                   | 0, EOF              |
+| c3-env-vs-cfg  | env =X=, =-c= =Y=                     | app-server                 | =Y=: configuration beats the environment            | 0, EOF              |
+| c4-toml-vs-cfg | =config.toml= =X=, =-c= =Y=           | app-server                 | =Y=: the command line beats =config.toml=           | 0, EOF              |
+| c10-env-vs-toml | env =X=, =config.toml= =Y=           | app-server                 | =Y=: =config.toml= beats the environment            | 0, EOF              |
+| c5-relative    | =-c sqlite_home="rel-sqlite"=         | app-server                 | =<cwd>/rel-sqlite=, inside the Git workspace        | 0, EOF              |
+| c6-missing     | =-c= absolute, directory absent       | app-server                 | created by Codex (=mkdir 0777= masked by umask)     | 0, EOF              |
+| c7-unwritable  | =-c= absolute, directory mode 0500    | app-server                 | none: exit 1 before any database or thread          | 1                   |
+| c8-rc-nodaemon | =-c sqlite_home=<abs>=                | =remote-control --no-daemon= | the =-c= directory (five stores; no thread)        | 1, relay error      |
+| c9-tui         | =-c sqlite_home=<abs>=                | TUI in tmux                | the =-c= directory, held by the TUI process itself  | =/quit=             |
+
+The six databases are =state_5=, =thread_history_1=, =goals_1=, =queue_1=, =memories_1= and =logs_2=, each with =-wal= and =-shm= sidecars, journal mode WAL, =user_version= 0, schema versioned through an =_sqlx_migrations= table.
+=memories_1= is opened although the =memories= feature is off.
+Every app-server case completed one marker turn in about six seconds of wall time, and the fake model received the marker.
+
+c7's error text, verbatim from stderr:
+
+#+begin_example
+Error: failed to initialize sqlite state runtime under <dir>: failed to initialize state runtime at <dir>
+#+end_example
+
+No database was opened anywhere else in c7, so Codex 0.162.1 does not fall back to =CODEX_HOME= when the configured location is unusable; it fails the launch.
+
+** What follows =sqlite_home= and what does not
+
+Followed the override in every case that reached a thread: the six databases and their sidecars, and nothing else.
+
+Stayed in =CODEX_HOME= in every case, regardless of override:
+
+- =thread-writer-locks/.coordination.lock= (=flock LOCK_EX=) and =thread-writer-locks/<thread-id>.lock= (=flock LOCK_EX|LOCK_NB=), created with mode 0666 masked by umask.
+- =installation_id= (=flock LOCK_EX= while written).
+- =.tmp/plugins.sync.lock= (=flock LOCK_EX=) and =tmp/arg0/codex-arg0<random>/.lock= (=flock LOCK_EX|LOCK_NB=).
+- =sessions/<yyyy>/<mm>/<dd>/rollout-<timestamp>-<thread-id>.jsonl=, opened =O_RDWR|O_CREAT|O_APPEND= with mode 0666 masked by umask, containing the marker, and re-opened read-only 39 further times during the single-turn c1 run.
+- In TUI mode additionally =history.jsonl= (=O_RDWR|O_CREAT|O_APPEND=, mode 0600; contains the marker), =version.json= and =shell_snapshots/=.
+- In =--no-daemon= mode additionally =app-server-control/app-server-startup.lock=.
+
+Not observed in any case: =.sqlite-maintenance.lock= (present in the real home, dated 2026-10-01) and =agent_message_board_1.sqlite=.
+The latter is named in the binary and gated by the =agent_message_board= feature, which =codex features list= reports as "under development, false"; the design's inventory table should list it as an optional, flag-gated seventh store.
+The maintenance lock may belong to a periodic task these short runs never reached; it remains unclassified.
+
+** Server ownership by mode (outcome 2)
+
+- app-server :: the launched native binary itself holds all eighteen database and sidecar descriptors; the only Unix-socket connections are =/dev/log= and =/var/run/nscd/socket=.
+  Nothing under =/tmp/codex-daemon-<uid>= is touched.
+- TUI :: the same: the TUI process holds the eighteen descriptors, makes no =codex-daemon= access at all, and connects only to the session bus and its own tmux socket.
+  =daemon_auto_start= is "stable, true" in the feature list, but no daemon was spawned for this launch.
+- =remote-control --no-daemon= :: the embedded server opened =state_5=, =goals_1=, =queue_1=, =memories_1= and =logs_2= under the override, created a relay socket under =/tmp/codex-rc-<random>/rc.sock= and a control lock plus socket at =/tmp/codex-daemon-<uid>/<64-hex>=, attempted TLS connections to public addresses, and exited 1 with "Remote control is enabled on n0033.savio4 but the connection is errored", because the isolated home has no credentials.
+  The 64-hex name differs from the real home's (=75c014f5...= against =1fa531dc...=) and is not the plain SHA-256 of either home path; its derivation was not established.
+  The directory is per host, and it was empty after the process exited.
+
+An authenticated remote-control launch cannot be exercised with a synthetic home, and this phase did not use real credentials; what is established is that the embedded server opens its stores under the override before the relay step.
+
+** Shutdown and WAL state
+
+- app-server, stdin closed :: exit 0 within twelve seconds in eight of nine cases, but five of the six main database files stayed at 4096 bytes (=logs_2.sqlite= reached 49152) with all thread content, including the marker, in the =-wal= files.
+  The connections were not closed before exit, so nothing was checkpointed.
+  A file copy of =*.sqlite= taken after such an exit would be empty; the design's choice of the SQLite backup API, which reads through the WAL, is the correct one, and "sealed" must mean a close that checkpoints, or a backup-API copy, not merely a zero exit.
+- app-server, c0 :: stdin EOF did not end the process within twelve seconds because the plugin marketplace =git clone= was still running; SIGINT ended it.
+  A graceful-shutdown profile must bound or wait for that sync.
+- TUI, =/quit= :: =thread_history_1.sqlite= was closed cleanly (no =-wal= or =-shm= left, marker in the main file) while the other five retained their WAL and shared-memory files.
+  Two UI warnings were shown in the pane and were not inspected.
+
+** Non-SQLite I/O in =CODEX_HOME=, recorded separately
+
+Counting strace lines by location for the six-second c1 run: 1972 on the =sqlite_home= directory; 5568 on =CODEX_HOME/.tmp=, 670 on =CODEX_HOME/skills=, 147 on =CODEX_HOME/sessions=, 319 elsewhere in =CODEX_HOME=; 5809 on the workspace; 3730 PATH probes under =/global= (Lmod, =~/.nvm=, =~/.claude/plugins=, =~/.elan=, =~/.local/bin=); 18775 elsewhere (sandbox =pivot_root= setup, =/proc=, =/usr=).
+Every fresh home cloned a plugin marketplace from the network into =CODEX_HOME/.tmp/plugins-clone-<random>/= (a 25 MB pack, 4535 entries, 67 MB on disk, left in place) and populated =skills/.system/=.
+The =plugins= and =remote_plugin= features are "stable, true".
+Moving the databases does not remove this traffic from the shared home; the design's statement that retaining shared configuration does not eliminate shared-home access is confirmed and now quantified.
+
+** Lock traffic, the contention mechanism
+
+In c1's six seconds SQLite issued 1656 =fcntl(F_SETLK)= calls on the override directory: 1002 on =state_5.sqlite-shm=, 224 on =thread_history_1.sqlite-shm=, 56--70 on each other =-shm=, and 29 on each main file.
+On ext4 these are local; on Lustre each is a lock-server round trip, which is how a nearly idle session becomes "nearly unusable" under contention and how the Oct 1 diagnosis reached 1299 locked warnings in four hours.
+No timing claim is made from these uncontended single runs; outcome 7 remains open.
+
+** Schema inventory (c1, 0.162.1)
+
+| Database                 | Tables                                                                                                                                                                                                                                                              |
+|--------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| =state_5.sqlite=         | =backfill_state=, =external_agent_config_imports=, =project_idempotency_keys=, =project_roots=, =projects=, =remote_control_enrollments=, =rollout_migration_skipped_rollouts=, =rollout_migration_state=, =thread_attachments=, =thread_dynamic_tools=, =thread_sections=, =thread_spawn_edges=, =threads= |
+| =thread_history_1.sqlite= | =thread_history_projection_state=, =thread_items=, =thread_realtime_items=, =thread_turns=                                                                                                                                                                           |
+| =goals_1.sqlite=         | =thread_goal_continuation_deferrals=, =thread_goals=                                                                                                                                                                                                                 |
+| =queue_1.sqlite=         | =queued_items=, =queued_thread_revisions=                                                                                                                                                                                                                            |
+| =memories_1.sqlite=      | =consolidation_progress=, =jobs=, =stage1_outputs=                                                                                                                                                                                                                  |
+| =logs_2.sqlite=          | =logs=                                                                                                                                                                                                                                                              |
+
+Each also carries =_sqlx_migrations= and, where used, =sqlite_sequence=.
+The =rollout_migration_*= tables and the =codex migrate-rollouts= subcommand show that the JSONL rollout is the older store and the paginated SQLite history the newer one, yet 0.162.1 still writes and re-reads the rollout.
+
+* Consequences for the design
+
+1. The inventory table in the design is confirmed for the six databases on 0.162.1 and should add =agent_message_board_1.sqlite= as flag-gated and optional, and note that no maintenance lock was observed in these modes.
+2. The =sessions/= rollout file and, for the TUI, =history.jsonl= are external transcript dependencies in =CODEX_HOME=.
+   A generation that captures only the databases does not capture everything the server reads for a thread; outcome 3 must establish whether resume works from the databases alone, or the generation must include the thread's rollout file.
+3. The runner must pass an absolute =sqlite_home=: a relative value resolves against the process cwd and lands inside the managed clone.
+   It must pre-create the directory with mode 0700 rather than let Codex create it with =0777= masked by umask, and verify effective placement through =/proc/<pid>/fd= as the Oct 1 =cutover.py= did.
+   A launch whose location is unusable fails with exit 1 and the error text above; that is the loud failure the design wants, and there is no silent fallback to repair.
+4. Precedence is =-c= over =config.toml= over =CODEX_SQLITE_HOME= (cases c3, c4 and c10), as the official reference the design cites states.
+   An explicit =-c= from the runner is therefore sufficient, and an environment export alone is defeated by a user's =config.toml= value, exactly as the design predicted; the conflict rule should compare the runner's path against both the environment and the file.
+5. "Sealed" needs a definition that checks WAL state: after an app-server stdin EOF the data is entirely in WAL, and after a TUI =/quit= only the history store was checkpointed.
+   The backup API reads committed WAL content, so warm captures are unaffected; the sealed profile must either close through a path that checkpoints or accept the backup-API copy as the sealed artifact.
+6. In remote-control mode the embedded server creates a per-host control socket and lock under =/tmp/codex-daemon-<uid>/=, and a startup lock in =CODEX_HOME/app-server-control/=; the independent-ownership check must cover both, and an authenticated test is still required.
+7. Shared-home plugin and skill synchronization is the dominant non-SQLite I/O and is unaffected by placement; it belongs in the shared-home I/O budget, not the recovery generation.
+
+* Limits of the inventory phase
+
+- Single, uncontended runs; no latency, size or duration claim is made.
+- No abrupt stop, restore into another allocation, claim race, failure injection or replay test was run.
+- Remote control was exercised only to the relay step, unauthenticated.
+- The =/tmp/codex-daemon= name derivation and the TUI's two warnings were not resolved.
+- Which component re-reads the rollout file, and whether resume depends on it, was not characterized.
+
+* Outcomes 3--7 on a disposable allocation
+
+** Scope and method
+
+The human authorized a separate =co_carleton= allocation for the remaining Slice 0 outcomes; it ran as Slurm job 39975196 on n0038.savio4 (4 cores, 16 GB, =--no-requeue=) between 14:04 and 14:11 UTC, cloning =main= at 944c156 from the shared mirror into its own =/local=.
+Outcome 6 and the protocol half of outcome 5 (claims, revocation, acknowledgements, pins, upload failures, scheduler errors) exercise the runner's transfer protocol, which does not exist yet; they are out of scope here and belong to Slices 2--3.
+What this job measured is Codex's own behavior with relocated state: outcome 3 (restore and the rollout dependency; abrupt-stop and capture interleavings), outcome 4 (queue and goal replay after resume), the Codex-facing half of outcome 5 (restart in place; two servers on one =sqlite_home=), and outcome 7 (placement latency).
+
+- Drivers :: [[file:../scripts/codex_state_outcomes.py][=scripts/codex_state_outcomes.py=]] (one sub-test per outcome, each writing =result.json= to the Lustre evidence directory as it completes) and [[file:../scripts/codex_state_outcomes_sbatch.sh][=scripts/codex_state_outcomes_sbatch.sh=]] (the job).
+  The driver reuses the fake model, process helpers and option builder of the placement harness, and its capture is the SQLite online-backup pattern of the 2026-10-01 =recovery-tools/snapshot.py= (per-database backup, =quick_check=, sha256, manifest); it never copies live database files.
+- Isolation :: every launch uses its own =HOME= and =CODEX_HOME= under the job's =/local= or the private Lustre test root, the loopback fake model and no credentials; the live daemon and the real home were not touched.
+- Deviations from the inventory runs :: =features.plugins=false= and =features.remote_plugin=false= suppress the 25 MB marketplace clone per fresh home (verified: no =.tmp/plugins-clone-*= appeared); the fake model answers every request with an empty completed response, which matters for outcome 4.
+- Parameters :: restore and interleaving threads of 6 turns; 20 interleavings from seed 20261015; replay watch 30 s; latency 30 timed turns per run, 3 repetitions per arm, concurrency 2; arms local, lustre, local_home.
+- Evidence :: =/global/scratch/fsa/fc_jevons/ligon/.sucoder-state-spike/job39969504/evidence-outcomes/job39975196/= (per-test =result.json=, =environment.json=, =driver.log=, the Slurm output one level up).
+  Smoke runs with tiny parameters on job 39969504 preceded submission; only the full-scale job's evidence is kept there.
+
+** Restore and the rollout dependency (outcome 3)
+
+One source server wrote a thread of 6 marker turns under =-c sqlite_home=A=; a warm capture was taken while it ran and a sealed capture after stdin EOF.
+Each cell restores one capture into a fresh directory and starts a new server, with the rollout JSONL either left at the absolute path recorded in the database, copied into a fresh home at the =CODEX_HOME=-relative path with the original hidden, or hidden entirely.
+Every cell then sends a follow-up turn and records which earlier markers the fake model received.
+
+| Cell | Home | Rollout at recorded path | =thread/list= | =thread/list= (state DB only) | =thread/read= | =thread/resume= | =thread/items/list= | =thread/turns/list= | History to model |
+|------+------+--------------------------+---------------+-------------------------------+---------------+-----------------+---------------------+--------------------+------------------|
+| original home sealed | original | present | found | found | ok | ok | ok | ok | 6/6 |
+| original home warm | original | present | found | found | ok | ok | ok | ok | 6/6 |
+| original home new cwd | original | present | found | found | ok | ok | ok | ok | 6/6 |
+| fresh home rollout at db path | fresh | present | not found | found | ok | ok | ok | ok | 6/6 |
+| fresh home rollout copied relative | fresh | hidden | found | not found | error | error | error | error | 0/6 |
+| fresh home rollout absent | fresh | hidden | not found | not found | error | error | error | error | 0/6 |
+| original home rollout absent | original | hidden | not found | not found | error | error | error | error | 0/6 |
+
+Findings:
+
+- The rollout file is required and the SQLite history is a projection of it.
+  With the file gone from the path stored in =threads.path=, =thread/resume= fails with "no rollout found for thread id", and =thread/read=, =thread/items/list= and =thread/turns/list= fail with "invalid paginated history lineage"; no history reaches the model.
+  That holds in the original home as well as a fresh one, and a copy at the =CODEX_HOME=-relative path does not help: the dependency is on the absolute path.
+  (The =thread_history_projection_state= table and the =rollout_migration_*= tables in =state_5= say the same thing from the schema side.)
+- With the file at its recorded path, a fresh =CODEX_HOME= resumes fully, including a different cwd on =thread/resume= and a follow-up turn whose model request carries the whole earlier conversation.
+  Default =thread/list= does not find the thread in a fresh home because it scans =CODEX_HOME/sessions=; =useStateDbOnly= finds it from the restored database.
+- Warm and sealed captures restore identically here; the difference between them is not visible through thread history because the server rebuilds the projection from the rollout on resume.
+- In the smoke runs the rollout accumulated follow-up turns from earlier cells, and every later cell saw them: a resumed thread shows whatever the rollout holds, not what the restored database holds.
+
+** Abrupt stops and captures (outcome 3, interleavings)
+
+20 seeded runs (base seed 20261015; per-run seed =base * 1000 + i=), each a fresh home and thread of 6 marker turns on =/local=, a warm capture started at a random fraction of a random turn, SIGKILL of the process group at a random fraction of a random later turn, then a post-crash capture from the files the killed process left.
+For each capture a fresh server restores it in the same home, with the rollout reset to its post-kill bytes, and the harness records the markers visible through =thread/resume= and =thread/items/list=, whether =thread/turns/list= agrees with =thread/items/list=, a byte search of the captured =thread_history_1.sqlite= and =state_5.sqlite= for markers, and a follow-up turn.
+A warm restore passes when every turn whose =turn/completed= preceded the start of the =thread_history= backup is visible and nothing not sent appears; a crash restore passes when nothing not sent appears and the follow-up turn works.
+
+All 20 warm captures and all 20 post-crash captures completed with =quick_check= ok on every database, opened read-only, in 11--24 ms each for 520 KB; all 20 of 20 runs passed both restores, and =thread/turns/list= agreed with =thread/items/list= in every restore.
+Every run was killed with a turn in flight.
+
+| Run | Seed | Capture at turn | Kill at turn | Completed before capture | Completed after | In flight at kill | In-flight message in crash capture | Warm restore | Crash restore | Visible after warm restore / in warm capture |
+|-----+------+-----------------+--------------+--------------------------+-----------------+-------------------+------------------------------------+--------------+---------------+----------------------------------------------|
+| 0 | 20261015000 | 2 | 4 | 2 | 2 | 2 | no | pass | pass | 4 / 2 |
+| 1 | 20261015001 | 3 | 3 | 3 | 0 | 3 | no | pass | pass | 3 / 3 |
+| 2 | 20261015002 | 3 | 5 | 3 | 2 | 1 | no | pass | pass | 5 / 4 |
+| 3 | 20261015003 | 0 | 0 | 3 | 1 | 2 | yes | pass | pass | 5 / 4 |
+| 4 | 20261015004 | 0 | 1 | 0 | 1 | 5 | no | pass | pass | 1 / 1 |
+| 5 | 20261015005 | 1 | 3 | 1 | 2 | 3 | yes | pass | pass | 4 / 2 |
+| 6 | 20261015006 | 2 | 5 | 2 | 3 | 1 | yes | pass | pass | 6 / 3 |
+| 7 | 20261015007 | 0 | 2 | 1 | 2 | 3 | no | pass | pass | 3 / 2 |
+| 8 | 20261015008 | 0 | 4 | 2 | 2 | 2 | yes | pass | pass | 5 / 2 |
+| 9 | 20261015009 | 4 | 4 | 5 | 0 | 1 | no | pass | pass | 5 / 5 |
+| 10 | 20261015010 | 0 | 4 | 3 | 1 | 2 | yes | pass | pass | 5 / 4 |
+| 11 | 20261015011 | 2 | 5 | 2 | 3 | 1 | yes | pass | pass | 6 / 3 |
+| 12 | 20261015012 | 3 | 5 | 4 | 1 | 1 | no | pass | pass | 5 / 4 |
+| 13 | 20261015013 | 0 | 0 | 2 | 0 | 4 | yes | pass | pass | 3 / 3 |
+| 14 | 20261015014 | 2 | 4 | 2 | 3 | 1 | no | pass | pass | 5 / 3 |
+| 15 | 20261015015 | 5 | 5 | 5 | 0 | 1 | yes | pass | pass | 6 / 6 |
+| 16 | 20261015016 | 3 | 3 | 3 | 0 | 3 | yes | pass | pass | 4 / 4 |
+| 17 | 20261015017 | 5 | 5 | 5 | 0 | 1 | yes | pass | pass | 6 / 6 |
+| 18 | 20261015018 | 5 | 5 | 5 | 0 | 1 | yes | pass | pass | 6 / 6 |
+| 19 | 20261015019 | 2 | 4 | 2 | 2 | 2 | no | pass | pass | 4 / 3 |
+
+Findings:
+
+- No completed turn was missing after any restore, warm or crash, and no unsent marker appeared.
+- In 12 of 20 runs the warm restore exposed more turns than its own =thread_history= capture contained (last column): the server rebuilt the projection from the rollout, which had kept growing after the capture.
+  The SQLite generation therefore fixes nothing by itself about which turns a resumed thread shows; the rollout does.
+- The byte search of the captured files is the only view of what the SQLite capture alone contained, because the server rebuilds thread history from the rollout on resume.
+  Every completed turn was present in every crash capture's =thread_history_1.sqlite=, and in 11 of the 20 runs the user message of the turn in flight at SIGKILL was already there too; after restore such a turn shows as a turn without completion.
+  =state_5.sqlite= holds only the thread's preview, so this search cannot measure skew between the databases; cross-database consistency of goals, queue and state rows at a crash remains unmeasured, and the design's warm-recovery gate stays open on that point.
+- These are 20 interleavings of a one-writer fake-model workload on ext4; they are regression evidence for this build, not a proof of cross-database atomicity.
+
+** Queue and goal replay (outcome 4)
+
+Four variants, each a fresh thread with one turn: a message queued with =codex queue= while the server was stopped; an active goal set with =thread/goal/set=; both; and a goal set active and then =paused= before the stop.
+After capture and restore, a fresh server received =thread/resume= and nothing else for 30 seconds.
+
+| Variant | =thread/resume= | Unprompted turns in 30 s | Model requests in 30 s | Requests per second, first five seconds | Queue rows before, after | Goal status after | Requests caused by the next client turn |
+|---------+-----------------+--------------------------+------------------------+------------------------------------------+--------------------------+-------------------+-----------------------------------------|
+| queue only | ok | 1 | 1 | 1, 0, 0, 0, 0 | 1, 0 | none | 1 |
+| goal only | ok | 448 | 447 | 28, 27, 21, 18, 18 | 0, 0 | active | 25 |
+| queue and goal | ok | 449 | 449 | 26, 27, 21, 20, 18 | 1, 0 | active | 25 |
+| goal paused | ok | 0 | 0 | 0, 0, 0, 0, 0 | 0, 0 | paused | 1 |
+
+Findings:
+
+- A persisted queue entry executes once, unprompted, on =thread/resume=: a =turn/started= and one model request carrying the queued text, and the =queued_items= row is consumed.
+- An active goal drives unprompted turns continuously after =thread/resume=: about twenty model requests per second for the whole watch window, each carrying the goal objective, with the goal still =active= afterwards and the next client turn itself producing dozens of requests.
+  With the fake model every reply is empty, so the goal loop never sees progress; with a real model each of those requests is paid.
+- A goal set to =paused= before the stop produced no unprompted activity at all after resume, and the next client turn produced one request: pausing is a usable hold for goals.
+- There is no comparable hold for the queue in the protocol; unattended resume of a thread with queued rows executes them.
+  A runner that resumes unattended must therefore either refuse while =queued_items= has rows for the thread, or accept the single execution; it must not resume a thread with an active goal unattended.
+
+** Restart in place and two writers (outcome 5, Codex side)
+
+- Restart in place :: a second server on the same =CODEX_HOME= and =sqlite_home= after a clean stop resumes the thread and the model receives the earlier history.
+- Same home, same databases, two servers :: the second =thread/resume= is refused with "thread <id> already has an active writer" (the =thread-writer-locks/<id>.lock= =flock=), and its =turn/start= fails with "thread not found"; the databases stay consistent.
+- Different homes, same databases, two servers :: both resume, both complete turns, =quick_check= stays =ok=, and both markers appear in the history afterwards.
+  Nothing in Codex prevents two writers when the per-thread lock lives in two different homes; that is the hazard the design's lineage exclusivity exists to prevent, measured.
+
+** Placement latency (outcome 7)
+
+Three arms with identical build, seeded fake-model workload and sequence: =local= (databases on =/local=, =CODEX_HOME= on Lustre, as the design proposes), =lustre= (both on Lustre, as production runs today), and =local_home= (both on =/local=, to show what the rollout traffic costs).
+Each run: start the server, one warm-up turn, 30 timed turns, stop, capture, restore into a new directory, restart and time the first =thread/list= and =thread/resume=.
+Arms alternate within each repetition so time-of-day drift cannot masquerade as a placement effect; two concurrent servers per arm follow the single runs.
+No strace was used in these runs.
+
+| Arm | Databases | =CODEX_HOME= | Concurrent servers | Runs | Turn p50 (s) | Turn p95 (s) | Startup (s) | =thread/start= (s) | Capture (s) | Capture bytes | Restart to first =thread/list= (s) | =thread/resume= (s) |
+|-----+-----------+--------------+--------------------+------+--------------+--------------+-------------+--------------------+-------------+---------------+-------------------------------------+---------------------|
+| local | /local | Lustre | 1 | 3 | 0.210 | 0.240 | 1.26 | 0.592 | 0.03 | 1822720 | 0.64 | 0.896 |
+| local | /local | Lustre | 2 | 2 | 0.198 | 0.222 | 1.24 | 0.596 | 0.03 | 1818624 | 0.58 | 0.867 |
+| lustre | Lustre | Lustre | 1 | 3 | 0.510 | 0.620 | 5.31 | 0.756 | 0.60 | 1789952 | 1.30 | 1.535 |
+| lustre | Lustre | Lustre | 2 | 2 | 0.501 | 0.563 | 5.25 | 0.722 | 0.73 | 1804288 | 1.31 | 1.526 |
+| local home | /local | /local | 1 | 3 | 0.042 | 0.050 | 0.37 | 0.043 | 0.03 | 1835008 | 0.31 | 0.072 |
+| local home | /local | /local | 2 | 2 | 0.048 | 0.065 | 0.33 | 0.026 | 0.02 | 1837056 | 0.27 | 0.051 |
+
+Medians over the runs in each row; no turn failed in any run.
+
+Findings:
+
+- Moving only the databases to =/local= took the median turn from 0.51 s to 0.21 s, server startup from 5.3 s to 1.3 s, the capture from 0.60 s to 0.03 s, restart to first =thread/list= from 1.3 s to 0.6 s and =thread/resume= from 1.5 s to 0.9 s.
+- Moving the home as well took the median turn to 0.042 s, startup to 0.37 s and =thread/resume= to 0.07 s: of the 0.47 s per turn between all-Lustre and all-local, the databases account for 0.30 s and the rest of the home, chiefly the rollout append and re-reads, for 0.17 s.
+- Two concurrent servers changed none of the medians by more than a few hundredths of a second in any arm; this workload does not contend with itself at that level.
+- Per-turn p95 stayed within 25 percent of p50 in every row except the two-server local-home runs (35 percent, a 17 ms spread); in absolute terms the Lustre runs were the most variable, with a 0.11 s gap between p50 and p95.
+- These are single-node samples between 14:08 and 14:11 UTC under whatever load =/global/scratch= carried at the time; they are not a speedup claim and the design should not quote them as one.
+
+** Bind mounts: the hot path without Lustre
+
+The human's concern is not Lustre's median latency but its episodes, when every operation takes minutes; the number that matters is therefore how many synchronous Lustre operations a turn contains, not their average cost.
+The =bind= sub-test launches the server through =bwrap --unshare-user --uid <own> --gid <own> --bind <local dir> CODEX_HOME/<subdir>=: a per-process mount namespace in which a local directory replaces a subdirectory of the shared home, while every other process keeps seeing the shared home unchanged, the stored rollout path stays =CODEX_HOME/sessions/...=, and Codex's own sandbox still runs nested inside (checked with =codex sandbox=; =/global/scratch= is read-only in it, as outside).
+=CODEX_HOME= sat on the Lustre test root, =TMPDIR= on local disk, and strace counted every path touched during six turns after a warm-up, on this slice (job 39969504).
+In both bind sets the rollout was physically on local disk, the shared =sessions/= stayed empty from outside, and a second server with the local directories copied to new paths and bound at the same mount points resumed the thread with all seven turns and sent the whole history to the model.
+
+| Bound to local disk                                                  | Lustre operations per turn | What remains on Lustre during a turn                                                                                                      |
+|----------------------------------------------------------------------+----------------------------+-------------------------------------------------------------------------------------------------------------------------------------------|
+| =sessions=                                                           | about 18                   | =tmp/arg0/<random>/git= (4), =skills/.system/.codex-system-skills.marker= (3), =skills= and =skills/.system= (3), =AGENTS.md= and =AGENTS.override.md= (2), path-component =readlink= and =lstat= calls |
+| =sessions=, =.tmp=, =tmp=, =thread-writer-locks=, =shell_snapshots=  | about 10                   | the =skills= stats (6), the two =AGENTS= stats (2), and about one =readlink= per path component of =CODEX_HOME= every few turns              |
+
+All of the remaining operations are metadata calls on entries of =CODEX_HOME= that the turn does not modify; no data is read or written on Lustre during a turn.
+They would reach zero by binding a read-only copy of =skills/= and the two =AGENTS= files as well, leaving the path-component lookups, which are client-cache hits unless another client has modified a directory on the chain.
+The harness's own artifacts are excluded from these counts: its isolated user home sat on Lustre, so =git= read =~/.gitconfig= there twenty times per turn, whereas production =HOME= is on NFS.
+Separately, Codex executes =git= about three times per turn and =lsb_release= every third turn; their PATH walks and =~/.gitconfig= reads touch =/global/home= and =/global/software=, which are NFS, not Lustre.
+
+** Episode tests: the rollout-local layout under the crash and the residue questions
+
+Seven further tests ran on this slice (job 39969504) with [[file:../scripts/codex_state_episode.py][=scripts/codex_state_episode.py=]], every server launched through the =bwrap= bind-mount layout above with =CODEX_HOME= on the Lustre test root; evidence is under =evidence-outcomes/job39969504-episode/=.
+
+- Rollout skew (the crash case) :: a six-turn thread was snapshotted after every turn (rollout bytes and database generation); each cell restores one pairing into a fresh bind and runs every read path, a follow-up turn, and row counts before and after.
+
+| Cell                        | Database from turn | Rollout from turn      | Read paths                                   | Turns the model received | =thread_turns= rows before, after |
+|-----------------------------+--------------------+------------------------+----------------------------------------------+--------------------------+-----------------------------------|
+| database ahead of rollout   | 6                  | 4                      | all ok, all show 6                           | 4                        | 6, 6: the follow-up turn never entered the history |
+| rollout truncated mid-line  | 6                  | 6, last line cut       | all ok, all show 6                           | 6                        | 6, 7                              |
+| rollout ahead of database   | 2                  | 6                      | =thread/read= shows 2, then =resume= rebuilds to 6 | 6                   | 2, 7                              |
+
+  No call failed in any cell, which is why the last case needs reading twice.
+  With the rollout ahead, resume rebuilds the projection (rows 2 to 7 after the follow-up); with the rollout truncated mid-line, Codex appended after the partial line and the model still received every turn.
+  With the database ahead, the model's context came from the rollout's four turns, the read paths showed the database's six, and the follow-up turn, though completed and appended to the rollout, never entered =thread_turns=.
+  The mechanism is =thread_history_projection_state=: its =next_rollout_byte_offset= (68910, from the six-turn database) lay beyond the end of the four-turn rollout (57220 bytes), so appends below that offset are never projected.
+  An extended run of the same cell (three more turns, a restart, one more turn) shows the projection resuming only once the file grows past the stale offset, from whatever byte that is: turn 10 is absent from the SQLite history for good, turn 11 entered it partially, and after the restart the read paths show two phantom turns the model never saw (the database's turns 5 and 6) and lack two real ones (10 and 11), while the model's context remained correct throughout.
+  This is the lag window of a replicated rollout, and the contract it imposes is hard: a database generation must be captured only after the replica is confirmed identical, and restore must refuse any generation whose =next_rollout_byte_offset= exceeds the rollout's length, which the manifest should record per thread.
+- Tail replication :: after each =turn/completed= the harness appended the rollout's new bytes to a replica on Lustre with =fsync=, outside Codex's path: 5.9 KB per turn after a 40 KB first turn, 13 ms median and 129 ms maximum per append, byte-identical to the local file immediately in 6 of 6 turns and at the next =turn/start= in 5 of 5.
+  A database generation two intervals old plus the replica resumed with all six turns (rows 2 to 7) and the follow-up turn carried the whole history.
+- Residue per turn :: with =sessions=, =.tmp=, =tmp=, =thread-writer-locks= and =shell_snapshots= bound, 9.7 Lustre operations per turn (the =skills= marker and directory stats, the two =AGENTS= stats, one =auth.json= read every few turns, and the path-component =readlink= chain of a depth-10 home); with a copy of =skills/= and the =AGENTS.md=, =AGENTS.override.md= and =history.jsonl= files bound as well, 1.7 per turn, all of them the path-component chain plus the occasional =auth.json= read.
+  Both numbers come from one analysis over the same six-turn window and replace the two inconsistent counts in the previous run.
+  The chain length is the depth of =CODEX_HOME=; a shallower mount point inside the namespace would shorten it.
+- Load-bearing? :: with =skills/= made unreadable mid-run, bound locally or on Lustre, three further turns completed in about 50 ms each with no error; the =skills= calls are not load-bearing.
+  The path-component chain and the =auth.json= read were not failure-tested, and the latter is the one that matters once real credentials refresh; a call that blocks rather than fails would still block.
+- TUI under =bwrap= :: the TUI started in a tmux pane whose command was the =bwrap= prefix, ran two prompts (the model received both), held the database descriptors itself, and wrote its rollout and =history.jsonl= into the bound local files while the shared =sessions/= stayed empty and the shared =history.jsonl= stayed at 0 bytes.
+  Its second prompt, with the app-server bind set plus =history.jsonl=, touched about 36 entries of the home: =config.toml= (8), the =skills= entries (15), the =AGENTS= files (6), =agents/=, =rules/=, =models_cache.json=, =archived_sessions= and =.sandbox_migration=; the TUI's zero set is therefore larger than the app-server's and includes =config.toml=, which the TUI also writes.
+- =remote-control --no-daemon= under =bwrap= :: identical to the inventory run: five stores under the override, =app-server-control/app-server-startup.lock= written to the shared home (that directory belongs in the bind set), exit 1 at the relay without credentials.
+- Compaction :: =thread/compact/start= was accepted and completed in 0.1 s with one model request; it appended to the same rollout (32 to 43 lines, no new file) and added one =thread_turns= row; with the fake model's empty summary the next request still carried every marker, and a capture, restore and resume after compaction worked.
+  On this build compaction does not rewrite the rollout, so the append-only replication held; what a real summary does to the model context was not exercised.
+
+** Consequences for the design, second set
+
+1. For thread history, the generation does not determine what resumes; the rollout does.
+   On resume the server rebuilds the SQLite history projection from the rollout at the absolute path in =threads.path=: without the file every history read fails, and with it a restored database is overridden by whatever the file holds (12 of 20 warm restores showed more turns than their captured database).
+   A generation's consistency claim therefore covers goals, queue, memories, logs and the non-history parts of state; for the conversation itself the recovery point is the shared rollout, not the generation.
+   The design must choose: either the rollout joins the generation, captured and restored with it, or the history-consistency guarantee is dropped and documented as "whatever the shared rollout contains".
+   The first is possible on this build without touching the shared home: the binary has no setting for the sessions directory, but it stores the rollout path as written rather than canonicalized, so a local directory placed at =CODEX_HOME/sessions= keeps the stored path valid; a symlink does it (the =symlink= sub-test) but redirects every process using the home, and a per-process =bwrap= bind mount does it for the managed server alone (the =bind= sub-test above).
+   A copy at the =CODEX_HOME=-relative path without either is not found, and rewriting =threads.path= remains the guessed fix the design forbids.
+   The trade-off is then measured: with the rollout on local disk and the full bind set a turn contains no Lustre data operation and 1.7 metadata calls, none load-bearing, so a Lustre episode no longer stalls the conversation; a per-turn tail append of the rollout to shared storage costs 13 ms outside Codex's path, is byte-identical at the next =turn/start=, and bounds the crash window to the replication lag rather than a capture interval.
+   Rollout skew in either direction keeps the model's context correct, but a database generation newer than the replica leaves the SQLite history permanently wrong (phantom turns shown, real turns missing, because the projection watermark sits past the end of the file), so the generation must be captured after the replica is confirmed and restore must refuse a generation whose watermark exceeds the rollout.
+   This record names the choice and does not make it.
+2. The rollout is also where the latency is: with the databases local and the home on Lustre a turn took 0.21 s at the median, against 0.51 s with everything on Lustre and 0.042 s with everything on =/local=.
+   The design's choice to move only the databases buys part of the improvement; moving =sessions/= as well is possible through the per-process bind mount described in consequence 1, which needs no private home.
+3. Unattended continuation must check =goals_1= and =queue_1= before =thread/resume=: refuse or require explicit confirmation when the thread has an =active= goal or queued rows, and offer =paused= as the hold for goals.
+   The design's fallback, that unattended recovery of such a profile is unsupported, is the measured outcome for queued work.
+4. Lineage exclusivity cannot be delegated to Codex: two homes on one =sqlite_home= are two writers.
+   The runner's single-owner rule and its placement check through =/proc/<pid>/fd= remain necessary.
+5. Cross-database consistency at a crash remains unmeasured: =state_5= holds only the thread preview, so the byte search of the captures cannot see skew, and the protocol hides it by rebuilding history from the rollout.
+   The sealed-only rule for automatic continuation stands until a recovery test covers goals, queue and state rows, which have no rollout to rebuild from.
+
+** Limits
+
+- Fake-model workloads only; no tool calls, approvals, attachments or compaction were exercised, so the inventory of rollout-dependent features is a lower bound.
+- The latency arms are one node, one afternoon, two concurrency levels.
+- Interleavings cover one writer and 20 seeds.
+- Remote control was not exercised beyond the relay step; the TUI's zero bind set was not measured; compaction with a real summary was not exercised; the path-component chain and =auth.json= read were not failure-tested, and nothing here reproduces a Lustre episode itself.
+
+** Next actions
+
+- Implementation (Slice 1 onward) can proceed against these contracts: absolute =sqlite_home=, pre-created 0700, placement verified through =/proc=, rollout recorded in the manifest, goal and queue checks before unattended resume, single owner per lineage.
+- Before production opt-in, repeat outcome 4 with a real-model thread once (a paused goal, a queued message) to confirm the hold behavior is not an artifact of empty replies.
+- Resolve the rollout choice in consequence 1 before Slice 2 defines what a generation promises; the measured contracts if the bind-mount layout is chosen are: launch through =bwrap= with =sessions=, =.tmp=, =tmp=, =thread-writer-locks=, =shell_snapshots=, =app-server-control=, a read-only =skills/= copy and the =AGENTS= and =history.jsonl= files bound to local disk; replicate the rollout tail after each =turn/completed= with =fsync=, lag-tolerant; capture the database generation only after the replica is confirmed identical and record each thread's =next_rollout_byte_offset= and the replica length in the manifest; restore as generation plus replica, rebound at the same mount points, refusing any generation whose offset exceeds the replica.
+  Check newer Codex builds for a supported way to relocate =sessions/= and for the paginated-history migration that would remove the dependency.
+
+* Corrections (2026-10-15, after Slice 2)
+
+Two statements above were corrected by =tests/test_codex_app_server.py= against the same build (0.162.1), with the design's "Slice 2 record" as the governing text:
+
+- =threads.rollout_path= is stored canonicalized (the realpath), not "as written": with =CODEX_HOME= given through a symlink the row holds the real path, and =thread/resume= rewrites it to the new canonical location.
+  The symlink and bind layouts measured above still work because both make the canonical path resolve; the inference about how the path is stored was wrong, not the measurements.
+- The database-ahead hazard needs a gap of several turns to reproduce: with a one-turn gap the next turn's append crosses the stale watermark and the projection resumes mid-record; the three-turn gap freezes it as recorded above.
+
+* Local document checks
+
+Recorded with each commit: =git diff --check=, Emacs =org-lint= on this file, an ASCII scan, and a check that every =file:= link target exists.
+The outcome drivers were smoke-tested with tiny parameters on job 39969504 before the burst job ran them at full scale.
+No Python runtime path under =sucoder/= changed, so pytest was not rerun; GitNexus is not installed in this clone (=.gitnexus/= is generated and absent), so =detect_changes= could not be run and the change set is documentation and standalone scripts only.
+
+Recorded by Sue.

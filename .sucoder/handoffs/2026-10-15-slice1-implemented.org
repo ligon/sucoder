@@ -1,0 +1,53 @@
+#+TITLE: Codex node-local state: Slice 1 implemented; Slice 2 next
+#+DATE: 2026-10-15
+#+STATUS: COMPLETE
+#+AUTHOR: Sue
+#+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Where things stand
+
+Branch =main=, last commit =6e7c998=, shared mirror in sync, tree clean.
+The human chose the bind-mount layout with per-turn rollout replication after the Slice 0 spike; the design records it in the governing section "Revision after Slice 0" of [[file:../docs/codex-local-state.org][the design]], and the measurements are in [[file:../docs/codex-local-state-spike.org][the spike record]].
+Slice 1 (placement and process ownership) is implemented and published.
+Nothing is enabled on any real mirror: =slurm.codex_state= is off by default, applies only to Codex launches on targets with local-disk tiering, and a managed launch starts an empty history separate from the human's shared Codex history.
+The human was offered the choice between starting Slice 2 on this slice and releasing it; no answer had been given when this note was written.
+The earlier handoffs are preserved in [[file:handoffs/2026-10-15-slice0-spike.org]], [[file:handoffs/2026-10-15-slice0-inventory.org]] and [[file:handoffs/2026-10-15-codex-local-state-design.org]].
+
+* What Slice 1 delivers
+
+- [[file:../sucoder/codex_state_runner.py][=sucoder/codex_state_runner.py=]] :: staged to the node like the native context installer and run as =python3 <runner> --scope <digest> -- <command>=; Python 3.6-clean because that is the default =python3= on some node images.
+  It resolves =SUCODER_LOCAL_ROOT= at run time, creates =<root>/state/codex/<scope>/<run>/{db,home,snapshots}= with mode 0700, takes a per-scope startup lock, substitutes the =sqlite_home= placeholder with the absolute =db= path, binds local directories over =sessions=, =.tmp=, =tmp=, =thread-writer-locks=, =shell_snapshots= and =app-server-control= of the shared =CODEX_HOME= in a per-process =bwrap= namespace (plus a copy of =skills/= and file binds for =AGENTS.md=, =AGENTS.override.md= and =history.jsonl=), binding only entries that exist and recording the rest, launches Codex as a child in the same process group, ignores =SIGINT=, forwards =SIGTERM= and =SIGHUP= to bwrap's child, verifies placement through =/proc= (every =.sqlite= descriptor under =db=, every rollout descriptor on local disk), and exits with the child's code.
+  Refusals exit 70 (=bwrap= missing, =CODEX_SQLITE_HOME= set, =sqlite_home= in the argv, =config.toml= or a =-p= profile, no =CODEX_HOME/sessions=, no local root); a misplaced store stops Codex and exits 71; =owner.json=, =status.json= and =runner.log= under the run directory record what happened.
+- [[file:../sucoder/codex_state.py][=sucoder/codex_state.py=]] :: the scope digest (SHA-256 of gateway, remote user, resolved mirror path, slot), the placeholder inserted right after the executable, the outermost runner command, the staged source.
+- =slurm.codex_state= :: =enabled=, =checkpoint_minutes=, =checkpoint_timeout_seconds=, =durable_root=; strict, requires =local_disk=; documented in =README.org= and =config.example.yaml=.
+- Wiring :: =launch_agent= decides once per launch (=_codex_state_scope=), inserts the placeholder at the argv stage before nvm and installer wrapping, and wraps the staged runner outermost after the context installer; in remote-control modes the supervisor's server and client invocations both carry the placeholder.
+- [[file:../tests/test_codex_state.py][Tests]] :: 34 cases: helpers, configuration, the wiring for TUI and remote-control commands, the runner on this node against a fake =codex= (placement, misplacement stop, early exit, SIGTERM through bwrap, every refusal) and against the real Codex app-server with the loopback fake model; the bwrap and Codex cases skip where those are absent.
+
+* Verification
+
+- =tests/test_codex_state.py=: 34 passed here; full suite 1206 passed, 1 failed.
+  The failure, =tests/test_codex_context.py::test_codex_model_receives_prelude_when_client_replaces_developer_instructions=, is a baseline failure against Codex 0.162.1 (its model request no longer carries a top-level =instructions= field) and was not touched.
+- =mypy --follow-imports=silent= clean on the two new modules; the runner compiles under =/usr/bin/python3.6=.
+- By hand: the TUI runs under the runner in a tmux pane (prompt executed, state placed, rollout local, =/quit= exits 0); Codex installs its own =SIGINT= handler, so the runner's inherited ignore is harmless; a ten-second =fc_jevons= job on n0038 confirmed =bwrap=, user namespaces and a working bind on that node image.
+- The real shared home has every bind directory and =history.jsonl=; it lacks =AGENTS.md= and =AGENTS.override.md=, which the runner skips.
+- GitNexus cannot load on this node image (=libssl.so.3=); callers of every touched symbol were grepped by hand and are listed in commit =37225ea=.
+
+* Next phase: Slice 2
+
+Replication, generations and restore, per the revision section of the design:
+
+1. A watcher in the runner follows each rollout under =home/sessions= by file growth and appends new bytes with =fsync= to =DURABLE/runs/<run>/rollouts/<thread-id>.jsonl=, recording offsets in =replica.json= and the replica age in =status.json=; never in Codex's path.
+2. Database generations through the SQLite backup API, captured only after every replica is confirmed byte-identical to its local file; the manifest records each thread's =next_rollout_byte_offset= from =thread_history_projection_state= and the replica length.
+3. Restore as generation plus replicas placed at the same relative paths and bound again, refusing any generation whose recorded offset exceeds the replica (the spike showed the projection then skips real turns and shows phantom ones); sealed means a backup taken after the owned server stopped.
+4. Before an unattended =thread/resume=, refuse when =goals_1= holds an active goal or =queue_1= holds rows for the thread; =paused= is the hold for goals.
+5. One startup line announcing that the managed history is fresh and separate from the shared one, as the design asks.
+6. Timer checkpoint requests, =RemoteSession= metadata and renewal are Slice 3; do not start them in Slice 2.
+
+* Operational notes
+
+- Use =fc_jevons= for normal-priority burst jobs; =co_carleton= is preemptible and its queue stalled a one-core probe.
+- The existing staged context installer (=codex_context.py=) fails on Python 3.6 node images (=from __future__ import annotations=); make it 3.6-clean in its own change.
+- =~/.sucoder/bulletin.org= does not exist on this host; create it with a dated entry before any infrastructure diagnosis.
+- This slice (job 39969504) is still held, with no work pending; release it with =sucoder release= unless Slice 2 starts.
+
+Recorded by Sue.

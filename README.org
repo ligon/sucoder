@@ -1108,6 +1108,126 @@ This is /tiering/ (design and measurements in
 [[file:docs/local-disk-tiering.org][docs/local-disk-tiering.org]]), and it works the same way
 on =confined= (=sbatch=) and =salloc= targets:
 
+**** Managed Codex state
+
+With local-disk tiering on, =slurm.codex_state= additionally keeps a
+Codex launch's SQLite databases and session rollouts on the node-local
+disk: the launcher stages a runner that owns the Codex process, passes an
+absolute =sqlite_home=, and binds local directories over the write-heavy
+subdirectories of the shared =CODEX_HOME= in a per-process namespace
+(=bwrap=), so every other Codex process still sees the shared home
+unchanged.  It is off by default, applies only to Codex launches, needs
+=local_disk=, and refuses to launch (rather than fall back to shared
+placement) when =bwrap= is missing, when =sqlite_home= is already set in
+the command, =CODEX_SQLITE_HOME= or =config.toml=, or when Codex opens a
+database anywhere else.  The design and the measurements behind it are
+in [[file:docs/codex-local-state.org][docs/codex-local-state.org]] and
+[[file:docs/codex-local-state-spike.org][docs/codex-local-state-spike.org]].
+
+The runner also carries that state across allocations.  It appends each
+thread's rollout, as it grows, to =DURABLE/runs/<run>/rollouts/<thread-id>.jsonl=,
+and every =checkpoint_minutes= it captures the databases into a
+generation under =DURABLE/runs/<run>/generations/<generation>/= with a
+=manifest.json= that records, per thread, the rollout offset the
+databases correspond to.  The deadline timer also requests a capture at
+each of its 30-, 15- and 5-minute warnings by touching the run's
+=checkpoint.request= on local disk, which the runner services on its own
+single-flight worker (the timer itself never backs up, hashes or writes
+to the durable root).  A generation is /warm/ when taken while Codex
+runs, /sealed/ when taken after the owned server has stopped cleanly,
+and /crash/ when taken after an abnormal or unknown exit (kept for
+explicit recovery, never promoted to sealed); nothing in the shared home
+is moved or rewritten, and no credential or copy of =CODEX_HOME= is
+included.  =DURABLE= is =durable_root= when set, else
+=.sucoder-state= next to the mirrors (the directory containing the
+resolved shared mirror path: =~/mirrors/<name>= gives
+=~/mirrors/.sucoder-state=, which on Savio is on the Lustre mirror
+filesystem); the runner keeps its files under =codex/<scope>= below it.
+The launcher refuses a =durable_root= that is, is inside, or contains
+the shared mirror repository, or that is under =local_disk=.  Two launch
+flags select which history the runner is told to continue: without
+either it reuses the run already on this allocation's local disk when
+one exists and otherwise starts a new history, =--codex-state-from
+RUN/GENERATION= names an exact generation to continue from, and
+=--codex-state-fresh= insists on a new history (the two are mutually
+exclusive and apply only to a Codex launch with =codex_state= enabled;
+no generation is ever selected automatically across allocations).  A
+restore stages and verifies the generation's stores locally, places
+each thread's rollout replica at its recorded path, refuses when the
+replica is shorter than the offset the databases record (the thread
+would show phantom turns), and reports active goals and queued items
+it finds rather than altering them; a restore that the durable
+filesystem does not answer within =max(120 s, 4 x
+checkpoint_timeout_seconds)= (=SUCODER_CODEX_STATE_RESTORE_TIMEOUT=
+overrides, at most a day) is reported =blocked= and refused rather
+than left hanging.  The transfer-fencing and
+retention protocol is Slice 3, so generations accumulate unpruned for
+now, and archiving a managed thread fails until =archived_sessions=
+joins the bind set.
+
+=sucoder codex-state-status <mirror>= (with =-T <target>=, as for
+=attach= and =release=) reports what the runner recorded for the
+mirror's recorded allocation, one line per fact: the run and its mode
+(fresh, restore or reuse); the placement state; the rollout replica's
+age and lag in bytes, with any anomaly; the last durable generation with
+its class and age, and a generation still unsynced when there is one;
+the checkpoint state, last outcome and dropped-trigger count; the
+active goals and queued items pending on the stores; the generation a
+restore came from; and the reason when the launch was refused or
+blocked.  It reads =latest-run=, =status.json= and =owner.json= under
+=<local_disk>/job<ID>/state/codex/<scope>/=, on a confined target
+inside the allocation through =srun --overlap= (never compute-node
+SSH); =--json= prints =status.json= as recorded, =--dry-run= prints the
+reads, a job whose launch never placed its state answers "no managed run
+recorded", and nothing here launches, checkpoints or drains (on a
+confined target nothing is allocated either; an unconfined target builds
+its executor as every command there does, which re-allocates a node when
+the recorded job has ended).
+
+=sucoder release= asks that owner to drain before it cancels anything:
+it places a release-mode =drain.request= in the run's directory
+(atomically, by the route the status reads take), waits at most
+=checkpoint_timeout_seconds + 30= seconds (=--drain-timeout= overrides)
+for the acknowledgement carrying its own nonce, prints one line, and
+then proceeds with the cancellation in every case, because the release
+is the cancellation instruction.  The line reads "drained: sealed
+generation <name> (<sha>)" when Codex stopped and the final generation
+sealed; "drained: warm generation <name> only (a person holds the
+terminal; it seals when they exit)" when a TUI is in front of someone,
+so Codex was not signalled; "drained: crash generation ..." when Codex's
+exit was not clean; "drain failed: <reason>; last durable generation
+<name|none>" when the runner's final capture failed; "drain
+unacknowledged after N s; last durable generation ..." when nothing
+answered in time; "no managed run recorded"; or "no managed owner to
+drain: ..." when the run's runner is already gone (a refused launch, or
+a run that exited with its final generation published, the usual case
+after quitting Codex before releasing).  A sibling detach
+drains only the departing mirror's owner, before its tmux session is
+stopped, and a detach that stops nothing requests nothing; =--no-drain=
+skips the request; a mirror whose configured harness is not Codex is
+not asked unless =--harness codex= says a Codex TUI was launched (a
+service launch is recognised from the session record).  =sucoder
+codex-state-drain <mirror> [--mode release|renew] [--timeout S]
+[--json]= sends the same request on its own: =--json= prints the record
+with the acknowledgement (nonce, generation, manifest sha256, exit code,
+the child's pid and start time and whether that exact process is gone),
+and a renew-mode drain leaves the runner alive holding the allocation's
+startup lock until SIGTERM or a release-mode drain, which is what a
+renewal hands over.
+
+#+begin_src yaml
+    slurm:
+      partition: savio4_htc
+      account: fc_jevons
+      confined: true
+      local_disk: true
+      codex_state:
+        enabled: true
+        checkpoint_minutes: 10            # periodic capture cadence
+        checkpoint_timeout_seconds: 30    # bounded wait for a capture or drain
+        durable_root: null                # null: <dir of the mirrors>/.sucoder-state
+#+end_src
+
 - the launch clones =~/mirrors/<name>= to
   =/local/job<ID>/mirrors/<name>= and starts the agent there, with
   =UV_CACHE_DIR=, =PIP_CACHE_DIR=, =npm_config_cache=, and =TMPDIR=

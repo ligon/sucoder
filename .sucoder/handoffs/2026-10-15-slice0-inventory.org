@@ -1,0 +1,45 @@
+#+TITLE: Codex node-local SQLite state: Slice 0 inventory done, outcomes 3--7 open
+#+DATE: 2026-10-15
+#+STATUS: COMPLETE
+#+AUTHOR: Sue
+#+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Completed phase
+
+The human authorized the read-only inventory part of Slice 0 on the existing confined slice (job 39969504, n0033.savio4, 4 cores), and it is done together with spike outcomes 1 and 2.
+Branch =main=, last commit =9c2c4fe=.
+No runtime source under =sucoder/= or =tests/= changed; the change set is one record, two standalone scripts and a ledger entry.
+The previous handoff is preserved in [[file:handoffs/2026-10-15-codex-local-state-design.org]].
+
+* Artifacts
+
+- [[file:../docs/codex-local-state-spike.org][Spike record]] :: environment, prior art, method, per-case placement table, what follows =sqlite_home= and what does not, server ownership by mode, WAL state after shutdown, non-SQLite shared-home I/O, lock traffic, schema inventory, consequences for the design, limits, next actions.
+- [[file:../scripts/codex_sqlite_placement_spike.py][Harness]] and [[file:../scripts/codex_sqlite_placement_matrix.sh][matrix runner]] :: one isolated strace-wrapped Codex launch per case; reuses =config_override= and the fake-model app-server pattern of =tests/test_codex_context.py:158=.
+- [[file:../.coder/ledger.md][Ledger]] :: now cites the 2026-10-01 live cutover tools under the real Codex home (=sqlite-backups/n0140-job39450011/recovery-tools/=) and the 2026-10-14 manual relocation, plus this phase's results.
+- Raw evidence :: =/global/scratch/fsa/fc_jevons/ligon/.sucoder-state-spike/job39969504/evidence/= (Lustre, mode 0700, per-case =result.json= and =strace.log=, inventory and matrix logs, scripts as run).
+  The =/local/job39969504/spike-codex-state/= case directories die with the job.
+
+* Findings that change the design
+
+- All six databases follow =sqlite_home=; =-c= beats =config.toml= beats =CODEX_SQLITE_HOME= (cases c3, c4, c10); a relative value resolves against the cwd; a missing directory is created with =0777= masked by umask; an unwritable one fails the launch with exit 1 and no fallback.
+- Thread-writer locks, =installation_id=, plugin and arg0 locks, the =sessions/= rollout JSONL and the TUI's =history.jsonl= stay in =CODEX_HOME=; the rollout is written and re-read, so it is an external transcript dependency the generation must address.
+- The app-server and the TUI own their database descriptors with no daemon socket; =remote-control --no-daemon= opens its stores under the override, creates =/tmp/codex-daemon-<uid>/<hash>= and a startup lock in =CODEX_HOME/app-server-control/=, then needs credentials.
+- A zero exit after stdin EOF leaves all data in WAL; "sealed" must check WAL state or use the backup API.
+- =agent_message_board_1.sqlite= is a flag-gated seventh store; no maintenance lock was observed.
+- The real Codex home sits on Lustre because NFS =$HOME= is mounted =local_lock=none= (the human confirmed this); 1656 =F_SETLK= calls in a six-second idle turn is the contention mechanism.
+
+* Next phase
+
+Outcomes 3--7 of Slice 0 need a separate disposable allocation; do not run them on this slice or against the real home.
+Recipe: =sbatch= or =srun -A co_carleton -p savio4_htc -q carleton_htc4_normal -N 1 -n 1 -c 4 --mem 16G -t 2:00:00=, then inside the job =git clone --branch main /global/home/users/ligon/mirrors/SuCoder /local/job$SLURM_JOB_ID/mirrors/SuCoder=, export =SUCODER_SHARED_STATE_TEST_ROOT= to the Lustre test root above, and extend the harness with restore and abrupt-stop drivers.
+Start with outcome 3 narrowed to the rollout question: restore the six databases into a fresh home with and without the thread's =sessions/= rollout file and check =thread/list= and resume for the marker.
+Outcome 7 needs identical seeded workloads on =/local= and on Lustre with the lock counts above as the metric to explain, without deliberately loading the shared filesystem.
+=~/.sucoder/bulletin.org= does not exist on this host; create it with a dated entry before any infrastructure diagnosis.
+
+* Verification
+
+=git diff --check=, an ASCII scan, a =file:= link check and Emacs =org-lint= (0 findings) passed on the record.
+Both scripts pass =python3 -c 'import ast'= and =bash -n=; the harness ran all ten cases with no leftover =codex= or tmux processes and an empty =/tmp/codex-daemon-43292/=.
+pytest was not rerun because no runtime path changed; =.gitnexus/= is absent from this clone, so =detect_changes= could not be run.
+
+Recorded by Sue.

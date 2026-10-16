@@ -154,6 +154,37 @@ def test_staged_installer_runs_in_final_clone_and_keeps_launches_separate(
     assert not (workspace / "INJECTED").exists()
 
 
+@pytest.mark.skipif(not Path("/usr/bin/python3.6").exists(), reason="Python 3.6 not installed")
+def test_staged_installer_runs_under_python36(tmp_path, monkeypatch, workspace):
+    python = "/usr/bin/python3.6"
+    source = Path(__file__).resolve().parents[1] / "sucoder/codex_context.py"
+    subprocess.run([python, "-m", "py_compile", str(source)], check=True,
+                   capture_output=True)
+    manager, ctx = _manager(tmp_path, monkeypatch)
+    manager._service_launch = {"command": ["codex", "remote-control"], "model": None}
+
+    def execute(args, **kwargs):
+        return subprocess.run(args, input=kwargs.get("input"), check=True,
+                              capture_output=True, text=True)
+
+    manager.executor.run_agent = execute
+    wrapped = [python, "-c", "import json, os, sys; print(json.dumps([os.getpid(), sys.argv[1:]]))",
+               "WRAPPED_COMMAND_EXECUTED"]
+    command = manager._wrap_codex_service_context(ctx, wrapped, PRELUDE)
+    command[0] = python
+    (workspace / "AGENTS.md").write_text("PROJECT_INSTRUCTIONS\n")
+    with subprocess.Popen(command, cwd=workspace, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, text=True) as process:
+        stdout, stderr = process.communicate(timeout=15)
+        assert process.returncode == 0, stderr
+        assert json.loads(stdout) == [process.pid, ["WRAPPED_COMMAND_EXECUTED"]]
+    content = (workspace / "AGENTS.override.md").read_text(encoding="utf-8")
+    assert PRELUDE in content
+    assert "PROJECT_INSTRUCTIONS" in content
+    assert not (tmp_path / "AGENTS.override.md").exists()
+    assert not (workspace / "INJECTED").exists()
+
+
 @pytest.mark.skipif(not shutil.which("codex"), reason="Codex CLI not installed")
 def test_codex_model_receives_prelude_when_client_replaces_developer_instructions(
     workspace, tmp_path,
@@ -243,7 +274,14 @@ def test_codex_model_receives_prelude_when_client_replaces_developer_instruction
             assert "PROJECT_INSTRUCTIONS" in model_input
             assert "GLOBAL_INSTRUCTIONS" in model_input
             assert "SERVER_VALUE_REPLACED_BY_CLIENT" not in model_input
-            assert request["instructions"]  # Preserve Codex's native base instructions.
+            # Codex's native base instructions must survive the override: a
+            # top-level ``instructions`` field through 0.161, the first developer
+            # message of ``input`` from 0.162.1 on.
+            base = request.get("instructions") or next(
+                (text for item in request["input"] if item.get("role") == "developer"
+                 for part in item.get("content", []) for text in [part.get("text", "")]
+                 if "Codex CLI" in text), "")
+            assert base, "Codex's native base instructions are missing from the request"
         finally:
             if process is not None:
                 process.terminate()

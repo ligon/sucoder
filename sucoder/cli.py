@@ -10,6 +10,7 @@ import os
 import re
 import shlex
 import pwd
+import socket
 import subprocess
 import sys
 import threading
@@ -21,7 +22,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple, cast
 
 import click
 
@@ -56,6 +57,7 @@ from .snapshots_report import DEFAULT_RECOVERY_WINDOW_DAYS
 from .slurm_timer import TIME_LEFT_TO_MINS_SH, build_timer_script, timer_identity
 from .tool_preflight import format_report
 from .mirror import (
+    _detect_agent_type,
     _sanitize_session_token,
     MirrorError,
     MirrorManager,
@@ -2216,6 +2218,197 @@ def worktrees(
         _display()
 
 
+@app.command("codex-state-status")
+def codex_state_status(
+    ctx: typer.Context,
+    mirror: Optional[str] = typer.Argument(None, help="Mirror name defined in configuration.", shell_complete=_mirror_completion),  # type: ignore[arg-type]
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print the reads without executing them."),
+    as_json: bool = typer.Option(False, "--json", help="Print the run's status.json as recorded instead of the summary."),
+) -> None:
+    """Show the managed Codex state of this mirror's recorded allocation.
+
+    With ``slurm.codex_state`` on, the staged runner records each launch
+    under ``<local_disk>/job<ID>/state/codex/<scope>/``: ``latest-run``
+    names the run this allocation placed, and the run's ``status.json``
+    carries its mode (fresh, restore or reuse), placement state, rollout
+    replica age and lag, last durable generation with its class and age,
+    checkpoint state, and the active goals or queued items found on its
+    stores.  This reads those files -- on a confined target inside the
+    allocation through ``srun --overlap``, otherwise on the compute node --
+    and prints one line per fact; ``--json`` prints ``status.json`` as
+    recorded.  A job whose launch was refused or never placed has no
+    ``latest-run``, reported as "no managed run recorded", exit 0.
+    Read-only on the managed state: nothing here launches, checkpoints or
+    drains, and on a confined target nothing is allocated (the reads go
+    through the login node).  On an unconfined target the executor is
+    built the way every command there builds it, which re-allocates a node
+    when the recorded job has already ended.
+    """
+    from .codex_state import format_status
+
+    mirror, job_id, manager = _codex_state_target(ctx, mirror, verbose=verbose, dry_run=dry_run, purpose="report")
+    try:
+        report = manager.codex_state_status(manager.context_for(mirror), job_id)
+    except MirrorError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    if report.dry_run:
+        typer.echo(
+            f"DRY-RUN: managed Codex state for job {job_id} (scope {report.scope}) "
+            "would be read with:"
+        )
+        for argv in report.commands:
+            typer.echo("  " + shlex.join(argv))
+        return
+    if report.run is None:
+        typer.echo(
+            f"no managed run recorded for job {job_id} (scope {report.scope}): "
+            f"{report.scope_dir}/latest-run is absent, so no launch placed its "
+            "state in this allocation.",
+            err=as_json,
+        )
+        raise typer.Exit(code=0)
+    if as_json:
+        typer.echo(json.dumps(report.status, indent=2, sort_keys=True))
+        return
+    typer.echo(f"managed Codex state for mirror {mirror}: job {job_id}, scope {report.scope}")
+    typer.echo(f"path: {report.run_dir}")
+    typer.echo(format_status(report.status or {}, run=report.run, owner=report.owner))
+
+
+def _codex_state_target(
+    ctx: typer.Context, mirror: Optional[str], *, verbose: bool, dry_run: bool, purpose: str,
+) -> Tuple[str, int, MirrorManager]:
+    """The mirror, its recorded SLURM job and a manager for it, for the managed-state commands.
+
+    The mirror must have a SLURM target (exit 1: managed Codex state lives
+    on an allocation) and its session must record a job (exit 0 with a
+    message: there is no managed run to *purpose*).  The session is read
+    before the manager is built: on an unconfined target building the
+    executor ensures a compute node, which allocates one when the record
+    holds no live job, and neither the status nor the drain command may
+    allocate when there is nothing recorded.
+    """
+    mirror = _resolve_mirror_name(ctx, mirror)
+    config = _get_config(ctx)
+    settings = config.mirrors.get(mirror)
+    target = _get_active_target(cast(click.Context, ctx))
+    if target is not None and settings is not None:
+        from dataclasses import replace
+        settings = replace(settings, remote=target)
+    if not settings or not settings.remote or settings.remote.slurm is None:
+        typer.echo(
+            f"Mirror {mirror} has no SLURM target; managed Codex state "
+            "(slurm.codex_state) lives on a SLURM allocation.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    from .session import RemoteSession
+
+    _tgt_name = ((ctx.obj or {}).get("target_name") if ctx else None)
+    session = RemoteSession.load(mirror, target_name=_tgt_name)
+    if not session.slurm_job_id:
+        typer.echo(
+            f"No SLURM allocation recorded for mirror {mirror}"
+            f"{f' (target {_tgt_name})' if _tgt_name else ''}; "
+            f"no managed Codex run to {purpose}."
+        )
+        raise typer.Exit(code=0)
+    job_id = session.slurm_job_id
+
+    logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
+    manager = _build_manager_for_mirror(config, logger, dry_run, mirror, cli_ctx=cast(click.Context, ctx))
+    return mirror, job_id, manager
+
+
+@app.command("codex-state-drain")
+def codex_state_drain(
+    ctx: typer.Context,
+    mirror: Optional[str] = typer.Argument(None, help="Mirror name defined in configuration.", shell_complete=_mirror_completion),  # type: ignore[arg-type]
+    mode: str = typer.Option(
+        "release", "--mode", metavar="release|renew",
+        help="release: after acknowledging, the runner lets Codex's exit end it.  renew: after acknowledging, "
+             "the runner stays alive holding the allocation's startup lock, so no restart there can invalidate "
+             "the acknowledgement, until SIGTERM to the runner or a release-mode drain.",
+    ),
+    timeout: Optional[float] = typer.Option(
+        None, "--timeout", metavar="SECONDS",
+        help="How long to wait for the acknowledgement (default: checkpoint_timeout_seconds + 30 from slurm.codex_state).",
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print the commands without sending the request."),
+    as_json: bool = typer.Option(False, "--json", help="Print the request's record, with the acknowledgement as recorded, as JSON."),
+) -> None:
+    """Ask the managed Codex state owner on this mirror's allocation to drain.
+
+    With ``slurm.codex_state`` on, the staged runner that owns the Codex
+    process serves drain requests: this places ``drain.request`` in the
+    recorded run's directory (atomically, through the same in-allocation
+    route ``codex-state-status`` reads by) and waits, bounded, for
+    ``drain.ack`` carrying this request's nonce.  With nobody at the
+    terminal the runner stops Codex gracefully and seals a final
+    generation; with a person at the terminal Codex is not signalled, a
+    warm generation is captured and acknowledged as warm only, and the
+    acknowledgement is updated when they exit.  The one-line outcome names
+    the generation (sealed, warm only, or crash), the runner's reason when
+    its final capture failed, or that no acknowledgement arrived in time,
+    with the last durable generation where it matters; ``--json`` prints
+    the whole record, including the acknowledgement's nonce, generation,
+    manifest sha256, Codex's exit code and the child's pid and start time
+    with whether that exact process is gone.  Exit 1 when the runner
+    reports a failure or does not answer in time; a job with no managed
+    run, or whose run has no runner left to answer (refused, blocked or
+    released), is a clean message, exit 0.
+
+    A renew-mode drain leaves the runner alive and holding the
+    allocation's startup lock until it is released (SIGTERM to the runner,
+    or a release-mode drain), as the runner documents; nothing here
+    signals or cancels anything.  ``sucoder release`` requests a
+    release-mode drain itself before cancelling.  On a confined target
+    nothing is allocated; an unconfined target builds its executor as
+    every command there does.
+    """
+    from .codex_state import DRAIN_MODES
+
+    if mode not in DRAIN_MODES:
+        raise typer.BadParameter(f"--mode must be one of {', '.join(DRAIN_MODES)}.", param_hint="--mode")
+    if timeout is not None and timeout < 0:
+        raise typer.BadParameter("--timeout cannot be negative.", param_hint="--timeout")
+    mirror, job_id, manager = _codex_state_target(ctx, mirror, verbose=verbose, dry_run=dry_run, purpose="drain")
+    config = _get_config(ctx)
+    settings = config.mirrors.get(mirror)
+    slurm = settings.remote.slurm if settings is not None and settings.remote is not None else None
+    state = slurm.codex_state if slurm is not None else None
+    if timeout is None:
+        timeout = float((state.checkpoint_timeout_seconds if state is not None else 30) + 30)
+    try:
+        report = manager.codex_state_drain(
+            manager.context_for(mirror), job_id, mode=mode, timeout_seconds=timeout,
+            requester=f"sucoder codex-state-drain on {socket.gethostname()}",
+        )
+    except MirrorError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    if report.dry_run:
+        typer.echo(
+            f"DRY-RUN: a {mode}-mode drain of job {job_id} (scope {report.scope}, nonce {report.nonce}) "
+            "would be requested and polled with:"
+        )
+        for argv in report.commands:
+            typer.echo("  " + shlex.join(argv))
+        return
+    if as_json:
+        typer.echo(json.dumps(report.as_json(), indent=2, sort_keys=True))
+    else:
+        typer.echo(f"{report.outcome} (job {job_id}, nonce {report.nonce})")
+    if report.requested and (report.ack is None or report.ack.get("outcome") == "failed"):
+        raise typer.Exit(code=1)
+
+
 def _codex_remote_mode(enabled: Optional[bool], server_only: bool) -> Optional[str]:
     if server_only:
         if enabled is False:
@@ -2330,6 +2523,12 @@ def _attach_local(mirror: str, *, node: Optional[str], via_srun: bool) -> None:
     os.execvp("tmux", tmux_env.attach_argv(session))
 
 
+def _codex_state_selection(from_generation: Optional[str], fresh: bool) -> None:
+    """Catch the conflicting pair before any session state is touched."""
+    if from_generation is not None and fresh:
+        raise typer.BadParameter("--codex-state-fresh conflicts with --codex-state-from.")
+
+
 @app.command("agents-run")
 def agents_run(
     ctx: typer.Context,
@@ -2379,6 +2578,14 @@ def agents_run(
         False, "--remote-control-only",
         help="Start a Codex remote-control server without the terminal UI.",
     ),
+    codex_state_from: Optional[str] = typer.Option(
+        None, "--codex-state-from", metavar="RUN/GENERATION",
+        help="Continue managed Codex state from this exact generation (slurm.codex_state).",
+    ),
+    codex_state_fresh: bool = typer.Option(
+        False, "--codex-state-fresh",
+        help="Start managed Codex state as a new history instead of reusing this allocation's run.",
+    ),
     agent_command: Optional[str] = typer.Option(
         None,
         "--agent-command",
@@ -2419,6 +2626,7 @@ def agents_run(
 ) -> None:
     """Launch the configured agent inside the mirror working tree."""
     remote_mode = _codex_remote_mode(remote_control, remote_control_only)
+    _codex_state_selection(codex_state_from, codex_state_fresh)
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
@@ -2441,6 +2649,8 @@ def agents_run(
             env_override=env_override,
             supports_inline_prompt=inline_prompt_flag,
             codex_remote_control=remote_mode,
+            codex_state_from=codex_state_from,
+            codex_state_fresh=codex_state_fresh,
         )
     except MirrorError as exc:
         typer.echo(str(exc), err=True)
@@ -2506,6 +2716,14 @@ def collaborate(
         False, "--remote-control-only",
         help="Start a Codex remote-control server without the terminal UI.",
     ),
+    codex_state_from: Optional[str] = typer.Option(
+        None, "--codex-state-from", metavar="RUN/GENERATION",
+        help="Continue managed Codex state from this exact generation (slurm.codex_state).",
+    ),
+    codex_state_fresh: bool = typer.Option(
+        False, "--codex-state-fresh",
+        help="Start managed Codex state as a new history instead of reusing this allocation's run.",
+    ),
     agent_command: Optional[str] = typer.Option(
         None,
         "--agent-command",
@@ -2554,6 +2772,7 @@ def collaborate(
 ) -> None:
     """Prepare canonical, ensure the mirror exists, and launch the agent in one step."""
     remote_mode = _codex_remote_mode(remote_control, remote_control_only)
+    _codex_state_selection(codex_state_from, codex_state_fresh)
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
@@ -2607,6 +2826,8 @@ def collaborate(
             env_override=env_override,
             supports_inline_prompt=inline_prompt_flag,
             codex_remote_control=remote_mode,
+            codex_state_from=codex_state_from,
+            codex_state_fresh=codex_state_fresh,
             skip_lfs=not lfs,
         )
     except MirrorError as exc:
@@ -3107,6 +3328,29 @@ def release(
         help="Leave the job's WIP snapshot ref on the mirror instead of "
              "retiring it with the job.",
     ),
+    no_drain: bool = typer.Option(
+        False,
+        "--no-drain",
+        help="Cancel without first asking the allocation's managed Codex "
+             "state owner (slurm.codex_state) to drain.",
+    ),
+    drain_timeout: Optional[float] = typer.Option(
+        None,
+        "--drain-timeout",
+        metavar="SECONDS",
+        help="How long to wait for the owner's drain acknowledgement "
+             "(default: checkpoint_timeout_seconds + 30 from slurm.codex_state; "
+             "a stop that spends its full SIGTERM grace and then a full "
+             "final capture can take longer and is reported unacknowledged, "
+             "the release proceeding either way).",
+    ),
+    harness: Optional[str] = typer.Option(
+        None,
+        "--harness",
+        help="The harness that was launched, when it is not the mirror's "
+             "configured one; a managed Codex owner is drained only for a "
+             "Codex launch.",
+    ),
 ) -> None:
     """Cancel the SLURM allocation for this mirror and clear session state.
 
@@ -3123,6 +3367,18 @@ def release(
     deliberately abandoned.  Only *this job's* ref goes, never a glob over
     the mirror, and never on the sibling-detach path, where the job
     survives for co-resident mirrors.  ``--keep-wip`` opts out.
+
+    With ``slurm.codex_state`` on and a Codex launch, the managed state
+    owner on the allocation is asked to drain before anything is
+    cancelled (docs/codex-local-state.org, "Clean exit and explicit
+    release"): one line reports what it came to -- a sealed generation,
+    a warm one only (a person holds the terminal), a crash candidate,
+    the runner's failure with the last durable generation, or no
+    acknowledgement within the bound -- and the release then proceeds in
+    every case, since it is the user's cancellation instruction.  The
+    sibling detach drains only the departing mirror's owner, before its
+    tmux session is stopped; a detach that stops nothing requests
+    nothing.  ``--no-drain`` skips the request.
     """
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
@@ -3216,10 +3472,31 @@ def release(
     def _forget_allocation():
         # Clear the SLURM-specific session fields so future commands don't
         # think a stale allocation is still ours.  Keep login_node so
-        # subsequent attaches can still resolve the gateway path.
-        session.slurm_job_id = None
-        session.compute_node = None
-        session.save()
+        # subsequent attaches can still resolve the gateway path.  Re-read
+        # the record first: the drain below may have built a manager, whose
+        # executor re-pins the login node or records the mirror root, and
+        # saving the copy loaded above would revert that.
+        current = RemoteSession.load(mirror, target_name=_tgt_name)
+        current.slurm_job_id = None
+        current.compute_node = None
+        current.save()
+
+    # Managed Codex state (docs/codex-local-state.org, "Clean exit and
+    # explicit release"): both paths below stop the owner -- scancel ends
+    # the allocation, the sibling detach kills the departing mirror's tmux
+    # session -- so it is asked to drain first and the acknowledgement is
+    # reported.  A sibling detach with no recorded compute node stops
+    # nothing (it only forgets the allocation) and leaves the owner
+    # running: no drain there.  Whatever the drain comes to, the release
+    # proceeds exactly as before: it is the user's cancellation instruction.
+    stops_owner = not siblings or bool(session.compute_node)
+    if stops_owner and not no_drain:
+        drained = _release_drain(
+            ctx, config, settings, session, mirror, job_id, logger, gw_control, remote,
+            debug_ssh=debug_ssh, timeout_override=drain_timeout, harness=harness,
+        )
+        if drained is not None:
+            typer.echo(drained)
 
     if siblings:
         # Another session still holds this job; detach this mirror rather
@@ -3327,6 +3604,69 @@ def release(
             typer.echo(f"Retired WIP snapshot {wip_ref} ({what.strip()}).")
     if result.stderr.strip():
         typer.echo(result.stderr.strip(), err=True)
+
+
+def _release_drain(
+    ctx: typer.Context, config: Config, settings: MirrorSettings, session, mirror: str, job_id: int,
+    logger, gw_control, remote, *, debug_ssh: bool, timeout_override: Optional[float], harness: Optional[str],
+) -> Optional[str]:
+    """``release``'s drain of the managed Codex state owner: the outcome line, or None when nothing is managed.
+
+    Only a target with ``slurm.codex_state`` enabled and a Codex launch
+    have an owner to drain.  The launch's harness is the one the session
+    recorded for a service launch, else the mirror's configured launcher,
+    unless ``--harness`` names it (a TUI launched with ``--harness codex``
+    on a mirror whose default is another harness leaves no record yet).
+    On an unconfined target the job is probed first, over the gateway
+    control the release already holds: building a manager there
+    re-allocates a node when the recorded job has ended
+    (``_ensure_slurm_node``), and a release must never allocate, so a job
+    that is not RUNNING gets no request.  Nothing raised here reaches the
+    caller -- the owner being unreachable is itself the outcome -- and the
+    release proceeds.
+    """
+    slurm = remote.slurm
+    state = slurm.codex_state if slurm is not None else None
+    if state is None or not state.enabled:
+        return None
+    recorded = session.service_launch.get("command") if isinstance(session.service_launch, dict) else None
+    if harness:
+        command = _agent_shorthand(harness)
+    elif recorded:
+        command = list(recorded)
+    else:
+        command = list(settings.agent_launcher.command)
+    if _detect_agent_type(command) != AgentType.CODEX:
+        logger.debug(
+            "Not draining managed Codex state for %s: the launch's harness is %s, not codex "
+            "(--harness codex says otherwise).", mirror, command[0] if command else "unset",
+        )
+        return None
+    timeout = float(timeout_override) if timeout_override is not None else float(state.checkpoint_timeout_seconds + 30)
+    try:
+        if not slurm.confined:
+            probe = _run_remote_capture(
+                gw_control, remote.gateway,
+                f"squeue --job {shlex.quote(str(job_id))} --noheader -o %T", debug=debug_ssh,
+            )
+            if probe.returncode != 0:
+                why = (probe.stderr or "").strip() or f"exit {probe.returncode}"
+                return (f"drain skipped: the state of job {job_id} could not be read ({why}), "
+                        "and a release never allocates a node to ask")
+            job_state = (probe.stdout or "").strip()
+            if job_state != "RUNNING":
+                return f"no managed run recorded: job {job_id} is {job_state or 'gone'}, so no owner can answer a drain"
+        manager = _build_manager_for_mirror(config, logger, False, mirror, cli_ctx=cast(click.Context, ctx))
+        report = manager.codex_state_drain(
+            manager.context_for(mirror), job_id, mode="release", timeout_seconds=timeout,
+            requester=f"sucoder release on {socket.gethostname()}",
+        )
+    except typer.Exit as exc:
+        return (f"drain failed: the managed owner could not be reached (exit {exc.exit_code}); "
+                "last durable generation unknown")
+    except Exception as exc:  # noqa: BLE001  -- the release proceeds whatever the drain did
+        return f"drain failed: {exc}; last durable generation unknown"
+    return report.outcome
 
 
 # Printed by the release round trip when the job's snapshot ref was deleted,
