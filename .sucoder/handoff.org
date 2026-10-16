@@ -15,7 +15,7 @@ The feature branches are merged and published; their worktrees on this job's loc
 * Next concrete actions
 
 1. Slice 3e's second half: transfer records (offer at a renew-mode seal, claim at restore binding the attempt, revoke before a drained runner restarts) and =--attempt= through =runner_command=; the 3d residuals recorded in the design (a startup-result file the runner writes independently of =latest-run=; the attempt id in sbatch =--comment= so a lost =sbatch= reply can be reconciled; a per-allocation tmux socket for two confined jobs of one mirror on one node; the two tolerated TUI attach races) and the 3e residuals (backfill of pins for children restored before 3e; a retirement cap per cycle); and make =test_a_real_codex_thread_resumes_from_a_restored_generation='s 20 s status wait longer or tunable (an environment variable the test reads), since it times out under node load twice in this session and passes alone.
-2. Slice 4 pilot on one disposable mirror, as before; =sucoder renew= now drains and continues a managed owner, so the pilot can exercise a real turnover.
+2. Slice 4 pilot on one disposable mirror: the human runs it from the laptop following [[file:../docs/codex-local-state-pilot.org][the pilot runbook]] (config block, three terminals, exit the TUI at the drain warning, verify =/resume= on the successor); the evidence it asks for goes into the design's Slice 4 record.
 3. Release this slice (job 40017774) with =sucoder release=: no work is pending here and every commit is published.
 
 * Second confirmation and clean-up (2026-10-16, later)
