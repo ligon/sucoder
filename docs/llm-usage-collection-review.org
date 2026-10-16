@@ -34,6 +34,8 @@ Both original reviewers independently rechecked the revised specification and fo
 The native-source recheck required emitter authentication on shared hosts and clarified that verified request IDs can suffice without a process epoch; both requirements are now explicit.
 The fixture's incidental repeated sequence in the switch/fallback scenario was also corrected.
 These are specification changes and offline acceptance inputs; no receiver, native adapter or calibrated estimator has been implemented or enabled.
+The human subsequently added Codex and its models to the required implementation scope.
+The [[file:llm-usage-implementation-charter.org][amended charter]] and collection specification now require Claude and Codex; the review acceptance above predates that extension, and implementation review must cover both adapters.
 
 * What the reviewed collector distinguishes
 

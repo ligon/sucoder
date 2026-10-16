@@ -8,7 +8,7 @@
 
 Build =llm-usage= as a small local collector and history reader around =llm-accounting=.
 Its first model-aware result combines a time series for each observed quota constraint with model-tagged usage from explicitly instrumented clients, linked to price and supply history.
-It distinguishes observed Fable and Opus work within that population, while preserving unknown external use and shared subscription metering weights.
+It distinguishes observed use of Claude and Codex models within that population, while preserving unknown external use and shared subscription metering weights.
 Neither completed-task labels nor a fitted demand model is required.
 
 This revised proposal is grounded in the [[file:llm-usage-collection-ledger.org][prior-art ledger]] and responds to the [[file:llm-usage-collection-review.org][model-identification red team]].
@@ -17,9 +17,9 @@ No collector, native hook or timer has been installed by this design work.
 
 There are two readiness milestones within the first delivery.
 Quota-ready collection stores normalized accounting snapshots, immutable price/supply publications and attempt records, then exports quota series and price history.
-The model-aware pilot additionally requires one verified native metadata adapter, source coverage records and model-tagged usage exports alongside those quota observations.
-Claude request telemetry is the selected first adapter; a quota-only installation must report that model-use rates are unavailable.
-Lifecycle/exposure-hour measures, other harnesses and decision records can follow without holding up model-tagged throughput per clock hour.
+The model-aware pilot additionally requires verified Claude and Codex metadata adapters, source coverage records and model-tagged usage exports alongside those quota observations.
+Claude request telemetry and Codex completion telemetry are the selected primary sources; neither a quota-only nor a Claude-only installation completes the implementation charter.
+Lifecycle/exposure-hour measures, harnesses beyond Claude/Codex and decision records can follow without holding up model-tagged throughput per clock hour.
 Planning prices per agent-hour continue to use declared workload assumptions until a compatible exposure-hour measure is available.
 
 * Ownership and interfaces
@@ -103,6 +103,8 @@ API reporting targets, where configured, get a separately declared cadence appro
 ** Advertised prices and supply
 
 Price publications contain the whole route vector, including unavailable quotes, currency, hourly convention, method version and declared assumptions.
+Both Claude and Codex models appear as separate selected routes, with versioned model/alias mappings, commercial access and known reasoning/speed context.
+Use explicit configuration or verified native catalog evidence to recognize model IDs, rather than a fixed list; a new or unavailable model retains unknown applicability/tariffs until its mapping is established.
 Assign a dataset-scoped publication ID and publisher capture time; retain a parent publication ID to establish the authorized publication sequence.
 One configured authority publishes a given price series; branches or conflicting successors remain conflicts rather than being resolved by import order.
 Manual prices are valid first inputs and are labeled =declared=.
@@ -262,7 +264,7 @@ A subagent's own request is attributed using its own model evidence, independent
 Only verified request-only quantities can be added across parent and child; an inclusive parent total is a corroborating aggregate, not additional work.
 Unknown parent/child inclusion blocks an exact combined total but need not invalidate separately observed request-only records.
 
-** Claude request telemetry: selected first source
+** Claude request telemetry: required source
 
 The [[https://code.claude.com/docs/en/monitoring-usage#api-request-event][documented monitoring interface]] exposes model-tagged request events with token categories, estimated cost and duration; token/cost metrics offer another view of that work.
 Use allowlisted =claude_code.api_request= events as the primary quantity source, normalized to =usage_event=.
@@ -314,13 +316,28 @@ The [[https://code.claude.com/docs/en/costs#report-spend-at-your-contracted-rate
 Preserve it as =native_cost_estimate= separately from published API-reference tariffs and actual provider-rated cost.
 If token categories lack the billing detail required by a tariff, exact revaluation remains unavailable; do not infer that detail from the native cost total.
 
-** Supporting Claude status line and later Codex adapter
+** Supporting Claude status line
 
 The [[https://code.claude.com/docs/en/statusline][Claude status-line interface]] remains optional supporting evidence.
 Its context/last-response token fields are snapshots, not cumulative consumption; client cost and session/API durations retain their own semantics.
 Repeated or absent callbacks cannot replace request telemetry or establish complete model activity.
 Compose a selected callback only after verifying invocation/cancellation behavior, with bounded ingestion that cannot block rendering on network/storage delays.
 Unverified quota callbacks do not replace the bound accounting source.
+
+** Codex telemetry: required source
+
+[[https://learn.chatgpt.com/docs/config-file/config-advanced#observability-and-telemetry][Official OpenAI documentation]] describes Codex OTel model metadata and completion token counts, exported through OTLP.
+Use allowlisted completion quantities as the prospective primary source, with source/build-specific verification; API-request diagnostics are not another token flow.
+The [[https://learn.chatgpt.com/docs/agent-approvals-security#monitoring-and-telemetry][documented event categories]] include SSE and WebSocket activity, but supported completion fields, identity and transport coverage must be verified separately.
+Do not infer missing WebSocket quantities from SSE behavior or count both representations of one response.
+
+The authenticated receiver can share transport/storage mechanics with Claude while using distinct source-bound installation credentials, allowlists, model mappings and account/access bindings.
+Preserve the selected Codex model ID, supported reasoning/speed context and native evidence basis; a generic Codex family label is insufficient for model-relative rates and quotes.
+Keep prompt logging disabled and drop user/tool content, arbitrary diagnostics and non-allowlisted resource attributes before queueing or persistence.
+Preserve existing exporter configuration and record disabled sources, shutdown tails, missing identities and uninstrumented sessions as coverage limitations.
+An unavailable verified Codex capture path is an implementation blocker, not grounds for silently postponing Codex.
+
+** Supporting Codex App Server evidence
 
 The [[https://learn.chatgpt.com/docs/app-server][official App Server interface]] exposes =thread/tokenUsage/updated= and turn lifecycle notifications.
 Generated schemas from installed Codex 0.162.1 include thread/turn IDs, =total=/=last= token breakdowns, cache categories and reasoning output.
@@ -329,6 +346,8 @@ Preserve reroute/selection evidence separately; a join to the latest thread mode
 Capture an allowlisted projection from the owning client's existing stream, with version-specific fixtures for counter behavior, reconnects, model changes and compaction.
 The isolated account-quota app-server used by llm-accounting does not observe other sessions' turns; starting another server is not a substitute for that capture path.
 The current SuCoder remote-control launcher does not yet provide this telemetry sink.
+Capture selected per-turn overrides and reroutes where available without recording turn input, and keep them as evidence rather than allocating every token to the latest setting.
+If telemetry and App Server counters describe the same work, choose the verified primary quantity source and retain the other as corroboration; do not add them.
 
 Do not copy a thread cumulative total into each turn or sum it together with the =last= breakdown.
 Preserve token-category inclusion metadata; unavailable billing-category semantics leave monetary conversion unavailable.
@@ -445,6 +464,8 @@ Before implementation is accepted, synthetic tests must additionally cover:
 - An outer cancellation/deadline that reaps independently sessioned native children before another attempt acquires the owner lock; hard-deadline rejection on an unsupported host.
 - Crash before publication, disk full, malformed finalized batches, simultaneous producers and an imported duplicate source stream.
 - Counter restart/reconnect, repeated callback, model switch, partial native coverage and inclusive token categories.
+- Required Codex coverage: at least two synthetic model IDs, turn overrides/reroutes, compaction/reconnect, completion transport overlap, absent request identities, and cached-input/reasoning-output inclusion semantics.
+- Codex model-specific quotes/tariff references with unavailable/new model mappings and one shared account-limit series across consuming models; never one allowance copy per model.
 - Quiet sessions, dead agents with live tmux/Slurm jobs, missing heartbeats and concurrent open-turn intervals.
 - An offline export that touches neither credentials nor providers and contains no canary prompt, token, path or raw diagnostic.
 
@@ -452,13 +473,13 @@ Before implementation is accepted, synthetic tests must additionally cover:
 
 1. Restore/test passive combined Claude collection and document the accounting policy; this is a small prerequisite in llm-accounting, separate from history storage.
 2. Implement batch validation/storage, saved-report ingestion, manual price/supply publication and offline quota export; run the replay before enabling live collection.
-3. Implement and fixture-verify the selected Claude request adapter, model evidence and coverage contract, deduplication and offline usage/model-rate-input exports; run the model-identification scenarios.
+3. Implement and fixture-verify both the Claude request and Codex completion adapters, model evidence and coverage contracts, deduplication and offline usage/model-rate-input exports; run the model-identification scenarios and added Codex acceptance cases.
 4. Add the bounded five-minute sampler, durable cooldowns, adapter setup and user-timer examples; pilot quota and model-tagged capture together on one selected owning host/population.
 5. Inspect source lag, quantization, gaps, model/binding coverage, storage size and capture overhead; record which rates are observed and which coefficients remain declared, unidentified or unavailable.
-6. Add verified exposure-hour measures, other harness/context adapters and decision records as needed, followed by calibrated estimates and SuCoder consumption work.
+6. Add verified exposure-hour measures, harnesses beyond Claude/Codex, further context adapters and decision records as needed, followed by calibrated estimates and SuCoder consumption work.
 
 Steps 1-2 establish quota-ready infrastructure; they do not satisfy the model-aware pilot.
-That pilot requires verified source semantics, two distinguished observed model streams in acceptance fixtures, explicit binding/coverage and deterministic metadata-only replay.
+That pilot requires verified source semantics for both harnesses, distinguished observed models including at least two synthetic Codex IDs in acceptance fixtures, explicit binding/coverage and deterministic metadata-only replay.
 Unknown serving models, account-wide background use or quota weights must remain visible; readiness does not require inventing them or fitting a demand model.
 
 On 2026-10-17, all 270 existing llm-accounting tests passed and its offline validator accepted three schemas and fourteen synthetic examples.
@@ -475,6 +496,8 @@ The subsequent model-identification review found that this scope omitted mandato
 This revision makes it part of the first model-aware pilot and specifies identity, coverage, transport, hour semantics and calibration-readiness criteria in response.
 The historical review retains its baseline findings and records their disposition separately.
 Both original model-identification reviewers accepted the revised specification after rechecking its calibration and native-source contracts.
+The human subsequently required Codex and its models in the implementation scope; the [[file:llm-usage-implementation-charter.org][charter]] and this specification now require both harnesses.
+The earlier review acceptance and 14-scenario fixture do not establish verification of the added Codex adapter; its acceptance tests and native-build checks remain implementation work.
 The recheck clarified verified request-ID identity without a fabricated process epoch and required selected-emitter authentication on shared hosts.
 The 14 revised scenarios parse, and their original-artifact references, numerical counterexamples, selected aggregation expectations and tariff arithmetic pass the offline check below.
 These checks and review findings establish design consistency, not implementation verification.
