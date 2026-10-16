@@ -1052,6 +1052,40 @@ def test_renew_reconciliation_ignores_an_unpromoted_or_mismatched_record(tmp_pat
     assert session.replacement == attempt.as_json()
 
 
+@pytest.mark.parametrize("change", ["release", "release-retained", "attempt", "new_job"])
+def test_renew_reconciliation_reloads_after_cancellation(tmp_path, monkeypatch, change):
+    import logging
+    from types import SimpleNamespace
+    from sucoder.cli import _reconcile_ready_record
+    attempt = ReplacementAttempt(attempt="00ff" * 4, old_job=4242, old_node=None, old_run=RUN, token=_token(),
+                                 state="ready", new_job=12345)
+    session = _managed_session(tmp_path, monkeypatch, replacement=attempt.as_json(), target_name="savio")
+    session.slurm_job_id, session.compute_node = 12345, "n0001.savio4"
+    session.save()
+    changed = []
+
+    def scancel(job):
+        assert job == 4242
+        current = RemoteSession.load("sample", target_name="savio")
+        if change.startswith("release"):
+            current.slurm_job_id, current.compute_node = None, None
+            if change == "release":
+                current.replacement = None
+        elif change == "attempt":
+            current.replacement["attempt"] = "11ee" * 4
+        else:
+            current.replacement["new_job"] = 23456
+        current.save()
+        changed.append(current)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    _reconcile_ready_record(session, scancel, logging.getLogger("test-renew"))
+    expected = changed[0]
+    if change == "release-retained":
+        expected.replacement = None  # Retire only the record, preserving the released allocation.
+    assert RemoteSession.load("sample", target_name="savio") == expected
+
+
 @pytest.mark.parametrize("state", ["PENDING", "RUNNING"])
 def test_relaunch_no_status_bound_excludes_queue_time(tmp_path, monkeypatch, state):
     import logging
@@ -1071,6 +1105,28 @@ def test_relaunch_no_status_bound_excludes_queue_time(tmp_path, monkeypatch, sta
     assert not any(c[0] == "run_agent" for c in fake.calls)
     assert cli._managed_replacement_turn(fake, None, session, attempt, logger, clock=lambda: 2900.0) is None
     assert [c[1] for c in fake.calls if c[0] == "run_agent"] == ([["scancel", "12345"]] if state == "RUNNING" else [])
+
+
+def test_relaunch_no_status_bound_restarts_after_requeue(tmp_path, monkeypatch):
+    import logging
+    from sucoder import cli
+    from sucoder.codex_state import Readiness
+    attempt = ReplacementAttempt(attempt="00ff" * 4, old_job=4242, old_node=None, old_run=RUN, token=_token(),
+                                 state="submitted", new_job=12345, submitted_at=1.0)
+    _managed_session(tmp_path, monkeypatch, replacement=attempt.as_json())
+    nothing = Readiness("pending", "no managed run recorded yet", no_status=True)
+    fake = _FakeManager(readiness=[nothing] * 4)
+    for state, now, running_since in [("RUNNING", 1000.0, 1000.0), ("PENDING", 2000.0, None),
+                                      ("RUNNING", 3000.0, 3000.0), ("RUNNING", 3899.0, 3000.0)]:
+        session = RemoteSession.load("sample")
+        attempt = ReplacementAttempt.from_json(session.replacement)
+        fake.old_state = state
+        assert cli._managed_replacement_turn(fake, None, session, attempt, logging.getLogger("test-renew"),
+                                             clock=lambda: now) is None
+        recorded = ReplacementAttempt.from_json(RemoteSession.load("sample").replacement)
+        assert recorded.new_job == 12345 and recorded.running_since == running_since
+        assert recorded.state == "submitted" and recorded.failures == []
+        assert not any(c[0] == "run_agent" for c in fake.calls)
 
 
 def test_relaunch_leaves_running_since_unset_when_the_scheduler_probe_fails(tmp_path, monkeypatch):
@@ -1097,8 +1153,8 @@ def test_renew_attempt_running_since_round_trips_and_loads_legacy_records():
             ReplacementAttempt.from_json(dict(data, running_since=bad))
 
 
-@pytest.mark.parametrize("exists", [True, False])
-def test_unconfined_tui_attach_keeps_the_existing_managed_owner(tmp_path, monkeypatch, exists):
+@pytest.mark.parametrize("probe_rc", [0, 1, 255])
+def test_unconfined_tui_attach_keeps_the_existing_managed_owner(tmp_path, monkeypatch, caplog, probe_rc):
     from types import SimpleNamespace
     from tests.test_codex_state import _state_manager
     manager, ctx, _ = _state_manager(tmp_path, monkeypatch)
@@ -1107,12 +1163,18 @@ def test_unconfined_tui_attach_keeps_the_existing_managed_owner(tmp_path, monkey
     original = session.managed_owner
     monkeypatch.setattr(manager, "_prepare_local_tier", lambda ctx, root: (tmp_path, "export SUCODER_LOCAL_ROOT=/local"))
     manager.executor.run_agent.side_effect = lambda args, **kw: SimpleNamespace(
-        returncode=int(not exists) if list(args)[:2] == ["tmux", "has-session"] else 0, stdout="", stderr="")
-    manager.launch_agent(ctx, sync=False, command_override=["codex"], model_override="another-model",
-                         supports_inline_prompt=True, detached=True)
+        returncode=probe_rc if list(args)[:2] == ["tmux", "has-session"] else 0, stdout="", stderr="")
+    with caplog.at_level("INFO"):
+        assert manager.launch_agent(ctx, sync=False, command_override=["codex"], model_override="another-model",
+                                    supports_inline_prompt=True, detached=True) == 0
     recorded = RemoteSession.load("sample").managed_owner
-    assert recorded == (original if exists else manager._managed_owner)
+    assert recorded == (manager._managed_owner if probe_rc == 1 else original)
     assert manager._managed_owner["model"] == "another-model"
+    if probe_rc == 0:
+        assert "Keeping the existing managed owner record for tmux session sucoder-sample" in caplog.text
+    elif probe_rc == 255:
+        assert "tmux session sucoder-sample probe returned 255" in caplog.text
+        assert "skipping managed owner recording" in caplog.text
     calls = manager.executor.run_agent.call_args_list
     assert calls[-2].args[0] == ["tmux", "has-session", "-t", "=sucoder-sample"]
     assert calls[-1].args[0][:2] == ["tmux", "new-session"] and "-A" in calls[-1].args[0]

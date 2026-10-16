@@ -4278,7 +4278,8 @@ def _managed_replacement_turn(manager, mctx, session, attempt, logger, clock=tim
     """Step 1 of :func:`_relaunch_managed_session`: the recorded replacement job's readiness.
 
     Pending with no status at all is bounded here by the time since the
-    first RUNNING observation (``_MANAGED_NO_STATUS_BOUND_SECONDS``): a runner
+    first RUNNING observation after each non-RUNNING state
+    (``_MANAGED_NO_STATUS_BOUND_SECONDS``): a runner
     that refused before placing a run writes no ``latest-run``, so its
     job would otherwise read as pending on every turn and never be
     cancelled.  ``clock`` is the test seam.
@@ -4295,6 +4296,10 @@ def _managed_replacement_turn(manager, mctx, session, attempt, logger, clock=tim
         return None
     if state == "RUNNING" and attempt.running_since is None:
         attempt.running_since = clock()
+        session.replacement = attempt.as_json()
+        session.save()
+    elif state != "RUNNING" and attempt.running_since is not None:
+        attempt.running_since = None
         session.replacement = attempt.as_json()
         session.save()
     try:
@@ -4364,6 +4369,7 @@ def _managed_replacement_turn(manager, mctx, session, attempt, logger, clock=tim
 def _reconcile_ready_record(session, scancel, logger):
     """Retry a promoted predecessor's cancellation once per poll, including HOLD."""
     from .codex_state import ReplacementAttempt
+    from .session import RemoteSession
 
     record = session.replacement
     if not isinstance(record, dict) or record.get("state") != "ready" or record.get("new_job") != session.slurm_job_id:
@@ -4376,6 +4382,13 @@ def _reconcile_ready_record(session, scancel, logger):
         if result.returncode != 0:
             logger.warning("Predecessor job %s cancellation returned %s: %s; keeping the ready record for next poll.",
                            attempt.old_job, result.returncode, (result.stderr or "").strip())
+            return
+        # Cancellation can overlap release or a new renewal. Retire only
+        # the same record on the latest session, preserving its allocation.
+        session = RemoteSession.load(session.mirror_name, target_name=session.target_name)
+        record = session.replacement
+        if (not isinstance(record, dict) or record.get("attempt") != attempt.attempt
+                or record.get("new_job") != attempt.new_job):
             return
         session.replacement = None
         session.save()
