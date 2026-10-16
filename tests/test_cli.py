@@ -1464,9 +1464,9 @@ def test_attach_via_srun_uses_overlap_step(tmp_path, monkeypatch):
     argv = captured["argv"]
     # Single hop via gateway to the login node — NOT a two-hop jump to
     # the compute node.
-    assert "-J" in argv
-    jump = argv[argv.index("-J") + 1]
-    assert jump == "gw.example.org", argv
+    assert "-J" not in argv
+    proxy = next(arg for arg in argv if arg.startswith("ProxyCommand="))
+    assert "-W %h:%p gw.example.org" in proxy, argv
     # Target host is the login node, not the compute node.
     assert "ln001" in argv, argv
     assert not any("n0148" in part for part in argv), argv
@@ -1557,7 +1557,9 @@ def test_attach_confined_uses_srun_overlap_dedicated_socket(tmp_path, monkeypatc
 
     argv = captured["argv"]
     # Single hop via gateway to the login node (srun routes by jobid).
-    assert argv[argv.index("-J") + 1] == "gw.example.org", argv
+    assert "-J" not in argv
+    proxy = next(arg for arg in argv if arg.startswith("ProxyCommand="))
+    assert "-W %h:%p gw.example.org" in proxy, argv
     assert "ln001" in argv and not any("n0148" in p for p in argv), argv
     remote_cmd = argv[-1]
     assert "srun --jobid=1234567 --overlap --pty" in remote_cmd, remote_cmd
@@ -1565,6 +1567,103 @@ def test_attach_confined_uses_srun_overlap_dedicated_socket(tmp_path, monkeypatc
     assert "tmux -L sucoder-sample attach-session -t sucoder-sample" in remote_cmd, remote_cmd
     # NO new-session fallback for confined.
     assert "new-session" not in remote_cmd, remote_cmd
+
+
+@pytest.mark.parametrize("via_srun", [False, True])
+@pytest.mark.parametrize("outcome", [
+    "ssh_failure", "scheduler_failure", "partial_failure", "timeout",
+    "gone", "invalid_job", "invalid_over_failed_ssh", "RUNNING", "PENDING", "SUSPENDED",
+])
+def test_attach_scheduler_probe_preserves_record_and_routes_by_host(
+    tmp_path, monkeypatch, via_srun, outcome,
+):
+    from sucoder import session as session_mod
+    from sucoder.tunnel import SshControl
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+    monkeypatch.setattr(cli, "_BUSY_RETRY_DELAY", 0)
+    config_path = _confined_config(tmp_path)
+    sessions_dir = tmp_path / "sessions"
+    monkeypatch.setattr(session_mod, "_session_dir", lambda: sessions_dir)
+    session = session_mod.RemoteSession(
+        mirror_name="sample", target_name="fake-confined", login_node="ln001",
+        slurm_job_id=1234567, compute_node="n0148",
+        managed_owner={"run": "preserve-owner"}, replacement={"attempt": "preserve-attempt"},
+    )
+    session.save()
+    # Attach may prefer a warm route, but failure must not rewrite the pin
+    # or any managed-state fields in the original record.
+    session_mod.RemoteSession(
+        mirror_name="tunnel-fake-confined", login_node="ln002",
+    ).save()
+    record = sessions_dir / "sample--fake-confined.yaml"
+    before = record.read_bytes()
+    connections = []
+    monkeypatch.setattr(cli, "_connect_with_retry", lambda control, *a, **kw: connections.append(control))
+    calls = []
+    error = "mux_client_request_session: session request failed: Session open refused by peer"
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        assert "squeue --job 1234567" in cmd[-1]
+        assert "2>/dev/null" not in cmd[-1]
+        assert kwargs["timeout"] == 20
+        if outcome == "timeout":
+            raise subprocess.TimeoutExpired(cmd, 20, output=b"RUNNING\n", stderr=b"Connection closed by remote host")
+        if outcome in ("ssh_failure", "partial_failure"):
+            return subprocess.CompletedProcess(cmd, 255, "RUNNING\n" if outcome == "partial_failure" else "", error)
+        if outcome == "scheduler_failure":
+            return subprocess.CompletedProcess(cmd, 1, "", "slurm_load_jobs error: controller unavailable")
+        if outcome in ("invalid_job", "invalid_over_failed_ssh"):
+            rc = 255 if outcome == "invalid_over_failed_ssh" else 1
+            return subprocess.CompletedProcess(cmd, rc, "", "slurm_load_jobs error: Invalid job id specified")
+        return subprocess.CompletedProcess(cmd, 0, "" if outcome == "gone" else outcome + "\n", error)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    executed = []
+    monkeypatch.setattr(os, "execvp", lambda prog, argv: executed.append(argv))
+    args = ["--config", str(config_path), "-T", "fake-confined", "attach", "sample"]
+    result = CliRunner().invoke(cli.app, args + (["--via-srun"] if via_srun else []))
+    assert record.read_bytes() == before
+    gw, ln = connections
+    assert gw.gateway == "gw.example.org"
+    assert ln.gateway == "ln002" and ln.jump_control is gw
+    assert isinstance(ln, SshControl)
+    for cmd in calls + executed:
+        assert cmd[-2] == "ln002"
+        assert f"ControlPath={ln.socket_path}" in cmd
+        assert f"ControlPath={gw.socket_path}" not in cmd
+        proxy = next(arg for arg in cmd if arg.startswith("ProxyCommand="))
+        assert f"ControlPath={gw.socket_path}" in proxy
+        assert "-W %h:%p gw.example.org" in proxy
+        assert "-J" not in cmd
+    if outcome in ("RUNNING", "PENDING"):
+        assert result.exit_code == 0, result.output
+        assert len(calls) == 1  # Successful fallback can still emit a mux refusal.
+        assert len(executed) == 1
+        assert executed[0][-1] == (
+            "srun --jobid=1234567 --overlap --pty "
+            "tmux -L sucoder-sample attach-session -t sucoder-sample"
+        )
+    else:
+        assert result.exit_code == 1, result.output
+        assert not executed
+        if outcome in ("gone", "invalid_job"):
+            assert "allocation has ended" in result.output
+        elif outcome == "SUSPENDED":
+            assert "not ready to attach" in result.output
+            assert "allocation has ended" not in result.output
+        else:
+            assert "unknown/unreachable" in result.output
+            assert "allocation has ended" not in result.output
+            assert "sucoder -T fake-confined tunnel status" in result.output
+            assert "sucoder -T fake-confined tunnel up" in result.output
+            if outcome == "timeout":
+                assert "timed out after 20s" in result.output
+                assert "Connection closed by remote host" in result.output
+            elif outcome in ("ssh_failure", "partial_failure"):
+                assert error in result.output
 
 
 def test_attach_unconfined_keeps_new_session_fallback(tmp_path, monkeypatch):
@@ -1908,7 +2007,10 @@ def _slurm_recovery_fixture(tmp_path, monkeypatch, *, squeue_lines):
         joined = " ".join(cmd) if isinstance(cmd, (list, tuple)) else str(cmd)
         run_calls.append(joined)
         if "squeue --job" in joined:
-            return pending.pop(0)
+            result = pending.pop(0) if len(pending) > 1 else pending[0]
+            if isinstance(result, Exception):
+                raise result
+            return result
         if "salloc" in joined:
             return subprocess.CompletedProcess(
                 cmd, 0, stdout="",
@@ -2063,6 +2165,35 @@ def test_ensure_slurm_node_keeps_job_when_node_query_errors(tmp_path, monkeypatc
         "LSMS_Library", target_name="savio-node",
     )
     assert reloaded.slurm_job_id == 35141648
+
+
+@pytest.mark.parametrize("recorded_node", [None, "n0123.savio3"])
+@pytest.mark.parametrize("failure", ["ssh", "timeout"])
+def test_ensure_slurm_node_probe_failure_preserves_allocation(
+    tmp_path, monkeypatch, capsys, recorded_node, failure,
+):
+    import logging
+
+    response = (
+        subprocess.TimeoutExpired("ssh", 20, stderr=b"connection stalled")
+        if failure == "timeout" else
+        subprocess.CompletedProcess([], 255, stdout="", stderr="Connection closed by remote host")
+    )
+    remote, sess, calls = _slurm_recovery_fixture(tmp_path, monkeypatch, squeue_lines=[response])
+    sess.compute_node = recorded_node
+    sess.save()
+    record = tmp_path / "sessions" / "LSMS_Library--savio-node.yaml"
+    before = record.read_bytes()
+    with pytest.raises(typer.Exit) as caught:
+        cli._ensure_slurm_node(remote, sess, _StubControl(), _StubControl(), logging.getLogger("t"))
+    assert caught.value.exit_code == 1
+    assert record.read_bytes() == before
+    assert sess.slurm_job_id == 35141648 and sess.compute_node == recorded_node
+    assert not any("salloc" in call or "scancel" in call for call in calls)
+    output = capsys.readouterr().err
+    assert "unknown/unreachable" in output
+    assert "sucoder -T savio-node tunnel status" in output
+    assert "sucoder -T savio-node tunnel up" in output
 
 
 class _FakeSshControl:
