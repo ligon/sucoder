@@ -36,6 +36,18 @@ class RemoteSession:
     # Remote-control command/model, before generated flags or prompt injection.
     # No credentials or composed prelude; renewal rebuilds those (ledger 5).
     service_launch: Optional[dict] = None
+    # Managed Codex state (docs/codex-local-state.org, Slice 3d).
+    # ``managed_owner``: what a renewal must know to replace the managed
+    # owner with its own history -- the Codex command and model as launched
+    # (before generated flags; a CLI-selected TUI renews as Codex, not as
+    # the configured default harness), the scope digest and the durable
+    # root.  ``replacement``: the renewal transaction in flight
+    # (``codex_state.ReplacementAttempt`` as JSON), retaining the old
+    # allocation and the pending new one with the transfer token until the
+    # successor is ready or the attempt is given up.  Both absent on
+    # sessions written before this field existed.
+    managed_owner: Optional[dict] = None
+    replacement: Optional[dict] = None
 
     # ------------------------------------------------------------------
     # Persistence
@@ -78,6 +90,8 @@ class RemoteSession:
             compute_node=data.get("compute_node"),
             remote_mirror_root=data.get("remote_mirror_root"),
             service_launch=data.get("service_launch"),
+            managed_owner=data.get("managed_owner"),
+            replacement=data.get("replacement"),
             forwards=list(data.get("forwards") or []),
         )
 
@@ -105,6 +119,8 @@ class RemoteSession:
             "compute_node": self.compute_node,
             "remote_mirror_root": self.remote_mirror_root,
             "service_launch": self.service_launch,
+            "managed_owner": self.managed_owner,
+            "replacement": self.replacement,
             "forwards": self.forwards,
         }
         tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
