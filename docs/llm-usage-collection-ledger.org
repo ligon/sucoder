@@ -7,6 +7,7 @@
 Design collection of model-tagged usage, advertised shadow prices and supply state sufficient to estimate reset-adjusted depletion rates and, later, price-conditional demand.
 The model-identification review requires a native metadata stream in the first model-aware pilot; quota-only readiness is a useful earlier milestone, not completion of that pilot.
 The human's 2026-10-17 scope amendment requires both Claude and Codex adapters and distinct model routes in the [[file:llm-usage-implementation-charter.org][implementation charter]].
+The human subsequently selected the existing =llm-accounting= repository and distribution for implementation, reusing its tooling instead of creating a separate project.
 The deliverable is a practical design and synthetic replay, not a running collector or a change to account credentials.
 The conceptual agreement is in [[file:llm-shadow-values.org][Standing Shadow Values]].
 
@@ -18,6 +19,9 @@ No conversation histories, credentials or live provider accounts were inspected.
 
 * 2. Existing machinery
 
+- Packaging and CLI :: [[file:../../llm-accounting/pyproject.toml][pyproject.toml]] installs =llm_accounting*= from =src/= and exposes the existing =llm-accounting= command through [[file:../../llm-accounting/src/llm_accounting/cli.py::71][cli.main]].
+  =tests/test_runtime.py:test_config_inspection_and_fixtures_do_not_touch_auth_network_or_native_cli= and =test_absolute_xdg_default_applies_to_all_accounting_commands= cover offline/configuration boundaries.
+  Extend this distribution, namespace and test suite with usage modules and an additional command entrypoint; fresh-wheel coverage for the new resources is new acceptance work.
 - Accounting entrypoint :: [[file:../../llm-accounting/src/llm_accounting/live.py::15][collect_live]] composes normalized API and subscription sources, isolates failures, validates reports and checks binding; =tests/test_subscriptions.py:test_combined_report_keeps_windows_permissions_state_and_api_unconfigured= and =test_complete_source_reading_coalesces_reordered_metric_subsets= cover assembly and one shared reading.
   Reuse after the passive-collection prerequisite below.
 - Report validation and identity :: [[file:../../llm-accounting/src/llm_accounting/contracts.py::543][validate]], =check_binding= at line 549, =physical_metric= at line 231 and =row_identity= at line 260 define version, binding and within-export row identity.
@@ -75,8 +79,10 @@ Model-tagged throughput does not identify shared quota weights without variation
 * 5. Reuse decisions
 
 Reuse accounting collection and validation rather than creating new provider quota clients.
+Extend the existing repository/distribution under the proposed =llm_accounting.usage= namespace; install the usage command with the existing package and reuse shared schemas/configuration/CLI conventions where their contracts fit.
 Reuse the existing public resource definitions and sanitized catalogs; add versioned history references around them.
 Add a history store, publication events, attempt records and temporal joins because the current library is export-only and provides no observation database or cross-export history reconciliation.
+Keep history envelopes and report contracts distinct within that repository; new storage must not change the existing accounting CLI defaults or published report semantics implicitly.
 Add a prospective Claude request-metadata adapter as required new work for the model-aware pilot, after its identity, quantity and coverage semantics are verified; never use context-window occupancy as cumulative token use.
 Add the required Codex telemetry adapter and supporting model-selection evidence; reuse shared ingestion/history mechanics while keeping source namespaces, account bindings and inclusion semantics distinct.
 Extend the history envelope with model evidence, request/stream identities and coverage records because the accounting quota contract intentionally does not represent model-attributed use.
