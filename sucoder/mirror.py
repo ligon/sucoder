@@ -3794,10 +3794,14 @@ class MirrorManager:
                 exists = self.executor.run_agent(
                     ["tmux", "has-session", "-t", f"={tmux_name}"], check=False, capture_output=True,
                 ) if selection is None else None  # A selection creates without -A.
-                # An attach keeps the existing owner's command/model. Another
-                # launcher can still win the create between this probe and -A.
-                if exists is None or exists.returncode != 0:
+                # Only tmux's absent result authorizes a new owner record.
+                if exists is None or exists.returncode == 1:
                     self._record_managed_owner(ctx)
+                elif exists.returncode == 0:
+                    self.logger.info("Keeping the existing managed owner record for tmux session %s.", tmux_name)
+                else:
+                    self.logger.warning("tmux session %s probe returned %s; presence is unknown, "
+                                        "skipping managed owner recording.", tmux_name, exists.returncode)
 
         self.logger.info("Starting agent command: %s", shlex.join(command))
 
@@ -3872,6 +3876,14 @@ class MirrorManager:
         owner here, before the tmux command runs.  A launch that then fails
         leaves a record naming an owner that never placed a run, which a
         renewal reads as "no managed run recorded" and relaunches fresh.
+
+        Without a history selection, the pre-launch probe and ``-A``
+        tolerate two races: absent then created by another launcher before
+        our attach records our command/model for their owner; present then
+        ended before our create keeps the previous owner's command/model
+        for our new owner. The service path's marker-based ``created``
+        logic identifies its own successful create exactly. This TUI path
+        lacks that logic and its pane has no owner metadata marker to read.
         """
         from .session import RemoteSession
 

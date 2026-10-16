@@ -1460,6 +1460,9 @@ retry probes the recorded job rather than submitting another, a
 failure before submission leaves the old allocation reachable, and a
 replacement that fails readiness stays recorded until its cancellation
 (by id) succeeds, then is resubmitted on the next turn, three times at most.
+A successor that records no managed run has a 900-second startup bound
+from its first observed RUNNING state. An observed non-RUNNING state resets
+the bound, so initial queue time and time queued after a requeue are excluded.
 Promotion keeps the record in state =ready=, naming the predecessor until
 its cancellation is confirmed; every renewal poll retries that cancellation,
 including while HOLD keeps the current job running, and =release= cancels
@@ -1475,6 +1478,8 @@ and the log names where its generations are for an explicit
 excludes its known predecessor from scheduler adoption, including the
 fallback when no managed run was recorded.  On an unconfined target, and on a dry run,
 a managed owner is renewed that way too.
+An unconfined TUI attach keeps the existing owner's command and model;
+an inconclusive tmux presence probe logs a warning and preserves that record.
 Renewal restarts the server; it does not automatically resume its chats.
 
 See [[file:docs/persistent-presence.org][docs/persistent-presence.org]]
