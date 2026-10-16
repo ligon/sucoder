@@ -416,6 +416,9 @@ def test_replication_and_a_requested_generation(home, python):
         run_json = json.loads((m.durable_run / "run.json").read_text())
         assert (run_json["format"], run_json["run"], run_json["parent"], run_json["scope"]) == (1, m.run_dir.name, None, home["scope"])
         assert run_json["codex_home"] == str(home["codex_home"]) and run_json["created_iso"].endswith("Z")
+        lineage = json.loads((m.durable_run.parent.parent / "lineages" / (m.run_dir.name + ".json")).read_text())
+        assert lineage["child_run"] == m.run_dir.name and lineage["parent"] is None
+        assert lineage["allocation"] == run_json["allocation"] and lineage["created_at"] > 0
         # the local bundle is kept as well
         assert (m.run_dir / "snapshots" / last["name"] / "manifest.json").exists()
 
@@ -1762,7 +1765,8 @@ def test_a_failed_sync_after_the_rename_is_not_acknowledged_until_the_sync_succe
     assert h.capture() == ("published", None)
     d = h.cp.last_generation
     assert d["name"] != c["name"] and h.cp.pending_sync is None and h.status_json()["unsynced_generation"] is None
-    assert sorted(os.listdir(h.generations)) == sorted([a["name"], b["name"], c["name"], d["name"]])
+    assert sorted(os.listdir(h.generations)) == sorted([b["name"], c["name"], d["name"]])
+    assert (h.durable_run / "retiring" / a["name"]).is_dir(), "the successful sync permits retention of the newest three warm"
     # the exit retries as well: inside the final capture's worker, never on the exit path itself
     failing["on"] = True
     assert h.capture() == ("published", None)
@@ -3079,3 +3083,705 @@ def test_the_drain_state_machine_in_process(runner, tmp_path):
     finally:
         stubborn.kill()
         stubborn.wait()
+
+
+# ----------------------------------------------------------------- scope metadata, parent references and retention
+
+
+def _scope(h):
+    return h.durable_run.parent.parent
+
+
+def _pin_paths(h, child, generation=None):
+    generation = generation or h.cp.last_generation["name"]
+    return (_scope(h) / "pins" / h.run_id / generation / (child + ".json"),
+            _scope(h) / "lineages" / (child + ".json"))
+
+
+def _metadata_attempt(runner, h, tmp_path, child="2" * 32, parent=True):
+    selector = h.run_id + "/" + h.cp.last_generation["name"]
+    local, durable_run, attempt, args = _bounded_restore(runner, h, selector, tmp_path, child)
+    meta, status = args[4], args[-2]
+    if parent:
+        meta["parent"] = {"run": h.run_id, "generation": h.cp.last_generation["name"],
+                          "class": h.cp.last_generation["class"], "manifest_sha256": h.cp.last_generation["manifest_sha256"]}
+    attempt.durable_created = True
+    runner.ensure_durable_run(str(durable_run), str(h.durable_base))
+    return local, durable_run, attempt, meta, status
+
+
+@pytest.mark.parametrize("existing_directories", [False, True])
+def test_metadata_pin_and_lineage_are_synced_under_the_lock_before_activation(runner, tmp_path, monkeypatch, existing_directories):
+    h, selector = _published(runner, tmp_path)
+    local, durable_run, attempt, args = _bounded_restore(runner, h, selector, tmp_path / "child", "2" * 32)
+    pin, lineage = _pin_paths(h, local.name)
+    lock = _scope(h) / "metadata.lock"
+    real_write, real_activate, real_sync = runner.write_metadata, runner.activate_restore, runner.fsync_path
+    writes, synced = [], []
+    if existing_directories:
+        # Visible directories left by an earlier failed sync are not proof
+        # that their names are durable.  Sync them even without a mkdir.
+        pin.parent.mkdir(parents=True)
+        lineage.parent.mkdir()
+
+    def write(path, record):
+        if path in (str(pin), str(lineage)):
+            owner = json.loads((lock / "owner.json").read_text())
+            assert owner["operation"] == "parent pin" and owner["run"] == local.name
+            assert owner["runner_pid"] == os.getpid() and owner["runner_starttime"] == runner.read_starttime(os.getpid())
+            assert owner["allocation"] == args[4]["allocation"] and owner["acquired_at"] > 0
+            assert not (local / "db").exists()
+            writes.append(path)
+        real_write(path, record)
+
+    def sync(path):
+        synced.append(path)
+        real_sync(path)
+
+    def activate(*values):
+        assert not lock.exists(), "database activation is outside the critical section"
+        assert writes == [str(pin), str(lineage)] and str(pin.parent) in synced and str(lineage.parent) in synced
+        assert all(str(directory) in synced for directory in (pin.parent.parent, pin.parent.parent.parent, _scope(h)))
+        assert json.loads(pin.read_text())["manifest_sha256"] == h.cp.last_generation["manifest_sha256"]
+        record = json.loads(lineage.read_text())
+        assert record["child_run"] == local.name and record["parent"] == args[4]["parent"]
+        assert record["created_at"] > 0 and json.loads(pin.read_text())["pinned_at"] > 0
+        assert json.loads((durable_run / "run.json").read_text())["parent"] == record["parent"]
+        real_activate(*values)
+
+    monkeypatch.setattr(runner, "write_metadata", write)
+    monkeypatch.setattr(runner, "fsync_path", sync)
+    monkeypatch.setattr(runner, "activate_restore", activate)
+    runner.restore_generation(*args)
+    assert (local / "db").is_dir() and not lock.exists()
+    assert oct(pin.stat().st_mode & 0o777) == "0o600"
+    # A later setup failure must undo only this child, not another child's reference.
+    other_pin = pin.with_name("3" * 32 + ".json")
+    other_pin.write_text('{"other": true}')
+    other_lineage = lineage.with_name("3" * 32 + ".json")
+    other_lineage.write_text('{"parent": null}')
+    attempt.rollback()
+    assert not pin.exists() and not lineage.exists() and not (local / "db").exists()
+    assert other_pin.read_text() == '{"other": true}' and other_lineage.read_text() == '{"parent": null}'
+    assert not lock.exists() and h.generations.is_dir()
+
+
+@needs_bwrap
+def test_metadata_records_are_rolled_back_after_bind_failure_and_fresh_lineage_has_no_parent(runner, tmp_path, monkeypatch):
+    h, selector = _published(runner, tmp_path)
+    seen = []
+
+    def fail_binds(codex_home, home_local, keep_existing=False):
+        child = Path(home_local).parent.name
+        pin, lineage = _pin_paths(h, child)
+        record = json.loads(lineage.read_text())
+        seen.append(record["parent"])
+        assert record["child_run"] == child and (record["parent"] is None or pin.exists())
+        raise OSError(5, "bind failure")
+
+    monkeypatch.setattr(runner, "prepare_binds", fail_binds)
+    for name, flags in (("restore", ("--restore", selector)), ("fresh", ("--fresh",))):
+        code, runs = _restore_in_process(runner, h, tmp_path / name, monkeypatch, *flags)
+        assert code == 70
+        _assert_rolled_back(runs[0], h, "bind failure")
+        assert not any(p.exists() for p in _pin_paths(h, runs[0].name))
+    assert seen[0]["generation"] == h.cp.last_generation["name"] and seen[1] is None
+
+
+@needs_bwrap
+def test_abandoned_metadata_lock_is_reported_never_stolen_and_restore_refuses(runner, tmp_path, monkeypatch):
+    h, selector = _published(runner, tmp_path)
+    lock = _scope(h) / "metadata.lock"
+    lock.mkdir()
+    gone = subprocess.Popen(["true"])
+    gone.wait()
+    owner = {"run": "f" * 32, "allocation": {"job": "old-job", "node": os.uname()[1]},
+             "runner_pid": gone.pid, "runner_starttime": 1, "operation": "retention", "acquired_at": time.time() - 86400}
+    (lock / "owner.json").write_text(json.dumps(owner))
+    before = _tree(lock)
+    monkeypatch.setattr(runner, "METADATA_LOCK_WAIT", 0.03)
+    code, runs = _restore_in_process(runner, h, tmp_path / "child", monkeypatch, "--restore", selector)
+    assert code == 70
+    _assert_rolled_back(runs[0], h, "metadata lock unavailable")
+    status = json.loads((runs[0] / "status.json").read_text())
+    assert status["metadata_lock"]["owner"] == owner and status["metadata_lock"]["age_seconds"] >= 86400
+    assert status["metadata_lock"]["state"] == "abandoned"
+    assert _tree(lock) == before and not any(p.exists() for p in _pin_paths(h, runs[0].name))
+    for _ in range(4):
+        assert h.capture() == ("published", None), "metadata contention does not prevent publication"
+    status = h.status_json()
+    assert status["retention"]["outcome"] == "skipped" and "metadata lock unavailable" in status["retention"]["reason"]
+    assert status["metadata_lock"]["owner"] == owner and _tree(lock) == before
+    assert len(list(h.generations.iterdir())) == 5
+
+
+@pytest.mark.parametrize("fault", ["mkdir_eio", "mkdir_timeout"])
+def test_uncertain_lock_acquisition_grants_nothing_and_never_removes_the_directory(runner, tmp_path, monkeypatch, fault):
+    h, _ = _published(runner, tmp_path)
+    lock = _scope(h) / "metadata.lock"
+    local, durable_run, attempt, meta, status = _metadata_attempt(runner, h, tmp_path / "child")
+    real_mkdir = runner.os.mkdir
+    monkeypatch.setattr(runner, "METADATA_LOCK_WAIT", 0.02)
+
+    def mkdir(path, *args, **kwargs):
+        result = real_mkdir(path, *args, **kwargs)
+        if path == str(lock):
+            if fault == "mkdir_eio":
+                raise OSError(5, "uncertain mkdir")
+            if fault == "mkdir_timeout":
+                raise TimeoutError("mkdir timed out")
+        return result
+
+    monkeypatch.setattr(runner.os, "mkdir", mkdir)
+    with pytest.raises(runner.MetadataUnavailable):
+        runner.record_lineage(str(_scope(h)), meta, str(local), str(durable_run), status, attempt)
+    assert lock.is_dir() and status.data["metadata_lock"]["state"] != "acquired"
+    assert not any(p.exists() for p in _pin_paths(h, local.name)) and not (local / "db").exists()
+    attempt.rollback()
+    assert lock.is_dir(), "even rollback cannot remove an ambiguously acquired lock"
+
+
+def test_a_slow_but_successful_lock_mkdir_grants_entry_and_is_released(runner, tmp_path, monkeypatch):
+    # The wait bound is on a held lock.  A mkdir that returned success after
+    # the bound is still this attempt's own directory: entering and releasing
+    # it beats leaving a live runner's lock that it could never take again.
+    h, _ = _published(runner, tmp_path)
+    lock = _scope(h) / "metadata.lock"
+    local, durable_run, attempt, meta, status = _metadata_attempt(runner, h, tmp_path / "child")
+    real_mkdir = runner.os.mkdir
+    monkeypatch.setattr(runner, "METADATA_LOCK_WAIT", 0.02)
+
+    def slow(path, *args, **kwargs):
+        result = real_mkdir(path, *args, **kwargs)
+        if path == str(lock):
+            time.sleep(0.05)
+        return result
+
+    monkeypatch.setattr(runner.os, "mkdir", slow)
+    runner.record_lineage(str(_scope(h)), meta, str(local), str(durable_run), status, attempt)
+    assert all(p.exists() for p in _pin_paths(h, local.name)) and (durable_run / "run.json").exists()
+    assert not lock.exists() and status.data["metadata_lock"]["state"] == "released"
+    with runner.MetadataLock(str(_scope(h)), h.cp.meta, h.status, "retention"):
+        assert lock.is_dir()
+    attempt.rollback()
+    assert not any(p.exists() for p in _pin_paths(h, local.name)) and not lock.exists()
+
+
+@pytest.mark.parametrize("fault", ["owner_tmp", "owner_sync", "durable_sync", "cleanup_fails"])
+def test_a_failed_owner_record_after_a_successful_mkdir_removes_only_this_attempts_lock(runner, tmp_path, monkeypatch, fault):
+    h, _ = _published(runner, tmp_path)
+    lock = _scope(h) / "metadata.lock"
+    owner_path = lock / "owner.json"
+    local, durable_run, attempt, meta, status = _metadata_attempt(runner, h, tmp_path / "child")
+    real_write, real_sync, real_rmdir = runner.write_metadata, runner.fsync_path, runner.os.rmdir
+    failed = []
+
+    def write(path, record):
+        if path == str(owner_path):
+            if fault == "owner_tmp":
+                # interrupted before the replace: only owner.json.tmp exists
+                Path(path + ".tmp").write_text(json.dumps(record))
+                raise OSError(5, "owner write failed")
+            real_write(path, record)
+            if fault in ("owner_sync", "cleanup_fails"):
+                raise OSError(5, "owner sync failed")
+            return
+        real_write(path, record)
+
+    def sync(path):
+        if fault == "durable_sync" and path == str(_scope(h)) and owner_path.exists() and not failed:
+            failed.append(path)
+            raise OSError(5, "durable sync failed")
+        real_sync(path)
+
+    def rmdir(path, *args, **kwargs):
+        if fault == "cleanup_fails" and path == str(lock):
+            raise OSError(5, "rmdir failed")
+        return real_rmdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(runner, "write_metadata", write)
+    monkeypatch.setattr(runner, "fsync_path", sync)
+    monkeypatch.setattr(runner.os, "rmdir", rmdir)
+    with pytest.raises(runner.MetadataUnavailable, match="metadata lock unavailable"):
+        runner.record_lineage(str(_scope(h)), meta, str(local), str(durable_run), status, attempt)
+    assert not any(p.exists() for p in _pin_paths(h, local.name)) and not (durable_run / "run.json").exists()
+    record = status.data["metadata_lock"]
+    if fault == "cleanup_fails":
+        # Only a failed removal leaves the directory, reported, never assumed gone.
+        assert lock.is_dir() and record["state"] != "acquired" and "rmdir failed" in record["reason"]
+        return
+    assert not lock.exists() and record["state"] == "unavailable" and record["removed_own_attempt"] is True
+    monkeypatch.setattr(runner, "write_metadata", real_write)
+    monkeypatch.setattr(runner, "fsync_path", real_sync)
+    with runner.MetadataLock(str(_scope(h)), h.cp.meta, h.status, "retention"):
+        assert owner_path.exists()
+    assert not lock.exists()
+
+
+def test_a_failed_release_after_a_pin_keeps_the_restore_and_reports_it(runner, tmp_path, monkeypatch):
+    # The pin, lineage and run.json are durable when the section ends; a
+    # release failure must not refuse the restore, whose rollback could not
+    # take the still-held lock and would orphan them.
+    h, selector = _published(runner, tmp_path)
+    local, durable_run, attempt, args = _bounded_restore(runner, h, selector, tmp_path / "child", "2" * 32)
+    lock = _scope(h) / "metadata.lock"
+    status = args[-2]
+    real_rmdir = runner.os.rmdir
+
+    def rmdir(path, *values, **kwargs):
+        if path == str(lock):
+            raise OSError(5, "release rmdir failed")
+        return real_rmdir(path, *values, **kwargs)
+
+    monkeypatch.setattr(runner.os, "rmdir", rmdir)
+    runner.restore_generation(*args)
+    assert (local / "db").is_dir() and all(p.exists() for p in _pin_paths(h, local.name))
+    assert json.loads((durable_run / "run.json").read_text())["parent"]["generation"] == h.cp.last_generation["name"]
+    record = status.data["metadata_lock"]
+    assert record["state"] == "release_failed" and record["reason"].startswith("release failed: ")
+    assert "release rmdir failed" in record["reason"] and lock.is_dir()
+    assert "metadata_rollback" not in status.data
+
+
+def test_a_fresh_lineage_is_written_without_the_lock(runner, tmp_path, monkeypatch):
+    # A null-parent lineage protects nothing, so a stalled or abandoned lock
+    # never blocks the explicit fresh-history choice.
+    h, _ = _published(runner, tmp_path)
+    lock = _scope(h) / "metadata.lock"
+    lock.mkdir()
+    (lock / "owner.json").write_text('{"unknown": true}')
+    before = _tree(lock)
+    local, durable_run, attempt, meta, status = _metadata_attempt(runner, h, tmp_path / "child", parent=False)
+    monkeypatch.setattr(runner, "METADATA_LOCK_WAIT", 0.02)
+    runner.record_lineage(str(_scope(h)), meta, str(local), str(durable_run), status, attempt)
+    pin, lineage = _pin_paths(h, local.name)
+    record = json.loads(lineage.read_text())
+    assert record["child_run"] == local.name and record["parent"] is None and not pin.exists()
+    assert json.loads((durable_run / "run.json").read_text())["parent"] is None
+    assert (local / "run.json").exists() and _tree(lock) == before
+    assert "metadata_lock" not in status.data
+
+
+def test_metadata_lock_contention_can_succeed_after_the_exact_owner_releases(runner, tmp_path, monkeypatch):
+    h, _ = _published(runner, tmp_path)
+    monkeypatch.setattr(runner, "METADATA_LOCK_WAIT", 0.5)
+    acquired, release = threading.Event(), threading.Event()
+    def owner():
+        with runner.MetadataLock(str(_scope(h)), h.cp.meta, h.status, "first"):
+            acquired.set()
+            assert release.wait(10)
+    worker = threading.Thread(target=owner)
+    worker.start()
+    assert acquired.wait(10)
+    timer = threading.Timer(0.05, release.set)
+    timer.start()
+    with runner.MetadataLock(str(_scope(h)), h.cp.meta, h.status, "second") as lock:
+        assert lock.owner["operation"] == "second"
+    worker.join(10)
+    timer.join(10)
+    assert not (_scope(h) / "metadata.lock").exists()
+
+
+def _retention_generations(runner, h, classes):
+    """Completed metadata plus a payload; retention never opens a database or hashes it."""
+    template = json.loads((Path(h.cp.last_generation["path"]) / "manifest.json").read_text())
+    names = []
+    for index, cls in enumerate(classes, 10):
+        name = "%06d-abcdef00" % index
+        path = h.generations / name
+        path.mkdir()
+        manifest = dict(template, generation=name, **{"class": cls})
+        (path / "manifest.json").write_text(json.dumps(manifest))
+        (path / "payload").write_bytes(b"x" * index)
+        names.append(name)
+    return names
+
+
+def test_retention_keeps_exactly_selected_generations_and_reports_storage(runner, tmp_path):
+    h, _ = _published(runner, tmp_path)
+    initial = h.cp.last_generation["name"]
+    names = _retention_generations(runner, h, ["warm"] * 7 + ["sealed"] * 2 + ["crash"] * 2)
+    pin = _scope(h) / "pins" / h.run_id / names[0]
+    pin.mkdir(parents=True)  # an empty pin directory still keeps the generation
+    lineages = _scope(h) / "lineages"
+    lineages.mkdir()
+    (lineages / ("9" * 32 + ".json")).write_text(json.dumps({"parent": {"run": h.run_id, "generation": names[1]}}))
+    # Another allocation's run, replicas and partial publications are outside the pruning scope.
+    other = _scope(h) / "runs" / ("8" * 32)
+    (other / "generations" / "000001-abcdef00").mkdir(parents=True)
+    (other / "payload").write_bytes(b"untouched")
+    incoming = h.durable_run / ".incoming-unfinished"
+    incoming.mkdir()
+    (incoming / "payload").write_bytes(b"unfinished")
+    incomplete = h.generations / "999999-abcdef00"
+    incomplete.mkdir()
+    before_other, before_replica = _tree(other), h.replica.read_bytes()
+    keep = {names[0], names[1], names[2], *names[4:7], names[8], names[10], incomplete.name}
+    candidates = {initial, *names} - keep
+    freed = sum(p.stat().st_size for name in candidates for p in (h.generations / name).rglob("*") if p.is_file())
+    h.cp.maintain(names[2])  # explicitly keep this publication even though it is older than the newest three
+    assert set(os.listdir(h.generations)) == keep
+    assert set(os.listdir(h.durable_run / "retiring")) == candidates
+    assert all(not list(p.iterdir()) for p in (h.durable_run / "retiring").iterdir())
+    status = h.status_json()
+    assert status["retention"]["outcome"] == "completed" and status["retention"]["kept"] == len(keep)
+    assert status["retention"]["retired"] == len(candidates) and status["retention"]["bytes_freed"] == freed
+    assert status["durable_bytes"] == sum(p.stat().st_size for p in h.durable_run.rglob("*") if p.is_file())
+    assert status["scope_storage"]["runs"] == 2 and status["scope_storage"]["complete"] is True
+    assert status["scope_storage"]["bytes"] == sum(p.stat().st_size for p in _scope(h).rglob("*") if p.is_file())
+    assert _tree(other) == before_other and h.replica.read_bytes() == before_replica and (incoming / "payload").exists()
+
+
+@pytest.mark.parametrize("parent_state", ["retiring", "missing"])
+def test_a_parent_retired_or_removed_during_staging_cannot_be_pinned_or_activated(runner, tmp_path, monkeypatch, parent_state):
+    h, selector = _published(runner, tmp_path)
+    local, durable_run, attempt, args = _bounded_restore(runner, h, selector, tmp_path / "child", "2" * 32)
+    real_record = runner.record_lineage
+    generation = h.cp.last_generation["name"]
+    def retire(*values):
+        if parent_state == "retiring":
+            (h.durable_run / "retiring").mkdir()
+            os.rename(h.generations / generation, h.durable_run / "retiring" / generation)
+        else:
+            shutil.rmtree(h.generations / generation)
+        real_record(*values)
+    monkeypatch.setattr(runner, "record_lineage", retire)
+    with pytest.raises(runner.Refused, match="retiring" if parent_state == "retiring" else "does not exist"):
+        runner.restore_generation(*args)
+    assert not (local / "db").exists() and not durable_run.exists()
+    assert not any(p.exists() for p in _pin_paths(h, local.name))
+
+
+@needs_bwrap
+def test_retiring_tombstone_refuses_restore_even_when_an_old_generation_directory_exists(runner, tmp_path, monkeypatch):
+    h, selector = _published(runner, tmp_path)
+    tombstone = h.durable_run / "retiring" / h.cp.last_generation["name"]
+    tombstone.mkdir(parents=True)
+    code, runs = _restore_in_process(runner, h, tmp_path / "child", monkeypatch, "--restore", selector)
+    assert code == 70
+    _assert_rolled_back(runs[0], h, "is retiring", "cannot be restored or pinned")
+
+
+def test_interrupted_deletion_leaves_a_non_restorable_record_and_retries_payload_only(runner, tmp_path, monkeypatch):
+    h, _ = _published(runner, tmp_path)
+    names = _retention_generations(runner, h, ["warm"] * 4)
+    target = h.durable_run / "retiring" / names[0]
+    real_delete = runner.delete_retired
+    def crash(path, progress):
+        assert not (_scope(h) / "metadata.lock").exists(), "payload deletion is outside the lock"
+        if path == str(target):
+            size = (target / "payload").stat().st_size
+            (target / "payload").unlink()
+            progress["bytes_freed"] += size
+            raise OSError(5, "interrupted deletion")
+        real_delete(path, progress)
+    monkeypatch.setattr(runner, "delete_retired", crash)
+    h.cp.maintain(names[-1])
+    assert h.status_json()["retention"]["outcome"] == "failed"
+    assert target.is_dir() and (target / "manifest.json").exists() and not (h.generations / names[0]).exists()
+    with pytest.raises(runner.Refused, match="retiring"):
+        runner.load_manifest(str(h.generations / names[0]), h.run_id + "/" + names[0])
+    monkeypatch.setattr(runner, "delete_retired", real_delete)
+    h.cp.maintain(names[-1])
+    assert h.status_json()["retention"]["outcome"] == "completed" and target.is_dir() and not list(target.iterdir())
+    with pytest.raises(runner.Refused, match="retiring"):
+        runner.load_manifest(str(h.generations / names[0]), h.run_id + "/" + names[0])
+
+
+def test_retirement_sync_failure_keeps_payload_and_never_reselects_it(runner, tmp_path, monkeypatch):
+    h, _ = _published(runner, tmp_path)
+    names = _retention_generations(runner, h, ["warm"] * 4)
+    real_sync = runner.fsync_path
+    def fail(path):
+        if path == str(h.generations):
+            raise OSError(5, "retirement sync failed")
+        real_sync(path)
+    monkeypatch.setattr(runner, "fsync_path", fail)
+    h.cp.maintain(names[-1])
+    target = h.durable_run / "retiring" / names[0]
+    assert target.is_dir() and (target / "payload").exists()
+    assert h.status_json()["retention"]["retired"] == 1 and h.status_json()["retention"]["bytes_freed"] == 0
+    with pytest.raises(runner.Refused, match="retiring"):
+        runner.require_generation(str(h.generations / names[0]), names[0])
+
+
+def test_an_emptied_tombstone_is_not_walked_again(runner, tmp_path, monkeypatch):
+    h, _ = _published(runner, tmp_path)
+    names = _retention_generations(runner, h, ["warm"] * 4)
+    h.cp.maintain(names[-1])
+    retiring = h.durable_run / "retiring"
+    emptied = sorted(os.listdir(retiring))
+    assert emptied and all(not list((retiring / name).iterdir()) for name in emptied)
+    # A tombstone left with payload (an interrupted deletion) is still retried.
+    leftover = retiring / "000099-abcdef00"
+    leftover.mkdir(mode=0o700)
+    (leftover / "payload").write_bytes(b"y" * 7)
+    walked, synced = [], []
+    real_delete, real_sync = runner.delete_retired, runner.fsync_path
+
+    def delete(path, progress):
+        walked.append(os.path.basename(path))
+        real_delete(path, progress)
+
+    def sync(path):
+        synced.append(path)
+        real_sync(path)
+
+    monkeypatch.setattr(runner, "delete_retired", delete)
+    monkeypatch.setattr(runner, "fsync_path", sync)
+    h.cp.maintain(names[-1])
+    assert walked == [leftover.name] and not list(leftover.iterdir())
+    assert not any(path == str(retiring / name) for name in emptied for path in synced)
+    assert h.status_json()["retention"]["bytes_freed"] == 7
+    walked[:] = []
+    h.cp.maintain(names[-1])
+    assert walked == [], "nothing left to walk"
+    assert sorted(os.listdir(retiring)) == sorted(emptied + [leftover.name]), "tombstones stay"
+
+
+def test_housekeeping_skipped_while_an_earlier_one_runs_is_noted(runner, tmp_path):
+    h, _ = _published(runner, tmp_path)
+    h.cp.maintain(h.cp.last_generation["name"])
+    assert h.status_json()["retention"]["outcome"] == "completed"
+    assert h.cp.maintenance_lock.acquire(False)
+    try:
+        h.cp.maintain("000077-abcdef00")
+    finally:
+        h.cp.maintenance_lock.release()
+    retention = h.status_json()["retention"]
+    assert retention["outcome"] == "skipped" and retention["generation"] == "000077-abcdef00"
+    assert "still running" in retention["reason"] and retention["retired"] == 0
+
+
+def test_unreadable_lineage_fails_retention_closed(runner, tmp_path):
+    h, _ = _published(runner, tmp_path)
+    names = _retention_generations(runner, h, ["warm"] * 4)
+    lineages = _scope(h) / "lineages"
+    lineages.mkdir()
+    (lineages / ("2" * 32 + ".json")).write_text('{"parent":')
+    before = _tree(h.generations)
+    h.cp.maintain(names[-1])
+    assert _tree(h.generations) == before and h.status_json()["retention"]["outcome"] == "failed"
+    assert not (_scope(h) / "metadata.lock").exists()
+
+
+def test_housekeeping_follows_acknowledgement_and_never_delays_the_final_capture(runner, tmp_path, monkeypatch):
+    h = InProcess(runner, tmp_path, timeout=0.5)
+    h.replicator.pass_once()
+    entered, release = threading.Event(), threading.Event()
+    real_measure = runner.measure_storage
+    def stalled(durable, durable_run):
+        assert h.status_json()["last_generation"] == h.cp.last_generation
+        assert h.cp.inflight is None
+        entered.set()
+        assert release.wait(10)
+        return real_measure(durable, durable_run)
+    monkeypatch.setattr(runner, "measure_storage", stalled)
+    worker = h.cp.begin("request", "warm")
+    try:
+        assert entered.wait(10)
+        assert worker.is_alive()
+        assert h.capture() == ("published", None), "a second capture does not queue another size walk"
+        started = time.monotonic()
+        assert h.cp.final("sealed") is None
+        assert time.monotonic() - started < 2
+        assert h.cp.last_generation["class"] == "sealed"
+        assert "exit takes priority" in h.status_json()["retention"]["reason"]
+    finally:
+        release.set()
+        worker.join(10)
+    assert not worker.is_alive()
+
+
+def test_storage_measurement_is_bounded_and_does_not_follow_symlinks(runner, tmp_path, monkeypatch):
+    h, _ = _published(runner, tmp_path)
+    outside = tmp_path / "unrelated"
+    outside.mkdir()
+    (outside / "payload").write_bytes(b"x" * 1000)
+    (_scope(h) / "link").symlink_to(outside, target_is_directory=True)
+    run_bytes, storage = runner.measure_storage(str(_scope(h)), str(h.durable_run))
+    assert storage["complete"] and storage["runs"] == 1
+    assert run_bytes == storage["bytes"], "the linked payload is not counted"
+    monkeypatch.setattr(runner, "STORAGE_WALK_ENTRIES", 2)
+    _, storage = runner.measure_storage(str(_scope(h)), str(h.durable_run))
+    assert storage["complete"] is False and storage["entries"] == 2 and "lower bounds" in storage["reason"]
+
+
+def test_failed_lineage_write_rolls_back_only_this_attempt_and_preserves_existing_records(runner, tmp_path, monkeypatch):
+    h, _ = _published(runner, tmp_path)
+    local, durable_run, attempt, meta, status = _metadata_attempt(runner, h, tmp_path / "child")
+    pin, lineage = _pin_paths(h, local.name)
+    real_write = runner.write_metadata
+    def torn(path, record):
+        if path == str(lineage):
+            Path(path + ".tmp").write_text("torn")
+            raise OSError(28, "no space")
+        real_write(path, record)
+    monkeypatch.setattr(runner, "write_metadata", torn)
+    with pytest.raises(OSError, match="no space"):
+        runner.record_lineage(str(_scope(h)), meta, str(local), str(durable_run), status, attempt)
+    assert pin.exists()
+    attempt.rollback()
+    assert not pin.exists() and not pin.parent.exists() and not lineage.exists() and not Path(str(lineage) + ".tmp").exists()
+    # An existing child's record, even one with this same run id, is immutable.
+    local, durable_run, attempt, meta, status = _metadata_attempt(runner, h, tmp_path / "retry")
+    lineage.parent.mkdir(exist_ok=True)
+    lineage.write_text('{"existing": true}')
+    monkeypatch.setattr(runner, "write_metadata", real_write)
+    with pytest.raises(runner.Refused, match="already exists"):
+        runner.record_lineage(str(_scope(h)), meta, str(local), str(durable_run), status, attempt)
+    attempt.rollback()
+    assert lineage.read_text() == '{"existing": true}' and not pin.exists()
+
+
+def test_a_pin_serializes_with_retention_and_survives_later_publications(runner, tmp_path, monkeypatch):
+    h, _ = _published(runner, tmp_path)
+    names = _retention_generations(runner, h, ["warm"] * 4)
+    local, durable_run, attempt, meta, status = _metadata_attempt(runner, h, tmp_path / "child")
+    meta["parent"].update(generation=names[0], manifest_sha256=_sha256(h.generations / names[0] / "manifest.json"))
+    entered, release = threading.Event(), threading.Event()
+    real_write = runner.write_run_meta
+    errors = []
+    def hold(*args):
+        real_write(*args)
+        entered.set()
+        assert release.wait(10)
+    def pin():
+        try:
+            runner.record_lineage(str(_scope(h)), meta, str(local), str(durable_run), status, attempt)
+        except Exception as exc:
+            errors.append(exc)
+    monkeypatch.setattr(runner, "write_run_meta", hold)
+    worker = threading.Thread(target=pin)
+    worker.start()
+    try:
+        assert entered.wait(10)
+        monkeypatch.setattr(runner, "METADATA_LOCK_WAIT", 0.03)
+        h.cp.maintain(names[-1])
+        assert h.status_json()["retention"]["outcome"] == "skipped"
+        assert all((h.generations / name).exists() for name in names)
+    finally:
+        release.set()
+        worker.join(10)
+    assert not worker.is_alive() and not errors
+    h.cp.maintain(names[-1])
+    assert (h.generations / names[0]).is_dir(), "the pin survives once retention can enter"
+    # Lineage is independently protective if the pin file and its directory disappear.
+    pin_path, lineage = _pin_paths(h, local.name, names[0])
+    pin_path.unlink()
+    pin_path.parent.rmdir()
+    h.cp.maintain(names[-1])
+    assert (h.generations / names[0]).is_dir() and lineage.exists()
+
+
+def test_rollback_keeps_references_when_metadata_ownership_is_unavailable(runner, tmp_path, monkeypatch):
+    h, _ = _published(runner, tmp_path)
+    local, durable_run, attempt, meta, status = _metadata_attempt(runner, h, tmp_path / "child")
+    runner.record_lineage(str(_scope(h)), meta, str(local), str(durable_run), status, attempt)
+    lock = _scope(h) / "metadata.lock"
+    lock.mkdir()
+    (lock / "owner.json").write_text('{"unknown": true}')
+    monkeypatch.setattr(runner, "METADATA_LOCK_WAIT", 0.01)
+    attempt.rollback()
+    assert not durable_run.exists() and all(p.exists() for p in _pin_paths(h, local.name))
+    assert status.data["metadata_rollback"]["outcome"] == "kept" and lock.exists()
+    # Reconciliation of that other owner permits the same attempt's cleanup.
+    (lock / "owner.json").unlink()
+    lock.rmdir()
+    attempt.rollback()
+    assert not any(p.exists() for p in _pin_paths(h, local.name))
+
+
+def test_retired_payload_walk_errors_are_reported_and_leave_the_tombstone(runner, tmp_path, monkeypatch):
+    h, _ = _published(runner, tmp_path)
+    names = _retention_generations(runner, h, ["warm"] * 4)
+    target = h.durable_run / "retiring" / names[0]
+    real_scandir = runner.os.scandir
+    def unreadable(path):
+        if str(path) == str(target):
+            raise PermissionError(13, "cannot list retired payload")
+        return real_scandir(path)
+    monkeypatch.setattr(runner.os, "scandir", unreadable)
+    h.cp.maintain(names[-1])
+    assert target.is_dir() and (target / "payload").exists()
+    assert h.status_json()["retention"]["outcome"] == "failed"
+    assert "cannot list retired payload" in h.status_json()["retention"]["reason"]
+    assert h.status_json()["scope_storage"]["complete"] is False
+
+
+def test_failed_pin_directory_sync_rolls_back_the_empty_reference(runner, tmp_path, monkeypatch):
+    h, _ = _published(runner, tmp_path)
+    local, durable_run, attempt, meta, status = _metadata_attempt(runner, h, tmp_path / "child")
+    pin, lineage = _pin_paths(h, local.name)
+    real_sync = runner.fsync_path
+
+    def failed(path):
+        if path == str(pin.parent.parent) and pin.parent.exists():
+            raise OSError(5, "pin directory sync failed")
+        real_sync(path)
+
+    monkeypatch.setattr(runner, "fsync_path", failed)
+    with pytest.raises(OSError, match="pin directory sync failed"):
+        runner.record_lineage(str(_scope(h)), meta, str(local), str(durable_run), status, attempt)
+    assert pin.parent.is_dir() and not pin.exists()
+    monkeypatch.setattr(runner, "fsync_path", real_sync)
+    attempt.rollback()
+    assert not pin.parent.exists() and not lineage.exists()
+    assert not (_scope(h) / "metadata.lock").exists()
+
+
+def test_tty_drain_acknowledges_its_capture_while_housekeeping_is_stalled(runner, tmp_path, monkeypatch):
+    h = InProcess(runner, tmp_path)
+    h.replicator.pass_once()
+    entered, release = threading.Event(), threading.Event()
+    real_measure = runner.measure_storage
+
+    def stalled(durable, durable_run):
+        entered.set()
+        assert release.wait(15)
+        return real_measure(durable, durable_run)
+
+    monkeypatch.setattr(runner, "measure_storage", stalled)
+    child = subprocess.Popen(["sleep", "60"])
+    worker = None
+    try:
+        info = {"pid": child.pid, "starttime": runner.read_starttime(child.pid)}
+        drain = runner.Drain(str(h.run_dir), child, info, "tty", h.status, h.cp, 5, h.scope, h.run_id)
+        _drain_request(h.run_dir, "a" * 16, "renew")
+        drain.poll()
+        flight = drain.flight
+        worker = flight["thread"]
+        assert entered.wait(10) and worker.is_alive() and flight["completed"].is_set()
+        # Another capture can finish before the scheduler polls the drain.
+        assert h.capture() == ("published", None)
+        assert h.cp.last_generation["name"] != flight["generation"]
+        drain.poll()
+        ack = json.loads((h.run_dir / "drain.ack").read_text())
+        assert ack["outcome"] == "warm_only" and ack["generation"]["name"] == flight["generation"]
+        assert ack["stopped"] is False and child.poll() is None and worker.is_alive()
+    finally:
+        release.set()
+        if worker is not None:
+            worker.join(10)
+        child.kill()
+        child.wait()
+
+
+def test_expired_lock_wait_does_not_make_one_more_mkdir_attempt(runner, tmp_path, monkeypatch):
+    h, _ = _published(runner, tmp_path)
+    lock = _scope(h) / "metadata.lock"
+    lock.mkdir()
+    (lock / "owner.json").write_text('{"unknown": true}')
+    now = [0.0]
+    monkeypatch.setattr(runner.time, "monotonic", lambda: now[0])
+
+    def release_after_deadline(seconds):
+        (lock / "owner.json").unlink()
+        lock.rmdir()
+        now[0] += runner.METADATA_LOCK_WAIT + 1
+
+    monkeypatch.setattr(runner.time, "sleep", release_after_deadline)
+    with pytest.raises(runner.MetadataUnavailable, match="timed out"):
+        with runner.MetadataLock(str(_scope(h)), h.cp.meta, h.status, "retention"):
+            pytest.fail("an expired attempt has no authority")
+    assert not lock.exists(), "do not create an abandoned lock after the wait already expired"
