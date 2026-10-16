@@ -3245,6 +3245,7 @@ def run(args):
                 "durable_root": durable_base, "durable": durable_run,
                 "bound": [{"local": l, "target": t} for l, t in binds], "skipped": skipped,
                 "runner_pid": os.getpid(), "started": time.time(), "command": elide(command),
+                "runner_starttime": read_starttime(os.getpid()),
                 "reused_run": mode == "reuse", "restored_from": restored, "pending_work": pending, "terminal": terminal,
             }
             if owner_before is not None:

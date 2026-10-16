@@ -449,6 +449,11 @@ login-node-daemon controller variant (v2).
   "ready" marker or a timeout; allocate =J'= *while J still holds*
   (overlap, so the queue slot is never dropped under contention);
   relaunch the agent in =J'=; update session YAML; =scancel J=.
+  A managed Codex owner (=slurm.codex_state=) is drained first and its
+  replacement continues the sealed generation the acknowledgement
+  names; =J= is cancelled only once =J'='s run is placed on it
+  (docs/codex-local-state.org, "Planned renewal sequence"; README,
+  "Persistent sessions").
 - *LOST* (=squeue= empty / =sacct= terminal -- reboot, crash):
   re-allocate =J'= with exponential backoff (a maintenance window may
   keep the partition down for hours); relaunch; the agent rehydrates

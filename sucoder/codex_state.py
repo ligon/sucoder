@@ -16,7 +16,7 @@ import posixpath
 import re
 import secrets
 import shlex
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
@@ -42,6 +42,7 @@ class CodexStateLaunch:
     checkpoint_timeout_seconds: int
     restore: Optional[str] = None   # ``RUN/GENERATION`` to continue from
     fresh: bool = False             # start a new independent history
+    unattended: bool = False        # no client attached: sealed-only restore, pending work refuses
 
     @property
     def selection(self) -> Optional[str]:
@@ -159,14 +160,19 @@ def runner_command(
     checkpoint_timeout_seconds: int,
     restore: Optional[str] = None,
     fresh: bool = False,
+    unattended: bool = False,
     python: str = "python3",
 ) -> List[str]:
     """The outermost command: the staged runner owning everything after ``--``.
 
     ``restore`` (``RUN/GENERATION``) and ``fresh`` are mutually exclusive;
     without either the runner reuses an intact run already on this
-    allocation's local disk, else starts a fresh history; nothing is
-    selected across allocations automatically (that is Slice 3).
+    allocation's local disk, else starts a fresh history.  ``unattended``
+    tells the runner nobody is watching (a renewal's detached replacement):
+    a restore then accepts sealed generations only and pending work in the
+    stores refuses rather than resumes.  Nothing is selected across
+    allocations automatically; a renewal passes the generation its
+    predecessor's drain acknowledgement named.
     """
     if restore is not None and fresh:
         raise ValueError("restore and fresh are mutually exclusive")
@@ -182,6 +188,8 @@ def runner_command(
         argv += ["--restore", validate_restore_selector(restore)]
     elif fresh:
         argv.append("--fresh")
+    if unattended:
+        argv.append("--unattended")
     return [*argv, "--", *command]
 
 
@@ -445,8 +453,14 @@ class CodexStateDrain:
     run, or None (a stale acknowledgement from an earlier request never
     counts).  ``outcome`` is the one line the operator reads.
     ``last_durable`` is the last durable generation known at the end, from
-    the acknowledgement or from ``status.json``.  ``commands`` lists every
-    command sent, or on a dry run the ones that would be.
+    the acknowledgement or from ``status.json``.  ``state`` is the run's
+    recorded state when no request was written because no owner was left
+    to answer one (refused, blocked, released, or exited with its final
+    generation published), else None.  ``exit`` and ``exited_at`` carry
+    the recorded exit code and newest exit transition's time in those
+    no-owner answers, so renewal can reject a seal from an earlier launch
+    of the same run.  ``commands`` lists every command sent, or on a dry
+    run the ones that would be.
     """
 
     job_id: int
@@ -462,6 +476,9 @@ class CodexStateDrain:
     waited_seconds: float = 0.0
     timeout_seconds: float = 0.0
     dry_run: bool = False
+    state: Optional[str] = None
+    exit: Optional[int] = None
+    exited_at: Optional[float] = None
 
     @property
     def acknowledged(self) -> bool:
@@ -476,5 +493,295 @@ class CodexStateDrain:
         return {
             "job_id": self.job_id, "scope": self.scope, "mode": self.mode, "nonce": self.nonce, "run": self.run,
             "requested": self.requested, "outcome": self.outcome, "ack": self.ack, "last_durable": self.last_durable,
-            "waited_seconds": self.waited_seconds, "timeout_seconds": self.timeout_seconds, "commands": self.commands,
+            "state": self.state, "exit": self.exit, "exited_at": self.exited_at,
+            "waited_seconds": self.waited_seconds, "timeout_seconds": self.timeout_seconds,
+            "commands": self.commands,
         }
+
+
+# ----------------------------------------------------------------- renewal: transfer token, attempt, readiness
+
+GENERATION_NAME = re.compile(r"[0-9]{6}-[0-9a-f]{8}")
+SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+NONCE_HEX = re.compile(r"[0-9a-f]{8,64}")
+# ``status.json`` states of a replacement run, as the renewal reads them
+# (the runner's ``Status.update`` vocabulary).  ``placed`` is the only
+# ready state; the pending ones precede it on a healthy launch; everything
+# else means this launch will not become the managed owner.
+READINESS_READY_STATE = "placed"
+READINESS_PENDING_STATES = ("starting", "restoring", "launched")
+
+
+@dataclass(frozen=True)
+class TransferToken:
+    """What a drain acknowledgement proves, as the replacement launch needs it.
+
+    A token exists only for a *sealed* generation whose writer is proven
+    stopped: the acknowledgement's outcome is ``sealed``, the generation's
+    class is ``sealed`` and ``stopped`` is true (the child's pid with its
+    ``/proc`` start time is gone; a dead pid alone is not that, under pid
+    reuse).  ``selector`` is the ``RUN/GENERATION`` the replacement passes
+    as ``--restore``; ``manifest_sha256`` is what readiness checks the
+    restored run's origin against, so a run restored from any other
+    generation (or reused in place) is never mistaken for the successor.
+    ``nonce`` names the drain request that produced it.
+    """
+
+    nonce: str
+    run: str
+    generation: str
+    manifest_sha256: str
+    exit: Optional[int] = None
+    child: Optional[Dict[str, Any]] = None
+
+    @property
+    def selector(self) -> str:
+        return f"{self.run}/{self.generation}"
+
+    def as_json(self) -> Dict[str, Any]:
+        return {"nonce": self.nonce, "run": self.run, "generation": self.generation,
+                "manifest_sha256": self.manifest_sha256, "exit": self.exit, "child": self.child}
+
+    @classmethod
+    def from_json(cls, data: Any) -> "TransferToken":
+        """A token as :meth:`as_json` wrote it, validated as strictly as one from an acknowledgement."""
+        if not isinstance(data, Mapping):
+            raise ValueError("a transfer token must be a mapping")
+        return _transfer_token(data.get("nonce"), data.get("run"), data.get("generation"), data.get("manifest_sha256"),
+                               exit_code=data.get("exit"), child=data.get("child"))
+
+
+def _transfer_token(nonce: Any, run: Any, generation: Any, manifest: Any, *, exit_code: Any, child: Any) -> TransferToken:
+    if not isinstance(nonce, str) or not NONCE_HEX.fullmatch(nonce):
+        raise ValueError(f"nonce {nonce!r} is not 8-64 lowercase hex")
+    if not isinstance(run, str) or not RUN_ID.fullmatch(run):
+        raise ValueError(f"run {run!r} is not a 32-hex run id")
+    if not isinstance(generation, str) or not GENERATION_NAME.fullmatch(generation):
+        raise ValueError(f"generation {generation!r} is not NNNNNN-hhhhhhhh")
+    if not isinstance(manifest, str) or not SHA256_HEX.fullmatch(manifest):
+        raise ValueError(f"manifest sha256 {manifest!r} is not 64 hex characters")
+    if exit_code is not None and (isinstance(exit_code, bool) or not isinstance(exit_code, int)):
+        raise ValueError(f"exit {exit_code!r} is not an integer")
+    if child is not None and not isinstance(child, Mapping):
+        raise ValueError("child must be a mapping of pid and starttime")
+    return TransferToken(nonce=nonce, run=run, generation=generation, manifest_sha256=manifest,
+                         exit=exit_code, child=dict(child) if child is not None else None)
+
+
+def transfer_token_from_ack(ack: Mapping[str, Any], *, mode: str = "renew") -> TransferToken:
+    """The token a drain acknowledgement carries, or ValueError saying why it carries none.
+
+    Only a ``sealed`` outcome with the child proven ``stopped`` is
+    transferable: ``warm_only`` means a person still holds the terminal
+    (defer), ``crash`` and ``failed`` leave no consistent sealed state
+    (recovery is explicit, never unattended).  ``mode`` must match the
+    request's: a release-mode acknowledgement ends the runner, which then
+    holds nothing against a restart in its allocation.
+    """
+    if ack.get("mode") != mode:
+        raise ValueError(f"acknowledgement is for mode {ack.get('mode')!r}, not {mode}")
+    outcome = ack.get("outcome")
+    if outcome != "sealed":
+        raise ValueError(f"outcome is {outcome!r}, not sealed")
+    if ack.get("stopped") is not True:
+        raise ValueError("the child process is not proven stopped")
+    generation = ack.get("generation")
+    if not isinstance(generation, Mapping):
+        raise ValueError("the acknowledgement names no generation")
+    if generation.get("class") != "sealed":
+        raise ValueError(f"the generation's class is {generation.get('class')!r}, not sealed")
+    return _transfer_token(ack.get("nonce"), ack.get("run"), generation.get("name"), generation.get("manifest_sha256"),
+                           exit_code=ack.get("exit"), child=ack.get("child"))
+
+
+def transfer_token_from_exit(status: Mapping[str, Any], *, nonce: str) -> TransferToken:
+    """The token of a run that already exited cleanly with a sealed final generation.
+
+    A drain finds no owner to ask there (``codex_state_drain`` reports it
+    without writing a request): Codex exited 0, the final capture sealed,
+    and the runner is gone, so nothing can write to that history.  The
+    generation must have been published at or after ``exited_at``, the
+    newest exit transition's time; a reused run can retain an older seal
+    when its later captures fail.  ``nonce`` is the request's, labelling
+    the attempt.
+    """
+    if status.get("state") not in DRAIN_EXITED_STATES:
+        raise ValueError(f"state is {status.get('state')!r}, not exited")
+    last = status.get("last_generation")
+    if not isinstance(last, Mapping) or last.get("class") != "sealed":
+        raise ValueError("the final generation is not sealed")
+    exit_code = status.get("exit")
+    if isinstance(exit_code, bool) or not isinstance(exit_code, int) or exit_code != 0:
+        raise ValueError("the run did not record a clean exit (exit 0)")
+    published_at, exited_at = last.get("published_at"), status.get("exited_at")
+    if (isinstance(published_at, bool) or not isinstance(published_at, (int, float))
+            or isinstance(exited_at, bool) or not isinstance(exited_at, (int, float))):
+        raise ValueError("the final generation's publication or the last exit time is missing or invalid")
+    if not published_at >= exited_at:
+        raise ValueError("the sealed generation was not published after the last exit")
+    return _transfer_token(nonce, status.get("run"), last.get("name"), last.get("manifest_sha256"),
+                           exit_code=exit_code, child=None)
+
+
+def transfer_token_from_drain(report: CodexStateDrain) -> TransferToken:
+    """The token a renew-mode drain came to, or ValueError saying why it came to none.
+
+    An acknowledgement must be sealed and stopped
+    (:func:`transfer_token_from_ack`).  Without one, a run that had no owner
+    left to ask because it had exited with a sealed final generation is as
+    good: Codex exited 0, the final capture sealed and the runner is gone,
+    so nothing can write to that history.  Everything else -- no answer in
+    time, warm only, crash, failed, refused, blocked, released, no managed
+    run -- is the reason to defer, in the report's own words.
+    """
+    if report.ack is not None:
+        return transfer_token_from_ack(report.ack, mode=report.mode)
+    if report.run is not None and not report.requested and report.state in DRAIN_EXITED_STATES:
+        return transfer_token_from_exit(
+            {"state": report.state, "run": report.run, "last_generation": report.last_durable,
+             "exit": report.exit, "exited_at": report.exited_at}, nonce=report.nonce,
+        )
+    raise ValueError(report.outcome)
+
+
+@dataclass
+class ReplacementAttempt:
+    """The renewal transaction, as the session record carries it between loop turns.
+
+    Retains the old allocation (job, node, managed run) and the pending new
+    one (attempt id, job, node) with the transfer token for the whole
+    transaction, so a failure after submission leaves the new job findable
+    (never submitted twice) and a failure before it leaves the old
+    allocation reachable; neither replaces the old provenance early.
+    ``state`` is ``drained`` (token held, nothing submitted), ``submitted``
+    (new job recorded), ``ready`` (the successor run is placed on the
+    token's generation; the predecessor is retained until cancellation is
+    confirmed).  ``failures`` keeps the reasons of earlier tries of this
+    attempt, newest last; ``cancel:`` entries record cleanup retries and
+    do not count as further replacement submissions.
+    """
+
+    attempt: str
+    old_job: int
+    old_node: Optional[str]
+    old_run: Optional[str]
+    token: TransferToken
+    state: str = "drained"
+    new_job: Optional[int] = None
+    new_node: Optional[str] = None
+    submitted_at: Optional[float] = None    # epoch seconds when sbatch answered
+    running_since: Optional[float] = None   # first RUNNING observation: bounds "no status yet"
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    failures: List[str] = field(default_factory=list)
+
+    def as_json(self) -> Dict[str, Any]:
+        return {"attempt": self.attempt, "old_job": self.old_job, "old_node": self.old_node, "old_run": self.old_run,
+                "token": self.token.as_json(), "state": self.state, "new_job": self.new_job, "new_node": self.new_node,
+                "submitted_at": self.submitted_at, "running_since": self.running_since,
+                "created_at": self.created_at, "updated_at": self.updated_at,
+                "failures": list(self.failures)}
+
+    @classmethod
+    def from_json(cls, data: Any) -> "ReplacementAttempt":
+        """A record as :meth:`as_json` wrote it; ValueError for anything else."""
+        if not isinstance(data, Mapping):
+            raise ValueError("a replacement attempt must be a mapping")
+        attempt = data.get("attempt")
+        if not isinstance(attempt, str) or not NONCE_HEX.fullmatch(attempt):
+            raise ValueError(f"attempt {attempt!r} is not 8-64 lowercase hex")
+        old_job, new_job = data.get("old_job"), data.get("new_job")
+        for label, value in (("old_job", old_job), ("new_job", new_job)):
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value <= 0):
+                raise ValueError(f"{label} {value!r} is not a job id")
+        if old_job is None:
+            raise ValueError("old_job is missing")
+        state = data.get("state")
+        if state not in ("drained", "submitted", "ready"):
+            raise ValueError(f"state {state!r} is not drained, submitted or ready")
+        failures = data.get("failures") or []
+        if not isinstance(failures, list) or not all(isinstance(item, str) for item in failures):
+            raise ValueError("failures must be a list of strings")
+        submitted_at = data.get("submitted_at")
+        if submitted_at is not None and (isinstance(submitted_at, bool) or not isinstance(submitted_at, (int, float))):
+            raise ValueError(f"submitted_at {submitted_at!r} is not a time")
+        running_since = data.get("running_since")
+        if running_since is not None and (isinstance(running_since, bool) or not isinstance(running_since, (int, float))):
+            raise ValueError(f"running_since {running_since!r} is not a time")
+        return cls(
+            attempt=attempt, old_job=old_job, old_node=_optional_str(data.get("old_node"), "old_node"),
+            old_run=_optional_str(data.get("old_run"), "old_run"), token=TransferToken.from_json(data.get("token")),
+            state=state, new_job=new_job, new_node=_optional_str(data.get("new_node"), "new_node"),
+            submitted_at=None if submitted_at is None else float(submitted_at),
+            running_since=None if running_since is None else float(running_since),
+            created_at=_optional_str(data.get("created_at"), "created_at"),
+            updated_at=_optional_str(data.get("updated_at"), "updated_at"), failures=list(failures),
+        )
+
+
+def _optional_str(value: Any, label: str) -> Optional[str]:
+    if value is not None and not isinstance(value, str):
+        raise ValueError(f"{label} {value!r} is not text")
+    return value
+
+
+def new_attempt_id() -> str:
+    """Sixteen lowercase hex characters naming one replacement attempt."""
+    return secrets.token_hex(8)
+
+
+@dataclass(frozen=True)
+class Readiness:
+    """Whether a replacement run has become the managed owner: ``ready``, ``pending`` or ``failed``, with why.
+
+    ``no_status`` marks the pending answer given because the job has no
+    ``status.json`` to read at all: a launch still cloning the mirror, or
+    one whose runner refused before placing a run, which writes no
+    ``latest-run`` and so never shows a state.  The caller bounds that
+    case by the time since submission, which this function cannot know.
+    """
+
+    outcome: str
+    reason: str
+    no_status: bool = False
+
+    @property
+    def ready(self) -> bool:
+        return self.outcome == "ready"
+
+
+def classify_readiness(status: Optional[Mapping[str, Any]], token: TransferToken) -> Readiness:
+    """Read a replacement run's ``status.json`` against the token it was launched with.
+
+    Ready means ``placed`` -- Codex's stores verified under the managed
+    directory -- *and* ``restored_from`` naming exactly the token's run,
+    generation and manifest hash: ``tmux has-session`` says a shell exists,
+    this says the successor owns the history the predecessor sealed.  A run
+    reused in place (``reused_run`` or ``restore_ignored``) or restored from
+    anything else is a failure, not a successor.  No status yet, or a state before
+    ``placed``, is pending; every other state is a failure with the
+    runner's reason where it recorded one.
+    """
+    if status is None:
+        return Readiness("pending", "no managed run recorded yet (the job is cloning the mirror, then starting the runner)",
+                         no_status=True)
+    state = status.get("state")
+    if not isinstance(state, str):
+        return Readiness("failed", "status.json records no state")
+    if status.get("restore_ignored") or status.get("reused_run"):
+        return Readiness("failed", "the allocation already held a run for this scope and reused it in place; "
+                                   "the token's generation was not restored")
+    if state in READINESS_PENDING_STATES:
+        return Readiness("pending", f"state {state}")
+    if state != READINESS_READY_STATE:
+        reason = status.get("reason")
+        return Readiness("failed", f"state {state}" + (f": {reason}" if isinstance(reason, str) and reason else ""))
+    origin = status.get("restored_from")
+    if not isinstance(origin, Mapping):
+        return Readiness("failed", f"placed, but not restored from {token.selector}: mode {status.get('mode')!r}")
+    if (origin.get("run"), origin.get("generation"), origin.get("manifest_sha256")) != (
+            token.run, token.generation, token.manifest_sha256):
+        return Readiness("failed", f"placed, but restored from {origin.get('run')}/{origin.get('generation')} "
+                                   f"(manifest {str(origin.get('manifest_sha256'))[:12]}), not {token.selector} "
+                                   f"(manifest {token.manifest_sha256[:12]})")
+    return Readiness("ready", f"placed on {token.selector}; run {status.get('run')}")

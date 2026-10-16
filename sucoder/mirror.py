@@ -36,6 +36,9 @@ from .codex_state import (
     CodexStateDrain as _CodexStateDrain,
     CodexStateLaunch as _CodexStateLaunch,
     CodexStateStatus as _CodexStateStatus,
+    Readiness as _Readiness,
+    TransferToken as _TransferToken,
+    classify_readiness as _state_classify_readiness,
     check_durable_root as _state_check_durable_root,
     describe_drain_ack as _state_describe_drain_ack,
     drain_request_script as _state_drain_request_script,
@@ -357,6 +360,10 @@ def _build_sbatch_command(slurm, *, job_name, log_path, script_path, nodelist=No
         parts.append(f"--nodelist={nodelist}")
     parts.append(script_path)
     return parts
+
+
+def _utc_now_iso() -> str:
+    return _dt.datetime.now(_dt.timezone.utc).isoformat()
 
 
 def _selection_over_live_session(mirror_name: str, selection: str, live: str) -> MirrorError:
@@ -3146,6 +3153,7 @@ class MirrorManager:
         detached: bool,
         selection: Optional[str] = None,
         codex_state_scope: Optional[str] = None,
+        replace_job: Optional[int] = None,
     ) -> int:
         """Submit + (for interactive) attach a confined sbatch launch.
 
@@ -3164,6 +3172,15 @@ class MirrorManager:
         staged deadline timer uses it to request a capture from the runner
         at each warning (``slurm_timer.build_timer_script``).
 
+        ``replace_job`` (see :meth:`launch_agent`) is the known
+        predecessor a renewal replaces: it is skipped by the id-keyed reuse
+        probe and the ``squeue --name`` adoption probe, and only it; the
+        new job must differ from it and is recorded in the session's
+        ``replacement`` attempt (``state: submitted``, then the node) rather
+        than as the session's job, which keeps naming the old allocation
+        until the renewal has seen the successor ready.  An unmanaged
+        relaunch has no attempt record and records the new job normally.
+
         Post-session hooks (``_auto_commit_agent_skills`` / ``_maybe_run_audit``)
         are intentionally NOT run: detaching tmux returns rc=0 while the
         agent keeps running inside the job, so those end-of-session hooks
@@ -3177,7 +3194,13 @@ class MirrorManager:
 
         # Reuse-probe: never submit a second job while one is live.
         sess = RemoteSession.load(ctx.settings.name, target_name=self.target_name)
-        if sess.slurm_job_id:
+        if replace_job is not None and sess.slurm_job_id == replace_job:
+            self.logger.info(
+                "Replacing drained confined SLURM job %s for mirror %s: a new job is "
+                "submitted beside it; the renewal cancels it once the successor is ready.",
+                replace_job, ctx.settings.name,
+            )
+        elif sess.slurm_job_id:
             state = self._confined_job_state(sess.slurm_job_id)
             if state is not None:
                 self.logger.info(
@@ -3200,6 +3223,18 @@ class MirrorManager:
         ):
             if job_id == sess.slurm_job_id:
                 continue          # already ruled out above: it is not live
+            if replace_job is not None and job_id == replace_job:
+                continue          # the drained predecessor this launch replaces
+            if replace_job is not None and self._job_matches_this_target(ctx, partition, account, qos):
+                # Two live jobs under this mirror's name on one target is
+                # not a record to heal mid-transaction: the attempt record
+                # names the predecessor, and adopting this one would orphan
+                # it.  Say so and submit nothing.
+                raise MirrorError(
+                    f"Mirror {ctx.settings.name} has another live SLURM job {job_id} ({state}) on this "
+                    f"target beside the drained job {replace_job}; not submitting a replacement over it.  "
+                    "Run `sucoder sessions` and release the stray job first."
+                )
             if not self._job_matches_this_target(ctx, partition, account, qos):
                 # Same mirror on a different target is a deliberate
                 # configuration, not a mistake; say so and carry on.
@@ -3344,13 +3379,29 @@ class MirrorManager:
                 "leak."
             )
         job_id = self._parse_sbatch_job_id(result.stdout, sbatch_argv)
+        if replace_job is not None and job_id == replace_job:
+            raise MirrorError(
+                f"sbatch answered with the job being replaced ({job_id}); refusing to "
+                "treat the drained allocation as its own successor."
+            )
 
         # Persist the id IMMEDIATELY (before the poll): any later exception
         # then leaves the job RECORDED (recoverable via attach/release),
-        # never silently leaked.
-        sess.slurm_job_id = job_id
-        sess.compute_node = None
-        sess.service_launch = getattr(self, "_service_launch", None)
+        # never silently leaked.  A replacement rides in the attempt record
+        # (the old allocation stays the session's job until the successor
+        # is ready); without a record the launch is recorded as any other.
+        record: Optional[Dict[str, Any]] = (
+            dict(sess.replacement) if replace_job is not None and isinstance(sess.replacement, dict) else None
+        )
+        if record is not None:
+            record.update(state="submitted", new_job=job_id, new_node=None, submitted_at=time.time(),
+                          updated_at=_utc_now_iso())
+            sess.replacement = record
+        else:
+            sess.slurm_job_id = job_id
+            sess.compute_node = None
+            sess.service_launch = getattr(self, "_service_launch", None)
+            sess.managed_owner = getattr(self, "_managed_owner", None)
         try:
             sess.save()
         except OSError as exc:
@@ -3365,7 +3416,11 @@ class MirrorManager:
             "Submitted confined SLURM job %s; waiting for RUNNING...", job_id,
         )
         node = self._poll_confined_node(job_id, time_request=slurm.time)
-        sess.compute_node = node
+        if record is not None:
+            record.update(new_node=node, updated_at=_utc_now_iso())
+            sess.replacement = dict(record)
+        else:
+            sess.compute_node = node
         sess.save()
         self.logger.info("Confined SLURM job %s RUNNING on %s.", job_id, node)
 
@@ -3410,6 +3465,8 @@ class MirrorManager:
         codex_remote_control: Optional[str] = None,
         codex_state_from: Optional[str] = None,
         codex_state_fresh: bool = False,
+        codex_state_unattended: bool = False,
+        replace_job: Optional[int] = None,
         detached: bool = False,
     ) -> int:
         """Launch the configured agent command within the mirror working tree.
@@ -3423,7 +3480,23 @@ class MirrorManager:
         select which managed Codex state history the staged runner continues
         (docs/codex-local-state.org); they are mutually exclusive and only
         meaningful for a Codex launch on a target with ``slurm.codex_state``
-        enabled.
+        enabled.  ``codex_state_unattended`` tells the runner nobody watches
+        this launch (a renewal's replacement): a restore accepts sealed
+        generations only and pending work refuses.
+
+        ``replace_job`` is a renewal's replacement authorization: the
+        confined SLURM predecessor, drained and acknowledged for a managed
+        handoff (``codex_state_drain`` in mode ``renew``), or the known old
+        job for an unmanaged relaunch.  Exactly
+        that job is excluded from the reuse and ``squeue --name`` adoption
+        probes, which would otherwise hand the drained allocation back as
+        "the" session; every other live job keeps blocking a second
+        submission as before, the new job must differ, and the new job id
+        is recorded in the session's replacement attempt rather than over
+        the old allocation (``cli._relaunch_session`` promotes it once the
+        successor is ready).  Without an attempt record the new job is
+        recorded normally.  Only ``_launch_confined`` adopts by scheduler
+        name, so the authorization has no effect on other paths.
         """
         launcher = ctx.agent_launcher
         base_command = list(command_override) if command_override else list(launcher.command)
@@ -3475,8 +3548,22 @@ class MirrorManager:
         # at two points below -- the sqlite_home placeholder at the argv stage,
         # before nvm/installer wrapping, and the staged runner outermost.
         state = self._codex_state_launch(
-            ctx, restore=codex_state_from, fresh=codex_state_fresh,
+            ctx, restore=codex_state_from, fresh=codex_state_fresh, unattended=codex_state_unattended,
         )
+        # What a renewal must know to replace this managed owner with its
+        # own history: the command and model as this launch received them
+        # (``command_override`` on the relaunch), not the adapted service
+        # command, which ``_service_launch`` keeps.  Persisted beside the
+        # job id by the paths that record a launch.
+        self._managed_owner: Optional[Dict[str, Any]] = None
+        if state is not None:
+            self._managed_owner = {
+                "command": list(base_command) + list(extra_args or []),
+                "model": effective_model,
+                "remote_control": remote_mode,
+                "scope": state.scope,
+                "durable_root": state.durable_root,
+            }
         # The history selection as the operator spelled it, or None.  It
         # rides in the argv of the command this launch starts, so every
         # decision below that would attach to a running session instead of
@@ -3486,7 +3573,7 @@ class MirrorManager:
         # is the early, read-only form of the same refusal.
         selection = state.selection if state is not None else None
         if selection is not None:
-            self._refuse_selection_over_live_session(ctx, selection)
+            self._refuse_selection_over_live_session(ctx, selection, replace_job=replace_job)
 
         model_for_flag, provider_env = self._provider_launch_environment(
             effective_model, self._detected_agent_type,
@@ -3636,7 +3723,7 @@ class MirrorManager:
                 durable_root=state.durable_root,
                 checkpoint_minutes=state.checkpoint_minutes,
                 checkpoint_timeout_seconds=state.checkpoint_timeout_seconds,
-                restore=state.restore, fresh=state.fresh,
+                restore=state.restore, fresh=state.fresh, unattended=state.unattended,
             )
 
         # Environment values may include API keys resolved from pass. Stage
@@ -3671,6 +3758,7 @@ class MirrorManager:
                     detached=detached,
                     selection=selection,
                     codex_state_scope=state.scope if state is not None else None,
+                    replace_job=replace_job,
                 )
 
             # Wrap in tmux so the session survives SSH disconnects, with the
@@ -3702,6 +3790,14 @@ class MirrorManager:
             )
             if selection is not None:
                 exclusive_tmux = tmux_name
+            if self._managed_owner is not None and not self.executor.dry_run:
+                exists = self.executor.run_agent(
+                    ["tmux", "has-session", "-t", f"={tmux_name}"], check=False, capture_output=True,
+                ) if selection is None else None  # A selection creates without -A.
+                # An attach keeps the existing owner's command/model. Another
+                # launcher can still win the create between this probe and -A.
+                if exists is None or exists.returncode != 0:
+                    self._record_managed_owner(ctx)
 
         self.logger.info("Starting agent command: %s", shlex.join(command))
 
@@ -3767,6 +3863,25 @@ class MirrorManager:
 
             return result.returncode
 
+    def _record_managed_owner(self, ctx: MirrorContext) -> None:
+        """Persist ``_managed_owner`` on the session an unconfined launch already holds.
+
+        The confined and service paths record it beside the job they
+        submit or create; the unconfined TUI path submits nothing (the
+        executor allocated the node before the launch), so it writes the
+        owner here, before the tmux command runs.  A launch that then fails
+        leaves a record naming an owner that never placed a run, which a
+        renewal reads as "no managed run recorded" and relaunches fresh.
+        """
+        from .session import RemoteSession
+
+        try:
+            session = RemoteSession.load(ctx.settings.name, target_name=self.target_name)
+            session.managed_owner = self._managed_owner
+            session.save()
+        except OSError as exc:
+            self.logger.warning("Could not record the managed Codex owner for renewal: %s", exc)
+
     def _wrap_codex_service_context(
         self, ctx: MirrorContext, command: Sequence[str], prelude: str,
     ) -> List[str]:
@@ -3778,7 +3893,7 @@ class MirrorManager:
 
     def _codex_state_launch(
         self, ctx: MirrorContext, *, restore: Optional[str] = None, fresh: bool = False,
-        agent_type: Optional[AgentType] = None,
+        unattended: bool = False, agent_type: Optional[AgentType] = None,
     ) -> Optional[_CodexStateLaunch]:
         """What the staged runner is told, or None when this launch is unmanaged.
 
@@ -3850,6 +3965,7 @@ class MirrorManager:
             checkpoint_timeout_seconds=state.checkpoint_timeout_seconds,
             restore=restore,
             fresh=fresh,
+            unattended=unattended,
         )
 
     def codex_state_status(self, ctx: MirrorContext, job_id: int) -> _CodexStateStatus:
@@ -3991,12 +4107,21 @@ class MirrorManager:
         last = last if isinstance(last, dict) else None
         last_name = str(last.get("name")) if last and last.get("name") else "none"
         state = status.get("state")
+        exit_code = status.get("exit")
+        if isinstance(exit_code, bool) or not isinstance(exit_code, int):
+            exit_code = None
+        transitions = status.get("transitions")
+        exited_at = next((item.get("at") for item in reversed(transitions) if isinstance(item, dict)
+                          and item.get("state") in _STATE_DRAIN_EXITED_STATES), None) if isinstance(transitions, list) else None
+        if isinstance(exited_at, bool) or not isinstance(exited_at, (int, float)):
+            exited_at = None
         if state in _STATE_DRAIN_NO_OWNER_STATES:
             return done(f"no managed owner to drain: run {run} is {state}; last durable generation {last_name}",
-                        run=run, last_durable=last)
+                        run=run, last_durable=last, state=state, exit=exit_code, exited_at=exited_at)
         if state in _STATE_DRAIN_EXITED_STATES and last is not None and last.get("class") in _STATE_DRAIN_FINAL_CLASSES:
             return done(f"no managed owner to drain: run {run} exited (exit {status.get('exit')}) and its final "
-                        f"generation {last_name} is {last.get('class')}", run=run, last_durable=last)
+                        f"generation {last_name} is {last.get('class')}", run=run, last_durable=last, state=state,
+                        exit=exit_code, exited_at=exited_at)
 
         text = _state_drain_request_text(nonce, mode, time.time(), requester)
         script = _state_drain_request_script(run_dir, nonce, text)
@@ -4037,6 +4162,82 @@ class MirrorManager:
             last_durable = last
         return done(outcome, run=run, requested=True, ack=ack, last_durable=last_durable, waited_seconds=waited)
 
+    def codex_state_readiness(
+        self, ctx: MirrorContext, job_id: int, token: _TransferToken, *, budget_seconds: float,
+        poll_seconds: float = 10.0, sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> _Readiness:
+        """Wait, bounded, for *job_id*'s replacement run to own *token*'s generation.
+
+        The managed readiness handshake of docs/codex-local-state.org
+        ("Planned renewal sequence", step 5): ``tmux has-session`` says a
+        shell exists, this reads the run's ``status.json`` through the
+        status route and answers ready only for ``placed`` on exactly the
+        token's run, generation and manifest hash
+        (:func:`codex_state.classify_readiness`), with the recorded Codex
+        process incarnation and its runner still present in /proc.  A
+        confined job that has left the queue is a failure; one still queued is pending.  A failed
+        state answers at once.  Pending is polled every ``poll_seconds``
+        until ``budget_seconds`` have passed on the monotonic clock, and the
+        bound passing is still *pending*, never a failure: the caller keeps
+        the attempt and asks again on its next turn rather than submitting
+        a second replacement.  A status that cannot be read yet (the job's
+        first seconds, a ``status.json`` mid-write) is pending too.  An
+        unknown scheduler answer raises as the reuse probe does; the caller
+        treats that as "ask again".
+        """
+        route = _CodexStateRoute(self.executor, job_id, confined=ctx.confined)
+
+        def read_stat(pid: Any) -> Tuple[Optional[str], Optional[int]]:
+            if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+                return None, None
+            stat = route.read(f"/proc/{pid}/stat")
+            try:
+                # comm (field 2) can itself contain spaces and ')'.
+                fields = (stat or "").rsplit(")", 1)[1].split()
+                return fields[0], int(fields[19])
+            except (IndexError, ValueError):
+                return None, None
+
+        started = clock()
+        while True:
+            state = self._confined_job_state(job_id) if ctx.confined else "RUNNING"
+            if state is None:
+                return _Readiness("failed", f"job {job_id} left the queue before its run was placed")
+            if state != "RUNNING":
+                result = _Readiness("pending", f"job {job_id} is {state}")
+            else:
+                try:
+                    report = self.codex_state_status(ctx, job_id)
+                except MirrorError as exc:
+                    result = _Readiness("pending", f"status not readable yet ({exc})")
+                else:
+                    result = _state_classify_readiness(report.status, token)
+                    if result.ready:
+                        status = report.status or {}
+                        try:
+                            child_state, starttime = read_stat(status.get("child_pid"))
+                            expected = status.get("child_starttime")
+                            if (child_state in (None, "Z", "X") or isinstance(expected, bool)
+                                    or not isinstance(expected, int) or starttime != expected):
+                                return _Readiness("failed", "the successor's Codex process is gone")
+                            owner = report.owner or {}
+                            runner_state, starttime = read_stat(owner.get("runner_pid"))
+                            expected = owner.get("runner_starttime")
+                            if (runner_state in (None, "Z", "X") or (expected is not None and
+                                    (isinstance(expected, bool) or not isinstance(expected, int)
+                                     or starttime != expected))):
+                                return _Readiness("failed", "the successor's runner is gone")
+                        except MirrorError as exc:
+                            result = _Readiness("pending", f"liveness not readable yet ({exc})")
+            if result.outcome != "pending":
+                return result
+            elapsed = clock() - started
+            if elapsed >= budget_seconds:
+                return _Readiness("pending", f"{result.reason}; {budget_seconds:.0f} s budget elapsed",
+                                  no_status=result.no_status)
+            sleep(max(0.0, min(poll_seconds, budget_seconds - elapsed)))
+
     def _absolute_for_codex_state(self, ctx: MirrorContext, what: str, value: str) -> str:
         """``value`` as given when it starts with ``/``; a MirrorError otherwise.
 
@@ -4055,7 +4256,9 @@ class MirrorManager:
             "to an absolute path."
         )
 
-    def _refuse_selection_over_live_session(self, ctx: MirrorContext, selection: str) -> None:
+    def _refuse_selection_over_live_session(
+        self, ctx: MirrorContext, selection: str, *, replace_job: Optional[int] = None,
+    ) -> None:
         """Refuse a history selection early, before anything is staged.
 
         ``--codex-state-from`` and ``--codex-state-fresh`` reach the runner
@@ -4075,9 +4278,15 @@ class MirrorManager:
         launch, whose ``new-session`` runs without ``-A``), so a probe that
         fails or races here -- ``squeue --name`` answering empty, a session
         created between this probe and ``new-session`` -- still cannot end
-        in a silent attach.  The renew loop passes no selection and is
-        unaffected.  A probe failure on the confined path raises as it does
-        for the reuse-probe itself: an unknown state is not "no session".
+        in a silent attach.  A probe failure on the confined path raises as
+        it does for the reuse-probe itself: an unknown state is not "no
+        session".
+
+        A managed renewal passes the selection its predecessor's drain
+        acknowledgement named together with ``replace_job``, the drained
+        predecessor: that one job is not a live session for this purpose
+        (its runner holds the allocation with Codex stopped, waiting to be
+        replaced), and every other live job still refuses.
         """
         from .session import RemoteSession
 
@@ -4085,12 +4294,13 @@ class MirrorManager:
         if ctx.confined:
             session_name, _socket = confined_tmux_target(ctx.settings.name)
             sess = RemoteSession.load(ctx.settings.name, target_name=self.target_name)
-            if sess.slurm_job_id and self._confined_job_state(sess.slurm_job_id) is not None:
-                live = f"job {sess.slurm_job_id}"
+            recorded = sess.slurm_job_id if sess.slurm_job_id != replace_job else None
+            if recorded and self._confined_job_state(recorded) is not None:
+                live = f"job {recorded}"
             else:
                 for job_id, _state, partition, account, qos in self._confined_jobs_by_name(session_name):
-                    if job_id == sess.slurm_job_id:
-                        continue          # ruled out above: it is not live
+                    if job_id == recorded or job_id == replace_job:
+                        continue          # ruled out above: not live, or the predecessor being replaced
                     if self._job_matches_this_target(ctx, partition, account, qos):
                         live = f"job {job_id}"
                         break
@@ -4201,6 +4411,7 @@ class MirrorManager:
                     # successful create identifies its launch unambiguously.
                     if created:
                         session.service_launch = self._service_launch
+                        session.managed_owner = getattr(self, "_managed_owner", None)
                     else:
                         assert probe is not None
                         session.service_launch = service_launch(probe.stdout)
