@@ -90,7 +90,9 @@ Scope metadata lives under ``DURABLE/{metadata.lock,pins,lineages}`` (here
 ``metadata.lock/`` serializes parent pins, lineage records and retention;
 ``owner.json`` records the exact runner and operation.  Contention waits at
 most METADATA_LOCK_WAIT seconds on the monotonic clock, never a lease.
-An uncertain acquisition grants nothing.  Restore and retention I/O stay on
+An uncertain acquisition (a mkdir that raised) grants nothing; once this
+runner's mkdir has returned, a failure to install owner.json removes its own
+writes, and a failed release is recorded in status, not raised.  Restore and retention I/O stay on
 workers (the restore watchdog still applies), not the conversation path.
 Old or abandoned locks are reported in status and never stolen.  To recover,
 first prove that the owner.json runner (allocation job/node, pid AND /proc
@@ -101,7 +103,8 @@ owner.json was installed, reconcile the unknown attempt first, remove its
 ``owner.json.tmp`` if present, and use the same rmdir; age proves nothing.
 
 Before activation a restore records ``pins/RUN/GENERATION/CHILD.json`` and
-``lineages/CHILD.json``; fresh histories record a null parent.  Rollback
+``lineages/CHILD.json``; fresh histories record a null parent outside the
+lock.  Rollback
 removes only this attempt's metadata under the same lock, conservatively
 keeping it if cleanup cannot acquire the lock.  These are retention
 references, not transfer authority; offer/claim/revoke is still deferred.
@@ -961,7 +964,8 @@ class MetadataUnavailable(Refused):
 
 def write_metadata(path, record):
     """A small metadata record: sync the bytes before replace, then its name.
-    Callers hold metadata.lock and never replace an immutable existing record."""
+    Callers never replace an immutable existing record, and hold
+    metadata.lock for every record but a fresh run's null-parent lineage."""
     tmp = path + ".tmp"
     with open(tmp, "x") as handle:
         os.chmod(tmp, 0o600)
@@ -974,10 +978,16 @@ def write_metadata(path, record):
 
 class MetadataLock(object):
     """Scope-wide mkdir mutex.  Only a successful mkdir and durable owner
-    record grant entry.  EIO, a late result or an incomplete owner write may
-    have left a directory behind: never infer ownership or remove it.  A
-    caller waiting on EEXIST may try a new mkdir, but never takes over the
-    directory it observed.  Blocking syscalls remain on the calling worker."""
+    record grant entry.  A mkdir that raised (EIO, a timeout) may still have
+    left a directory behind: never infer ownership of it or remove it.  Once
+    this attempt's mkdir has returned, the directory is ours however long the
+    call took; the wait bound applies to a held lock, not to a slow success.
+    If writing or syncing the owner record then fails, this attempt removes
+    exactly its own writes and reports the lock unavailable only when that
+    removal fails too.  A caller waiting on EEXIST may try a new mkdir, but
+    never takes over the directory it observed.  A failed release is logged
+    and recorded in status, never raised: what the section wrote is already
+    durable.  Blocking syscalls remain on the calling worker."""
 
     def __init__(self, durable, meta, status, operation):
         self.durable = durable
@@ -987,7 +997,7 @@ class MetadataLock(object):
                       "runner_pid": os.getpid(), "runner_starttime": read_starttime(os.getpid()),
                       "operation": operation, "attempt": uuid.uuid4().hex}
 
-    def observed(self, reason):
+    def observed(self, reason, release=False):
         owner, age, error = None, None, None
         state = "unavailable"
         try:
@@ -1008,20 +1018,24 @@ class MetadataLock(object):
                     state = "held_or_unknown"
         except (OSError, ValueError, Refused) as exc:
             error = str(exc)
+        if release:
+            state = "release_failed"
         record = {"state": state, "path": self.path, "owner": owner, "age_seconds": age,
                   "observed_at": time.time(), "reason": reason, "owner_error": error}
         self.status.note(metadata_lock=record)
-        log("metadata lock unavailable at %s: %s; owner=%s; age=%s; never stolen, operator reconciliation required if abandoned" % (
-            self.path, reason, owner, age))
+        log("metadata lock %s at %s: %s; owner=%s; age=%s; never stolen, operator reconciliation required if abandoned" % (
+            "release failed" if release else "unavailable", self.path, reason, owner, age))
 
     def __enter__(self):
         deadline = time.monotonic() + METADATA_LOCK_WAIT
+        created = False
         try:
             while True:
                 if time.monotonic() >= deadline:
                     raise MetadataUnavailable("metadata.lock acquisition timed out after %.1fs" % METADATA_LOCK_WAIT)
                 try:
                     os.mkdir(self.path, 0o700)
+                    created = True
                     break
                 except FileExistsError:
                     remaining = deadline - time.monotonic()
@@ -1031,31 +1045,59 @@ class MetadataLock(object):
             self.owner["acquired_at"] = time.time()
             write_metadata(os.path.join(self.path, "owner.json"), self.owner)
             fsync_path(self.durable)
-            if time.monotonic() > deadline:
-                raise MetadataUnavailable("metadata.lock acquisition answered after its deadline; ownership is uncertain")
         except (OSError, Refused) as exc:
             reason = str(exc)
+            if created:
+                # The mkdir returned: the directory and anything in it are
+                # this attempt's own, so take them back rather than leave a
+                # live runner's lock that it could never take again.
+                try:
+                    self.release(partial=True)
+                except (OSError, ValueError, Refused) as failure:
+                    reason += "; removing this attempt's own lock failed: " + str(failure)
+                else:
+                    self.status.note(metadata_lock={"state": "unavailable", "path": self.path, "owner": None,
+                                                    "observed_at": time.time(), "reason": reason,
+                                                    "owner_error": None, "removed_own_attempt": True})
+                    log("metadata lock not acquired at %s: %s; this attempt's own directory was removed" % (self.path, reason))
+                    raise MetadataUnavailable("metadata lock unavailable: " + reason)
             self.observed(reason)
             raise MetadataUnavailable("metadata lock unavailable: " + reason)
         self.status.note(metadata_lock={"state": "acquired", "owner": self.owner, "path": self.path})
         return self
 
-    def __exit__(self, exc_type, exc, tb):
+    def release(self, partial=False):
+        """Remove this attempt's lock.  An operator must not remove a live
+        owner's lock; if that has happened, leave its replacement alone
+        rather than unlinking it.  ``partial``: a failed acquisition, whose
+        owner record may be missing or still only ``owner.json.tmp``."""
+        path = os.path.join(self.path, "owner.json")
         try:
-            # An operator must not remove a live owner's lock.  If that has
-            # happened, leave its replacement alone rather than unlinking it.
-            path = os.path.join(self.path, "owner.json")
             with open(path) as handle:
                 if json.load(handle) != self.owner:
                     raise MetadataUnavailable("metadata.lock owner changed before release")
+        except FileNotFoundError:
+            if not partial:
+                raise
+        else:
             os.unlink(path)
-            fsync_path(self.path)
-            os.rmdir(self.path)
-            fsync_path(self.durable)
+        if partial:
+            try:
+                os.unlink(path + ".tmp")
+            except FileNotFoundError:
+                pass
+        fsync_path(self.path)
+        os.rmdir(self.path)
+        fsync_path(self.durable)
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            self.release()
         except (OSError, ValueError, Refused) as failure:
-            self.observed("release failed: " + str(failure))
-            if exc_type is None:
-                raise MetadataUnavailable("metadata lock release failed: " + str(failure))
+            # Never raised: the records written in the section are durable,
+            # and failing their operation now would roll back a pin that
+            # this same lock, still held, then could not remove.
+            self.observed("release failed: " + str(failure), release=True)
         else:
             self.status.note(metadata_lock={"state": "released", "path": self.path})
 
@@ -1087,47 +1129,59 @@ def record_lineage(durable, meta, local, durable_run, status, attempt):
     store is activated.  The manifest hash was read outside the section;
     publication never changes those bytes, and retirement shares this lock.
     A parent retired during staging therefore refuses here.  run.json is
-    written in the same section; no database or rollout I/O belongs here."""
+    written in the same section; no database or rollout I/O belongs here.
+    A fresh run (null parent) writes its lineage and run.json without it."""
     attempt.metadata_meta, attempt.metadata_status = meta, status
-    with MetadataLock(durable, meta, status, "parent pin" if meta["parent"] else "fresh lineage"):
-        attempt.check_fence()
-        parent = meta["parent"]
-        if parent is not None:
-            name, _, gen_dir = selector_paths(durable, (parent["run"], parent["generation"]))
-            require_generation(gen_dir, name)
-        record = {"child_run": meta["run"], "parent": parent, "allocation": meta["allocation"],
-                  "created_at": time.time()}
-        records = [(os.path.join(durable, "lineages", meta["run"] + ".json"), record)]
-        if parent is not None:
-            pin = {"child_run": meta["run"], "allocation": meta["allocation"], "pinned_at": time.time(),
-                   "manifest_sha256": parent["manifest_sha256"]}
-            records.insert(0, (os.path.join(durable, "pins", parent["run"], parent["generation"], meta["run"] + ".json"), pin))
-        for path, data in records:
-            directory = durable
-            for part in os.path.relpath(os.path.dirname(path), durable).split(os.sep):
-                attempt.check_fence()
-                directory = os.path.join(directory, part)
-                try:
-                    os.mkdir(directory, 0o700)
-                except FileExistsError:
-                    check_private_dir(directory)
-                else:
-                    # Track the mkdir before syncing: a failed sync still
-                    # leaves this attempt's empty pin directory to undo.
-                    attempt.metadata_dirs.append(directory)
-                # An earlier failed attempt may have left this directory
-                # visible without syncing its name.  Existing names must
-                # be durable too before this child can rely on its pin.
-                fsync_path(os.path.dirname(directory))
+    if meta["parent"] is None:
+        # A null-parent lineage protects nothing in retention and its name is
+        # a new run id, so it needs no section: a stalled or abandoned lock
+        # must not block the explicit fresh-history choice.
+        write_lineage(durable, meta, local, durable_run, attempt)
+        return
+    with MetadataLock(durable, meta, status, "parent pin"):
+        write_lineage(durable, meta, local, durable_run, attempt)
+
+
+def write_lineage(durable, meta, local, durable_run, attempt):
+    """record_lineage's writes: the pin (with a parent), the lineage and run.json."""
+    attempt.check_fence()
+    parent = meta["parent"]
+    if parent is not None:
+        name, _, gen_dir = selector_paths(durable, (parent["run"], parent["generation"]))
+        require_generation(gen_dir, name)
+    record = {"child_run": meta["run"], "parent": parent, "allocation": meta["allocation"],
+              "created_at": time.time()}
+    records = [(os.path.join(durable, "lineages", meta["run"] + ".json"), record)]
+    if parent is not None:
+        pin = {"child_run": meta["run"], "allocation": meta["allocation"], "pinned_at": time.time(),
+               "manifest_sha256": parent["manifest_sha256"]}
+        records.insert(0, (os.path.join(durable, "pins", parent["run"], parent["generation"], meta["run"] + ".json"), pin))
+    for path, data in records:
+        directory = durable
+        for part in os.path.relpath(os.path.dirname(path), durable).split(os.sep):
             attempt.check_fence()
-            if os.path.lexists(path) or os.path.lexists(path + ".tmp"):
-                raise Refused("metadata record already exists: %s; this attempt will not replace it" % path)
-            attempt.metadata_records.append((path, data))
-            write_metadata(path, data)
+            directory = os.path.join(directory, part)
+            try:
+                os.mkdir(directory, 0o700)
+            except FileExistsError:
+                check_private_dir(directory)
+            else:
+                # Track the mkdir before syncing: a failed sync still
+                # leaves this attempt's empty pin directory to undo.
+                attempt.metadata_dirs.append(directory)
+            # An earlier failed attempt may have left this directory
+            # visible without syncing its name.  Existing names must
+            # be durable too before this child can rely on its pin.
+            fsync_path(os.path.dirname(directory))
         attempt.check_fence()
-        attempt.meta_written = True
-        write_run_meta(meta, local, durable_run)
-        fsync_path(durable_run)
+        if os.path.lexists(path) or os.path.lexists(path + ".tmp"):
+            raise Refused("metadata record already exists: %s; this attempt will not replace it" % path)
+        attempt.metadata_records.append((path, data))
+        write_metadata(path, data)
+    attempt.check_fence()
+    attempt.meta_written = True
+    write_run_meta(meta, local, durable_run)
+    fsync_path(durable_run)
 
 
 def rollback_lineage(attempt):
@@ -2124,6 +2178,7 @@ class Checkpointer(object):
         self.last_flight = None         # generation, trigger and class of the most recent flight, whether or not it is still in flight
         self.inflight_lock = threading.Lock()
         self.maintenance_lock = threading.Lock()  # at most one post-acknowledgement walk, never a backlog
+        self.emptied = set()            # retiring/<gen> tombstones this runner has emptied and synced: not walked again
         self.last_started = time.monotonic()
         self.errors = 0
         self.drain = None               # the Drain the scheduler polls for ``drain.request``, set by run()
@@ -2341,6 +2396,9 @@ class Checkpointer(object):
         never holds in-flight or delays the final capture.  Later captures
         skip housekeeping while this one runs, so no workers queue for it."""
         if not self.maintenance_lock.acquire(False):
+            self.status.note(retention={"outcome": "skipped", "kept": 0, "retired": 0, "bytes_freed": 0,
+                                        "generation": published, "at": time.time(),
+                                        "reason": "an earlier publication's housekeeping is still running"})
             return
         durable = os.path.dirname(os.path.dirname(self.durable_run))
         result = {"outcome": "completed", "kept": 0, "retired": 0, "bytes_freed": 0,
@@ -2369,10 +2427,13 @@ class Checkpointer(object):
                     fsync_path(retired)
                     fsync_path(self.generations)
                     for name in os.listdir(retired):
-                        if GENERATION_NAME.fullmatch(name):
+                        if GENERATION_NAME.fullmatch(name) and name not in self.emptied:
                             path = os.path.join(retired, name)
                             check_private_dir(path)
                             delete_retired(path, result)
+                            # A tombstone stays forever; once empty and
+                            # synced, later cycles need not walk it again.
+                            self.emptied.add(name)
             except MetadataUnavailable as exc:
                 result.update(outcome="skipped" if not result["retired"] else "incomplete", reason=str(exc))
             except Exception as exc:
