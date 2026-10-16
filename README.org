@@ -1461,8 +1461,11 @@ failure before submission leaves the old allocation reachable, and a
 replacement that fails readiness stays recorded until its cancellation
 (by id) succeeds, then is resubmitted on the next turn, three times at most.
 Promotion keeps the record in state =ready=, naming the predecessor until
-its cancellation is confirmed; the next renewal reconciles that record
-before renewing the current job, and =release= cancels the recorded job too.
+its cancellation is confirmed; every renewal poll retries that cancellation,
+including while HOLD keeps the current job running, and =release= cancels
+the recorded job too. If that second cancellation fails, =release= exits 1,
+clears only the allocation fields already released or detached, and keeps
+the replacement record so another =release= can retry the remaining job.
 After three failed replacements the loop submits no
 more, keeps watching, and says what to do (and falls back to a fresh
 history if the predecessor meanwhile ends).  A predecessor that vanished before it could be

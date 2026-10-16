@@ -3791,7 +3791,13 @@ class MirrorManager:
             if selection is not None:
                 exclusive_tmux = tmux_name
             if self._managed_owner is not None and not self.executor.dry_run:
-                self._record_managed_owner(ctx)
+                exists = self.executor.run_agent(
+                    ["tmux", "has-session", "-t", f"={tmux_name}"], check=False, capture_output=True,
+                ) if selection is None else None  # A selection creates without -A.
+                # An attach keeps the existing owner's command/model. Another
+                # launcher can still win the create between this probe and -A.
+                if exists is None or exists.returncode != 0:
+                    self._record_managed_owner(ctx)
 
         self.logger.info("Starting agent command: %s", shlex.join(command))
 
@@ -4182,13 +4188,16 @@ class MirrorManager:
         """
         route = _CodexStateRoute(self.executor, job_id, confined=ctx.confined)
 
-        def read_stat(pid: Any) -> Optional[str]:
+        def read_stat(pid: Any) -> Tuple[Optional[str], Optional[int]]:
             if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
-                return None
+                return None, None
+            stat = route.read(f"/proc/{pid}/stat")
             try:
-                return route.read(f"/proc/{pid}/stat")
-            except MirrorError:
-                return None
+                # comm (field 2) can itself contain spaces and ')'.
+                fields = (stat or "").rsplit(")", 1)[1].split()
+                return fields[0], int(fields[19])
+            except (IndexError, ValueError):
+                return None, None
 
         started = clock()
         while True:
@@ -4206,18 +4215,21 @@ class MirrorManager:
                     result = _state_classify_readiness(report.status, token)
                     if result.ready:
                         status = report.status or {}
-                        stat = read_stat(status.get("child_pid"))
                         try:
-                            # comm (field 2) can itself contain spaces and ')'.
-                            starttime = int((stat or "").rsplit(")", 1)[1].split()[19])
-                        except (IndexError, ValueError):
-                            starttime = None
-                        expected = status.get("child_starttime")
-                        if (isinstance(expected, bool) or not isinstance(expected, int)
-                                or starttime != expected):
-                            return _Readiness("failed", "the successor's Codex process is gone")
-                        if read_stat((report.owner or {}).get("runner_pid")) is None:
-                            return _Readiness("failed", "the successor's runner is gone")
+                            child_state, starttime = read_stat(status.get("child_pid"))
+                            expected = status.get("child_starttime")
+                            if (child_state in (None, "Z", "X") or isinstance(expected, bool)
+                                    or not isinstance(expected, int) or starttime != expected):
+                                return _Readiness("failed", "the successor's Codex process is gone")
+                            owner = report.owner or {}
+                            runner_state, starttime = read_stat(owner.get("runner_pid"))
+                            expected = owner.get("runner_starttime")
+                            if (runner_state in (None, "Z", "X") or (expected is not None and
+                                    (isinstance(expected, bool) or not isinstance(expected, int)
+                                     or starttime != expected))):
+                                return _Readiness("failed", "the successor's runner is gone")
+                        except MirrorError as exc:
+                            result = _Readiness("pending", f"liveness not readable yet ({exc})")
             if result.outcome != "pending":
                 return result
             elapsed = clock() - started

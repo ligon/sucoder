@@ -669,7 +669,8 @@ class ReplacementAttempt:
     state: str = "drained"
     new_job: Optional[int] = None
     new_node: Optional[str] = None
-    submitted_at: Optional[float] = None    # epoch seconds when sbatch answered: bounds "no status yet"
+    submitted_at: Optional[float] = None    # epoch seconds when sbatch answered
+    running_since: Optional[float] = None   # first RUNNING observation: bounds "no status yet"
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
     failures: List[str] = field(default_factory=list)
@@ -677,7 +678,8 @@ class ReplacementAttempt:
     def as_json(self) -> Dict[str, Any]:
         return {"attempt": self.attempt, "old_job": self.old_job, "old_node": self.old_node, "old_run": self.old_run,
                 "token": self.token.as_json(), "state": self.state, "new_job": self.new_job, "new_node": self.new_node,
-                "submitted_at": self.submitted_at, "created_at": self.created_at, "updated_at": self.updated_at,
+                "submitted_at": self.submitted_at, "running_since": self.running_since,
+                "created_at": self.created_at, "updated_at": self.updated_at,
                 "failures": list(self.failures)}
 
     @classmethod
@@ -703,11 +705,15 @@ class ReplacementAttempt:
         submitted_at = data.get("submitted_at")
         if submitted_at is not None and (isinstance(submitted_at, bool) or not isinstance(submitted_at, (int, float))):
             raise ValueError(f"submitted_at {submitted_at!r} is not a time")
+        running_since = data.get("running_since")
+        if running_since is not None and (isinstance(running_since, bool) or not isinstance(running_since, (int, float))):
+            raise ValueError(f"running_since {running_since!r} is not a time")
         return cls(
             attempt=attempt, old_job=old_job, old_node=_optional_str(data.get("old_node"), "old_node"),
             old_run=_optional_str(data.get("old_run"), "old_run"), token=TransferToken.from_json(data.get("token")),
             state=state, new_job=new_job, new_node=_optional_str(data.get("new_node"), "new_node"),
             submitted_at=None if submitted_at is None else float(submitted_at),
+            running_since=None if running_since is None else float(running_since),
             created_at=_optional_str(data.get("created_at"), "created_at"),
             updated_at=_optional_str(data.get("updated_at"), "updated_at"), failures=list(failures),
         )

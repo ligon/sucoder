@@ -334,9 +334,9 @@ def test_launch_agent_hands_the_runner_unattended_and_the_authorization_to_the_c
 
 # ----------------------------------------------------------------- readiness through the manager
 
-def _proc_stat(pid, starttime):
+def _proc_stat(pid, starttime, state="S"):
     # Field 2 has spaces and a ')' inside it; field 22 follows fields 3-21.
-    return f"{pid} (codex (x)) S " + " ".join(str(i) for i in range(4, 22)) + f" {starttime} 23\n"
+    return f"{pid} (codex (x)) {state} " + " ".join(str(i) for i in range(4, 22)) + f" {starttime} 23\n"
 
 
 def test_readiness_polls_status_until_placed_on_the_token(tmp_path, monkeypatch):
@@ -515,7 +515,7 @@ def test_relaunch_drains_launches_on_the_token_and_promotes_the_ready_successor(
     fake = _FakeManager(drain=_report(), readiness=[_ready()])
     assert _relaunch(monkeypatch, fake) == 12345
     kinds = [c[0] for c in fake.calls]
-    assert kinds == ["job_state", "drain", "launch", "readiness", "run_agent"]
+    assert kinds == ["job_state", "drain", "launch", "job_state", "readiness", "run_agent"]
     launch = fake.calls[2][1]
     assert launch == {"sync": False, "detached": True, "codex_state_from": f"{RUN}/{GEN}", "codex_state_unattended": True,
                       "replace_job": 4242, "command_override": ["codex", "--model", "gpt-6-astra"], "model_override": None,
@@ -546,7 +546,7 @@ def test_relaunch_keeps_a_pending_replacement_and_only_probes_it_next_turn(tmp_p
     attempt = ReplacementAttempt.from_json(session.replacement)
     assert (session.slurm_job_id, attempt.state, attempt.new_job) == (4242, "submitted", 12345)
     assert _relaunch(monkeypatch, fake) == 12345
-    assert [c[0] for c in fake.calls] == ["job_state", "drain", "launch", "readiness", "readiness", "run_agent"], (
+    assert [c[0] for c in fake.calls] == ["job_state", "drain", "launch", "job_state", "readiness", "job_state", "readiness", "run_agent"], (
         "the second turn neither drains nor launches: it asks about the recorded job")
     assert RemoteSession.load("sample", target_name=None).slurm_job_id == 12345
 
@@ -573,7 +573,7 @@ def test_relaunch_probes_a_job_recorded_before_the_launch_raised(tmp_path, monke
     _managed_session(tmp_path, monkeypatch)
     fake = _FakeManager(drain=_report(), readiness=[_ready()], launch="record+raise")
     assert _relaunch(monkeypatch, fake) == 12345
-    assert [c[0] for c in fake.calls] == ["job_state", "drain", "launch", "readiness", "run_agent"]
+    assert [c[0] for c in fake.calls] == ["job_state", "drain", "launch", "job_state", "readiness", "run_agent"]
 
 
 def test_relaunch_records_a_launch_that_submitted_nothing(tmp_path, monkeypatch):
@@ -604,7 +604,7 @@ def test_relaunch_of_a_lost_predecessor_with_a_token_continues_on_it(tmp_path, m
     _managed_session(tmp_path, monkeypatch, replacement=attempt.as_json())
     fake = _FakeManager(old_state=None, readiness=[_ready()])
     assert _relaunch(monkeypatch, fake) == 12345
-    assert [c[0] for c in fake.calls] == ["launch", "readiness", "run_agent"], "no probe, no drain: the token is held"
+    assert [c[0] for c in fake.calls] == ["launch", "job_state", "readiness", "run_agent"], "no predecessor probe or drain: the token is held"
     assert fake.calls[0][1]["codex_state_from"] == f"{RUN}/{GEN}"
 
 
@@ -672,18 +672,19 @@ def test_unmanaged_relaunch_restores_the_old_allocation_when_the_launch_fails_be
 
 def test_relaunch_fails_a_replacement_that_never_records_a_run_after_the_bound(tmp_path, monkeypatch):
     """A runner that refuses before placing writes no latest-run, so its
-    status is never readable: bounded by the time since sbatch answered,
+    status is never readable: bounded by the time since first RUNNING,
     not pending forever with the allocation leaking."""
     from sucoder import cli
     from sucoder.codex_state import Readiness
     import time as _time
     submitted = _time.time() - 2000.0
     attempt = ReplacementAttempt(attempt="00ff" * 4, old_job=4242, old_node="n0033.savio4", old_run=RUN, token=_token(),
-                                 state="submitted", new_job=12345, new_node="n0001.savio4", submitted_at=submitted)
+                                 state="submitted", new_job=12345, new_node="n0001.savio4", submitted_at=submitted,
+                                 running_since=submitted)
     _managed_session(tmp_path, monkeypatch, replacement=attempt.as_json())
     nothing = Readiness("pending", "no managed run recorded yet; 360 s budget elapsed", no_status=True)
     fake = _FakeManager(readiness=[nothing, nothing])
-    # Recently submitted: still pending, nothing cancelled.
+    # Recently running: still pending, nothing cancelled.
     monkeypatch.setattr(cli, "_MANAGED_NO_STATUS_BOUND_SECONDS", 3000.0)
     assert _relaunch(monkeypatch, fake) is None
     assert not any(c[0] == "run_agent" for c in fake.calls)
@@ -694,6 +695,7 @@ def test_relaunch_fails_a_replacement_that_never_records_a_run_after_the_bound(t
     assert [c[1] for c in fake.calls if c[0] == "run_agent"] == [["scancel", "12345"]]
     after = ReplacementAttempt.from_json(RemoteSession.load("sample", target_name=None).replacement)
     assert after.new_job is None and after.state == "drained" and "never placed one" in after.failures[-1]
+    assert after.running_since is None, "the next submission gets its own startup bound"
 
 
 def test_relaunch_after_the_failure_bound_falls_back_only_once_the_predecessor_is_gone(tmp_path, monkeypatch, caplog):
@@ -834,6 +836,10 @@ def test_drain_reports_the_newest_exit_for_transfer_validation(tmp_path, monkeyp
     (_proc_stat(4321, 123457), _proc_stat(1234, 654321), "Codex process is gone"),
     ("malformed stat", _proc_stat(1234, 654321), "Codex process is gone"),
     (_proc_stat(4321, 123456), None, "runner is gone"),
+    (_proc_stat(4321, 123456, "Z"), _proc_stat(1234, 654321), "Codex process is gone"),
+    (_proc_stat(4321, 123456, "X"), _proc_stat(1234, 654321), "Codex process is gone"),
+    (_proc_stat(4321, 123456), _proc_stat(1234, 654321, "Z"), "runner is gone"),
+    (_proc_stat(4321, 123456), _proc_stat(1234, 654321, "X"), "runner is gone"),
 ])
 def test_readiness_checks_codex_incarnation_and_runner_through_the_status_route(
         tmp_path, monkeypatch, confined, child_stat, runner_stat, why):
@@ -932,3 +938,181 @@ def test_release_with_a_ready_record_cancels_the_predecessor(tmp_path, monkeypat
     assert commands[0].startswith("scancel 7654400") and commands[-1] == "scancel 7654321"
     loaded = RemoteSession.load("sample", target_name="fake-slurm")
     assert loaded.slurm_job_id is None and loaded.replacement is None
+
+
+@pytest.mark.parametrize("pid", [4321, 1234])
+@pytest.mark.parametrize("budget", [0.0, 10.0])
+def test_readiness_retries_a_liveness_probe_error_without_cancelling(tmp_path, monkeypatch, pid, budget):
+    from types import SimpleNamespace
+    from sucoder.mirror import MirrorError, _CodexStateRoute
+    from tests.test_codex_state import _state_manager
+    from tests.test_codex_state_release import _Node
+    manager, ctx, _ = _state_manager(tmp_path, monkeypatch)
+    monkeypatch.setattr(manager, "_confined_job_state", lambda job: "RUNNING")
+    monkeypatch.setattr(manager, "codex_state_status",
+                        lambda c, job: SimpleNamespace(status=_placed(), owner={"runner_pid": 1234}))
+    node = _Node({"/proc/4321/stat": _proc_stat(4321, 123456), "/proc/1234/stat": _proc_stat(1234, 654321)})
+    manager.executor.run_agent.side_effect = node.run_agent
+    read, errors = _CodexStateRoute.read, []
+
+    def transient(route, path):
+        if path == f"/proc/{pid}/stat" and not errors:
+            errors.append(path)
+            raise MirrorError("srun temporarily unavailable")
+        return read(route, path)
+
+    monkeypatch.setattr(_CodexStateRoute, "read", transient)
+    slept = []
+    result = manager.codex_state_readiness(ctx, 4242, _token(), budget_seconds=budget,
+                                           sleep=slept.append, clock=lambda: sum(slept))
+    if budget == 0:
+        assert result.outcome == "pending" and "liveness not readable yet (srun temporarily unavailable)" in result.reason
+        result = manager.codex_state_readiness(ctx, 4242, _token(), budget_seconds=0.0)
+    else:
+        assert slept == [10.0]
+    assert result.ready and errors == [f"/proc/{pid}/stat"]
+    assert all("scancel" not in argv for argv, _ in node.calls)
+
+
+@pytest.mark.parametrize("recorded, ready", [(None, True), (654321, True), (654322, False)])
+def test_readiness_checks_runner_starttime_when_recorded(tmp_path, monkeypatch, recorded, ready):
+    from types import SimpleNamespace
+    from tests.test_codex_state import _state_manager
+    from tests.test_codex_state_release import _Node
+    manager, ctx, _ = _state_manager(tmp_path, monkeypatch)
+    owner = {"runner_pid": 1234}
+    if recorded is not None:
+        owner["runner_starttime"] = recorded
+    monkeypatch.setattr(manager, "_confined_job_state", lambda job: "RUNNING")
+    monkeypatch.setattr(manager, "codex_state_status", lambda c, job: SimpleNamespace(status=_placed(), owner=owner))
+    node = _Node({"/proc/4321/stat": _proc_stat(4321, 123456), "/proc/1234/stat": _proc_stat(1234, 654321)})
+    manager.executor.run_agent.side_effect = node.run_agent
+    result = manager.codex_state_readiness(ctx, 4242, _token(), budget_seconds=0.0)
+    assert result.outcome == ("ready" if ready else "failed")
+    if not ready:
+        assert "runner is gone" in result.reason
+
+
+@pytest.mark.parametrize("failure", [1, OSError("login node unavailable")])
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_renew_hold_reconciles_ready_record_on_every_probe(tmp_path, monkeypatch, caplog, failure, dry_run):
+    from types import SimpleNamespace
+    from sucoder import cli, tunnel
+    import sucoder.renew as renew_module
+    from tests.test_codex_state import _state_manager
+    from tests.test_codex_state_release import _FakeSshControl
+    manager, ctx, _ = _state_manager(tmp_path, monkeypatch)
+    attempt = ReplacementAttempt(attempt="00ff" * 4, old_job=4242, old_node="n0033.savio4", old_run=RUN, token=_token(),
+                                 state="ready", new_job=12345, new_node="n0001.savio4")
+    session = _managed_session(tmp_path, monkeypatch, replacement=attempt.as_json())
+    session.slurm_job_id, session.compute_node, session.login_node = 12345, "n0001.savio4", "login1"
+    session.save()
+    monkeypatch.setattr(cli, "_connect_with_retry", lambda *a, **kw: None)
+    monkeypatch.setattr(cli, "_reconcile_login_node", lambda *a, **kw: None)
+    monkeypatch.setattr(tunnel, "SshControl", _FakeSshControl)
+    calls, cancels = [], [failure, 0]
+
+    def capture(control, host, command, **kw):
+        calls.append((host, command))
+        if command == "scancel 4242":
+            assert RemoteSession.load("sample").replacement == attempt.as_json()
+            rc = cancels.pop(0)
+            if isinstance(rc, Exception):
+                raise rc
+            return SimpleNamespace(returncode=rc, stdout="", stderr="scheduler unavailable" if rc else "")
+        return SimpleNamespace(returncode=0, stdout="RUNNING|1-00:00:00\n" if command.startswith("squeue") else "", stderr="")
+
+    def loop(job_id, settings, *, probe, **kwargs):
+        assert probe(job_id).mins_left == 1440  # HOLD: no relaunch is called.
+        assert RemoteSession.load("sample").replacement == attempt.as_json()
+        assert probe(job_id).ok
+        assert RemoteSession.load("sample").replacement == (attempt.as_json() if dry_run else None)
+        assert probe(job_id).ok  # Nothing more to cancel after retirement.
+
+    monkeypatch.setattr(cli, "_run_remote_capture", capture)
+    monkeypatch.setattr(renew_module, "run_renew_loop", loop)
+    with caplog.at_level("INFO"):
+        cli.renew(SimpleNamespace(obj={"config": manager.config}, params={}), mirror="sample", drain_minutes=20,
+                  poll_interval=0, checkpoint_grace=0, once=True, verbose=False, dry_run=dry_run)
+    assert [(host, command) for host, command in calls if command.startswith("scancel")] == ([] if dry_run else [("login1", "scancel 4242")] * 2)
+    if not dry_run:
+        assert "next poll" in caplog.text and "retired the ready record" in caplog.text
+    assert len([command for _, command in calls if "@sucoder-service-launch" in command]) == 1
+
+
+@pytest.mark.parametrize("state, current_job", [("submitted", 12345), ("ready", 4242)])
+def test_renew_reconciliation_ignores_an_unpromoted_or_mismatched_record(tmp_path, monkeypatch, state, current_job):
+    import logging
+    from sucoder.cli import _reconcile_ready_record
+    attempt = ReplacementAttempt(attempt="00ff" * 4, old_job=4242, old_node=None, old_run=RUN, token=_token(),
+                                 state=state, new_job=12345)
+    session = _managed_session(tmp_path, monkeypatch, replacement=attempt.as_json())
+    session.slurm_job_id = current_job
+    _reconcile_ready_record(session, lambda job: pytest.fail("must not cancel"), logging.getLogger("test-renew"))
+    assert session.replacement == attempt.as_json()
+
+
+@pytest.mark.parametrize("state", ["PENDING", "RUNNING"])
+def test_relaunch_no_status_bound_excludes_queue_time(tmp_path, monkeypatch, state):
+    import logging
+    from sucoder import cli
+    from sucoder.codex_state import Readiness
+    attempt = ReplacementAttempt(attempt="00ff" * 4, old_job=4242, old_node=None, old_run=RUN, token=_token(),
+                                 state="submitted", new_job=12345, submitted_at=1.0)
+    session = _managed_session(tmp_path, monkeypatch, replacement=attempt.as_json())
+    nothing = Readiness("pending", "no managed run recorded yet", no_status=True)
+    fake = _FakeManager(old_state=state, readiness=[nothing, nothing, nothing])
+    logger = logging.getLogger("test-renew")
+    assert cli._managed_replacement_turn(fake, None, session, attempt, logger, clock=lambda: 2000.0) is None
+    recorded = ReplacementAttempt.from_json(RemoteSession.load("sample").replacement)
+    assert recorded.new_job == 12345 and recorded.running_since == (2000.0 if state == "RUNNING" else None)
+    assert not any(c[0] == "run_agent" for c in fake.calls)
+    assert cli._managed_replacement_turn(fake, None, session, attempt, logger, clock=lambda: 2899.0) is None
+    assert not any(c[0] == "run_agent" for c in fake.calls)
+    assert cli._managed_replacement_turn(fake, None, session, attempt, logger, clock=lambda: 2900.0) is None
+    assert [c[1] for c in fake.calls if c[0] == "run_agent"] == ([["scancel", "12345"]] if state == "RUNNING" else [])
+
+
+def test_relaunch_leaves_running_since_unset_when_the_scheduler_probe_fails(tmp_path, monkeypatch):
+    import logging
+    from sucoder import cli
+    from sucoder.mirror import MirrorError
+    attempt = ReplacementAttempt(attempt="00ff" * 4, old_job=4242, old_node=None, old_run=RUN, token=_token(),
+                                 state="submitted", new_job=12345, submitted_at=1.0)
+    session = _managed_session(tmp_path, monkeypatch, replacement=attempt.as_json())
+    fake = _FakeManager(old_state=MirrorError("squeue unavailable"))
+    assert cli._managed_replacement_turn(fake, None, session, attempt, logging.getLogger("test-renew"), clock=lambda: 2000.0) is None
+    assert fake.calls == [("job_state", 12345)]
+    assert RemoteSession.load("sample").replacement == attempt.as_json()
+
+
+def test_renew_attempt_running_since_round_trips_and_loads_legacy_records():
+    attempt = ReplacementAttempt(attempt="00ff" * 4, old_job=4242, old_node=None, old_run=RUN, token=_token(), running_since=10.0)
+    assert ReplacementAttempt.from_json(attempt.as_json()) == attempt
+    data = attempt.as_json()
+    del data["running_since"]
+    assert ReplacementAttempt.from_json(data).running_since is None
+    for bad in (True, "10", []):
+        with pytest.raises(ValueError, match="running_since"):
+            ReplacementAttempt.from_json(dict(data, running_since=bad))
+
+
+@pytest.mark.parametrize("exists", [True, False])
+def test_unconfined_tui_attach_keeps_the_existing_managed_owner(tmp_path, monkeypatch, exists):
+    from types import SimpleNamespace
+    from tests.test_codex_state import _state_manager
+    manager, ctx, _ = _state_manager(tmp_path, monkeypatch)
+    ctx.settings.remote.slurm.confined = False
+    session = _managed_session(tmp_path, monkeypatch)
+    original = session.managed_owner
+    monkeypatch.setattr(manager, "_prepare_local_tier", lambda ctx, root: (tmp_path, "export SUCODER_LOCAL_ROOT=/local"))
+    manager.executor.run_agent.side_effect = lambda args, **kw: SimpleNamespace(
+        returncode=int(not exists) if list(args)[:2] == ["tmux", "has-session"] else 0, stdout="", stderr="")
+    manager.launch_agent(ctx, sync=False, command_override=["codex"], model_override="another-model",
+                         supports_inline_prompt=True, detached=True)
+    recorded = RemoteSession.load("sample").managed_owner
+    assert recorded == (original if exists else manager._managed_owner)
+    assert manager._managed_owner["model"] == "another-model"
+    calls = manager.executor.run_agent.call_args_list
+    assert calls[-2].args[0] == ["tmux", "has-session", "-t", "=sucoder-sample"]
+    assert calls[-1].args[0][:2] == ["tmux", "new-session"] and "-A" in calls[-1].args[0]

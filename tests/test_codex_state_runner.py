@@ -1086,6 +1086,7 @@ def test_reuse_in_place_continues_the_run_and_refuses_a_live_owner(home, tmp_pat
         assert f"pending work: an active goal on thread(s) {a.tid}" in (b.run_dir / "runner.log").read_text()
         owner = json.loads((b.run_dir / "owner.json").read_text())
         assert owner["reused_run"] is True and owner["runner_pid"] == b.proc.pid != first_owner["runner_pid"]
+        assert owner["runner_starttime"] == _starttime(b.proc.pid)
         assert owner["previous"] == [{"runner_pid": first_owner["runner_pid"], "child_pid": first_owner["child_pid"], "started": first_owner["started"]}]
         assert owner["child_pid"] != first_owner["child_pid"] and owner["first_started"] == first_owner["started"]
         assert history.read_text() == 'shared\n{"marker": "between runs"}\n', "reuse never overwrites the managed history"
