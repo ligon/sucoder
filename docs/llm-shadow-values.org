@@ -11,6 +11,7 @@ These are two decisions over the same resource state.
 
 The human agreed this direction in the 2026-10-16 discussion and distinguished supply, demand, market clearing and comparisons of depletion rates on 2026-10-17.
 The first useful version must work with declared hourly estimates and the accounting data already available, without waiting for task completion labels or a well estimated demand model.
+The [[file:llm-usage-collection.org][collection design]] now requires model-tagged native metadata for its first model-aware pilot; quota-only history is an earlier infrastructure milestone.
 This note records that scope and proposes acceptance checks; it does not report a running integration.
 
 * Economic object
@@ -143,6 +144,8 @@ Compute pressure on shared constraints before associating it with models.
 A common weekly allowance produces one collective pressure signal; it does not establish separate depletion rates for every model using it.
 Route-specific resource draw and additional model-specific constraints determine how that shared scarcity enters each hourly quote.
 Concurrent use cannot be attributed to individual models from the shared utilization trend alone.
+Native model-tagged throughput supplies a missing input, but separate draw coefficients still require useful variation and assumptions about workload, windows and background activity.
+When those coefficients are unidentified or unavailable, route quotes may continue to use declared priors.
 
 This comparison gives a direction for relative adjustment, not an estimate of a price elasticity or a ratio of optimal dollar prices.
 API replacement costs anchor the monetary scale; declared responsiveness assumptions or later demand estimates determine adjustment size.

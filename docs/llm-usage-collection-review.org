@@ -3,7 +3,7 @@
 #+DATE: 2026-10-17
 #+DESCRIPTION: Findings on whether the proposed collector distinguishes Fable and Opus use and supports model-relative resource estimates.
 
-* Verdict
+* Verdict on the reviewed baseline
 
 The design needs revision before a pilot can claim to learn model-specific use or resource draw.
 Its first slice collects quota constraints, including a constraint applying to the Fable family, but does not require observations distinguishing Fable from Opus activity.
@@ -15,9 +15,27 @@ Model-tagged capture should accompany the first pilot intended to improve those 
 
 Reviewed baseline: SuCoder =cc48d19= and llm-accounting =ed7c851=.
 The line references below identify that baseline.
+After revision, file links navigate the current documents; recover the reviewed collection text with =git show cc48d19:docs/llm-usage-collection.org=.
 Two fresh independent reviewers examined identification and native telemetry sources; the earlier reviews primarily established storage and accounting consistency and missed the minimum model-data requirement.
 
-* What the current records distinguish
+* Response in the revised design
+
+The user authorized a design revision on 2026-10-17.
+The findings below remain the review of =cc48d19=, while the revised [[file:llm-usage-collection.org][collection design]] makes these changes:
+
+- Missing model-use vector :: Quota-ready infrastructure is an earlier milestone; the first model-aware pilot requires the selected Claude request adapter and model-tagged usage/coverage exports.
+- Unidentified shared weights :: The model-rate-input view retains activity mix and account coverage; calibration has explicit variation/assumption criteria and declared/estimated/unidentified/unavailable statuses.
+- Route versus execution identity :: The record contract separates requested, configured, native-reported and served models, with mixed/unknown scopes, observed lineage and quantity inclusion rules.
+- Transport, hours and cost :: Request events are the primary source, metrics corroborate, verified request identity or process-scoped event identity governs deduplication, and gaps remain visible.
+  Selected emitters are authenticated separately from account binding; clock-hour throughput precedes verified exposure-hour rates, and native cost estimates remain separate from reference tariffs.
+- Insufficient replay :: The [[file:examples/llm-usage-collection-v2.json][14 model-identification scenarios]] exercise two observed models, ambiguous coefficients, inclusive children, switches/fallback, duplicate delivery, metric temporality, absent identities, partial coverage and tariff/zero distinctions.
+
+Both original reviewers independently rechecked the revised specification and found no surviving material issue within their identification and native-source scopes.
+The native-source recheck required emitter authentication on shared hosts and clarified that verified request IDs can suffice without a process epoch; both requirements are now explicit.
+The fixture's incidental repeated sequence in the switch/fallback scenario was also corrected.
+These are specification changes and offline acceptance inputs; no receiver, native adapter or calibrated estimator has been implemented or enabled.
+
+* What the reviewed collector distinguishes
 
 - Shared Claude constraints :: The normalized five-hour and aggregate weekly quota trajectories are observable, subject to their recorded quality and window assumptions.
 - Fable-family constraint :: Its own weekly utilization and reset are observable where the source supplies them.
