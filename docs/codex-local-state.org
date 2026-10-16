@@ -762,3 +762,19 @@ Lines 296-297 above stand: the move uses Codex's supported =thread/resume= with 
 - A thread whose configuration came from a command-line override the successor's launch no longer passes fails to move and is reported; its history is unaffected.
 - The app-server pass loads the user's configuration as an interactive resume does, with whatever hooks and MCP servers it configures; the measurements used a configuration with neither.
 - An app-server killed at its bound may leave its thread writer lock in =thread-writer-locks=, which Codex re-creates on the next resume.
+
+** Laptop cross-node acceptance retest (2026-10-16)
+
+The repeat pilot tested PR 49 revision =c1a9ede=, tree =9cd6cbd4917896d770160b0ec549e4b3df48af37=, including the reviewed attach correction (PR 48) and CI environment-test correction (PR 50), against Codex =0.162.1=.
+Job =40042040= on =n0043.savio4= sealed =55e7b62108264abeacc6265572fa657d/000004-635d426a=; renewal restored that exact parent into job =40042340= on =n0059.savio4= and confirmed predecessor cancellation.
+The successor reported =mode: restore=, =state: placed=, =thread_cwd.moved_count: 1= and no failures; the cwd helper exited 0 after 10.5 seconds. Ownership was observed about 103 seconds after =/exit=.
+The pilot used two-minute private checkpoints, 50-minute allocations, a 49-minute drain threshold and ten-second checkpoint grace to accelerate the turnover; the normal target retained its ten-minute cadence. Both launches disabled the startup update prompt.
+
+Normal =sucoder attach= and =attach --via-srun= reached the successor's existing confined tmux session.
+=/resume= listed the restored thread without asking which directory to use. It recalled the earlier phrase =amber otter 942= and number =61=, then a real shell tool ran =pwd; head -n 1 README.org= and printed =/local/job40042340/mirrors/codex-state-retest-20261016= and the expected disposable-repository title.
+Read-only checks found the predecessor's clone absent on that node, the successor's clone present, the thread's stored cwd pointing at the successor, and no matching thread in the shared =~/.codex/state_5.sqlite=. The original 104823-byte rollout prefix remained identical.
+This satisfies the live cross-node cwd acceptance item for issue 46 and repeats the live attach acceptance for issue 47; the broader storage, fencing, upload-failure and overlapping-history gates remain separate.
+The evidence and operator result are recorded on [[https://github.com/ligon/sucoder/issues/46#issuecomment-6224938170][issue 46]]; raw JSON, renewal logs, the picker and tool output are retained in the private =codex-state-retest-20261016= pilot bundle on the laptop and Savio.
+
+GitHub Actions passed on Python 3.9 and 3.11 after the CI test fix. Locally, 407 combined CLI/remote/release tests and the three forced-color regressions passed.
+A full local run with umask 022 reported 1714 passed, six skipped and one pre-existing failure, =test_restore_places_a_sealed_generation_in_another_allocation[current]=, also reproduced on the unchanged baseline: its final holder scan counts the runner itself while a snapshot reader is still open and conservatively records a crash before that reader drains. The cwd change does not alter that shutdown path; the actual two-node pilot sealed normally.
