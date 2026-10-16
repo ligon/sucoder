@@ -18,6 +18,7 @@ Unix-user sandboxing for AI coding agents.  One account per agent, filesystem-en
 - [[file:persistent-presence.html][Persistent Presence]] --- a standing condo slice on a shared HTC partition: renew, turnover, and handoff.
 - [[file:local-disk-tiering.html][Local-disk Tiering]] --- design note: disposable working tree on node-local disk, git as the sync, WIP snapshots (spike-verified).
 - [[file:codex-local-state.html][Codex Local State]] --- proposed SQLite placement, durable recovery, lifecycle handoff, and Savio validation gates.
+- [[file:codex-local-state-pilot.html][Codex Local State: Pilot Runbook]] --- the Slice 4 pilot from a laptop: config, the step-by-step turnover, what to bring back, what refusals mean.
 - [[file:codex-local-state-spike.html][Codex Local State: Slice 0 Spike]] --- measured on Savio with Codex 0.162.1: what follows =sqlite_home=, what stays in =CODEX_HOME=, the rollout dependency on restore, abrupt-stop captures, queue and goal replay, two writers, and local-versus-Lustre latency.
 
 ** Examples

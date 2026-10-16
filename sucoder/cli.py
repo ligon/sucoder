@@ -1279,12 +1279,16 @@ def _start_slurm_timer(
     # It may not exist yet when the timer starts -- snapshot_wip skips a
     # missing directory.
     snapshot_dir = work_path(local_disk_root, token, job_id) if local_disk_root else None
+    # The managed-state scope is decided later by the manager.  Deadline
+    # warnings concern every managed run under this allocation's root.
     timer_script = build_timer_script(
         mirror_token=token,
         tmux_session=tmux_session,
         job_id=job_id,
         snapshot_dir=snapshot_dir,
         timer_scope=timer_identity(session.mirror_name, getattr(session, "target_name", None)),
+        local_disk_root=local_disk_root,
+        codex_state_all_scopes=bool(local_disk_root),
     )
     # Immutable script names: staging never truncates a running shell's file.
     digest = hashlib.sha256(timer_script.encode()).hexdigest()[:24]
@@ -3408,7 +3412,9 @@ def release(
 
     _tgt_name = ((ctx.obj or {}).get("target_name") if ctx else None)
     session = RemoteSession.load(mirror, target_name=_tgt_name)
-    if not session.slurm_job_id:
+    pending_job = RemoteSession.pending_replacement_job(session)
+    job_id = session.slurm_job_id or pending_job
+    if job_id is None:
         typer.echo(
             f"No SLURM allocation recorded for mirror {mirror}"
             f"{f' (target {_tgt_name})' if _tgt_name else ''}. "
@@ -3416,8 +3422,12 @@ def release(
         )
         raise typer.Exit(code=0)
 
-    job_id = session.slurm_job_id
     compute_node = session.compute_node or "<unknown>"
+    # A managed renewal retains the submitted successor, or the predecessor
+    # still awaiting cancellation after promotion.  Release cancels that
+    # recorded job too, after the session's own allocation.
+    if pending_job == job_id:
+        pending_job = None  # Retrying release after only the other job's cancel failed.
     # Other sessions co-resident on this node share the same job id.
     # Releasing must not scancel the allocation out from under them.
     siblings = RemoteSession.holders_of_job(
@@ -3469,7 +3479,7 @@ def release(
     # established best-effort.
     import subprocess as _sp
 
-    def _forget_allocation():
+    def _forget_allocation(*, keep_replacement=False):
         # Clear the SLURM-specific session fields so future commands don't
         # think a stale allocation is still ours.  Keep login_node so
         # subsequent attaches can still resolve the gateway path.  Re-read
@@ -3479,7 +3489,30 @@ def release(
         current = RemoteSession.load(mirror, target_name=_tgt_name)
         current.slurm_job_id = None
         current.compute_node = None
+        if not keep_replacement:
+            current.replacement = None
         current.save()
+
+    def _cancel_pending_replacement():
+        # Keep the record until this cancel succeeds, including when the
+        # session's own allocation has already been cancelled or detached.
+        if pending_job is None:
+            return True
+        try:
+            result = _run_remote_capture(
+                gw_control, remote.gateway, f"scancel {shlex.quote(str(pending_job))}", debug=debug_ssh,
+            )
+            error = None if result.returncode == 0 else f"scancel returned {result.returncode}: {result.stderr.strip()}"
+        except Exception as exc:  # noqa: BLE001 - retain the job for another release
+            error = str(exc)
+        if error is not None:
+            typer.echo(
+                f"Could not cancel the pending replacement job {pending_job} ({error}); "
+                "keeping its record for another `sucoder release`.", err=True,
+            )
+            return False
+        typer.echo(f"Cancelled the pending replacement job {pending_job} (a renewal in flight).")
+        return True
 
     # Managed Codex state (docs/codex-local-state.org, "Clean exit and
     # explicit release"): both paths below stop the owner -- scancel ends
@@ -3490,7 +3523,9 @@ def release(
     # running: no drain there.  Whatever the drain comes to, the release
     # proceeds exactly as before: it is the user's cancellation instruction.
     stops_owner = not siblings or bool(session.compute_node)
-    if stops_owner and not no_drain:
+    # A replacement-only retry follows the pending cancel path directly;
+    # building an unconfined manager without a session job could allocate anew.
+    if stops_owner and not no_drain and session.slurm_job_id:
         drained = _release_drain(
             ctx, config, settings, session, mirror, job_id, logger, gw_control, remote,
             debug_ssh=debug_ssh, timeout_override=drain_timeout, harness=harness,
@@ -3559,11 +3594,14 @@ def release(
             ]
             logger.debug("detach tmux command: %s", kill_cmd)
             _sp.run(kill_cmd, capture_output=True, text=True, check=False)
-        _forget_allocation()
         typer.echo(
             f"Detached mirror {mirror} from SLURM job {job_id}; the "
             f"allocation stays alive for: {', '.join(siblings)}."
         )
+        cancelled = _cancel_pending_replacement()
+        _forget_allocation(keep_replacement=not cancelled)
+        if not cancelled:
+            raise typer.Exit(code=1)
         return
 
     # No siblings: cancel the job.  Run `scancel` over the gateway
@@ -3596,14 +3634,17 @@ def release(
         )
         raise typer.Exit(code=1)
 
-    _forget_allocation()
     typer.echo(f"Released SLURM job {job_id} on {compute_node}.")
+    cancelled = _cancel_pending_replacement()
+    _forget_allocation(keep_replacement=not cancelled)
     for line in (result.stdout or "").splitlines():
         mark, _, what = line.partition("\t")
         if mark == _WIP_RETIRED_MARK:
             typer.echo(f"Retired WIP snapshot {wip_ref} ({what.strip()}).")
     if result.stderr.strip():
         typer.echo(result.stderr.strip(), err=True)
+    if not cancelled:
+        raise typer.Exit(code=1)
 
 
 def _release_drain(
@@ -3890,6 +3931,33 @@ def _try_remote_capture(control, host: str, command: str, **kwargs):
         return None
 
 
+# Seconds one relaunch turn waits for a replacement's managed readiness
+# before answering pending: the runner's placement timeout (90 s) and a
+# restore's blocked bound (max(120 s, 4 x checkpoint_timeout) at the
+# default 30 s), with room for the stores to be staged and verified.
+_MANAGED_READINESS_BUDGET_SECONDS = 360.0
+# Replacement jobs that failed readiness before the renewal stops
+# submitting: each failure cancels its job and keeps the token, so the
+# bound is what keeps a durable-side outage from leaking a stream of
+# allocations; the old one stays held, drained, for the operator.
+_MANAGED_REPLACEMENT_MAX_FAILURES = 3
+# A replacement whose runner refused before placing a run writes no
+# latest-run, so its status is never readable and readiness stays
+# pending; past this long after sbatch answered, "no status" is a
+# failure (the local-disk clone wait is bounded at five minutes and the
+# runner's placement at 90 s, so a healthy launch has shown a state).
+_MANAGED_NO_STATUS_BOUND_SECONDS = 900.0
+
+
+def _renew_mirror_settings(mirror, config, ctx):
+    """The mirror settings with renew's active named target applied."""
+    from dataclasses import replace
+
+    settings = config.mirrors.get(mirror)
+    target = _get_active_target(ctx)
+    return replace(settings, remote=target) if target is not None and settings is not None else settings
+
+
 def _relaunch_session(mirror, config, ctx, logger, dry_run):
     """Re-allocate a fresh SLURM node and relaunch the agent detached.
 
@@ -3906,22 +3974,60 @@ def _relaunch_session(mirror, config, ctx, logger, dry_run):
     A recorded remote-control launch retains its command and model. Ordinary
     terminal sessions use the configured harness as before; their CLI command
     overrides are not persisted. Credentials and the prelude are rebuilt.
+
+    A managed Codex owner (``session.managed_owner``, recorded by a launch
+    with ``slurm.codex_state`` on) is replaced on its own sealed history by
+    :func:`_relaunch_managed_session` on a confined target.  Elsewhere,
+    and on a dry run, it is relaunched as any other session but with its
+    command and model (never the configured default harness) and a fresh
+    managed history, and the log says where the predecessor's generations
+    are for an explicit continuation.
     """
     from .session import RemoteSession
     from .agent_mode import service_launch
 
     _tgt = ((ctx.obj or {}).get("target_name") if ctx else None)
     session = RemoteSession.load(mirror, target_name=_tgt)
+    owner = session.managed_owner if isinstance(session.managed_owner, dict) else None
+    overrides = {}
+    if owner is not None:
+        settings = _renew_mirror_settings(mirror, config, ctx)
+        slurm = settings.remote.slurm if settings is not None and settings.remote is not None else None
+        if slurm is not None and slurm.confined and not dry_run:
+            return _relaunch_managed_session(mirror, config, ctx, logger, session, _tgt)
+        logger.warning(
+            "Mirror %s records a managed Codex owner, but %s: relaunching it with its command and "
+            "model and a fresh managed history.  The predecessor's generations stay under "
+            "%s/codex/%s/runs for an explicit `--codex-state-from RUN/GENERATION`.",
+            mirror,
+            "this is a dry run" if dry_run else "managed renewal is implemented for confined targets only",
+            owner.get("durable_root"), owner.get("scope"),
+        )
+        overrides = {"command_override": list(owner.get("command") or []), "model_override": owner.get("model"),
+                     "codex_remote_control": owner.get("remote_control")}
     try:
         launch = service_launch(session.service_launch)
     except ValueError as exc:
         logger.warning("Cannot renew invalid service launch: %s", exc)
         return None
-    overrides = {}
-    if launch is not None:
+    if launch is not None and not overrides:
         overrides = {"command_override": launch["command"], "model_override": launch["model"]}
-    # Force a fresh allocation: clear job AND node so _ensure_slurm_node
-    # does not adopt the slice we're about to replace.
+    return _relaunch_unmanaged_session(mirror, config, ctx, logger, dry_run, session, overrides, _tgt)
+
+
+def _relaunch_unmanaged_session(mirror, config, ctx, logger, dry_run, session, overrides, target_name):
+    """The relaunch itself: a fresh allocation, the agent detached on it.
+
+    The job and node are cleared first so ``_ensure_slurm_node`` does not
+    adopt the slice being replaced; on a confined target ``replace_job``
+    also excludes it from scheduler-name adoption.  The fields are restored
+    if the launch fails before it records a job of its own, so ``attach`` and ``release`` still reach
+    the old allocation (a launch that persisted a new id before failing
+    keeps that id: the job is submitted and must stay findable).
+    """
+    from .session import RemoteSession
+
+    old_job, old_node = session.slurm_job_id, session.compute_node
     session.slurm_job_id = None
     session.compute_node = None
     session.save()
@@ -3929,16 +4035,366 @@ def _relaunch_session(mirror, config, ctx, logger, dry_run):
         manager = _build_manager_for_mirror(
             config, logger, dry_run, mirror, cli_ctx=ctx,
         )
+        mctx = manager.context_for(mirror)
+        if old_job is not None and mctx.confined:
+            overrides = dict(overrides, replace_job=old_job)
         manager.launch_agent(
-            manager.context_for(mirror),
+            mctx,
             sync=False,
             detached=True,
             **overrides,
         )
     except Exception as exc:  # noqa: BLE001 - relaunch must not crash the loop
         logger.warning("relaunch failed: %s", exc)
+        current = RemoteSession.load(mirror, target_name=target_name)
+        if current.slurm_job_id is None and old_job is not None:
+            current.slurm_job_id, current.compute_node = old_job, old_node
+            current.save()
         return None
-    return RemoteSession.load(mirror, target_name=_tgt).slurm_job_id
+    return RemoteSession.load(mirror, target_name=target_name).slurm_job_id
+
+
+def _relaunch_managed_session(mirror, config, ctx, logger, session, target_name):
+    """Replace a managed Codex owner with a successor on its sealed generation.
+
+    The renewal of docs/codex-local-state.org ("Planned renewal sequence"),
+    as one transaction over ``session.replacement``
+    (:class:`codex_state.ReplacementAttempt`), advanced one step per call
+    so the renew loop's retries never submit twice and never lose the old
+    allocation:
+
+    1. A recorded replacement job is asked whether it is ready
+       (``codex_state_readiness``: ``placed`` on exactly the token's
+       generation).  Ready promotes it to the session's job, keeping the
+       record until the old job's cancellation is confirmed.  Pending keeps both.
+       Failed cancels that job -- ours, by id -- and keeps the token for a
+       fresh submission next call, up to a bound.
+    2. Without a record, the predecessor is drained in mode ``renew``.
+       Only a sealed, stopped acknowledgement, or a run that had already
+       exited cleanly with a sealed final generation, becomes the token;
+       warm only (a person at the terminal), crash, failed and no answer
+       defer -- the loop asks again while time remains and never starts a
+       replacement from unknown live state.  A predecessor that has left
+       the queue with no token obtained is lost: it is relaunched like an
+       unmanaged session with the owner's command and a fresh history, and
+       the log names where its generations are.
+    3. With a token and no job, the replacement is launched detached with
+       ``--restore`` on that generation, unattended (sealed only; pending
+       work refuses), authorized to replace exactly the predecessor
+       (``replace_job``); its job id lands in the record the moment
+       ``sbatch`` answers.
+    4. Then step 1 for the new job, within this call's readiness budget.
+
+    Returns the new job id when the successor is ready, else None.
+    """
+    import datetime as _dt
+    import socket as _socket
+    from .codex_state import ReplacementAttempt, new_attempt_id, transfer_token_from_drain
+    from .mirror import MirrorError
+    from .session import RemoteSession
+
+    def now() -> str:
+        return _dt.datetime.now(_dt.timezone.utc).isoformat()
+
+    owner = session.managed_owner
+    old_job = session.slurm_job_id
+    settings = _renew_mirror_settings(mirror, config, ctx)
+    state = settings.remote.slurm.codex_state
+    drain_timeout = float((state.checkpoint_timeout_seconds if state is not None else 30) + 30)
+    overrides = {"command_override": list(owner.get("command") or []), "model_override": owner.get("model"),
+                 "codex_remote_control": owner.get("remote_control")}
+
+    attempt = None
+    if session.replacement is not None:
+        try:
+            attempt = ReplacementAttempt.from_json(session.replacement)
+        except ValueError as exc:
+            logger.error(
+                "Mirror %s has an unreadable replacement record (%s); not submitting a replacement "
+                "until it is repaired or removed from the session file.", mirror, exc,
+            )
+            return None
+        if attempt.state == "ready":
+            if attempt.new_job != old_job:
+                logger.error("Mirror %s's ready replacement record names job %s but the session names job %s; "
+                             "not submitting until the record is reconciled.", mirror, attempt.new_job, old_job)
+                return None
+        elif attempt.old_job != old_job:
+            logger.error(
+                "Mirror %s's replacement record names job %s as the predecessor but the session names "
+                "job %s; not submitting a replacement until the record is reconciled.",
+                mirror, attempt.old_job, old_job,
+            )
+            return None
+
+    try:
+        manager = _build_manager_for_mirror(config, logger, False, mirror, cli_ctx=ctx)
+    except Exception as exc:  # noqa: BLE001 - relaunch must not crash the loop
+        logger.warning("relaunch failed: %s", exc)
+        return None
+    mctx = manager.context_for(mirror)
+
+    # Finish a previous promotion before renewing the session's current job.
+    if attempt is not None and attempt.state == "ready":
+        try:
+            predecessor_state = manager._confined_job_state(attempt.old_job)
+        except MirrorError as exc:
+            logger.warning("Cannot tell whether predecessor job %s is still allocated (%s); asking again next turn.",
+                           attempt.old_job, exc)
+            return None
+        cancel_error = _cancel_managed_job(manager, attempt.old_job) if predecessor_state is not None else None
+        if cancel_error is not None:
+            attempt.failures.append(f"cancel: predecessor job {attempt.old_job}: {cancel_error}")
+            attempt.updated_at = now()
+            session.replacement = attempt.as_json()
+            session.save()
+            logger.warning("Predecessor job %s is still allocated (%s); retrying cancellation next turn.",
+                           attempt.old_job, cancel_error)
+            return None
+        logger.info("Predecessor job %s is gone or its cancellation is confirmed; retiring the ready record.",
+                    attempt.old_job)
+        session.replacement = None
+        session.save()
+        attempt = None
+
+    # 1. A replacement already submitted: is it ready?  Never submit another.
+    if attempt is not None and attempt.new_job is not None:
+        return _managed_replacement_turn(manager, mctx, session, attempt, logger)
+
+    # 2. No token yet: drain the predecessor, or treat a vanished one as lost.
+    if attempt is None:
+        try:
+            old_state = manager._confined_job_state(old_job)
+        except MirrorError as exc:
+            logger.warning("Cannot tell whether job %s is still allocated (%s); asking again next turn.", old_job, exc)
+            return None
+        if old_state is None:
+            logger.warning(
+                "Job %s is gone before its managed owner could be drained: relaunching with the owner's "
+                "command and a fresh managed history.  Its generations stay under %s/codex/%s/runs%s for "
+                "an explicit `--codex-state-from RUN/GENERATION`.",
+                old_job, owner.get("durable_root"), owner.get("scope"),
+                f"/{owner['run']}" if owner.get("run") else "",
+            )
+            return _relaunch_unmanaged_session(mirror, config, ctx, logger, False, session, overrides, target_name)
+        try:
+            report = manager.codex_state_drain(
+                mctx, old_job, mode="renew", timeout_seconds=drain_timeout,
+                requester=f"sucoder renew on {_socket.gethostname()}",
+            )
+        except MirrorError as exc:
+            logger.warning("Draining job %s's managed owner failed (%s); asking again next turn.", old_job, exc)
+            return None
+        if report.run is None:
+            logger.warning(
+                "Job %s records no managed run (%s): relaunching with the owner's command and a fresh "
+                "managed history.", old_job, report.outcome,
+            )
+            return _relaunch_unmanaged_session(mirror, config, ctx, logger, False, session, overrides, target_name)
+        try:
+            token = transfer_token_from_drain(report)
+        except ValueError as why:
+            logger.info("Job %s: %s; deferring the replacement (asked again next turn while time remains).", old_job, why)
+            return None
+        attempt = ReplacementAttempt(
+            attempt=new_attempt_id(), old_job=old_job, old_node=session.compute_node, old_run=report.run,
+            token=token, created_at=now(), updated_at=now(),
+        )
+        session.replacement = attempt.as_json()
+        session.save()
+        logger.info("Job %s drained: sealed generation %s (nonce %s); launching its replacement.",
+                    old_job, token.selector, token.nonce)
+
+    # 3. Token held, nothing submitted: launch the replacement.
+    failure_count = sum(not failure.startswith("cancel:") for failure in attempt.failures)
+    if failure_count >= _MANAGED_REPLACEMENT_MAX_FAILURES:
+        try:
+            old_state = manager._confined_job_state(old_job)
+        except MirrorError as exc:
+            logger.warning("Cannot tell whether job %s is still allocated (%s); asking again next turn.", old_job, exc)
+            return None
+        if old_state is None:
+            # The predecessor is gone and its sealed generation could not
+            # be continued: presence matters more than the history, which
+            # stays durable for an explicit continuation.  The record is
+            # retired first, or it would name a predecessor the session no
+            # longer does.
+            logger.warning(
+                "Job %s is gone after %d failed replacements (%s): relaunching with the owner's command and a "
+                "fresh managed history.  Generation %s stays under %s/codex/%s/runs for an explicit "
+                "`--codex-state-from`.", old_job, failure_count, attempt.failures[-1],
+                attempt.token.selector, owner.get("durable_root"), owner.get("scope"),
+            )
+            session.replacement = None
+            session.save()
+            return _relaunch_unmanaged_session(mirror, config, ctx, logger, False, session, overrides, target_name)
+        logger.error(
+            "Mirror %s: %d replacement attempts failed (%s); not submitting another.  Job %s stays "
+            "allocated with its owner drained on generation %s: fix the cause and remove the replacement "
+            "record from the session file, or `sucoder release` it.",
+            mirror, failure_count, attempt.failures[-1], old_job, attempt.token.selector,
+        )
+        return None
+    failure = None
+    try:
+        manager.launch_agent(
+            mctx, sync=False, detached=True, codex_state_from=attempt.token.selector,
+            codex_state_unattended=True, replace_job=old_job, **overrides,
+        )
+    except Exception as exc:  # noqa: BLE001 - relaunch must not crash the loop
+        failure = str(exc)
+        logger.warning("replacement launch failed: %s", exc)
+    session = RemoteSession.load(mirror, target_name=target_name)
+    try:
+        attempt = ReplacementAttempt.from_json(session.replacement) if session.replacement is not None else None
+    except ValueError:
+        attempt = None
+    if attempt is None:
+        logger.error("Mirror %s's replacement record vanished during the launch; nothing more is submitted.", mirror)
+        return None
+    if attempt.new_job is None:
+        attempt.failures.append(f"launch: {failure or 'no job was submitted'}")
+        attempt.updated_at = now()
+        session.replacement = attempt.as_json()
+        session.save()
+        return None
+
+    # 4. Submitted: readiness within this turn's budget.
+    return _managed_replacement_turn(manager, mctx, session, attempt, logger)
+
+
+def _cancel_managed_job(manager, job_id):
+    """Cancel a recorded job; None confirms success, otherwise the reason to retry."""
+    try:
+        result = manager.executor.run_agent(["scancel", str(job_id)], check=False, capture_output=True)
+    except Exception as exc:  # noqa: BLE001 - keep the job recorded for another turn
+        return str(exc)
+    if result.returncode != 0:
+        return f"scancel returned {result.returncode}: {(result.stderr or '').strip() or 'no error output'}"
+    return None
+
+
+def _managed_replacement_turn(manager, mctx, session, attempt, logger, clock=time.time):
+    """Step 1 of :func:`_relaunch_managed_session`: the recorded replacement job's readiness.
+
+    Pending with no status at all is bounded here by the time since the
+    first RUNNING observation after each non-RUNNING state
+    (``_MANAGED_NO_STATUS_BOUND_SECONDS``): a runner
+    that refused before placing a run writes no ``latest-run``, so its
+    job would otherwise read as pending on every turn and never be
+    cancelled.  ``clock`` is the test seam.
+    """
+    import datetime as _dt
+    from .codex_state import Readiness
+    from .mirror import MirrorError
+
+    new_job = attempt.new_job
+    try:
+        state = manager._confined_job_state(new_job)
+    except Exception as exc:  # noqa: BLE001 - a failed probe is not absence
+        logger.warning("Cannot tell whether replacement job %s is running (%s); asking again next turn.", new_job, exc)
+        return None
+    if state == "RUNNING" and attempt.running_since is None:
+        attempt.running_since = clock()
+        session.replacement = attempt.as_json()
+        session.save()
+    elif state != "RUNNING" and attempt.running_since is not None:
+        attempt.running_since = None
+        session.replacement = attempt.as_json()
+        session.save()
+    try:
+        result = manager.codex_state_readiness(
+            mctx, new_job, attempt.token, budget_seconds=_MANAGED_READINESS_BUDGET_SECONDS,
+        )
+    except MirrorError as exc:
+        logger.warning("Cannot tell whether replacement job %s is ready (%s); asking again next turn.", new_job, exc)
+        return None
+    if result.outcome == "pending" and result.no_status and attempt.running_since is not None:
+        age = clock() - attempt.running_since
+        if age >= _MANAGED_NO_STATUS_BOUND_SECONDS:
+            result = Readiness(
+                "failed", f"no managed run recorded {age:.0f} s after first RUNNING: the runner never placed one "
+                          "(a refused launch writes no latest-run); see the job's log under ~/.cache/sucoder",
+            )
+    stamp = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    if result.ready:
+        session.slurm_job_id = new_job
+        session.compute_node = attempt.new_node
+        attempt.state, attempt.updated_at = "ready", stamp
+        session.replacement = attempt.as_json()
+        session.save()
+        cancel_error = _cancel_managed_job(manager, attempt.old_job)
+        if cancel_error is None:
+            session.replacement = None
+            session.save()
+            logger.info("Replacement job %s owns the managed history now (%s); job %s's cancellation is confirmed.",
+                        new_job, result.reason, attempt.old_job)
+        else:
+            attempt.failures.append(f"cancel: predecessor job {attempt.old_job}: {cancel_error}")
+            session.replacement = attempt.as_json()
+            session.save()
+            logger.warning("Replacement job %s owns the managed history now (%s); predecessor job %s is still "
+                           "allocated (%s).  Keeping the ready record for cancellation on the next poll or release.",
+                           new_job, result.reason, attempt.old_job, cancel_error)
+        return new_job
+    if result.outcome == "pending":
+        attempt.updated_at = stamp
+        session.replacement = attempt.as_json()
+        session.save()
+        logger.info("Replacement job %s is not ready yet (%s); job %s stays; asking again next turn.",
+                    new_job, result.reason, attempt.old_job)
+        return None
+    logger.warning(
+        "Replacement job %s failed readiness: %s.  Cancelling it; generation %s stays sealed and durable, "
+        "and a new replacement can be submitted once cancellation is confirmed.", new_job, result.reason, attempt.token.selector,
+    )
+    if not result.reason.startswith(f"job {new_job} left the queue"):
+        cancel_error = _cancel_managed_job(manager, new_job)
+        if cancel_error is not None:
+            attempt.failures.append(f"cancel: job {new_job}: {cancel_error}")
+            attempt.state, attempt.updated_at = "submitted", stamp
+            session.replacement = attempt.as_json()
+            session.save()
+            logger.warning("Failed replacement job %s is still allocated (%s); keeping it recorded and retrying "
+                           "cancellation next turn.", new_job, cancel_error)
+            return None
+    attempt.failures.append(f"job {new_job}: {result.reason}")
+    attempt.state, attempt.new_job, attempt.new_node, attempt.updated_at = "drained", None, None, stamp
+    attempt.running_since = None
+    session.replacement = attempt.as_json()
+    session.save()
+    return None
+
+
+def _reconcile_ready_record(session, scancel, logger):
+    """Retry a promoted predecessor's cancellation once per poll, including HOLD."""
+    from .codex_state import ReplacementAttempt
+    from .session import RemoteSession
+
+    record = session.replacement
+    if not isinstance(record, dict) or record.get("state") != "ready" or record.get("new_job") != session.slurm_job_id:
+        return
+    try:
+        attempt = ReplacementAttempt.from_json(record)
+        if attempt.old_job == session.slurm_job_id:
+            return
+        result = scancel(attempt.old_job)
+        if result.returncode != 0:
+            logger.warning("Predecessor job %s cancellation returned %s: %s; keeping the ready record for next poll.",
+                           attempt.old_job, result.returncode, (result.stderr or "").strip())
+            return
+        # Cancellation can overlap release or a new renewal. Retire only
+        # the same record on the latest session, preserving its allocation.
+        session = RemoteSession.load(session.mirror_name, target_name=session.target_name)
+        record = session.replacement
+        if (not isinstance(record, dict) or record.get("attempt") != attempt.attempt
+                or record.get("new_job") != attempt.new_job):
+            return
+        session.replacement = None
+        session.save()
+        logger.info("Predecessor job %s's cancellation is confirmed; retired the ready record.", attempt.old_job)
+    except Exception as exc:  # noqa: BLE001 - cleanup must not block renewal
+        logger.warning("Could not reconcile the ready replacement record (%s); asking again next poll.", exc)
 
 
 @app.command("renew")
@@ -4035,6 +4491,9 @@ def renew(
     mode_checked = set()
 
     def probe(job_id):
+        cur = RemoteSession.load(mirror, target_name=_tgt_name)
+        if cur.slurm_job_id == job_id and not dry_run:
+            _reconcile_ready_record(cur, scancel, logger)
         cmd = f"squeue --job {shlex.quote(str(job_id))} -h -o '%T|%L'"
         result = _run_remote_capture(ln_control, login_node, cmd, debug=debug_ssh)
         if result.returncode != 0:
@@ -4096,7 +4555,7 @@ def renew(
         )
 
     def scancel(job_id):
-        _run_remote_capture(
+        return _run_remote_capture(
             ln_control, login_node, f"scancel {shlex.quote(str(job_id))}", debug=debug_ssh,
         )
 

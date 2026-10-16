@@ -376,6 +376,7 @@ def test_batched_job_probe_preserves_service_mode_and_snapshot_age(monkeypatch):
 def test_relaunch_preserves_service_command_and_model(session_dir, monkeypatch, launch):
     RemoteSession("sample", slurm_job_id=42, compute_node="old", service_launch=launch).save()
     manager = Mock()
+    manager.context_for.return_value.confined = False
 
     def start(ctx, **kwargs):
         current = RemoteSession.load("sample")

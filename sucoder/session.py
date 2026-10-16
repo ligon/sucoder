@@ -36,6 +36,18 @@ class RemoteSession:
     # Remote-control command/model, before generated flags or prompt injection.
     # No credentials or composed prelude; renewal rebuilds those (ledger 5).
     service_launch: Optional[dict] = None
+    # Managed Codex state (docs/codex-local-state.org, Slice 3d).
+    # ``managed_owner``: what a renewal must know to replace the managed
+    # owner with its own history -- the Codex command and model as launched
+    # (before generated flags; a CLI-selected TUI renews as Codex, not as
+    # the configured default harness), the scope digest and the durable
+    # root.  ``replacement``: the renewal transaction in flight
+    # (``codex_state.ReplacementAttempt`` as JSON), retaining the old
+    # allocation and the pending new one with the transfer token until the
+    # successor is ready and the predecessor's cancellation is confirmed.
+    # Both absent on sessions written before these fields existed.
+    managed_owner: Optional[dict] = None
+    replacement: Optional[dict] = None
 
     # ------------------------------------------------------------------
     # Persistence
@@ -78,6 +90,8 @@ class RemoteSession:
             compute_node=data.get("compute_node"),
             remote_mirror_root=data.get("remote_mirror_root"),
             service_launch=data.get("service_launch"),
+            managed_owner=data.get("managed_owner"),
+            replacement=data.get("replacement"),
             forwards=list(data.get("forwards") or []),
         )
 
@@ -105,6 +119,8 @@ class RemoteSession:
             "compute_node": self.compute_node,
             "remote_mirror_root": self.remote_mirror_root,
             "service_launch": self.service_launch,
+            "managed_owner": self.managed_owner,
+            "replacement": self.replacement,
             "forwards": self.forwards,
         }
         tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
@@ -118,6 +134,29 @@ class RemoteSession:
             if tmp.exists():
                 tmp.unlink()
 
+    @staticmethod
+    def pending_replacement_job(data) -> Optional[int]:
+        """The job the replacement record names beside the session's own, or None.
+
+        A managed Codex renewal (``cli._relaunch_managed_session``) keeps
+        the job it submitted under ``replacement.new_job`` until that job
+        is ready, while ``slurm_job_id`` still names the predecessor.  A
+        ``ready`` record instead names ``old_job`` until its cancellation
+        is confirmed, while the session's job is the successor.  The
+        listings and ``release`` read it here so the job is neither
+        reported as unrecorded nor left running when the session is
+        released.  *data* is a loaded record or a session.
+        """
+        record = data.replacement if isinstance(data, RemoteSession) else (
+            data.get("replacement") if isinstance(data, dict) else None)
+        job = None
+        if isinstance(record, dict):
+            if record.get("state") == "submitted":
+                job = record.get("new_job")
+            elif record.get("state") == "ready":
+                job = record.get("old_job")
+        return job if isinstance(job, int) and not isinstance(job, bool) and job > 0 else None
+
     @classmethod
     def holders_of_job(cls, job_id, exclude_key: Optional[str] = None) -> list:
         """Return session keys that reference *job_id*.
@@ -126,7 +165,9 @@ class RemoteSession:
         Used by ``sucoder release`` to detect when a SLURM job is shared
         by several sessions (e.g. two mirrors co-resident on one node) so
         it can detach this mirror instead of cancelling a job the others
-        still need.  *exclude_key* omits the caller's own session.
+        still need.  *exclude_key* omits the caller's own session.  A
+        record names a job as its allocation or as the replacement it has
+        in flight (:meth:`pending_replacement_job`).
         """
         holders: list = []
         if job_id is None:
@@ -143,7 +184,8 @@ class RemoteSession:
                     data = yaml.safe_load(fh) or {}
             except (yaml.YAMLError, OSError):
                 continue
-            if isinstance(data, dict) and data.get("slurm_job_id") == job_id:
+            if isinstance(data, dict) and (
+                    data.get("slurm_job_id") == job_id or cls.pending_replacement_job(data) == job_id):
                 holders.append(stem)
         return holders
 
@@ -156,7 +198,8 @@ class RemoteSession:
         record name this job?" (an unnamed job is unreachable by every
         command), this one answers "does this record's job still exist?"
         (a record naming a dead job is what ``release`` should clear).
-        Neither direction subsumes the other.
+        Neither direction subsumes the other.  A replacement job a record
+        holds in flight is listed under ``<key> (replacement)``.
         """
         recorded: dict = {}
         directory = _session_dir()
@@ -170,6 +213,9 @@ class RemoteSession:
                 continue
             if isinstance(data, dict) and data.get("slurm_job_id"):
                 recorded[path.stem] = data["slurm_job_id"]
+            pending = cls.pending_replacement_job(data)
+            if pending is not None:
+                recorded[f"{path.stem} (replacement)"] = pending
         return recorded
 
     @classmethod

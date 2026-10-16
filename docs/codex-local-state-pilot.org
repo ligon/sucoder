@@ -1,0 +1,148 @@
+#+TITLE: Codex Local State: Slice 4 Pilot Runbook
+#+OPTIONS: toc:2 num:nil html-postamble:nil
+#+HTML_HEAD: <link rel="stylesheet" type="text/css" href="style.css" />
+
+How to run the first pilot of managed Codex state from a laptop against the =carleton-htc= target, what to expect at each step, and what to bring back.
+The design is [[file:codex-local-state.org][Codex Local State]]; its "Slice 4: pilot and acceptance" section is the gate this runbook serves.
+Everything here was exercised on Savio piecewise (the runner with real Codex, restore and resume on a simulated second allocation, the renewal against scripted schedulers) but never yet as one turnover from =collaborate= to a successor on another node; that is what the pilot establishes.
+
+* Prerequisites
+
+- The laptop's SuCoder checkout at =main= =b925a15= or later (pull it from the shared mirror); reinstall if =sucoder= is installed as a tool rather than run from the checkout.
+- A throwaway git repository on the laptop; nothing in it matters, and it must not be a repository whose history you care about.
+- On the cluster, the state of this writing: Codex =0.162.1= from the nvm Node 20 install, =bwrap= and the =sqlite3= CLI on the =savio4_htc= node images, Python 3.6 as =/usr/bin/python3= (the runner is written for it).
+  A newer Codex is not verified against the storage profile; the runner stops Codex if any store opens outside the managed directory, so a layout change fails loudly rather than silently.
+- Your Codex login on the cluster (=codex login status= there says "Logged in using ChatGPT"); the managed runner uses the same =~/.codex= for auth and config, only the SQLite stores and rollouts move.
+
+* Config change (laptop, =~/.sucoder/config.yaml=)
+
+Managed state is switched on per target, under its =slurm:= block; there is no command-line switch.
+The two lines above =codex_state= are the ones the target already needs for confined, tiered launches.
+
+#+begin_src yaml
+targets:
+  carleton-htc:
+    # ... gateway, transfer_host, mirror_root: ~/mirrors, cert_file ...
+    slurm:
+      partition: savio4_htc
+      account: co_carleton
+      qos: carleton_htc4_normal
+      cpus_per_task: 4
+      mem: 16G
+      confined: true
+      local_disk: true
+      codex_state:
+        enabled: true
+        checkpoint_minutes: 2          # pilot cadence; the default is 10
+        checkpoint_timeout_seconds: 30
+        # durable_root: null           # null -> ~/mirrors/.sucoder-state on the cluster (Lustre)
+#+end_src
+
+=checkpoint_minutes: 2= is for watching generations arrive; set it back to 10 afterwards.
+The durable root defaults to the sibling of the mirrors directory, =~/mirrors/.sucoder-state=, which on Savio is a symlink onto Lustre; it is created on first use.
+A root inside or around a mirror, or on local disk, is refused.
+
+* The pilot, step by step
+
+Three terminals on the laptop.
+A short courtesy time makes the turnover arrive about thirty minutes after the start.
+
+** 1. Start the session (terminal A)
+
+#+begin_src sh
+cd ~/Projects/throwaway
+sucoder -T carleton-htc --time 0:50:00 collaborate --harness codex
+#+end_src
+
+The mirror appears as =~/mirrors/throwaway= on the cluster.
+Before Codex owns the terminal the runner prints three lines: the stores' path under =/local/job<ID>/state/codex/<scope>/<run>/db=, that the managed history for this mirror starts empty and separate from =~/.codex=, and that generations go to =~/mirrors/.sucoder-state/codex/<scope>=.
+Have two or three turns with Codex that you will recognise later (ask it to remember a word, say).
+
+** 2. Watch the state (terminal B)
+
+#+begin_src sh
+sucoder -T carleton-htc codex-state-status throwaway
+sucoder -T carleton-htc codex-state-status throwaway --json > pilot-before.json
+#+end_src
+
+Expect =mode: fresh=, =state: placed=, a replica line with one thread per conversation, and =last durable generation: 00000N-xxxxxxxx (warm, age ...)= advancing every two minutes.
+=pending work: none= unless you set a goal or queued a message.
+
+** 3. Renewal (terminal C)
+
+#+begin_src sh
+sucoder -T carleton-htc --time 0:50:00 renew throwaway --drain-minutes 20 --poll-interval 60 2>&1 | tee pilot-renew.log
+#+end_src
+
+=--time= here sizes the successor job; without it the target's configured time applies.
+The loop holds while more than twenty minutes remain.
+
+** 4. The turnover
+
+When =renew= logs "~20 min to --time; checkpointing then re-allocating" (the tmux status line flashes a warning at thirty minutes, and the deadline timer requests a capture at each warning), *exit Codex* in terminal A with =/exit=.
+This is the attended-TUI rule: while a person sits in the TUI the drain does not signal Codex, takes a warm generation and answers "warm only", and =renew= defers to its next turn; your clean exit seals the final generation and that seal is the transfer token.
+The pane drops to a shell afterwards, which is expected (the job keeps the allocation for =attach=).
+
+Expected in =renew='s log, in this order:
+
+- =drained: sealed generation RUN/GENERATION= or =no managed owner to drain: run ... exited (exit 0) and its final generation ... is sealed= (the second when the exit landed before the drain request);
+- =Job N drained: sealed generation RUN/GENERATION (nonce ...); launching its replacement.=;
+- the confined submission and node lines for the new job;
+- =Replacement job M owns the managed history now (placed on RUN/GENERATION; run ...); job N is released by the renew loop.=;
+- =relaunched: job N -> M=.
+
+If instead you see =deferring the replacement= with "not sealed" or "warm only", you are still in the TUI; exit it and wait one poll.
+
+** 5. Verify continuity (terminal B)
+
+#+begin_src sh
+sucoder -T carleton-htc codex-state-status throwaway              # mode: restore; restored from RUN/GENERATION
+sucoder -T carleton-htc codex-state-status throwaway --json > pilot-after.json
+sucoder -T carleton-htc sessions                                  # only job M for throwaway
+sucoder -T carleton-htc attach throwaway                          # the successor's Codex TUI
+#+end_src
+
+In the successor's TUI use =/resume=: the earlier thread is listed; pick it and ask what you discussed.
+The answer must come from the restored history, not from =~/.codex= (which never saw this conversation).
+Note the successor's node in =sessions=; a different node from the predecessor's is the stronger result, but the same node is not a failure.
+
+** 6. End
+
+#+begin_src sh
+sucoder -T carleton-htc release throwaway
+#+end_src
+
+=release= drains first (a sealed final generation, since you exit the TUI before it or it answers warm only and seals when you do), then cancels; if a replacement were still pending it would cancel that too.
+Set =checkpoint_minutes= back to 10.
+The pilot's generations stay under =~/mirrors/.sucoder-state/codex/<scope>/runs/= (a few megabytes); remove that scope directory by hand if you want nothing left.
+
+* What to bring back
+
+The Slice 4 record needs evidence, not impressions:
+
+- =pilot-before.json= and =pilot-after.json=, and =pilot-renew.log=;
+- the =/resume= answer (a sentence is enough) and whether the successor ran on another node;
+- =ls ~/mirrors/.sucoder-state/codex/*/runs/*/generations= and =.../retiring= after the pilot (retention should have kept the newest three warm, the newest sealed, and any pinned parent, and retired the rest);
+- the wall-clock from =/exit= to "owns the managed history now";
+- anything the runbook got wrong.
+
+* If something refuses
+
+The design forbids silent fallback, so every failure is loud and local.
+
+| Symptom | Where to look | Meaning |
+|---------+---------------+---------|
+| The launch exits with "managed placement is unavailable" or a =sqlite_home= conflict | the pane; =~/.cache/sucoder/job-throwaway-<jobid>.out= | =bwrap= missing on that node image, or your Codex config sets =sqlite_home=; nothing was started |
+| =codex-state-status= says =state: refused= with a reason | the same log | the runner refused before placing (durable root, lock, pending work); the reason names it |
+| =state: blocked= on the successor | =renew='s log, then =codex-state-status= | the durable side did not answer within two minutes; the replacement fails readiness, is cancelled, and is resubmitted next turn (three times at most) |
+| =renew= keeps logging "deferring the replacement" | terminal A | you are still in the TUI (warm only), or the drain was not answered in time; exit Codex, or raise =checkpoint_timeout_seconds= |
+| =renew= logs "3 replacement attempts failed" | the session file =~/.sucoder/sessions/throwaway--carleton-htc.yaml= (=replacement:=) | the old job stays allocated and drained; fix the cause, remove the =replacement= record, or =release= |
+| =sessions= shows a job with no record | =sucoder sessions= | a replacement whose =sbatch= reply was lost; =scancel= it by hand (recorded limitation) |
+| The successor never leaves "no managed run recorded yet" and is cancelled after fifteen minutes | the successor's job log | its runner refused before writing =latest-run= (the log has the reason), or two jobs of this mirror landed on one node and shared the tmux socket (recorded limitation); the next attempt usually lands elsewhere |
+
+* Known limits during the pilot
+
+- The managed history is separate from =~/.codex=: nothing is migrated, and =/resume= lists only managed threads.
+- Archiving a thread inside the managed TUI fails with an =EXDEV= error and changes nothing; leave threads unarchived.
+- Continuity across turnover needs either a clean exit or an unattended launch; an attended TUI that is never exited is not drained, and when its allocation ends the successor starts a fresh history with the old generations named in the log for an explicit =--codex-state-from RUN/GENERATION=.
+- Generations are per-run; a fresh history on the successor is a new run, and the old run's generations remain for explicit continuation.

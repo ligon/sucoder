@@ -304,7 +304,14 @@ def test_the_record_serializes_for_json_output():
                              run=RUN, requested=True, ack=_ack(), waited_seconds=4.0, timeout_seconds=60.0)
     assert report.as_json() == {
         "job_id": 4242, "scope": SCOPE, "mode": "renew", "nonce": NONCE, "run": RUN, "requested": True, "outcome": "o",
-        "ack": _ack(), "last_durable": None, "waited_seconds": 4.0, "timeout_seconds": 60.0, "commands": [["cat", "x"]]}
+        "ack": _ack(), "last_durable": None, "state": None, "exit": None, "exited_at": None,
+        "waited_seconds": 4.0, "timeout_seconds": 60.0,
+        "commands": [["cat", "x"]]}
+    # The run's state rides along only when no owner was left to ask (Slice 3d reads it for a clean sealed exit).
+    unasked = CodexStateDrain(job_id=4242, scope=SCOPE, mode="renew", nonce=NONCE, commands=[], outcome="o", run=RUN,
+                              state="exited", exit=0, exited_at=20.0)
+    assert unasked.as_json()["state"] == "exited" and not unasked.requested
+    assert unasked.as_json()["exit"] == 0 and unasked.as_json()["exited_at"] == 20.0
 
 
 # ----------------------------------------------------------------- ``release``
@@ -651,3 +658,66 @@ def test_drain_command_reports_a_lookup_failure_and_a_missing_job(tmp_path, monk
     result, builder_calls, _ = _drain_cli(tmp_path, monkeypatch, [], job=None)
     assert result.exit_code == 0 and builder_calls == []
     assert "No SLURM allocation recorded for mirror sample (target fake-slurm); no managed Codex run to drain." in result.output
+
+
+def test_release_cancels_a_pending_replacement_job_after_the_allocation(tmp_path, monkeypatch):
+    """A managed renewal in flight holds the job it submitted under
+    ``replacement.new_job`` (Slice 3d); releasing the session must not
+    leave that job running with nothing naming it."""
+    from sucoder.session import RemoteSession
+    yaml_text = (
+        "login_node: ln002\nslurm_job_id: 7654321\ncompute_node: n0032\n"
+        "replacement:\n  attempt: 00ff00ff00ff00ff\n  old_job: 7654321\n  state: submitted\n  new_job: 7654400\n"
+        f"  token: {{nonce: {NONCE}, run: {RUN}, generation: 000013-cafebabe, manifest_sha256: {'ab' * 32}}}\n"
+    )
+    cluster = _Cluster(tmp_path, monkeypatch, session_yaml=yaml_text)
+    result = cluster.release("-f", "--no-drain")
+    assert result.exit_code == 0, (result.output, result.exception)
+    commands = [command for _host, command in cluster.captures]
+    assert commands[0].startswith("scancel 7654321") and commands[-1] == "scancel 7654400"
+    assert "Cancelled the pending replacement job 7654400" in result.output
+    loaded = RemoteSession.load("sample", target_name="fake-slurm")
+    assert loaded.slurm_job_id is None and loaded.replacement is None
+
+
+@pytest.mark.parametrize("siblings", [(), ("other",)])
+@pytest.mark.parametrize("state", ["submitted", "ready"])
+@pytest.mark.parametrize("failure", [1, OSError("gateway unavailable")])
+def test_release_keeps_pending_record_when_cancel_fails_and_retries(tmp_path, monkeypatch, siblings, state, failure):
+    from sucoder.session import RemoteSession
+    own, pending = (7654321, 7654400) if state == "submitted" else (7654400, 7654321)
+    yaml_text = (
+        f"login_node: ln002\nslurm_job_id: {own}\ncompute_node: n0032\n"
+        f"replacement:\n  attempt: 00ff00ff00ff00ff\n  old_job: 7654321\n  state: {state}\n  new_job: 7654400\n"
+    )
+    cluster = _Cluster(tmp_path, monkeypatch, session_yaml=yaml_text, siblings=siblings, confined=not siblings)
+    monkeypatch.setattr(RemoteSession, "holders_of_job", staticmethod(lambda job, **kw: list(siblings) if job == own else []))
+    original = RemoteSession.load("sample", target_name="fake-slurm").replacement
+    capture = cluster.capture
+
+    def fail_second_cancel(control, host, command, **kw):
+        if command == f"scancel {pending}":
+            recorded = RemoteSession.load("sample", target_name="fake-slurm")
+            assert recorded.slurm_job_id == own and recorded.replacement == original, "forget only after cancelling"
+            if isinstance(failure, Exception):
+                raise failure
+            return SimpleNamespace(returncode=failure, stdout="", stderr="scheduler unavailable")
+        return capture(control, host, command, **kw)
+
+    monkeypatch.setattr(cli, "_run_remote_capture", fail_second_cancel)
+    result = cluster.release("-f", "--no-drain")
+    assert result.exit_code == 1, (result.output, result.exception)
+    assert (f"Detached mirror sample from SLURM job {own}" if siblings else f"Released SLURM job {own}") in result.output
+    assert f"Could not cancel the pending replacement job {pending}" in result.output
+    assert "keeping its record for another `sucoder release`" in result.output
+    loaded = RemoteSession.load("sample", target_name="fake-slurm")
+    assert loaded.slurm_job_id is None and loaded.compute_node is None and loaded.replacement == original
+    assert RemoteSession.pending_replacement_job(loaded) == pending
+    monkeypatch.setattr(cli, "_run_remote_capture", capture)
+    cluster.captures.clear()
+    result = cluster.release("-f")
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert cluster.builder_calls == [], "a replacement-only retry must not build a manager that could allocate anew"
+    assert len(cluster.captures) == 1 and cluster.captures[0][1].startswith(f"scancel {pending}")
+    loaded = RemoteSession.load("sample", target_name="fake-slurm")
+    assert loaded.slurm_job_id is None and loaded.replacement is None
