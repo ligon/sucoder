@@ -1,4 +1,4 @@
-#+TITLE: Codex node-local state: Slice 3d on a branch under review-fix; 3a gap and 3e runner half ready to merge
+#+TITLE: Codex node-local state: 3a gap and 3e runner half merged; 3d on its branch under a second review-fix pass
 #+DATE: 2026-10-16
 #+STATUS: IN PROGRESS
 #+AUTHOR: Sue
@@ -6,34 +6,25 @@
 
 * Where things stand
 
-=main= is =3652d05= (the human's merge of Slices 0-3c) plus this note.
-Three branches hang off it, each published to the shared mirror by the post-commit hook:
+=main= is =26d79c4=: the human's merge of Slices 0-3c (=3652d05=), the 3a gap (=fdb2de4=, merged as =97912f4=) and the Slice 3e runner half (=6fcf18e= by Codex, review fixes =178ee47= by Claude Opus, record =7e4054b=, merged as =26d79c4=); full suite on merged =main= 1525 passed.
+The design record (=docs/codex-local-state.org=, end of the Slice 2 record) carries the 3e entry with its residuals; transfer records (offer/claim/revoke) are deliberately not in it.
 
-- =feat/codex-state-3a-gap= (=fdb2de4=) :: the unconfined deadline timer requests a capture from every managed run under the allocation's local root (closes the 3a gap).  Written by Codex under the Slice 2 runner, reviewed and trimmed by Sue; full suite on its worktree 1493 passed.  Ready to merge.
-- =feat/codex-state-3d= (=9f74f35= code, =95e38fc= record, =42d511a= mypy, =b1adb60= three review gaps) :: renewal with acknowledged handoff, launcher side; 64 cases in =tests/test_codex_state_renew.py=; full suite 1538 passed at =9f74f35=.  A read-only Codex review of =42d511a= found ten defects (the transcript of the review is not in the repo; the triage is in the brief named below); a Codex fix pass for seven of them is running in the worktree =/local/job40017774/mirrors/SuCoder-3d= as this note is written, with the brief at the scratchpad path =scratchpad/codex/brief-fix-3d.md= of this session (not durable; its content is summarised under "Open review findings" below).
-- =feat/codex-state-3e= (no commits yet) :: Slice 3e runner half -- =metadata.lock/= critical section, pins, lineages, retention with =retiring/= tombstones, storage status -- written by Codex (plain =codex exec=, 998 lines, 80 runner tests) as uncommitted changes in the worktree =/local/job40017774/mirrors/SuCoder-3e=; verified outside the sandbox: =/usr/bin/python3.6 -m py_compile= clean, =tests/test_codex_state_runner.py= 80 passed, full suite 1503 passed.  An independent review (Claude subagent) was running as this note is written.  Transfer records (offer/claim/revoke) are deliberately NOT in it: they are sequenced after 3d lands.
-
-The worktrees live on this job's local disk and vanish with it; only commits and the WIP snapshot survive (the 3e tree is uncommitted -- commit it first on a cold restart if the snapshot restored it).
-
-* Open review findings on 3d (the fix pass in flight)
-
-Fix: (F1) =_relaunch_session= must overlay the active =-T= target on the mirror's settings before choosing the managed path (as =cli.renew= does), else a named target takes the unmanaged path; (F2) the unmanaged relaunch on a confined target must pass =replace_job= so the predecessor is never adopted and cancelled as its own successor (the review's original P1, which the "no managed run" and lost branches fall into); (F3) the clean-exit token must require exit 0 and a seal published after the run's last =exited= transition (a run reused in place keeps an older seal in =last_generation=); (F4) readiness must verify the successor's runner and Codex pids are alive (=/proc/<pid>/stat= start time) and reject =reused_run=; (F7) a failed =scancel= of a failed successor must keep its id; (F8) promotion must keep the record in state =ready= until the predecessor's cancellation is confirmed, and =release= must cancel whichever job the record names; (F10) the recorded =remote_control= mode must be passed on relaunch.
-Recorded limitations, not fixed: a successor refusing before =latest-run= is bounded only by =submitted_at= (900 s); a lost =sbatch= reply cannot be reconciled to the attempt; two confined jobs of one mirror on one node share a tmux socket name.
-
-* Dogfooding findings (for the design record; the 3d entry carries them)
-
-- Codex under the runner: placement, warm generations and the drain protocol work on this node; a Codex task that runs the runner's own tests is stopped by the outer runner's misplacement guard (nested fake-Codex stores read as misplaced state) and ends as a crash generation -- the guard working as designed.  Run such tasks with plain =codex exec=.
-- Codex cannot write =-o= outside its sandbox; have it write the report inside the worktree.
-- Lessons kept: one heredoc per shell command; never two agents in one file.
+=feat/codex-state-3d= (=c2fa924=) is Slice 3d, renewal with acknowledged handoff: =9f74f35= code, =b1adb60= three review gaps, =355fad8= Codex's fix pass for its own read-only review (F1-F4, F7, F8, F10), records =95e38fc= and =c2fa924=; full suite on the branch 1586 passed; mypy at the baseline (72, all pre-existing).
+A Codex confirmation review of =c2fa924= confirmed F1, F2, F3, F7 and F10 resolved, F4 and F8 partly, and found six remaining or new defects; a second Codex fix pass for all six is running in the worktree =/local/job40017774/mirrors/SuCoder-3d= as this note is written (brief: liveness probe errors must be pending not absence; zombie states and the runner's start time; =release= must cancel the second job before forgetting the record; a =ready= record reconciled during HOLD from the renew probe; the no-status bound measured from the first RUNNING observation; the unconfined attach must not overwrite the owner record).
+Merging 3d into =main= conflicts only in =docs/codex-local-state.org= (both branches insert their record entry before "** Corrections to the record"; keep both, 3d before 3e); =cli.py= auto-merges.
 
 * Next concrete actions
 
-1. When the 3d fix pass reports: review its diff and =.codex-report.md=, run the full suite on the worktree, commit with the drafted =.codex-commit-msg.txt= plus attribution (=Co-Authored-By: GPT-6 Astra (codex-cli 0.162.1) <noreply@openai.com>=), fill the =<sha>= in the design record's "Review fixes" paragraph, then a read-only Codex confirmation review as in Slice 2.
-2. When the 3e review reports: a fix pass (Opus 5.5 or Codex) in the 3e worktree, runner files only; verify (py_compile 3.6, runner tests, full suite); commit on =feat/codex-state-3e= with Codex attribution; record Slice 3e in the design.
-3. Merge order: =main= <- =feat/codex-state-3a-gap= <- =feat/codex-state-3d= <- =feat/codex-state-3e= (3a and 3d both touch =cli.py= in disjoint hunks; 3e touches the runner only); full suite on merged =main= before the hook publishes anything further; mypy against the baseline (72 on cli/mirror/config/codex_state, all pre-existing).
-4. Then Slice 3e's second half: transfer records (offer at a renew-mode seal, claim at restore binding the attempt, revoke before a drained runner restarts), and wiring =--attempt= through =runner_command=.
-5. Slice 4 pilot, unchanged from the previous handoff.
-6. Clean-up when the human agrees: the trial durable root =/global/scratch/fsa/fc_jevons/ligon/.sucoder-state-trial= (now ~160 MB with this session's four dogfood runs).
-7. This slice (job 40017774) holds the worktrees; release with =sucoder release= once the three branches are merged, or earlier if the allowance runs out (the branches are published; only the uncommitted 3e tree is at risk -- the WIP snapshot covers the clone, not the worktrees, so commit 3e first).
+1. When the second 3d pass reports: run the full suite on the worktree outside the sandbox, commit with its drafted =.codex-commit-msg.txt= plus the Codex attribution trailer, fill =<sha>= in the record, merge =main <- feat/codex-state-3d= (resolve the record conflict as above), full suite on merged =main=, then a Codex read-only confirmation if allowance permits.
+2. Slice 3e's second half: transfer records (offer at a renew-mode seal, claim at restore binding the attempt, revoke before a drained runner restarts) and =--attempt= through =runner_command=; the 3e residuals (startup-result file independent of =latest-run=; backfill of pins for children restored before 3e; retirement cap per cycle; per-allocation tmux socket for colocated jobs; attempt id in sbatch =--comment=).
+3. Slice 4 pilot, as before.
+4. Clean-up when the human agrees: the trial durable root =/global/scratch/fsa/fc_jevons/ligon/.sucoder-state-trial= (~160 MB).
+5. Release this slice (job 40017774) with =sucoder release= once 3d is merged; the worktrees are disposable (every commit is published; only an unfinished fix pass would be lost, and it is re-runnable from the briefs' content summarised above).
+
+* Dogfooding findings (also in the 3d record)
+
+- Codex under the Slice 2 runner: placement, warm and sealed generations and the drain protocol work on this node; a Codex task that runs the runner's own tests is stopped by the misplacement guard (nested fake-Codex stores) and ends as a crash generation, by design; run such tasks with plain =codex exec=.  Read-only reviews under the runner end with a sealed final generation.
+- Codex cannot write =-o= outside its sandbox; have it write the report inside the worktree.
+- Delegation pattern used: Codex writes and fixes (own review loop), a Claude subagent reviews independently, Opus fixes the runner half; one agent per file set, worktree per stream.
 
 Recorded by Sue (Claude Fable 5.1).
