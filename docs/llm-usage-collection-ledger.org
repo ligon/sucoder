@@ -6,6 +6,7 @@
 
 Design collection of model-tagged usage, advertised shadow prices and supply state sufficient to estimate reset-adjusted depletion rates and, later, price-conditional demand.
 The model-identification review requires a native metadata stream in the first model-aware pilot; quota-only readiness is a useful earlier milestone, not completion of that pilot.
+The human's 2026-10-17 scope amendment requires both Claude and Codex adapters and distinct model routes in the [[file:llm-usage-implementation-charter.org][implementation charter]].
 The deliverable is a practical design and synthetic replay, not a running collector or a change to account credentials.
 The conceptual agreement is in [[file:llm-shadow-values.org][Standing Shadow Values]].
 
@@ -37,7 +38,10 @@ No conversation histories, credentials or live provider accounts were inspected.
   Extend optional lifecycle metadata later; existing =sucoder sessions= has no JSON interface and must not be scraped as an activity counter.
 - Native Codex metadata :: Codex 0.162.1 generated =ThreadTokenUsageUpdatedNotification=, =ThreadTokenUsage= and =TokenUsageBreakdown= schemas expose thread/turn references and =total=/=last= breakdowns.
   [[https://learn.chatgpt.com/docs/app-server][Official App Server documentation]] describes token-usage and turn notifications.
-  A future adapter needs an owning client's stream and counter-semantics fixtures; a separately started quota app-server does not observe other sessions.
+  The token update has no model field; =Thread.model= explicitly describes configured/latest state, while =TurnStartParams.model= and =ModelReroutedNotification= provide separate selection/reroute evidence.
+  Supporting capture needs an owning client's stream and counter-semantics fixtures; a separately started quota app-server does not observe other sessions.
+- Codex OpenTelemetry :: [[https://learn.chatgpt.com/docs/config-file/config-advanced#observability-and-telemetry][Official OpenAI documentation]], checked 2026-10-17, describes model-tagged log metadata and completion token counts, with OTLP HTTP/gRPC export.
+  Select this as the prospective primary Codex quantity source, with source/build/transport-specific verification; documentation does not prove serving-model identity, request deduplication or SSE/WebSocket coverage in the installed build.
 - Native Claude metadata :: [[https://code.claude.com/docs/en/statusline][Official status-line documentation]], checked 2026-10-17, distinguishes context/last-response token snapshots from an accumulated client-side session cost estimate and durations.
   This source is a candidate optional adapter, not an already implemented or complete token ledger.
 - Model-tagged Claude telemetry :: A subsequent red team found the [[https://code.claude.com/docs/en/monitoring-usage#api-request-event][documented monitoring interface]], which is a stronger prospective source for model-tagged usage than the status line.
@@ -74,6 +78,7 @@ Reuse accounting collection and validation rather than creating new provider quo
 Reuse the existing public resource definitions and sanitized catalogs; add versioned history references around them.
 Add a history store, publication events, attempt records and temporal joins because the current library is export-only and provides no observation database or cross-export history reconciliation.
 Add a prospective Claude request-metadata adapter as required new work for the model-aware pilot, after its identity, quantity and coverage semantics are verified; never use context-window occupancy as cumulative token use.
+Add the required Codex telemetry adapter and supporting model-selection evidence; reuse shared ingestion/history mechanics while keeping source namespaces, account bindings and inclusion semantics distinct.
 Extend the history envelope with model evidence, request/stream identities and coverage records because the accounting quota contract intentionally does not represent model-attributed use.
 Keep the estimator separate from collection so later methods can replay the original evidence and price publications.
 
@@ -88,6 +93,7 @@ Independent semantics and operations reviews accepted the final design after rec
 The subsequent [[file:llm-usage-collection-review.org][model-identification red team]] finds that this acceptance did not establish readiness to estimate Fable-versus-Opus use: the first slice lacks a required model-observation stream.
 The response revises that milestone, specifies the required metadata adapter and adds synthetic model-identification cases; native capture and calibration remain implementation work.
 Both original model-identification reviewers accepted the revised specification after rechecking identity, coverage, hour semantics and emitter authentication.
+That acceptance predates the explicit Codex scope extension; the implementation charter requires acceptance of both adapters rather than treating the earlier review as Codex verification.
 Offline validation confirms the 14 scenario projections' referenced artifacts and numerical counterexamples; it does not validate an implemented reader or adapter.
 Runnable artifact validation and review outcomes are recorded in [[file:llm-usage-collection.org][the collection design]].
 The design reuses the definitions in sections 2-4; the history/capture mechanisms in section 5 are specified as new work, not represented as existing tested machinery.
