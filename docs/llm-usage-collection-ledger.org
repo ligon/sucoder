@@ -4,7 +4,8 @@
 
 * 1. Task and search tier
 
-Design collection of usage, advertised shadow prices and supply state sufficient to estimate reset-adjusted depletion rates and, later, price-conditional demand.
+Design collection of model-tagged usage, advertised shadow prices and supply state sufficient to estimate reset-adjusted depletion rates and, later, price-conditional demand.
+The model-identification review requires a native metadata stream in the first model-aware pilot; quota-only readiness is a useful earlier milestone, not completion of that pilot.
 The deliverable is a practical design and synthetic replay, not a running collector or a change to account credentials.
 The conceptual agreement is in [[file:llm-shadow-values.org][Standing Shadow Values]].
 
@@ -41,6 +42,9 @@ No conversation histories, credentials or live provider accounts were inspected.
   This source is a candidate optional adapter, not an already implemented or complete token ledger.
 - Model-tagged Claude telemetry :: A subsequent red team found the [[https://code.claude.com/docs/en/monitoring-usage#api-request-event][documented monitoring interface]], which is a stronger prospective source for model-tagged usage than the status line.
   Its native-reported model evidence and transport semantics still need adapter verification; it does not identify shared subscription metering weights by itself.
+  Select request events as the first adapter's primary quantity source; metrics are corroboration, not additional use.
+- Telemetry transport :: The [[https://opentelemetry.io/docs/specs/otlp/#duplicate-data][OTLP specification]] permits redelivery; the [[https://opentelemetry.io/docs/specs/otel/metrics/data-model/#temporality][metrics data model]] distinguishes cumulative and delta intervals.
+  These are source contracts, not evidence of a locally tested receiver or exact deduplication without native identities.
 
 * 3. Definitions in force
 
@@ -50,22 +54,27 @@ No conversation histories, credentials or live provider accounts were inspected.
 - Identity :: =row_identity= explicitly defines "Identity within an export; observation aliases are deliberately excluded" (=contracts.py:260=).
 - Integration :: "Reports do not reserve quota or promise that concurrent/unrelated activity will fit" (=WORKPLAN.md:339=).
 - Hours :: The conceptual design distinguishes collective draw per clock hour from resource use per agent-hour; residency, open turns and API waiting are different exposure measures.
+- Model identity :: Requested, configured, native-reported and served identities are separate evidence; neither a launch label nor quota applicability proves the model that did work.
+- Coverage :: Completeness of the instrumented population and coverage of the whole account are distinct; missing or external activity is unknown, not zero.
+- Cost :: Native client estimates, provider-rated monetary observations, local API-reference conversions and subscription scarcity values are separate quantities.
 
 * 4. Invariants
 
 Keep observations, counter-derived flows, declared priors and forecasts distinct.
 Preserve original collection/source times, unknowns, binding generations, applicability, quota-window kind and source quality.
 Repeated collection of a snapshot is not another unit of consumption; interval revisions replace compatible source facts rather than adding to them.
-Account or catalog changes break comparability unless an explicit mapping establishes continuity.
+Relevant account-binding or resource-semantic changes break comparability unless an explicit mapping establishes continuity; unrelated catalog additions do not.
 Quota trajectory forecasting may use compatible utilization observations but cannot claim token consumption or attribute a shared-pool change to a particular model.
 Normal sampling must not start inference, renew credentials, inspect another Unix identity or alter existing sessions.
+Model-tagged throughput does not identify shared quota weights without variation and assumptions about background use, windows and workload.
 
 * 5. Reuse decisions
 
 Reuse accounting collection and validation rather than creating new provider quota clients.
 Reuse the existing public resource definitions and sanitized catalogs; add versioned history references around them.
 Add a history store, publication events, attempt records and temporal joins because the current library is export-only and provides no observation database or cross-export history reconciliation.
-Add native adapters only after their counter semantics and capture path are verified; never use context-window occupancy as cumulative token use.
+Add a prospective Claude request-metadata adapter as required new work for the model-aware pilot, after its identity, quantity and coverage semantics are verified; never use context-window occupancy as cumulative token use.
+Extend the history envelope with model evidence, request/stream identities and coverage records because the accounting quota contract intentionally does not represent model-attributed use.
 Keep the estimator separate from collection so later methods can replay the original evidence and price publications.
 
 * 6. Design choices and verification
@@ -74,8 +83,11 @@ The practical design must choose storage, sampling, clock handling, deduplicatio
 Remaining limitations are unknown provider denominators/replenishment rules, incomplete external activity attribution, and missing passive collection policy in the current combined Claude path.
 These limit interpretation or specific live adapters; they do not block writing the design or collecting already normalized reports offline.
 All 270 existing llm-accounting tests and its validator for three schemas/fourteen examples pass on the inspected baseline.
-Four accounting reports in the new replay pass the same schema and binding checks.
+Four accounting reports in the original replay pass the same schema and binding checks.
 Independent semantics and operations reviews accepted the final design after rechecking source-fact identity, knowledge snapshots, throttle fallback and descendant cleanup requirements.
 The subsequent [[file:llm-usage-collection-review.org][model-identification red team]] finds that this acceptance did not establish readiness to estimate Fable-versus-Opus use: the first slice lacks a required model-observation stream.
+The response revises that milestone, specifies the required metadata adapter and adds synthetic model-identification cases; native capture and calibration remain implementation work.
+Both original model-identification reviewers accepted the revised specification after rechecking identity, coverage, hour semantics and emitter authentication.
+Offline validation confirms the 14 scenario projections' referenced artifacts and numerical counterexamples; it does not validate an implemented reader or adapter.
 Runnable artifact validation and review outcomes are recorded in [[file:llm-usage-collection.org][the collection design]].
 The design reuses the definitions in sections 2-4; the history/capture mechanisms in section 5 are specified as new work, not represented as existing tested machinery.
