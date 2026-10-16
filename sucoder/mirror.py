@@ -51,6 +51,7 @@ from .codex_state import (
     scope_id as _state_scope_id,
     validate_restore_selector as _state_validate_restore_selector,
     with_sqlite_home_placeholder as _with_sqlite_home_placeholder,
+    app_server_command as _state_app_server_command,
 )
 from .codex_remote import build_remote_command
 
@@ -3648,11 +3649,16 @@ class MirrorManager:
             command = self._apply_agent_flag_templates(
                 command, ctx, launcher, templates, model=model_for_flag,
             )
+        # The runner's pre-launch thread/resume pass (issue 46) needs a bare
+        # app-server on the same executable and placeholder, taken here before
+        # later flags shift the placeholder and nvm wraps it like the command.
+        state_app_server: Optional[List[str]] = None
         if state is not None:
             try:
                 command = _with_sqlite_home_placeholder(command)
             except ValueError as exc:
                 raise MirrorError(str(exc)) from exc
+            state_app_server = _state_app_server_command(command)
 
         # Inject system prompt via native flag if available, otherwise
         # trailing text.
@@ -3751,6 +3757,7 @@ class MirrorManager:
                 checkpoint_minutes=state.checkpoint_minutes,
                 checkpoint_timeout_seconds=state.checkpoint_timeout_seconds,
                 restore=state.restore, fresh=state.fresh, unattended=state.unattended,
+                app_server=self._wrap_with_nvm(state_app_server, launcher) if state_app_server else None,
             )
 
         # Environment values may include API keys resolved from pass. Stage

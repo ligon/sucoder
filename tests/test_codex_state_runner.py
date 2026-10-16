@@ -72,7 +72,8 @@ history = store("thread_history_1.sqlite")
 history.execute("create table if not exists thread_history_projection_state ("
                 "thread_id TEXT PRIMARY KEY, next_rollout_byte_offset INTEGER NOT NULL, next_rollout_ordinal INTEGER NOT NULL)")
 state = store("state_5.sqlite")
-state.execute("create table if not exists threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL, cli_version TEXT NOT NULL DEFAULT '')")
+state.execute("create table if not exists threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL, cli_version TEXT NOT NULL DEFAULT '', "
+              "cwd TEXT NOT NULL DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 goals = store("goals_1.sqlite")
 goals.execute("create table if not exists thread_goals (thread_id TEXT PRIMARY KEY NOT NULL, goal_id TEXT NOT NULL, "
               "objective TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('active','paused','blocked','usage_limited',"
@@ -86,7 +87,7 @@ held = []
 # recorded rollout paths (and the file's size there), the projection rows,
 # goals and queued items.  Then, like Codex, continue the thread on record
 # at its recorded path, or start a new one.
-sees = {"threads": [], "projection": {}, "goals": [], "queue": {}}
+sees = {"threads": [], "projection": {}, "goals": [], "queue": {}, "cwds": {}}
 existing = state.execute("select id, rollout_path from threads order by rowid desc").fetchall()
 for row_id, path in existing:
     try:
@@ -96,6 +97,7 @@ for row_id, path in existing:
     sees["threads"].append({"id": row_id, "rollout_path": path, "rollout_bytes": size})
 for row in history.execute("select thread_id, next_rollout_byte_offset, next_rollout_ordinal from thread_history_projection_state"):
     sees["projection"][row[0]] = [row[1], row[2]]
+sees["cwds"] = dict(state.execute("select id, cwd from threads").fetchall())
 sees["goals"] = [list(row) for row in goals.execute("select thread_id, status from thread_goals order by thread_id")]
 sees["queue"] = dict((row[0], row[1]) for row in queue.execute("select thread_id, count(*) from queued_items group by thread_id"))
 if existing and not os.environ.get("FAKE_FRESH_THREAD"):
@@ -110,7 +112,8 @@ else:
     rollout_path = os.path.join(day, "rollout-2026-10-15T00-00-00-%s.jsonl" % tid)
     rollout = open(rollout_path, "ab", buffering=0)
     rollout.write((json.dumps({"type": "session_meta", "payload": {"id": tid}}) + "\n").encode())
-    state.execute("insert or replace into threads values (?, ?, ?)", (tid, rollout_path, "0.162.1"))
+    state.execute("insert or replace into threads (id, rollout_path, cli_version, cwd) values (?, ?, ?, ?)",
+                  (tid, rollout_path, "0.162.1", os.getcwd()))
     ordinal = turn = 0
 signal.signal(signal.SIGTERM, lambda s, f: os._exit(int(os.environ.get("FAKE_SIGTERM_EXIT", "37"))))
 sys.stdout.write("FAKE_SEES " + json.dumps(sees, sort_keys=True) + "\n")
@@ -170,7 +173,10 @@ while True:
         other_rollout = open(other_path, "ab", buffering=0)
         other_rollout.write((json.dumps({"type": "session_meta", "payload": {"id": other}}) + "\n").encode())
         held.append(other_rollout)
-        state.execute("insert or replace into threads values (?, ?, ?)", (other, other_path, "0.162.1"))
+        # ``thread [CWD [archived]]``: the cwd defaults to the child's own
+        state.execute("insert or replace into threads (id, rollout_path, cli_version, cwd, archived) values (?, ?, ?, ?, ?)",
+                      (other, other_path, "0.162.1", words[1] if len(words) > 1 else os.getcwd(),
+                       1 if words[2:3] == ["archived"] else 0))
         reply = "ok %s %s" % (other, other_path)
     elif words[0] == "drop":
         history.execute("drop table thread_history_projection_state")
@@ -261,7 +267,7 @@ class Managed:
     the fake, and the test speaks through the master; stderr stays a pipe so
     the runner's own lines can be read."""
 
-    def __init__(self, home, python=None, timeout=30.0, extra=(), env=None, tty=False):
+    def __init__(self, home, python=None, timeout=30.0, extra=(), env=None, tty=False, cwd=None):
         python = python or sys.executable
         self.home = home
         argv = [python, str(RUNNER), "--scope", home["scope"], "--durable-root", str(home["durable"]),
@@ -273,11 +279,11 @@ class Managed:
             self.master, slave = os.openpty()
             _setraw(slave)
             self.proc = subprocess.Popen(argv, env=_env(home, **(env or {})), stdin=slave, stdout=slave, stderr=subprocess.PIPE,
-                                         text=True)
+                                         text=True, cwd=cwd)
             os.close(slave)
         else:
             self.proc = subprocess.Popen(argv, env=_env(home, **(env or {})), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                         stderr=subprocess.PIPE, text=True)
+                                         stderr=subprocess.PIPE, text=True, cwd=cwd)
         self.sees = None            # what the fake found in the stores it was handed
         while True:
             line = self._readline()
@@ -3786,3 +3792,244 @@ def test_expired_lock_wait_does_not_make_one_more_mkdir_attempt(runner, tmp_path
         with runner.MetadataLock(str(_scope(h)), h.cp.meta, h.status, "retention"):
             pytest.fail("an expired attempt has no authority")
     assert not lock.exists(), "do not create an abandoned lock after the wait already expired"
+
+
+# ----------------------------------------------------------------- issue 46: a restored thread's working directory
+
+FAKE_APP = r'''#!/usr/bin/env python3
+"""A scriptable ``codex app-server`` for the runner's pre-launch pass: it
+answers ``initialize``, and ``thread/resume {threadId, cwd}`` rewrites the
+thread's own row and appends one record to its rollout, as Codex 0.162.1
+does (an unknown thread is an error); ``FAKE_APP_HANG`` makes thread/resume
+never answer.  Its argv, cwd and every message go to ``FAKE_APP_LOG``."""
+import json, os, re, sqlite3, sys, time
+
+sqlite_home = None
+for arg in sys.argv[1:]:
+    m = re.match(r'sqlite_home="([^"]+)"', arg)
+    if m:
+        sqlite_home = m.group(1)
+log = open(os.environ["FAKE_APP_LOG"], "a")
+log.write(json.dumps({"argv": sys.argv[1:], "cwd": os.getcwd(), "sqlite_home": sqlite_home}) + "\n")
+log.flush()
+state = sqlite3.connect(os.path.join(sqlite_home, "state_5.sqlite"), isolation_level=None)
+
+
+def reply(message):
+    sys.stdout.write(json.dumps(message) + "\n")
+    sys.stdout.flush()
+
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    log.write(json.dumps(msg) + "\n")
+    log.flush()
+    if "id" not in msg:
+        continue
+    result = {}
+    if msg["method"] == "thread/resume":
+        if os.environ.get("FAKE_APP_HANG"):
+            time.sleep(3600)
+        params = msg["params"]
+        row = state.execute("select rollout_path from threads where id = ?", (params["threadId"],)).fetchone()
+        if row is None:
+            reply({"id": msg["id"], "error": {"code": -32600, "message": "no rollout found for thread id"}})
+            continue
+        state.execute("update threads set cwd = ? where id = ?", (params["cwd"], params["threadId"]))
+        with open(row[0], "ab") as rollout:
+            rollout.write((json.dumps({"type": "event_msg", "payload": {"type": "thread_settings_applied", "cwd": params["cwd"]}}) + "\n").encode())
+        result = {"thread": {"id": params["threadId"], "cwd": params["cwd"]}, "cwd": params["cwd"]}
+    reply({"id": msg["id"], "result": result})
+'''
+
+
+def test_clone_layout_recognises_only_a_clone_under_a_job_root(runner):
+    assert runner.clone_layout("/local/job222", "/local/job222/mirrors/tok") == ("/local", "job222", "mirrors/tok")
+    assert runner.clone_layout("/local/job222/", "/local/job222/mirrors/tok/sub") == ("/local", "job222", "mirrors/tok/sub")
+    for root, cwd, reason in [
+        ("/local/run222", "/local/run222/mirrors/tok", "not shaped <disk>/job<ID>"),
+        ("/local/job222", "/global/home/u/mirrors/tok", "not under the allocation-local root"),
+        ("/local/job222", "/local/job222/tmp", "not a clone under /local/job222/mirrors"),
+        ("/local/job222", "/local/job222", "not under the allocation-local root"),
+    ]:
+        disk, job, why = runner.clone_layout(root, cwd)
+        assert disk is None and job is None and reason in why, (root, cwd, why)
+
+
+def test_classify_cwds_moves_only_the_same_mirrors_clone_in_another_allocation(runner):
+    here = "/local/job222/mirrors/tok"
+    rows = [
+        ("t-old", "/local/job111/mirrors/tok", False),
+        ("t-sub", "/local/job111/mirrors/tok/src", False),
+        ("t-gone", "/local/job111/mirrors/tok/build", False),
+        ("t-older", "/local/job7/mirrors/tok/", False),            # any earlier allocation, trailing slash
+        ("t-here", here, False),
+        ("t-here-sub", here + "/src", False),
+        ("t-archived", "/local/job111/mirrors/tok", True),
+        ("t-goal", "/local/job111/mirrors/tok", False),
+        ("t-queued", "/local/job111/mirrors/tok", False),
+        ("t-tmp", "/local/job111/tmp", False),                     # another allocation, not the clone
+        ("t-sibling", "/local/job111/mirrors/tokens", False),      # another mirror whose name extends ours
+        ("t-other-mirror", "/local/job111/mirrors/other", False),
+        ("t-ext", "/global/home/u/project", False),
+        ("t-other-disk", "/scratch/job111/mirrors/tok", False),
+        ("t-relative", "mirrors/tok", False),
+    ]
+    pending = {"active_goals": [{"thread": "t-goal", "goal": "g"}], "queued": {"t-queued": 1}}
+    moves, kept, skipped = runner.classify_cwds(rows, "/local/job222", here, pending,
+                                                isdir=lambda p: p == here + "/src")
+    assert skipped is None
+    assert moves == [
+        {"thread": "t-old", "from": "/local/job111/mirrors/tok", "to": here, "fallback": False},
+        {"thread": "t-sub", "from": "/local/job111/mirrors/tok/src", "to": here + "/src", "fallback": False},
+        {"thread": "t-gone", "from": "/local/job111/mirrors/tok/build", "to": here, "fallback": True},
+        {"thread": "t-older", "from": "/local/job7/mirrors/tok/", "to": here, "fallback": False},
+    ]
+    assert {k["thread"]: k["reason"] for k in kept} == {
+        "t-here": "current", "t-here-sub": "current", "t-archived": "archived", "t-goal": "pending_work",
+        "t-queued": "pending_work", "t-tmp": "other_allocation_path", "t-sibling": "other_allocation_path",
+        "t-other-mirror": "other_allocation_path", "t-ext": "external", "t-other-disk": "external", "t-relative": "external"}
+    assert all(k["cwd"] == dict((r[0], r[1]) for r in rows)[k["thread"]] for k in kept), "kept cwds are reported as recorded"
+    assert runner.summarize_kept(kept) == "1 archived, 3 external, 3 other allocation path, 2 pending work"
+    # a launch outside the layout moves nothing at all
+    moves, kept, skipped = runner.classify_cwds(rows, "/local/job222", "/global/home/u/mirrors/tok", pending)
+    assert (moves, kept) == ([], []) and "not under the allocation-local root" in skipped
+
+
+def test_app_server_argv_must_carry_the_placeholder_exactly_once(runner):
+    good = json.dumps(["bash", "-lc", f"exec codex -c 'sqlite_home=\"{PLACEHOLDER}\"' app-server"])
+    assert runner.app_server_argv(good, PLACEHOLDER, "/local/job2/state/codex/ab/cd/db")[2] == (
+        "exec codex -c 'sqlite_home=\"/local/job2/state/codex/ab/cd/db\"' app-server")
+    for value, message in [
+        ("not json", "not JSON"),
+        ('{"a": 1}', "JSON list of strings"),
+        ("[]", "JSON list of strings"),
+        ('["codex", 1]', "JSON list of strings"),
+        ('["codex", "app-server"]', "placeholder exactly once"),
+        (json.dumps(["codex", "-c", f'sqlite_home="{PLACEHOLDER}"', "-c", f'x="{PLACEHOLDER}"', "app-server"]), "exactly once"),
+        (json.dumps(["codex", "-c", f'other="{PLACEHOLDER}"', "app-server"]), "exactly once"),
+    ]:
+        with pytest.raises(runner.Refused, match=message):
+            runner.app_server_argv(value, PLACEHOLDER, "/db")
+
+
+def _state_store(path, rows):
+    path.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path / "state_5.sqlite"))
+    conn.execute("create table threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL, cwd TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0)")
+    conn.executemany("insert into threads values (?, ?, ?, ?)", rows)
+    conn.commit()
+    conn.close()
+
+
+@needs_bwrap
+def test_place_thread_cwds_without_an_app_server_reports_and_moves_nothing(runner, tmp_path, monkeypatch):
+    clone = tmp_path / "disk" / "job2" / "mirrors" / "tok"
+    clone.mkdir(parents=True)
+    old = str(tmp_path / "disk" / "job1" / "mirrors" / "tok")
+    db = tmp_path / "db"
+    _state_store(db, [("t1", "/r1", old, 0), ("t2", "/r2", "/elsewhere", 0)])
+    monkeypatch.chdir(clone)
+    record = runner.place_thread_cwds(None, [], dict(os.environ), str(db), str(tmp_path / "disk" / "job2"),
+                                      {}, 5, str(tmp_path / "helper.log"))
+    assert record["moved"] == [] and "no --app-server command" in record["skipped"]
+    assert [f["thread"] for f in record["failed"]] == ["t1"] and record["failed"][0]["error"] == "not attempted"
+    assert record["kept"] == [{"thread": "t2", "cwd": "/elsewhere", "reason": "external"}]
+    assert runner.thread_cwds(str(db)) == [("t1", old, False), ("t2", "/elsewhere", False)], "nothing was written"
+    line = runner.describe_thread_cwds(record)
+    assert "1 thread(s) NOT moved" in line and "codex resume -C %s" % clone in line and "1 external" in line
+
+
+@needs_bwrap
+def test_a_hanging_app_server_is_stopped_within_its_bound_and_reported(runner, tmp_path, monkeypatch):
+    clone = tmp_path / "disk" / "job2" / "mirrors" / "tok"
+    clone.mkdir(parents=True)
+    old = str(tmp_path / "disk" / "job1" / "mirrors" / "tok")
+    db = tmp_path / "db"
+    rollout = tmp_path / "r1.jsonl"
+    rollout.write_text("{}\n")
+    _state_store(db, [("t1", str(rollout), old, 0)])
+    fake_app = tmp_path / "fake_app.py"
+    fake_app.write_text(FAKE_APP)
+    monkeypatch.chdir(clone)
+    env = dict(os.environ, FAKE_APP_LOG=str(tmp_path / "app.log"), FAKE_APP_HANG="1")
+    helper = runner.app_server_argv(json.dumps([sys.executable, str(fake_app), "-c", f'sqlite_home="{PLACEHOLDER}"', "app-server"]),
+                                    PLACEHOLDER, str(db))
+    started = time.monotonic()
+    record = runner.place_thread_cwds(helper, [], env, str(db), str(tmp_path / "disk" / "job2"), {}, 2.0, str(tmp_path / "helper.log"))
+    assert time.monotonic() - started < 15
+    assert record["moved"] == [] and record["failed"][0]["thread"] == "t1" and "no reply in time" in record["failed"][0]["error"]
+    assert record["helper"]["exit"] is not None and record["helper"]["exit"] != 0, "the hung server was signalled"
+    assert runner.thread_cwds(str(db)) == [("t1", old, False)]
+    assert "NOT moved" in runner.describe_thread_cwds(record)
+
+
+@needs_bwrap
+@pytest.mark.parametrize("python", INTERPRETERS)
+def test_a_restore_moves_threads_from_the_predecessors_clone_into_this_one(home, tmp_path, python):
+    """Issue 46, hermetic: run A works in ``disk/job111/mirrors/tok`` with
+    threads recorded there, in a subdirectory, outside the layout, in another
+    allocation path and archived; its clone is removed (the successor's node
+    never had it); run B restores in ``disk/job222/mirrors/tok`` with
+    ``--app-server``: before the child starts, the app-server moved exactly
+    the clone's threads (the child sees the new cwds), everything else is as
+    recorded and reported, and the rollout only grew."""
+    disk = (tmp_path / "disk").resolve()
+    clone_a, clone_b = disk / "job111" / "mirrors" / "tok", disk / "job222" / "mirrors" / "tok"
+    for d in (clone_a / "sub", clone_b / "sub"):
+        d.mkdir(parents=True)
+    external = (tmp_path / "elsewhere").resolve()
+    external.mkdir()
+    alloc_a, alloc_b = dict(home, local=disk / "job111"), dict(home, local=disk / "job222")
+    a = Managed(alloc_a, python, cwd=clone_a)
+    try:
+        a.cmd("turn 400")
+        sub_tid = a.cmd(f"thread {clone_a / 'sub'}").split()[1]
+        gone_tid = a.cmd(f"thread {clone_a / 'gone'}").split()[1]
+        ext_tid = a.cmd(f"thread {external}").split()[1]
+        tmp_tid = a.cmd(f"thread {disk / 'job111' / 'tmp'}").split()[1]
+        arch_tid = a.cmd(f"thread {clone_a} archived").split()[1]
+        a.wait_synced()
+        assert a.quit() == 0
+    finally:
+        a.close()
+    status_a = a.status()
+    gen = status_a["last_generation"]
+    assert gen["class"] == "sealed" and status_a.get("thread_cwd") is None, "a fresh run has nothing to move"
+    source = a.replica.read_bytes()
+    shutil.rmtree(clone_a)
+    fake_app = tmp_path / "fake_app.py"
+    fake_app.write_text(FAKE_APP)
+    app_log = tmp_path / "app.log"
+    helper = json.dumps([python, str(fake_app), "-c", f'sqlite_home="{PLACEHOLDER}"', "app-server"])
+    b = Managed(alloc_b, python, extra=("--restore", f"{a.run_dir.name}/{gen['name']}", "--app-server", helper),
+                cwd=clone_b, env={"FAKE_APP_LOG": str(app_log)})
+    try:
+        assert b.sees["cwds"] == {a.tid: str(clone_b), sub_tid: str(clone_b / "sub"), gone_tid: str(clone_b),
+                                  ext_tid: str(external), tmp_tid: str(disk / "job111" / "tmp"), arch_tid: str(clone_a)}
+        record = b.status()["thread_cwd"]
+        assert record["clone"] == str(clone_b) and record["skipped"] is None and record["failed"] == []
+        assert record["moved_count"] == 3 and sorted(m["thread"] for m in record["moved"]) == sorted([a.tid, sub_tid, gone_tid])
+        assert [m["fallback"] for m in record["moved"] if m["thread"] == gone_tid] == [True]
+        assert {k["thread"]: k["reason"] for k in record["kept"]} == {
+            ext_tid: "external", tmp_tid: "other_allocation_path", arch_tid: "archived"}
+        assert record["helper"]["exit"] == 0 and record["helper"]["error"] is None
+        log = [json.loads(line) for line in app_log.read_text().splitlines()]
+        assert log[0]["cwd"] == str(clone_b) and log[0]["sqlite_home"] == str(b.run_dir / "db")
+        assert [m.get("method") for m in log[1:]] == ["initialize", "initialized"] + ["thread/resume"] * 3
+        assert sorted(m["params"]["threadId"] for m in log[3:]) == sorted([a.tid, sub_tid, gone_tid])
+        placed = b.run_dir / "home" / "sessions" / a.relative
+        replica = b.durable_run / "rollouts" / f"{a.tid}.jsonl"
+        assert placed.read_bytes()[:len(source)] == source and placed.stat().st_size > len(source)
+
+        def grown(st):
+            entry = st.get("replica", {}).get("threads", {}).get(a.tid)
+            return entry is not None and entry["local_bytes"] == entry["replicated_bytes"] == placed.stat().st_size
+        _wait(alloc_b, grown, "the appended record to replicate")
+        assert replica.read_bytes() == placed.read_bytes(), "the appended record replicates as growth"
+        runner_log = (b.run_dir / "runner.log").read_text()
+        assert f"thread cwd: 3 thread(s) moved to {clone_b} through Codex thread/resume" in runner_log
+        assert "left as recorded: 1 archived, 1 external, 1 other allocation path" in runner_log
+        assert b.quit() == 0
+    finally:
+        b.close()

@@ -82,8 +82,14 @@ class FakeModel:
     empty by default, or one assistant message carrying ``reply_text``.
     """
 
-    def __init__(self, reply_text: str = "") -> None:
+    def __init__(self, reply_text: str = "", exec_on: Optional[str] = None, exec_cmd: str = "pwd") -> None:
         self.reply_text = reply_text
+        #: When the newest input item is a user message containing this text,
+        #: the reply is one ``exec_command`` call running ``exec_cmd`` instead;
+        #: Codex runs it in the turn's cwd and sends its output back in the
+        #: next request (``tool_outputs``), which gets the plain reply.
+        self.exec_on = exec_on
+        self.exec_cmd = exec_cmd
         self.requests: List[JsonDict] = []
         self.lock = threading.Lock()
         self._server: Optional[ThreadingHTTPServer] = None
@@ -146,10 +152,27 @@ class FakeModel:
         with self.lock:
             self.requests.append(body)
 
+    def _wants_exec(self) -> bool:
+        if not self.exec_on:
+            return False
+        with self.lock:
+            last = (self.requests[-1].get("input") or [None])[-1] if self.requests else None
+        if not isinstance(last, dict) or last.get("role") != "user":
+            return False
+        content = last.get("content")
+        texts = [content] if isinstance(content, str) else [str(p.get("text", "")) for p in content or [] if isinstance(p, dict)]
+        return any(self.exec_on in t for t in texts)
+
     def _sse(self) -> str:
         output: List[JsonDict] = []
         events: List[JsonDict] = []
-        if self.reply_text:
+        if self._wants_exec():
+            n = self.count()
+            item = {"type": "function_call", "id": f"fc_{n}", "call_id": f"call_{n}", "name": "exec_command",
+                    "arguments": json.dumps({"cmd": self.exec_cmd, "login": False}), "status": "completed"}
+            output.append(item)
+            events.append({"type": "response.output_item.done", "output_index": 0, "item": item})
+        elif self.reply_text:
             item = {"type": "message", "id": "msg_fake", "role": "assistant", "status": "completed",
                     "content": [{"type": "output_text", "text": self.reply_text, "annotations": []}]}
             output.append(item)
@@ -177,6 +200,21 @@ class FakeModel:
             if len(seen) >= n or time.monotonic() >= deadline:
                 return seen
             time.sleep(0.05)
+
+    @staticmethod
+    def tool_outputs(request: JsonDict) -> List[str]:
+        """The ``function_call_output`` texts a request carries back to the model."""
+        return [str(item.get("output")) for item in request.get("input") or []
+                if isinstance(item, dict) and item.get("type") == "function_call_output"]
+
+    @staticmethod
+    def environment_cwd(request: JsonDict) -> Optional[str]:
+        """The ``<cwd>`` of the newest ``<environment_context>`` in a request."""
+        found = None
+        for text in FakeModel.user_texts(request):
+            if "<environment_context>" in text and "<cwd>" in text:
+                found = text.split("<cwd>", 1)[1].split("</cwd>", 1)[0]
+        return found
 
     @staticmethod
     def user_texts(request: JsonDict) -> List[str]:

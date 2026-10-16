@@ -686,3 +686,95 @@ The evidence is in the tests named here and in the commit messages; where this s
 - Warm generations remain per-database consistent only; the gate for unattended continuation stands.
 - Archiving a managed thread. Measured for Slice 3: binding =archived_sessions= as a second bind does not help, because each =bwrap --bind= is its own vfsmount and =rename(2)= across two mounts fails with =EXDEV= even for sibling directories on one filesystem; an archive succeeds only when =sessions/= and =archived_sessions/= share one mount (the whole home in one bind, or no bind), where it is a same-inode rename to a flat =archived_sessions/<basename>= with =rollout_path= rewritten and =archived=1=, the file immutable while archived, =thread/resume= refused until =thread/unarchive= moves it back.
   Under the managed layout =thread/archive= therefore remains an atomic, state-consistent failure whose only side effect is the dropped writer lock (re-created on the next resume); supporting it needs a single-mount layout or an upstream copy-and-delete fallback, and a replicator that follows a thread across the two directories by thread id with the manifest recording =archived=, =archived_at= and the archived path.
+
+* Slice 4 record (2026-10-16)
+
+The first managed-state turnover pilot, what it found about a restored thread's working directory, how Codex 0.162.1 treats that directory, and the fix (issue 46).
+Where this section conflicts with the sections above, this section applies.
+
+** The pilot
+
+SuCoder =9765aa1=, Codex =0.162.1=, target =carleton-htc= (confined, local disk, managed state on), run by the runbook [[file:codex-local-state-pilot.org][codex-local-state-pilot.org]].
+The predecessor was job =40038236= on =n0059.savio4=; the successor job =40038356= on =n0037.savio4= restored the sealed parent generation =c8f875045e1f4dcab946c52544f9bca8/000004-99f8c69f= and reported =mode: restore=, =state: placed= and the parent's exact manifest hash.
+In the successor's TUI =/resume= listed the thread, and the model recalled two values from its history; the thread was present in the managed state database and absent from the shared one.
+Conversation continuity across allocations and nodes therefore passed.
+The resumed thread, however, kept the predecessor's working directory: =threads.cwd= and the TUI both named =/local/job40038236/mirrors/codex-state-pilot-20261016=, which does not exist on =n0037=, while the successor's clone was =/local/job40038356/mirrors/codex-state-pilot-20261016= (issue 46).
+The pilot ran no tool in that directory.
+Separately, =sucoder attach= reported the running successor as an ended allocation because its scheduler probe treated a failed SSH probe's empty output as absence (issue 47, fixed on its own branch).
+
+** Measurements (Codex 0.162.1)
+
+A scratch =CODEX_HOME= with an absolute =sqlite_home= and a loopback fake model that answers a marker message with an =exec_command= call running =pwd; ls=; one thread was started in the TUI in =OLD= (=<tmp>/job111/mirrors/tok=), =OLD= was then removed, and every cell below began from a pristine copy of the stores and the rollout, run from or toward =NEW= (=<tmp>/job222/mirrors/tok=).
+"Model cwd" is the =<cwd>= of the =<environment_context>= Codex sends; "tool" is where =pwd= ran.
+The measurement script, its JSON output and the TUI screens accompany issue 46.
+
+| Route | Model cwd | Tool | =threads.cwd= after | Rollout |
+|-------+-----------+------+---------------------+---------|
+| Seed: TUI started in =OLD= | =OLD= | - | =OLD= | =session_meta= and =turn_context= record =OLD= |
+| app-server started in =NEW=, =thread/resume= without =cwd= | =OLD= | fails: ENOENT | =OLD= | appends =turn_context= =OLD= |
+| TUI in =NEW=, =/resume=, cwd prompt default ("Use session directory") | =OLD= | fails: ENOENT | =OLD= | appends |
+| TUI in =NEW=, =/resume=, "Use current directory" | =NEW= | =NEW= | =NEW= | appends |
+| TUI in =NEW=, =/resume=, "Always use current directory" | =NEW= | =NEW= | =NEW= | appends; writes =[tui] resume_cwd = "current"= to =config.toml= |
+| TUI =codex resume ID -C NEW= | =NEW= | =NEW= | =NEW= | appends |
+| =codex exec resume ID= run from =NEW= | =NEW= | =NEW= | =NEW= | appends |
+| =codex exec -C NEW resume ID= | =NEW= | =NEW= | =NEW= | appends |
+| =codex exec resume ID -C NEW= | - | - | =OLD= | refused: =-C= must precede =resume= |
+| app-server =thread/resume= with =cwd= =NEW=, then a turn | =NEW= | =NEW= | =NEW= (already before the turn) | appends |
+| app-server =thread/resume= with =cwd= =NEW=, no turn, stopped | - | - | =NEW= | appends one =thread_settings_applied= record (2914 bytes) |
+| then a later =thread/resume= without =cwd=, from elsewhere | =NEW= | =NEW= | =NEW= | appends |
+| app-server =thread/resume= =cwd= =NEW= first, then TUI in =NEW= =/resume= | =NEW= | =NEW= | =NEW= | listed under the default filter, no cwd prompt |
+
+Findings:
+
+- A resumed thread works where =threads.cwd= says, not where the client was started: the app-server without =cwd= and the TUI's default answer both take the stored value, and with the predecessor's clone gone every tool call fails with ENOENT.
+  The TUI's prompt reads the stored value too ("Session = latest cwd recorded in the resumed session"); after the stored value changes, the TUI shows no prompt.
+  =codex exec resume= is the exception and takes the process cwd.
+- Every supported override (=thread/resume= with =cwd=, =-C= before the subcommand, the prompt's "current" answer, =tui.resume_cwd=) moves the thread: Codex rewrites =threads.cwd= itself and only appends to the rollout; the restored bytes stay a byte-identical prefix, so the replica and prefix-hash invariants of the restore hold.
+- =thread/resume= with =cwd= persists without a turn and without calling the model.
+- The TUI's =/resume= picker filters by cwd by default and hides a thread recorded elsewhere; =Right= switches the filter to All and =codex resume --all= lists it.
+  The pilot's "listed" therefore means the operator was on All.
+- =thread/resume= loads the configuration the thread was recorded with: a thread whose model provider was defined by a command-line =-c= fails with "Model provider ... not found" when resumed without that override.
+- Scripted TUI homes must set =check_for_update_on_startup = false=: an Enter sent while the TUI showed its update offer accepted "Update now" and ran =npm install -g @openai/codex=, replacing the shared nvm install with 0.163.0 at 12:39; a reinstall at 12:44 then failed with EBUSY on an NFS silly-renamed binary still open elsewhere and left =codex= absent from PATH until 0.162.1 was reinstalled at 12:47, with the two half-removed package directories moved aside as =lib/node_modules/.openai-codex*.broken-issue46-*= (removable once the process holding the old binary has exited).
+
+Lines 296-297 above stand: the move uses Codex's supported =thread/resume= with =cwd=, and no cwd or rollout-path column is written by SuCoder.
+
+** The fix
+
+- Launcher :: right after it inserts the =sqlite_home= placeholder, the launcher derives a bare app-server command from the launch's own argv (=codex_state.app_server_command=: the executable, the placeholder and the launch's =-c=, =--config=, =--enable= and =--disable= overrides, then =app-server=; subcommands, prompts and other flags stay out), wraps it with nvm like the launch command, and hands it to the runner as =--app-server JSON=, before the selection flags.
+- Runner :: on a restore or a reuse, after the stores are placed and before Codex starts, the runner reads =threads= read-only and classifies every row.
+  A thread moves only when its cwd is the same mirror's clone, or a directory inside it, in another allocation on the same local disk: =<disk>/job<N>/<rel>[/sub]=, where =<disk>/job<M>= is this launch's =SUCODER_LOCAL_ROOT= and =<rel>= (=mirrors/<token>=) is this launch's working directory relative to it; it moves to =<cwd>/sub=, or to the clone itself when that subdirectory does not exist here.
+  The layout rule needs no job id from the manifest, so a thread recorded two allocations back moves as well.
+  The runner then starts the app-server once under the same =bwrap= binds (the restored rollouts resolve only there) in its own working directory, sends =initialize=, then one =thread/resume {threadId, cwd}= per move, closes stdin and waits; the bound is =max(60 s, 2 x checkpoint_timeout)= (at most ten minutes), then SIGTERM and SIGKILL of its process group.
+  The outcome is read back from =threads= and recorded in =status.json= as =thread_cwd= (=clone=, =moved=, =failed= with the error, =kept= with reasons, =helper= with exit code and duration), printed on the startup line, and shown by =codex-state-status= as one =thread cwd:= line.
+  A missing, malformed or failing app-server never stops the launch: the history is intact, and the line names the remedy.
+- Policy for other cwds :: left exactly as recorded and reported by reason: =current= (already this clone), =archived= (=thread/resume= refuses it until unarchived), =pending_work= (an active goal or queued item would run the moment the thread resumes, unattended and possibly paid), =other_allocation_path= (another allocation's local disk outside this mirror's clone, such as its =tmp=), =external= (anything else, including another mirror's clone).
+  The app-server is not started when nothing moves.
+
+** Verification
+
+- =tests/test_codex_app_server.py::test_a_restored_thread_works_in_the_successors_clone= runs the real Codex under the runner as the pilot did: a two-turn thread in =disk/job111/mirrors/tok=, sealed; that allocation's disk removed; a restore under =disk/job222= from its clone with =--app-server=; =threads.cwd= is the new clone before any client resumes the thread; a plain =thread/resume= and one turn recall both earlier messages and run =pwd; ls= in the new clone (its marker file is listed); the restored rollout is a prefix of the resumed one.
+- The pilot's own path, scripted once on this node with the same fake model: the runner with =--restore= and =--app-server= in front of the real TUI in =disk/job222/mirrors/tok= (tmux); =/resume= listed the restored thread under the default directory filter, picking it raised no directory prompt, and one turn carried the earlier message and ran =pwd; ls= in the successor's clone.
+- =tests/test_codex_state_runner.py= covers the layout rule, every policy category, the =--app-server= refusals, a hanging app-server stopped within its bound, a missing one, and a hermetic restore under the current interpreter and Python 3.6 whose child sees the moved cwds and whose appended record replicates as growth.
+
+** Residuals
+
+- A pre-existing thread that is archived or holds pending work keeps its old cwd; resume it with "Use current directory" (or =codex resume ID -C <clone>=) after dealing with the goal or queued item.
+- A thread whose configuration came from a command-line override the successor's launch no longer passes fails to move and is reported; its history is unaffected.
+- The app-server pass loads the user's configuration as an interactive resume does, with whatever hooks and MCP servers it configures; the measurements used a configuration with neither.
+- An app-server killed at its bound may leave its thread writer lock in =thread-writer-locks=, which Codex re-creates on the next resume.
+
+** Laptop cross-node acceptance retest (2026-10-16)
+
+The repeat pilot tested PR 49 revision =c1a9ede=, tree =9cd6cbd4917896d770160b0ec549e4b3df48af37=, including the reviewed attach correction (PR 48) and CI environment-test correction (PR 50), against Codex =0.162.1=.
+Job =40042040= on =n0043.savio4= sealed =55e7b62108264abeacc6265572fa657d/000004-635d426a=; renewal restored that exact parent into job =40042340= on =n0059.savio4= and confirmed predecessor cancellation.
+The successor reported =mode: restore=, =state: placed=, =thread_cwd.moved_count: 1= and no failures; the cwd helper exited 0 after 10.5 seconds. Ownership was observed about 103 seconds after =/exit=.
+The pilot used two-minute private checkpoints, 50-minute allocations, a 49-minute drain threshold and ten-second checkpoint grace to accelerate the turnover; the normal target retained its ten-minute cadence. Both launches disabled the startup update prompt.
+
+Normal =sucoder attach= and =attach --via-srun= reached the successor's existing confined tmux session.
+=/resume= listed the restored thread without asking which directory to use. It recalled the earlier phrase =amber otter 942= and number =61=, then a real shell tool ran =pwd; head -n 1 README.org= and printed =/local/job40042340/mirrors/codex-state-retest-20261016= and the expected disposable-repository title.
+Read-only checks found the predecessor's clone absent on that node, the successor's clone present, the thread's stored cwd pointing at the successor, and no matching thread in the shared =~/.codex/state_5.sqlite=. The original 104823-byte rollout prefix remained identical.
+This satisfies the live cross-node cwd acceptance item for issue 46 and repeats the live attach acceptance for issue 47; the broader storage, fencing, upload-failure and overlapping-history gates remain separate.
+The evidence and operator result are recorded on [[https://github.com/ligon/sucoder/issues/46#issuecomment-6224938170][issue 46]]; raw JSON, renewal logs, the picker and tool output are retained in the private =codex-state-retest-20261016= pilot bundle on the laptop and Savio.
+
+GitHub Actions passed on Python 3.9 and 3.11 after the CI test fix. Locally, 407 combined CLI/remote/release tests and the three forced-color regressions passed.
+A full local run with umask 022 reported 1714 passed, six skipped and one pre-existing failure, =test_restore_places_a_sealed_generation_in_another_allocation[current]=, also reproduced on the unchanged baseline: its final holder scan counts the runner itself while a snapshot reader is still open and conservatively records a crash before that reader drains. The cwd change does not alter that shutdown path; the actual two-node pilot sealed normally.

@@ -65,6 +65,14 @@ What it does, per ``docs/codex-local-state.org`` ("Revision after Slice 0"):
   it was created for: same run, same local directory, same durable run,
   history and generation numbering continuing;
   local state wins over ``--restore``, ``--fresh`` starts a new run;
+- on a restore or reuse, before Codex starts, moves threads recorded in
+  another allocation's clone of this mirror (``<disk>/job<N>/mirrors/<token>``,
+  or a directory inside it) into this launch's working directory through
+  Codex's own ``thread/resume`` with ``cwd``, run once under the same binds
+  from the ``--app-server`` command; it never writes a row, leaves every other
+  cwd, archived threads and threads with pending work as recorded, reports
+  all of it in ``status.json["thread_cwd"]`` and the startup line, and a
+  failure there never stops the launch;
 - detects pending work (active goals in ``goals_1``, queued items in
   ``queue_1``) in the stores it is about to hand to Codex and records it; it
   never rewrites a row to hold it.  With ``--unattended`` it refuses instead
@@ -1517,6 +1525,316 @@ def bwrap_argv(binds, command):
         argv += ["--bind", local, target]
     argv += ["--unshare-user", "--uid", str(os.getuid()), "--gid", str(os.getgid()), "--die-with-parent", "--"]
     return argv + list(command)
+
+
+# ----------------------------------------------------------------- restored threads' working directory
+#
+# A thread records the cwd it was started in (``threads.cwd`` in state_5),
+# and Codex resumes it there: an app-server ``thread/resume`` without a cwd
+# and the TUI's ``/resume`` ("Use session directory", its default) both take
+# the stored value, which after a restore on another allocation names the
+# predecessor's clone under ``/local/job<OLD>``, absent on this node.  The
+# supported way to move it is ``thread/resume`` with ``cwd``: Codex rewrites
+# ``threads.cwd`` itself, appends a ``thread_settings_applied`` record to the
+# rollout (growth the replicator follows, never a rewrite) and later resumes
+# without a cwd keep the new value (docs/codex-local-state.org, "Slice 4
+# record").  No SQL here ever writes a row.
+
+JOB_DIR = re.compile(r"^job[0-9]+$")
+THREAD_ID = re.compile(r"^[0-9A-Za-z][0-9A-Za-z_-]{0,127}$")
+CWD_REPORT_LIMIT = 50
+
+
+def clone_layout(local_root, cwd):
+    """``(disk, job_dir, rel)`` when ``cwd`` is a working clone under the
+    allocation-local root ``<disk>/job<ID>`` (``rel`` = ``mirrors/<token>``
+    or deeper), else ``(None, None, reason)``: the local-tier layout
+    (``local_tier.work_path``) is what makes another allocation's clone of
+    the same mirror recognisable."""
+    root = os.path.normpath(local_root)
+    disk, job_dir = os.path.split(root)
+    if not JOB_DIR.match(job_dir) or not disk.startswith("/"):
+        return None, None, "the allocation-local root %s is not shaped <disk>/job<ID>" % local_root
+    cwd = os.path.normpath(cwd)
+    if not cwd.startswith(root + "/"):
+        return None, None, "this launch's working directory %s is not under the allocation-local root %s" % (cwd, root)
+    rel = cwd[len(root) + 1:]
+    if not rel.startswith("mirrors/") or rel == "mirrors/":
+        return None, None, "this launch's working directory %s is not a clone under %s/mirrors" % (cwd, root)
+    return disk, job_dir, rel
+
+
+def classify_cwds(rows, local_root, cwd, pending, isdir=os.path.isdir):
+    """Which restored threads to move into this launch's clone, and why the rest stay.
+
+    ``rows`` are ``(thread_id, cwd, archived)``.  A thread moves only when its
+    cwd is the same mirror's clone (or a directory inside it) in another
+    allocation on the same local disk, ``<disk>/job<N>/<rel>[/sub]``; it then
+    moves to ``<cwd>/sub``, or to the clone itself when that subdirectory does
+    not exist here.  Everything else is left exactly as recorded and reported:
+    ``current`` (already this clone), ``archived`` (``thread/resume`` refuses
+    it until unarchived), ``pending_work`` (an active goal or a queued item
+    would run the moment the thread resumes), ``other_allocation_path``
+    (another allocation's local disk outside the clone), ``external`` (any
+    other path, never touched).  Returns ``(moves, kept, skipped)``; with
+    ``skipped`` set nothing moves."""
+    disk, job_dir, rel = clone_layout(local_root, cwd)
+    if disk is None:
+        return [], [], rel
+    cwd = os.path.normpath(cwd)
+    pending = pending or {}
+    held = set(record.get("thread") for record in pending.get("active_goals") or [] if isinstance(record, dict))
+    held.update((pending.get("queued") or {}).keys())
+    moves, kept = [], []
+    for thread_id, recorded, archived in rows:
+        recorded = recorded if isinstance(recorded, str) else ""
+        path = os.path.normpath(recorded) if recorded.startswith("/") else recorded
+        if path == cwd or path.startswith(cwd + "/"):
+            kept.append({"thread": thread_id, "cwd": recorded, "reason": "current"})
+            continue
+        sub = None
+        other_job = False
+        if path.startswith(disk + "/"):
+            head, _, tail = path[len(disk) + 1:].partition("/")
+            if JOB_DIR.match(head) and head != job_dir:
+                other_job = True
+                if tail == rel:
+                    sub = ""
+                elif tail.startswith(rel + "/"):
+                    sub = tail[len(rel):]
+        if sub is None:
+            kept.append({"thread": thread_id, "cwd": recorded, "reason": "other_allocation_path" if other_job else "external"})
+        elif archived:
+            kept.append({"thread": thread_id, "cwd": recorded, "reason": "archived"})
+        elif thread_id in held:
+            kept.append({"thread": thread_id, "cwd": recorded, "reason": "pending_work"})
+        elif not THREAD_ID.match(thread_id or ""):
+            kept.append({"thread": thread_id, "cwd": recorded, "reason": "external"})
+        else:
+            target = cwd + sub
+            fallback = bool(sub) and not isdir(target)
+            moves.append({"thread": thread_id, "from": recorded, "to": cwd if fallback else target, "fallback": fallback})
+    return moves, kept, None
+
+
+def thread_cwds(db_dir):
+    """``(thread_id, cwd, archived)`` for every row of ``threads``, read-only;
+    None when the store or the column is absent (an older or fake schema)."""
+    path = os.path.join(db_dir, "state_5.sqlite")
+    if not os.path.isfile(path):
+        return None
+    conn = connect_readonly(path)
+    try:
+        columns = [row[1] for row in conn.execute("pragma table_info(threads)").fetchall()]
+        if "cwd" not in columns:
+            return None
+        archived = "archived" if "archived" in columns else "0"
+        return [(row[0], row[1], bool(row[2])) for row in
+                conn.execute("select id, cwd, %s from threads order by id" % archived).fetchall()]
+    finally:
+        conn.close()
+
+
+def app_server_argv(value, placeholder, db_dir):
+    """The ``--app-server`` JSON: a list of strings with the sqlite_home
+    placeholder in exactly one element, substituted with ``db_dir``.  Anything
+    else is refused here, because a Codex started without the managed
+    sqlite_home would open the shared stores."""
+    try:
+        argv = json.loads(value)
+    except ValueError as exc:
+        raise Refused("--app-server is not JSON: %s" % exc)
+    if not isinstance(argv, list) or not argv or not all(isinstance(arg, str) for arg in argv):
+        raise Refused("--app-server must be a JSON list of strings")
+    carriers = [arg for arg in argv if placeholder in arg]
+    if len(carriers) != 1 or "sqlite_home=" not in carriers[0]:
+        raise Refused("--app-server must carry the sqlite_home placeholder exactly once")
+    return substitute(argv, placeholder, db_dir)
+
+
+class AppServerClient(object):
+    """A minimal JSON-RPC client for ``codex app-server`` on stdio, every wait bounded."""
+
+    def __init__(self, argv, env, cwd, log_path):
+        self.log = open(log_path, "a")
+        self.proc = subprocess.Popen(argv, env=env, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                     stderr=self.log, universal_newlines=True, start_new_session=True)
+        self.replies = {}
+        self.cond = threading.Condition()
+        self.next_id = 0
+        self.reader = threading.Thread(target=self.read)
+        self.reader.daemon = True
+        self.reader.start()
+
+    def read(self):
+        for line in self.proc.stdout:
+            try:
+                message = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(message, dict) and "id" in message and ("result" in message or "error" in message):
+                with self.cond:
+                    self.replies[message["id"]] = message
+                    self.cond.notify_all()
+        with self.cond:
+            self.cond.notify_all()
+
+    def send(self, message):
+        self.proc.stdin.write(json.dumps(message) + "\n")
+        self.proc.stdin.flush()
+
+    def call(self, method, params, deadline):
+        self.next_id += 1
+        rid = self.next_id
+        self.send({"id": rid, "method": method, "params": params})
+        with self.cond:
+            while rid not in self.replies:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RuntimeError("%s: no reply in time" % method)
+                if self.proc.poll() is not None and not self.reader.is_alive():
+                    raise RuntimeError("%s: the app-server exited with %s" % (method, self.proc.returncode))
+                self.cond.wait(min(remaining, 0.2))
+            reply = self.replies.pop(rid)
+        if "error" in reply:
+            raise RuntimeError("%s: %s" % (method, json.dumps(reply["error"])[:300]))
+        return reply.get("result") if isinstance(reply.get("result"), dict) else {}
+
+    def close(self, deadline):
+        """Close stdin and wait; SIGTERM then SIGKILL the group past the deadline.  Returns the exit code."""
+        try:
+            self.proc.stdin.close()
+        except (OSError, ValueError):
+            pass
+        code = None
+        for signum in (None, signal.SIGTERM, signal.SIGKILL):
+            if signum is not None:
+                try:
+                    os.killpg(self.proc.pid, signum)
+                except OSError:
+                    pass
+            try:
+                code = self.proc.wait(timeout=max(3.0, deadline - time.monotonic()) if signum is None else 5)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        self.reader.join(timeout=2)
+        self.log.close()
+        return code
+
+
+def move_thread_cwds(argv, env, cwd, moves, timeout, log_path):
+    """``thread/resume {threadId, cwd}`` for each move through one app-server
+    (``argv`` already under bwrap), then stop it.  Returns ``(results, exit,
+    error)`` with ``results[thread] = reply cwd or an error text``."""
+    deadline = time.monotonic() + timeout
+    results = {}
+    error = None
+    try:
+        client = AppServerClient(argv, env, cwd, log_path)
+    except OSError as exc:
+        return results, None, "starting the app-server failed: %s: %s" % (type(exc).__name__, exc)
+    try:
+        client.call("initialize", {"clientInfo": {"name": "sucoder_codex_state_runner", "version": "1"},
+                                   "capabilities": {"experimentalApi": True}}, deadline)
+        client.send({"method": "initialized", "params": {}})
+        for move in moves:
+            try:
+                reply = client.call("thread/resume", {"threadId": move["thread"], "cwd": move["to"]}, deadline)
+                thread = reply.get("thread") if isinstance(reply.get("thread"), dict) else {}
+                results[move["thread"]] = reply.get("cwd") or thread.get("cwd")
+            except RuntimeError as exc:
+                results[move["thread"]] = "error: %s" % exc
+                if time.monotonic() >= deadline or client.proc.poll() is not None:
+                    raise
+    except (RuntimeError, OSError, ValueError) as exc:
+        error = str(exc)
+    code = client.close(deadline)
+    return results, code, error
+
+
+def summarize_kept(kept):
+    counts = {}
+    for record in kept:
+        if record["reason"] != "current":
+            counts[record["reason"]] = counts.get(record["reason"], 0) + 1
+    return ", ".join("%d %s" % (n, reason.replace("_", " ")) for reason, n in sorted(counts.items()))
+
+
+def thread_cwd_timeout(checkpoint_timeout):
+    """Seconds the pre-launch ``thread/resume`` pass may take: 60, or twice
+    the capture budget when that is longer, at most ten minutes."""
+    return min(600.0, max(60.0, 2.0 * checkpoint_timeout))
+
+
+def place_thread_cwds(helper, binds, env, db_dir, local_root, pending, timeout, log_path):
+    """Move restored threads recorded in another allocation's clone of this
+    mirror into this launch's clone, before Codex starts, through Codex's own
+    ``thread/resume``; a record for ``status.json``.  Never fatal: a failure is
+    reported and the launch goes on, the threads keeping their recorded cwd
+    (their history is intact; the TUI's "Use current directory" or
+    ``codex resume -C`` still moves them)."""
+    cwd = os.getcwd()
+    record = {"clone": cwd, "moved": [], "kept": [], "failed": [], "skipped": None}
+    try:
+        rows = thread_cwds(db_dir)
+    except sqlite3.Error as exc:
+        record["skipped"] = "reading threads failed: %s" % exc
+        return record
+    if rows is None:
+        record["skipped"] = "the state store records no thread cwd"
+        return record
+    moves, kept, skipped = classify_cwds(rows, os.path.realpath(local_root), cwd, pending)
+    record["kept"] = [k for k in kept if k["reason"] != "current"][:CWD_REPORT_LIMIT]
+    record["kept_counts"] = summarize_kept(kept)
+    record["current"] = len([k for k in kept if k["reason"] == "current"])
+    if skipped:
+        record["skipped"] = skipped
+        return record
+    if not moves:
+        return record
+    if helper is None or isinstance(helper, Refused):
+        record["skipped"] = ("%s, so %d thread(s) keep another allocation's cwd" %
+                             (helper if helper is not None else "no --app-server command was given", len(moves)))
+        record["failed"] = [dict(m, error="not attempted") for m in moves][:CWD_REPORT_LIMIT]
+        return record
+    started = time.monotonic()
+    results, code, error = move_thread_cwds(bwrap_argv(binds, helper), env, cwd, moves, timeout, log_path)
+    record["helper"] = {"exit": code, "seconds": round(time.monotonic() - started, 2), "error": error}
+    try:
+        now = dict((row[0], row[1]) for row in (thread_cwds(db_dir) or []))
+    except sqlite3.Error as exc:
+        now = {}
+        record["helper"]["error"] = (error + "; " if error else "") + "re-reading threads failed: %s" % exc
+    for move in moves:
+        stored = now.get(move["thread"])
+        if stored == move["to"]:
+            record["moved"].append(move)
+        else:
+            record["failed"].append(dict(move, stored=stored, error=results.get(move["thread"]) or error or "not moved"))
+    record["moved"] = record["moved"][:CWD_REPORT_LIMIT]
+    record["moved_count"] = len([m for m in moves if now.get(m["thread"]) == m["to"]])
+    record["failed"] = record["failed"][:CWD_REPORT_LIMIT]
+    return record
+
+
+def describe_thread_cwds(record):
+    """The startup line's account of ``place_thread_cwds``."""
+    if record.get("skipped") and not record.get("failed"):
+        return "thread cwd: unchanged (%s)" % record["skipped"]
+    parts = []
+    moved = record.get("moved_count", len(record.get("moved") or []))
+    if moved:
+        sources = sorted(set(m["from"] for m in record["moved"]))
+        parts.append("%d thread(s) moved to %s through Codex thread/resume (from %s)" % (moved, record["clone"], ", ".join(sources[:3])))
+    if record.get("failed"):
+        parts.append("%d thread(s) NOT moved and still recorded in another allocation's clone (%s); resume them with "
+                     "\"Use current directory\" or codex resume -C %s" % (len(record["failed"]), record.get("skipped") or
+                                                                         (record.get("helper") or {}).get("error") or "see runner.log",
+                                                                         record["clone"]))
+    if record.get("kept_counts"):
+        parts.append("left as recorded: %s" % record["kept_counts"])
+    return "thread cwd: " + ("; ".join(parts) if parts else "nothing to move")
 
 
 def descendants(root_pid):
@@ -3293,6 +3611,24 @@ def run(args):
                 "replicas and generations continue under %s; pending work: %s" % (run_id[:8], rollouts, local, durable_run, describe_pending(pending)))
         else:
             log("the managed Codex history for this mirror starts empty and is separate from the shared history in %s; rollout replicas and database generations go to %s" % (codex_home, durable))
+        if mode in ("restore", "reuse"):
+            # Before Codex owns the stores: threads recorded in another
+            # allocation's clone of this mirror move into this one through
+            # Codex's own thread/resume (docs/codex-local-state.org, "Slice 4
+            # record"); never fatal.
+            try:
+                helper = app_server_argv(args.app_server, args.placeholder, db_dir) if args.app_server else None
+            except Refused as exc:
+                helper = exc
+            try:
+                thread_cwd = place_thread_cwds(helper, binds, env, db_dir, local_root, pending,
+                                               thread_cwd_timeout(args.checkpoint_timeout), os.path.join(local, "thread-cwd.log"))
+            except Exception as exc:
+                log("placing the restored threads' cwd failed:\n%s" % traceback.format_exc())
+                thread_cwd = {"clone": os.getcwd(), "moved": [], "kept": [], "failed": [],
+                              "skipped": "placing the threads' cwd failed: %s: %s" % (type(exc).__name__, exc)}
+            status.note(thread_cwd=thread_cwd)
+            log(describe_thread_cwds(thread_cwd))
     except Blocked as exc:
         # The restore thread may still be mid-write: nothing is cleaned from here.
         log("restore blocked: %s" % exc)
@@ -3419,6 +3755,12 @@ def main(argv=None):
                         help="no interactive client is attached: a restore accepts sealed generations only, and both restore and reuse "
                              "refuse (exit 70) while the stores hold an active goal or queued items, because an active goal drives "
                              "unprompted model requests on resume and a queued item executes once; pause the goal in Codex first")
+    parser.add_argument("--app-server", default=None, metavar="JSON",
+                        help="the Codex app-server command as a JSON list of strings carrying the sqlite_home placeholder once; "
+                             "on a restore or reuse, before Codex starts, it is run under the same binds to move threads recorded "
+                             "in another allocation's clone of this mirror (<disk>/job<N>/mirrors/<token>[/sub]) into this "
+                             "launch's working directory with thread/resume; other cwds, archived threads and threads with "
+                             "pending work are left as recorded and reported (status.json thread_cwd)")
     parser.add_argument("command", nargs=argparse.REMAINDER, help="the Codex command, after --")
     args = parser.parse_args(argv)
     if args.command and args.command[0] == "--":
