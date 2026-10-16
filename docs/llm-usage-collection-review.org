@@ -36,6 +36,7 @@ The fixture's incidental repeated sequence in the switch/fallback scenario was a
 These are specification changes and offline acceptance inputs; no receiver, native adapter or calibrated estimator has been implemented or enabled.
 The human subsequently added Codex and its models to the required implementation scope.
 The [[file:llm-usage-implementation-charter.org][amended charter]] and collection specification now require Claude and Codex; the review acceptance above predates that extension, and implementation review must cover both adapters.
+The human also chose the existing llm-accounting repository/distribution for implementation; the charter now requires shared tooling and preservation of its existing interfaces.
 
 * What the reviewed collector distinguishes
 

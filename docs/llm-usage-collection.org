@@ -6,7 +6,7 @@
 
 * Deliverable and first useful result
 
-Build =llm-usage= as a small local collector and history reader around =llm-accounting=.
+Add =llm-usage= collection and history reading to the existing =llm-accounting= repository and distribution.
 Its first model-aware result combines a time series for each observed quota constraint with model-tagged usage from explicitly instrumented clients, linked to price and supply history.
 It distinguishes observed use of Claude and Codex models within that population, while preserving unknown external use and shared subscription metering weights.
 Neither completed-task labels nor a fitted demand model is required.
@@ -26,12 +26,15 @@ Planning prices per agent-hour continue to use declared workload assumptions unt
 
 =llm-accounting= continues to own provider requests, account binding, credential access, quota semantics and sanitized reports.
 =llm-usage= owns sampling, durable history, historical publication versions and temporal joins.
+These are module responsibilities within the existing project, with shared collection, validation, configuration and test tooling.
 It also owns allowlisted native metadata ingestion; these adapters do not issue inference or query provider quota endpoints.
 The rate estimator consumes exports and writes separately versioned estimates; it does not rewrite collected observations.
 SuCoder will emit small optional lifecycle and decision records instead of becoming another provider client.
 
-Use Python 3.11, matching the current accounting package.
-Keep the first implementation in an =llm-usage= package rather than coupling its storage to SuCoder's session files.
+Use the existing Python 3.11+ package and test infrastructure.
+Place usage modules in the proposed =src/llm_accounting/usage/= namespace and install an additional =llm-usage= command through the existing =pyproject.toml=.
+One installation provides both commands; preserve the current accounting CLI defaults and public report/library contracts while adding history-specific interfaces.
+Call shared accounting machinery directly, without a second distribution, self-dependency, vendored copy or subprocess scraping of the CLI.
 The following are proposed interfaces, not existing commands:
 
 - =llm-usage init= :: Create an owner-private dataset and record the route/source registry from an explicitly selected user configuration.
@@ -471,8 +474,8 @@ Before implementation is accepted, synthetic tests must additionally cover:
 
 * Implementation sequence and checks performed
 
-1. Restore/test passive combined Claude collection and document the accounting policy; this is a small prerequisite in llm-accounting, separate from history storage.
-2. Implement batch validation/storage, saved-report ingestion, manual price/supply publication and offline quota export; run the replay before enabling live collection.
+1. Restore/test passive combined Claude collection and document the accounting policy in the existing llm-accounting repository.
+2. Extend that package with batch validation/storage, saved-report ingestion, manual price/supply publication and offline quota export; run the replay before enabling live collection.
 3. Implement and fixture-verify both the Claude request and Codex completion adapters, model evidence and coverage contracts, deduplication and offline usage/model-rate-input exports; run the model-identification scenarios and added Codex acceptance cases.
 4. Add the bounded five-minute sampler, durable cooldowns, adapter setup and user-timer examples; pilot quota and model-tagged capture together on one selected owning host/population.
 5. Inspect source lag, quantization, gaps, model/binding coverage, storage size and capture overhead; record which rates are observed and which coefficients remain declared, unidentified or unavailable.
@@ -498,6 +501,7 @@ The historical review retains its baseline findings and records their dispositio
 Both original model-identification reviewers accepted the revised specification after rechecking its calibration and native-source contracts.
 The human subsequently required Codex and its models in the implementation scope; the [[file:llm-usage-implementation-charter.org][charter]] and this specification now require both harnesses.
 The earlier review acceptance and 14-scenario fixture do not establish verification of the added Codex adapter; its acceptance tests and native-build checks remain implementation work.
+The human also selected the existing llm-accounting repository/distribution for all implementation, reusing its collectors, contracts, CLI conventions and tests.
 The recheck clarified verified request-ID identity without a fabricated process epoch and required selected-emitter authentication on shared hosts.
 The 14 revised scenarios parse, and their original-artifact references, numerical counterexamples, selected aggregation expectations and tariff arithmetic pass the offline check below.
 These checks and review findings establish design consistency, not implementation verification.

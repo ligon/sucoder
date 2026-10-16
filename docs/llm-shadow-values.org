@@ -110,7 +110,8 @@ Its eventual replacement can estimate demand conditional on prices and revise th
 - =llm-shadow-price= :: Approximate resource valuations and a published collection of route-specific hourly shadow charges, using the supply schedule, price-conditional demand forecasts and explicit API fallback assumptions, with market clearing as the eventual objective.
 - SuCoder :: Supplies contemplated work and execution choices, consumes the published estimates, and delegates according to ability, resource cost and the human's timing decision.
 
-These are responsibility boundaries; separate repositories, processes and installation mechanisms remain implementation choices.
+These names describe responsibilities.
+Usage collection and account reporting will share the existing =llm-accounting= repository and distribution, reusing its collection, validation and test tooling.
 The first version needs neither fitted task-cost models nor exact task attribution.
 
 * Relative depletion and price adjustment
