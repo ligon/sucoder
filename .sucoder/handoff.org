@@ -1,10 +1,19 @@
-#+TITLE: Codex node-local state: Slices 3a gap, 3d and 3e runner half merged; 3e transfer records next
+#+TITLE: Codex node-local state: cross-node acceptance passed; PRs 48-50 merged; remaining recovery gates
 #+DATE: 2026-10-16
 #+STATUS: COMPLETE
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
-* Where things stand
+* Current status after laptop acceptance (2026-10-16)
+
+PRs 50 (CI test assumptions), 48 (attach and SSH routing) and 49 (restored cwd) are merged on GitHub; issues 46 and 47 are closed. Production code matches merge =3f9ed7f=.
+The laptop retest ran job =40042040= on =n0043.savio4=, then successor =40042340= on =n0059.savio4=: exact sealed-parent restore, one thread moved through Codex thread/resume, conversation recall, and a real =pwd; head -n 1 README.org= in the successor clone all passed. Both normal attach and --via-srun worked. Both pilot jobs sealed and were released.
+The measured result is in [[file:../docs/codex-local-state.org][the design's laptop acceptance retest record]] and on issue 46. The private =codex-state-retest-20261016= evidence bundle is on the laptop and Savio under =~/.sucoder/pilots/=.
+GitHub CI is green on Python 3.9/3.11; 407 portable local tests and three forced-color cases passed. A full local run with umask 022 had 1714 passes, six skips and one pre-existing shutdown-test failure also reproduced on the unchanged baseline: the final holder scan counts the runner's own in-flight snapshot reader and records a conservative crash generation. This needs follow-up; it was not introduced by the cwd fix and the actual cross-node pilot sealed normally.
+The broader storage/fencing, upload-failure, overlapping-history and replay gates remain open. Managed state is enabled for carleton-htc on the laptop, with its normal ten-minute checkpoint cadence; the disposable retest used a separate two-minute config.
+The earlier notes below are preserved as history; their pending-PR and pending-laptop-check statements have been superseded by this section.
+
+* Earlier slice handoff (before the pilot)
 
 =main= is =bb6242f=: the human's merge of Slices 0-3c (=3652d05=), then this session's three merges -- the 3a gap (=fdb2de4=, merged as =97912f4=), the Slice 3e runner half (=6fcf18e= by Codex, review fixes =178ee47= by Claude Opus, merged as =26d79c4=) and Slice 3d (=9f74f35=, =b1adb60=, Codex fix passes =355fad8= and =3ce05f3=, merged as =bb6242f=, the record conflict resolved by keeping the 3d entry before the 3e entry).
 Full suite on merged =main=: 1667 passed and one failure, =test_a_real_codex_thread_resumes_from_a_restored_generation=, which passes alone (3.9 s) and times out its 20 s status wait only when the shared node is loaded (load average 7 from other users' Codex processes during that run); the run before the 3d merge was 1525 passed, the 3d branch alone 1621 passed.
@@ -12,11 +21,25 @@ The design record (=docs/codex-local-state.org=, end of the Slice 2 record) carr
 Nothing is enabled on any real mirror; =slurm.codex_state= stays off by default.
 The feature branches are merged and published; their worktrees on this job's local disk were removed.
 
+* Pilot aftermath (2026-10-16, evening): three pull requests, a Codex install incident
+
+The human ran the Slice 4 pilot from the laptop (predecessor job 40038236 on n0059, successor 40038356 on n0037; recall across nodes passed) and filed issues 46 and 47 on GitHub.
+=main= on the shared mirror and on GitHub is the human's =9765aa1=; this session landed nothing on =main= after that, by the human's choice to review as pull requests:
+
+- PR 48 (issue 47, =attach= treated a failed SSH scheduler probe as an ended allocation) :: branch =fix/issue-47-attach-probe= (=6352658=, Codex): the probe follows the launcher's three-way rule, rides a login-node control jumped through the gateway, and the nested ProxyCommand keeps the jump mux's fallback options; 1711 passed.  Still to do from the laptop: a live =attach= against a running confined allocation.
+- PR 49 (issue 46, a restored thread kept the predecessor's cwd) :: branch =fix/issue-46-restore-cwd= (=16002d6=, Claude Opus): measured on Codex 0.162.1 that the default resume uses =threads.cwd= and that =thread/resume {cwd}= through the app-server moves it and sticks; the runner now runs a one-shot app-server before Codex starts and resumes each thread whose cwd was this mirror's clone in another allocation into the successor's clone (policy and residuals in the PR and the Slice 4 record); 1696 passed, a real-Codex regression for recall plus =pwd=.  Still to do from the laptop: repeat the cross-node turnover.
+- PR https://github.com/ligon/sucoder/pull/50 (CI) :: branch =fix/ci-test-environment-assumptions=: GitHub Actions has been red on =main= since =3652d05= on four environment-sensitive tests (Rich-rendered Typer errors under =GITHUB_ACTIONS=; no =bwrap= on the runner); test-only fix.  Merge it first, then re-run or rebase 48 and 49.
+
+Incident: during the issue 46 measurements a scripted TUI keystroke accepted Codex's "Update available" dialog and replaced the shared nvm Codex with 0.163.0 at 12:39 PDT; the agent reinstalled 0.162.1 by 12:47 (=codex --version= confirms).  Launches in that window may have failed or run 0.163.0; Codex's own run for issue 47 lost its sandbox helper then.  Two half-removed package directories remain under =~/.nvm/versions/node/v20.20.2/lib/node_modules/= as =.openai-codex*.broken-issue46-*=; delete them once nothing holds the old binary.  Scripted TUI runs now set =check_for_update_on_startup=false=.
+
+Next: merge the three PRs on GitHub (CI first), pull =main= to the mirror and the laptop, do the two live checks above, then the items below.
+
 * Next concrete actions
 
 1. Slice 3e's second half: transfer records (offer at a renew-mode seal, claim at restore binding the attempt, revoke before a drained runner restarts) and =--attempt= through =runner_command=; the 3d residuals recorded in the design (a startup-result file the runner writes independently of =latest-run=; the attempt id in sbatch =--comment= so a lost =sbatch= reply can be reconciled; a per-allocation tmux socket for two confined jobs of one mirror on one node; the two tolerated TUI attach races) and the 3e residuals (backfill of pins for children restored before 3e; a retirement cap per cycle); and make =test_a_real_codex_thread_resumes_from_a_restored_generation='s 20 s status wait longer or tunable (an environment variable the test reads), since it times out under node load twice in this session and passes alone.
-2. Slice 4 pilot on one disposable mirror: the human runs it from the laptop following [[file:../docs/codex-local-state-pilot.org][the pilot runbook]] (config block, three terminals, exit the TUI at the drain warning, verify =/resume= on the successor); the evidence it asks for goes into the design's Slice 4 record.
-3. Release this slice (job 40017774) with =sucoder release=: no work is pending here and every commit is published.
+2. The disposable cross-node pilot and cwd/attach acceptance retest are complete and recorded. Continue only the remaining Slice 4 production gates, including upload-failure behavior and independent overlapping histories.
+3. Pilot jobs 40042040 and 40042340 are cancelled. The existing SuCoder allocation 40017774 was left intact for its active agent; release it separately when that work ends.
+4. Investigate the pre-existing local final-seal test failure described above without weakening the stop proof for other processes holding stores.
 
 * Second confirmation and clean-up (2026-10-16, later)
 
