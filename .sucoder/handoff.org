@@ -1,76 +1,39 @@
-#+TITLE: Codex node-local state: Slice 2 reviewed; Slice 3a-3c landed; 3d-3e next
-#+DATE: 2026-10-15
-#+STATUS: COMPLETE
+#+TITLE: Codex node-local state: Slice 3d on a branch under review-fix; 3a gap and 3e runner half ready to merge
+#+DATE: 2026-10-16
+#+STATUS: IN PROGRESS
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
 * Where things stand
 
-Branch =main=, shared mirror in sync; the last commits are listed below.
-Slice 2 of [[file:../docs/codex-local-state.org][the design]] is implemented, reviewed and published; Slice 3's first three pieces (timer requests, a status surface, a drain request with a sealed acknowledgement) landed in the same session.
-The record for all of it is the "Slice 2 record" section at the end of the design, which governs where it conflicts with the sections above it.
-Nothing is enabled on any real mirror: =slurm.codex_state= is off by default.
-The human approved spending Codex credits for reviews and trials in this session ("codex credits are less expensive than claude credits").
-The earlier handoffs are preserved under [[file:handoffs/]]; the Slice 1 one is [[file:handoffs/2026-10-15-slice1-implemented.org]].
-A parallel session on =main= added tmux placement for =collaborate=, =agents-run= and =attach= (=sucoder/tmux_env.py=); its handoff is [[file:handoffs/2026-10-15-tmux-placement.org]], merged with this work.
+=main= is =3652d05= (the human's merge of Slices 0-3c) plus this note.
+Three branches hang off it, each published to the shared mirror by the post-commit hook:
 
-* Commits this session
+- =feat/codex-state-3a-gap= (=fdb2de4=) :: the unconfined deadline timer requests a capture from every managed run under the allocation's local root (closes the 3a gap).  Written by Codex under the Slice 2 runner, reviewed and trimmed by Sue; full suite on its worktree 1493 passed.  Ready to merge.
+- =feat/codex-state-3d= (=9f74f35= code, =95e38fc= record, =42d511a= mypy, =b1adb60= three review gaps) :: renewal with acknowledged handoff, launcher side; 64 cases in =tests/test_codex_state_renew.py=; full suite 1538 passed at =9f74f35=.  A read-only Codex review of =42d511a= found ten defects (the transcript of the review is not in the repo; the triage is in the brief named below); a Codex fix pass for seven of them is running in the worktree =/local/job40017774/mirrors/SuCoder-3d= as this note is written, with the brief at the scratchpad path =scratchpad/codex/brief-fix-3d.md= of this session (not durable; its content is summarised under "Open review findings" below).
+- =feat/codex-state-3e= (no commits yet) :: Slice 3e runner half -- =metadata.lock/= critical section, pins, lineages, retention with =retiring/= tombstones, storage status -- written by Codex (plain =codex exec=, 998 lines, 80 runner tests) as uncommitted changes in the worktree =/local/job40017774/mirrors/SuCoder-3e=; verified outside the sandbox: =/usr/bin/python3.6 -m py_compile= clean, =tests/test_codex_state_runner.py= 80 passed, full suite 1503 passed.  An independent review (Claude subagent) was running as this note is written.  Transfer records (offer/claim/revoke) are deliberately NOT in it: they are sequenced after 3d lands.
 
-- =270e9cb= :: launcher passes =--durable-root=, =--checkpoint-minutes=, =--checkpoint-timeout=, =--restore RUN/GENERATION= or =--fresh=; CLI flags =--codex-state-from= and =--codex-state-fresh=; durable-root refusals; README and example config.
-- =a95522e= :: the one baseline test failure fixed: Codex 0.162.1 carries its base instructions as the first developer message, not a top-level =instructions= field.
-- =96a77a4= :: =sucoder/codex_context.py= made Python-3.6-clean with a test running the staged form under =/usr/bin/python3.6=; written by Codex (gpt-6-astra) in an isolated worktree through the Slice 1 runner.
-- =f074a5d= :: runner replicates rollouts and publishes database generations (replicator and checkpointer threads, ordering invariant, =.incoming= publication, warm/sealed/crash).
-- =7f55e44=, =6acc531= :: real-Codex app-server harness (=tests/codex_app_server.py=) and the contracts measured on 0.162.1, including =thread/archive= failing with =EXDEV= under the bind layout.
-- =f92298b= :: runner restores a named generation, gates pending work (detect only), reuses a run in place.
-- =f99a246= :: design record and README.
-- =f6e460f=, =4298140=, =3ff3608=, =930eae4= :: four runner review-fix passes, each from a read-only Codex review or confirmation run through the managed runner itself; details in the design's Slice 2 record ("Review fixes").
-- =c2efc73=, =d0d469e= :: launcher review fixes: a history selection refused over a live session at the preflight and at every reuse decision; =//= roots; relative roots; exact =tmux has-session -t =name=.
-- =9765ca7=, =525e2be=, =61dae0e=, =e9a9c58=, =41fd29e=, =1e69fb8= :: docs for the above (=9c8bc7c= was a duplicate insertion, removed by =525e2be=); =d147480= corrects the spike record's rollout_path claim; =6e4efb2= the previous handoff.
-- =2d8c94a= :: the archive measurement across four bind layouts (binding =archived_sessions= does not help: =EXDEV= across separate vfsmounts).
-- =18a3cab= :: Slice 3a, the deadline timer touches the run's =checkpoint.request= at the 30/15/5-minute warnings. WARNING: this commit's =sucoder/mirror.py= does not import (IndentationError at line 3606) because it was staged from a region split of a file two agents had edited concurrently; =a9fa6ec= restores a consistent tree. Never check out =18a3cab= alone.
-- =a9fa6ec= :: Slice 3b, =sucoder codex-state-status <mirror> [--json]=. Its commit message was mangled by a shell quoting error; =54b1541= (empty) carries the intended message.
-- =a97674a= :: Slice 3c runner half, =drain.request= / =drain.ack= (see the design record); =7cdbca1=, =a5f4b89= docs.
-- =e25d592= :: Slice 3c launcher half: =sucoder release= drains the managed owner first (bounded; =--no-drain=, =--drain-timeout=) and =sucoder codex-state-drain= exposes the request; 54 tests. Its message was mangled like =a9fa6ec='s; the empty commit after it carries the intended one.
+The worktrees live on this job's local disk and vanish with it; only commits and the WIP snapshot survive (the 3e tree is uncommitted -- commit it first on a cold restart if the snapshot restored it).
 
-* Review loop and where it stopped
+* Open review findings on 3d (the fix pass in flight)
 
-Six read-only Codex sessions (gpt-6-astra, =codex exec --sandbox read-only=, each run under the newest committed runner) reviewed the runner halves and the launcher, then confirmed each fix pass; four runner passes and two launcher passes resulted, every finding confirmed against the code before it was fixed and every fix carrying a test.
-The launcher side closed with "all resolved, no new defects" (confirmation of =d0d469e=).
-The runner side closed with the fourth pass (=930eae4=): its confirmation found all three items resolved, judged the one deliberate choice (a deadline passing after the local activation landed lets the launch take the completed result) sound, and introduced no new defect.
-Accepted residuals, by design, documented in the design record: the prefix hash is computed from the local rollout and verified against the durable replica at restore; a thread whose rollout has 0 bytes passes without a replica; a restore fsyncs =rollouts/= after renaming, so the replicator may seed those lengths on first sight; the sync of the durable base's own parent is best effort; a blocked restore whose thread never wakes leaves files under an abandoned run id that no selector names; an explicit =launch_mode: exec= cannot intercept a duplicate tmux session; the unselected service script keeps tmux prefix matching.
+Fix: (F1) =_relaunch_session= must overlay the active =-T= target on the mirror's settings before choosing the managed path (as =cli.renew= does), else a named target takes the unmanaged path; (F2) the unmanaged relaunch on a confined target must pass =replace_job= so the predecessor is never adopted and cancelled as its own successor (the review's original P1, which the "no managed run" and lost branches fall into); (F3) the clean-exit token must require exit 0 and a seal published after the run's last =exited= transition (a run reused in place keeps an older seal in =last_generation=); (F4) readiness must verify the successor's runner and Codex pids are alive (=/proc/<pid>/stat= start time) and reject =reused_run=; (F7) a failed =scancel= of a failed successor must keep its id; (F8) promotion must keep the record in state =ready= until the predecessor's cancellation is confirmed, and =release= must cancel whichever job the record names; (F10) the recorded =remote_control= mode must be passed on relaunch.
+Recorded limitations, not fixed: a successor refusing before =latest-run= is bounded only by =submitted_at= (900 s); a lost =sbatch= reply cannot be reconciled to the attempt; two confined jobs of one mirror on one node share a tmux socket name.
 
-* Verification
+* Dogfooding findings (for the design record; the 3d entry carries them)
 
-- Full suite at =930eae4= in a clean worktree: 1348 passed, 0 failed, 209 s serially (1258 passed, 1 failed at =270e9cb= when the session began).
-- =tests/test_codex_state_runner.py=: 48 cases in 116 s; =tests/test_codex_state.py=: 118; =tests/test_codex_app_server.py=: 8 in 15 s; =tests/test_codex_context.py=: 14; all with bwrap, codex 0.162.1 and python3.6 present on this node, no skips.
-- =/usr/bin/python3.6 -m py_compile= and =mypy --follow-imports=silent= clean on the runner; mypy on cli/mirror/config/codex_state: 69 errors before and after (67 in =cli.py=, 2 in =mirror.py=, all pre-existing).
-- Real traffic under the Slice 2 runner: a nine-minute gpt-6-astra review session with tool calls, ten warm generations at the one-minute cadence (0.3-0.5 s each) and a sealed final one; the 1.1 MB rollout replicated with offset = replica = local size; 12 MB on Lustre for the run; the shared Codex home untouched (your own concurrent VS Code session on job 39919092 was the only writer there).
-- Real-model restore: that run's sealed generation =000011-4f2b18e6= (run =effbc1a47d31420f9fae86f24f840ddd=, scope =bb3bdae6...=, durable root =/global/scratch/fsa/fc_jevons/ligon/.sucoder-state-trial=) restored under =SUCODER_LOCAL_ROOT=/local/job39969504/trial-root2= (a simulated second allocation) with =codex exec resume <thread>=: 6 stores and the 1.1 MB rollout placed and verified, Codex resumed the thread under its original id and sent 123k tokens of restored history; the first attempt died on an upstream 503 (model at capacity; the final generation correctly came out =crash=), the retry reused the run in place (=--restore= ignored loudly), and gpt-6-astra answered from the restored history alone, naming the commit it had reviewed and its own top finding; sealed final generation on exit 0.
-
-* Limitations recorded
-
-- Generations accumulate unpruned until Slice 3 (about 1 MB per capture at these sizes; 6 per hour at the default cadence).
-- Archiving a managed thread fails with =EXDEV= until =archived_sessions= joins the bind set and replication, capture and restore cover it.
-- Python 3.6 nodes need the =sqlite3= CLI for backups; a node image without it fails every capture rather than copying files.
-- Lustre episode behaviour (a blocked replicator, a stuck capture, a stalled restore) is reasoned about and tested with permission faults, not reproduced.
+- Codex under the runner: placement, warm generations and the drain protocol work on this node; a Codex task that runs the runner's own tests is stopped by the outer runner's misplacement guard (nested fake-Codex stores read as misplaced state) and ends as a crash generation -- the guard working as designed.  Run such tasks with plain =codex exec=.
+- Codex cannot write =-o= outside its sandbox; have it write the report inside the worktree.
+- Lessons kept: one heredoc per shell command; never two agents in one file.
 
 * Next concrete actions
 
-1. Slice 3d, renewal with acknowledged handoff. Input token: a renew-mode =drain.ack= with its nonce, the sealed generation's name and manifest sha256, Codex's exit code, and =child {pid, starttime}= with =stopped: true=; the drained runner holds =startup.lock= until released (SIGTERM, or a release-mode drain with a new nonce). Work: a managed-owner descriptor in =RemoteSession= (Codex command and model, scope, run, requested parent generation, durable root identity); =_relaunch_session= retaining the old allocation and the pending-new attempt rather than clearing them; replacement authorization through =launch_agent= that excludes only the verified drained predecessor from =_launch_confined='s =squeue --name= adoption and keeps every other duplicate-job protection; readiness from the new run's =status.json= (=placed= with the expected parent) rather than =tmux has-session=; typed outcomes (ready, pending, retryable failure, lost or unknown owner); and the regression that drives the real confined adoption branch. Read the design's "Planned renewal sequence" and the review's lifecycle findings first; =sucoder codex-state-drain --mode renew --json= already produces the token.
-2. Slice 3e, fencing, lineage pins and retention under =DURABLE/metadata.lock/= (atomic mkdir), =lineages/=, =transfers/=, =pins/=; prune warm generations to the newest three and the newest sealed per run only under that protocol.
-3. Close the gap in 3a: an unconfined managed launch's timer is started from =cli._start_slurm_timer=, which does not know the scope, so its warnings fire without a request; pass =codex_state_scope= and =local_disk_root= there once cli.py learns the scope.
-4. Slice 4 pilot: enable =slurm.codex_state= on one disposable mirror first (the flag lives in the human's laptop config); the real default root =~/mirrors/.sucoder-state= was never created this session, so the pilot starts clean. Use =sucoder codex-state-status= to watch it and =sucoder release= (which drains first) to end it.
-5. Archiving a managed thread stays unsupported (atomic =EXDEV= failure, state consistent): binding =archived_sessions= does not help; it needs a single-mount layout or an upstream copy-and-delete fallback.
-6. Clean-up when the human agrees: the trial durable root =/global/scratch/fsa/fc_jevons/ligon/.sucoder-state-trial= (143 MB), the trial scopes under =/local/job39969504/state/codex/= and =/local/job39969504/trial-root2= (wiped with the job anyway).
+1. When the 3d fix pass reports: review its diff and =.codex-report.md=, run the full suite on the worktree, commit with the drafted =.codex-commit-msg.txt= plus attribution (=Co-Authored-By: GPT-6 Astra (codex-cli 0.162.1) <noreply@openai.com>=), fill the =<sha>= in the design record's "Review fixes" paragraph, then a read-only Codex confirmation review as in Slice 2.
+2. When the 3e review reports: a fix pass (Opus 5.5 or Codex) in the 3e worktree, runner files only; verify (py_compile 3.6, runner tests, full suite); commit on =feat/codex-state-3e= with Codex attribution; record Slice 3e in the design.
+3. Merge order: =main= <- =feat/codex-state-3a-gap= <- =feat/codex-state-3d= <- =feat/codex-state-3e= (3a and 3d both touch =cli.py= in disjoint hunks; 3e touches the runner only); full suite on merged =main= before the hook publishes anything further; mypy against the baseline (72 on cli/mirror/config/codex_state, all pre-existing).
+4. Then Slice 3e's second half: transfer records (offer at a renew-mode seal, claim at restore binding the attempt, revoke before a drained runner restarts), and wiring =--attempt= through =runner_command=.
+5. Slice 4 pilot, unchanged from the previous handoff.
+6. Clean-up when the human agrees: the trial durable root =/global/scratch/fsa/fc_jevons/ligon/.sucoder-state-trial= (now ~160 MB with this session's four dogfood runs).
+7. This slice (job 40017774) holds the worktrees; release with =sucoder release= once the three branches are merged, or earlier if the allowance runs out (the branches are published; only the uncommitted 3e tree is at risk -- the WIP snapshot covers the clone, not the worktrees, so commit 3e first).
 
-* Operational notes
-
-- =codex exec= works under the runner with the human's ChatGPT login; =--sandbox read-only= for reviews, =workspace-write= for edits in an isolated worktree; =codex exec review --uncommitted= rejects a custom prompt, so use plain =exec= and have it read =git diff= itself.
-- Use =fc_jevons= for burst jobs; the full suite needs no burst (81 s serially here).
-- GitNexus cannot load on this node image (=libssl.so.3=); callers are grepped by hand and listed in commit messages.
-- =~/.sucoder/bulletin.org= still does not exist on this host.
-- Lesson from this session: never let two agents edit one file concurrently and then split the result by region; stage whole files, or serialize the agents. =18a3cab= is what the split produced.
-- Second lesson: never nest a here-document inside a =git commit -F -= here-document in one shell command; bash assigns the bodies in order and the commit message swallows the script (=a9fa6ec=, =e25d592=). One here-document per command.
-- This slice (job 39969504) is held with no work pending; release with =sucoder release= unless Slice 3d starts in this session.
-
-Recorded by Sue.
+Recorded by Sue (Claude Fable 5.1).
