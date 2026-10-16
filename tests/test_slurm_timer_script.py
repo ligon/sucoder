@@ -811,6 +811,106 @@ def test_warnings_without_a_managed_run_leave_the_local_root_untouched(tmp_path)
     assert result.stdout.count("could not request a Codex state checkpoint") == 1
 
 
+def test_all_scopes_needs_the_local_root_and_excludes_a_specific_scope():
+    for root in (None, ""):
+        with pytest.raises(ValueError, match="local_disk_root"):
+            _render(codex_state_all_scopes=True, local_disk_root=root)
+    with pytest.raises(ValueError, match="not both"):
+        _managed(codex_state_all_scopes=True)
+    assert _render(local_disk_root="/local") == _render()
+
+
+@_bash
+@pytest.mark.parametrize("job_id", [None, 42])
+def test_all_scopes_shell_syntax_and_root_quoting(tmp_path, job_id):
+    root = tmp_path / "local ' $HOME"
+    script = _render(job_id=job_id, codex_state_all_scopes=True, local_disk_root=str(root) + "/")
+    result = _bash_n(script, tmp_path)
+    assert result.returncode == 0, result.stderr
+    assignment = next(ln for ln in script.splitlines() if ln.startswith("CODEX_STATE_ROOT="))
+    result = subprocess.run(
+        ["sh", "-c", 'SLURM_JOB_ID=42\n' + assignment + '\nprintf "%s" "$CODEX_STATE_ROOT"'],
+        capture_output=True, text=True, check=True,
+    )
+    assert result.stdout == str(root / "job42" / "state" / "codex")
+    assert script.count("        snapshot_wip\n        request_codex_checkpoint\n") == 3
+    assert script.count("request_codex_checkpoint") == 4
+    assert not re.search(r"@[A-Z_]+@", script)
+
+
+@_bash
+@pytest.mark.parametrize("time_left", ["25:00", "12:00", "4:00", "2:00:00"])
+def test_all_scopes_warnings_request_only_each_scopes_latest_run(tmp_path, time_left):
+    root = tmp_path / "local ' $HOME"
+    expected = set()
+    for job in (42, 43):
+        for scope in (SCOPE, SCOPE[::-1]):
+            state = root / f"job{job}" / "state" / "codex" / scope
+            for run in (RUN, RUN[::-1]):
+                (state / run).mkdir(parents=True)
+            (state / "latest-run").write_text(RUN + "\n")
+            if job == 42 and time_left != "2:00:00":
+                expected.add(str((state / RUN / "checkpoint.request").relative_to(root)))
+    before = _tree(root)
+    msgs, result = _drive_run(tmp_path, [time_left], snapshot_minutes=1,
+                              codex_state_all_scopes=True, local_disk_root=str(root))
+    assert len([m for m in msgs if "min left" in m]) == bool(expected)
+    assert _tree(root) == before | expected
+    assert result.stdout.count("requested a Codex state checkpoint") == bool(expected)
+
+
+@_bash
+@pytest.mark.parametrize("existing", [None, "job42", "job42/state/codex", f"job42/state/codex/{SCOPE}"])
+def test_all_scopes_without_managed_runs_creates_nothing(tmp_path, existing):
+    root = tmp_path / "local"
+    if existing is not None:
+        (root / existing).mkdir(parents=True)
+    before = _tree(root)
+    msgs, result = _drive_run(tmp_path, ["25:00", "12:00", "4:00"],
+                              codex_state_all_scopes=True, local_disk_root=str(root))
+    assert len([m for m in msgs if "min left" in m]) == 3
+    assert _tree(root) == before
+    assert root.exists() == (existing is not None)
+    assert "Codex state checkpoint" not in result.stdout
+
+
+@pytest.mark.parametrize("shell", ["sh", "bash"])
+def test_all_scopes_skips_bad_runs_and_failed_requests_and_repeats(tmp_path, shell):
+    root = tmp_path / "local"
+    states = root / "job42" / "state" / "codex"
+    bad = ("", "../escape", RUN[:-1], RUN + "0", RUN.upper(), RUN + "\nextra", RUN[::-1])
+    for i, latest in enumerate(bad):
+        state = states / f"{i:064x}"
+        (state / RUN).mkdir(parents=True)
+        (state / "latest-run").write_text(latest + "\n")
+    # A directory at the request path forces a write failure even as root.
+    failed = states / ("0" * 63 + "f")
+    (failed / RUN / "checkpoint.request").mkdir(parents=True)
+    (failed / "latest-run").write_text(RUN + "\n")
+    good = states / SCOPE
+    (good / RUN).mkdir(parents=True)
+    (good / "latest-run").write_text(RUN + "\n")
+    request = good / RUN / "checkpoint.request"
+    before = _tree(root)
+    rendered = _render(job_id=42, codex_state_all_scopes=True, local_disk_root=str(root))
+    assignment = next(ln for ln in rendered.splitlines() if ln.startswith("CODEX_STATE_ROOT="))
+    helper = rendered[rendered.index("_codex_request_said_ok=0"):rendered.index("\n\nwarn()")]
+    # Consume the first request as the runner does; the next warning must
+    # request again even though its success message has already been logged.
+    result = subprocess.run(
+        [shell, "-c", "set -eu\n" + assignment + "\n" + helper
+         + "\nrequest_codex_checkpoint\n"
+         + f"rm {shlex.quote(str(request))}\n"
+         + "request_codex_checkpoint\nrequest_codex_checkpoint\n"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0 and result.stderr == ""
+    assert _tree(root) == before | {str(request.relative_to(root))}
+    assert request.is_file() and request.stat().st_size == 0
+    assert result.stdout.count("requested a Codex state checkpoint") == 1
+    assert result.stdout.count("could not request a Codex state checkpoint") == 1
+
+
 # -- the launcher hands the scope to the timer for a managed Codex launch ----
 
 def _confined_launch(tmp_path, monkeypatch, command):

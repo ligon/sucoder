@@ -2460,12 +2460,14 @@ def test_build_executor_warns_once_about_retired_local_mirror_root(tmp_path, mon
     assert RemoteSession.load(settings.name, target_name=None).remote_mirror_root == str(settings.remote.mirror_root)
 
 
-def test_start_slurm_timer_snapshots_the_local_clone_and_retires_the_old_timer(monkeypatch):
+@pytest.mark.parametrize("local_disk_root", [None, "", "/local"])
+def test_start_slurm_timer_snapshots_the_local_clone_and_retires_the_old_timer(monkeypatch, local_disk_root):
     from sucoder import slurm_timer
-    rendered, ssh_cmds = [], []
+    rendered, ssh_cmds, builder_args = [], [], []
     real_build = slurm_timer.build_timer_script
 
     def capture(**kw):
+        builder_args.append(kw)
         script = real_build(**kw)
         rendered.append(script)
         return script
@@ -2479,9 +2481,17 @@ def test_start_slurm_timer_snapshots_the_local_clone_and_retires_the_old_timer(m
     monkeypatch.setattr(subprocess, "run", fake_run)
     session = SimpleNamespace(slurm_job_id=7, mirror_name="sample", compute_node="n0")
     control = SimpleNamespace(ssh_options=lambda **kw: [])
-    cli._start_slurm_timer(session, control, control, mock.Mock(), local_disk_root="/local")
+    cli._start_slurm_timer(session, control, control, mock.Mock(), local_disk_root=local_disk_root)
 
-    assert "SNAPSHOT_DIR=/local/job7/mirrors/sample\n" in rendered[0]
+    assert builder_args[0]["local_disk_root"] == local_disk_root
+    assert builder_args[0]["codex_state_all_scopes"] == bool(local_disk_root)
+    if local_disk_root:
+        assert "SNAPSHOT_DIR=/local/job7/mirrors/sample\n" in rendered[0]
+        assert "CODEX_STATE_ROOT=/local/job7/state/codex\n" in rendered[0]
+        assert "request_codex_checkpoint() {" in rendered[0]
+    else:
+        assert "SNAPSHOT_DIR=''\n" in rendered[0]
+        assert "request_codex_checkpoint" not in rendered[0]
     write_cmd, start_cmd = ssh_cmds[-2][-1], ssh_cmds[-1][-1]
     assert "mktemp" in write_cmd and "mv" in write_cmd
     assert "slurm-timer-" in start_cmd and "--ensure" in start_cmd

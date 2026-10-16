@@ -29,6 +29,9 @@ itself: the runner polls that file, consumes it and runs one
 single-flight backup to the durable root ("Scheduling and outages": the
 timer enqueues through a nonblocking local control path and does no
 backup, checksumming or upload inline).
+``codex_state_all_scopes`` requests each scope's latest run under the
+allocation's local root, for unconfined timers started before the scope
+is known.
 
 It lives in its own module because ``cli`` imports ``mirror``, not the
 reverse, so a builder both can share cannot live in either.  The script
@@ -190,6 +193,41 @@ request_codex_checkpoint() {
 }
 '''.strip("\n")
 
+# The unconfined timer starts before the manager knows the scope.  A
+# deadline concerns the whole allocation, so ask every scope's latest
+# run.  Missing/invalid records are skipped; a failed request must not
+# prevent another scope's request.  Like the scope-specific helper, this
+# creates only checkpoint.request and logs each outcome at most once.
+# Isolate the redirection in a subshell: POSIX shells may exit on a
+# special builtin's redirection failure even inside an if statement.
+CODEX_CHECKPOINT_ALL_SCOPES_SH = r'''
+_codex_request_said_ok=0
+_codex_request_said_fail=0
+request_codex_checkpoint() {
+    for _codex_latest in "$CODEX_STATE_ROOT"/*/latest-run; do
+        [ -f "$_codex_latest" ] || continue
+        _codex_dir=${_codex_latest%/latest-run}
+        _codex_run=$(cat "$_codex_latest" 2>/dev/null) || continue
+        case "$_codex_run" in
+            ''|*[!0-9a-f]*) continue ;;
+        esac
+        [ "${#_codex_run}" -eq 32 ] || continue
+        [ -d "$_codex_dir/$_codex_run" ] || continue
+        _codex_request="$_codex_dir/$_codex_run/checkpoint.request"
+        if ( : > "$_codex_request" ) 2>/dev/null; then
+            if [ "$_codex_request_said_ok" -eq 0 ]; then
+                _codex_request_said_ok=1
+                echo "sucoder timer: requested a Codex state checkpoint ($_codex_request); later requests are not logged."
+            fi
+        elif [ "$_codex_request_said_fail" -eq 0 ]; then
+            _codex_request_said_fail=1
+            echo "sucoder timer: could not request a Codex state checkpoint: could not touch $_codex_request"
+        fi
+    done
+    return 0
+}
+'''.strip("\n")
+
 # State files are per mirror: several confined mirrors share one $HOME,
 # and a second timer's startup ``rm -f`` must not clear the first's
 # markers.  The un-suffixed ``slurm-deadline.warn`` is still written for
@@ -201,9 +239,10 @@ request_codex_checkpoint() {
 # one to poll.
 #
 # The three ``@CODEX_*@`` tokens render as nothing unless a managed Codex
-# scope is given.  Each sits at the end of an existing line and its
-# replacement starts with the newline(s) it needs, so a script rendered
-# without a scope is byte-identical to one rendered before the feature.
+# scope or the all-scopes mode is given.  Each sits at the end of an
+# existing line and its replacement starts with the newline(s) it needs,
+# so a script rendered without either mode is byte-identical to one
+# rendered before the feature.
 _TEMPLATE = r'''#!/bin/bash
 # sucoder SLURM deadline timer + WIP snapshotter (generated; do not edit).
 set -u
@@ -336,6 +375,7 @@ def build_timer_script(
     timer_scope: Optional[str] = None,
     codex_state_scope: Optional[str] = None,
     local_disk_root: Optional[str] = None,
+    codex_state_all_scopes: bool = False,
 ) -> str:
     """Render the timer script.
 
@@ -363,8 +403,11 @@ def build_timer_script(
     ``<root>/job<ID>/state/codex/<scope>/`` (the same ``SUCODER_LOCAL_ROOT``
     it is given, rendered by :func:`local_tier.local_root_shell` with the
     literal or runtime job id), and the periodic cadence stays the
-    runner's own.  Without a scope the rendered script is byte-identical
-    to one without the feature.
+    runner's own.  Alternatively, ``codex_state_all_scopes`` requests each
+    scope's latest run under that allocation's local root, without needing
+    the scope before the manager exists.  Give at most one request mode;
+    both need ``local_disk_root``.  Without either mode the rendered script
+    is byte-identical to one without the feature.
 
     Every user-controlled value is shell-quoted.  The only unquoted
     substitutions are the ``$SLURM_JOB_ID`` reference itself and a
@@ -374,6 +417,8 @@ def build_timer_script(
         raise ValueError("snapshot_minutes must be >= 0")
     if snapshot_dir is not None and snapshot_dir_shell is not None:
         raise ValueError("give snapshot_dir or snapshot_dir_shell, not both")
+    if codex_state_scope is not None and codex_state_all_scopes:
+        raise ValueError("give codex_state_scope or codex_state_all_scopes, not both")
     codex_vars = codex_fn = codex_call = ""
     if codex_state_scope is not None:
         if not _SCOPE_DIGEST.fullmatch(codex_state_scope):
@@ -389,6 +434,13 @@ def build_timer_script(
         )
         codex_vars = f"\nCODEX_STATE_DIR={state_dir}"
         codex_fn = "\n\n" + CODEX_CHECKPOINT_SH
+        codex_call = "\n        request_codex_checkpoint"
+    elif codex_state_all_scopes:
+        if not local_disk_root:
+            raise ValueError("codex_state_all_scopes needs local_disk_root (managed state is local-disk only)")
+        state_root = f"{local_root_shell(local_disk_root, job_id)}/state/codex"
+        codex_vars = f"\nCODEX_STATE_ROOT={state_root}"
+        codex_fn = "\n\n" + CODEX_CHECKPOINT_ALL_SCOPES_SH
         codex_call = "\n        request_codex_checkpoint"
     snapshot_word = (
         snapshot_dir_shell if snapshot_dir_shell is not None

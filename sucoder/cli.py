@@ -1279,12 +1279,16 @@ def _start_slurm_timer(
     # It may not exist yet when the timer starts -- snapshot_wip skips a
     # missing directory.
     snapshot_dir = work_path(local_disk_root, token, job_id) if local_disk_root else None
+    # The managed-state scope is decided later by the manager.  Deadline
+    # warnings concern every managed run under this allocation's root.
     timer_script = build_timer_script(
         mirror_token=token,
         tmux_session=tmux_session,
         job_id=job_id,
         snapshot_dir=snapshot_dir,
         timer_scope=timer_identity(session.mirror_name, getattr(session, "target_name", None)),
+        local_disk_root=local_disk_root,
+        codex_state_all_scopes=bool(local_disk_root),
     )
     # Immutable script names: staging never truncates a running shell's file.
     digest = hashlib.sha256(timer_script.encode()).hexdigest()[:24]
