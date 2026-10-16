@@ -3389,12 +3389,12 @@ class MirrorManager:
         # never silently leaked.  A replacement rides in the attempt record
         # (the old allocation stays the session's job until the successor
         # is ready); without a record the launch is recorded as any other.
-        replacing = replace_job is not None and isinstance(sess.replacement, dict)
-        if replacing:
-            sess.replacement = dict(
-                sess.replacement, state="submitted", new_job=job_id, new_node=None,
-                updated_at=_utc_now_iso(),
-            )
+        record: Optional[Dict[str, Any]] = (
+            dict(sess.replacement) if replace_job is not None and isinstance(sess.replacement, dict) else None
+        )
+        if record is not None:
+            record.update(state="submitted", new_job=job_id, new_node=None, updated_at=_utc_now_iso())
+            sess.replacement = record
         else:
             sess.slurm_job_id = job_id
             sess.compute_node = None
@@ -3414,8 +3414,9 @@ class MirrorManager:
             "Submitted confined SLURM job %s; waiting for RUNNING...", job_id,
         )
         node = self._poll_confined_node(job_id, time_request=slurm.time)
-        if replacing:
-            sess.replacement = dict(sess.replacement, new_node=node, updated_at=_utc_now_iso())
+        if record is not None:
+            record.update(new_node=node, updated_at=_utc_now_iso())
+            sess.replacement = dict(record)
         else:
             sess.compute_node = node
         sess.save()
