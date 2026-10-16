@@ -586,7 +586,7 @@ def test_resolve_mirror_name_single(tmp_path, monkeypatch):
     # the important thing is it gets past _resolve_mirror_name.
     result = runner.invoke(cli.app, ["status"])
     # Should not fail due to "specify one of" (mirror resolution worked).
-    assert "specify one of" not in (result.stdout + (result.output or ""))
+    assert "specify one of" not in _plain_output(result)
 
 
 def test_resolve_mirror_name_explicit(tmp_path, monkeypatch):
@@ -601,7 +601,7 @@ def test_resolve_mirror_name_explicit(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
 
     result = runner.invoke(cli.app, ["status", "myrepo"])
-    assert "specify one of" not in (result.stdout + (result.output or ""))
+    assert "specify one of" not in _plain_output(result)
 
 
 # ---------------------------------------------------------------------------
@@ -657,7 +657,7 @@ def test_resolve_mirror_name_matches_configured_canonical(tmp_path, monkeypatch)
     # Use status command; it will fail at MirrorManager level but should
     # get past _resolve_mirror_name without "specify one of".
     result = runner.invoke(cli.app, ["status"])
-    assert "specify one of" not in (result.stdout + (result.output or ""))
+    assert "specify one of" not in _plain_output(result)
 
 
 def test_resolve_mirror_name_creates_ephemeral_for_unconfigured_repo(tmp_path, monkeypatch):
@@ -680,7 +680,7 @@ def test_resolve_mirror_name_creates_ephemeral_for_unconfigured_repo(tmp_path, m
 
     result = runner.invoke(cli.app, ["status"])
     # Should not hit the "Multiple mirrors" error.
-    assert "specify one of" not in (result.stdout + (result.output or ""))
+    assert "specify one of" not in _plain_output(result)
     # The ephemeral mirror should have been injected.
     assert "VESDemand" in cfg.mirrors
 
@@ -704,7 +704,7 @@ def test_resolve_mirror_name_not_in_git_repo(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_detect_git_toplevel", _raise_not_git)
 
     result = runner.invoke(cli.app, ["status"])
-    assert "specify one of" in (result.stdout + (result.output or "")).lower()
+    assert "specify one of" in _plain_output(result).lower()
 
 
 def test_resolve_mirror_name_explicit_unconfigured_matches_cwd(tmp_path, monkeypatch):
