@@ -172,7 +172,8 @@ This permits a series across observed resets without treating different constrai
 Repeated unchanged quota values at later genuine collection times are useful observations and remain in the trajectory.
 Define a separate candidate quota source-fact key from the bound physical constraint, full normalized original window, source authority/compatible version, data mode, and original =observed_at= and =collected_at=.
 Exclude the measured value from that key so differing values cannot evade conflict detection by becoming different facts.
-Resolve report-local pool/scope references through the binding before using the accounting physical-row identity rules, and normalize equivalent UTC timestamp spellings.
+Resolve namespace-qualified stable pool/scope references through the binding before using the accounting physical-row identity rules; only observation IDs are report-local.
+Normalize equivalent UTC timestamp spellings.
 For a matching key, compare normalized measurement equality and original source/binding/coverage evidence separately; incompatible values or evidence remain conflicts rather than an arbitrary selected point.
 Export =generated_at=, reassessed freshness and local aliases are assessment evidence, not additions to the source-fact key.
 Retain their report references even when the quota-series view coalesces equal source facts.
