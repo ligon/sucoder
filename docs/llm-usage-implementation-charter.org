@@ -1,11 +1,12 @@
 #+TITLE: Workshop Charter: Working LLM Usage Collection
 #+AUTHOR: Sue
 #+DATE: 2026-10-17
-#+STATUS: DRAFT -- awaiting explicit human approval before implementation
+#+STATUS: APPROVED -- human sign-off received 2026-10-17
 #+DESCRIPTION: Scope and checkable acceptance criteria for implementing the reviewed model-aware collection design.
 
 * 0. Question, restated
 
+The human approved this charter in the session on 2026-10-17, including the Codex scope and existing-repository amendments.
 Implement the reviewed =llm-usage= design so we can collect account quota trajectories and distinguish native-reported use of Claude and Codex models within an explicitly instrumented population.
 Both harnesses and their selected models are required scope; the human explicitly added Codex on 2026-10-17.
 Implementation belongs in the existing =llm-accounting= repository and distribution, as the human specified on the same date.
