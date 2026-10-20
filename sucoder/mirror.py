@@ -3578,6 +3578,7 @@ class MirrorManager:
         state = self._codex_state_launch(
             ctx, restore=codex_state_from, fresh=codex_state_fresh, unattended=codex_state_unattended,
         )
+        self._log_codex_state_placement(ctx, state)
         # What a renewal must know to replace this managed owner with its
         # own history: the command and model as this launch received them
         # (``command_override`` on the relaunch), not the adapted service
@@ -3981,6 +3982,11 @@ class MirrorManager:
             return None
         assert remote is not None
         local_disk_root = getattr(self.executor, "local_disk_root", None) or None
+        if not local_disk_root and state.implied and not selected:
+            # On only by the local_disk default, and this launch turned local
+            # disk off (--no-local-disk): there is no node-local root, so the
+            # launch is unmanaged and the placement notice says so.
+            return None
         if not local_disk_root:
             raise MirrorError(
                 "slurm.codex_state is enabled for this target but local-disk tiering is "
@@ -4012,6 +4018,48 @@ class MirrorManager:
             restore=restore,
             fresh=fresh,
             unattended=unattended,
+        )
+
+    def _log_codex_state_placement(
+        self, ctx: MirrorContext, state: Optional[_CodexStateLaunch],
+    ) -> None:
+        """Say where this Codex launch's SQLite state lives (issue 51).
+
+        A node-local working clone says nothing about the databases: an
+        unmanaged Codex on a SLURM target keeps them in the shared
+        ``CODEX_HOME``, on Lustre at Savio, where long sessions have wedged.
+        Managed placement is an info line; unmanaged placement on a SLURM
+        target is a warning naming why and how to change it.  Non-Codex
+        launches and targets without SLURM say nothing.
+        """
+        if self._detected_agent_type != AgentType.CODEX:
+            return
+        remote = ctx.settings.remote
+        slurm = remote.slurm if remote is not None else None
+        if slurm is None:
+            return
+        local_disk_root = getattr(self.executor, "local_disk_root", None) or None
+        if state is not None:
+            self.logger.info(
+                "Codex state: managed; SQLite and rollouts on node-local disk under "
+                "%s/job<ID>/state/codex/%s, checkpointed every %d min to %s "
+                "(sucoder codex-state-status %s).",
+                str(local_disk_root).rstrip("/"), state.scope, state.checkpoint_minutes,
+                state.durable_root, ctx.settings.name,
+            )
+            return
+        configured = slurm.codex_state
+        if configured is not None and not configured.enabled:
+            why = "slurm.codex_state.enabled is false for this target"
+        elif local_disk_root is None:
+            why = "local-disk tiering is off for this launch (set slurm.local_disk)"
+        else:
+            why = ("slurm.local_disk is not set for this target, so the managed-state "
+                   "default does not apply (--local-disk alone does not enable it)")
+        self.logger.warning(
+            "Codex state: UNMANAGED; SQLite databases and their WAL/SHM files stay in the "
+            "shared CODEX_HOME, not on node-local disk, so long sessions can stall on "
+            "shared-filesystem I/O. Reason: %s.", why,
         )
 
     def codex_state_status(self, ctx: MirrorContext, job_id: int) -> _CodexStateStatus:

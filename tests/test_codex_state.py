@@ -201,6 +201,16 @@ def test_codex_state_config_parses_defaults_and_values():
     assert (parsed.enabled, parsed.checkpoint_minutes, parsed.checkpoint_timeout_seconds, parsed.durable_root) == (False, 5, 60, "/global/scratch/x")
 
 
+def test_codex_state_is_on_by_default_wherever_local_disk_is_set():
+    # Issue 51: a local-disk target with no codex_state block left Codex's
+    # SQLite on Lustre; managed state is now its default, opted out explicitly.
+    implied = _parse_slurm_config({"partition": "p", "account": "a", "local_disk": True}).codex_state
+    assert implied == CodexStateConfig(enabled=True, implied=True)
+    assert _slurm(checkpoint_minutes=5).codex_state == CodexStateConfig(enabled=True, checkpoint_minutes=5, implied=True)
+    assert _slurm(enabled=True).codex_state.implied is False
+    assert _slurm(enabled=False).codex_state == CodexStateConfig(enabled=False)
+
+
 @pytest.mark.parametrize("raw, message", [
     ({"partition": "p", "account": "a", "codex_state": {"enabled": True}}, "requires `slurm.local_disk`"),
     ({"partition": "p", "account": "a", "local_disk": True, "codex_state": {"enabled": "yes"}}, "must be a boolean"),
@@ -279,6 +289,48 @@ def test_launch_without_local_disk_refuses_managed_state(tmp_path, monkeypatch):
     manager, ctx, _ = _state_manager(tmp_path, monkeypatch, local_disk_root=None)
     with pytest.raises(MirrorError, match="local-disk tiering is off"):
         manager.launch_agent(ctx, sync=False, command_override=["codex"], supports_inline_prompt=True, detached=True)
+
+
+def test_launch_without_local_disk_is_unmanaged_and_warns_when_state_is_only_the_default(tmp_path, monkeypatch):
+    # --no-local-disk on a target managed only by the local_disk default: no
+    # node-local root, so the launch is unmanaged and says so loudly.
+    manager, ctx, confined = _state_manager(tmp_path, monkeypatch, local_disk_root=None)
+    ctx.settings.remote.slurm.codex_state = CodexStateConfig(enabled=True, implied=True)
+    manager.logger = Mock()
+    _launch(manager, ctx)
+    assert "codex-state-runner" not in " ".join(confined.call_args.args[1])
+    (message, *args), _ = manager.logger.warning.call_args
+    assert "UNMANAGED" in message and "local-disk tiering is off" in (message % tuple(args))
+    with pytest.raises(MirrorError, match="local-disk tiering is off"):
+        _launch(manager, ctx, codex_state_fresh=True)
+
+
+@pytest.mark.parametrize("remote_control", [None, "terminal"])
+def test_a_local_disk_target_without_a_codex_state_block_launches_managed(tmp_path, monkeypatch, remote_control):
+    # The issue 51 launch: savio-node style target (local_disk, no
+    # codex_state block), Codex in remote-control terminal mode.
+    manager, ctx, confined = _state_manager(tmp_path, monkeypatch)
+    ctx.settings.remote.slurm.codex_state = _parse_slurm_config(
+        {"partition": "p", "account": "a", "local_disk": "/local"}).codex_state
+    manager.logger = Mock()
+    _launch(manager, ctx, codex_remote_control=remote_control)
+    launched = confined.call_args.args[1]
+    assert re.search(r"codex-state-runner-sample-[0-9a-f]{16}\.py$", launched[1])
+    assert PLACEHOLDER in " ".join(launched)
+    manager.logger.warning.assert_not_called()
+    infos = [c.args[0] % tuple(c.args[1:]) for c in manager.logger.info.call_args_list]
+    assert any(i.startswith("Codex state: managed") and "/local/job<ID>/state/codex/" in i for i in infos)
+
+
+def test_an_opted_out_codex_launch_warns_that_state_is_on_shared_storage(tmp_path, monkeypatch):
+    manager, ctx, _ = _state_manager(tmp_path, monkeypatch, enabled=False)
+    manager.logger = Mock()
+    _launch(manager, ctx)
+    (message, *args), _ = manager.logger.warning.call_args
+    assert "UNMANAGED" in message and "enabled is false" in (message % tuple(args))
+    manager.logger = Mock()
+    _launch(manager, ctx, command=("claude",))
+    manager.logger.warning.assert_not_called()
 
 
 def test_launch_with_explicit_sqlite_home_refuses(tmp_path, monkeypatch):

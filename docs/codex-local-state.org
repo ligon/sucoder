@@ -368,6 +368,7 @@ Starting a replacement service does not automatically resume active chats or att
 * Proposed configuration and operator surface
 
 Keep the feature off by default, separately from Git local-disk tiering.
+/Superseded (issue 51, 2026-10-20):/ a Savio target with =local_disk= but no =codex_state= block left a remote-control Codex's SQLite on Lustre, and the session stopped making progress about ten minutes after launch, with its SQLite worker thread in uninterruptible I/O wait (not proven causal; no controlled comparison).  =enabled= now defaults to whether =local_disk= is set (=CodexStateConfig.implied= marks that default); =enabled: false= opts out; an implied default with =--no-local-disk= launches unmanaged with a warning instead of refusing, while an explicit =enabled: true= still refuses; and every Codex launch on a SLURM target logs managed or unmanaged placement.
 Proposed target =slurm= keys, to be implemented together with parser tests, =README.org= and =config.example.yaml=:
 
 #+begin_example

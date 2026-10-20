@@ -321,7 +321,13 @@ def _release_config(tmp_path, *, confined=True, harness="codex", codex_state=Tru
     human = os.environ.get("USER", "coder")
     (tmp_path / "mirrors").mkdir(exist_ok=True)
     (tmp_path / "canonical").mkdir(exist_ok=True)
-    state = "      codex_state:\n        enabled: true\n        checkpoint_timeout_seconds: 30\n" if codex_state else ""
+    # codex_state: True writes an explicit block, False opts out, None omits
+    # the block (managed by default, since this target has local_disk).
+    state = {
+        True: "      codex_state:\n        enabled: true\n        checkpoint_timeout_seconds: 30\n",
+        False: "      codex_state:\n        enabled: false\n",
+        None: "",
+    }[codex_state]
     path = tmp_path / "config.yaml"
     path.write_text(f"""
 human_user: {human}
@@ -462,6 +468,14 @@ def test_release_without_codex_state_never_builds_a_manager(tmp_path, monkeypatc
     result = cluster.release("-f")
     assert result.exit_code == 0, (result.output, result.exception)
     assert cluster.events == ["scancel"] and cluster.builder_calls == []
+
+
+def test_release_drains_a_local_disk_target_without_a_codex_state_block(tmp_path, monkeypatch):
+    # Issue 51: managed state is the default wherever slurm.local_disk is set.
+    cluster = _Cluster(tmp_path, monkeypatch, codex_state=None)
+    result = cluster.release("-f")
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert cluster.events == ["drain", "scancel"]
 
 
 def test_release_skips_the_drain_for_a_non_codex_harness_unless_told_otherwise(tmp_path, monkeypatch):
