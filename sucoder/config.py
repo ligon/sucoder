@@ -45,8 +45,10 @@ class BranchPrefixes:
 class CodexStateConfig:
     """Managed Codex state on node-local disk (docs/codex-local-state.org).
 
-    Off by default and separate from Git local-disk tiering, which it
-    requires: the launcher stages a runner that owns the Codex process,
+    On by default wherever ``slurm.local_disk`` is set (issue 51: Codex's
+    SQLite on Lustre wedged long sessions while the clone sat on local
+    disk), off elsewhere, and opted out with ``enabled: false``.  It
+    requires local-disk tiering: the launcher stages a runner that owns the Codex process,
     keeps its SQLite databases and session rollouts on local disk through a
     per-process bind namespace over the shared ``CODEX_HOME``, and refuses
     to launch rather than fall back to shared placement.
@@ -57,6 +59,8 @@ class CodexStateConfig:
     checkpoint_timeout_seconds: int = 30    # bounded wait for a capture/drain
     durable_root: Optional[str] = None      # None: a private sibling of the
                                             # shared mirror root (design: Identities)
+    implied: bool = False                   # enabled by the local_disk default, not
+                                            # by an explicit ``enabled: true``
 
 
 @dataclass
@@ -1433,9 +1437,14 @@ _VALID_CODEX_STATE_KEYS = frozenset({
 
 
 def _parse_codex_state(raw: Any, local_disk: Optional[str]) -> Optional[CodexStateConfig]:
-    """``slurm.codex_state``: typed, strict, and only meaningful with local_disk."""
+    """``slurm.codex_state``: typed, strict, and only meaningful with local_disk.
+
+    ``enabled`` defaults to whether ``local_disk`` is set, so a local-disk
+    target with no ``codex_state`` block gets managed state (``implied``);
+    a target without local disk and without the block gets None.
+    """
     if raw is None:
-        return None
+        return CodexStateConfig(enabled=True, implied=True) if local_disk else None
     if not isinstance(raw, dict):
         raise ConfigError("`slurm.codex_state` must be a mapping when provided.")
     unknown = sorted(set(raw) - _VALID_CODEX_STATE_KEYS)
@@ -1444,7 +1453,8 @@ def _parse_codex_state(raw: Any, local_disk: Optional[str]) -> Optional[CodexSta
             f"Unknown key(s) under `slurm.codex_state`: {', '.join(unknown)} "
             f"(valid keys: {', '.join(sorted(_VALID_CODEX_STATE_KEYS))})."
         )
-    enabled = raw.get("enabled", False)
+    implied = "enabled" not in raw
+    enabled = raw.get("enabled", bool(local_disk))
     if not isinstance(enabled, bool):
         raise ConfigError("`slurm.codex_state.enabled` must be a boolean when provided.")
 
@@ -1474,6 +1484,7 @@ def _parse_codex_state(raw: Any, local_disk: Optional[str]) -> Optional[CodexSta
         checkpoint_minutes=checkpoint_minutes,
         checkpoint_timeout_seconds=checkpoint_timeout_seconds,
         durable_root=durable_root,
+        implied=implied and enabled,
     )
 
 

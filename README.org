@@ -1116,11 +1116,20 @@ disk: the launcher stages a runner that owns the Codex process, passes an
 absolute =sqlite_home=, and binds local directories over the write-heavy
 subdirectories of the shared =CODEX_HOME= in a per-process namespace
 (=bwrap=), so every other Codex process still sees the shared home
-unchanged.  It is off by default, applies only to Codex launches, needs
+unchanged.  It is *on by default wherever =local_disk= is set* (a
+target with no =codex_state= block gets the defaults below; opt out with
+=codex_state: {enabled: false}=), applies only to Codex launches, needs
 =local_disk=, and refuses to launch (rather than fall back to shared
 placement) when =bwrap= is missing, when =sqlite_home= is already set in
 the command, =CODEX_SQLITE_HOME= or =config.toml=, or when Codex opens a
-database anywhere else.  The design and the measurements behind it are
+database anywhere else.  Every Codex launch on a SLURM target logs its
+placement: an info line naming the node-local state directory and the
+durable root when managed, a warning (=Codex state: UNMANAGED=) with the
+reason when the databases stay in the shared =CODEX_HOME= -- opted out,
+=--no-local-disk=, or a target without =local_disk=.  A node-local
+working clone alone says nothing about where Codex's SQLite lives, and
+long Codex sessions with it on Lustre have stalled with a SQLite
+worker in uninterruptible I/O wait (issue 51).  The design and the measurements behind it are
 in [[file:docs/codex-local-state.org][docs/codex-local-state.org]] and
 [[file:docs/codex-local-state-spike.org][docs/codex-local-state-spike.org]].
 
