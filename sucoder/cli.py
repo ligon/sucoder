@@ -4725,6 +4725,10 @@ def sessions(
     )  # noqa: F401 -- PANE_PROBE_SH is imported by the probe helper
 
     config = _get_config(ctx)
+    _delegate_to_session_relay(config, "sessions", [
+        *(["--fast"] if fast else []), "--login-nodes" if login_nodes else "--no-login-nodes",
+        *(["--verbose"] if verbose else []),
+    ])
     if not config.targets:
         typer.echo("No targets configured; nothing to list.", err=True)
         raise typer.Exit(code=0)
@@ -4740,6 +4744,12 @@ def sessions(
         config, probed=probed, login_nodes=login_nodes, logger=logger, debug_ssh=debug_ssh,
     )
     typer.echo(render_report(report, probed=probed).rstrip("\n"))
+    if report.uninspected:
+        typer.echo(
+            f"! not inspected: {', '.join(report.uninspected)}; sessions there are unknown, "
+            "not absent." + _unavailable_hint(config), err=True,
+        )
+        raise typer.Exit(code=EXIT_UNAVAILABLE)
 
 
 @app.command("message")
@@ -4821,10 +4831,23 @@ def message(
         raise typer.Exit(code=2)
 
     config = _get_config(ctx)
+    target_name = ((ctx.obj or {}).get("target_name") if ctx else None)
+    if _session_relay_applies(config):
+        if force:
+            typer.echo("--force is not available through session_relay: the relay only "
+                       "types into panes probed as a live agent.", err=True)
+            raise typer.Exit(code=2)
+        _delegate_to_session_relay(config, "message", [
+            *(["-T", target_name] if target_name else []),
+            *(["--all"] if everyone else []),
+            *(["--from", sender] if sender else []),
+            "--wait", str(wait), *(["--dry-run"] if dry_run else []),
+            *(["--verbose"] if verbose else []),
+            "--", *([text] if everyone else [recipient, text]),
+        ])
     if not config.targets:
         typer.echo("No targets configured; nothing to send to.", err=True)
         raise typer.Exit(code=1)
-    target_name = ((ctx.obj or {}).get("target_name") if ctx else None)
     logger = setup_logger("sucoder.message", config.log_dir, verbose)
     debug_ssh = _get_debug_ssh(ctx)
     set_progress(True)
@@ -4837,7 +4860,10 @@ def message(
         typer.echo(f"  skipped {note}")
     for err in report.errors:
         typer.echo(f"! {err}", err=True)
+    unseen = _uninspected_clusters(config, report, target_name)
     if not chosen:
+        if unseen:
+            _exit_unavailable(config, unseen, mirror, target_name, "Nothing was sent.")
         what = "no live session found" if everyone else f"no live session found for mirror {mirror}"
         typer.echo(f"{what}" + (f" on target {target_name}" if target_name else "") + ".")
         raise typer.Exit(code=1)
@@ -4856,6 +4882,7 @@ def message(
     for r in chosen:
         by_host.setdefault(r.host, []).append(r)
     failures = 0
+    unreachable = bool(unseen and everyone)   # a broadcast that missed a cluster
     delivered = []
     for host, recipients in by_host.items():
         script = "\n".join(send_keys_command(r, line) for r in recipients)
@@ -4869,8 +4896,9 @@ def message(
                 control, host, script, logger=logger, config=config, debug=debug_ssh, timeout=90,
             )
         except Exception as exc:  # noqa: BLE001 -- report and go on to the next host
-            typer.echo(f"! {host}: could not connect ({exc})", err=True)
+            typer.echo(f"! {host}: could not connect ({exc}); delivery unavailable", err=True)
             failures += len(recipients)
+            unreachable = True
             continue
         sent, failed = parse_send_output(result.stdout)
         for r in recipients:
@@ -4911,8 +4939,183 @@ def message(
                 f"  no reply from {r.label} within {int(wait)}s; "
                 f"`sucoder peek {mirror or r.session[len('sucoder-'):]}` reads its pane later"
             )
+    if unreachable:
+        if unseen and everyone:
+            typer.echo(f"! not inspected: {', '.join(unseen)}; sessions there got nothing.", err=True)
+        typer.echo("! delivery was unavailable for some recipients." + _unavailable_hint(config), err=True)
+        raise typer.Exit(code=EXIT_UNAVAILABLE)
     if failures:
         raise typer.Exit(code=1)
+
+
+# Exit status when discovery or delivery could not reach a cluster (issue
+# 52): the outcome is unknown, which a caller must not read as exit 1's
+# "inspected, and no live session found".
+EXIT_UNAVAILABLE = 3
+
+
+def _uninspected_clusters(config, report, target_name) -> List[str]:
+    """The clusters *report* could not inspect that could hold the session
+    asked for: the target's own cluster under ``-T``, else every one."""
+    from .sessions_report import cluster_key
+
+    if not report.uninspected:
+        return []
+    remote = config.targets.get(target_name) if target_name else None
+    if remote is not None:
+        key = cluster_key(remote)
+        return [c for c in report.uninspected if c == key]
+    return list(report.uninspected)
+
+
+def _unavailable_hint(config) -> str:
+    """What an account whose own SSH route failed can do about it."""
+    if getattr(config, "session_relay", None) is not None:
+        return ""
+    me = pwd.getpwuid(os.getuid()).pw_name
+    return (
+        "\n  If this account's gateway certificate is missing or expired "
+        "(`sucoder -T <target> tunnel doctor`), ask the human to mint a fresh one "
+        f"(`sudo -iu {me} sucoder -T <target> cert`), or configure `session_relay` to go "
+        "through the human's warm connections (README: Messaging from the agent account)."
+    )
+
+
+def _exit_unavailable(config, unseen, mirror, target_name, consequence: str) -> None:
+    where = f"mirror {mirror}" if mirror else "any session"
+    typer.echo(
+        f"discovery unavailable: could not inspect {', '.join(unseen)}, so whether {where} "
+        f"is live" + (f" on target {target_name}" if target_name else "")
+        + f" is unknown. {consequence}" + _unavailable_hint(config),
+        err=True,
+    )
+    raise typer.Exit(code=EXIT_UNAVAILABLE)
+
+
+def _session_relay_applies(config) -> bool:
+    relay = getattr(config, "session_relay", None)
+    return relay is not None and relay.user != pwd.getpwuid(os.getuid()).pw_name
+
+
+def _delegate_to_session_relay(config, command: str, args: List[str]) -> None:
+    """Run *command* as ``session_relay.user`` and exit with its status.
+
+    No-op without a relay or when already running as that user.  ``sudo
+    -n -l`` asks first whether the rule exists, so a missing rule is
+    reported as the relay being unavailable rather than surfacing sudo's
+    exit 1, which a caller would read as "no live session".
+    """
+    import subprocess
+
+    if not _session_relay_applies(config):
+        return
+    relay = config.session_relay
+    argv = [*relay.command, "relay", command, *args]
+    sudo = ["sudo", "-n", "-u", relay.user]
+    try:
+        allowed = subprocess.run([*sudo, "-l", *argv], capture_output=True, text=True)
+    except FileNotFoundError:
+        typer.echo("session_relay: sudo is not installed here.", err=True)
+        raise typer.Exit(code=EXIT_UNAVAILABLE)
+    if allowed.returncode != 0:
+        typer.echo(
+            f"session_relay unavailable: sudo does not let {pwd.getpwuid(os.getuid()).pw_name} run "
+            f"`{shlex.join(relay.command)} relay ...` as {relay.user} without a password "
+            "(README: Messaging from the agent account)."
+            + (f"\n  sudo: {allowed.stderr.strip()}" if allowed.stderr.strip() else ""),
+            err=True,
+        )
+        raise typer.Exit(code=EXIT_UNAVAILABLE)
+    raise typer.Exit(code=subprocess.run([*sudo, *argv]).returncode)
+
+
+relay_app = typer.Typer(
+    help="sessions/message/peek on behalf of another local account, run as this one "
+         "through sudo (session_relay; issue 52).",
+)
+app.add_typer(relay_app, name="relay")
+
+
+@relay_app.callback()
+def relay_main(ctx: typer.Context) -> None:
+    """Refuse unless this process runs with its own account's home and config.
+
+    The caller is another account (``SUDO_USER``), so nothing it controls
+    may choose the configuration, the session records or the SSH sockets:
+    those all hang off ``~``, which must be this uid's home directory.
+    """
+    home = pwd.getpwuid(os.geteuid()).pw_dir
+    if os.path.realpath(os.path.expanduser("~")) != os.path.realpath(home):
+        typer.echo(
+            f"relay refused: HOME is not {home}; run it through `sudo -u <user>` with "
+            "sudo's default env_reset (or -H).", err=True,
+        )
+        raise typer.Exit(code=2)
+    obj = ctx.obj or {}
+    path = obj.get("config_path")
+    if path is None or os.path.realpath(path) != os.path.realpath(_default_config_path()):
+        typer.echo(f"relay refused: it reads only {_default_config_path()}.", err=True)
+        raise typer.Exit(code=2)
+
+
+def _relay_target(ctx: typer.Context, target: Optional[str]) -> None:
+    if target is None:
+        return
+    config = _get_config(ctx)
+    try:
+        ctx.obj["target"] = config.resolve_target(target)
+    except ConfigError as exc:
+        typer.echo(f"Target error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    ctx.obj["target_name"] = target
+
+
+def _relay_sender(sender: Optional[str]) -> str:
+    """Who a relayed message says it is from: always naming the caller."""
+    caller = os.environ.get("SUDO_USER") or "unknown"
+    return f"{sender} (via {caller})" if sender else f"{caller}@{socket.gethostname()} (relay)"
+
+
+@relay_app.command("sessions")
+def relay_sessions(
+    ctx: typer.Context,
+    fast: bool = typer.Option(False, "--fast"),
+    login_nodes: bool = typer.Option(True, "--login-nodes/--no-login-nodes"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+) -> None:
+    """``sucoder sessions``, for the relay's caller."""
+    sessions(ctx, fast=fast, login_nodes=login_nodes, verbose=verbose)
+
+
+@relay_app.command("message")
+def relay_message(
+    ctx: typer.Context,
+    recipient: str = typer.Argument(..., metavar="MIRROR|TEXT"),
+    text: Optional[str] = typer.Argument(None),
+    target: Optional[str] = typer.Option(None, "--target", "-T"),
+    everyone: bool = typer.Option(False, "--all"),
+    sender: Optional[str] = typer.Option(None, "--from"),
+    wait: float = typer.Option(0, "--wait", metavar="SECONDS"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+) -> None:
+    """``sucoder message`` for the relay's caller: no ``--force``, sender tagged."""
+    _relay_target(ctx, target)
+    message(ctx, recipient=recipient, text=text, everyone=everyone, sender=_relay_sender(sender),
+            wait=wait, force=False, dry_run=dry_run, verbose=verbose)
+
+
+@relay_app.command("peek")
+def relay_peek(
+    ctx: typer.Context,
+    mirror: str = typer.Argument(...),
+    target: Optional[str] = typer.Option(None, "--target", "-T"),
+    lines: int = typer.Option(40, "-n", "--lines"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+) -> None:
+    """``sucoder peek``, for the relay's caller."""
+    _relay_target(ctx, target)
+    peek(ctx, mirror=mirror, lines=lines, verbose=verbose)
 
 
 # A pane read is one ssh session open (~10s on a BRC login node), so a poll
@@ -4940,13 +5143,17 @@ def peek(
     from .agent_mode import CODEX_REMOTE_CONTROL
 
     config = _get_config(ctx)
+    target_name = ((ctx.obj or {}).get("target_name") if ctx else None)
+    _delegate_to_session_relay(config, "peek", [
+        *(["-T", target_name] if target_name else []), "--lines", str(lines),
+        *(["--verbose"] if verbose else []), "--", mirror,
+    ])
     if not config.targets:
         typer.echo("No targets configured; nothing to read.", err=True)
         raise typer.Exit(code=1)
     if lines <= 0:
         typer.echo("--lines must be positive.", err=True)
         raise typer.Exit(code=2)
-    target_name = ((ctx.obj or {}).get("target_name") if ctx else None)
     logger = setup_logger("sucoder.peek", config.log_dir, verbose)
     debug_ssh = _get_debug_ssh(ctx)
     set_progress(True)
@@ -4960,6 +5167,9 @@ def peek(
     for err in report.errors:
         typer.echo(f"! {err}", err=True)
     if not chosen:
+        unseen = _uninspected_clusters(config, report, target_name)
+        if unseen:
+            _exit_unavailable(config, unseen, mirror, target_name, "Nothing was read.")
         typer.echo(
             f"no live session found for mirror {mirror}"
             + (f" on target {target_name}" if target_name else "") + "."
@@ -5156,6 +5366,7 @@ def _collect_sessions(config, *, probed: bool, login_nodes: bool, logger, debug_
         },
         recorded=RemoteSession.recorded_jobs(),
         schedulerless=schedulerless, errors=errors,
+        uninspected=[cluster for cluster in clusters if cluster not in jobs_by_cluster],
     )
 
     if probed:

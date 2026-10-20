@@ -5,6 +5,15 @@ mirror_root: /var/tmp/coder-mirrors
 log_dir: /home/<your-username>/.sucoder/logs
 system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 
+# Agent account only (optional): reach live cluster sessions through the
+# human's warm SSH for `sessions`, `message` and `peek`, via
+# `sudo -n -u <user> <command> relay ...`.  Needs a sudoers rule such as
+#   coder ALL=(<your-username>) NOPASSWD: /usr/local/bin/sucoder relay *
+# and a `command` the agent cannot write.  README: Messaging from the agent account.
+# session_relay:
+#   user: <your-username>
+#   command: /usr/local/bin/sucoder
+
 # Codex remote control (optional; ordinary terminal launch by default).
 # Applies when Codex is selected, including --agent codex / --harness codex.
 # Per-mirror agent_launcher.codex_remote_control overrides this default.
