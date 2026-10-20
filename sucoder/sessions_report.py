@@ -345,6 +345,9 @@ class Report:
     logins: List[LoginSession] = field(default_factory=list)
     login_probed: bool = False
     errors: List[str] = field(default_factory=list)
+    # Clusters whose scheduler could not be asked (connection, auth or
+    # squeue failure): their sessions are unknown, never absent (issue 52).
+    uninspected: List[str] = field(default_factory=list)
 
 
 def cluster_key(remote) -> Optional[str]:
@@ -511,6 +514,7 @@ def build_report(
     recorded: Mapping[str, int],
     schedulerless: Sequence[str] = (),
     errors: Sequence[str] = (),
+    uninspected: Sequence[str] = (),
 ) -> Report:
     """Join scheduler truth to local state.
 
@@ -521,7 +525,7 @@ def build_report(
     scheduler no longer has.  Both directions matter, and neither alone is
     enough.
     """
-    report = Report(schedulerless=list(schedulerless), errors=list(errors))
+    report = Report(schedulerless=list(schedulerless), errors=list(errors), uninspected=list(uninspected))
     live: set = set()
     by_target: Dict[str, List[SessionEntry]] = {}
 

@@ -994,6 +994,55 @@ The cheaper half of the same fix is the bulletin,
 default system prompt tells agents to read before concluding that
 infrastructure is broken and to write to before attempting a repair.
 
+=sessions=, =message= and =peek= separate "nobody is there" from "could
+not look".  Exit 1 with =no live session found= means the cluster was
+inspected and the session is not running; exit 3 (=discovery
+unavailable=, =delivery unavailable=, or =sessions='s =not inspected=)
+means a cluster could not be reached --- an expired certificate, a
+failed OTP, a dead tunnel --- so nothing is known either way.  Scripts
+and agents should treat 3 as "retry or ask", never as "absent".
+
+**** Messaging from the agent account
+
+An agent on the laptop (the =coder= account) reaching a peer on the
+cluster has two routes, and the error text names both.
+
+1. *Its own certificate.*  =coder= connects with its own
+   =~/.sucoder/config.yaml= and =cert_file=.  BRC certificates last 12h
+   and minting one needs the human's PIN and one-time code, so the agent
+   should ask: the human runs =sudo -iu coder sucoder -T <target> cert=
+   (or mints as themselves and copies it).  This gives the agent a full
+   cluster shell as the cluster user for the certificate's lifetime.
+2. *The relay* (preferred).  The human's warm SSH multiplexers cannot be
+   shared --- OpenSSH's control master refuses a client with another uid,
+   whatever the socket's permissions --- so instead =coder= asks the human's
+   account to run the command.  In =coder='s config:
+
+   #+begin_src yaml
+   session_relay:
+     user: ligon                       # the human's local account
+     command: /usr/local/bin/sucoder   # absolute; must NOT be writable by coder
+   #+end_src
+
+   and one sudoers line, as root (=visudo -f /etc/sudoers.d/sucoder-relay=):
+
+   #+begin_example
+   coder ALL=(ligon) NOPASSWD: /usr/local/bin/sucoder relay *
+   #+end_example
+
+   =coder='s =sessions=, =message= and =peek= then run =sudo -n -u ligon
+   /usr/local/bin/sucoder relay ...= and exit with its status.  The relay
+   reads only the human's default config (it refuses =--config= and a
+   =HOME= that is not the account's own, so keep sudo's default
+   =env_reset=), offers no =--force=, keeps the bare-shell refusal, and
+   tags every message's sender with the calling account
+   (=Sue/Admin@lyn (via coder)=).  It does let =coder= read any session's
+   pane through =peek=.  A missing sudo rule is reported as the relay
+   being unavailable (exit 3).  The =command= must be an installation the
+   agent cannot modify --- the relay runs it as the human --- so point it at
+   a root-owned install (see "Quick Start"), not a checkout or venv the agent's
+   group can write.
+
 *** Choosing a login node
 
 The login node is pinned once, from a round-robin =ssh <gateway> hostname=,

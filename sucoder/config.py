@@ -480,6 +480,23 @@ class ToolPreflightConfig:
 
 
 @dataclass
+class SessionRelayConfig:
+    """Reach live sessions through another account's warm SSH (issue 52).
+
+    Set on the agent account: ``sessions``, ``message`` and ``peek`` run
+    ``sudo -n -u USER COMMAND relay ...`` instead of opening their own
+    cluster connections.  That account's SSH multiplexers refuse other uids,
+    and the agent's own certificate is usually expired, so the relay is the
+    route that reuses the human's live connections without handing the
+    agent a credential.  ``command`` is the absolute ``sucoder`` the sudoers
+    rule names; it must not be writable by the agent.
+    """
+
+    user: str
+    command: List[str]
+
+
+@dataclass
 class Config:
     human_user: str
     agent_user: str = "coder"
@@ -498,6 +515,7 @@ class Config:
     targets: Dict[str, RemoteConfig] = field(default_factory=dict)
     audit: AuditConfig = field(default_factory=AuditConfig)
     tool_preflight: ToolPreflightConfig = field(default_factory=ToolPreflightConfig)
+    session_relay: Optional[SessionRelayConfig] = None
 
     def resolve_target(self, target_name: Optional[str]) -> Optional[RemoteConfig]:
         """Look up a named target, returning ``None`` for local execution."""
@@ -740,6 +758,7 @@ def _build_config(data: Dict[str, Any], *, path: Path) -> Config:
     targets = _parse_targets(data.get("targets"))
     audit = _parse_audit_config(data.get("audit"), path=path)
     tool_preflight = _parse_tool_preflight(data.get("tool_preflight"), path=path)
+    session_relay = _parse_session_relay(data.get("session_relay"))
     mirrors = _parse_mirrors(
         data.get("mirrors"), global_skills=global_skills,
         global_mcp_servers=global_mcp_servers, path=path,
@@ -765,7 +784,34 @@ def _build_config(data: Dict[str, Any], *, path: Path) -> Config:
         targets=targets,
         audit=audit,
         tool_preflight=tool_preflight,
+        session_relay=session_relay,
     )
+
+
+def _parse_session_relay(raw: Any) -> Optional[SessionRelayConfig]:
+    """``session_relay: {user: ligon, command: /usr/local/bin/sucoder}``."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ConfigError("`session_relay` must be a mapping with `user` and `command`.")
+    unknown = sorted(set(raw) - {"user", "command"})
+    if unknown:
+        raise ConfigError(f"Unknown key(s) under `session_relay`: {', '.join(unknown)} (valid keys: command, user).")
+    user = raw.get("user")
+    if not isinstance(user, str) or not re.fullmatch(r"[a-z_][a-z0-9_-]*\$?", user):
+        raise ConfigError("`session_relay.user` must be a user name.")
+    command = raw.get("command")
+    if isinstance(command, str):
+        command = [command]
+    if (not isinstance(command, list) or not command
+            or not all(isinstance(part, str) and part for part in command)):
+        raise ConfigError("`session_relay.command` must be a path or a non-empty list of strings.")
+    if not command[0].startswith("/"):
+        raise ConfigError(
+            "`session_relay.command` must start with an absolute path: sudo matches the "
+            "sudoers rule against it."
+        )
+    return SessionRelayConfig(user=user, command=list(command))
 
 
 _ENVIRONMENT_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
