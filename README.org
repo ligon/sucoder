@@ -1027,8 +1027,20 @@ cluster has two routes, and the error text names both.
    and one sudoers line, as root (=visudo -f /etc/sudoers.d/sucoder-relay=):
 
    #+begin_example
+   Defaults!/usr/local/bin/sucoder env_reset
    coder ALL=(ligon) NOPASSWD: /usr/local/bin/sucoder relay *
    #+end_example
+
+   A root-owned install for =command=, from a checkout of =main=:
+
+   #+begin_src shell
+   sudo sh -c 'umask 022; UV_TOOL_DIR=/opt/sucoder/tools UV_TOOL_BIN_DIR=/usr/local/bin \
+     uv tool install --reinstall /path/to/SuCoder'
+   #+end_src
+
+   The relay establishes connections with =BatchMode=yes=: nobody is there
+   to type a PIN/OTP, so it rides the human's live connections or a valid
+   certificate and otherwise reports the cluster as not inspected (exit 3).
 
    =coder='s =sessions=, =message= and =peek= then run =sudo -n -u ligon
    /usr/local/bin/sucoder relay ...= and exit with its status.  The relay

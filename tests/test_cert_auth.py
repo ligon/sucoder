@@ -85,6 +85,18 @@ def test_establish_presents_cert_on_gateway(monkeypatch, tmp_path) -> None:
     assert "IdentitiesOnly=yes" in cmd
 
 
+def test_establish_is_batch_mode_only_when_noninteractive(monkeypatch, tmp_path) -> None:
+    """The session relay has nobody to type a PIN/OTP (issue 52)."""
+    from sucoder import tunnel
+    monkeypatch.setattr(SshControl, "socket_path", property(lambda self: tmp_path / "gw.sock"))
+    control = SshControl(gateway="gw", cert_file=CERT)
+    monkeypatch.setattr(tunnel, "_NONINTERACTIVE", False)
+    assert "BatchMode=yes" not in _establish_capture_cmd(monkeypatch, control)
+    monkeypatch.setattr(tunnel, "_NONINTERACTIVE", True)
+    cmd = _establish_capture_cmd(monkeypatch, control)
+    assert "BatchMode=yes" in cmd and cmd.index("BatchMode=yes") < cmd.index("-fN")
+
+
 def test_establish_no_cert_on_jumped_hop(monkeypatch, tmp_path) -> None:
     """Login/DTN hops (jump_host set) authenticate by publickey through the
     mux and must NOT be forced onto the gateway cert."""

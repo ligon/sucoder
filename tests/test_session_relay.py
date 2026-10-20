@@ -22,13 +22,20 @@ from sucoder.sessions_report import Report
 GATEWAY = "gw.example.org"
 
 
-def _config(tmp_path, relay=None):
+@pytest.fixture(autouse=True)
+def _interactive(monkeypatch):
+    # ``sucoder relay`` turns the process-wide BatchMode switch on.
+    from sucoder import tunnel
+    monkeypatch.setattr(tunnel, "_NONINTERACTIVE", False)
+
+
+def _config(tmp_path, relay=None, human_user=None):
     human = os.environ.get("USER", "coder")
     (tmp_path / "mirrors").mkdir(exist_ok=True)
     (tmp_path / "canonical").mkdir(exist_ok=True)
     path = tmp_path / "config.yaml"
     path.write_text(f"""
-human_user: {human}
+human_user: {human_user or human}
 agent_user: {human}
 agent_group: {human}
 mirror_root: {tmp_path / 'mirrors'}
@@ -53,8 +60,8 @@ def run(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **k: None)
     monkeypatch.setattr(cli, "set_progress", lambda *a, **k: None)
 
-    def invoke(*argv, relay=None):
-        path = _config(tmp_path, relay)
+    def invoke(*argv, relay=None, human_user=None):
+        path = _config(tmp_path, relay, human_user)
         return CliRunner().invoke(cli.app, ["--config", str(path), *argv])
     return invoke
 
@@ -72,10 +79,17 @@ def _unreached():
 
 def test_message_says_discovery_was_unavailable_not_that_no_session_exists(run, monkeypatch):
     _collected(monkeypatch, _unreached())
-    result = run("-T", "fake-slurm", "message", "sample", "hello")
+    result = run("-T", "fake-slurm", "message", "sample", "hello", human_user="the-human")
     assert result.exit_code == cli.EXIT_UNAVAILABLE, result.output
     assert "discovery unavailable" in result.output and "no live session found" not in result.output
     assert "sucoder -T <target> cert" in result.output and "sudo -iu" in result.output     # the agent can ask for a cert
+
+
+def test_the_human_is_told_to_refresh_rather_than_to_ask(run, monkeypatch):
+    _collected(monkeypatch, _unreached())
+    monkeypatch.setattr("sucoder.sessions_report.render_report", lambda report, probed: "listing")
+    result = run("sessions")
+    assert "Refresh this account's connection" in result.output and "ask the human" not in result.output
 
 
 def test_message_still_says_no_live_session_after_a_successful_inspection(run, monkeypatch):
@@ -224,10 +238,15 @@ def test_the_relay_tags_the_sender_with_the_caller_and_never_forces(tmp_path, mo
 
 
 def test_the_relay_reports_unavailable_discovery_like_the_command(tmp_path, monkeypatch):
+    from sucoder import tunnel
+    monkeypatch.setattr(tunnel, "_NONINTERACTIVE", False)
     _as_default_config(monkeypatch, tmp_path)
     _collected(monkeypatch, _unreached())
     result = CliRunner().invoke(cli.app, ["relay", "peek", "sample"])
     assert result.exit_code == cli.EXIT_UNAVAILABLE
+    # The relay never prompts, and says the human must refresh the connection.
+    assert tunnel._NONINTERACTIVE is True
+    assert "relay cannot prompt" in result.output and "sudo -iu" not in result.output
 
 
 def test_the_relay_refuses_another_config(tmp_path, monkeypatch):

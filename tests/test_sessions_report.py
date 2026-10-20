@@ -169,6 +169,16 @@ def test_a_record_pointing_at_a_vanished_job_is_stale():
     ]
 
 
+def test_a_record_on_an_uninspected_cluster_is_not_called_stale():
+    """Issue 52: when squeue never answered, a record's job is unknown, and
+    calling it gone would suggest ``release`` on a possibly live job."""
+    report = _report(
+        [], recorded={"MetricsMiscellany--carleton-htc": 38999103, "Old": 1},
+        uninspected=["hpc.brc"],
+    )
+    assert report.stale == []
+
+
 def test_a_stale_record_names_the_command_that_clears_it():
     """`release` resolves the mirror through config.mirrors and the target
     through -T, so the advice has to carry both or it exits 1."""
