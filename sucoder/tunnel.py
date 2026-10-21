@@ -499,12 +499,13 @@ class SshControl:
         # Present a gateway SSH certificate (direct hop only --- see
         # _identity_options).
         cmd += self._identity_options()
-        cmd.extend(self.extra_options)
         if _NONINTERACTIVE:
             # No human to answer a PIN/OTP prompt (the session relay):
             # fail fast on a missing or expired certificate instead of
             # retrying password auth into "Too many authentication failures".
+            # SSH uses the first value, so this must precede extra_options.
             cmd.extend(["-o", "BatchMode=yes"])
+        cmd.extend(self.extra_options)
         if self.debug:
             cmd.append("-vvv")
         cmd.extend(["-fN", self._format_host(self.gateway)])

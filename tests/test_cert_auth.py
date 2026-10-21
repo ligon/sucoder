@@ -97,6 +97,27 @@ def test_establish_is_batch_mode_only_when_noninteractive(monkeypatch, tmp_path)
     assert "BatchMode=yes" in cmd and cmd.index("BatchMode=yes") < cmd.index("-fN")
 
 
+@pytest.mark.parametrize("noninteractive, expected", [(False, "no"), (True, "yes")])
+def test_establish_batch_mode_precedence(monkeypatch, tmp_path, noninteractive, expected) -> None:
+    """Relay mode must win over a direct target's explicit BatchMode=no."""
+    import subprocess
+
+    from sucoder import tunnel
+
+    monkeypatch.setattr(SshControl, "socket_path", property(lambda self: tmp_path / "gw.sock"))
+    monkeypatch.setattr(tunnel, "_NONINTERACTIVE", noninteractive)
+    control = SshControl(gateway="review.invalid", extra_options=["-o", "BatchMode=no"])
+    with monkeypatch.context() as capture:
+        cmd = _establish_capture_cmd(capture, control)
+
+    # -G resolves the actual option precedence without connecting to a host.
+    result = subprocess.run(
+        ["ssh", "-G", "-F", "/dev/null", *cmd[1:]],
+        capture_output=True, text=True, check=True,
+    )
+    assert f"batchmode {expected}" in result.stdout.splitlines()
+
+
 def test_establish_no_cert_on_jumped_hop(monkeypatch, tmp_path) -> None:
     """Login/DTN hops (jump_host set) authenticate by publickey through the
     mux and must NOT be forced onto the gateway cert."""

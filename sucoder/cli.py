@@ -201,6 +201,11 @@ def _maybe_offer_cert_mint(
     :func:`_resolve_cert_username`); it is optional and degrades gracefully
     when a call site cannot supply it.
     """
+    from . import tunnel
+
+    # A relay may inherit a terminal, but must never ask for credentials.
+    if tunnel._NONINTERACTIVE:
+        return
     cert_file = getattr(control, "cert_file", None)
     if getattr(control, "jump_host", None) is not None or not cert_file:
         return
