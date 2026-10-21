@@ -97,6 +97,7 @@ from .config import (
     AgentFlagTemplates,
     AgentLauncher,
     AgentType,
+    CodexStateConfig,
     Config,
     MirrorSettings,
     RemoteConfig,
@@ -118,6 +119,10 @@ from .workspace_prefs import WorkspacePrefs
 
 class MirrorError(RuntimeError):
     """Raised when mirror operations fail."""
+
+
+class _CodexOwnerMissing(MirrorError):
+    """The selected tmux session exists but has no published owner yet."""
 
 
 @dataclass
@@ -3577,6 +3582,7 @@ class MirrorManager:
         # before nvm/installer wrapping, and the staged runner outermost.
         state = self._codex_state_launch(
             ctx, restore=codex_state_from, fresh=codex_state_fresh, unattended=codex_state_unattended,
+            remote_control=remote_enabled or self._service_launch is not None,
         )
         self._log_codex_state_placement(ctx, state)
         # What a renewal must know to replace this managed owner with its
@@ -3593,6 +3599,8 @@ class MirrorManager:
                 "scope": state.scope,
                 "durable_root": state.durable_root,
             }
+            if state.remote_control:
+                self._managed_owner["remote_isolated"] = True
         # The history selection as the operator spelled it, or None.  It
         # rides in the argv of the command this launch starts, so every
         # decision below that would attach to a running session instead of
@@ -3728,15 +3736,17 @@ class MirrorManager:
         except Exception:  # pragma: no cover - defensive
             self.logger.debug("Agent binary report failed.", exc_info=True)
 
-        if remote_enabled:
-            assert remote_mode is not None
-            instructions = remote_prelude_text
+        if remote_enabled or self._service_launch is not None:
+            instructions = remote_prelude_text if remote_enabled else None
             if instructions and ctx.is_remote:
                 instructions = prelude_sentinel
             elif not ctx.is_remote:
                 remote_prelude_text = None
             try:
-                command = build_remote_command(command, remote_mode, instructions=instructions)
+                selected_mode = remote_mode if remote_enabled and remote_mode is not None else "server"
+                command = build_remote_command(command, selected_mode,
+                                               instructions=instructions,
+                                               legacy_service=self._service_launch is not None)
             except ValueError as exc:
                 raise MirrorError(str(exc)) from exc
 
@@ -3759,6 +3769,9 @@ class MirrorManager:
                 checkpoint_timeout_seconds=state.checkpoint_timeout_seconds,
                 restore=state.restore, fresh=state.fresh, unattended=state.unattended,
                 app_server=self._wrap_with_nvm(state_app_server, launcher) if state_app_server else None,
+                temporary_local_root=state.temporary_local_root,
+                remote_helper=self._stage_codex_remote_helper(ctx) if state.remote_control else None,
+                publish_run=state.remote_control,
             )
 
         # Environment values may include API keys resolved from pass. Stage
@@ -3941,6 +3954,7 @@ class MirrorManager:
     def _codex_state_launch(
         self, ctx: MirrorContext, *, restore: Optional[str] = None, fresh: bool = False,
         unattended: bool = False, agent_type: Optional[AgentType] = None,
+        remote_control: bool = False,
     ) -> Optional[_CodexStateLaunch]:
         """What the staged runner is told, or None when this launch is unmanaged.
 
@@ -3952,7 +3966,9 @@ class MirrorManager:
         there is no detection to read).  Enabled state without local-disk
         tiering on this launch is an error too: the databases need the
         node-local root the working clone uses, and the design forbids a
-        silent fall back to shared placement.  The durable root is the
+        silent fall back to shared placement. Remote-control launches instead
+        use a private temporary local root when clone tiering is absent.
+        The durable root is the
         configured one or the private sibling of the shared mirror root, and
         it may neither nest with the mirror repository nor sit on local disk.
         """
@@ -3965,6 +3981,12 @@ class MirrorManager:
         remote = ctx.settings.remote
         slurm = remote.slurm if remote is not None else None
         state = slurm.codex_state if slurm is not None else None
+        if remote_control:
+            if state is not None and not state.enabled:
+                raise MirrorError("Codex remote control requires isolated managed state, but slurm.codex_state.enabled is false. "
+                                  "Enable it, or use --no-remote-control for the ordinary CLI.")
+            if state is None:
+                state = CodexStateConfig(enabled=True)
         if state is None or not state.enabled:
             if selected:
                 raise MirrorError(
@@ -3980,14 +4002,13 @@ class MirrorManager:
                     "(use --harness codex or --agent codex)."
                 )
             return None
-        assert remote is not None
         local_disk_root = getattr(self.executor, "local_disk_root", None) or None
-        if not local_disk_root and state.implied and not selected:
+        if not local_disk_root and state.implied and not selected and not remote_control:
             # On only by the local_disk default, and this launch turned local
             # disk off (--no-local-disk): there is no node-local root, so the
             # launch is unmanaged and the placement notice says so.
             return None
-        if not local_disk_root:
+        if not local_disk_root and not remote_control:
             raise MirrorError(
                 "slurm.codex_state is enabled for this target but local-disk tiering is "
                 "off for this launch; managed Codex state needs the node-local root and "
@@ -3996,13 +4017,10 @@ class MirrorManager:
         try:
             if restore is not None:
                 restore = _state_validate_restore_selector(restore)
-            user = getattr(remote, "remote_user", None) or getattr(self.executor, "agent_user", None) or ""
             # The resolved shared mirror path (``~`` expanded on the target, not
             # realpath'd), so two targets spelling the same storage differently
             # share a scope and the derived durable root is its sibling.
-            mirror_path = self._absolute_for_codex_state(
-                ctx, "shared mirror path", self._resolve_remote_path(ctx),
-            )
+            scope, mirror_path = self._codex_scope(ctx)
             durable_root = self._absolute_for_codex_state(
                 ctx, "durable root", _state_check_durable_root(
                     _state_durable_root_for(mirror_path, state.durable_root), mirror_path, local_disk_root,
@@ -4011,13 +4029,15 @@ class MirrorManager:
         except ValueError as exc:
             raise MirrorError(str(exc)) from exc
         return _CodexStateLaunch(
-            scope=_state_scope_id(remote.gateway, user, mirror_path),
+            scope=scope,
             durable_root=durable_root,
             checkpoint_minutes=state.checkpoint_minutes,
             checkpoint_timeout_seconds=state.checkpoint_timeout_seconds,
             restore=restore,
             fresh=fresh,
             unattended=unattended,
+            temporary_local_root=not bool(local_disk_root),
+            remote_control=remote_control,
         )
 
     def _log_codex_state_placement(
@@ -4036,6 +4056,11 @@ class MirrorManager:
             return
         remote = ctx.settings.remote
         slurm = remote.slurm if remote is not None else None
+        if state is not None and state.temporary_local_root:
+            self.logger.info("Codex remote-control state: managed under a private /tmp/sucoder-codex-state-* root; "
+                             "working tree unchanged; checkpoints every %d min to %s (scope %s).",
+                             state.checkpoint_minutes, state.durable_root, state.scope)
+            return
         if slurm is None:
             return
         local_disk_root = getattr(self.executor, "local_disk_root", None) or None
@@ -4062,7 +4087,16 @@ class MirrorManager:
             "shared-filesystem I/O. Reason: %s.", why,
         )
 
-    def codex_state_status(self, ctx: MirrorContext, job_id: int) -> _CodexStateStatus:
+    def _codex_scope(self, ctx: MirrorContext) -> Tuple[str, str]:
+        """Stable identity, independent of today's placement/enablement flags."""
+        remote = ctx.settings.remote
+        mirror_path = self._absolute_for_codex_state(
+            ctx, "shared mirror path", self._resolve_remote_path(ctx) if ctx.is_remote else str(ctx.mirror_path))
+        user = getattr(remote, "remote_user", None) or getattr(self.executor, "agent_user", None) or ""
+        return _state_scope_id(remote.gateway if remote is not None else "local", user, mirror_path), mirror_path
+
+    def codex_state_status(self, ctx: MirrorContext, job_id: int, *, via_allocation: bool = False,
+                           remote_control: bool = False) -> _CodexStateStatus:
         """What the managed runner recorded for *job_id*'s allocation.
 
         The operator surface of docs/codex-local-state.org: ``latest-run``
@@ -4080,18 +4114,37 @@ class MirrorManager:
         the run id: it sends the first read (the executor logs it) and
         returns the two it would send with ``<run>`` in place.  The scope is
         the launch's, so a target whose managed state is misconfigured is
-        refused here the way a launch is.
+        refused here the way a launch is for ordinary managed owners. Isolated
+        remote owners use their published run path independent of current
+        placement/enablement settings.
         """
-        launch = self._codex_state_launch(ctx, agent_type=AgentType.CODEX)
-        if launch is None:
-            raise MirrorError(
-                f"slurm.codex_state is not enabled for mirror {ctx.settings.name}; "
-                "there is no managed Codex state to report."
-            )
-        # _codex_state_launch has already refused an unset local-disk root.
+        from .session import RemoteSession
+        recorded = RemoteSession.load(ctx.settings.name, target_name=self.target_name).managed_owner
+        runtime_discovery = remote_control or (isinstance(recorded, dict) and recorded.get("remote_isolated") is True)
         local_disk_root = str(getattr(self.executor, "local_disk_root", None) or "")
-        scope_dir = _state_local_scope_dir(local_disk_root, job_id, launch.scope)
-        route = _CodexStateRoute(self.executor, job_id, confined=ctx.confined)
+        route = _CodexStateRoute(self.executor, job_id, confined=ctx.confined or via_allocation)
+        selected_run = None
+        if runtime_discovery:
+            scope, _ = self._codex_scope(ctx)
+            try:
+                run_path = self._codex_runtime_run(ctx, route)
+            except _CodexOwnerMissing:
+                # Confirmed absence keeps renewal's existing missing-status
+                # watchdog active. Transport errors remain retryable reads.
+                return _CodexStateStatus(job_id=job_id, scope=scope, scope_dir="<unpublished>",
+                                         commands=route.commands, dry_run=self.executor.dry_run)
+            if not re.fullmatch(rf"/[A-Za-z0-9/_.-]+/state/codex/{scope}/[0-9a-f]{{32}}", run_path) or "/../" in run_path:
+                raise MirrorError("No matching managed Codex run is published in this session.")
+            scope_dir, selected_run = run_path.rsplit("/", 1)
+        else:
+            launch = self._codex_state_launch(ctx, agent_type=AgentType.CODEX)
+            if launch is None:
+                raise MirrorError(
+                    f"slurm.codex_state is not enabled for mirror {ctx.settings.name}; "
+                    "there is no managed Codex state to report."
+                )
+            scope = launch.scope
+            scope_dir = _state_local_scope_dir(local_disk_root, job_id, scope)
         commands = route.commands
         argv_for = route.argv_for
         read = route.read
@@ -4106,15 +4159,15 @@ class MirrorManager:
             return data
 
         latest_path = f"{scope_dir}/latest-run"
-        latest = read(latest_path)
+        latest = selected_run if selected_run is not None else read(latest_path)
         if self.executor.dry_run:
             for name in _STATE_STATUS_FILES:
                 commands.append(argv_for(["cat", f"{scope_dir}/<run>/{name}"]))
             return _CodexStateStatus(
-                job_id=job_id, scope=launch.scope, scope_dir=scope_dir, commands=commands, dry_run=True,
+                job_id=job_id, scope=scope, scope_dir=scope_dir, commands=commands, dry_run=True,
             )
         if latest is None:
-            return _CodexStateStatus(job_id=job_id, scope=launch.scope, scope_dir=scope_dir, commands=commands)
+            return _CodexStateStatus(job_id=job_id, scope=scope, scope_dir=scope_dir, commands=commands)
         run = latest.strip()
         if not _STATE_RUN_ID.fullmatch(run):
             raise MirrorError(
@@ -4132,9 +4185,65 @@ class MirrorManager:
         owner_text = read(owner_path)
         owner = None if owner_text is None else parse(owner_path, owner_text)
         return _CodexStateStatus(
-            job_id=job_id, scope=launch.scope, scope_dir=scope_dir, commands=commands,
+            job_id=job_id, scope=scope, scope_dir=scope_dir, commands=commands,
             run=run, status=status, owner=owner,
         )
+
+    def _codex_runtime_run(self, ctx: MirrorContext, route: _CodexStateRoute) -> str:
+        """Read the actual root; node names and job IDs cannot reconstruct it."""
+        if ctx.confined:
+            session, socket_name = confined_tmux_target(ctx.settings.name)
+            command = ["tmux", "-L", socket_name]
+        else:
+            session = f"sucoder-{ctx.settings.name}"
+            command = ["tmux"]
+        result = route.run([*command, "list-panes", "-s", "-t", f"={session}",
+                            "-F", "#{@sucoder-codex-state-run}"], what="locate the owned Codex run")
+        paths = set(line.strip() for line in (result.stdout or "").splitlines() if line.strip())
+        if not paths:
+            raise _CodexOwnerMissing("The selected session has no published Codex owner yet; "
+                                     "for a local launch without its own tmux session, pass --run.")
+        if len(paths) != 1:
+            raise MirrorError("The selected session has no unique Codex owner; choose its exact mirror and target.")
+        return paths.pop()
+
+    def codex_remote_request(self, ctx: MirrorContext, job_id: int, action: str,
+                             *, run_dir: Optional[str] = None) -> Dict[str, Any]:
+        """Diagnose/pair only the owner found through the existing state route."""
+        if action not in ("status", "pair"):
+            raise MirrorError("Remote-control action must be status or pair.")
+        slurm = ctx.settings.remote.slurm if ctx.settings.remote is not None else None
+        if slurm is not None:
+            state = self._confined_job_state(job_id)
+            if state != "RUNNING":
+                raise MirrorError(f"Recorded allocation {job_id} is {state or 'gone'}; "
+                                  "remote control requires its running owner. No replacement was allocated.")
+        route = _CodexStateRoute(self.executor, job_id, confined=ctx.confined or slurm is not None)
+        scope, _ = self._codex_scope(ctx)
+        if run_dir is None:
+            run_dir = self._codex_runtime_run(ctx, route)
+        if not re.fullmatch(rf"/[A-Za-z0-9/_.-]+/state/codex/{scope}/[0-9a-f]{{32}}", run_dir) or "/../" in run_dir:
+            raise MirrorError("The selected run path does not match this mirror/target's Codex scope.")
+        text = route.read(f"{run_dir}/status.json")
+        try:
+            status = json.loads(text or "null")
+        except ValueError as exc:
+            raise MirrorError("The selected Codex run has unreadable status JSON.") from exc
+        remote = status.get("remote_control") if isinstance(status, dict) else None
+        if not isinstance(remote, dict) or not isinstance(remote.get("helper"), str):
+            raise MirrorError("This run has no isolated remote-control owner; launch it with --remote-control.")
+        helper = remote["helper"]
+        if not helper.startswith("/") or "\x00" in helper or "\n" in helper:
+            raise MirrorError("The run's remote-control helper path is invalid.")
+        result = route.run(["python3", helper, action, "--run", run_dir],
+                           what=f"{action} Codex remote control")
+        try:
+            data = json.loads(result.stdout)
+        except ValueError as exc:
+            raise MirrorError("Codex remote-control helper returned invalid JSON.") from exc
+        if not isinstance(data, dict):
+            raise MirrorError("Codex remote-control helper returned no status object.")
+        return data
 
     def codex_state_drain(
         self, ctx: MirrorContext, job_id: int, *, mode: str, timeout_seconds: float, requester: str,
@@ -4415,7 +4524,7 @@ class MirrorManager:
     def _stage_codex_state_runner(self, ctx: MirrorContext) -> str:
         """Stage the state runner on the target, private and unique per launch."""
         safe = re.sub(r"[^A-Za-z0-9._-]", "_", ctx.settings.name)
-        home = self._resolve_remote_home(ctx)
+        home = self._codex_helper_home(ctx)
         path = f"{home}/.cache/sucoder/codex-state-runner-{safe}-{secrets.token_hex(8)}.py"
         self.executor.run_agent(
             [
@@ -4424,6 +4533,24 @@ class MirrorManager:
                 "sucoder-codex-state", path,
             ],
             input=_state_runner_source(), check=True, capture_output=True,
+        )
+        return path
+
+    def _codex_helper_home(self, ctx: MirrorContext) -> str:
+        if ctx.is_remote:
+            return self._resolve_remote_home(ctx)
+        home = self._agent_home_directory()
+        if home is None:
+            raise MirrorError("Could not resolve the agent home for Codex's staged helpers.")
+        return str(home)
+
+    def _stage_codex_remote_helper(self, ctx: MirrorContext) -> str:
+        safe = re.sub(r"[^A-Za-z0-9._-]", "_", ctx.settings.name)
+        path = f"{self._codex_helper_home(ctx)}/.cache/sucoder/codex-remote-{safe}-{secrets.token_hex(8)}.py"
+        source = Path(__file__).with_name("codex_remote_client.py").read_text(encoding="utf-8")
+        self.executor.run_agent(
+            ["sh", "-c", 'umask 077 && mkdir -p "$(dirname "$1")" && cat > "$1"', "sucoder-codex-remote-helper", path],
+            input=source, check=True, capture_output=True,
         )
         return path
 

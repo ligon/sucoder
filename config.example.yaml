@@ -24,6 +24,12 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 # Requires a Codex build with `app-server --remote-control` and ChatGPT login
 # on the target. --remote-control / --remote-control-only / --no-remote-control
 # override this setting for one launch. Existing sessions keep their mode.
+# Requires Linux bwrap namespace support. Every new remote server gets private
+# managed state and a fresh identity; renewals require pairing again. Without
+# local-tier clone placement, state uses a retained private /tmp root. An explicit
+# slurm.codex_state.enabled: false conflicts with remote control.
+# Inspect/pair the selected owner with codex-remote-status / codex-remote-pair;
+# native codex remote-control pair addresses a different, shared daemon.
 
 # Provider credentials (optional). Values stay in the human user's `pass`
 # store; only the pass entry name belongs in this file. The first line of

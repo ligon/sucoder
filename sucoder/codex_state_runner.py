@@ -139,6 +139,7 @@ import sqlite3
 import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -1525,6 +1526,56 @@ def bwrap_argv(binds, command):
         argv += ["--bind", local, target]
     argv += ["--unshare-user", "--uid", str(os.getuid()), "--gid", str(os.getgid()), "--die-with-parent", "--"]
     return argv + list(command)
+
+
+def prepare_remote_identity(db_dir, home_local, codex_home_real):
+    """A new owner's identity and private enrollment cache (ledger 3--5).
+
+    Called only after the runner owns and has restored its private stores,
+    before any Codex process opens them. Never edit a source generation or
+    the shared database. Installation identity is not conversation history.
+    """
+    target = os.path.join(codex_home_real, "installation_id")
+    if not os.path.isfile(target) or os.path.islink(target):
+        raise Refused("remote control needs an existing regular CODEX_HOME/installation_id; initialize Codex in the shared home first")
+    installation = str(uuid.uuid4())
+    local = os.path.join(home_local, "installation_id-" + installation)
+    fd = os.open(local, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as handle:
+        handle.write(installation)
+    database = os.path.join(db_dir, "state_5.sqlite")
+    if os.path.isfile(database):
+        shared_database = os.path.join(codex_home_real, "state_5.sqlite")
+        if os.path.islink(database) or (os.path.exists(shared_database) and os.path.samefile(database, shared_database)):
+            raise Refused("remote enrollment reset requires a private database, not a link to shared state")
+        connection = sqlite3.connect(database, timeout=5)
+        try:
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(remote_control_enrollments)")}
+            expected = {"websocket_url", "account_id", "app_server_client_name", "server_id",
+                        "environment_id", "server_name", "updated_at"}
+            if columns:
+                if not expected.issubset(columns) or columns - expected - {"remote_control_enabled"}:
+                    raise Refused("unrecognized private remote_control_enrollments schema; refusing remote control")
+                connection.execute("DELETE FROM remote_control_enrollments")
+                connection.commit()
+        finally:
+            connection.close()
+    return installation, (local, target)
+
+
+def publish_run_path(local):
+    """Actual runtime path, for temporary-root status and control discovery."""
+    pane = os.environ.get("TMUX_PANE")
+    if not pane or not os.environ.get("TMUX"):
+        return
+    try:
+        result = subprocess.run(["tmux", "set-option", "-p", "-t", pane,
+                                 "@sucoder-codex-state-run", local],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=3)
+        if result.returncode:
+            log("could not publish the managed run path in its tmux pane")
+    except (OSError, subprocess.TimeoutExpired):
+        log("could not publish the managed run path in its tmux pane")
 
 
 # ----------------------------------------------------------------- restored threads' working directory
@@ -3453,6 +3504,10 @@ def run(args):
     try:
         if shutil.which("bwrap") is None:
             raise Refused("bwrap is not installed on this node; managed placement is unavailable and SuCoder will not fall back to shared SQLite")
+        if getattr(args, "temporary_local_root", False):
+            # No clone placement is implied. Keep the root after exit: a
+            # failed checkpoint may leave the only unsynced state here.
+            os.environ["SUCODER_LOCAL_ROOT"] = tempfile.mkdtemp(prefix="sucoder-codex-state-", dir="/tmp")
         local_root = resolve_local_root()
         codex_home, codex_home_real = resolve_codex_home(args.codex_home)
         check_conflicts(args.command, args.placeholder, codex_home_real)
@@ -3556,6 +3611,13 @@ def run(args):
         step = "preparing the binds"
         try:
             binds, skipped = prepare_binds(codex_home_real, home_local, keep_existing=(mode == "reuse"))
+            if getattr(args, "remote_helper", None):
+                step = "isolating remote-control identity"
+                installation, binding = prepare_remote_identity(db_dir, home_local, codex_home_real)
+                binds.append(binding)
+                env["SUCODER_CODEX_REMOTE_ID"] = installation
+                env["SUCODER_CODEX_REMOTE_HELPER"] = args.remote_helper
+                status.note(remote_control={"installation_id": installation, "helper": args.remote_helper})
             argv = bwrap_argv(binds, command)
             owner = {
                 "scope": args.scope, "run": run_id, "local": local, "db": db_dir, "codex_home": codex_home,
@@ -3583,7 +3645,7 @@ def run(args):
             if attempt is not None:
                 attempt.rollback()
             raise
-        except OSError as exc:
+        except (OSError, sqlite3.Error) as exc:
             if attempt is not None:
                 attempt.rollback()
             raise Refused("%s failed while %s: %s: %s" % (launch, step, type(exc).__name__, exc))
@@ -3593,6 +3655,8 @@ def run(args):
         if restore_ignored:
             fields["restore_ignored"] = restore_ignored
         status.update("starting", **fields)
+        if getattr(args, "publish_run", False):
+            publish_run_path(local)
         log("run %s: databases at %s; bound %s; skipped %s" % (run_id[:8], db_dir, ", ".join(os.path.basename(t) for _, t in binds) or "nothing", ", ".join(skipped) or "nothing"))
         if mode == "restore":
             line = ("run %s restores generation %s/%s (%s, captured %s): %d thread(s), %d rollout bytes and %d database bytes placed "
@@ -3621,7 +3685,8 @@ def run(args):
             except Refused as exc:
                 helper = exc
             try:
-                thread_cwd = place_thread_cwds(helper, binds, env, db_dir, local_root, pending,
+                helper_env = dict(env, CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED="1") if getattr(args, "remote_helper", None) else env
+                thread_cwd = place_thread_cwds(helper, binds, helper_env, db_dir, local_root, pending,
                                                thread_cwd_timeout(args.checkpoint_timeout), os.path.join(local, "thread-cwd.log"))
             except Exception as exc:
                 log("placing the restored threads' cwd failed:\n%s" % traceback.format_exc())
@@ -3732,6 +3797,11 @@ def main(argv=None):
     parser.add_argument("--scope", required=True, help="stable scope digest from the launcher")
     parser.add_argument("--placeholder", default=PLACEHOLDER_DEFAULT)
     parser.add_argument("--codex-home", default=None)
+    parser.add_argument("--temporary-local-root", action="store_true",
+                        help="create a private /tmp root for remote-control state without moving the working tree; retain it on exit")
+    parser.add_argument("--remote-helper", default=None,
+                        help="staged remote-control helper; isolate installation identity and reset only this run's enrollment cache")
+    parser.add_argument("--publish-run", action="store_true", help="publish this launch's actual run path in its tmux pane")
     parser.add_argument("--placement-timeout", type=float, default=90.0)
     parser.add_argument("--durable-root", required=True, metavar="ABS_BASE",
                         help="absolute durable state root; this run's rollout replicas and database generations go under "

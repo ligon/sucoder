@@ -1,0 +1,224 @@
+#+TITLE: Codex remote control: isolated owners and verified reachability
+#+DATE: 2026-10-20
+#+AUTHOR: Sue
+#+STATUS: Implemented and validated; Android acceptance pending
+
+* Charter
+
+The human requested a goal of implementing robust Codex remote control across different nodes on Savio or elsewhere.
+The observed failure is an identity collision, independent of whether the old hostname still has a live session.
+The relay rejected this launch with HTTP 409 and =Remote app server already online=, although a pairing code could be issued and claimed.
+The phone showed an older host and could not open this conversation.
+
+The implementation covers SuCoder-owned Codex terminal and server-only launches, including the legacy =codex remote-control= spelling, on Linux targets capable of the existing state runner's isolation.
+It preserves current conversations and services, uses the existing checkpoint/restore machinery, and gives pairing and status an exact owner to address.
+Automatic transfer of a paired identity between allocations, merging independent histories, changing account authentication, and repairing an upstream stale registration are outside this change.
+Each new owner receives a fresh identity; this deliberately requires pairing a new launch or renewal successor.
+An ordinary reconnect or another client attaching to the running owner keeps its identity.
+
+The human authorized implementation through the active goal while leaving the session.
+The scope above applies that authorization; no additional design approval is required before reversible implementation and testing.
+Existing live processes, account-wide state, and allocation ownership remain protected.
+
+** Definition of done
+
+1. Concurrent owners starting from the same shared Codex home have distinct installation and enrollment identities, including after restored state.
+2. Neither startup, shutdown nor failure modifies the shared installation ID, shared enrollment database, another owner's runtime, or a source generation.
+3. Remote-control launches use private databases and transcripts with the existing durable checkpoints, including when no local-tier working clone is configured.
+4. Legacy service launches and terminal/server modes all use an owned foreground app-server; signals stop only the owned processes.
+5. Status distinguishes local process/socket readiness from relay connectivity, and pairing targets the selected live owner and checks its returned environment.
+6. Missing isolation support, disconnected relay, stale metadata and unsupported protocol behavior produce actionable failures without silently switching to a shared daemon or allocating work.
+7. Existing restore, renewal, explicit history selection, model/policy settings and context behavior pass their targeted regressions; new behaviors have meaningful tests and the Python suite is run.
+8. A reproducible live probe shows simultaneous isolated relay connections where account/backend access permits; Android discovery and conversation opening are recorded separately when the human returns.
+
+* Prior art and evidence
+
+The implementation is anchored in [[file:../.coder/ledger.md][the prior-art ledger]], sections 2--5.
+The existing supervisor owns its server and terminal client under one tmux/Slurm launch and uses a private Unix socket (=sucoder/codex_remote.py=).
+The existing state runner already redirects SQLite, binds private transcripts at the canonical home paths, replicates rollouts, checkpoints databases and handles sealed restoration (=sucoder/codex_state_runner.py=).
+Its core needs =SUCODER_LOCAL_ROOT=; Slurm allocation metadata may be absent.
+
+Codex 0.163.0 reads =installation_id= from its home even with private =sqlite_home=.
+Its =state_5.sqlite= contains an enrollment cache keyed by endpoint, account and client name, without the installation ID.
+Unix WebSocket servers use the global/null client key, so changing a control client's name does not separate their enrollment.
+These facts were checked in the installed binary/schema and matching upstream source, under tag =rust-v0.163.0=.
+The local evidence and protocol probes use no inference request.
+
+The [[https://learn.chatgpt.com/docs/cli/reference][official CLI reference]] documents managed-daemon pairing; it is not a selector for the app-server socket owned by this launch.
+The [[https://learn.chatgpt.com/docs/config-file/environment-variables][environment reference]] distinguishes =CODEX_HOME= from SQLite placement.
+The integration must preserve the former's configuration, credentials, trust and absolute rollout paths.
+
+GitNexus query and impact were attempted before implementation.
+Its native module fails to load on this host because the required glibc version is unavailable; adding the already-installed OpenSSL library only exposed that next dependency.
+Source/call-site and named-test inspection is the fallback, not an assertion that the index is read-only.
+=launch_agent= is a shared, high-impact integration point used by collaborate/bootstrap, agents-run and renewal.
+The intended change stays within Codex remote-control branches.
+
+* Design
+
+** Identity and enrollment
+
+Generate one UUID for a new remote server owner and write it to a private installation file in that run's local state.
+Bind the file over the existing =CODEX_HOME/installation_id= only inside the owned process namespace.
+Keep the public and canonical home path unchanged.
+Do not copy or rewrite the shared installation file, and do not include the generated identity in conversation restoration.
+
+Before Codex opens a restored or reused private database with this new identity, remove only its =remote_control_enrollments= cache.
+Run this operation after state ownership and restore checks, before any pre-launch helper or real server can enable remote control.
+Never edit a source checkpoint or the shared database.
+Unknown incompatible cache schemas refuse remote startup instead of guessing.
+Suppress remote-control preference resolution in the one-shot helper used to repair restored working directories.
+
+** Placement outside local-tier clones
+
+Every remote-control launch uses the existing state runner.
+With configured local-tier placement, keep the existing allocation-local root and restore/renewal behavior.
+Otherwise the runner creates its own private node-local temporary root without moving the working tree.
+The root remains available after exit; final-checkpoint failure must not delete the only unsynced state.
+Database generations and transcript replicas use the same durable root and format as existing managed state.
+
+Publish the actual run path in pane metadata when startup has established it.
+Status and drain can then locate a generic run without inventing a =job<ID>= path.
+A reconnect to the existing tmux launch reuses that server and its metadata.
+An explicit managed-state opt-out cannot authorize a remote launch against shared state; report the conflict and how to resolve it.
+Unsupported isolation environments fail clearly, while ordinary remote-disabled Codex behavior stays intact.
+
+** Owned transport and control
+
+Normalize both remote-control flag modes and the legacy service spelling to an owned foreground app-server and optional terminal client.
+Keep the same private Unix WebSocket socket for local terminal and control requests.
+Persist a private receipt containing run/scope, actual host, installation UUID, socket, helper path and process incarnation.
+The receipt has no credential or pairing secret.
+Use the existing in-allocation route for confined requests and reject stale or mismatched process/node identities.
+
+The control helper uses a bounded stdlib-only WebSocket client and only diagnostic/pairing RPCs.
+It does not resume a thread, start inference, start a daemon, or modify another registration.
+Pairing first requires relay status =connected= and the expected installation ID, then checks the pairing response's environment against that status.
+A claimed code and a listening local socket are never advertised as proof of remote reachability.
+
+Expose explicit status and pairing commands for the selected mirror/target.
+Print enough owner information to distinguish two services whose upstream display label is the same physical hostname.
+Terminal QR rendering belongs on the launcher; the compute node needs no image package or X11.
+Never write pairing secrets to persistent launch records or ordinary logs.
+
+** Failure and renewal
+
+Leave transient relay reconnects and token refresh to Codex while retaining the same owner identity.
+Report degraded remote access without destroying a usable terminal conversation.
+Do not rotate identities on each failed connection and do not stop a suspected old node automatically.
+
+A replacement server gets a new identity even when it restores the predecessor's conversations.
+The existing acknowledged-drain and sealed-generation rules still govern conversation continuity.
+Thus an overlapping predecessor, a delayed relay disconnect or a stale registration cannot claim the replacement's identity.
+Preserving pairing across replacement would require a separate durable identity-transfer and fencing design.
+
+* Validation and handoff
+
+Use fake local servers for control protocol, ownership, concurrent startup, disconnected status, pairing mismatch, frame bounds and failure tests.
+Use real installed Codex with isolated test state to verify installation-file binding and absence of shared writes, without model requests.
+Cover restored enrollment sanitization and legacy launch normalization alongside existing managed-state and renewal tests.
+Run pytest from the worktree root and record baseline/environment failures separately.
+
+Use an isolated live probe for relay enrollment and simultaneous connections only after local invariants pass.
+The human's existing server remains running; no account-wide registration is reset or revoked.
+Record exact runnable commands, version, result and remaining Android acceptance work here.
+
+* Implementation and validation record
+
+The change is isolated on =feat/codex-remote-identity= in =/tmp/sucoder-remote-identity-20261020=; the shared mirror's =main= checkout is unchanged.
+The prior-art ledger is committed as =5da3730=.
+The identity/cache preparation is part of the existing runner's owned pre-launch transaction.
+Remote launches record =remote_isolated= in their managed owner provenance; lifecycle inspection follows the actual published run even if current placement settings differ.
+It never substitutes another run through =latest-run= when inspecting an isolated owner.
+A confirmed empty pane marker yields absent status, preserving renewal's bounded missing-status watchdog; transport failures remain distinct.
+Local launches without their own tmux session can use an explicit =--run= directory.
+
+Independent code review identified discovery and shutdown gaps before final validation.
+Regression coverage now includes explicit local run selection, exact in-allocation routing, diagnostics without allocation, changed placement/enablement settings, mismatched owner scopes, missing successor publication, server crashes after socket readiness and forced shutdown.
+A clean terminal exit cannot mask an abnormal server exit or produce a sealed checkpoint.
+The standalone target helper remains stdlib-only and parses with Python 3.6 syntax.
+
+** Live native probes
+
+Installed Codex: =codex-cli 0.163.0=.
+No probe sent an inference request, stopped an existing service, reset shared enrollment, or allocated a job.
+The probes started only their own bounded owners and retained their private evidence.
+
+Same-node simultaneous-owner probe:
+
+#+begin_src shell
+python scripts/codex_remote_probe.py --live \
+  --report-root ~/.sucoder/pilots/codex-remote-identity-20261020b
+#+end_src
+
+Both native servers connected concurrently with distinct installation and environment IDs.
+Shared installation bytes and enrollment fingerprints were unchanged; both exited zero.
+
+Cross-node probe evidence is under =~/.sucoder/pilots/codex-remote-crossnode-20261020/{ln001,ln002}/result.json=.
+The source snapshot used by both hosts is in that evidence directory's =source/=.
+Two invocations ran concurrently, one locally and one through batch SSH to =ln001.brc=, with this common argument set:
+
+#+begin_src shell
+python scripts/codex_remote_probe.py --live --owners 1 \
+  --scope 71f93cbafc504ac6be35fc74ed64165cab18d11258bc4ed1abdf58285d8048de \
+  --hold-seconds 15 --report-root <new-private-report-directory>
+#+end_src
+
+| Host | Installation | Relay | Exit | Final checkpoint |
+|------+--------------+-------+------+------------------|
+| ln001.brc | fdf8cdfd-5f8e-4cb6-a998-8bc50c996ff7 | connected | 0 | sealed |
+| ln002.brc | 05c2a454-3bce-47e7-ac5b-c0280b7a3e70 | connected | 0 | sealed |
+
+The native servers' placed intervals overlapped from 03:43:54 to 03:44:06 UTC on 2026-10-21.
+They shared the same canonical Codex home and probe scope, had different environment IDs, and each reported unchanged shared identity/enrollment state.
+These were separate Savio login nodes; Slurm request routing is covered by executor/CLI tests rather than a new compute allocation.
+The original human session and its stale registration were not changed.
+
+A separate native pairing check used the same probe with =--verify-pairing=:
+
+#+begin_src shell
+python scripts/codex_remote_probe.py --live --verify-pairing \
+  --report-root ~/.sucoder/pilots/codex-remote-pairing-20261020
+#+end_src
+
+Both owners returned pairing responses matching their checked environment and installation identities.
+Pairing secrets existed only in memory and were neither displayed nor saved; the report records boolean checks.
+Both owners exited zero with sealed final generations, and shared state was unchanged.
+
+** Automated checks
+
+The final combined remote-control/protocol/identity/control/state-launch batch passes: 190 tests.
+The final release/control batch passes: 80 tests.
+The lifecycle, state-status and renewal batch passes: 183 tests.
+The first full Python run under the session's inherited umask 077 had 1780 passes and three failures.
+Two existing timer permission tests assume umask 022; both failures reproduce on unchanged =main= under 077.
+The real-Codex restored-thread test timed out waiting for a sealed generation after its final rollout grew beyond the last replication length; it passed alone on unchanged =main= in 4.75 seconds.
+The focused restored-thread rerun also hit this timing failure.
+Independent review traced it to unchanged final-capture ordering (replication stops before the SQLite projection can expose a later required rollout watermark); no remote-control code participates in the predecessor phase.
+The exact earlier symptom was not reproduced on unchanged main, so this is recorded as an observed timing failure rather than claimed as a proven baseline reproduction.
+A further worktree test using the unchanged baseline runner passed in 4.89 seconds.
+The final full suite with umask 022 passes: 1791 tests in 266.17 seconds, including that real-Codex restore test and the timer tests.
+The last release/control regression added after full collection is covered in the final focused batches.
+
+Reproduce the portable full run from the worktree root:
+
+#+begin_src shell
+umask 022
+python -m pytest -q
+#+end_src
+
+=poetry check --lock= passes with existing Poetry metadata deprecation warnings.
+Independent follow-up review found no remaining concrete blocker after the discovery, shutdown and renewal-watchdog fixes.
+The installed type checker reports the same 68 pre-existing errors as unchanged =main= after ignoring the optional QR library's absent type stubs; there are no additional diagnostics.
+=git diff --check= passes.
+GitNexus =impact= and =detect-changes --scope compare --base-ref main= were attempted and both fail loading the host's native database library (=libssl.so.3=; the existing-library retry earlier exposed incompatible glibc).
+Source/call-site review, independent review and the test suite provide the available scope checks; no global dependency repair was attempted.
+
+** Remaining human acceptance
+
+From a fresh SuCoder remote-control launch, run =sucoder codex-remote-status <mirror>= and =sucoder codex-remote-pair <mirror> --qr= on the appropriate target.
+Scan with the Android client's Codex pairing flow, select this owner, then open a chat in the mirror directory and confirm a round trip.
+That phone interaction is not automated and is not claimed as verified.
+Each new launch, including a renewal successor, requires fresh pairing by design.
+
+Sue, 2026-10-20 (America/Los_Angeles).
