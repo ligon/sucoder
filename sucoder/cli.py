@@ -3427,12 +3427,26 @@ def attach(
         )
     else:
         tmux_name = f"sucoder-{mirror}"
-        # When via_srun is set, `srun_prefix` is applied to both branches
-        # so the fallback `tmux new-session` also runs inside the
-        # allocation, not on the login node.
+        # No `|| tmux new-session` fallback (issue 59).  A session the route
+        # cannot *see* is not a session that is gone: on 2026-10-22 two live
+        # unconfined servers listened in their nodes' host /tmp while every
+        # `srun --overlap` step had a private job /tmp, and the fallback
+        # would have handed the user a fresh empty shell named like the
+        # agent's.  Fail, name the other route, and print the command that
+        # starts a new session deliberately.
+        other = (
+            "without --via-srun (direct ssh to the node)" if via_srun
+            else "with --via-srun (inside the job step)"
+        )
+        new_cmd = f"{srun_prefix}tmux new-session -s {tmux_name}"
+        hint = (
+            f"sucoder: no tmux session {tmux_name} visible by this route. "
+            f"It may live where this route cannot see it; retry {other}. "
+            f"To start a new one deliberately, run on {attach_target}: {new_cmd}"
+        )
         attach_cmd = (
             f"{srun_prefix}tmux attach-session -t {shlex.quote(tmux_name)} "
-            f"|| {srun_prefix}tmux new-session -s {shlex.quote(tmux_name)}"
+            f"|| {{ echo {shlex.quote(hint)} >&2; exit 1; }}"
         )
     # Trusted forwarding (-Y semantics): untrusted X11 breaks many
     # clients and expires after ssh's 20-minute window.
@@ -6004,7 +6018,7 @@ def _probe_session_panes(
     follow.
     """
     from .mirror import confined_tmux_target
-    from .sessions_report import SESSION_PANE_PROBE_SH, parse_pane_status
+    from .sessions_report import SESSION_PANE_PROBE_SH, job_tmux_command, parse_pane_status
 
     by_cluster: Dict[str, list] = {}
     for group in report.groups:
@@ -6038,16 +6052,15 @@ def _probe_session_panes(
             mirror = entry.mirror or entry.job.token
             session_name, socket = confined_tmux_target(mirror)
             job = shlex.quote(str(entry.job.job_id))
-            # TMPDIR and the cwd are this job's node-local paths and do not
-            # exist on another node, so srun into a sibling allocation fails
-            # before the probe runs unless both are neutralised.
-            lines.append(
-                f'printf "%s\\t" {job}; '
-                f'TMPDIR=/tmp srun --jobid={job} --overlap --quiet --chdir=/tmp '
-                f'bash -c {shlex.quote(SESSION_PANE_PROBE_SH)} _ '
-                f'{shlex.quote(session_name)} '
-                f'{shlex.quote(socket if confined else "")} 2>/dev/null; echo'
+            probe = (
+                f"bash -c {shlex.quote(SESSION_PANE_PROBE_SH)} _ "
+                f"{shlex.quote(session_name)} {shlex.quote(socket if confined else '')}"
             )
+            routed = job_tmux_command(
+                probe, job_id=entry.job.job_id, session=session_name,
+                socket=socket if confined else "", node=entry.job.node or None,
+            )
+            lines.append(f'printf "%s\\t" {job}; {routed} 2>/dev/null; echo')
             # Age of this job's own WIP snapshot on the shared mirror.  The
             # ref is per job now, so it answers for this allocation and not
             # for whichever one wrote last.
