@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 from typing import List, Optional, Sequence
 
+from .agent_mode import _CODEX_VALUE_OPTIONS, _first_positional
+
 
 # Keep this self-contained: SuCoder need not be installed on the target.
 _SUPERVISOR = r'''set -u
@@ -21,6 +23,8 @@ socket="unix://$runtime/server.sock"
 server_pid=
 client_pid=
 cleanup() {
+    final_status=$?
+    trap - EXIT
     trap '' INT TERM HUP
     for pid in "$client_pid" "$server_pid"; do
         [ -z "$pid" ] || kill -TERM "$pid" 2>/dev/null || true
@@ -36,15 +40,29 @@ cleanup() {
     done
     for pid in "$client_pid" "$server_pid"; do
         if [ -n "$pid" ]; then
-            kill -KILL "$pid" 2>/dev/null || true
-            wait "$pid" 2>/dev/null || true
+            if kill -0 "$pid" 2>/dev/null; then
+                kill -KILL "$pid" 2>/dev/null || true
+                [ "$final_status" -ne 0 ] || final_status=137
+            fi
+            wait "$pid" 2>/dev/null; child_status=$?
+            # A clean TUI exit cannot seal a crashed/forced server.
+            if [ "$final_status" -eq 0 ] && [ "$child_status" -ne 0 ]; then
+                final_status=$child_status
+            fi
         fi
     done
     rm -rf -- "$runtime"
+    exit "$final_status"
+}
+stop_server() {
+    # cleanup waits for a graceful native exit, bounds it, and preserves
+    # the native status. Never report a forced stop as a sealed owner.
+    if [ "$mode" = server ]; then exit 0; fi
+    exit 143
 }
 trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
+if [ "$mode" = terminal ]; then trap '' INT; else trap stop_server INT; fi
+trap stop_server TERM
 trap 'exit 129' HUP
 
 # Resolve to a native executable/shim in the same login/nvm environment as
@@ -55,16 +73,6 @@ if ! "${server[0]}" app-server --remote-control --help >"$runtime/probe.log" 2>&
     exit 1
 fi
 echo "SuCoder: starting Codex remote control in $PWD" >&2
-if [ "$mode" = server ]; then
-    echo 'SuCoder: server only; connect from your remote client. Ctrl-C stops this server.' >&2
-    "${server[@]}" --listen "$socket" &
-    server_pid=$!
-    wait "$server_pid"
-    status=$?
-    server_pid=
-    exit "$status"
-fi
-
 "${server[@]}" --listen "$socket" >"$runtime/server.log" 2>&1 &
 server_pid=$!
 ready=false
@@ -85,7 +93,18 @@ if ! "$ready"; then
     echo 'SuCoder: Codex app-server did not create its local socket within 30 seconds.' >&2
     exit 1
 fi
-echo "SuCoder: terminal and remote clients use the same server; server log: $runtime/server.log" >&2
+echo "SuCoder: owned Codex server; local socket: $socket; server log: $runtime/server.log" >&2
+if [ -n "${SUCODER_CODEX_REMOTE_HELPER:-}" ]; then
+    python3 "$SUCODER_CODEX_REMOTE_HELPER" register --runtime "$runtime" --pid "$server_pid" || exit 1
+    python3 "$SUCODER_CODEX_REMOTE_HELPER" wait --timeout 20 || true
+fi
+if [ "$mode" = server ]; then
+    echo 'SuCoder: server only. Check relay status before pairing. Ctrl-C stops this server.' >&2
+    wait "$server_pid"; status=$?
+    server_pid=
+    [ "$status" -eq 0 ] || cat "$runtime/server.log" >&2
+    exit "$status"
+fi
 # Explicit stdin keeps the background client attached to the terminal while
 # allowing traps to clean up both children on signals to the supervisor.
 "${client[@]}" --remote "$socket" <&0 &
@@ -99,6 +118,7 @@ exit "$status"
 
 def build_remote_command(
     command: Sequence[str], mode: str, *, instructions: Optional[str] = None,
+    legacy_service: bool = False,
 ) -> List[str]:
     """Translate normal Codex settings, retaining terminal argv verbatim.
 
@@ -108,6 +128,25 @@ large prompts over SSH stdin using the existing prelude machinery.
     """
     if mode not in ("terminal", "server"):
         raise ValueError(f"Unknown Codex remote-control mode: {mode!r}")
+    if legacy_service:
+        # Detection already validated this service. Keep option values
+        # atomic: a config value called remote-control is not a subcommand.
+        at = _first_positional(command, 1, _CODEX_VALUE_OPTIONS)
+        if at is None or command[at] != "remote-control":
+            raise ValueError("Expected a Codex remote-control service command.")
+        values = {"-c", "--config", "--enable", "--disable"}
+        normalized = list(command[:at])
+        pending_value = False
+        for arg in command[at + 1:]:
+            if pending_value:
+                normalized.append(arg)
+                pending_value = False
+            elif arg in values:
+                normalized.append(arg)
+                pending_value = True
+            elif arg != "--no-daemon":
+                normalized.append(arg)
+        command = normalized
     server = [command[0], "app-server", "--remote-control"]
     value_keys = {
         "--model": "model", "-m": "model",

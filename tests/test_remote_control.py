@@ -91,6 +91,7 @@ def _manager(tmp_path, monkeypatch, *, remote=False):
     manager = MirrorManager(config, executor, logging.getLogger("remote-control-test"))
     monkeypatch.setattr(manager, "_agent_home_directory", lambda: tmp_path)
     monkeypatch.setattr(manager, "_resolve_remote_home", lambda ctx: str(tmp_path))
+    monkeypatch.setattr(manager, "_resolve_remote_path", lambda ctx: str(tmp_path / "sample"))
     monkeypatch.setattr(manager, "_ensure_mirror_exists", lambda ctx: tmp_path)
     monkeypatch.setattr(manager, "_compose_context_prelude", lambda ctx: PRELUDE)
     for method in ("_maybe_run_tool_preflight", "_maybe_run_poetry_auto_install",

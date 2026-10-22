@@ -412,8 +412,8 @@ sucoder -T savio collaborate project --agent-command "codex remote-control"
 #+end_src
 
 =--agent-command "codex remote-control start"= is also accepted.
-SuCoder converts =start= to the foreground form and reports that choice, so tmux and Slurm retain ownership of the service process.
-Commands such as =stop= and =pair= are management operations; run them separately on the remote host.
+SuCoder normalizes both spellings to a launch-owned foreground app-server with an isolated identity and state.
+Use =sucoder codex-remote-status= and =sucoder codex-remote-pair= for that owner; native =codex remote-control pair= addresses Codex's shared daemon instead.
 The remote Codex installation must support =remote-control= and have the authentication and pairing required by the connected Codex client.
 See the [[https://learn.chatgpt.com/docs/developer-commands?surface=cli#codex-remote-control][Codex remote-control reference]].
 
@@ -1906,23 +1906,41 @@ UI ends that launch's server, while Ctrl-C ends a server-only launch.
 deadline retain their usual meaning. These options affect new launches;
 reusing a running session keeps its original mode.
 
-The integration uses Codex's experimental =app-server --remote-control=
-support (accepted by the installed 0.159.2 CLI), and checks for the flag on
-the target before starting. The terminal connects through a private,
-launch-specific Unix socket on node-local =/tmp=; no new TCP listener or SSH
-forward is required. It starts the server directly, avoiding the extra
-foreground =codex remote-control= initialization handshake discussed below.
-This does not establish a fix for every Codex startup timeout.
+The integration uses Codex's experimental =app-server --remote-control= support, verified with Codex 0.163.0.
+It checks for the flag on the target before starting.
+A private Unix socket connects the terminal and control clients to the same server; no TCP listener or SSH forward is required.
 
-Log in to Codex with ChatGPT on the target first. Remote availability still
-depends on account access and outbound connectivity. A local socket becoming
-ready is not proof of enrollment: confirm that the host appears in your
-remote client. Terminal mode prints a private server-log path before opening
-the UI; server-only mode leaves server output visible. Runtime logs and the
-socket are removed when the launch exits. No persistent daemon settings or
-Codex database locations are changed. If another remote-control process is
-already using the same Codex installation, end that process before starting
-this one; SuCoder does not stop other servers automatically.
+Each new launch has a fresh installation identity and private SQLite/enrollment state, so nodes sharing =CODEX_HOME= can connect simultaneously.
+SuCoder uses the existing managed-state runner, retaining canonical home paths, credentials and configuration while binding private state inside the owner's namespace.
+Linux, =bwrap= and its namespace support are required; unavailable isolation refuses startup.
+With no local-tier clone configured, the runner creates a private =/tmp= state root and retains it after exit.
+Conversations use the existing durable checkpoints and restore/renewal machinery.
+An explicit =slurm.codex_state.enabled: false= conflicts with remote control; remove the opt-out or use =--no-remote-control=.
+The shared installation ID and enrollment database are unchanged.
+Each new launch or renewal successor requires fresh pairing; clients reconnecting to the same running server keep its identity.
+
+Log in to Codex with ChatGPT on the target first.
+Remote availability depends on account access and outbound connectivity.
+Check the selected launch, then pair it from the launcher:
+
+#+begin_src shell
+sucoder -T savio codex-remote-status project
+sucoder -T savio codex-remote-pair project --qr
+#+end_src
+
+Status reports local socket readiness separately from relay connectivity and returns success only for a connected relay.
+Pairing refuses a disconnected relay and checks the socket's installation and environment identities.
+The commands inspect the recorded allocation; they never allocate a replacement node or start a shared daemon.
+For a local launch without its own tmux session, pass =--run /absolute/path/to/state/codex/<scope>/<run>=, using the run directory printed by the runner.
+Both commands accept =--json=; pairing codes are short-lived and are not saved in launch records.
+Terminal QR output requires the optional =remote-qr= extra on the launcher (=pip install 'sucoder[remote-qr]'= or =poetry install --extras remote-qr=).
+The target needs no QR package, image viewer or X11.
+
+The supervisor prints its private server-log path before opening the UI or waiting in server-only mode.
+Socket and runtime logs are removed when the launch exits; managed state and durable checkpoints remain.
+A failed or forced server shutdown cannot produce a clean sealed checkpoint.
+SuCoder stops only its owned child processes and does not reset another node's registration.
+See [[file:docs/codex-remote-control.org][the identity design and validation record]] for the collision evidence and live probe.
 
 SuCoder passes its context prelude as =developer_instructions= on the server,
 so new chats created by either client receive it. Model, sandbox, approval,
@@ -1935,8 +1953,9 @@ when creating another chat.
 
 *** Manual command and the original startup failure
 
-After SuCoder has opened a shell on an allocated compute node, run Codex's
-remote-control command in a tmux window from the desired mirror:
+The following historical diagnostic used native Codex directly.
+It shares the account's installation identity and is unsuitable for concurrent nodes; use the SuCoder launch and pairing commands above for normal operation.
+For reproducing the earlier initialization failure only, the command was:
 
 #+begin_src sh
 codex --version

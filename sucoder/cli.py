@@ -675,7 +675,10 @@ def _build_executor(
         #    job cgroup).  No compute node exists at build time, so we skip
         #    salloc and return a *login-node* executor; the confined
         #    collaborate flow submits the job and resolves the node itself.
-        confined = remote.slurm is not None and remote.slurm.confined
+        # Diagnostics must not enter _ensure_slurm_node: that path can
+        # allocate when an old job ended. Use the login node + srun route.
+        observe_only = bool((cli_ctx.obj or {}).get("codex_observe_only")) if cli_ctx else False
+        confined = remote.slurm is not None and (remote.slurm.confined or observe_only)
         target_node = session.login_node
         target_control = ln_control
         # Remembered before the allocation step below may replace them.
@@ -2256,6 +2259,91 @@ def worktrees(
         _display()
 
 
+def _codex_remote_request(ctx: typer.Context, mirror: Optional[str], action: str, verbose: bool,
+                          run_dir: Optional[str] = None) -> Dict[str, Any]:
+    """Select an existing owner without allocating a replacement node."""
+    from .session import RemoteSession
+
+    mirror = _resolve_mirror_name(ctx, mirror)
+    config = _get_config(ctx)
+    settings = config.mirrors.get(mirror)
+    remote = _get_active_target(cast(click.Context, ctx)) or (settings.remote if settings else None)
+    session = RemoteSession.load(mirror, target_name=(ctx.obj or {}).get("target_name"))
+    if remote is not None and remote.slurm is not None and not session.slurm_job_id:
+        raise MirrorError("No allocation is recorded for this mirror/target; select a running remote-control launch.")
+    logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
+    if ctx.obj is None:
+        ctx.obj = {}
+    before = ctx.obj.get("codex_observe_only")
+    ctx.obj["codex_observe_only"] = True
+    try:
+        manager = _build_manager_for_mirror(config, logger, False, mirror, cli_ctx=cast(click.Context, ctx))
+    finally:
+        if before is None:
+            ctx.obj.pop("codex_observe_only", None)
+        else:
+            ctx.obj["codex_observe_only"] = before
+    return manager.codex_remote_request(manager.context_for(mirror), session.slurm_job_id or 0, action, run_dir=run_dir)
+
+
+@app.command("codex-remote-status")
+def codex_remote_status(
+    ctx: typer.Context,
+    mirror: Optional[str] = typer.Argument(None, help="Mirror containing the running owner.", shell_complete=_mirror_completion),  # type: ignore[arg-type]
+    as_json: bool = typer.Option(False, "--json", help="Print the exact owner's status as JSON."),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+    run_dir: Optional[str] = typer.Option(None, "--run", help="Exact run directory for a local launch without its own tmux session."),
+) -> None:
+    """Check the selected launch's local socket and remote relay separately."""
+    try:
+        data = _codex_remote_request(ctx, mirror, "status", verbose, run_dir)
+    except MirrorError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        typer.echo(json.dumps(data, indent=2, sort_keys=True))
+    else:
+        typer.echo(f"host: {data.get('node')}  installation: {data.get('installation_id')}")
+        typer.echo(f"local socket: {'ready' if data.get('local_ready') else 'unavailable'}; relay: {data.get('status')}")
+        typer.echo(f"run: {data.get('run')}")
+    if data.get("status") != "connected":
+        raise typer.Exit(code=1)
+
+
+@app.command("codex-remote-pair")
+def codex_remote_pair(
+    ctx: typer.Context,
+    mirror: Optional[str] = typer.Argument(None, help="Mirror containing the running owner.", shell_complete=_mirror_completion),  # type: ignore[arg-type]
+    qr: bool = typer.Option(False, "--qr", help="Render the short-lived pairing code as a terminal QR."),
+    as_json: bool = typer.Option(False, "--json", help="Print the short-lived pairing response as JSON."),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+    run_dir: Optional[str] = typer.Option(None, "--run", help="Exact run directory for a local launch without its own tmux session."),
+) -> None:
+    """Pair the phone with this connected launch's socket, checking its identity."""
+    if qr and as_json:
+        raise typer.BadParameter("--qr and --json cannot be combined.")
+    try:
+        data = _codex_remote_request(ctx, mirror, "pair", verbose, run_dir)
+    except MirrorError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    if as_json:
+        typer.echo(json.dumps(data))
+        return
+    typer.echo(f"host: {data.get('node')}  installation: {data.get('installationId')}")
+    typer.echo(f"Pairing code: {data.get('manualPairingCode')}; expires at epoch {data.get('expiresAt')}")
+    if qr:
+        try:
+            import qrcode  # type: ignore[import-untyped]
+        except ImportError as exc:
+            typer.echo("Terminal QR rendering requires qrcode on the launcher (install sucoder with the remote-qr extra).", err=True)
+            raise typer.Exit(code=1) from exc
+        code = qrcode.QRCode(border=4)
+        code.add_data(data["pairingCode"])
+        code.make(fit=True)
+        code.print_ascii(invert=True)
+
+
 @app.command("codex-state-status")
 def codex_state_status(
     ctx: typer.Context,
@@ -3714,9 +3802,14 @@ def _release_drain(
     """
     slurm = remote.slurm
     state = slurm.codex_state if slurm is not None else None
+    owner = session.managed_owner if isinstance(session.managed_owner, dict) else None
+    if owner is not None and (state is None or owner.get("remote_isolated") is True and not state.enabled):
+        from .config import CodexStateConfig
+        state = CodexStateConfig(enabled=True)
     if state is None or not state.enabled:
         return None
-    recorded = session.service_launch.get("command") if isinstance(session.service_launch, dict) else None
+    recorded = owner.get("command") if owner else (
+        session.service_launch.get("command") if isinstance(session.service_launch, dict) else None)
     if harness:
         command = _agent_shorthand(harness)
     elif recorded:

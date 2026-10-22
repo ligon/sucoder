@@ -43,6 +43,8 @@ class CodexStateLaunch:
     restore: Optional[str] = None   # ``RUN/GENERATION`` to continue from
     fresh: bool = False             # start a new independent history
     unattended: bool = False        # no client attached: sealed-only restore, pending work refuses
+    temporary_local_root: bool = False  # remote control without a local-tier clone
+    remote_control: bool = False        # private installation identity as well as SQLite
 
     @property
     def selection(self) -> Optional[str]:
@@ -191,6 +193,9 @@ def runner_command(
     fresh: bool = False,
     unattended: bool = False,
     app_server: Optional[Sequence[str]] = None,
+    temporary_local_root: bool = False,
+    remote_helper: Optional[str] = None,
+    publish_run: bool = False,
     python: str = "python3",
 ) -> List[str]:
     """The outermost command: the staged runner owning everything after ``--``.
@@ -230,6 +235,12 @@ def runner_command(
         argv.append("--fresh")
     if unattended:
         argv.append("--unattended")
+    if temporary_local_root:
+        argv.append("--temporary-local-root")
+    if remote_helper is not None:
+        argv += ["--remote-helper", remote_helper]
+    if publish_run:
+        argv.append("--publish-run")
     return [*argv, "--", *command]
 
 
