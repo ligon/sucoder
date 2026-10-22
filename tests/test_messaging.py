@@ -18,7 +18,7 @@ from sucoder.messaging import (
     pane_tail, parse_send_output, plan_recipients, send_keys_command,
 )
 from sucoder.sessions_report import (
-    JobRow, LoginSession, Report, SessionEntry, TargetGroup,
+    JobRow, LoginSession, Report, SessionEntry, TargetGroup, job_tmux_command,
 )
 
 
@@ -120,7 +120,7 @@ def test_an_unconfined_target_uses_the_default_tmux_server():
                      mirror="M", target="savio-node", pane="claude"),
     ])])
     [r], _ = plan_recipients(report, mirror="M", **PLAN)
-    assert r.socket == "" and r.job_id == 3
+    assert r.socket == "" and r.job_id == 3 and r.node == "n2"
 
 
 def test_a_mirror_no_config_names_is_selected_by_its_token():
@@ -253,3 +253,101 @@ def test_a_peek_may_read_a_shell_pane():
         _report(_job(1, "M", pane="bash")), mirror="M", for_reading=True, **PLAN,
     )
     assert len(chosen) == 1 and skipped == []
+
+
+# -- a host-side tmux server the job step cannot see (issue 59) ------------------
+
+def test_a_confined_session_keeps_the_step_only_route():
+    cmd = job_tmux_command("tmux -L s ls", job_id=7, session="sucoder-M",
+                           socket="s", node="n1")
+    assert cmd == "TMPDIR=/tmp srun --jobid=7 --overlap --quiet --chdir=/tmp bash -c 'tmux -L s ls'"
+
+
+def test_a_job_with_no_node_keeps_the_step_only_route():
+    for node in (None, "", "(None)"):
+        cmd = job_tmux_command("tmux ls", job_id=7, session="sucoder-M", node=node)
+        assert "ssh" not in cmd
+
+
+def test_an_unconfined_session_falls_back_to_the_node():
+    cmd = job_tmux_command("tmux ls", job_id=7, session="sucoder-M", node="n0071.savio3")
+    assert "tmux has-session -t sucoder-M 2>/dev/null || exit 75" in cmd
+    assert "ssh -n -o BatchMode=yes -o LogLevel=ERROR n0071.savio3 'tmux ls'" in cmd
+
+
+@pytest.fixture
+def two_tmps(tmp_path):
+    """A job step and its node's host side, as two tmux socket directories.
+
+    Fake ``srun`` and ``ssh`` run their command with ``TMUX_TMPDIR`` set to
+    the step's or the host's directory, and log that they were called --
+    the same split a private job /tmp makes on savio3.
+    """
+    step, host, bindir = tmp_path / "step", tmp_path / "host", tmp_path / "bin"
+    for d in (step, host, bindir):
+        d.mkdir()
+    calls = tmp_path / "calls"
+    (bindir / "srun").write_text(
+        "#!/bin/bash\n"
+        f"echo srun >> {calls}\n"
+        'while [ "$1" != bash ]; do shift; done\n'
+        f'TMUX_TMPDIR={step} exec "$@"\n'
+    )
+    (bindir / "ssh").write_text(
+        "#!/bin/bash\n"
+        f"echo ssh >> {calls}\n"
+        f'TMUX_TMPDIR={host} exec bash -c "${{@: -1}}"\n'
+    )
+    for f in ("srun", "ssh"):
+        (bindir / f).chmod(0o755)
+    import os
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"}
+    env.pop("TMUX", None)
+    servers = []
+
+    def start(where):
+        d = step if where == "step" else host
+        subprocess.run(["tmux", "new-session", "-d", "-s", "sucoder-M", "cat"],
+                       check=True, env={**env, "TMUX_TMPDIR": str(d)})
+        servers.append(d)
+
+    def run(cmd):
+        out = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, env=env)
+        routes = calls.read_text().split() if calls.exists() else []
+        calls.unlink(missing_ok=True)
+        return out, routes
+
+    yield start, run
+    for d in servers:
+        subprocess.run(["tmux", "kill-server"], capture_output=True,
+                       env={**env, "TMUX_TMPDIR": str(d)})
+
+
+def test_a_host_side_session_is_reached_through_the_node(two_tmps):
+    start, run = two_tmps
+    start("host")
+    r = Recipient("x", "ln001", "sucoder-M", job_id=7, node="n1")
+    out, routes = run(send_keys_command(r, "hello host"))
+    assert parse_send_output(out.stdout) == (["sucoder-M"], [])
+    assert routes == ["srun", "ssh"]
+    subprocess.run(["sleep", "0.5"])
+    out, routes = run(capture_pane_command(r))
+    assert out.stdout.count("hello host") == 2, out.stdout
+    assert routes == ["srun", "ssh"]
+
+
+def test_a_step_side_session_never_leaves_the_step(two_tmps):
+    start, run = two_tmps
+    start("step")
+    r = Recipient("x", "ln001", "sucoder-M", job_id=7, node="n1")
+    out, routes = run(send_keys_command(r, "hello step"))
+    assert parse_send_output(out.stdout) == (["sucoder-M"], [])
+    assert routes == ["srun"]
+
+
+def test_a_session_visible_nowhere_fails_once(two_tmps):
+    start, run = two_tmps
+    r = Recipient("x", "ln001", "sucoder-M", job_id=7, node="n1")
+    out, routes = run(send_keys_command(r, "hello"))
+    assert parse_send_output(out.stdout) == ([], ["sucoder-M"])
+    assert routes == ["srun", "ssh"]

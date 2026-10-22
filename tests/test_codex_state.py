@@ -264,13 +264,14 @@ def test_launch_wraps_codex_in_the_staged_runner_with_the_placeholder_after_code
     app_server = json.loads(launched[13])
     assert app_server[:3] == ["codex", "-c", marker] and app_server[-1] == "app-server"
     assert "remote-control" not in app_server and all(not a.startswith("developer_instructions") for a in app_server)
-    assert launched[14] == "--"
-    inner = launched[15:]
-    if remote_control is None:
+    boundary = launched.index("--")
+    inner = launched[boundary + 1:]
+    if remote_control is None and command != ["codex", "remote-control"]:
         assert inner.count(marker) == 1
         codex_at = inner.index("codex")
         assert inner[codex_at + 1:codex_at + 3] == ["-c", marker]
     else:
+        assert "--remote-helper" in launched[:boundary]
         # The remote-control supervisor carries two Codex invocations, the
         # app-server and the terminal client; both run inside the runner's
         # namespace and both must carry the placeholder.

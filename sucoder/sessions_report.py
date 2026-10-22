@@ -124,6 +124,51 @@ LOGIN_SESSION_PANES_SH = (
 )
 
 
+# Exit status the job-step half of :func:`job_tmux_command` reserves for
+# "this session's tmux server is not visible from inside the step".
+_NOT_IN_STEP_RC = 75
+
+
+def job_tmux_command(
+    inner: str, *, job_id: int, session: str, socket: str = "",
+    node: Optional[str] = None,
+) -> str:
+    """Run the shell *inner* against a job's tmux server, wherever it lives.
+
+    The route is ``srun --jobid --overlap`` into the allocation.  But a step
+    can have a private, job-scoped ``/tmp`` (Slurm's ``job_container``),
+    while an unconfined session's tmux server was started over plain ssh to
+    the node and listens in the node's *host* ``/tmp`` -- invisible to every
+    step.  Measured 2026-10-22 on savio3 (issue 59): ``srun --overlap tmux
+    ls`` said "error connecting to /tmp/tmux-<uid>/default" for two live
+    sessions that ``ssh <node> tmux ls`` listed at once, so ``peek`` called
+    them gone and ``sessions`` could not read their panes.
+
+    So for a default-socket session on a known node, the step first checks
+    that the session is visible there, and if it is not, *inner* runs by
+    direct ssh to the node instead.  A confined session (dedicated
+    *socket*) lives inside the allocation by construction and keeps the
+    step-only route, as does a job with no node yet.  TMPDIR and the cwd are
+    this job's node-local paths and do not exist on another node, so the
+    step neutralises both.
+    """
+    srun = f"TMPDIR=/tmp srun --jobid={int(job_id)} --overlap --quiet --chdir=/tmp"
+    if socket or not node or node.startswith("("):
+        return f"{srun} bash -c {shlex.quote(inner)}"
+    guarded = (
+        f"tmux has-session -t {shlex.quote(session)} 2>/dev/null "
+        f"|| exit {_NOT_IN_STEP_RC}; {inner}"
+    )
+    direct = (
+        f"ssh -n -o BatchMode=yes -o LogLevel=ERROR {shlex.quote(node)} "
+        f"{shlex.quote(inner)}"
+    )
+    return (
+        f"{{ {srun} bash -c {shlex.quote(guarded)}; rc=$?; "
+        f'if [ "$rc" = {_NOT_IN_STEP_RC} ]; then {direct}; else (exit "$rc"); fi; }}'
+    )
+
+
 # Two scripts, one session.
 #
 # A gateway is both "the cluster's scheduler host" and "a login host worth

@@ -1,6 +1,14 @@
 # Prior-Art Ledger - Codex launches and node-local SQLite state
 
-Current design task: node-local SQLite with durable checkpoints, 2026-10-15.
+Current task: remote-control identity and reachability, 2026-10-20.
+Baseline: main `77b7a29`; implementation authorized by the human's active goal.
+Search tier: source/call-site searches, named tests, matching upstream Codex
+0.163.0 source, installed schema, and read-only live RPC/SQLite/log inspection.
+GitNexus query and impact were attempted; its native module requires glibc
+2.29, unavailable on this host, including with the existing OpenSSL library.
+The current charter and design are `docs/codex-remote-control.org`.
+
+Earlier state-design task: node-local SQLite with durable checkpoints, 2026-10-15.
 Baseline: main `ffd0447`; design only, no runtime implementation.
 Search tier: GitNexus CLI query/context, source and named tests, installed Codex
 0.162.1 help and database filename inventory, and official OpenAI/SQLite docs.
@@ -14,6 +22,11 @@ Follow-up: preserve instructions across remote-client overrides, 2026-09-26.
 
 ## 1. Task
 
+Make concurrent Codex remote-control owners independent across nodes, pair
+with the selected owner rather than the shared daemon, distinguish local
+readiness from relay connectivity, and retain the existing state/recovery
+and allocation lifecycle. The human authorized implementation while away.
+
 Launch Codex remote control inside SuCoder's existing remote job/tmux lifecycle,
 carry the SuCoder prelude through native instructions and Codex config,
 retain model/permission settings,
@@ -26,6 +39,18 @@ concurrent allocations. Deliver a reviewed design and Savio validation plan
 before implementation; see `docs/codex-local-state.org`.
 
 ## 2. Existing machinery
+
+Current remote-control anchors at `77b7a29` (earlier anchors below are history):
+
+| Machinery | Source | Tests inspected | Decision |
+|---|---|---|---|
+| Owned app-server and Unix socket | `sucoder/codex_remote.py:14`, `:100` | `test_terminal_uses_same_server_and_cleans_up`, `test_signal_stops_only_owned_processes` | Extend, retain supervisor lifecycle |
+| Mode/legacy detection and launch assembly | `sucoder/agent_mode.py:46`, `sucoder/mirror.py:3490` | `tests/test_remote_control.py`, `test_confined_remote_launch_stages_toml_context_inside_batch` | Extend, normalize legacy service to owned app-server |
+| State scope, runner argv, checkpoint root | `sucoder/codex_state.py:60`, `:183` | `test_scope_id_is_a_stable_digest_of_the_unsanitized_tuple`, runner-command cases | Reuse; add remote-isolation and temporary-root intents |
+| Canonical home and bind namespace | `sucoder/codex_state_runner.py:1422`, `:1479`, `:3450` | `test_runner_places_a_real_codex_app_server`, restored/reused run cases | Extend with private installation file; reuse recovery engine |
+| Run ownership, restore and transcript replication | `sucoder/codex_state_runner.py:3450` | `test_restore_places_a_sealed_generation_in_another_allocation`, `test_a_real_codex_thread_resumes_from_a_restored_generation` | Reuse; do not create a second recovery mechanism |
+| State reporting, drain and renewal | `sucoder/mirror.py:4067`, `sucoder/cli.py:4132` | `tests/test_codex_state_status.py`, `tests/test_codex_state_renew.py` | Extend actual-run discovery when no local-tier root exists |
+| In-allocation request routing | `sucoder/mirror.py:386` (`_CodexStateRoute`) | state status/drain routing cases | Reuse for remote status and pairing |
 
 | Machinery | Source at baseline | Tests | Decision |
 |---|---|---|---|
@@ -55,6 +80,24 @@ Current baseline anchors for the state design:
 | Confined adoption and readiness | `sucoder/mirror.py:3045`, `:3058`, `:3233` | scheduler-adoption cases in `tests/test_mirror.py` | Extend only for an authorized replacement; tmux alone is not state-owner readiness |
 
 ## 3. Definitions and conventions
+
+- An installation identity is read from `CODEX_HOME/installation_id`, even
+  when `sqlite_home` is private. Confirmed in installed 0.163.0 and matching
+  upstream `codex-rs/core/src/installation_id.rs`; canonical home remains
+  shared unless that file is bound privately.
+- Codex 0.163.0 stores `remote_control_enrollments` in `state_5.sqlite`, keyed
+  by WebSocket URL, account and app-server client name. Its cached enrollment
+  does not carry/check the installation ID (`remote_control/enroll.rs:293`).
+  A restored private database therefore also needs its enrollment cache reset
+  before an owner with a new installation identity opens it.
+- Unix WebSocket transports use a null/global enrollment key; changing a
+  diagnostic client's `initialize.clientInfo.name` does not isolate it.
+- Pairing claimed, a local socket, and a connected relay are separate facts.
+  This session paired successfully while relay connects returned HTTP 409
+  with `Remote app server already online`; the phone displayed an old node.
+- `codex remote-control pair` addresses Codex's managed daemon. Pairing a
+  SuCoder-owned server must use its exact private socket and verify the
+  returned installation/environment identity.
 
 - `--agent-command` is shell-tokenized argv, not a shell program (`cli.py:1595`).
   Shell metacharacters must remain data.
@@ -87,6 +130,21 @@ Current baseline anchors for the state design:
   removes `start`; its earlier foreground assumption needs revalidation.
 
 ## 4. Invariants and assumptions
+
+- Each new remote server owner gets a fresh installation identity and private
+  enrollment storage. Reconnecting to that running owner does not rotate it.
+- New remote-control launches reuse the state runner even without local-tier
+  clone placement. Their private temporary local root is retained after exit,
+  especially when a final checkpoint fails; durable replicas/generations use
+  the existing engine and remain outside Git.
+- Remote identity is not copied from a predecessor. Renewal pairs a fresh
+  owner; carrying a paired identity across renewals needs separate fencing.
+- Never reset enrollment in shared, live, or source-generation databases.
+  Only the owned, stopped, private database may be sanitized before startup.
+- Missing isolation tools or explicitly disabled managed state must refuse
+  unsafe remote control rather than silently launch against shared state.
+- A status/pair operation never starts a daemon, allocates a node, resumes a
+  thread, sends inference, or trusts an old PID without its start identity.
 
 - Preserve existing agent profile defaults outside remote-control launches.
 - Preserve the full prelude, including target instructions and skills, in native
@@ -128,6 +186,17 @@ Current baseline anchors for the state design:
   Existing shared state is never silently imported, overwritten or deleted.
 
 ## 5. Reuse decisions
+
+- Extend `CodexStateLaunch` and the existing runner with remote-isolation and
+  temporary-local-root intents; retain configured local-tier placement.
+- New bounded, stdlib-only Unix WebSocket RPC helper: existing state helper
+  speaks stdio for one-shot thread/cwd repair, not the owned socket, and the
+  native CLI pairing command targets another daemon.
+- Extend state/run discovery using a pane marker for actual runtime paths;
+  reuse existing request routing and lifecycle records instead of inventing
+  a second global service registry.
+- Expose truthful status and explicit pairing for the selected mirror/target.
+  Generate terminal QR output on the launcher; the target needs no QR package.
 
 - Extend the launch path with a small, pure Codex subcommand adapter: executable
   detection alone cannot distinguish a TUI from an app-server service.
@@ -172,6 +241,14 @@ State design decisions (proposed, not implemented):
   must be resolved on Savio before production opt-in.
 
 ## 6. Open questions
+
+Current remote-control validation gates: prove two isolated owners can enroll
+simultaneously, prove restored enrollment is not reused, test disconnected and
+stale-owner status/pairing, and perform live relay checks without altering any
+existing server. Android conversation opening requires the human's phone;
+do not claim that gate passed from pairing or relay status alone.
+
+Earlier state-design questions and historical evidence follow.
 
 Current state-design gates: determine which databases and maintenance locks
 actually follow `sqlite_home` on Savio; prove cross-database warm recovery and

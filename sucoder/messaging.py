@@ -8,7 +8,9 @@ is a dead drop: nothing tells the peer to read it.  For a terminal agent
 *stdin is the API*, and tmux owns it, so a message is ``tmux send-keys``
 into the session's pane -- through ``srun --overlap`` for a job, since the
 tmux server lives inside the allocation's cgroup, exactly as the pane probe
-already reaches it.
+already reaches it (or by direct ssh to the node when an unconfined
+session's server is not visible from the step; see
+``sessions_report.job_tmux_command``).
 
 Three rules shape what is pure here:
 
@@ -34,7 +36,7 @@ import shlex
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
-from .sessions_report import LoginSession, Report, SessionEntry
+from .sessions_report import LoginSession, Report, SessionEntry, job_tmux_command
 from .agent_mode import CODEX_REMOTE_CONTROL, TERMINAL
 
 # Between the text and the Enter that submits it.  A burst of typed
@@ -79,10 +81,7 @@ def capture_pane_command(recipient: Recipient, lines: int = 200) -> str:
     sess = shlex.quote(recipient.session)
     tmux = f"tmux {sock}capture-pane -p -S -{int(lines)} -t {sess}"
     if recipient.job_id is not None:
-        tmux = (
-            f"TMPDIR=/tmp srun --jobid={recipient.job_id} --overlap --quiet --chdir=/tmp "
-            f"bash -c {shlex.quote(tmux)}"
-        )
+        tmux = _in_job(recipient, tmux)
     return tmux
 
 
@@ -127,6 +126,7 @@ class Recipient:
     session: str                   # tmux session name
     socket: str = ""               # dedicated tmux socket, or "" for the default server
     job_id: Optional[int] = None   # reached through srun --overlap when set
+    node: Optional[str] = None     # the job's compute node, for a host-side tmux
     target: Optional[str] = None
     pane: Optional[str] = None     # what the probe saw running there
     agent_mode: str = TERMINAL
@@ -138,7 +138,8 @@ def send_keys_command(recipient: Recipient, line: str) -> str:
     ``send-keys -l`` sends the text literally, so nothing in it is read as
     a key name.  For a job the whole thing runs under ``srun --overlap`` in
     the allocation, with the node-local ``TMPDIR`` and cwd neutralised the
-    way the pane probe does.  Prints ``SENT`` or ``FAILED`` with the
+    way the pane probe does, falling back to the node itself for a
+    host-side tmux server (``job_tmux_command``).  Prints ``SENT`` or ``FAILED`` with the
     session name so a batch of sends reports per recipient.
     """
     if recipient.agent_mode == CODEX_REMOTE_CONTROL:
@@ -150,13 +151,19 @@ def send_keys_command(recipient: Recipient, line: str) -> str:
         f"sleep {_SUBMIT_DELAY} && tmux {sock}send-keys -t {sess} Enter"
     )
     if recipient.job_id is not None:
-        tmux = (
-            f"TMPDIR=/tmp srun --jobid={recipient.job_id} --overlap --quiet --chdir=/tmp "
-            f"bash -c {shlex.quote(tmux)}"
-        )
+        tmux = _in_job(recipient, tmux)
     return (
         f"if {tmux} 2>/dev/null; then printf 'SENT\\t%s\\n' {sess}; "
         f"else printf 'FAILED\\t%s\\n' {sess}; fi"
+    )
+
+
+def _in_job(recipient: Recipient, tmux: str) -> str:
+    """*tmux* routed to the recipient's job, by the step or by its node."""
+    assert recipient.job_id is not None
+    return job_tmux_command(
+        tmux, job_id=recipient.job_id, session=recipient.session,
+        socket=recipient.socket, node=recipient.node,
     )
 
 
@@ -249,6 +256,7 @@ def plan_recipients(
                 lambda: Recipient(
                     label=label, host=host, session=session,
                     socket=socket if confined else "", job_id=entry.job.job_id,
+                    node=entry.job.node or None,
                     target=group.name, pane=entry.pane, agent_mode=entry.agent_mode,
                 ),
             )

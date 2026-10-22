@@ -1685,10 +1685,11 @@ def test_attach_scheduler_probe_preserves_record_and_routes_by_host(
                 assert error in result.output
 
 
-def test_attach_unconfined_keeps_new_session_fallback(tmp_path, monkeypatch):
-    """Regression: the confined-only attach branch must NOT perturb the
-    unconfined attach command -- it still carries the `|| tmux new-session`
-    fallback and uses the default socket (no `-L`)."""
+def test_attach_unconfined_refuses_instead_of_creating_a_session(tmp_path, monkeypatch):
+    """The unconfined attach uses the default socket (no `-L`) and, when the
+    session is not visible, fails with a hint instead of silently starting
+    a fresh `tmux new-session` (issue 59: a live server outside the job
+    step's /tmp read as gone, and the fallback would mask it)."""
     from sucoder import session as session_mod
 
     runner = CliRunner()
@@ -1722,17 +1723,72 @@ def test_attach_unconfined_keeps_new_session_fallback(tmp_path, monkeypatch):
     )
     assert result.exit_code == 0, (result.stdout, result.exception)
     remote_cmd = captured["argv"][-1]
-    # Pin the EXACT unconfined command (byte-identity): the srun --overlap
-    # prefix must be applied to BOTH the attach AND the new-session fallback
-    # (so the fallback runs inside the allocation, not as a login-node
-    # orphan -- the field bug this form fixes).  A substring check would miss
-    # a dropped prefix on the fallback.
-    expected = (
-        "srun --jobid=1234567 --overlap --pty tmux attach-session -t sucoder-sample "
-        "|| srun --jobid=1234567 --overlap --pty tmux new-session -s sucoder-sample"
-    )
-    assert remote_cmd == expected, remote_cmd
+    assert remote_cmd.startswith(
+        "srun --jobid=1234567 --overlap --pty tmux attach-session -t sucoder-sample || {"
+    ), remote_cmd
+    assert remote_cmd.endswith("exit 1; }"), remote_cmd
     assert "-L sucoder-sample" not in remote_cmd, remote_cmd
+    # The only new-session is inside the quoted hint, never executed: the
+    # srun prefix is kept there so the printed command lands in the job.
+    assert remote_cmd.count("new-session") == 1, remote_cmd
+    assert "retry without --via-srun" in remote_cmd, remote_cmd
+    assert "srun --jobid=1234567 --overlap --pty tmux new-session -s sucoder-sample" in remote_cmd
+
+
+def test_attach_direct_route_refusal_runs_and_starts_nothing(tmp_path, monkeypatch):
+    """The direct-ssh attach's remote command is valid shell that, when the
+    session is absent, prints the hint naming --via-srun and exits 1 --
+    and never asks tmux for a new session."""
+    from sucoder import session as session_mod
+
+    runner = CliRunner()
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **kw: None)
+
+    config_path = _slurm_config(tmp_path)
+    sessions_dir = fake_home / ".sucoder" / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    (sessions_dir / "sample--fake-slurm.yaml").write_text(
+        "login_node: ln001\nslurm_job_id: 1234567\ncompute_node: n0148\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(session_mod, "_session_dir", lambda: sessions_dir)
+    real_run = subprocess.run
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda cmd, **kw: SimpleNamespace(stdout="RUNNING\n", stderr="", returncode=0),
+    )
+
+    captured: dict = {}
+    def _fake_execvp(prog, argv):
+        captured["argv"] = list(argv)
+        raise SystemExit(0)
+    monkeypatch.setattr(os, "execvp", _fake_execvp)
+
+    result = runner.invoke(
+        cli.app, ["--config", str(config_path), "-T", "fake-slurm", "attach", "sample"],
+    )
+    assert result.exit_code == 0, (result.stdout, result.exception)
+    remote_cmd = captured["argv"][-1]
+    assert captured["argv"][-2] == "n0148"
+    assert "retry with --via-srun" in remote_cmd, remote_cmd
+
+    # Run it against a tmux that logs its arguments and finds no session.
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    log = tmp_path / "tmux.log"
+    fake = bindir / "tmux"
+    fake.write_text(f'#!/bin/sh\necho "$@" >> {log}\nexit 1\n')
+    fake.chmod(0o755)
+    proc = real_run(
+        ["bash", "-c", remote_cmd], capture_output=True, text=True,
+        env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"},
+    )
+    assert proc.returncode == 1
+    assert "no tmux session sucoder-sample visible" in proc.stderr
+    assert log.read_text().splitlines() == ["attach-session -t sucoder-sample"]
 
 
 def test_attach_via_srun_rejects_non_slurm_target(tmp_path, monkeypatch):
