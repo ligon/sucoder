@@ -1257,6 +1257,25 @@ def _tty(is_tty):
     )
 
 
+def test_noninteractive_connect_skips_cert_prompts_even_with_a_tty(monkeypatch):
+    """A relay can inherit a terminal without having anyone to authenticate."""
+    from sucoder import cert as cert_mod, tunnel
+
+    monkeypatch.setattr(tunnel, "_NONINTERACTIVE", True)
+    monkeypatch.setattr(cli, "sys", _tty(True))
+    monkeypatch.setattr(cli, "_cert_status", lambda cf: ("⚠", "cert EXPIRED (x)"))
+    monkeypatch.setattr(cli.typer, "confirm", lambda *a, **k: pytest.fail("relay asked for confirmation"))
+    monkeypatch.setattr(cli.typer, "prompt", lambda *a, **k: pytest.fail("relay asked for credentials"))
+    monkeypatch.setattr(cert_mod, "mint", lambda *a, **k: pytest.fail("relay tried to mint a certificate"))
+    connected = []
+    monkeypatch.setattr(cli, "_ensure_ssh_visible", lambda control, *a: connected.append(control))
+
+    control = _fake_control()
+    cli._connect_with_retry(control, "gateway", logger=SimpleNamespace(info=lambda *a, **k: None))
+
+    assert connected == [control]
+
+
 def test_maybe_offer_cert_mint_mints_when_stale(monkeypatch):
     """Gateway hop + cold mux + TTY + stale cert + confirm -> mint fires."""
     from sucoder import cert as cert_mod

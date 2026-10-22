@@ -551,6 +551,10 @@ def build_report(
             entries=sorted(by_target[name], key=lambda e: e.job.job_id),
         ))
 
+    # A record on a cluster whose scheduler was not asked is unverified,
+    # not stale: calling it "gone" (and suggesting ``release``) is the
+    # issue 52 mistake of reading "could not look" as "absent".
+    unseen_targets = {name for cluster in uninspected for name in clusters.get(cluster, ())}
     for key, job_id in sorted(recorded.items()):
         if job_id not in live:
             # ``<mirror>--<target>``, or a bare ``<mirror>`` from an older
@@ -559,6 +563,8 @@ def build_report(
             mirror, sep, target = key.rpartition("--")
             if not sep:
                 mirror, target = key, ""
+            if target in unseen_targets or (uninspected and target not in targets):
+                continue
             report.stale.append(StaleRecord(
                 key=key, job_id=job_id, mirror=mirror, target=target,
                 # ``release`` looks the mirror up in ``config.mirrors``;

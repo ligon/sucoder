@@ -1027,7 +1027,28 @@ cluster has two routes, and the error text names both.
    and one sudoers line, as root (=visudo -f /etc/sudoers.d/sucoder-relay=):
 
    #+begin_example
+   Defaults!/usr/local/bin/sucoder env_reset
    coder ALL=(ligon) NOPASSWD: /usr/local/bin/sucoder relay *
+   #+end_example
+
+   A root-owned install for =command=, from a checkout of =main=:
+
+   #+begin_src shell
+   sudo sh -c 'umask 022; UV_TOOL_DIR=/opt/sucoder/tools UV_TOOL_BIN_DIR=/usr/local/bin \
+     uv tool install --reinstall /path/to/SuCoder'
+   #+end_src
+
+   The relay establishes connections with =BatchMode=yes=: nobody is there
+   to type a PIN/OTP, so it rides the human's live connections or a valid
+   certificate and otherwise reports the cluster as not inspected (exit 3).
+   sudo's =env_reset= also drops =SSH_AUTH_SOCK=, and a fresh login-node or
+   DTN hop authenticates with keys from the human's ssh-agent, so name the
+   agent in the human's =~/.ssh/config= (the path is the agent's socket,
+   e.g. a systemd user =ssh-agent.service='s =%t/ssh-agent.sock=):
+
+   #+begin_example
+   Match host "*.brc,*.brc.berkeley.edu"
+       IdentityAgent /run/user/1000/ssh-agent.sock
    #+end_example
 
    =coder='s =sessions=, =message= and =peek= then run =sudo -n -u ligon

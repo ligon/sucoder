@@ -22,6 +22,16 @@ from typing import Dict, List, Optional
 
 _LOG = logging.getLogger(__name__)
 
+# Set by a caller that has no human to authenticate (``sucoder relay``):
+# establishing a master then uses ``BatchMode=yes``, so only a valid
+# certificate can bring one up and nothing ever prompts.
+_NONINTERACTIVE = False
+
+
+def set_noninteractive(flag: bool = True) -> None:
+    global _NONINTERACTIVE
+    _NONINTERACTIVE = flag
+
 # Tuning for SshControl.is_active()'s end-to-end liveness probe.  The probe
 # execs a remote command, which spawns a login shell on the far side; on a
 # hammered HPC login node that spawn can be slow enough to blow a single
@@ -489,6 +499,12 @@ class SshControl:
         # Present a gateway SSH certificate (direct hop only --- see
         # _identity_options).
         cmd += self._identity_options()
+        if _NONINTERACTIVE:
+            # No human to answer a PIN/OTP prompt (the session relay):
+            # fail fast on a missing or expired certificate instead of
+            # retrying password auth into "Too many authentication failures".
+            # SSH uses the first value, so this must precede extra_options.
+            cmd.extend(["-o", "BatchMode=yes"])
         cmd.extend(self.extra_options)
         if self.debug:
             cmd.append("-vvv")

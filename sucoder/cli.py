@@ -201,6 +201,11 @@ def _maybe_offer_cert_mint(
     :func:`_resolve_cert_username`); it is optional and degrades gracefully
     when a call site cannot supply it.
     """
+    from . import tunnel
+
+    # A relay may inherit a terminal, but must never ask for credentials.
+    if tunnel._NONINTERACTIVE:
+        return
     cert_file = getattr(control, "cert_file", None)
     if getattr(control, "jump_host", None) is not None or not cert_file:
         return
@@ -4970,9 +4975,18 @@ def _uninspected_clusters(config, report, target_name) -> List[str]:
 
 def _unavailable_hint(config) -> str:
     """What an account whose own SSH route failed can do about it."""
+    from . import tunnel
+
     if getattr(config, "session_relay", None) is not None:
         return ""
     me = pwd.getpwuid(os.getuid()).pw_name
+    if me == getattr(config, "human_user", None):
+        return (
+            "\n  Refresh this account's connection: `sucoder -T <target> cert` (a 12h "
+            "certificate) or `sucoder -T <target> tunnel up`."
+            + (" The relay cannot prompt for a PIN/OTP, so the human has to do this."
+               if tunnel._NONINTERACTIVE else "")
+        )
     return (
         "\n  If this account's gateway certificate is missing or expired "
         "(`sucoder -T <target> tunnel doctor`), ask the human to mint a fresh one "
@@ -5056,6 +5070,10 @@ def relay_main(ctx: typer.Context) -> None:
     if path is None or os.path.realpath(path) != os.path.realpath(_default_config_path()):
         typer.echo(f"relay refused: it reads only {_default_config_path()}.", err=True)
         raise typer.Exit(code=2)
+    # Nobody at the relay can type a PIN/OTP: reuse live connections or a
+    # valid certificate, and otherwise fail fast as unavailable.
+    from .tunnel import set_noninteractive
+    set_noninteractive()
 
 
 def _relay_target(ctx: typer.Context, target: Optional[str]) -> None:
