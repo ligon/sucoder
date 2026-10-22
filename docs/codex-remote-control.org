@@ -1,7 +1,7 @@
 #+TITLE: Codex remote control: isolated owners and verified reachability
 #+DATE: 2026-10-20
 #+AUTHOR: Sue
-#+STATUS: Implemented and validated; Android acceptance pending
+#+STATUS: Implemented, validated and accepted on Android
 
 * Charter
 
@@ -214,11 +214,14 @@ The installed type checker reports the same 68 pre-existing errors as unchanged 
 GitNexus =impact= and =detect-changes --scope compare --base-ref main= were attempted and both fail loading the host's native database library (=libssl.so.3=; the existing-library retry earlier exposed incompatible glibc).
 Source/call-site review, independent review and the test suite provide the available scope checks; no global dependency repair was attempted.
 
-** Remaining human acceptance
+** Human acceptance, 2026-10-22
 
-From a fresh SuCoder remote-control launch, run =sucoder codex-remote-status <mirror>= and =sucoder codex-remote-pair <mirror> --qr= on the appropriate target.
+The human reports that real-world use functions with an Android phone and authorized merging the change.
+This is human-reported acceptance; the phone interaction was not automated.
+No additional node, allocation, or client-version details were supplied.
+
+For a future fresh SuCoder remote-control launch, run =sucoder codex-remote-status <mirror>= and =sucoder codex-remote-pair <mirror> --qr= on the appropriate target.
 Scan with the Android client's Codex pairing flow, select this owner, then open a chat in the mirror directory and confirm a round trip.
-That phone interaction is not automated and is not claimed as verified.
 Each new launch, including a renewal successor, requires fresh pairing by design.
 
-Sue, 2026-10-20 (America/Los_Angeles).
+Sue, implementation and validation 2026-10-20; Android acceptance recorded 2026-10-22 (America/Los_Angeles).
