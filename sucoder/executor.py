@@ -20,6 +20,24 @@ class CommandError(RuntimeError):
         self.result = result
 
 
+# Lines OpenSSH prints when a ControlMaster refuses a session and the
+# client dials afresh.  Clusters that allow one session per connection
+# print them routinely; logged first, they hid the error that mattered.
+_SSH_MUX_NOISE_PREFIXES = (
+    "mux_client_request_session:",
+    "controlsocket ",
+)
+
+
+def _without_ssh_mux_noise(stderr: str) -> str:
+    """``stderr`` stripped, minus OpenSSH's multiplexing chatter."""
+    lines = [
+        line for line in (stderr or "").splitlines()
+        if not line.strip().lower().startswith(_SSH_MUX_NOISE_PREFIXES)
+    ]
+    return "\n".join(lines).strip()
+
+
 @dataclass
 class CommandResult:
     """Representation of a completed subprocess."""
@@ -219,8 +237,9 @@ class CommandExecutor:
                 f"Command failed with exit code {result_proc.returncode}: "
                 f"{_format_display(requested_args)}"
             )
-            if result.stderr:
-                self.logger.error(result.stderr.strip())
+            stderr = _without_ssh_mux_noise(result.stderr)
+            if stderr:
+                self.logger.error(stderr)
             raise CommandError(message, result)
 
         return result
@@ -297,8 +316,8 @@ class RemoteExecutor(CommandExecutor):
                                                 # None = agent works on the shared mirror
     proxy_node: str = ""                         # Login node hostname (compute-node proxy)
     proxy_socket_path: Optional[str] = None      # Login node ControlMaster socket
-    scaffolding_node: str = ""                   # DTN (or login node) for filesystem ops
-    scaffolding_socket_path: Optional[str] = None  # DTN ControlMaster socket
+    scaffolding_node: str = ""                   # Login node for filesystem ops
+    scaffolding_socket_path: Optional[str] = None  # Its ControlMaster socket
     debug_ssh: bool = False                      # Emit -vvv SSH tracing
     forward_x11: bool = False                    # Request X11 forwarding on
                                                  # interactive (TTY) hops only
@@ -306,6 +325,7 @@ class RemoteExecutor(CommandExecutor):
                                                  # (config/CLI) rather than the
                                                  # DISPLAY-present default; gates
                                                  # the speculative srun --x11
+    _scaffolding_unreachable: bool = field(default=False, init=False, repr=False)
 
     # Default timeout (seconds) for remote SSH commands.  Long enough
     # for normal Lustre latency, short enough to surface hangs.
@@ -421,12 +441,18 @@ class RemoteExecutor(CommandExecutor):
             detail = "\n  - ".join([""] + hints)
             self.logger.error("SSH connection diagnostic:%s", detail)
 
-    # Return codes that indicate a DTN-level failure (not a command
-    # failure) and warrant falling back to the compute node.
-    _DTN_FALLBACK_RETURNCODES = frozenset({
-        -1,   # our timeout sentinel
-        255,  # SSH connection error
-    })
+    # Remote exit status of coreutils ``timeout`` when it had to stop the
+    # command (see ``_build_login_node_command``).
+    _REMOTE_TIMEOUT_RETURNCODE = 124
+
+    def _remote_time_limit(self, timeout: int) -> int:
+        """Seconds the remote command may run before it is told to stop.
+
+        Short of our own ``timeout`` so the remote side stops the command
+        -- and git, on SIGTERM, removes its ``.git/*.lock`` -- before we
+        stop waiting for it.
+        """
+        return max(timeout - 15, timeout // 2, 1)
 
     def run_on_login_node(
         self,
@@ -437,27 +463,36 @@ class RemoteExecutor(CommandExecutor):
         env: Optional[Mapping[str, str]] = None,
         timeout: Optional[int] = None,
     ) -> CommandResult:
-        """Run a command on the scaffolding node (DTN or login node).
+        """Run a command on the scaffolding node (the login node).
 
-        Filesystem scaffolding (mkdir, git init, etc.) runs on the DTN
-        (data transfer node) when available, since it has fat pipes and
-        spare CPU.  Falls back to the login node, or to ``run_agent``
-        for non-compute targets without a separate scaffolding node.
+        Filesystem scaffolding (mkdir, git init, git reset, etc.) on the
+        shared mirror runs on the login node, which sees the same shared
+        filesystem as the compute node and spares a compute-node target
+        the three-hop chain.  Without a separate scaffolding node this is
+        ``run_agent``.
 
-        If the DTN times out or the SSH connection fails, falls back to
-        ``run_agent`` (the compute node) since shared FS is visible
-        from all cluster nodes.
+        Only an SSH connection failure (exit 255: the command most likely
+        never started) falls back to ``run_agent``, and only when that is
+        a different host.  A timeout does not: the command may still be
+        running remotely, holding e.g. ``.git/index.lock``, and running it
+        again elsewhere would collide with it.  The remote command is
+        stopped shortly before our own timeout (exit 124), so a timeout
+        normally ends it cleanly.
         """
-        scaffolding = self.scaffolding_node and self.scaffolding_socket_path
+        scaffolding = (
+            self.scaffolding_node and self.scaffolding_socket_path
+            and not self._scaffolding_unreachable
+        )
         if not scaffolding:
             return self.run_agent(
                 args, check=check, cwd=cwd, env=env, timeout=timeout,
             )
         remote_cwd = self._translate_path(cwd) if cwd else None
-        ssh_args = self._build_login_node_command(
-            args, cwd=remote_cwd, env=env,
-        )
         effective_timeout = timeout if timeout is not None else self.DEFAULT_SSH_TIMEOUT
+        time_limit = self._remote_time_limit(effective_timeout)
+        ssh_args = self._build_login_node_command(
+            args, cwd=remote_cwd, env=env, time_limit=time_limit,
+        )
         try:
             result = self._run(
                 ssh_args,
@@ -474,6 +509,8 @@ class RemoteExecutor(CommandExecutor):
                     _format_display(args),
                     result.stderr.rstrip(),
                 )
+            if result.returncode == self._REMOTE_TIMEOUT_RETURNCODE:
+                self._log_remote_timeout(args, time_limit)
             return result
         except CommandError as exc:
             if self.debug_ssh and exc.result.stderr:
@@ -482,19 +519,40 @@ class RemoteExecutor(CommandExecutor):
                     _format_display(args),
                     exc.result.stderr.rstrip(),
                 )
-            # Timeout or SSH connection failure — the DTN itself is
-            # unreachable, not a problem with the command.  Fall back
-            # to the compute node (shared FS is visible from there).
-            if exc.result.returncode in self._DTN_FALLBACK_RETURNCODES:
+            rc = exc.result.returncode
+            if rc == self._REMOTE_TIMEOUT_RETURNCODE:
+                self._log_remote_timeout(args, time_limit)
+            elif rc == -1:
+                self.logger.error(
+                    "%s did not finish %s within %ss and could not be "
+                    "confirmed stopped; it may still be running there (a git "
+                    "command holds .git/index.lock until it exits).  Not "
+                    "retrying it on another node.",
+                    self.scaffolding_node, summarize_command(_format_display(args)),
+                    effective_timeout,
+                )
+            elif rc == 255 and self.scaffolding_node != self.login_node:
+                # The connection failed, so the command most likely never
+                # started.  Stop trying this node for the rest of the run
+                # rather than paying for the failure on every command.
+                self._scaffolding_unreachable = True
                 self.logger.warning(
-                    "Scaffolding node %s unavailable (rc=%d); "
-                    "falling back to compute node",
-                    self.scaffolding_node, exc.result.returncode,
+                    "Scaffolding node %s unreachable; using %s for the rest "
+                    "of this run",
+                    self.scaffolding_node, self.login_node,
                 )
                 return self.run_agent(
                     args, check=check, cwd=cwd, env=env, timeout=timeout,
                 )
             raise
+
+    def _log_remote_timeout(self, args: Sequence[str], time_limit: int) -> None:
+        self.logger.error(
+            "%s: %s was stopped after %ss (remote timeout).  The shared "
+            "filesystem may be slow or wedged there.",
+            self.scaffolding_node, summarize_command(_format_display(args)),
+            time_limit,
+        )
 
     def _build_login_node_command(
         self,
@@ -502,13 +560,18 @@ class RemoteExecutor(CommandExecutor):
         *,
         cwd: Optional[str] = None,
         env: Optional[Mapping[str, str]] = None,
+        time_limit: Optional[int] = None,
     ) -> List[str]:
-        """Build an SSH command targeting the scaffolding node (DTN).
+        """Build an SSH command targeting the scaffolding node.
 
         Uses ``BatchMode=yes`` so that if the ControlMaster socket is
         dead and the ProxyCommand falls through to a fresh connection,
         SSH fails immediately instead of hanging for a password prompt
         that will never be answered (we're running non-interactively).
+
+        With ``time_limit``, the command runs under coreutils ``timeout``
+        where the remote has it: killing our local ssh does not stop the
+        remote process, so the remote side has to bound itself.
         """
         from .tunnel import _control_socket_path as _gw_sock
 
@@ -546,7 +609,19 @@ class RemoteExecutor(CommandExecutor):
             else:
                 cwd_expr = shlex.quote(cwd)
             parts.append(f"cd {cwd_expr} &&")
-        parts.append(_format_display(args))
+        command = _format_display(args)
+        if time_limit is not None:
+            # SIGTERM only, never SIGKILL: git removes its lock files on
+            # TERM, and a KILL would leave them behind.  The ``if`` (not a
+            # ``$(...)`` prefix) keeps this working in shells that do not
+            # word-split, and runs the command unbounded where there is no
+            # ``timeout``.
+            command = (
+                f"if command -v timeout >/dev/null 2>&1; "
+                f"then timeout -s TERM {int(time_limit)} {command}; "
+                f"else {command}; fi"
+            )
+        parts.append(command)
         ssh_cmd.append(" ".join(parts))
         return ssh_cmd
 

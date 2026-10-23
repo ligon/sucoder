@@ -589,6 +589,12 @@ targets:
 No =mirrors:= entry is needed---zero-config repo detection works with
 targets.  The target can be used with any repo.
 
+=transfer_host= names the cluster's data-transfer node.
+=sucoder tunnel up= warms a connection to it and writes a =<target>-dtn=
+alias, for moving bulk data yourself; a launch does not use it.  Mirror
+setup (=git status=, =git reset=, =mkdir=...) and git push/fetch run on
+the login node.
+
 The three SSH connection-sharing knobs are optional and default to the
 values shown above; tune them per target:
 
@@ -1621,8 +1627,12 @@ for the design and the open cgroup-confinement caveat.
 
 - *Stale ControlMaster sockets* are detected and recycled
   automatically.
-- *DTN timeouts* --- if the data transfer node is unreachable,
-  =sucoder= falls back to pushing via the compute node.
+- *Slow shared filesystem* --- mirror-setup commands on the login node
+  run under the remote =timeout= (SIGTERM, about 15s short of the local
+  120s limit), so a command stuck on a slow filesystem ends remotely and
+  git removes its =.git/index.lock= on the way out.  A command that times
+  out is never re-run on another node: if it could still be running, the
+  retry would collide with its lock.
 - *Debug mode changes* --- switching =--debug-ssh= on or off
   automatically cycles the ControlMaster socket so the new setting
   takes effect.

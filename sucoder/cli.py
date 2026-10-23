@@ -646,32 +646,14 @@ def _build_executor(
                 typer.echo(str(exc2) + _ssh_debug_hint(debug_ssh), err=True)
                 raise typer.Exit(code=1) from exc2
 
-        # 3b. Establish ControlMaster to the data transfer node (DTN).
-        #     The DTN has fat pipes and spare CPU compared with the
-        #     hammered login nodes, so filesystem scaffolding and git
-        #     transport route through it.
-        dtn_control = SshControl(
-            gateway=remote.transfer_host,
-            **remote.ssh_control_kwargs(),
-            jump_host=remote.gateway,
-            jump_control=gw_control,
-            debug=debug_ssh,
-        )
-        try:
-            # DTN is optional and already falls back to the login node, so
-            # ride out only a *brief* transient blip rather than the full
-            # 60s window before falling back.
-            _connect_with_retry(
-                dtn_control, remote.transfer_host, logger, max_wait=6,
-            )
-        except TunnelError as exc:
-            # DTN is optional — fall back to the login node if
-            # the DTN is unreachable.
-            logger.warning(
-                "DTN %s unreachable, falling back to login node: %s",
-                remote.transfer_host, exc,
-            )
-            dtn_control = ln_control
+        # The data-transfer node (``transfer_host``) is deliberately not
+        # part of a launch.  It is for bulk data movement; the mirror's
+        # scaffolding is small, latency-bound git and filesystem work on
+        # the shared mirror.  Routing that through the DTN added a fourth
+        # host whose view of the shared filesystem could wedge on its own
+        # (2026-10-22: `git reset --hard` hung there, and the retry on the
+        # login node then tripped over its .git/index.lock).  The DTN stays
+        # reachable through `sucoder warm` and the `<target>-dtn` alias.
 
         # 4. If SLURM is configured, allocate a compute node and
         #    establish a ControlMaster through the login node to it.
@@ -792,11 +774,11 @@ def _build_executor(
         executor_kwargs["forward_x11_explicit"] = x11_explicit
         if use_local_disk:
             executor_kwargs["local_disk_root"] = local_disk_root
-        # Route filesystem scaffolding and git transport through the DTN
-        # (or login node as fallback): the shared mirror is reachable from
-        # anywhere, whichever node the agent works on.
-        executor_kwargs["scaffolding_node"] = str(dtn_control.gateway)
-        executor_kwargs["scaffolding_socket_path"] = str(dtn_control.socket_path)
+        # Route filesystem scaffolding through the login node: the shared
+        # mirror is reachable from there whichever node the agent works on,
+        # and it spares a compute-node target the three-hop chain.
+        executor_kwargs["scaffolding_node"] = str(ln_control.gateway)
+        executor_kwargs["scaffolding_socket_path"] = str(ln_control.socket_path)
         # For compute-node targets, the proxy fields are still needed
         # for the SSH ProxyCommand fallback to the login node.  A confined
         # target's executor already targets the login node, so there is no

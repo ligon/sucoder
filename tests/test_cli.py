@@ -2408,8 +2408,35 @@ def test_build_executor_confined_local_disk_is_tiering(tmp_path, monkeypatch):
     kwargs = captured["kwargs"]
     assert kwargs["remote_mirror_root"] == str(settings.remote.mirror_root)
     assert kwargs["local_disk_root"] == "/local"
-    # Scaffolding still goes through the DTN: the shared mirror is reachable.
-    assert kwargs.get("scaffolding_node")
+    # Scaffolding goes through the login node: the shared mirror is reachable.
+    assert kwargs.get("scaffolding_node") == "ln001.brc"
+
+
+@pytest.mark.parametrize("confined", [True, False])
+def test_build_executor_never_connects_to_the_dtn(tmp_path, monkeypatch, confined):
+    """A launch does not touch ``transfer_host``: the DTN is for bulk data,
+    and its view of the shared filesystem can wedge on its own."""
+    import logging
+    import sucoder.tunnel as tunnel_mod
+
+    captured, _ = _install_build_executor_fakes(monkeypatch, tmp_path)
+    hosts = []
+
+    class _Recording(_FakeSshControl):
+        def __init__(self, *, gateway=None, **kwargs):
+            hosts.append(gateway)
+            super().__init__(gateway=gateway, **kwargs)
+
+    monkeypatch.setattr(tunnel_mod, "SshControl", _Recording)
+    config = Config(human_user="coder", mirror_root=tmp_path / "mirrors")
+    settings = _confined_mirror_settings(tmp_path, confined=confined)
+
+    cli._build_executor(
+        config, logging.getLogger("t"), dry_run=False, mirror_settings=settings,
+    )
+
+    assert settings.remote.transfer_host not in hosts
+    assert captured["kwargs"]["scaffolding_node"] == "ln001.brc"
 
 
 def test_build_executor_confined_local_disk_flag_without_config(tmp_path, monkeypatch):
@@ -2623,7 +2650,7 @@ def test_build_executor_unconfined_local_disk_is_tiering(tmp_path, monkeypatch):
     """An unconfined (salloc) target with slurm.local_disk keeps the mirror
     root shared, hands the root to the executor, tells the allocation step
     (so the timer snapshots the clone), and still routes scaffolding via
-    the DTN."""
+    the login node."""
     import logging
 
     captured, slurm_calls = _install_build_executor_fakes(monkeypatch, tmp_path)
@@ -2638,7 +2665,7 @@ def test_build_executor_unconfined_local_disk_is_tiering(tmp_path, monkeypatch):
     kwargs = captured["kwargs"]
     assert kwargs["remote_mirror_root"] == str(settings.remote.mirror_root)
     assert kwargs["local_disk_root"] == "/local"
-    assert kwargs.get("scaffolding_node"), "shared mirror: scaffolding stays on the DTN"
+    assert kwargs.get("scaffolding_node") == "ln001.brc", "shared mirror: scaffolding on the login node"
     assert captured.get("slurm_kwargs", {}).get("local_disk_root") == "/local"
 
 
