@@ -567,3 +567,44 @@ the charter allows (entry types and counts, no text dumped).
 - Renewal replacement records: whether the new uuid rides in
   `replacement` and is promoted, or is simply written on the successor's
   launch; fallback covers the gap either way.
+
+---
+
+# Implementation notes - Message replies from the agent's transcript (2026-10-23)
+
+Engine implementation pass on `feat/reply-from-transcript`, after the
+prior-art section above. Decisions taken where the charter or design left
+room:
+
+- **Where the reader lives.** All transcript logic (adapters, shared reader,
+  identification, mailbox) is in the standalone probe `sucoder/reply_probe.py`
+  (stdlib, Python 3.6) because it must run on the cluster; the tests import
+  its pure functions. `sucoder/replies.py` is the laptop half (sent log,
+  identity from the session record, shipped command, status/exit table).
+- **Frame match.** The anchored match is against the frame *header*
+  (`[message <id> from <sender> via sucoder, <time>]`, `messaging.frame_header`),
+  which is what the design calls the whole frame; the body is not compared.
+- **Freshness** (`absent` vs `unrecognized`): any entry stamped at or after
+  send minus 30s, in the parsed region or in up to 256 KB before the frame's
+  first copy.
+- **Probe route.** Login host first (shared home, managed-Codex replica);
+  if nothing is identified there and the recipient is a job, inside the job
+  via `job_tmux_command`, and it stays there.
+- **Screen fallback.** No identity -> screen only (today's exit codes).
+  `no-adapter`, `unrecognized` and `unreadable` also read the pane each poll;
+  a screen reply wins (0), otherwise the probe status stands.
+- **Worst-of order** 3 > 1 > 4 > 0, as proposed above; failed deliveries
+  contribute 1 and unreachable clusters 3, as before.
+- **Recorded identity.** New optional `RemoteSession.harness` and
+  `claude_session_id`. Unmanaged Codex is identified only when `harness:
+  codex` was recorded, which happens on the confined path (no tmux probe was
+  added to unconfined non-Claude launches).
+- **`_launch_confined`** (GitNexus HIGH) got one additive line recording the
+  identity beside `managed_owner`; `_build_tmux_launch_command` is untouched.
+- **Test isolation.** No test fixture isolated HOME, so `tests/conftest.py`
+  now redirects `replies.sent_log_path`; one early run (before that fixture)
+  created the real `~/.sucoder/sent.jsonl` with 7 fixture lines, which was
+  deleted.
+- **mypy.** `cli.py` carries 66 pre-existing errors (typer/click Context
+  typing); none on changed lines. `mirror.py`'s two pre-existing errors were
+  fixed (typing only).
