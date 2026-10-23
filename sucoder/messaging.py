@@ -32,6 +32,7 @@ Everything here is pure: the caller does the SSH and passes text in.
 
 from __future__ import annotations
 
+import re
 import shlex
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
@@ -98,20 +99,52 @@ def extract_reply(pane_text: str, msg_id: str) -> Optional[str]:
     taken from the row holding ``REPLY <id>`` down to the next blank row or
     the next row that starts a box border (the input prompt).  The last
     such reply wins, since an agent may correct itself.
+
+    Agents answering quickly often drop the id (``REPLY: ok``; issue 52), so
+    without a tagged reply a bare ``REPLY:`` row counts when it follows this
+    message's own framed row and precedes the next framed message: it can
+    only be answering this one.
     """
     needle = f"{REPLY_PREFIX} {msg_id}"
     rows = pane_text.splitlines()
     start = None
     for i, row in enumerate(rows):
-        if needle in row and not row.lstrip().startswith("[message "):
+        if needle in row and not _is_framed(row):
             start = i
-    if start is None:
+    if start is not None:
+        first = rows[start]
+        return _reply_from(rows, start, first[first.index(needle) + len(needle):])
+    framed = [i for i, row in enumerate(rows) if f"[message {msg_id} " in row]
+    if not framed:
         return None
-    first = rows[start]
-    first = first[first.index(needle) + len(needle):].lstrip(":").strip()
+    later = [i for i, row in enumerate(rows) if i > framed[-1] and _is_framed(row)]
+    end = later[0] if later else len(rows)
+    for i in range(end - 1, framed[-1], -1):
+        match = _BARE_REPLY.match(rows[i].strip())
+        if match:
+            return _reply_from(rows, i, rows[i].strip()[match.end():])
+    return None
+
+
+_BARE_REPLY = re.compile(rf"^\W*{REPLY_PREFIX}\s*:")
+
+
+# A row starting with one of these ends a reply: a box border (the input
+# prompt), or the marker a TUI puts before its next item (tool call, status
+# line, prompt) -- a reflowed continuation row is indented text instead.
+_REPLY_ENDS = ("╭", "│", "╰", "┌", "└", "> ", "●", "⏺", "⎿", "❯", "✻", "✶", "✳", "✢", "✨", "·")
+
+
+def _is_framed(row: str) -> bool:
+    """A row holding a framed message (``[message <id> from ...``)."""
+    return "[message " in row and " via sucoder, " in row
+
+
+def _reply_from(rows: List[str], start: int, first: str) -> Optional[str]:
+    first = first.lstrip(":").strip()
     collected = [first] if first else []
     for row in rows[start + 1:]:
-        if not row.strip() or row.lstrip().startswith(("╭", "│", "╰", "┌", "└", "> ")):
+        if not row.strip() or row.lstrip().startswith(_REPLY_ENDS):
             break
         collected.append(row.strip())
     return " ".join(collected).strip() or None
