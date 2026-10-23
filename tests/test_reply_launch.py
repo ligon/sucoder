@@ -95,3 +95,20 @@ def test_the_new_fields_round_trip_and_old_records_still_load(tmp_path, monkeypa
     (tmp_path / "Old--t0.yaml").write_text(yaml.safe_dump({"slurm_job_id": 7, "login_node": "ln002"}))
     old = RemoteSession.load("Old", target_name="t0")
     assert old.slurm_job_id == 7 and old.harness is None and old.claude_session_id is None
+
+
+@pytest.mark.parametrize("command, harness", [(["claude", "--resume"], "claude"), (["codex"], "codex")])
+def test_every_unconfined_launch_that_creates_the_session_rewrites_the_identity(
+        tmp_path, monkeypatch, command, harness):
+    # A record left by an earlier Claude launch: a resumed Claude (no id of
+    # ours) or an unmanaged Codex launch must not inherit its session id.
+    manager, ctx, confined = _state_manager(tmp_path, monkeypatch, enabled=False)
+    ctx.settings.remote.slurm.confined = False
+    ctx.settings.agent_launcher = AgentLauncher(command=["claude"])
+    monkeypatch.setattr(manager, "_prepare_local_tier", lambda ctx, root: (tmp_path, "export SUCODER_LOCAL_ROOT=/local"))
+    manager.executor.run_agent.side_effect = lambda args, **kw: SimpleNamespace(
+        returncode=1 if list(args)[:2] == ["tmux", "has-session"] else 0, stdout="", stderr="")
+    RemoteSession("sample", slurm_job_id=41, harness="claude", claude_session_id="old-one").save()
+    manager.launch_agent(ctx, sync=False, command_override=list(command), detached=True)
+    record = RemoteSession.load("sample")
+    assert record.harness == harness and record.claude_session_id is None

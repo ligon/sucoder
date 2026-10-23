@@ -3844,7 +3844,11 @@ class MirrorManager:
             )
             if selection is not None:
                 exclusive_tmux = tmux_name
-            if (self._managed_owner is not None or self._claude_session_id is not None) \
+            # The reply reader's identity (harness, Claude session id) is
+            # rewritten by every launch that creates the session, Claude or
+            # Codex, managed or not, resumed or fresh, so a record left by an
+            # earlier launch of another harness is never read as this one's.
+            if (self._managed_owner is not None or self._identity_to_record(ctx)) \
                     and not self.executor.dry_run:
                 exists = self.executor.run_agent(
                     ["tmux", "has-session", "-t", f"={tmux_name}"], check=False, capture_output=True,
@@ -3853,8 +3857,7 @@ class MirrorManager:
                 if exists is None or exists.returncode == 1:
                     if self._managed_owner is not None:
                         self._record_managed_owner(ctx)
-                    else:
-                        self._record_launch_identity(ctx)
+                    self._record_launch_identity(ctx)
                 elif exists.returncode == 0:
                     self.logger.info("Keeping the existing managed owner record for tmux session %s.", tmux_name)
                 else:
@@ -3928,8 +3931,22 @@ class MirrorManager:
     def _launch_identity(self) -> Tuple[Optional[str], Optional[str]]:
         """``(harness, claude_session_id)`` for the session this launch creates."""
         agent = getattr(self, "_detected_agent_type", None)
-        harness = {AgentType.CLAUDE: "claude", AgentType.CODEX: "codex"}.get(agent) if agent else None
+        harness = agent.name.lower() if agent is not None and agent != AgentType.UNKNOWN else None
         return harness, getattr(self, "_claude_session_id", None)
+
+    def _identity_to_record(self, ctx: MirrorContext) -> bool:
+        """True when a launch that creates the session must write the reply
+        identity: a Claude or Codex harness, or a record still holding the
+        identity of an earlier launch, which a different harness must clear."""
+        from .session import RemoteSession
+
+        if self._launch_identity()[0] is not None:
+            return True
+        try:
+            record = RemoteSession.load(ctx.settings.name, target_name=self.target_name)
+        except (OSError, ValueError):
+            return False
+        return record.harness is not None or record.claude_session_id is not None
 
     def _record_launch_identity(self, ctx: MirrorContext) -> None:
         """Persist the harness and Claude session id on the session an
