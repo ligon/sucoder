@@ -239,6 +239,35 @@ def test_extract_reply_ignores_the_message_itself_and_other_ids():
     assert extract_reply("", "ab12") is None
 
 
+# What CerealDemand printed on 2026-10-22 (issue 52): a prompt that echoes
+# the framed message, and an answer without the id.
+BARE = """\
+❯ [message 43dd from ligon's Claude Code session@lyn (via coder) via sucoder, 2026-10-22 20:01] Relay test (sucoder
+  issue 52): please answer with a single REPLY line saying ok, then carry on.
+● REPLY: ok
+✻ Waiting for 1 background agent to finish
+"""
+
+
+def test_a_reply_without_the_id_counts_after_this_message():
+    assert extract_reply(BARE, "43dd") == "ok"
+
+
+def test_a_bare_reply_is_not_taken_for_another_message():
+    # Before the message, or after a later one, a bare REPLY answers something else.
+    assert extract_reply(" ● REPLY: earlier\n" + BARE.replace("● REPLY: ok\n", ""), "43dd") is None
+    later = BARE.replace("● REPLY: ok\n", "") + (
+        "❯ [message 9f00 from ligon@lyn via sucoder, 2026-10-22 20:05] next\n● REPLY: ok to that\n")
+    assert extract_reply(later, "43dd") is None
+    assert extract_reply(later, "9f00") == "ok to that"
+    assert extract_reply(BARE, "zz99") is None
+
+
+def test_a_tagged_reply_wins_over_a_bare_one():
+    pane = BARE + "● REPLY 43dd: ok, tagged this time\n"
+    assert extract_reply(pane, "43dd") == "ok, tagged this time"
+
+
 def test_extract_reply_takes_the_last_reply_when_the_agent_corrects_itself():
     pane = PANE + "\n ● REPLY ab12: correction, one test failed.\n\n"
     assert extract_reply(pane, "ab12") == "correction, one test failed."
