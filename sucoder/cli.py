@@ -5111,7 +5111,8 @@ class _ReplyWait:
         self.route = "login"           # where the probe runs; "job" once the login host saw nothing
         self.answer = None             # the probe's last answer
         self.failed = 0                # polls that failed in transport
-        self.screen_reply = None
+        self.timed_out = False         # a probe ran out of time: never re-run blind
+        self.screen_reply = None       # a reply read from the screen (no-adapter only)
 
 
 def _recipient_fields(r) -> Dict[str, Any]:
@@ -5172,9 +5173,16 @@ def _reply_identity(config, r) -> Optional[Dict[str, Any]]:
 
 
 def _run_probe(config, hosts, w, route: str, *, logger, debug_ssh) -> Optional[Dict[str, Any]]:
-    """One probe run on *route*; None when it failed in transport or never answered."""
+    """One probe run on *route*; None when it failed in transport or never
+    answered.  A run that outlived the local wall clock (exit 124) is the
+    probe's timeout answer, so neither this poll nor a later one re-runs it
+    blind (15c9510): the read may still be stuck on the far side.  That is
+    also why this calls :func:`_run_remote_capture` itself rather than
+    :func:`_capture_over_tunnel`, which reconnects and re-runs on a 124;
+    only an ssh failure (255, or a transient transport error) reconnects
+    and tries once more."""
     from .messaging import _in_job
-    from .replies import parse_probe_output, probe_command
+    from .replies import PROBE_SCHEMA, PROBE_TIMEOUT, PROBE_TRANSPORT_TIMEOUT, parse_probe_output, probe_command
 
     r = w.recipient
     control = _control_for_recipient(config, hosts, r.host, r, debug_ssh)
@@ -5183,15 +5191,29 @@ def _run_probe(config, hosts, w, route: str, *, logger, debug_ssh) -> Optional[D
     command = probe_command(w.spec)
     if route == "job" and r.job_id is not None:
         command = _in_job(r, command)
+    timed_out = {"schema": PROBE_SCHEMA, "status": "unrecognized", "why": PROBE_TIMEOUT, "replies": []}
     try:
-        got = _capture_over_tunnel(control, r.host, command, logger=logger, config=config,
-                                   debug=debug_ssh, timeout=90)
+        got = _run_remote_capture(control, r.host, command, debug=debug_ssh, timeout=PROBE_TRANSPORT_TIMEOUT)
+        if got is not None and got.returncode == 124:
+            return timed_out
+        if _needs_tunnel_setup(got):
+            _connect_with_retry(control, r.host, logger, config=config)
+            got = _run_remote_capture(control, r.host, command, debug=debug_ssh,
+                                      timeout=PROBE_TRANSPORT_TIMEOUT)
     except Exception as exc:  # noqa: BLE001 -- a failed poll; the caller counts it
         logger.info("%s: reply probe failed (%s)", r.host, exc)
         return None
+    if getattr(got, "returncode", 0) == 124:
+        return timed_out
     if getattr(got, "returncode", 0) in _SSH_TRANSPORT_RC:
         return None
     return parse_probe_output(getattr(got, "stdout", "") or "")
+
+
+def _probe_timed_out(answer: Optional[Dict[str, Any]]) -> bool:
+    from .replies import PROBE_TIMEOUT
+
+    return answer is not None and answer.get("why") == PROBE_TIMEOUT
 
 
 def _probe_reply(config, hosts, w, *, logger, debug_ssh) -> Optional[Dict[str, Any]]:
@@ -5201,7 +5223,8 @@ def _probe_reply(config, hosts, w, *, logger, debug_ssh) -> Optional[Dict[str, A
     identified there and the recipient is a job, it runs inside the job
     (``job_tmux_command``'s route) and stays there."""
     answer = _run_probe(config, hosts, w, w.route, logger=logger, debug_ssh=debug_ssh)
-    if (w.route == "login" and w.recipient.job_id is not None
+    # Not after a timeout: the login host's read may still be running.
+    if (w.route == "login" and w.recipient.job_id is not None and not _probe_timed_out(answer)
             and (answer is None or answer.get("status") == "no-adapter")):
         inside = _run_probe(config, hosts, w, "job", logger=logger, debug_ssh=debug_ssh)
         if inside is not None and (answer is None or inside.get("status") != "no-adapter"):
@@ -5212,9 +5235,10 @@ def _probe_reply(config, hosts, w, *, logger, debug_ssh) -> Optional[Dict[str, A
 def _echo_reply(label: str, text: str, source: Optional[str] = None) -> None:
     """Print a peer's reply, sanitised and capped, labelled as its text."""
     from .messaging import sanitize_reply
+    from .replies import clean_field
 
     lines = sanitize_reply(text).split("\n")
-    tag = f" ({source})" if source else ""
+    tag = f" ({clean_field(source)})" if source else ""
     typer.echo(f"  {label} replied{tag}: {lines[0]}")
     for extra in lines[1:]:
         typer.echo(f"    {extra}")
@@ -5223,7 +5247,13 @@ def _echo_reply(label: str, text: str, source: Optional[str] = None) -> None:
 def _poll_reply(config, hosts, w, msg_id: str, *, logger, debug_ssh) -> bool:
     """One poll of *w*; True when its search is over (a reply, or a turn
     that ended after the delivery, or a probe that timed out and must not
-    be re-run blind)."""
+    be re-run blind).
+
+    The screen is read only for ``no-adapter`` (or no recorded identity):
+    when the reader found the transcript but could not read or interpret
+    it, the answer is "could not look" (exit 3), and a ``REPLY <id>`` row on
+    the pane -- which may be a tool call quoting the protocol -- does not
+    overrule it."""
     from .messaging import capture_pane_command, extract_reply
 
     r = w.recipient
@@ -5232,6 +5262,12 @@ def _poll_reply(config, hosts, w, msg_id: str, *, logger, debug_ssh) -> bool:
         if answer is None:
             w.failed += 1
             return False
+        if _probe_timed_out(answer):
+            w.timed_out = True
+            # A timeout says nothing new: an earlier answer still stands.
+            if w.answer is None:
+                w.answer = answer
+            return True
         w.answer = answer
         status = answer.get("status")
         if status == "replied":
@@ -5240,12 +5276,7 @@ def _poll_reply(config, hosts, w, msg_id: str, *, logger, debug_ssh) -> bool:
             return True
         if status == "seen" and answer.get("turn_ended"):
             return True
-        if answer.get("why") == "ProbeTimeout":
-            return True
-        # Without an identified transcript, or one the reader could not
-        # read or interpret, the screen is still worth a look (the status
-        # stands unless it shows a reply).
-        if status not in ("no-adapter", "unrecognized", "unreadable"):
+        if status != "no-adapter":
             return False
     control = _control_for_recipient(config, hosts, r.host, r, debug_ssh)
     try:
@@ -5279,10 +5310,18 @@ def _report_reply(w, msg_id: str, *, within: str, peek_hint: str) -> int:
     1 ambiguous, 3 could not look; the screen path's 0 without an identity)."""
     from .replies import STATUS_EXIT
 
+    from .replies import clean_field
+
     r = w.recipient
     answer = w.answer
-    if w.screen_reply is not None or (answer is not None and answer.get("status") == "replied"):
+    if answer is not None and answer.get("status") == "replied":
         return 0
+    if w.screen_reply is not None and (answer is None or answer.get("status") == "no-adapter"):
+        return 0
+    if _probe_timed_out(answer):
+        typer.echo(f"! {r.label}: the reply probe timed out, so whether it replied is unknown; "
+                   f"it is not re-run blind; `sucoder peek --reply {msg_id}` asks again later", err=True)
+        return EXIT_UNAVAILABLE
     if w.spec is not None and answer is None and w.failed:
         typer.echo(f"! {r.label}: every reply probe failed in transport, so whether it replied "
                    "is unknown", err=True)
@@ -5297,9 +5336,11 @@ def _report_reply(w, msg_id: str, *, within: str, peek_hint: str) -> int:
         detail += " (its turn has ended since)"
     why = answer.get("why")
     if why and status in ("unreadable", "unrecognized"):
-        detail += f" ({why})"
+        detail += f" ({clean_field(why)})"
     if status == "ambiguous":
-        detail += ": " + ", ".join(answer.get("candidates") or [])
+        detail += ": " + ", ".join(clean_field(c) for c in answer.get("candidates") or [])
+    if w.timed_out:
+        detail += " (a later probe timed out and was not re-run)"
     later = f"; `sucoder peek --reply {msg_id}` asks again later"
     if code in (EXIT_UNAVAILABLE, 1):
         typer.echo(f"! {r.label}: {status}: {detail}{later}", err=True)

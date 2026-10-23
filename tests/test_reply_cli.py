@@ -46,11 +46,12 @@ def _answer(status, **fields):
 
 
 def _run(monkeypatch, *, answers=(), panes=(), wait=30, report=None, recipient="M", everyone=False,
-         text="hello", times=None, raise_probe=False, ctx_obj=None):
+         text="hello", times=None, raise_probe=False, ctx_obj=None, probe_rc=0, reconnects=None):
     harness = _SnapshotsHarness(times=("12-00:00:00",))
     harness.config.mirrors = {"M": SimpleNamespace(mirror_dirname="M"), "L": SimpleNamespace(mirror_dirname="L")}
     monkeypatch.setattr(cli, "setup_logger", lambda *a, **k: logging.getLogger("t"))
-    monkeypatch.setattr(cli, "_connect_with_retry", lambda *a, **kw: None)
+    monkeypatch.setattr(cli, "_connect_with_retry",
+                        lambda *a, **kw: None if reconnects is None else reconnects.append(a[1]))
     monkeypatch.setattr(cli, "_message_sleep", lambda s: None)
     if times is not None:
         clock = iter(times)
@@ -67,11 +68,14 @@ def _run(monkeypatch, *, answers=(), panes=(), wait=30, report=None, recipient="
         if "python3 -I -c" in command:
             if raise_probe:
                 raise RuntimeError("ssh: connection refused")
+            if probe_rc:
+                return SimpleNamespace(returncode=probe_rc, stdout="", stderr="")
             return SimpleNamespace(returncode=0, stdout=next(probe_out, _answer("seen")), stderr="")
         if "capture-pane" in command:
             return SimpleNamespace(returncode=0, stdout=next(pane_out, ""), stderr="")
         return SimpleNamespace(returncode=0, stdout="SENT\tsucoder-M\nSENT\tsucoder-L\n", stderr="")
     monkeypatch.setattr(cli, "_capture_over_tunnel", fake)
+    monkeypatch.setattr(cli, "_run_remote_capture", fake)   # the probe's own transport
     monkeypatch.setattr(cli, "_control_for_host", lambda remote, host, debug, **kw: control)
     obj = {"config": harness.config, "target_name": None}
     obj.update(ctx_obj or {})
@@ -135,7 +139,7 @@ def test_wait_maps_each_status_to_its_exit_code(home, monkeypatch, capsys, statu
     assert got == code, out
     assert _probes(trips)
     screen = any("capture-pane" in c for _, c in trips)
-    assert screen == (status in ("unreadable", "unrecognized"))   # the pane is still worth a look
+    assert not screen                    # only no-adapter reads the pane
     if status == "replied":
         assert "M (job 41 on n0035, t0) replied (transcript): ok." in out.out
     else:
@@ -186,17 +190,51 @@ def test_no_adapter_falls_back_to_the_screen(home, monkeypatch, capsys):
     assert "srun --jobid=41" not in probes[0] and "srun --jobid=41" in probes[1]
 
 
-def test_an_unrecognized_transcript_still_takes_a_reply_from_the_screen(home, monkeypatch, capsys):
+@pytest.mark.parametrize("status", ["unrecognized", "unreadable"])
+def test_a_transcript_that_could_not_be_read_is_exit_3_whatever_the_screen_shows(
+        home, monkeypatch, capsys, status):
+    # A pane row naming the id may be a tool call that quotes the protocol;
+    # it does not overrule the reader's "could not look".
     _record(slurm_job_id=41, harness="claude", claude_session_id=SID)
-    pane = " ● REPLY 8e25ab12: seen on screen\n"
-    code, _ = _run(monkeypatch, answers=[_answer("unrecognized", why="x")] * 4, panes=[pane])
-    assert code == 0 and "replied: seen on screen" in capsys.readouterr().out
+    pane = ' ● Bash(echo "REPLY 8e25ab12: not really")\n'
+    code, trips = _run(monkeypatch, answers=[_answer(status, why="x")] * 9, panes=[pane] * 9,
+                       times=[0, 0, 0, 100])
+    out = capsys.readouterr()
+    assert code == 3 and f"{status}:" in out.err and "replied" not in out.out
+    assert not any("capture-pane" in c for _, c in trips)
 
 
 def test_a_probe_timeout_is_not_rerun_blind(home, monkeypatch, capsys):
     _record(slurm_job_id=41, harness="claude", claude_session_id=SID)
     code, trips = _run(monkeypatch, answers=[_answer("unrecognized", why="ProbeTimeout")] * 4)
     assert code == 3 and len(_probes(trips)) == 1
+    assert "timed out" in capsys.readouterr().err
+
+
+def test_a_transport_timeout_is_not_rerun_on_the_next_poll_or_the_job_route(home, monkeypatch, capsys):
+    _record(slurm_job_id=41, harness="claude", claude_session_id=SID)
+    reconnects = []
+    code, trips = _run(monkeypatch, times=[0, 0, 0, 0, 100], probe_rc=124, reconnects=reconnects)
+    err = capsys.readouterr().err
+    assert code == 3 and "timed out" in err
+    probes = _probes(trips)
+    assert len(probes) == 1 and "srun" not in probes[0]   # one run, never the job route after it
+    assert reconnects == []                               # and no reconnect-and-rerun
+
+
+def test_an_ssh_failure_reconnects_and_tries_the_probe_once_more(home, monkeypatch, capsys):
+    _record(slurm_job_id=41, harness="claude", claude_session_id=SID)
+    reconnects = []
+    code, trips = _run(monkeypatch, times=[0, 0, 100], probe_rc=255, reconnects=reconnects)
+    assert code == 3 and "every reply probe failed in transport" in capsys.readouterr().err
+    assert reconnects and len(_probes(trips)) == 2 * len(reconnects)
+
+
+def test_the_shipped_command_answers_a_timeout_itself_with_exit_0():
+    command = replies.probe_command({"id": ID})
+    assert command.startswith("if command -v timeout >/dev/null 2>&1; then timeout -s TERM 75 python3 -I -c ")
+    late = command.rsplit("echo ", 1)[1].strip("'")
+    assert replies.parse_probe_output(late)["why"] == "ProbeTimeout"
 
 
 def test_no_adapter_at_the_deadline_keeps_the_screen_exit(home, monkeypatch, capsys):
@@ -242,6 +280,46 @@ def test_managed_codex_identity_comes_from_the_owner_record(home, monkeypatch):
                                  "local_root": "/local/job41"}
 
 
+def _identity(**fields):
+    from sucoder.messaging import Recipient
+    session = RemoteSession(mirror_name="M", target_name="t0", slurm_job_id=41, **fields)
+    r = Recipient("M", "ln001.brc", "sucoder-M", job_id=41, target="t0")
+    return replies.transcript_identity(session, r, mirror_path="~/mirrors/M", local_root="/local/job41", token="M")
+
+
+def test_the_harness_the_last_launch_recorded_beats_a_leftover_identity():
+    owner = {"command": ["codex"], "scope": "abc", "durable_root": "/g/state"}
+    # A Codex launch after a Claude one: the Claude id is a leftover.
+    got = _identity(harness="codex", claude_session_id=SID, managed_owner=owner)
+    assert got["harness"] == "codex" and got["codex"]["scope"] == "abc" and "claude_session_id" not in got
+    # A record older than the harness field: the managed owner first.
+    assert _identity(claude_session_id=SID, managed_owner=owner)["harness"] == "codex"
+    assert _identity(claude_session_id=SID)["harness"] == "claude"
+    # A Claude launch after a managed Codex one keeps no Codex identity.
+    got = _identity(harness="claude", claude_session_id=SID, managed_owner=owner)
+    assert got["harness"] == "claude" and "codex" not in got
+    # Unmanaged Codex, and a harness with no adapter (the screen path).
+    unmanaged = _identity(harness="codex")
+    assert unmanaged["harness"] == "codex" and "codex" not in unmanaged
+    assert _identity(harness="gemini", managed_owner=owner) is None
+
+
+def test_an_ambiguous_answer_never_prints_a_file_name_raw(home, monkeypatch, capsys):
+    _record(slurm_job_id=41, harness="claude", claude_session_id=SID)
+    osc = "\x1b]52;c;SGVsbG8=\x07"
+    code, _ = _run(monkeypatch, answers=[_answer("ambiguous", candidates=[f"/p/{osc}.jsonl", "/p/b\u202e.jsonl"],
+                                                 why=f"x{osc}")] * 3, times=[0, 0, 100])
+    out = capsys.readouterr()
+    text = out.out + out.err
+    assert code == 1 and "\x1b" not in text and "\x07" not in text and "\u202e" not in text
+    assert "/p/]52;c;SGVsbG8=.jsonl, /p/b.jsonl" in out.err
+    for status in ("unreadable", "unrecognized"):
+        cleaned = replies.parse_probe_output(_answer(status, why=f"denied: /p/{osc}\nnext"))
+        assert cleaned["why"] == "denied: /p/]52;c;SGVsbG8= next"
+    got = replies.parse_probe_output(_answer("replied", reply="ok", replies=[{"source": f"mail{osc}", "text": "ok"}]))
+    assert got["replies"] == [{"source": "mail]52;c;SGVsbG8=", "text": "ok"}]
+
+
 # ----------------------------------------------------------------- sanitising
 
 def test_sanitize_strips_controls_and_bidi_and_caps():
@@ -283,6 +361,7 @@ def _peek(monkeypatch, reply, *, answers=(), mirror=None, relay_caller=None):
             return SimpleNamespace(returncode=0, stdout=next(out, _answer("seen")), stderr="")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
     monkeypatch.setattr(cli, "_capture_over_tunnel", fake)
+    monkeypatch.setattr(cli, "_run_remote_capture", fake)
     monkeypatch.setattr(cli, "_control_for_host", lambda remote, host, debug, **kw: control)
     obj = {"config": harness.config, "target_name": None}
     if relay_caller:
@@ -340,9 +419,11 @@ def test_the_relay_process_sanitises_what_reaches_the_caller(tmp_path, monkeypat
     control = object()
     evil = "ok\x1b]52;c;cGF5bG9hZA==\x07‮!"
     monkeypatch.setattr(cli, "_control_for_recipient", lambda *a: control)
-    monkeypatch.setattr(cli, "_capture_over_tunnel", lambda *a, **k: SimpleNamespace(
+    answer = lambda *a, **k: SimpleNamespace(   # noqa: E731
         returncode=0, stderr="", stdout=_answer("replied", reply=evil, source="transcript",
-                                                replies=[{"source": "transcript", "text": evil}])))
+                                                replies=[{"source": "transcript", "text": evil}]))
+    monkeypatch.setattr(cli, "_capture_over_tunnel", answer)
+    monkeypatch.setattr(cli, "_run_remote_capture", answer)
     result = CliRunner().invoke(cli.app, ["relay", "peek", "--reply", ID])
     assert result.exit_code == 0, result.output
     assert "replied (transcript): ok]52;c;cGF5bG9hZA==!" in result.output

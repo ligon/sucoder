@@ -19,7 +19,10 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 PROBE_SCHEMA = 1
-PROBE_BUDGET_SECONDS = 60      # the probe's own alarm; the transport allows 90
+PROBE_BUDGET_SECONDS = 60      # the probe's own alarm (it cannot interrupt a D-state read)
+PROBE_REMOTE_LIMIT = 75        # coreutils ``timeout`` on the remote side, which can
+PROBE_TRANSPORT_TIMEOUT = 90   # the local ssh wall clock
+PROBE_TIMEOUT = "ProbeTimeout"  # the ``why`` of an answer from a probe that ran out of time
 SKEW_SECONDS = 30.0
 
 # Exit codes.  0 and 3 keep their meanings ("replied"; "could not look").
@@ -124,19 +127,27 @@ def transcript_identity(record, recipient, *, mirror_path: Optional[str],
     owner = getattr(record, "managed_owner", None)
     harness = getattr(record, "harness", None)
     claude_id = getattr(record, "claude_session_id", None)
+    managed = isinstance(owner, dict) and bool(owner.get("scope")) and bool(owner.get("durable_root"))
+    # Every launch that creates the session writes ``harness`` (and clears
+    # or sets the Claude id), so it is the newest word on which agent runs
+    # there; a Claude id or an owner record beside another harness is a
+    # leftover of an earlier launch.  Another harness has no adapter.
+    # Records older than the field fall back to the managed owner first,
+    # then the Claude id.
+    if harness is None:
+        harness = "codex" if managed else ("claude" if claude_id else None)
     identity: Dict[str, Any] = {}
-    if claude_id or harness == "claude":
+    if harness == "claude":
         identity["harness"] = "claude"
         identity["claude_session_id"] = claude_id
-    elif isinstance(owner, dict) and owner.get("scope") and owner.get("durable_root"):
-        identity["harness"] = "codex"
-        identity["codex"] = {
-            "durable_root": owner["durable_root"], "scope": owner["scope"],
-            "job": None if recipient.job_id is None else str(recipient.job_id),
-            "local_root": local_root,
-        }
     elif harness == "codex":
         identity["harness"] = "codex"
+        if managed and isinstance(owner, dict):
+            identity["codex"] = {
+                "durable_root": owner["durable_root"], "scope": owner["scope"],
+                "job": None if recipient.job_id is None else str(recipient.job_id),
+                "local_root": local_root,
+            }
     else:
         return None
     cwds = [p for p in (mirror_path,) if p]
@@ -167,16 +178,65 @@ def probe_command(spec: Dict[str, Any], source: Optional[str] = None) -> str:
     needs quoting through ``job_tmux_command``'s layers or the ``ssh -n``
     route (no stdin).  ``-I`` keeps the remote cwd and environment out of
     the import path; stderr is discarded.
+
+    A Lustre read stuck in D state outlives the probe's own alarm, so the
+    remote coreutils ``timeout`` (SIGTERM, short of the local limit, as for
+    the scaffolding commands of 15c9510) ends it, and the shell then prints
+    the probe's timeout answer itself.  The command exits 0 either way: a
+    remote 124 would read as a wedged tunnel and be re-run.
     """
     code = base64.b64encode(zlib.compress((source or probe_source()).encode("utf-8"), 9)).decode("ascii")
     args = base64.b64encode(json.dumps(spec, sort_keys=True).encode("utf-8")).decode("ascii")
-    return (f'python3 -I -c "import base64,zlib;exec(zlib.decompress(base64.b64decode(\'{code}\')))" '
-            f"{args} 2>/dev/null")
+    run = (f'python3 -I -c "import base64,zlib;exec(zlib.decompress(base64.b64decode(\'{code}\')))" '
+           f"{args} 2>/dev/null")
+    late = json.dumps({"schema": PROBE_SCHEMA, "status": "unrecognized", "why": PROBE_TIMEOUT}, sort_keys=True)
+    return (f"if command -v timeout >/dev/null 2>&1; then timeout -s TERM {PROBE_REMOTE_LIMIT} {run}; "
+            f"else {run}; fi; [ $? -ne 124 ] || echo '{late}'")
+
+
+FIELD_MAX_BYTES = 512
+CANDIDATES_MAX = 20
+
+
+def clean_field(value: Any) -> str:
+    """A probe-supplied string other than reply text (a path, a reason, a
+    source) made safe to print as one line: the reply sanitiser's control,
+    format and bidi stripping, newlines and tabs folded to spaces, capped.
+    File names are the agent uid's to choose, and JSON's ``\\u001b``
+    decodes back to a raw escape, so none of them is printed as sent."""
+    from .messaging import sanitize_reply
+
+    text = value if isinstance(value, str) else json.dumps(value)
+    text = text.replace("\r", " ").replace("\n", " ").replace("\t", " ")
+    return sanitize_reply(text, max_bytes=FIELD_MAX_BYTES, max_lines=1)
+
+
+def _clean_answer(answer: Dict[str, Any]) -> Dict[str, Any]:
+    """*answer* with every printable field but the reply texts cleaned
+    (those are sanitised and capped where they are printed)."""
+    out = dict(answer)
+    for key in ("why", "source", "transcript", "harness"):
+        if out.get(key) is not None:
+            out[key] = clean_field(out[key])
+    candidates = out.get("candidates")
+    if candidates is not None:
+        items = candidates if isinstance(candidates, list) else [candidates]
+        out["candidates"] = [clean_field(c) for c in items[:CANDIDATES_MAX]]
+    if not isinstance(out.get("reply"), (str, type(None))):
+        out["reply"] = None
+    given = out.get("replies")
+    kept = []
+    for item in given if isinstance(given, list) else []:
+        if isinstance(item, dict) and isinstance(item.get("text"), str):
+            kept.append({"source": clean_field(item.get("source") or "transcript"), "text": item["text"]})
+    out["replies"] = kept
+    return out
 
 
 def parse_probe_output(stdout: str) -> Optional[Dict[str, Any]]:
     """The probe's answer from its stdout (the last JSON line with a
-    ``schema`` and a known ``status``), or None when it never answered."""
+    ``schema`` and a known ``status``), or None when it never answered.
+    Its fields other than reply text come back cleaned (:func:`clean_field`)."""
     for raw in reversed((stdout or "").splitlines()):
         raw = raw.strip()
         if not raw.startswith("{"):
@@ -186,5 +246,5 @@ def parse_probe_output(stdout: str) -> Optional[Dict[str, Any]]:
         except ValueError:
             continue
         if isinstance(answer, dict) and "schema" in answer and answer.get("status") in STATUS_EXIT:
-            return answer
+            return _clean_answer(answer)
     return None
