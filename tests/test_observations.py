@@ -2,6 +2,7 @@
 import copy
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -460,4 +461,5 @@ def test_json_help_never_runs_startup(monkeypatch):
     for command in ("context", "sessions"):
         result = CliRunner().invoke(cli.app, [command, "--help"])
         assert result.exit_code == 0
-        assert "--json" in result.stdout
+        # Rich colours help under CI (GITHUB_ACTIONS), splitting "--json" with escapes.
+        assert "--json" in re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
