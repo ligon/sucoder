@@ -1000,8 +1000,8 @@ as the pane probe reaches it.  Recipients are the sessions =sucoder
 sessions= shows, enumerated from the scheduler and the login nodes, so
 a job whose record was lost can still be reached.
 
-The text arrives framed, =[message from you@laptop via sucoder, <time>]
-...=, because it lands with the same authority as you typing; the
+The text arrives framed, =[message <id> from you@laptop via sucoder,
+<time>] ...=, because it lands with the same authority as you typing; the
 system prompt's bulletin convention tells the agent to treat it as a
 peer's report to check, not an instruction from the human.  A session
 whose pane is a bare shell --- an agent that has exited, leaving the
@@ -1012,14 +1012,73 @@ Enter, and would submit half of it.
 
 A reply cannot be pushed back --- a cluster has no route to a laptop
 behind NAT --- so it is pulled.  The default system prompt asks an agent
-to answer on its own screen with a line =REPLY <id>: ...=, naming the id
-the message carried, and =--wait= reads the pane after the send for that
-line and prints it:
+to answer as soon as it sees the message with a line =REPLY <id>: ...=
+in its own message text, naming the id the message carried (eight hex
+characters).  =--wait= polls for that reply and prints it:
 
 #+begin_src shell
 sucoder -T carleton-htc message SuCoder --wait 120 "is n0032's Lustre healthy from where you sit?"
+sucoder peek --reply 8e25ab12                   # ask again later about one message, by its id
 sucoder -T carleton-htc peek SuCoder -n 60      # the pane's last rows, any time
 #+end_src
+
+*Where the reply is read* (docs/reply-from-transcript.org).  A
+full-screen TUI keeps no scrollback and a reply typed mid-turn scrolls
+off before a poll sees it, so for Claude Code and Codex the reply is read
+from the agent's JSONL transcript instead of its screen.  A small probe
+(=sucoder/reply_probe.py=, standalone, Python 3.6) travels over the same
+route the message did, finds the delivery of this exact message by its
+harness-specific shape, and reads the assistant text after it for a
+tagged line.  Which transcript is chosen comes from what SuCoder recorded
+at launch, never from the pane name: a Claude session SuCoder starts gets
+=--session-id <uuid>= (unless its command already has =--session-id=,
+=--resume=/=-r= or =--continue=/=-c=), stored as =claude_session_id= in
+the session record; a managed Codex session is found through the
+runner's =run.json= for the job and the thread whose =thread_source= is
+=user=.  A session with no such record --- one launched before this, or
+another harness --- falls back to reading the pane as before.
+
+The probe also checks a *mailbox*: an agent may write its answer to
+=~/.sucoder/mail/<id>.reply= (or =<mirror>/.sucoder/mail/<id>.reply=
+when its sandbox refuses =$HOME=) on the host it runs on.  A regular
+file owned by the agent's uid, written after the send, of at most 64 KB
+counts as a reply; a symlink, an older file or a larger one is ignored.
+SuCoder never deletes mailbox files.
+
+Each recipient ends with one status, and =--wait= (and =peek --reply=)
+exit with the worst of them, in the order 3, 1, 4, 0:
+
+| status         | meaning                                                         | exit |
+|----------------+-----------------------------------------------------------------+------|
+| =replied=      | a tagged reply in the transcript, or a mailbox file             |    0 |
+| =seen=         | the agent took the message in; no reply by the deadline         |    4 |
+| =queued=       | Claude queued it while busy and has not taken it up             |    4 |
+| =absent=       | the transcript was read past the send and shows no delivery     |    4 |
+| =ambiguous=    | several candidate transcripts hold the message                  |    1 |
+| =unreadable=   | the transcript is another uid's, or reading it was denied       |    3 |
+| =unrecognized= | the transcript holds the frame in no shape the reader knows, or |    3 |
+|                | nothing in it proves the read went past the send                |      |
+| =no-adapter=   | no transcript identified: the pane is read, as before           | 0    |
+
+Exit 3 also covers every probe poll failing in transport.  *Exit 4 is
+new*: =--wait= used to exit 0 when no reply came, which a script could
+not tell from a reply; it now exits 4 when the message was delivered (or
+queued) and not answered.  A pane-only recipient keeps the old
+behaviour.  =--wait= stops early on a reply, and on =seen= once the
+agent's turn has ended since the delivery (Claude =end_turn=, Codex
+=task_complete=), since a reply after that needs another message.
+Reply text is a model's output, so before it is printed --- by
+=--wait=, =peek --reply=, and the relay --- control characters (C0 and
+C1, except newline and tab) and Unicode format and bidi characters are
+stripped, and it is capped at 2 KB and 20 lines.
+
+*The sent-message log.*  Every delivered message appends one line per
+recipient to =~/.sucoder/sent.jsonl= (mode 0600) on the sending
+machine: the id, the exact frame, the recipient (mirror, target, job,
+node, host, tmux session), the transcript identity, the UTC send time
+and the sending account.  =peek --reply <id>= reads it, so it needs only
+the id; an id not in the log is a usage error (exit 2).  Nothing prunes
+it.
 
 =peek= is the read half on its own, for looking at a session without
 sending anything; unlike =message= it will happily show a pane that is
@@ -1095,7 +1154,12 @@ cluster has two routes, and the error text names both.
    =env_reset=), offers no =--force=, keeps the bare-shell refusal, and
    tags every message's sender with the calling account
    (=Sue/Admin@lyn (via coder)=).  It does let =coder= read any session's
-   pane through =peek=.  A missing sudo rule is reported as the relay
+   pane through =peek=.  Messages sent through the relay are logged in the
+   human's =~/.sucoder/sent.jsonl= with the caller (=SUDO_USER=) as the
+   sending account, and =relay peek --reply <id>= answers only for ids
+   that same caller sent; any other id is unknown to it.  The relay
+   sanitises and caps reply text itself, before it reaches the calling
+   account.  A missing sudo rule is reported as the relay
    being unavailable (exit 3).  The =command= must be an installation the
    agent cannot modify --- the relay runs it as the human --- so point it at
    a root-owned install (see "Quick Start"), not a checkout or venv the agent's
