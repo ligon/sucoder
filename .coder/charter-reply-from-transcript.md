@@ -183,6 +183,25 @@ trimmed and anonymised where needed.
 - [ ] **Human review** of the diff and the README wording. ← judgement call
   (Ethan)
 
+### §2b results (2026-10-23, lyn agent, branch at 910835c)
+
+- [x] **Busy managed Codex** (CerealDemand, job 40401999):
+  - [x] Direct: `replied (transcript): ok.`, exit 0.
+  - [x] Through the `coder` relay: the same, exit 0.
+  - [x] `peek --reply` gives the same answer, directly and through the relay.
+  - [x] `relay peek --reply` for an id that `coder` did not send exits 2.
+- [x] **Idle Claude login session** (the Savio helper): `replied (transcript): ok`, exit 0.
+- [x] **Busy Claude, through the relay:** the message was absorbed mid-turn
+  next to a tool result (the queued path), and the result was
+  `replied (transcript)`, exit 0.
+- [x] **Ignored message:** `seen` (turn ended), exit 4.
+- [ ] **Not exercised live:** a fresh launch with `--session-id`. The
+  helper predates this change, so its record was annotated by hand with
+  its known session id (backup in `~/.sucoder/sessions/`). `collaborate`
+  force-pushes to the mirror and runs `git reset --hard` there, so it was
+  not run just to test. The launch path is covered by unit tests only.
+- [ ] Human review. ← Ethan
+
 ## §3 Constraints & assumptions
 
 - **Budget:** the engine runs at most 2 implement↔red-team iterations.
@@ -203,11 +222,15 @@ trimmed and anonymised where needed.
   - the existing `extract_reply` tests;
   - session records written before this change;
   - the remote-control refusal for `codex-remote-control` agents.
-- **Known pre-existing test failures** (not caused by this work):
-  - `test_a_real_codex_thread_resumes_from_a_restored_generation`
-  - `test_restore_places_a_sealed_generation_in_another_allocation`
-  - `test_restore_refusals_place_nothing...`
-  - `test_reuse_keeps...`
+- **Known pre-existing test failures** (not caused by this work). The
+  list was corrected after the engine run; the original four names were
+  stale.
+  - `test_codex_app_server.py::test_a_restored_thread_works_in_the_successors_clone`
+    fails on `main` too (the bwrap sandbox environment).
+  - Order-dependent tests in `test_codex_state_runner.py` (for example
+    `test_the_drain_state_machine_in_process`,
+    `test_restore_refusals_place_nothing_and_never_start_codex`) pass when
+    run alone.
 - **Conventions:**
   - match the surrounding code style and comment density;
   - remote helpers are standalone files kept Python 3.6 compatible;
