@@ -1750,7 +1750,8 @@ jumped connection already contends for.
 
 Because the waiting is unavoidable, it is at least visible: every remote
 round trip announces itself on *stderr* before it is made, naming the
-host and what it is about to run.
+host and what it is about to run --- the command itself, not the =cd=,
+=export= and =timeout= plumbing wrapped around it on the remote side.
 
 #+begin_example
 · ln001.brc  squeue --me --noheader -o '%i|%j|%P|%a|%q|%T|%L|%N'
