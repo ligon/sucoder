@@ -48,10 +48,20 @@ _SUBMIT_DELAY = "0.3"
 
 
 def new_message_id() -> str:
-    """Four hex characters: enough to tell today's messages apart, short
-    enough to type in a reply."""
+    """Eight hex characters.  Agents copy the id into the reply, so its
+    length costs nothing, and the transcript reader matches deliveries by
+    it: four characters (16 bits) were too few for content matching
+    (docs/reply-from-transcript.org)."""
     import secrets
-    return secrets.token_hex(2)
+    return secrets.token_hex(4)
+
+
+def frame_header(sender: str, when: str, msg_id: str = "") -> str:
+    """``[message <id> from <sender> via sucoder, <when>]``: the part of the
+    frame a delivery must begin with, whole, for the transcript reader to
+    count it (an embedded copy after other text does not)."""
+    tag = f"message {msg_id} from" if msg_id else "message from"
+    return f"[{tag} {sender} via sucoder, {when}]"
 
 
 def frame(text: str, sender: str, when: str, msg_id: str = "") -> str:
@@ -61,8 +71,50 @@ def frame(text: str, sender: str, when: str, msg_id: str = "") -> str:
     find that reply in the pane among everything else the agent prints.
     """
     flat = " ".join(text.split())
-    tag = f"message {msg_id} from" if msg_id else "message from"
-    return f"[{tag} {sender} via sucoder, {when}] {flat}"
+    return f"{frame_header(sender, when, msg_id)} {flat}"
+
+
+# Reply text is a model's output, possibly echoing tool output, and the
+# transcript (unlike ``capture-pane -p``) carries escape sequences intact:
+# an OSC 52 payload would write the reader's clipboard, a bidi override
+# would make the text read as something else.  Whatever prints it --
+# ``--wait``, ``peek --reply``, and the relay before anything reaches the
+# calling account -- passes it through here first.
+REPLY_MAX_BYTES = 2048
+REPLY_MAX_LINES = 20
+_TRUNCATED = " [truncated]"
+
+
+def sanitize_reply(text: str, max_bytes: int = REPLY_MAX_BYTES, max_lines: int = REPLY_MAX_LINES) -> str:
+    """*text* with C0/C1 controls (except newline and tab) and Unicode
+    format (``Cf``, which holds the bidi overrides and isolates) and
+    bidi-control characters removed, capped at *max_bytes* of UTF-8 and
+    *max_lines* lines."""
+    import unicodedata
+
+    kept = []
+    for ch in text.replace("\r\n", "\n"):
+        if ch in "\n\t":
+            kept.append(ch)
+            continue
+        code = ord(ch)
+        if code < 0x20 or 0x7F <= code <= 0x9F:
+            continue
+        category = unicodedata.category(ch)
+        if category in ("Cf", "Cs") or unicodedata.bidirectional(ch) in _BIDI_CONTROLS:
+            continue
+        kept.append(ch)
+    clean = "".join(kept).strip("\n")
+    lines = clean.split("\n")
+    truncated = len(lines) > max_lines
+    clean = "\n".join(lines[:max_lines])
+    if truncated or len(clean.encode("utf-8")) > max_bytes:
+        room = max_bytes - len(_TRUNCATED.encode("utf-8"))
+        clean = clean.encode("utf-8")[:room].decode("utf-8", "ignore").rstrip() + _TRUNCATED
+    return clean
+
+
+_BIDI_CONTROLS = frozenset({"LRE", "RLE", "LRO", "RLO", "PDF", "LRI", "RLI", "FSI", "PDI"})
 
 
 REPLY_PREFIX = "REPLY"
@@ -163,6 +215,8 @@ class Recipient:
     target: Optional[str] = None
     pane: Optional[str] = None     # what the probe saw running there
     agent_mode: str = TERMINAL
+    mirror: Optional[str] = None   # configured mirror name, when the report knows it
+    session_keys: Tuple[str, ...] = ()   # <mirror>--<target> records naming the job
 
 
 def send_keys_command(recipient: Recipient, line: str) -> str:
@@ -291,6 +345,7 @@ def plan_recipients(
                     socket=socket if confined else "", job_id=entry.job.job_id,
                     node=entry.job.node or None,
                     target=group.name, pane=entry.pane, agent_mode=entry.agent_mode,
+                    mirror=entry.mirror, session_keys=tuple(entry.session_keys),
                 ),
             )
     for entry in report.unmatched:
