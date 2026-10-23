@@ -48,6 +48,13 @@ class RemoteSession:
     # Both absent on sessions written before these fields existed.
     managed_owner: Optional[dict] = None
     replacement: Optional[dict] = None
+    # Which transcript the reply reader (docs/reply-from-transcript.org)
+    # reads: ``harness`` is the agent the launch started ("claude" or
+    # "codex"), and ``claude_session_id`` the ``--session-id`` SuCoder gave
+    # Claude.  Written only when the launch creates the session; absent on
+    # records written before these fields existed, or by a reattach.
+    harness: Optional[str] = None
+    claude_session_id: Optional[str] = None
 
     # ------------------------------------------------------------------
     # Persistence
@@ -93,6 +100,8 @@ class RemoteSession:
             managed_owner=data.get("managed_owner"),
             replacement=data.get("replacement"),
             forwards=list(data.get("forwards") or []),
+            harness=data.get("harness"),
+            claude_session_id=data.get("claude_session_id"),
         )
 
     def save(self) -> None:
@@ -122,6 +131,8 @@ class RemoteSession:
             "managed_owner": self.managed_owner,
             "replacement": self.replacement,
             "forwards": self.forwards,
+            "harness": self.harness,
+            "claude_session_id": self.claude_session_id,
         }
         tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
         try:

@@ -843,9 +843,10 @@ class MirrorManager:
             dirname = ctx.settings.mirror_dirname
             raw = f"{executor_root.rstrip('/')}/{dirname}"
         else:
-            raw = ctx.remote_mirror_path
-            if raw is None:
+            configured = ctx.remote_mirror_path
+            if configured is None:
                 raise MirrorError("No remote mirror path configured.")
+            raw = configured
 
         if not raw.startswith("~"):
             return raw
@@ -3429,6 +3430,7 @@ class MirrorManager:
             sess.compute_node = None
             sess.service_launch = getattr(self, "_service_launch", None)
             sess.managed_owner = getattr(self, "_managed_owner", None)
+            sess.harness, sess.claude_session_id = self._launch_identity()
         try:
             sess.save()
         except OSError as exc:
@@ -3571,6 +3573,16 @@ class MirrorManager:
         remote_enabled = remote_mode in ("terminal", "server")
         if remote_enabled and self._detected_agent_type != AgentType.CODEX:
             raise MirrorError("Remote control requires --harness codex (or --agent codex).")
+        # The reply reader (docs/reply-from-transcript.org) finds a Claude
+        # session's transcript by an id chosen here: ``--session-id`` makes
+        # the path ``<config>/projects/<cwd>/<id>.jsonl`` deterministic.  Not
+        # when the operator's command already picks or resumes a session.
+        # Recorded beside the job only when this launch creates the session.
+        self._claude_session_id: Optional[str] = None
+        if self._detected_agent_type == AgentType.CLAUDE and not _claude_session_chosen(command):
+            import uuid
+            self._claude_session_id = str(uuid.uuid4())
+            command = self._insert_after_executable(command, ["--session-id", self._claude_session_id])
         # Managed Codex state (docs/codex-local-state.org): decided here, applied
         # at two points below -- the sqlite_home placeholder at the argv stage,
         # before nvm/installer wrapping, and the staged runner outermost.
@@ -3832,13 +3844,17 @@ class MirrorManager:
             )
             if selection is not None:
                 exclusive_tmux = tmux_name
-            if self._managed_owner is not None and not self.executor.dry_run:
+            if (self._managed_owner is not None or self._claude_session_id is not None) \
+                    and not self.executor.dry_run:
                 exists = self.executor.run_agent(
                     ["tmux", "has-session", "-t", f"={tmux_name}"], check=False, capture_output=True,
                 ) if selection is None else None  # A selection creates without -A.
                 # Only tmux's absent result authorizes a new owner record.
                 if exists is None or exists.returncode == 1:
-                    self._record_managed_owner(ctx)
+                    if self._managed_owner is not None:
+                        self._record_managed_owner(ctx)
+                    else:
+                        self._record_launch_identity(ctx)
                 elif exists.returncode == 0:
                     self.logger.info("Keeping the existing managed owner record for tmux session %s.", tmux_name)
                 else:
@@ -3908,6 +3924,26 @@ class MirrorManager:
                 )
 
             return result.returncode
+
+    def _launch_identity(self) -> Tuple[Optional[str], Optional[str]]:
+        """``(harness, claude_session_id)`` for the session this launch creates."""
+        agent = getattr(self, "_detected_agent_type", None)
+        harness = {AgentType.CLAUDE: "claude", AgentType.CODEX: "codex"}.get(agent) if agent else None
+        return harness, getattr(self, "_claude_session_id", None)
+
+    def _record_launch_identity(self, ctx: MirrorContext) -> None:
+        """Persist the harness and Claude session id on the session an
+        unconfined launch holds, before its tmux session is created (the
+        managed-owner rule: only tmux's "absent" answer authorizes it, so a
+        reattach keeps the running session's record)."""
+        from .session import RemoteSession
+
+        try:
+            session = RemoteSession.load(ctx.settings.name, target_name=self.target_name)
+            session.harness, session.claude_session_id = self._launch_identity()
+            session.save()
+        except OSError as exc:
+            self.logger.warning("Could not record the Claude session id for message replies: %s", exc)
 
     def _record_managed_owner(self, ctx: MirrorContext) -> None:
         """Persist ``_managed_owner`` on the session an unconfined launch already holds.
@@ -7605,7 +7641,7 @@ If you find issues, describe each one clearly with the filename and specific con
             return
 
         # Derive target name from the session state or fall back to gateway hostname.
-        obj = {}
+        obj: Dict[str, Any] = {}
         try:
             import click as _click
             obj = (_click.get_current_context().obj or {})
@@ -7848,6 +7884,19 @@ def _parse_version(text: Optional[str]) -> Optional[Tuple[int, ...]]:
     if match is None:
         return None
     return tuple(int(part) for part in match.group(1).split("."))
+
+
+_CLAUDE_SESSION_FLAGS = ("--session-id", "--resume", "-r", "--continue", "-c")
+
+
+def _claude_session_chosen(command: Sequence[str]) -> bool:
+    """Does *command* already choose or resume a Claude session?"""
+    for token in command[1:]:
+        if token in _CLAUDE_SESSION_FLAGS:
+            return True
+        if token.startswith(("--session-id=", "--resume=")):
+            return True
+    return False
 
 
 def _detect_agent_type(command: Sequence[str]) -> AgentType:
