@@ -1,7 +1,7 @@
 #+TITLE: Reading message replies from the agent's transcript
 #+DATE: 2026-10-23
 #+AUTHOR: Claude (SuCoder agent on lyn)
-#+STATUS: Draft 2, revised after red-team review and cluster evidence; one decision open; nothing implemented
+#+STATUS: Draft 3: protocol decided (transcript primary, mailbox also checked); charter in .coder/charter-reply-from-transcript.md
 #+OPTIONS: toc:2 num:nil
 
 * Problem
@@ -47,9 +47,14 @@ the answer the screen lost.
   (evidence, summary items 4-5), so the "untagged" status from draft 1 is
   dropped.
 
-* Open decision: what the reply protocol is
+* Decision: what the reply protocol is
 
-The reviewers and the cluster agent disagree on this, and the choice
+Decided 2026-10-23 by the human: *the transcript reader is primary, and
+the probe also checks a mailbox* (A, with B's mailbox as a second
+source; specified under [[*Mailbox][Mailbox]]).  The options as they were
+weighed are kept below.
+
+The reviewers and the cluster agent disagreed on this, and the choice
 shapes everything else.
 
 - *A. Transcript reader as the protocol* (both reviewers).  Agents keep
@@ -287,6 +292,31 @@ From the delivery's file position (Claude) or =ordinal= (Codex):
   onwards, and only complete, newline-terminated lines.  Transcripts
   reach tens of MB.
 
+** Mailbox
+
+The mailbox is a second place the probe looks for a reply.  An agent
+can use it when printing a line is awkward, or when it wants the reply
+to survive regardless of the transcript format.
+
+- *Path:* the agent writes =~/.sucoder/mail/<id>.reply= on the host it
+  runs on.  If its sandbox refuses =$HOME=, it writes
+  =<mirror>/.sucoder/mail/<id>.reply= instead.  Plain shell is enough,
+  for example =mkdir -p ~/.sucoder/mail && printf '%s\n' "ok" >
+  ~/.sucoder/mail/<id>.reply=.  No SuCoder command needs to exist on the
+  cluster.
+- *What the probe accepts:*
+  - a regular file, not a symlink;
+  - owned by the agent's uid;
+  - modified after the send time (with the same skew allowance);
+  - at most 64 KB read, and the laptop-side caps applied.
+- *Precedence:* a mailbox reply counts as =replied= with =source:
+  mailbox=.  If the transcript also has a tagged reply, both are
+  reported, transcript first.
+- *Trust:* the same as the transcript.  Anything running as the agent's
+  uid can write either.
+- *Clean-up:* SuCoder never deletes mailbox files.  The ids are unique
+  and the files are tiny; pruning is out of scope.
+
 ** Output safety
 
 Reply text is untrusted data written by a model, possibly echoing tool
@@ -308,6 +338,8 @@ transcript would without this step.
   own message text, never only in a tool call or a file.  Answer as soon
   as you see the message, even mid-task; a short line is enough.  The
   "finish it before your next tool call so it is on screen" clause goes.
+  Add one sentence offering the mailbox for a longer or more durable
+  answer.  The bulletin stays the place for anything long.
 - README "Messaging": statuses, exit 4, =peek --reply=, the sent-message
   log, and the relay restriction.
 - The launch passes =--session-id= to Claude.  Tests cover the session
@@ -319,9 +351,8 @@ transcript would without this step.
   the timing gap only.  Full-screen redraws arrive as fragments, and it
   still needs per-harness glyph parsing.  It can't see =queued=.
   Rejected.
-- *A mailbox* (=sucoder-reply=, =~/.sucoder/mail/<id>.reply=).  See the
-  open decision above.  Recommended as an optional second source, not
-  the protocol.
+- *A mailbox as the only protocol.*  See the decision above.  Adopted as
+  a second source, not the protocol.
 - *Claude Code's own peer socket.*  =~/.claude/sessions/<pid>.json=
   advertises =messagingSocketPath= and =peerProtocol: 1=.  It is
   Claude-only, works on the same host only, is undocumented, and there
@@ -372,7 +403,7 @@ files.
 | S8 | deadline policy and exit codes                                           | accepted: exit 4, early stop at end of turn               |
 | S9 | system prompt and README                                                 | accepted                                                  |
 | S10-12 | tail window, tool-result immunity, fixtures                          | accepted                                                  |
-| E  | the protocol should be the mailbox, transcripts only a diagnostic        | open: see the decision above                              |
+| E  | the protocol should be the mailbox, transcripts only a diagnostic        | partly accepted: mailbox also checked; transcript primary |
 
 Two corrections to draft 1 came out of this.  The project-directory
 encoding replaces every non-alphanumeric character, not only =/= and
@@ -381,7 +412,7 @@ files, since a broadcast puts one frame in several.
 
 * Plan
 
-1. Settle the open decision.
+1. (Done) Settle the protocol decision.
 2. Sent-message log, 8-hex ids, and frame anchoring.  Then Claude
    =--session-id= at launch, recorded in the session record.
 3. Adapters and the shared reader as pure functions.  Fixtures: real
