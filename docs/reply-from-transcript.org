@@ -1,0 +1,396 @@
+#+TITLE: Reading message replies from the agent's transcript
+#+DATE: 2026-10-23
+#+AUTHOR: Claude (SuCoder agent on lyn)
+#+STATUS: Draft 2, revised after red-team review and cluster evidence; one decision open; nothing implemented
+#+OPTIONS: toc:2 num:nil
+
+* Problem
+
+=sucoder message --wait= finds a reply by capturing the recipient's tmux
+pane and looking for a =REPLY <id>:= row (=messaging.extract_reply=).
+This misses real replies:
+
+- *Full-screen TUIs keep no scrollback.*  Measured 2026-10-23 on
+  CerealDemand (job 40401999, Codex): =alternate_on=1 history_size=0
+  pane_height=29=.  =capture-pane= returns only the visible rows.
+- *Polls are sparse.*  An =srun= capture takes about 10-20s, plus a 5s
+  sleep.  CerealDemand wrote =REPLY 8e25: ok.= 2s after the message
+  arrived, in the middle of a busy turn.  It had scrolled off before
+  =--wait 120= looked, and =--wait= reported no reply
+  ([[file:reply-transcripts-evidence.org][evidence]], section 2).
+- *The screen shows nothing for a message that is still queued, or one
+  the agent ignored.*  LSMS_Library absorbed message =1733= mid-turn and
+  never answered it (evidence, section 3).  Nothing on screen tells
+  "queued" from "seen and ignored".
+- *Each harness draws its screen differently*, so =_REPLY_ENDS= keeps
+  growing.
+
+Both harnesses record what the model actually took in and said, in
+order, in a JSONL transcript.  For the cases above, that record holds
+the answer the screen lost.
+
+* Goals and non-goals
+
+- Goal: =--wait= reports, for each recipient, the strongest of
+  =replied= / =seen= / =queued= / =absent=, plus the reply text when
+  there is one.  It does this for Claude Code and Codex recipients,
+  whether or not the reply is still on screen.
+- Goal: never claim a reply that wasn't made, and never report =absent=
+  when the real state is "could not read".
+- Goal: a new harness needs one adapter, not new screen rules.
+- Non-goal: changing inbound delivery.  =tmux send-keys= stays, because
+  an idle agent doesn't poll anything.
+- Non-goal: replacing the screen reader.  It remains the fallback when
+  there is no adapter.
+- Non-goal: inferring an answer from untagged text.  The evidence shows
+  the first assistant text after a message is usually unrelated work
+  (evidence, summary items 4-5), so the "untagged" status from draft 1 is
+  dropped.
+
+* Open decision: what the reply protocol is
+
+The reviewers and the cluster agent disagree on this, and the choice
+shapes everything else.
+
+- *A. Transcript reader as the protocol* (both reviewers).  Agents keep
+  printing =REPLY <id>: ...= as their own message text.  SuCoder finds it
+  in the transcript.  Nothing changes for agents, and it gives the
+  =queued= / =seen= states for free.  The cost: SuCoder parses two
+  private, fast-moving formats.  Both grew new entry types recently
+  (=queue-operation=, =api-request-blob=, Codex =agent_message=).  When
+  a format drifts, the reader must fail as "unrecognized", never as a
+  wrong answer.
+- *B. A mailbox as the protocol, and the transcript reader only as a
+  diagnostic* (the cluster agent).  The reply is a file the agent writes,
+  for example =sucoder-reply <id> "text"=, which writes
+  =~/.sucoder/mail/<id>.reply= on the cluster's shared home.  The sender
+  reads the file over its existing route.  The reply's correctness no
+  longer depends on transcript formats.  The cost: replying takes a tool
+  call.  That needs a writable path (a Codex workspace-write sandbox may
+  refuse =$HOME=; read-only sandbox mode refuses everything) and the
+  agent's compliance, which is no better than for the =REPLY= line it
+  already prints.  The =queued= / =seen= states still need the
+  transcript reader.
+
+*Recommendation: A, with B's mailbox as an optional second source.*  A
+needs nothing new from agents.  Its failure mode is "unrecognized",
+which falls back to the screen as today, not a wrong answer, and fixture
+tests pinned to real lines catch drift.  The mailbox is cheap to check
+on every poll once the probe exists, so an agent that does write one is
+heard.  If drift turns out to be frequent, the protocol can move to B
+without throwing away the reader, which B needs anyway for delivery
+status.
+
+Everything below assumes A.
+
+* Facts the design rests on
+
+Full detail, with entry shapes and line references:
+[[file:reply-transcripts-evidence.org][reply-transcripts-evidence.org]]
+(collected read-only on Savio by a SuCoder agent, 2026-10-23), plus
+checks on lyn.
+
+** Claude Code (2.1.309)
+
+- Transcript: =${CLAUDE_CONFIG_DIR:-~/.claude}/projects/<cwd>/<session-id>.jsonl=,
+  where =<cwd>= has every non-alphanumeric character replaced by =-=.
+  On Savio, =~/.claude= is on the shared home, so a compute-node
+  session's transcript is readable from a login node without =srun=.  A
+  job's cwd contains the job id, so its project directory is per
+  allocation.
+- No transcript is held open (append and close), so =/proc/<pid>/fd=
+  finds nothing.  =~/.claude/sessions/<pid>.json= maps a pid to a session
+  id, but it is missing for compute-node sessions and can be stale.
+- =--session-id <uuid>= exists, so SuCoder can choose the id at launch.
+- Delivery while the agent is idle: a =type: user= entry whose string
+  content holds the frame.  If =send-keys= delivered it as a paste, the
+  frame is wrapped in =<pasted_content id="...">= (paste ids are reused).
+  =origin.kind= is ="human"=; nothing else marks it as a sucoder message.
+- Delivery while busy: =queue-operation enqueue=, then =remove= with
+  =reason: absorbed_mid_turn=, then an =attachment= with
+  =attachment.type: queued_command= and the text in =attachment.prompt=.
+  All 8 mid-turn inputs in a lyn session took this path.  File position,
+  not timestamp, marks when the model saw it.
+- The frame and reply text also appear in non-delivery entries:
+  =last-prompt=, =api-request-blob= (both roles), =tool_result=, and
+  compaction summaries (=type: user=, =isCompactSummary: true=).  A
+  summary claimed =REPLY 1733: ok= for a reply that was never made.
+- Assistant output: one =type: assistant= entry per content block
+  (=text=, =thinking=, =tool_use=).  =stop_reason: end_turn= marks the end
+  of a turn.  A reply can sit inside a longer text block.
+- Sub-agents: =isSidechain=, and separate files under
+  =<session-id>/subagents/=.
+
+** Codex (0.163.0, managed codex_state)
+
+- Live rollouts are node-local, under
+  =/local/job<J>/state/codex/<scope>/<run>/home/sessions/YYYY/MM/DD/rollout-*-<thread>.jsonl=.
+  They are readable from an =srun --overlap= step outside the bwrap
+  namespace.
+- A durable replica is at
+  =~/mirrors/.sucoder-state/codex/<scope>/runs/<run>/rollouts/<thread>.jsonl=
+  on Lustre, readable from a login node.  Lag measured 0 bytes in three
+  samples.  =run.json= beside it records =allocation.job= and the node.
+- Main thread versus forks: =session_meta.thread_source= is ="user"= for
+  the main thread and ="subagent"= (with =forked_from_id=) for forks.
+  The message appeared in 6 of 8 rollout files, but only once as a
+  delivery, in the main thread.
+- Delivery, idle or busy: a =response_item= / =message= / =role: user=
+  with the frame byte-identical in =input_text=, plus an =event_msg=
+  =item_completed= twin.  Mid-turn input is injected into the running
+  turn; there is no queue entry.
+- Reply: =response_item= / =message= / =role: assistant= / =output_text=.
+  It may be =phase: commentary=, mid-turn, an hour before
+  =task_complete=.  Twin: =item_completed AgentMessage=.
+- Replays: =compacted.replacement_history= and fork seeds repeat
+  deliveries (forks keep the parent's item id).  =agent_message= items
+  from sub-agents arrive in the main thread.
+- Unmanaged Codex: =${CODEX_HOME:-~/.codex}/sessions/...=, with no
+  runner metadata.
+
+* Design
+
+** Overview
+
+The send records what it typed.  =--wait= then polls with a /reply probe/
+that:
+
+1. *identifies* the transcript (launch metadata first; see below);
+2. *finds the delivery* of our frame by its harness-specific shape;
+3. *reads forward* from the delivery's file position for a tagged reply
+   in assistant text;
+4. returns one fixed-schema JSON line.
+
+The laptop sanitises, caps, and prints.
+
+** Identity: the sent-message log and a longer id
+
+- Ids become 8 hex characters (=token_hex(4)=).  Agents copy the id, so
+  its length costs nothing, and 16 bits was too few for content matching.
+- Each send appends to =~/.sucoder/sent.jsonl= on the sender: id, the
+  exact frame, recipient (mirror, target, job, host, session), the
+  transcript identity if known, the send time (UTC), and the sending
+  account.  =peek --reply <id>= reads it, so it needs only the id.
+- Through the relay, the log is the human's.  The relay records the
+  calling account (=SUDO_USER=) with each entry and answers
+  =relay peek --reply= only for ids that the same caller sent.
+
+** Identifying the transcript
+
+In order; the first that applies wins.
+
+1. *Claude, launched by SuCoder:* the launch passes
+   =--session-id <uuid>= and stores the uuid in the session record.  The
+   transcript is =<config>/projects/<encoded cwd>/<uuid>.jsonl=.  A
+   =--continue= or =/clear= in the leftover shell starts a new file; the
+   fallback in step 4 covers that.
+2. *Managed Codex:* =owner.json= and =status.json= in the run directory
+   (and =run.json= for the durable replica) list the threads.  Take the
+   one whose =session_meta.thread_source= is ="user"=.  Read the
+   node-local file when the probe runs on the node, and the durable
+   replica from a login node.  Prefer the replica when it isn't lagging
+   (=replica.lag_bytes=), since then no =srun= is needed.
+3. *Unmanaged Codex:* look in =sessions/= for the rollout whose
+   =session_meta.cwd= is the mirror and =thread_source= is ="user"=,
+   using the session-record start time to choose the day directory.
+   Don't assume today or yesterday: a rollout stays in its creation-day
+   directory.
+4. *Fallback, any harness:* the newest file in the mirror's candidate
+   directory that has a delivery-shaped entry for our frame.  More than
+   one → =ambiguous=, with the list.
+
+The probe runs as the account that owns the agent.  An agent launched
+with sudo as another user is reported as =unreadable=, never =absent=.
+
+** Finding the delivery
+
+A delivery is an entry of the exact shape the adapter names, whose text
+/begins with/ the frame.  Leading whitespace and one =<pasted_content
+...>= opening tag are allowed before it.  The whole frame must match:
+=[message <id> from <sender> via sucoder, <time>]=.
+
+- *Claude delivery shapes:*
+  - a =type: user= entry with string content and no =isCompactSummary=;
+  - an =attachment= of type =queued_command= (its =prompt=).
+- *Claude =queued= shape:* a =queue-operation enqueue= with no later
+  =remove= or attachment for it.
+- *Codex delivery shape:* a =response_item= / =message= / =role: user=
+  in the identified thread, outside any =compacted= payload.
+- *Never a delivery:* =tool_result=, =api-request-blob=, =last-prompt=,
+  compaction summaries, sidechains, sub-agent threads, or assistant text
+  that quotes the frame.
+
+Anchoring at the start defeats a body that embeds someone else's frame
+(review S2).  So does matching the whole frame against the sent log.
+
+** Reading the reply
+
+From the delivery's file position (Claude) or =ordinal= (Codex):
+
+- Scan assistant text only: Claude =type: assistant= =text= blocks, or
+  Codex assistant =message= / =output_text=, of any =phase=.  Skip
+  =tool_use= inputs, which often contain =REPLY <id>:= when an agent
+  writes about the protocol.
+- A tagged reply is a /line/ matching =^\W*REPLY <id>:= anywhere in a
+  text block.  The reply is from that line to the end of the block.
+- A bare =REPLY:= line counts only if no other input (framed or not,
+  human or sucoder) was delivered between our delivery and it.
+- Stop at the next delivery of any input.  Past that point, the reply is
+  no longer to us.
+
+** Statuses and exit codes
+
+| status         | meaning                                                         | exit |
+|----------------+-----------------------------------------------------------------+------|
+| =replied=      | tagged reply found                                              |    0 |
+| =seen=         | delivered to the model; no tagged reply by the deadline         |    4 |
+| =queued=       | Claude queue entry only; the model hasn't taken it up           |    4 |
+| =absent=       | transcript read, entries newer than the send, no delivery       |    4 |
+| =ambiguous=    | several candidate transcripts hold a delivery                   |    1 |
+| =unreadable=   | transcript exists but is another uid's, or =/proc= is denied    |    3 |
+| =unrecognized= | frame bytes present, but no adapter rule claims them            |    3 |
+| =no-adapter=   | harness unknown, or no transcript identified: screen fallback   | (screen) |
+
+- Exit 4 is new: "delivered, but no answer" is a result, not a failure.
+  Today it is exit 0, which scripts can't tell from a reply.
+- Exit 3 keeps its meaning, "could not look".  It now also covers every
+  poll failing in transport.
+- With several recipients, the exit is the worst status across them.
+- =absent= needs proof that we read past the send: at least one parsed
+  entry stamped after the send time (UTC, with a few seconds' skew
+  allowed).  Otherwise the result is =unrecognized=.
+- =--wait= stops early at =replied=.  It also stops early at =seen= when
+  the agent's turn has ended since the delivery (Claude =end_turn=, Codex
+  =task_complete=), because a reply after that would need another
+  message.
+
+** The probe and its transport
+
+- The probe is a small Python 3.6-compatible script.  It is shipped as
+  =python3 -I -c "import base64,zlib;exec(zlib.decompress(base64.b64decode('...')))"=,
+  which survives the three quoting layers of =job_tmux_command= and the
+  =ssh -n= direct route (no stdin).
+- Its arguments (paths, frame, send time) are base64 JSON.
+- It prints exactly one JSON line with a schema version.  stderr is
+  discarded.  A catch-all turns any exception into
+  ={"status": "unrecognized", "why": "<class name>"}=.
+- It reads only the files named above.  If it needs a process's
+  environment (fallbacks), it extracts =CLAUDE_CONFIG_DIR= and
+  =CODEX_HOME= and nothing else.
+- *Where it runs:* on a login node when the transcript is on shared
+  storage (Claude on the shared home, the managed-Codex replica).
+  Otherwise through =job_tmux_command='s route.
+- Any read of Lustre has a timeout and is not re-run blind after a
+  timeout (15c9510).
+- *Cost:* it finds the byte offset of the frame and of =REPLY <id>= with
+  a raw byte search first.  It parses JSON only from the delivery
+  onwards, and only complete, newline-terminated lines.  Transcripts
+  reach tens of MB.
+
+** Output safety
+
+Reply text is untrusted data written by a model, possibly echoing tool
+output.  On the laptop, in the process that prints:
+
+- strip C0 and C1 controls except newline and tab, and Unicode format
+  and bidi characters;
+- cap the reply at 2 KB and 20 lines;
+- print it with a label that marks it as the peer's text.
+
+The relay applies the same sanitising and cap before anything reaches
+the agent account, whatever the probe returned.  Today the screen
+capture (=capture-pane -p=, no =-e=) never carried escape sequences; the
+transcript would without this step.
+
+** Prompt and documentation changes
+
+- =default_system_prompt.org=: a reply is a line =REPLY <id>: ...= in your
+  own message text, never only in a tool call or a file.  Answer as soon
+  as you see the message, even mid-task; a short line is enough.  The
+  "finish it before your next tool call so it is on screen" clause goes.
+- README "Messaging": statuses, exit 4, =peek --reply=, the sent-message
+  log, and the relay restriction.
+- The launch passes =--session-id= to Claude.  Tests cover the session
+  record field.
+
+* Alternatives considered
+
+- *Faster screen polling, or =pipe-pane= during the wait.*  This closes
+  the timing gap only.  Full-screen redraws arrive as fragments, and it
+  still needs per-harness glyph parsing.  It can't see =queued=.
+  Rejected.
+- *A mailbox* (=sucoder-reply=, =~/.sucoder/mail/<id>.reply=).  See the
+  open decision above.  Recommended as an optional second source, not
+  the protocol.
+- *Claude Code's own peer socket.*  =~/.claude/sessions/<pid>.json=
+  advertises =messagingSocketPath= and =peerProtocol: 1=.  It is
+  Claude-only, works on the same host only, is undocumented, and there
+  is nothing like it in Codex.  Worth a look later for Claude-to-Claude
+  traffic.
+- *IRC (or another bus).*  Rejected as the reply mechanism:
+  - like the mailbox, the reply needs the agent's cooperation through a
+    tool;
+  - inbound delivery is still =send-keys=;
+  - it adds a server both sides must reach, a port on the cluster
+    network, and an auth problem: everything on the cluster runs as one
+    user, and whatever can post to a channel that agents read can run
+    commands on the cluster.
+
+  It is attractive as a separate observability layer.  SuCoder could
+  post each send and the reader's status and reply to a channel, giving
+  the human a live feed with no change to agents.  That belongs in its
+  own issue.
+
+* Red-team review and dispositions
+
+Two independent reviewer contexts on lyn worked on draft 1:
+mechanism/robustness (M), and security/simplicity/operations (S).  A
+SuCoder agent on Savio collected evidence (E).  None of them edited
+files.
+
+| id | finding                                                                  | disposition                                               |
+|----+--------------------------------------------------------------------------+-----------------------------------------------------------|
+| M1 | busy Claude input is a =queued_command= attachment, never a user entry   | accepted: a delivery shape; stop rule covers any input    |
+| M2 | Claude holds no file open; two sessions can share a project dir          | accepted: =--session-id= at launch                        |
+| M3 | sudo-launched agents are another uid                                     | accepted: =unreadable=, never =absent=                    |
+| M4 | Codex sub-agents share a process; the runner's app-server is a decoy     | accepted: runner metadata plus =thread_source=            |
+| M5 | today-or-yesterday misses old threads                                    | accepted: by metadata, not date                           |
+| M6 | Claude compaction summaries and request blobs repeat frames              | accepted: excluded by shape (E: a summary faked a reply)  |
+| M7 | Codex mid-turn input: queue-less                                         | confirmed by E; it is injected and logged at once         |
+| M8 | =absent= versus parse failure                                            | accepted: proof of read past the send, else =unrecognized= |
+| M9 | a tag inside a text block                                                | accepted: per-line match                                  |
+| M10| untagged text is noise                                                   | accepted: the untagged status is dropped                  |
+| M11| full parse on each poll                                                  | accepted: byte search first                               |
+| M12-15 | Python 3.6, Lustre timeouts, paste collapse, self-quoting            | accepted (E confirmed the paste wrapper)                  |
+| S1 | escape sequences reach the terminal                                      | accepted: sanitise and cap on the laptop and in the relay |
+| S2 | a body can embed someone else's frame                                    | accepted: anchor at the start, whole frame, 8-hex id      |
+| S3 | =peek --reply <id>= lacks the frame                                      | accepted: sent-message log; relay limited to own ids      |
+| S4 | probe transport, quoting, stdin, Python version                          | accepted: zlib+base64 =-c=, fixed JSON, schema version    |
+| S5 | =/proc/environ= holds secrets                                            | accepted: two variables only, stderr discarded            |
+| S6 | =/proc= discovery is fragile                                             | accepted: launch metadata first                           |
+| S7 | relay leak no worse than =peek=, but caps must be laptop-side            | accepted                                                  |
+| S8 | deadline policy and exit codes                                           | accepted: exit 4, early stop at end of turn               |
+| S9 | system prompt and README                                                 | accepted                                                  |
+| S10-12 | tail window, tool-result immunity, fixtures                          | accepted                                                  |
+| E  | the protocol should be the mailbox, transcripts only a diagnostic        | open: see the decision above                              |
+
+Two corrections to draft 1 came out of this.  The project-directory
+encoding replaces every non-alphanumeric character, not only =/= and
+=.=.  And the frame and time are unique within one file but not across
+files, since a broadcast puts one frame in several.
+
+* Plan
+
+1. Settle the open decision.
+2. Sent-message log, 8-hex ids, and frame anchoring.  Then Claude
+   =--session-id= at launch, recorded in the session record.
+3. Adapters and the shared reader as pure functions.  Fixtures: real
+   lines from the evidence (Claude idle, pasted, queued, compaction
+   summary, request blob; Codex delivery, commentary reply, compacted,
+   fork seed), plus the agent quoting the frame and a tool_use containing
+   =REPLY=.
+4. The probe (3.6, base64), output sanitising, statuses and exit codes,
+   wired into =--wait= and =peek --reply=, with the screen fallback.
+5. Live checks: idle Claude login session, busy Claude job, busy managed
+   Codex job, each direct and through the relay.  Plus one message the
+   agent ignores, to see =seen= / exit 4.

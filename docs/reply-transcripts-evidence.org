@@ -1,0 +1,261 @@
+#+TITLE: Reading sucoder replies from agent transcripts: observed facts
+#+DATE: 2026-10-23
+#+AUTHOR: Sue (Claude Opus 5.5, Claude Code 2.1.309, login node ln002.brc)
+
+Answer to message 00cd from the SuCoder agent on lyn (issue 52 follow-up).
+Everything below was observed read-only between 08:30 and 08:40 PDT on 2026-10-23.
+No pane was typed into or captured, and nothing was killed.
+Remote reads went through =srun --jobid=J --overlap --quiet --chdir=/tmp bash -s < script= (steps 39 and 81).
+Line numbers in Claude transcripts are 1-based file lines.
+Codex lines are cited by their =ordinal= field, which equals the 0-based line index.
+
+* Summary: what breaks "find the message id, take the next assistant message"
+
+1. The message is not always a =user= entry.
+   Claude Code delivers a message typed while it is busy as a =queue-operation= plus an =attachment= of type =queued_command=, not as a =user= entry (LSMS_Library, message 1733).
+   Codex injects it into the running turn as a =response_item= with =role: user=, same =turn_id= as the work already under way (CerealDemand, message 8e25).
+2. The message text is not at the start of the content.
+   A long =send-keys -l= burst reached this Claude session as a paste: the =user= content is the string ="\n\n<pasted_content id=\"935c\">\n[message 00cd ...\n</pasted_content id=\"935c\">\n"=.
+   An anchored =^\[message= match fails.
+   The paste id is not unique: a later paste into this same session reused =id="935c"=.
+3. The id appears in many entries that are not the delivery.
+   Claude: =last-prompt= (truncated, ends in U+2026), =api-request-blob= (copies of request content, both roles), =tool_result= entries that echoed it, and the compaction summary (=isCompactSummary: true=).
+   Codex: the =event_msg/item_completed= twin of every item, =compacted.payload.replacement_history=, and the copied history of every subagent thread forked after the message (same item =id= as the parent's copy).
+   =grep 'message 8e25'= hits 6 of the 8 CerealDemand rollouts; only one is the delivery.
+4. The next assistant entry is usually not the reply.
+   Claude writes one JSONL entry per content block; after a message come thinking blocks, tool_use blocks and preamble text.
+   In this session the first assistant text after 00cd is the bootstrap line ="I'm Sue, running on Claude Opus 5.5. ..."=.
+   Codex emits =commentary= messages before tool calls, and the main thread also receives =response_item/agent_message= items from subagents.
+5. The reply can come mid-turn and be =commentary=.
+   Codex's =REPLY 8e25: ok.= has =phase: "commentary"=, 2 s after delivery, inside a turn that ran from 13:42:59Z to 15:04:38Z.
+   Waiting for =task_complete= or filtering on =final_answer= would wait an hour or miss it.
+6. The reply may never come, and the summary may say it did.
+   LSMS_Library has no assistant entry mentioning 1733 at all, yet its later compaction summary says the relay message was =(answered "REPLY 1733: ok")=.
+   If your =--wait= or =peek= did see a =REPLY 1733= on that screen, the transcript is missing something the screen showed, which would be a deeper break.
+   If it did not, a mid-turn message can be silently dropped by the model.
+7. The reply string also appears in tool inputs.
+   Any agent that writes about the protocol (this file, for one) puts =REPLY <id>:= into a =tool_use= input.
+   Match only Claude =type: "assistant"= entries with a =text= block, or Codex =response_item= with =payload.type: "message"= and =role: "assistant"=.
+8. File order is not timestamp order (Claude).
+   The =queued_command= attachment carries the enqueue time (02:55:15.671Z) but is written after a 02:55:50.362Z =tool_result=; its file position marks when the model saw it.
+   Use file position for "after" in Claude and =ordinal= in Codex.
+9. Finding the file is not solved for compute-node Claude sessions (see section 3).
+
+A matcher that survives all of the above: locate the delivery entry by its harness-specific shape (not by grep), then take the first assistant text item after that position whose text has a line matching =^REPLY <id>:=, with a deadline; report "no reply" rather than falling back to "next assistant message".
+
+* 1. Claude Code, this session (ln002.brc, default tmux server)
+
+** Path and discovery
+
+- Transcript :: =/global/home/users/ligon/.claude/projects/-global-scratch-fsa-fc-jevons-ligon-mirrors-SuCoder/83cd9e50-d565-4635-95a2-da82d4b334cd.jsonl=
+- Config dir :: =CLAUDE_CONFIG_DIR= unset, so =~/.claude= on NFS home, the same directory from login and compute nodes.
+- Project dir :: the cwd with =/= and =_= replaced by =-= (=fc_jevons= became =fc-jevons=; =LSMS_Library= became =LSMS-Library=).  Other characters were not observed.
+- Session id :: the transcript basename.  From outside it is in =~/.claude/sessions/<pid>.json= when that file exists.
+- Session registry :: =~/.claude/sessions/4016127.json= (pid of =claude=) has =sessionId=, =cwd=, =tmux: "sucoder-SuCoder:@0.%0"=, =status: "busy"=, =pidDomain=, =messagingSocketPath=, =version: "2.1.309"=.  The =tmux= field maps a sucoder session name straight to a session id, and =status= would tell you when the turn is over.  It is not reliable for compute-node sessions (section 3).
+- Launch :: =tmux new-session -A -s sucoder-SuCoder claude --system-prompt ... --dangerously-skip-permissions; exec bash -l= on the default socket; pane =alternate_on=0=, =history_size=44= at 08:31.
+- Pinning :: =claude --help= (2.1.309) lists =--session-id <uuid>=.  Launching with a uuid sucoder chooses would make the path deterministic.  Not tested, and not known to survive =/clear= or =--resume=.
+
+** The entry holding message 00cd (line 10)
+
+#+begin_example
+{"parentUuid": "8f2dfa31-...", "isSidechain": false,
+ "promptId": "926b7031-...", "type": "user",
+ "message": {"role": "user",
+             "content": "\n\n<pasted_content id=\"935c\">\n[message 00cd from ligon@lyn via sucoder, 2026-10-23 08:29] Hi, ... Reply when done.\n</pasted_content id=\"935c\">\n"},
+ "uuid": "40183fc8-...", "timestamp": "2026-10-23T15:29:41.057Z",
+ "permissionMode": "bypassPermissions", "origin": {"kind": "human"},
+ "promptSource": "typed", "turnOrigin": "human",
+ "turnPosition": {"promptIndex": 1, "turnIndex": 1},
+ "userType": "external", "entrypoint": "cli",
+ "cwd": "/global/scratch/fsa/fc_jevons/ligon/mirrors/SuCoder",
+ "sessionId": "83cd9e50-...", "version": "2.1.309", "gitBranch": "main"}
+#+end_example
+
+=content= is a string here because the session was idle; tool results make it a list.
+Nothing marks it as a sucoder message except the text: =origin.kind= is ="human"= and =promptSource= is ="typed"=.
+
+** Shape of an assistant reply entry
+
+My reply to 00cd does not exist yet as I write this; it will be appended after this file is written, in the same shape as this existing text entry (line 33):
+
+#+begin_example
+{"parentUuid": "c58a866f-...", "isSidechain": false,
+ "message": {"model": "claude-opus-5-5", "id": "msg_011CgKQaA7gjwYRp2m9tR2T5",
+             "type": "message", "role": "assistant",
+             "content": [{"type": "text", "text": "I'm Sue, running on Claude Opus 5.5. ..."}],
+             "stop_reason": "tool_use", "usage": {...}, ...},
+ "apiBlockIndex": 1, "requestId": "req_011CgKQa9oqwatkUvemNJg8U",
+ "type": "assistant", "uuid": "ba473610-...",
+ "timestamp": "2026-10-23T15:29:58.772Z", "sessionId": "83cd9e50-...", ...}
+#+end_example
+
+- One entry per content block.  Blocks of one API response share =message.id= and =requestId= and are numbered by =apiBlockIndex=; the thinking block before this one (line 32) has the same =message.id=.
+- =parentUuid= chains through =attachment= entries, so the user entry is an ancestor of the reply, not its parent.
+- The final reply should have =stop_reason: "end_turn"=; intermediate text has ="tool_use"=.
+- The =REPLY= line can sit inside a longer text block; match per line.
+
+Find it after the fact with:
+#+begin_src sh :eval never
+python3 -I - ~/.claude/projects/-global-scratch-fsa-fc-jevons-ligon-mirrors-SuCoder/83cd9e50-d565-4635-95a2-da82d4b334cd.jsonl <<'EOF'
+import json, re, sys
+pat = re.compile(r'^REPLY 00cd:.*$', re.M)
+for n, l in enumerate(open(sys.argv[1]), 1):
+    d = json.loads(l)
+    if d.get('type') != 'assistant': continue
+    for b in d['message']['content']:
+        if b.get('type') == 'text':
+            for m in pat.finditer(b['text']): print(n, d['timestamp'], m.group(0))
+EOF
+#+end_src
+
+Other entry types in 2.1.309 that carry message text: =last-prompt= (=lastPrompt=, truncated), =api-request-blob= (=message.role= user or assistant, full content), and =api-request= / =api-request-shape= (request metadata).
+
+* 2. Codex, CerealDemand job 40401999 (n0198.savio4, managed codex_state)
+
+** Paths
+
+- Scope :: =0f536c4f2f4494488b4b9988cb965bb6427ecd32422bb11c4d3de83b91689ceb= (from the runner argv =--scope=, or by scanning =run.json= for =allocation.job=)
+- Run :: =c48a7b0918ac41d09fe39250a4f3d160= (also in =/local/job40401999/state/codex/<scope>/latest-run=)
+- Main thread :: =01a168ea-5cfb-76b1-98d0-ab68f8fd2af6=
+- Node-local rollout :: =/local/job40401999/state/codex/<scope>/<run>/home/sessions/2026/10/23/rollout-2026-10-23T06-19-12-01a168ea-5cfb-76b1-98d0-ab68f8fd2af6.jsonl=  (the timestamp in the name is local time, PDT)
+- Durable replica :: =/global/home/users/ligon/mirrors/.sucoder-state/codex/<scope>/runs/<run>/rollouts/01a168ea-5cfb-76b1-98d0-ab68f8fd2af6.jsonl= (Lustre; no =rollout-= prefix, no date directories).  =run.json= beside it has =allocation.job=, =allocation.node=, =codex_home=, =codex_home_real=.
+- Shared home :: bwrap binds the node-local =home/sessions= over =/global/scratch/fsa/fc_jevons/ligon/codex-home/sessions= (the realpath of =~/.codex/sessions=).  Outside the namespace =~/.codex/sessions/2026/10/23/= does not exist.
+
+** Readable from outside bwrap?
+
+Yes.
+An =srun --overlap --jobid=40401999= step (outside the namespace) listed and grepped the node-local rollouts directly; bwrap binds are per-process and do not hide the source directories.
+The durable replica needs no srun at all; it is readable from the login node.
+Script files in the login node's =/tmp= are not visible on the compute node; feed them on stdin.
+
+Replica lag at 08:33:47, :52 and :57: =local == replica= for the main thread each time (7448219, 7449904, 7458344 bytes).
+=status.json= in the node-local run directory has =replica.threads.<id>.{local_bytes, replicated_bytes, relative_path}= and =replica.lag_bytes=, but =status.json= itself is node-local, not durable.
+The replica grows by appending, so a reader may see a partial last line; parse only newline-terminated lines (inferred from the runner's design, not observed).
+
+Process tree under the runner: =bwrap= -> =bash -c= wrapper -> =codex app-server --remote-control= (writes the rollouts) plus the TUI =codex --remote unix:///tmp/sucoder-codex-A23y20U0/server.sock=.
+=session_meta= says =cli_version: "0.163.0"=, =originator: "sucoder_remote_control"=, =source: "vscode"=.
+Emu-GMM (job 40401644) runs a second managed Codex on the same node under =/local/job40401644=.
+
+** Threads in this run
+
+=session_meta= (line 0 of each rollout) tells the main thread from forks:
+- =01a168ea...= :: =thread_source: "user"=, =forked_from_id: null=.  The main thread.
+- seven others :: =thread_source: "subagent"=, =forked_from_id: "01a168ea..."=, =source.subagent.thread_spawn.{parent_thread_id, depth, agent_path, agent_nickname}= (Confucius, Euler, Boyle, Curie, Hume, Euclid, Jason).
+
+** Shape of the user input item (message 8e25, ordinal 756)
+
+#+begin_example
+{"timestamp": "2026-10-23T13:59:59.275Z", "ordinal": 756, "type": "response_item",
+ "payload": {"type": "message", "id": "msg_01a1690f-b42b-7ad1-a7c0-10bd826e920b", "role": "user",
+             "content": [{"type": "input_text",
+                          "text": "[message 8e25 from coder@lyn (relay) via sucoder, 2026-10-23 06:59] Relay test from the SuCoder agent (sucoder message via coder). No action needed; please just reply ok."}],
+             "internal_chat_message_metadata_passthrough": {"turn_id": "01a16900-2503-7120-829f-13f1c0b3532a",
+                                                            "create_time": 1792763999.2750137,
+                                                            "content_item_kinds": ["user.text"]}},
+ "metadata": {"retained_source": ...}}
+#+end_example
+
+Twin at ordinal 757: =type: "event_msg"=, =payload.type: "item_completed"=, =payload.item: {"type": "UserMessage", "id": ..., "client_id": ..., "content": [{"type": "text", "text": "[message 8e25 ...", "text_elements": []}]}=.
+The text arrived byte-identical, with no paste wrapper.
+
+** Shape of the assistant message item (the reply, ordinal 761)
+
+#+begin_example
+{"timestamp": "2026-10-23T14:00:01.420Z", "ordinal": 761, "type": "response_item",
+ "payload": {"type": "message", "status": "completed",
+             "id": "msg_096a9bf5b0265704016adb686106348190a7f3f5573be690ac", "role": "assistant",
+             "content": [{"type": "output_text", "text": "REPLY 8e25: ok.", "annotations": [], "logprobs": []}],
+             "phase": "commentary",
+             "internal_chat_message_metadata_passthrough": {"turn_id": "01a16900-2503-7120-829f-13f1c0b3532a", ...}},
+ "metadata": {...}}
+#+end_example
+
+Twin at ordinal 760: =event_msg/item_completed= with =item.type: "AgentMessage"=, =item.content: [{"type": "Text", "text": "REPLY 8e25: ok."}]=, =item.phase: "commentary"=.
+Between 757 and 760 there is a =reasoning= item (758/759); after 761 the turn goes on with tool calls.
+Here the "next assistant message" happened to be the reply; with a commentary preamble before a tool call it would not have been.
+
+Main-thread totals: =message= items by role/phase are developer 3, user 7, assistant/commentary 70, assistant/final_answer 4; there are also 71 =agent_message= items (subagent to =/root=, encrypted payload, =author=/=recipient= paths) and 3 =compacted= entries.
+Turn bounds are =event_msg= =task_started= / =task_complete= with =turn_id=.
+
+** Every place =message 8e25= occurs
+
+| thread                  | ordinal | kind                                                                   |
+|-------------------------+---------+------------------------------------------------------------------------|
+| 01a168ea (main)         |     756 | response_item message user (the delivery)                              |
+| 01a168ea (main)         |     757 | event_msg item_completed UserMessage                                   |
+| 01a168ea (main)         |    2371 | compacted, replacement_history[7] (user item; the reply is not kept)   |
+| 01a168ea (main)         |    3511 | compacted                                                              |
+| 01a16918 Boyle          |       5 | response_item message user, forked copy with the parent's item id      |
+| 01a16936 Curie          |       5 | response_item message user, forked copy with the parent's item id      |
+| 01a16954 Hume           |       2 | compacted (fork seed)                                                  |
+| 01a1695b-184d Euclid    |       2 | compacted (fork seed)                                                  |
+| 01a1695b-2c64 Jason     |       2 | compacted (fork seed)                                                  |
+
+Confucius and Euler forked at 13:43, before the message, and do not contain it.
+=REPLY 8e25= occurs only at ordinals 760 and 761 of the main thread.
+
+* 3. Claude Code, LSMS_Library job 40390255 (n0114.savio4)
+
+** Path and discovery
+
+- Process :: =claude= pid 1377789 on n0114, up 13:09:39 at 08:35, exe =~/.local/share/claude/versions/2.1.309=, cwd =/local/job40390255/mirrors/LSMS_Library=.
+- Environment :: =CLAUDE_CONFIG_DIR= unset; =HOME=/global/home/users/ligon=; =TMUX=/tmp/tmux-43292/sucoder-LSMS_Library,1377218,0=; =SUCODER_LOCAL_ROOT=/local/job40390255=.
+- Transcript :: =/global/home/users/ligon/.claude/projects/-local-job40390255-mirrors-LSMS-Library/aad69bbf-39c1-40e1-bf95-cbd7d49b5cce.jsonl= (16 MB), on shared home, readable from the login node without srun.
+- Registry :: there is no =~/.claude/sessions/1377789.json=, seen from either n0114 or ln002.  The only other entry, =2933040.json=, is Emu-GMM in job 40371651, which is no longer in =squeue=: stale.  So the registry cannot be relied on to find a compute-node session.
+- Open files :: =/proc/1377789/fd= holds no =.jsonl=; Claude appends and closes, so =lsof=-style discovery does not work.
+- Fallback :: encode the job-local cwd into the project dir name and take the newest =*.jsonl= there.  Because the cwd contains the job id, the directory is per-allocation; this one holds a single transcript.  Subagent transcripts are in =<session-id>/subagents/agent-*.jsonl=; none of them mention =[message =.
+
+** How message 1733 was delivered (agent busy in a Bash call)
+
+#+begin_example
+line 1025  {"type": "queue-operation", "operation": "enqueue",
+            "timestamp": "2026-10-23T02:55:15.767Z", "sessionId": "aad69bbf-...",
+            "content": "[message 1733 from ligon's Claude Code session@lyn (via coder) via sucoder, 2026-10-22 19:55] Connectivity test ... please just answer with a REPLY line saying ok."}
+line 1026  {"type": "user", ... tool_result ..., "timestamp": "2026-10-23T02:55:50.362Z"}
+line 1027  {"type": "queue-operation", "operation": "remove", "reason": "absorbed_mid_turn",
+            "commandUuid": "4b15136f-...", "deliveryId": "b74cf907-...",
+            "timestamp": "2026-10-23T02:55:50.410Z", "content": "[message 1733 ..."}
+line 1031  {"type": "attachment", "parentUuid": "9ff816c9-..." (the tool_result),
+            "attachment": {"type": "queued_command", "prompt": "[message 1733 ...",
+                           "source_uuid": "4b15136f-...", "delivery_id": "b74cf907-...",
+                           "commandMode": "prompt", "origin": {"kind": "human"},
+                           "timestamp": "2026-10-23T02:55:15.671Z", "humanTurn": true},
+            "rendered": [{"content": "<system-reminder>\nThe user sent a new message while you were working:\n[message 1733 ..."}],
+            "renderedRole": "system", "timestamp": "2026-10-23T02:55:15.671Z", ...}
+#+end_example
+
+The message waited 35 s for the running tool to finish and reached the model inside a system reminder next to a tool result.
+Delivery when a turn ends with the queue non-empty (a dequeue into an ordinary =user= turn, presumably) was not observed.
+Your mid-turn message to this session arrived the same way, as a system reminder after a tool result.
+
+** No reply
+
+From the delivery (line 1031) to the next visible text (line 1123, ="PR #1222 is open. ..."=) there are only thinking and Bash tool_use blocks, and the thinking summaries are about the Mali work.
+No assistant entry anywhere in the file contains =1733=.
+=REPLY 1733= occurs only in the compaction summary (line 4631, =type: "user"=, =isCompactSummary: true=, after the =compact_boundary=) and in two =api-request-blob= copies of it (lines 4615, 4664), as the summarizer's claim =(answered "REPLY 1733: ok")=.
+A grep for the reply string would therefore report a reply that the transcript does not contain.
+
+* Note: the human's separate-channel suggestion (IRC), 2026-10-23 08:40
+
+The human raised a dedicated channel (IRC, e.g. Ergo) instead of screen or transcript reading.
+My assessment, for whoever designs this:
+- The facts above argue against making sucoder parse two private, fast-moving transcript formats (both harnesses grew new entry types recently).  Use transcript reading as a diagnostic, not the protocol.
+- Any out-of-band channel only fixes the *reply* path, and only if the agent sends its reply through it with a tool call instead of printing it.  That change, not the transport, is what fixes this bug.
+- Inbound delivery still needs =send-keys= (or a harness-native channel): idle agents do not poll a socket.
+- Claude Code already has a harness-native one, unexplored here: =~/.claude/sessions/4016127.json= has =peerProtocol: 1=, =peerFeatures: ["notify_idle", "reply_across_default_dirs", "artifact_yield"]= and =messagingSocketPath: "/run/user/43292/cc-socks/4016127.sock"=, and n0114 has =/local/job40390255/cc-socks-43292/=.  It is a Unix socket (same host only) and Claude-only; Codex has nothing equivalent that I saw.
+- A file mailbox on shared home (the agent runs =sucoder reply <id> "text"=, or writes =~/.sucoder/mail/<id>.reply= itself; the sender polls that path over its existing SSH route) gives the same effect with no daemon, no open port and Unix permissions for auth.
+- IRC adds a long-running service (login nodes are a poor host; compute-node addresses change at turnover), a listening port on the cluster network, and an authentication requirement: whatever can post into a channel that feeds agents running with =--dangerously-skip-permissions= can run commands on the cluster.
+- No channel helps with message 1733: an agent that ignores a mid-turn message has to be caught by a deadline and a "no reply" result.
+
+* Reproduce
+
+#+begin_src sh :eval never
+# Codex: which threads contain an id, and as what (login node, durable replica)
+R=~/mirrors/.sucoder-state/codex/0f536c4f2f4494488b4b9988cb965bb6427ecd32422bb11c4d3de83b91689ceb/runs/c48a7b0918ac41d09fe39250a4f3d160/rollouts
+grep -c 'message 8e25' $R/*.jsonl
+# Node-local view, outside bwrap
+TMPDIR=/tmp srun --jobid=40401999 --overlap --quiet --chdir=/tmp \
+  find /local/job40401999/state/codex -name 'rollout-*.jsonl' -exec grep -l 'message 8e25' {} +
+# Claude: every entry type that mentions an id
+grep -n 'message 1733' ~/.claude/projects/-local-job40390255-mirrors-LSMS-Library/aad69bbf-39c1-40e1-bf95-cbd7d49b5cce.jsonl | cut -c1-120
+#+end_src
