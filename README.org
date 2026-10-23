@@ -1035,8 +1035,15 @@ at launch, never from the pane name: a Claude session SuCoder starts gets
 =--resume=/=-r= or =--continue=/=-c=), stored as =claude_session_id= in
 the session record; a managed Codex session is found through the
 runner's =run.json= for the job and the thread whose =thread_source= is
-=user=.  A session with no such record --- one launched before this, or
-another harness --- falls back to reading the pane as before.
+=user=.  Every launch that creates the tmux session (or submits the
+job) rewrites the recorded harness and Claude id, so a record left by an
+earlier launch of another harness, or of a resumed Claude, is never read
+as this session's.  A session with no such record --- one launched
+before this, or another harness --- falls back to reading the pane as
+before.  So does a Claude session whose recorded transcript is not found
+when no file in the mirror's project directory holds the message: a
+file there that merely changed since the send is another session's, and
+proves nothing about this one.
 
 The probe also checks a *mailbox*: an agent may write its answer to
 =~/.sucoder/mail/<id>.reply= (or =<mirror>/.sucoder/mail/<id>.reply=
@@ -1060,7 +1067,14 @@ exit with the worst of them, in the order 3, 1, 4, 0:
 |                | nothing in it proves the read went past the send                |      |
 | =no-adapter=   | no transcript identified: the pane is read, as before           | 0    |
 
-Exit 3 also covers every probe poll failing in transport.  *Exit 4 is
+Only =no-adapter= reads the pane.  When the transcript was found but
+could not be read or interpreted the answer stays exit 3: a =REPLY <id>=
+row on the screen may be a tool call quoting the protocol, and does not
+overrule the reader.  Exit 3 also covers every probe poll failing in
+transport, and a probe that timed out: it runs under the remote
+coreutils =timeout= (75s, short of the 90s local limit), since a read
+stuck on Lustre outlives its own alarm, and a timed-out probe is never
+re-run, neither on a later poll nor inside the job.  *Exit 4 is
 new*: =--wait= used to exit 0 when no reply came, which a script could
 not tell from a reply; it now exits 4 when the message was delivered (or
 queued) and not answered.  A pane-only recipient keeps the old
@@ -1070,7 +1084,10 @@ agent's turn has ended since the delivery (Claude =end_turn=, Codex
 Reply text is a model's output, so before it is printed --- by
 =--wait=, =peek --reply=, and the relay --- control characters (C0 and
 C1, except newline and tab) and Unicode format and bidi characters are
-stripped, and it is capped at 2 KB and 20 lines.
+stripped, and it is capped at 2 KB and 20 lines.  The rest of the
+probe's answer that is printed --- candidate file names, reasons,
+sources --- gets the same stripping, folded to one line and capped,
+since an agent's uid chooses its file names.
 
 *The sent-message log.*  Every delivered message appends one line per
 recipient to =~/.sucoder/sent.jsonl= (mode 0600) on the sending

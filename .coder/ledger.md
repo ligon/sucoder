@@ -608,3 +608,41 @@ room:
 - **mypy.** `cli.py` carries 66 pre-existing errors (typer/click Context
   typing); none on changed lines. `mirror.py`'s two pre-existing errors were
   fixed (typing only).
+
+## 2026-10-23 — reply-from-transcript: red-team round 1 revisions
+
+Supersedes the "Screen fallback" and "Recorded identity" notes above (left
+as written); each item answers one red-team finding.
+
+- **Screen only for `no-adapter`.** `unrecognized`/`unreadable` no longer
+  read the pane; they exit 3 whatever it shows (a pane row can be a tool
+  call quoting `REPLY <id>`). The test that locked in exit 0 was replaced.
+- **Recorded harness decides.** `transcript_identity` uses the `harness`
+  field first; records without it fall back to `managed_owner`, then the
+  Claude id. A harness with no adapter (`gemini`, ...) is now recorded by
+  name and gets the screen path. Every unconfined launch that creates the
+  tmux session rewrites `harness` and `claude_session_id` (Claude fresh or
+  resumed, Codex managed or not), and also probes `has-session` when the
+  record still holds an identity a different harness must clear
+  (`_identity_to_record`). `_launch_remote_service` (GitNexus HIGH) was not
+  touched: `message` refuses remote-control services anyway.
+- **Timeouts are not re-run.** The probe runs under remote coreutils
+  `timeout -s TERM 75` (local limit 90) and the shell prints the
+  `ProbeTimeout` answer itself, exiting 0 so the transport never reads it
+  as a wedged tunnel. `_run_probe` calls `_run_remote_capture` itself (not
+  `_capture_over_tunnel`, HIGH, untouched, which reconnects and re-runs on
+  124): a local 124 is a timeout answer, only 255/transient reconnect and
+  retry once. A timeout ends the recipient's polling, the job route is not
+  tried after a login-route timeout, and an earlier answer stands.
+- **Claude fallback needs our frame.** The project-directory scan counts
+  only files with a delivery, a queue entry, the frame in an unclaimed
+  shape, or an unreadable file. A file merely newer than the send no
+  longer yields `absent`; nothing identified becomes `no-adapter`, so the
+  job route and then the screen are tried.
+- **Every printed probe field is cleaned.** `parse_probe_output` returns
+  `why`, `source`, `transcript`, `harness`, `candidates` (max 20) and reply
+  sources through `replies.clean_field` (the reply sanitiser, folded to one
+  line, 512 bytes); `_report_reply` and `_echo_reply` clean again at print.
+- **Tests.** Full suite: 1930 passed, 8 skipped, 1 failed
+  (`test_codex_app_server.py::test_a_restored_thread_works_in_the_successors_clone`,
+  which fails the same way on baseline 60f25b9; a bwrap sandbox path).
