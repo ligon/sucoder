@@ -455,6 +455,22 @@ def test_claude_falls_back_to_the_project_directory_and_reports_ambiguity(tmp_pa
     assert got["status"] == "ambiguous" and sorted(got["candidates"]) == sorted([str(other), str(third)])
 
 
+def test_an_unrelated_recent_file_beside_a_missing_session_is_not_absent(tmp_path, monkeypatch):
+    # The recorded session's file is not on this host (it is node-local, or
+    # was never written); another Claude session in the same mirror wrote
+    # since the send.  That file says nothing about our message, so nothing
+    # is identified (the job route and then the screen are tried), not
+    # "absent" about a session we never found.
+    home, named = _claude_home(tmp_path, c_text("unrelated work", at=30),
+                               session_id="5d1c0de0-0000-4000-8000-000000000000")
+    monkeypatch.setenv("HOME", str(home))
+    got = rp.probe(_spec(), str(tmp_path / "noproc"))
+    assert got["status"] == "no-adapter"
+    # The recorded session's own file, read past the send, still is.
+    (named.parent / f"{SID}.jsonl").write_bytes(lines(c_text("other work", at=30)))
+    assert rp.probe(_spec(), str(tmp_path / "noproc"))["status"] == "absent"
+
+
 def test_nothing_identified_is_no_adapter(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     assert rp.probe(_spec(), str(tmp_path / "noproc"))["status"] == "no-adapter"

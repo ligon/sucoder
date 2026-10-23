@@ -524,11 +524,22 @@ def claude_config_dirs(spec, proc_root="/proc", with_environ=False):
 _DECISIVE = ("replied", "seen", "queued", "ambiguous", "unreadable")
 
 
+def _about_frame(result):
+    """True when *result* is evidence about our frame itself: a delivery
+    (or its queue entry), the frame in a shape no rule claims, or a file
+    that could not be read to tell."""
+    status = result["status"]
+    if status == "unrecognized":
+        return result.get("why") == WHY_SHAPE
+    return status in ("replied", "seen", "queued", "unreadable")
+
+
 def find_claude(spec, proc_root="/proc"):
     """Claude: the transcript named by the ``--session-id`` SuCoder chose at
     launch; else -- no id recorded, or a ``--continue`` or ``/clear`` in the
     leftover shell started a new file -- the files in the mirror's project
-    directories written since the send.  Only when neither gives anything
+    directories written since the send that hold our frame (the design's
+    fallback: a file without it is no evidence about this session).  Only when neither gives anything
     are the configuration directories of this uid's processes consulted.
     None when no transcript is identified."""
     floor = spec["sent_at"] - spec.get("skew", DEFAULT_SKEW)
@@ -557,7 +568,13 @@ def find_claude(spec, proc_root="/proc"):
         files = []
         for project in _uniq(projects):
             files.extend(glob.glob(os.path.join(project, "*.jsonl")))
-        answer = combine(_evaluate(_recent(_uniq(files), floor), "claude", spec))
+        # The fallback names no session, so a file there speaks only about
+        # our message: one that is merely newer than the send (another
+        # Claude session in the same mirror) proves nothing, and counting
+        # its "absent" would report a session we never found.
+        answer = combine([(path, result) for path, result
+                          in _evaluate(_recent(_uniq(files), floor), "claude", spec)
+                          if _about_frame(result)])
         if answer is not None and answer["status"] in _DECISIVE:
             return answer
         if answer is not None:
