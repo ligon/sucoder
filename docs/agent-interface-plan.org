@@ -1,0 +1,201 @@
+#+TITLE: SuCoder agent interface: proposed workplan and review
+#+DATE: 2026-10-22
+#+AUTHOR: Sue
+#+STATUS: P0 approved and delivered; P1/P2 awaiting contract approval
+
+* 0. Question and proposed outcome
+
+Help a SuCoder worker identify its working environment and discover other sessions without reconstructing CLI output or accidentally provisioning resources.
+Provide procedural guidance through skills and factual observations through one shared inspection service, available through the CLI and an optional MCP server.
+Test whether MCP improves these tasks before expanding into control operations.
+The human approved P0 on 2026-10-22.
+P0 artifacts are [[file:agent-interface-contract.org][the contract]], [[file:agent-interface-ledger.org][the ledger]], and the schemas/examples under =docs/agent-interface/=.
+Implementation and deployment remain unapproved.
+
+* 1. Scope and boundaries
+
+The first release covers session inspection, =sessions --json=, =context --json=, two read-only MCP tools (=session_context= and =list_sessions=), a new =sucoder-session= skill, and an update to =sucoder-peers=.
+Keep the human-readable CLI compatible.
+Use the existing scheduler and login-node discovery logic, including its distinction between unknown and absent.
+Retain a CLI fallback for harnesses without an installed MCP configuration.
+
+Defer pane-content access, snapshot tools, messaging, launch, renewal, release, restoration, arbitrary shell execution, and remote HTTP serving.
+Also defer new recovery and handoff skills until the initial pilot establishes which gaps remain.
+Do not change filesystem permissions, install sudo rules, mint credentials, or deploy a service as part of this implementation.
+Do not perform a general refactor of cli.py or change managed-state protocols.
+
+* 2. Definition of done
+
+- D1 :: The CLI (=sessions --json= and =context --json=) and their MCP counterparts return equivalent observations from the same service for a fixed fixture, with a versioned response schema and no parsing of rendered tables.
+- D2 :: Inspection cannot submit/cancel jobs, launch/stop agents, select a new state generation, edit repository content, or repair session records. Tests fail if any of these paths is invoked.
+- D3 :: Unreachable, skipped, partially inspected, and inspected-empty targets remain distinguishable in both transports. Every response names its collection start/end times, per-source coverage, and typed errors; recorded claims and live observations carry distinct provenance.
+- D4 :: A session identity distinguishes clusters, allocations and login-node sessions, survives display-name ambiguity, and reports unknown provenance rather than guessing. Preserve cluster/account provenance before joining records to observations; job IDs alone are not globally unique. Sanitized-name collisions return ambiguity instead of the first match. The exact identity contract is frozen before adapter work.
+- D5 :: A request has a bounded deadline and returns available results with explicit timeout coverage. Propagate remaining budget through locks, retries, subprocesses, relay calls, and worker cleanup; cancellation must clean up observer-owned local probes. The P0 contract narrows this to account-local cleanup plus independently enforced relay budgets; remote termination during a partition is not provable. Fast mode does not imply that an agent is alive or dead.
+- D6 :: The optional server exposes only the two agreed tools, uses structured output with schema validation, and keeps diagnostics off protocol stdout. Installing or using the ordinary CLI does not require MCP dependencies.
+- D7 :: The server runs with the caller's effective authority. Any access through the existing relay preserves its fixed configuration and sender/account boundaries; agent-controlled paths cannot select privileged executable code or configuration.
+- D8 :: New skills are discoverable in SuCoder's catalog and accurately describe deployed CLI/MCP capabilities, unknown states, node-local versus durable storage, and fallback behavior.
+- D9 :: Deterministic contract tests and existing affected suites pass. The full supported test matrix is run before merge, with any baseline failures separately reproduced and recorded.
+- D10 :: In a bounded pilot, an agent can identify its checkout and discovery limits, find a known peer, and correctly report an unreachable target. Record tool calls, errors, correctness, and runtime for CLI-plus-skill and MCP-plus-skill routes; report no demonstrated MCP benefit if results do not support it.
+
+* 3. Constraints and definitions
+
+Inspection is observational at the application level, not literally zero filesystem writes: ordinary logging, transient SSH control sockets and host connection bookkeeping may occur.
+Document these effects and do not label provisioning or repair as inspection.
+The structured CLI and MCP observation path must be noninteractive: no credential prompts, certificate minting, connection-repair fallback, or session-record updates.
+Reuse existing authenticated routes or attempt bounded BatchMode access; report unavailable when that cannot succeed.
+Preserve the legacy human CLI authentication behavior separately.
+Return only allowlisted fields; exclude raw config, credentials, environment dumps, transcripts, and credential-bearing remote URLs.
+Use stable error codes and bounded, sanitized public messages; raw stderr, scheduler rows, exception strings, and sudo output must not pass directly into public errors.
+Keep detailed diagnostics behind an explicit local debug destination.
+Treat facts from session records as recorded claims until live probes corroborate them.
+Resolve current context from the actual cwd and environment plus trusted configuration; do not equate a shared mirror with the active node-local clone.
+Do not infer a laptop identity or remote control authority from a cluster-side cwd.
+Keep local workspace/process context local even when discovery uses the relay.
+Distinguish observer account, configuration authority, record source, and discovery/SSH account in the contract.
+Relay failure must not erase known local context or substitute the relay process's cwd and home.
+
+Use a local stdio server initially.
+Use one launch-bound workspace per server process, not a global server whose working directory is mistaken for every calling agent's workspace.
+Return unknown when launch binding cannot be verified; P0 must specify the binding mechanism and its behavior after clone replacement or session restoration.
+Do not acquire extra authority merely to make an MCP call succeed.
+The initial harness smoke tests cover Claude and Codex, subject to verifying their installed native configuration mechanisms; other harnesses retain the CLI fallback.
+Preserve existing supported Python versions for the base CLI.
+Choose and pin a supported MCP SDK/protocol combination during the compatibility spike; an extra with a newer Python requirement must be explicit and must not silently raise the base requirement.
+
+* 4. Existing machinery and reuse decisions
+
+Grounding snapshot: SuCoder commit =164913d=; sucoder-skills includes the committed backlog and feedback skills at =062b6d6=.
+Search used git and ripgrep; GitNexus MCP tools and the referenced local exploration skill were unavailable in this session.
+Revalidate symbol locations and the working tree before implementation.
+
+- Reuse =sucoder/sessions_report.py:340= (=Report=) and its reporting models; tested by =tests/test_sessions_report.py=. Extend with an explicit external schema rather than exporting dataclass internals as a permanent API.
+- Extract the observation orchestration from =sucoder/cli.py:5343= (=_collect_sessions=) into a service without Typer exit/printing dependencies. Preserve cluster grouping, fused queries, and existing routing; extend its tests for deadlines and partial coverage.
+- Reuse =sucoder/cli.py:5093= and the =relay= command boundary for existing authorized cross-account discovery; tested by =tests/test_session_relay.py=. Do not duplicate credential lookup or sudo policy in MCP. Extend the observation-only route so relay use cannot re-enable interactive authentication, and negotiate capabilities before requiring new flags from an older privileged relay installation.
+- Avoid =_build_manager_for_mirror= / =_build_executor= for inspection: =sucoder/cli.py:734= can enter =_ensure_slurm_node= for unconfined Slurm targets. Add negative tests around this boundary.
+- Reuse catalog rendering at =sucoder/mirror.py:7153= and profile selection in =sucoder/config.py:284=. Built-in generated MCP configuration is currently passed by Claude's profile; do not assume other harnesses inherit it.
+- Reuse existing context, local-tier and session records where sufficient; investigate =sucoder/local_tier.py= and =sucoder/session.py= before defining =session_context=. Return unknown for missing mappings rather than inventing a second mapping mechanism. Distinguish corrupt records from absent records at the observer boundary; =RemoteSession.load= currently collapses both to an empty record.
+- Extend =sucoder-peers/SKILL.md= in sucoder-skills with current relay and unavailable-state guidance. Keep =scrum-master-hpc= for explicitly delegated HPC work.
+
+Baseline check already run: 112 tests passed across =test_sessions_report.py=, =test_messaging.py=, =test_session_relay.py=, and =test_mcp_discovery.py=; Typer deprecation warnings remain.
+This is not a full-suite baseline or live infrastructure validation.
+
+* 5. Work packages and order
+
+** P0. Freeze contracts and compatibility
+
+Read the current context/session/local-tier implementations and their tests, and turn section 4 into the implementation ledger.
+Specify JSON fields, nullability, identity, time semantics, coverage statuses, failure envelope, and schema version policy using fixtures for local, login-node, confined and unconfined Slurm contexts.
+Specify which current context facts are observable in each execution location.
+Verify installed harness MCP configuration and SDK/Python compatibility without installing or altering shared configuration.
+Record exact installed harness versions and configuration routes.
+Choose deadline and response-size limits and document the CLI exit-code mapping, including existing exit 3 for unavailable inspection.
+
+Acceptance: reviewed schemas, compatibility matrix, noninteractive transport policy, workspace binding design, and example responses; explicit resolution of section 7 before implementing dependent behavior.
+P0 is a bounded read-only code/documentation investigation: write the contract/ledger and disposable configuration examples, without implementing server/service code, modifying real harness configuration, or contacting live infrastructure.
+Return unresolved packaging or topology choices with concrete alternatives.
+The human approves P0 findings and P1-P4 implementation scope before code changes begin.
+Deliver separately so interface choices can be reviewed before refactoring.
+
+** P1. Shared inspection service and CLI JSON
+
+Extract only collection and result translation needed for =list_sessions=.
+Add =sessions --json=, passing the format through the existing relay when configured, and keep progress/diagnostics on stderr.
+Add =context --json= as the CLI equivalent of =session_context=, without entering allocation setup.
+Preserve cluster provenance before joins and expose missing/corrupt/ambiguous records explicitly; do not promise these semantics by merely serializing today's =Report=.
+Keep observer-specific fixes isolated from the existing mutation consumers unless a separately reviewed correctness fix is required.
+Do not change the default human-readable rendering or the existing message/peek consumers' semantics.
+
+Acceptance: D1-D5 contract fixtures, legacy behavior checks, relay JSON handling, and negative tests for mutation paths.
+Simulate one unreachable target among healthy targets, missing/corrupt records, duplicate names, no targets, a stale allocation, unknown pane state, and fast mode.
+Add fixtures for identical job IDs on different clusters, colliding sanitized mirror names, and a recorded job on an uninspected cluster; none may produce a false peer match or false stale verdict.
+Test the context-binding service with another cwd, symlinked workspaces, missing or replaced checkouts, and two concurrent workspace bindings; exercise actual server startup for these cases in P3.
+Test expired authentication, a contended session lock, retry exhaustion, cancellation during relay execution, and a slow login worker; all must terminate within the request budget with no owned probes left running.
+Distinguish no tmux server from a failed tmux query rather than allowing shell success masking to prove an empty result.
+Check collection budgets under mocked slow connections and preserve one-query-per-cluster behavior.
+
+** P2. Skills usable with the CLI
+
+Add =sucoder-session= and update =sucoder-peers= in sucoder-skills.
+Cover capability detection, location/clone identity, persistent versus temporary storage, interpreted coverage, and existing relay behavior.
+Avoid embedding raw transport recipes as the preferred route when a supported command exists.
+Use command help and structured inspection as the current capability source.
+Do not tell agents to provision, repair, message others, or release allocations merely to inspect context.
+
+Acceptance: catalog/lint checks and scenario walkthroughs on current and older CLI versions; explicit fallback when JSON or MCP is absent.
+Exercise old CLI, current CLI without MCP, current CLI with MCP when available, and unavailable-relay cases; each must select a supported route or report explicit unknowns.
+Record compatible CLI and skills revisions in release notes.
+Keep changes independently reviewable in the skills repository and record the minimum CLI capability required by each recipe.
+
+** P3. Optional MCP adapter
+
+Begin with a go/no-go review after P1/P2: identify a concrete benefit over CLI-plus-skills, installation feasibility, and expected maintenance burden.
+A useful CLI-plus-skills outcome may finish the project without an MCP release.
+If proceeding, build a disposable two-tool protocol spike before full harness integration, testing workspace binding and structured calls against predeclared pilot scenarios.
+Expose only =session_context= and =list_sessions= through a local stdio entrypoint backed by P1.
+Constrain inputs to validated scope and budgets; expose no arbitrary executable, configuration file, host command, or shell argument field.
+Return schema-valid observations and structured failures; separate transport failure from an incomplete but valid observation.
+Integrate through documented, reversible harness configuration for a disposable test environment first.
+
+Acceptance: D6-D7, protocol initialization/list/call tests, malformed inputs, cancellation/deadline behavior, stdout cleanliness, and output parity with the CLI.
+Test built wheel installation and CLI startup on Python 3.9/3.11 without MCP installed, and extra installation/protocol calls under its declared interpreters.
+Requesting an unsupported extra/interpreter combination must fail explicitly rather than silently install an unusable command.
+Test old relay versions lacking JSON support, malformed relay output, unknown schema versions, oversized stderr, and credential-like URLs in errors; never parse legacy tables as an automated fallback.
+Each claimed harness must discover exactly the two tools, call both with the correct binding, and start normally after configuration removal. Untested harnesses remain CLI-only.
+Test configured relay access and refusal with no fallback to elevated arbitrary execution.
+
+** P4. Pilot, review and release decision
+
+Run the same representative tasks through CLI-plus-skills and MCP-plus-skills, using identical fixtures first and then a separately authorized disposable live setup.
+Use a fixed scenario matrix: verified local clone; verified node-local clone with durable mirror; known peer; unavailable target; inspected-empty target; sanitized-name collision; and stale or corrupt record.
+Require correct identity or an explicit unknown, no false absence, and no forbidden side effects on every deterministic scenario.
+Use identical model/settings and task text for the paired routes; record raw results and repetitions. Do not claim statistical superiority from a small pilot.
+Have an independent reviewer inspect the service's side effects, privilege boundaries, schemas, and fallback behavior.
+Run the supported test matrix and record live-environment checks separately.
+Document installation, disable/removal, minimum versions, and behavior when a target cannot be reached.
+
+Acceptance: all applicable D1-D10 criteria have evidence; outstanding live checks stay explicitly open.
+If MCP adds no observed benefit, retain P1/P2 and defer deployment of P3 rather than widening the server to justify it.
+
+* 6. Follow-ons requiring separate scope
+
+Pane reads need content-access policy, bounds, session identity and stale-session handling.
+Messaging needs explicit recipient selection, delivery/acknowledgment distinction, retry/idempotency policy, and a review of the probe-to-send race in terminal delivery.
+Snapshot inspection needs precise definitions of available, recoverable and safe-to-retire generations.
+Lifecycle tools need operation identities, stale-state preconditions, authorization, reconciliation after ambiguous failures, and existing managed-state acceptance gates.
+Do not wrap arbitrary CLI subcommands to bypass these designs.
+
+* 7. Decisions proposed for approval
+
+- Approve P0 only as the next step: freeze contracts and compatibility, then review the implementation scope. P1-P4 describe the intended path, not authorization to implement. Live deployment/pilot authorization remains separate.
+- Prefer a server running under the agent's existing account, using only already-configured relay access. No human-account server is implied.
+- Define context as the server process's launch-bound workspace; permit no arbitrary cwd probing in the first server. P0 must determine how to bind that workspace reliably when a harness launches the server elsewhere.
+- Prefer an optional MCP extra over adding a mandatory dependency. If SDK compatibility prevents this, return with a packaging proposal before changing the Python support policy.
+- Keep the first release to two tools and two skills; require new scope for messaging or lifecycle controls.
+
+* 8. Red-team review record
+
+Two independent read-only reviewers examined the draft and the implementation on 2026-10-22: =redteam_architecture= and =redteam_acceptance= (Sue agents).
+Both recommended P0-only approval after revision; neither endorsed blanket implementation approval.
+Their findings and dispositions follow.
+
+- High: discovery can authenticate, mint credentials, or wait indefinitely :: Accepted. Sections 2-3 and P1 require a noninteractive observation policy and an end-to-end deadline including lock, relay, retry and worker cleanup. Evidence: =cli.py:4005=, =cli.py:5093=, =cli.py:5888=.
+- High: Report translation alone cannot preserve identity/completeness :: Accepted. P1 must retain provenance before joins, distinguish same job IDs across clusters, and avoid false stale/absence claims for uninspected targets. Evidence: =sessions_report.py:533=, =sessions_report.py:554=, =sessions_report.py:490=.
+- Medium: no CLI context counterpart and relay can misidentify the worker :: Accepted. Add =context --json=, keep workspace/process facts local, and label each authority/source separately. Test relay failure and incorrect launch cwd.
+- Medium: raw error strings escape field allowlists :: Accepted. Use typed, bounded public errors and test sensitive or oversized remote output.
+- Medium: packaging and harness smoke checks were insufficient :: Accepted. Add built-wheel/extra interpreter checks, old-relay and unknown-schema cases, actual two-tool discovery/call checks, and reversible configuration tests.
+- Medium: MCP value was assumed before its maintenance cost was known :: Accepted. Limit immediate approval to P0, make P1/P2 independently useful, and add a P3 go/no-go and disposable spike before full integration.
+- Medium: skills could pass catalog checks while recipes fail on deployed versions :: Accepted. Add old/current CLI, absent MCP and unavailable-relay scenarios, plus compatible revision records.
+
+Self-review also added an explicit fixed pilot scenario matrix and separated deterministic fixture checks from live agent trials.
+No service, CLI, harness configuration, skill, or infrastructure changes were made in this planning task.
+The plan remains a proposal; passing its review does not mean the implementation acceptance criteria are already satisfied.
+
+Both reviewers reread the revised plan and confirmed that every finding was addressed at the planning level, with no remaining blocker to P0-only approval.
+The acceptance reviewer's final sequencing note was incorporated: P1 tests the binding service, while P3 tests actual server startup.
+
+* 9. P1/P2 authorization and implementation
+
+After the P0 contract and two independent reviews, the human accepted the recommendation and authorized P1/P2 on 2026-10-22.
+The implementation and reproducible validation record are in [[file:agent-interface-contract.org][the contract's P1/P2 section]].
+The earlier P0-only approval language records the original sequencing; it no longer blocks P1/P2.
+P3/P4 and live deployment remain conditional.

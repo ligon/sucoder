@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "sucoder-observer": {
+      "command": "/EXAMPLE/venv/bin/sucoder-mcp",
+      "args": [
+        "--workspace",
+        "/EXAMPLE/actual-working-clone"
+      ]
+    }
+  }
+}

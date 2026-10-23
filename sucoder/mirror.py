@@ -885,15 +885,13 @@ class MirrorManager:
         Builds the SSH transport command using the ControlMaster sockets
         so that ``git fetch``/``git push`` can reach the mirror.
 
-        When a scaffolding node (DTN) is configured, git transport is
-        routed through it — fat pipes, spare CPU, and the mirror lives
+        With ``use_scaffolding`` and a scaffolding node configured (the
+        login node), git transport is routed through it; the mirror lives
         on shared Lustre visible from any cluster node.
 
-        Pass ``use_scaffolding=False`` to deliberately skip the DTN and
-        build transport against the target/login node instead.  That is
-        the failover path when the DTN's ControlMaster refuses a session
-        (a common limit on transfer nodes): the login node is already
-        authenticated, session-capable, and sees the same Lustre.
+        Pass ``use_scaffolding=False`` to build transport against the
+        executor's target (the login node, or the compute node of an
+        salloc target) instead.
         """
         remote = ctx.settings.remote
         assert remote is not None
@@ -937,9 +935,8 @@ class MirrorManager:
             f"-o BatchMode=yes {proxy_quiet}-o ConnectTimeout={connect_timeout} "
         )
 
-        # Prefer the scaffolding node (DTN) for git transport when
-        # available.  It sees the same Lustre filesystem and avoids
-        # load on login nodes (or the fragile compute-node chain).
+        # The scaffolding node sees the same Lustre filesystem and avoids
+        # the fragile compute-node chain.
         scaffolding_node = getattr(self.executor, "scaffolding_node", "")
         scaffolding_sock = getattr(self.executor, "scaffolding_socket_path", "")
         if use_scaffolding and scaffolding_node and scaffolding_sock:
@@ -1018,17 +1015,13 @@ class MirrorManager:
     ) -> List[Tuple[str, str, Mapping[str, str]]]:
         """Ordered ``(label, url, env)`` git transports to try.
 
-        Primary is the **target/login node** — it is session-capable and
-        reliable.  A scaffolding node (DTN), if configured, is kept only
-        as a *secondary* fallback: transfer nodes have fat pipes but
-        commonly cap concurrent SSH sessions to ~1 (Savio's DTN refuses
-        the 2nd of 12 concurrent sessions), so routing git through them
-        is fragile under any overlap.  Filesystem scaffolding still uses
-        the DTN directly (see ``run_on_login_node``); only git push/fetch
-        prefer the login node here.  Keeping the DTN last preserves a
-        route home if the login-node master is ever down, at no cost in
-        the common path.  Without a scaffolding node only one transport
-        is returned (no pointless retry).
+        Primary is the **executor's target** — it is session-capable and
+        reliable.  A scaffolding node (the login node), if configured and
+        distinct from the primary, is the fallback.  The data-transfer
+        node is not used: it is for bulk data, commonly caps concurrent
+        SSH sessions to ~1, and its view of the shared filesystem can
+        wedge on its own.  Without a distinct scaffolding node only one
+        transport is returned (no pointless retry).
 
         Note: for a SLURM compute-node target the "primary" is the
         compute node (where the agent runs and the executor is pinned),
@@ -1047,11 +1040,11 @@ class MirrorManager:
         scaffolding_node = getattr(self.executor, "scaffolding_node", "")
         scaffolding_sock = getattr(self.executor, "scaffolding_socket_path", "")
         if scaffolding_node and scaffolding_sock:
-            dtn_url, dtn_env = self._remote_git_env(ctx, use_scaffolding=True)
-            # Skip the DTN when it resolves to the same host as the
-            # primary (no distinct fallback).
-            if dtn_url != url:
-                transports.append(("DTN", dtn_url, dtn_env))
+            scaffold_url, scaffold_env = self._remote_git_env(ctx, use_scaffolding=True)
+            # Skip it when it resolves to the same host as the primary
+            # (no distinct fallback).
+            if scaffold_url != url:
+                transports.append(("login node", scaffold_url, scaffold_env))
         return transports
 
     @staticmethod
@@ -1070,7 +1063,7 @@ class MirrorManager:
             return True
         stderr = (result.stderr or "").lower()
         # Git can append "remote end hung up" to a definitive missing-ref
-        # response. That is not a connection fault and won't improve on DTN.
+        # response. That is not a connection fault and won't improve on another node.
         if any(line.startswith("fatal: couldn't find remote ref ")
                for line in stderr.splitlines()):
             return False
@@ -1311,7 +1304,7 @@ class MirrorManager:
         genuinely empty one, because ``_resolve_base_branch`` probes only
         canonical and never asks the mirror what it actually has.
 
-        Shared by ``_pull_from_remote`` (SSH transports, DTN→login-node
+        Shared by ``_pull_from_remote`` (SSH transports, target→login-node
         failover) and ``_pull_from_local`` (a single filesystem path).
         Must run *before* ``_sync_remote`` so that work the agent
         committed on the mirror is not lost when the canonical repo
@@ -1786,9 +1779,10 @@ class MirrorManager:
     def _sync_remote(self, ctx: MirrorContext, *, force: bool = True) -> None:
         """Push local canonical commits to the remote mirror.
 
-        Pushes over the login node (the reliable, session-capable
-        transport); if a configured DTN is present it is tried only as a
-        fallback should the login-node transport break.  A genuine git
+        Pushes over the executor's target (the login node, or an salloc
+        target's compute node); if a distinct scaffolding node (the login
+        node) is present it is tried only as a fallback should that
+        transport break.  A genuine git
         error (e.g. a rejected ref) is *not* retried — it would fail the
         same way on the other transport and the original message is
         clearer.  See ``_git_transports`` for the ordering rationale.

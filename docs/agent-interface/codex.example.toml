@@ -1,0 +1,8 @@
+# Inert P0 example: proposed executable does not exist yet.
+[mcp_servers.sucoder-observer]
+command = "/EXAMPLE/venv/bin/sucoder-mcp"
+args = ["--workspace", "/EXAMPLE/actual-working-clone"]
+cwd = "/EXAMPLE/actual-working-clone"
+enabled_tools = ["session_context", "list_sessions"]
+startup_timeout_sec = 10
+tool_timeout_sec = 60

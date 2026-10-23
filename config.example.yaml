@@ -101,7 +101,7 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #     # No scheduler or watchdog; Git, bash, tmux, and the harness run as this user.
 #   savio:
 #     gateway: hpc.brc.berkeley.edu
-#     transfer_host: dtn.brc.berkeley.edu
+#     transfer_host: dtn.brc.berkeley.edu  # bulk data only (`tunnel up`, <target>-dtn alias); launches don't use it
 #     mirror_root: ~/mirrors
 #     remote_user: <remote-username>  # optional; defaults to local $USER
 #     # SSH connection-sharing knobs (all optional; defaults shown).

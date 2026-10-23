@@ -1550,10 +1550,10 @@ def test_ensure_remote_clone_rebuilds_empty_mirror(tmp_path, monkeypatch):
     assert subprocess.check_output(["git", "-C", str(path), "config", "review.keep"], text=True).strip() == "yes"
 
 
-def test_git_transports_login_first_then_dtn(
+def test_git_transports_target_first_then_scaffolding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Login node is primary; the DTN is kept only as a fallback."""
+    """The executor's target is primary; the scaffolding node is the fallback."""
     manager = _build_remote_manager(tmp_path)
     ctx = manager.context_for("rproj")
     manager.executor = _remote_exec_with_scaffolding(tmp_path)
@@ -1564,11 +1564,11 @@ def test_git_transports_login_first_then_dtn(
 
     transports = manager._git_transports(ctx)
 
-    assert [t[0] for t in transports] == ["login node", "DTN"]
+    assert [t[0] for t in transports] == ["login node", "login node"]
     login_url, dtn_url = transports[0][1], transports[1][1]
     assert login_url.startswith("ln001:")
     assert dtn_url.startswith("dtn.example.com:")
-    # Login node rides its own socket; DTN rides the scaffolding socket.
+    # The target rides its own socket; the fallback the scaffolding socket.
     assert "ControlPath=/tmp/test.sock" in transports[0][2]["GIT_SSH_COMMAND"]
     assert "ControlPath=/tmp/dtn.sock" in transports[1][2]["GIT_SSH_COMMAND"]
 
@@ -1894,24 +1894,24 @@ def test_run_query_dispatch_local(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 
 
 def test_run_on_login_node_compute_target() -> None:
-    """run_on_login_node routes through the DTN, not the compute node."""
+    """run_on_login_node routes through the login node, not the compute node."""
     executor = _make_remote_executor(
         login_node="n0101.savio3",
         control_socket_path="/tmp/compute.sock",
         is_compute_node=True,
         proxy_node="ln001",
         proxy_socket_path="/tmp/login.sock",
-        scaffolding_node="dtn.brc.berkeley.edu",
-        scaffolding_socket_path="/tmp/dtn.sock",
+        scaffolding_node="ln001",
+        scaffolding_socket_path="/tmp/login.sock",
     )
     # Build the command that run_on_login_node would use
     cmd = executor._build_login_node_command(["hostname"])
     joined = " ".join(cmd)
-    # Target is the DTN, not the compute node
-    assert "dtn.brc.berkeley.edu" in cmd
+    # Target is the login node, not the compute node
+    assert "ln001" in cmd
     assert "n0101.savio3" not in joined
-    # Uses the DTN's ControlMaster socket
-    assert "/tmp/dtn.sock" in joined
+    # Uses the login node's ControlMaster socket
+    assert "/tmp/login.sock" in joined
     # BatchMode prevents hanging on impossible password prompts when
     # the ControlMaster socket is dead and SSH falls through to a
     # fresh connection in a non-interactive context.
@@ -1937,53 +1937,137 @@ def test_run_on_login_node_falls_through_without_scaffolding() -> None:
     assert not executor.scaffolding_node
 
 
-def test_run_on_login_node_falls_back_on_dtn_timeout(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """When the DTN times out, run_on_login_node falls back to run_agent."""
+def _timeout_error(returncode: int = -1):
     from sucoder.executor import CommandError, CommandResult
+
+    return CommandError(
+        "Command timed out after 120s",
+        CommandResult(
+            requested_args=["git", "reset", "--hard", "main"],
+            executed_args=["ssh", "dtn.brc.berkeley.edu", "git reset --hard main"],
+            stdout="",
+            stderr="(timed out)",
+            returncode=returncode,
+        ),
+    )
+
+
+def test_run_on_login_node_does_not_retry_after_timeout(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A timed-out command is not re-run elsewhere: it may still be running.
+
+    2026-10-22: ``git reset --hard`` hung on the DTN past the 120s limit;
+    re-running it on the login node failed on the hung process's
+    ``.git/index.lock`` and aborted every launch.
+    """
+    import logging
+    from sucoder.executor import CommandError
 
     executor = _make_remote_executor(
         login_node="n0101.savio3",
         control_socket_path="/tmp/compute.sock",
         is_compute_node=True,
-        proxy_node="ln001",
-        proxy_socket_path="/tmp/login.sock",
         scaffolding_node="dtn.brc.berkeley.edu",
         scaffolding_socket_path="/tmp/dtn.sock",
     )
 
-    # Make _run raise a timeout CommandError (returncode=-1).
     def fake_run(*args, **kwargs):
-        raise CommandError(
-            "Command timed out after 120s",
-            CommandResult(
-                requested_args=["echo", "$HOME"],
-                executed_args=["ssh", "dtn.brc.berkeley.edu", "echo $HOME"],
-                stdout="",
-                stderr="(timed out)",
-                returncode=-1,
-            ),
-        )
-
-    fallback_called = {}
+        raise _timeout_error()
 
     def fake_run_agent(args, **kwargs):
-        fallback_called["args"] = list(args)
-        return CommandResult(
-            requested_args=list(args),
-            executed_args=list(args),
-            stdout="/home/ligon",
-            stderr="",
-            returncode=0,
-        )
+        raise AssertionError("a timed-out command must not be re-run")
 
     monkeypatch.setattr(executor, "_run", fake_run)
     monkeypatch.setattr(executor, "run_agent", fake_run_agent)
 
-    result = executor.run_on_login_node(["echo", "$HOME"])
-    assert result.stdout == "/home/ligon"
-    assert fallback_called["args"] == ["echo", "$HOME"]
+    with caplog.at_level(logging.ERROR, logger="test.remote"):
+        with pytest.raises(CommandError) as excinfo:
+            executor.run_on_login_node(["git", "reset", "--hard", "main"])
+    assert excinfo.value.result.returncode == -1
+    assert "Not retrying it on another node" in caplog.text
+    assert "index.lock" in caplog.text
+
+
+def test_run_on_login_node_bounds_the_remote_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The remote side is told to stop the command before we stop waiting."""
+    from sucoder.executor import CommandResult
+
+    executor = _make_remote_executor(
+        scaffolding_node="ln001", scaffolding_socket_path="/tmp/login.sock",
+    )
+    seen = {}
+
+    def fake_run(args, **kwargs):
+        seen["remote"] = args[-1]
+        seen["timeout"] = kwargs["timeout"]
+        return CommandResult(list(args), list(args), "", "", 0)
+
+    monkeypatch.setattr(executor, "_run", fake_run)
+
+    executor.run_on_login_node(["git", "status", "--porcelain"], cwd="/m")
+    assert seen["timeout"] == executor.DEFAULT_SSH_TIMEOUT
+    assert seen["remote"] == (
+        "cd /m && if command -v timeout >/dev/null 2>&1; "
+        "then timeout -s TERM 105 git status --porcelain; "
+        "else git status --porcelain; fi"
+    )
+
+    executor.run_on_login_node(["true"], timeout=20)
+    assert seen["timeout"] == 20
+    assert "timeout -s TERM 10 true" in seen["remote"]
+
+
+@pytest.mark.parametrize("shell", ["sh", "bash", "zsh"])
+def test_bounded_remote_command_runs_in_common_shells(shell: str) -> None:
+    """The wrapper stops a slow command (exit 124) and passes a fast one."""
+    import shutil
+    import subprocess
+
+    if shutil.which(shell) is None or shutil.which("timeout") is None:
+        pytest.skip(f"{shell} or timeout not installed")
+    executor = _make_remote_executor(
+        scaffolding_node="ln001", scaffolding_socket_path="/tmp/login.sock",
+    )
+
+    def remote(args, limit):
+        return executor._build_login_node_command(args, time_limit=limit)[-1]
+
+    slow = subprocess.run([shell, "-c", remote(["sleep", "5"], 1)], timeout=10)
+    assert slow.returncode == 124
+    fast = subprocess.run(
+        [shell, "-c", remote(["echo", "a b"], 5)],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert (fast.returncode, fast.stdout) == (0, "a b\n")
+
+
+def test_run_on_login_node_reports_a_remote_timeout(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Exit 124 (the remote ``timeout`` fired) is named, not retried."""
+    import logging
+    from sucoder.executor import CommandError
+
+    executor = _make_remote_executor(
+        scaffolding_node="ln001", scaffolding_socket_path="/tmp/login.sock",
+    )
+
+    def fake_run(*args, **kwargs):
+        raise _timeout_error(returncode=124)
+
+    def fake_run_agent(args, **kwargs):
+        raise AssertionError("a remote timeout must not be re-run")
+
+    monkeypatch.setattr(executor, "_run", fake_run)
+    monkeypatch.setattr(executor, "run_agent", fake_run_agent)
+
+    with caplog.at_level(logging.ERROR, logger="test.remote"):
+        with pytest.raises(CommandError):
+            executor.run_on_login_node(["git", "reset", "--hard", "main"])
+    assert "was stopped after 105s (remote timeout)" in caplog.text
 
 
 def test_run_on_login_node_falls_back_on_ssh_error(
@@ -2030,6 +2114,99 @@ def test_run_on_login_node_falls_back_on_ssh_error(
     result = executor.run_on_login_node(["hostname"])
     assert fallback_called.get("called")
     assert result.stdout == "n0101"
+
+
+def test_run_on_login_node_stops_using_an_unreachable_node(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After one connection failure, later commands skip that node."""
+    from sucoder.executor import CommandError, CommandResult
+
+    executor = _make_remote_executor(
+        login_node="n0101.savio3",
+        control_socket_path="/tmp/compute.sock",
+        is_compute_node=True,
+        scaffolding_node="ln001",
+        scaffolding_socket_path="/tmp/login.sock",
+    )
+    attempts = []
+
+    def fake_run(args, **kwargs):
+        attempts.append(args)
+        raise CommandError(
+            "SSH connection failed",
+            CommandResult(["hostname"], list(args), "", "Connection refused", 255),
+        )
+
+    def fake_run_agent(args, **kwargs):
+        return CommandResult(list(args), list(args), "n0101", "", 0)
+
+    monkeypatch.setattr(executor, "_run", fake_run)
+    monkeypatch.setattr(executor, "run_agent", fake_run_agent)
+
+    executor.run_on_login_node(["hostname"])
+    executor.run_on_login_node(["hostname"])
+    assert len(attempts) == 1
+
+
+def test_run_on_login_node_no_fallback_to_the_same_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When run_agent targets the scaffolding node itself, rc 255 is raised."""
+    from sucoder.executor import CommandError, CommandResult
+
+    executor = _make_remote_executor(
+        login_node="ln001",
+        control_socket_path="/tmp/login.sock",
+        scaffolding_node="ln001",
+        scaffolding_socket_path="/tmp/login.sock",
+    )
+
+    def fake_run(args, **kwargs):
+        raise CommandError(
+            "SSH connection failed",
+            CommandResult(["hostname"], list(args), "", "Connection refused", 255),
+        )
+
+    def fake_run_agent(args, **kwargs):
+        raise AssertionError("retrying the same host is pointless")
+
+    monkeypatch.setattr(executor, "_run", fake_run)
+    monkeypatch.setattr(executor, "run_agent", fake_run_agent)
+
+    with pytest.raises(CommandError):
+        executor.run_on_login_node(["hostname"])
+
+
+def test_failed_command_log_omits_ssh_mux_noise(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The logged stderr leads with the real error, not mux chatter."""
+    import logging
+    import subprocess
+    from sucoder.executor import CommandError
+
+    executor = _make_remote_executor()
+    stderr = (
+        "mux_client_request_session: session request failed: "
+        "Session open refused by peer\n"
+        "ControlSocket /home/u/.sucoder/ssh/ln001.brc.sock already exists, "
+        "disabling multiplexing\n"
+        "fatal: Unable to create '/m/.git/index.lock': File exists.\n"
+    )
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda *a, **k: subprocess.CompletedProcess(a[0], 128, "", stderr),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="test.remote"):
+        with pytest.raises(CommandError) as excinfo:
+            executor._run(["ssh", "ln001", "git status"], check=True,
+                          cwd=None, env=None, as_agent=False)
+    assert caplog.records[-1].getMessage().startswith("fatal: Unable to create")
+    assert "mux_client" not in caplog.text
+    # The result itself keeps everything, for callers that parse it.
+    assert excinfo.value.result.stderr == stderr
 
 
 def test_run_on_login_node_does_not_fallback_on_command_error(

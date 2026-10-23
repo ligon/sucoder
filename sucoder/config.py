@@ -104,7 +104,7 @@ class RemoteConfig:
     """
 
     gateway: str = ""                               # Jump host, e.g. "brc.berkeley.edu"
-    transfer_host: str = ""                         # DTN for git transport
+    transfer_host: str = ""                         # DTN: `tunnel up` and its ssh alias only
     remote_user: Optional[str] = None               # SSH username on the remote host
     mirror_root: Path = field(default_factory=lambda: Path("~/mirrors"))
     ssh_options: Dict[str, str] = field(default_factory=dict)

@@ -1,0 +1,82 @@
+#+TITLE: Prior-art ledger - agent observation interface
+#+DATE: 2026-10-22
+#+AUTHOR: Sue
+
+* 1. Task and evidence
+
+Define P0 contracts for observational CLI/MCP interfaces without implementing them.
+SuCoder baseline =164913d2e67c782d4a25e70b3710888a03edbb2e=, initially clean except the uncommitted plan.
+Search used git, ripgrep, local help and official documentation; GitNexus tools were unavailable.
+Read the existing =.coder/ledger.md= (last change =5da3730=), which concerns Codex remote ownership and managed state; preserve that ledger and its invariants.
+The task-specific contract is [[file:agent-interface-contract.org][agent-interface-contract.org]].
+
+* 2. Existing machinery and tests
+
+- =sucoder/sessions_report.py:353= (=cluster_key=) and =:365= (=group_targets_by_cluster=) :: Current gateway grouping; =test_targets_sharing_a_gateway_are_one_cluster=. Extend observer grouping with authority/remote-user separation.
+- =sucoder/sessions_report.py:416= (=parse_squeue=) :: Pure scheduler parsing; =test_malformed_lines_are_reported_not_dropped= and =test_blank_output_is_not_an_error=. Reuse with bounded diagnostic translation.
+- =sucoder/sessions_report.py:507= (=build_report=) :: Legacy joins and rendering model; =test_a_record_pointing_at_a_vanished_job_is_stale=. Do not reuse its global job-ID set for new provenance-sensitive joins.
+- =sucoder/cli.py:5343= (=_collect_sessions=) :: Current orchestration, grouping/fused probes and record reads. =tests/test_session_relay.py= exercises unavailable discovery. Extract observation intent, not credential-capable fallback.
+- =sucoder/cli.py:3900= / =:4005= :: Warm remote capture and reconnect. Existing timeout covers an individual subprocess, not lock/retry/relay lifetime. New bounded policy required; preserve human CLI path.
+- =sucoder/cli.py:5093= / =:5134= :: Relay delegation and fixed home/config restrictions; =test_the_relay_refuses_another_config=, =test_the_relay_refuses_a_home_that_is_not_its_own=. Extend with capabilities and structured noninteractive sessions.
+- =sucoder/session.py:64= (=RemoteSession.load=), =:138= (=pending_replacement_job=), =:161= (=holders_of_job=), =:193= (=recorded_jobs=) :: Missing/corrupt collapse and replacement-holder logic. Reuse holder rules; new diagnostic reader for observer distinguishes unreadable/corrupt/missing without changing restoration behavior.
+- =sucoder/local_tier.py:46= (=work_path=), =:57= (=cache_exports_sh=) :: Layout and environment claims; =test_paths_runtime_job_id_expands_and_literal_is_quoted=, =test_cache_exports_cover_tools_and_tmpdir_but_not_installs=. Reuse path rules; do not assume hook success proves publication.
+- =sucoder/codex_context.py:120= (=run=) :: Final-cwd launch boundary after tier preparation; =test_staged_installer_runs_in_final_clone_and_keeps_launches_separate=. Future binding uses that boundary without modifying managed stores.
+- =sucoder/tmux_env.py:97= (=detect=) :: Optional local tmux context; =test_detect_inside_tmux_survives_a_server_that_does_not_answer=. No requirement to make a local tmux failure erase git facts.
+- =sucoder/config.py:284= profiles and =sucoder/mirror.py:5268= MCP JSON generation :: Claude-shaped config; =tests/test_mcp_discovery.py= tests suggestions/configuration. Codex integration is not supplied by that profile hook.
+- =sucoder/mirror.py:7153= catalog rendering :: Existing skill discovery; reuse for two skills in sucoder-skills. Existing rendering smoke passed in earlier work.
+
+* 3. Definitions in force
+
+A live allocation or tmux pane does not prove a live agent.
+Unknown discovery is not absence; exit 3 already denotes unavailable inspection in =cli.py=.
+The shared mirror is durable storage; the active working clone may be node-local and temporary.
+The relay runs with its own account's home/config and does not let callers supply arbitrary configuration or --force.
+Existing managed state identifies histories with scope/run identity rather than job ID alone; the new snapshot keys do not replace that identity.
+
+* 4. Invariants
+
+Do not allocate, cancel, authenticate interactively, repair records, restore generations, or write repository content while observing.
+Do not widen existing privileged relay executable/configuration authority.
+Do not replace canonical managed-state ownership, recovery, renewal, or snapshot logic.
+Keep current context local even if discovery is relayed.
+Carry source provenance before joins; do not merge equal numeric job IDs from different clusters/accounts.
+Keep base Python 3.9 compatibility and existing CLI behavior unless a reviewed change explicitly says otherwise.
+
+* 5. Reuse decisions
+
+- Reuse :: Pure path helpers, parsers, configuration resolution rules, replacement-holder rules, and catalog rendering.
+- Extend :: Observation collection with bounded noninteractive policy, source provenance, typed errors and diagnostic record reads; relay capabilities/JSON; CLI commands.
+- New :: Public schema and serialization boundary, because rendered tables/internal dataclasses do not provide a stable contract.
+- New :: Workspace binding consistency guard, because no generic cross-harness binding currently exists; reuse the final-cwd launch boundary.
+- Conditional new :: Thin companion MCP package on Python >=3.10; no server until P3 is approved.
+
+* 6. Human decisions and validation
+
+Approve P1/P2 against the proposed contract before implementation.
+The companion-package proposal replaces the originally preferred extra; approval can wait until P3 go/no-go.
+The cancellation guarantee explicitly excludes proof of immediate remote termination across a network partition.
+Schema/example validation establishes document consistency only, not implementation correctness or harness interoperability.
+
+* P1 implementation choices (2026-10-22)
+
+The human approved P1/P2 after both P0 reviewers cleared the contract.
+The shared CLI callback is bypassed only for structured observation and relevant help requests, avoiding startup privilege checks.
+The human sessions renderer and mutation consumers retain their existing paths.
+The JSON adapter supervises a bounded worker so configuration reads and YAML decoding cannot escape the command's subprocess deadline.
+The worker's probes remain in its owned process group; the supervisor reaps/terminates that group, while a privileged relay runs its own supervisor and deadline.
+No process signal targets an existing SSH master, tmux server, agent or allocation.
+
+Pure parsers, replacement-holder semantics, local-tier work_path and confined_tmux_target are reused.
+Transport is deliberately separate from interactive capture/reconnect helpers.
+Sources with unknown accounts or endpoint-affecting options are conservatively separated; legacy sockets without verifiable account/endpoint identity are not reused for overridden routes.
+Scheduler panes are batched through srun and login pane enumeration is fused; probes are sequential, within the maximum-four concurrency contract.
+This trades peak throughput for simple deadline and ownership semantics.
+
+GitNexus impact was attempted but its native library could not load libssl.so.3 in this environment.
+Source/caller review identified main, sessions and relay_sessions as the only modified existing functions, plus the Typer app construction; new functionality lives in separate observation modules.
+Existing human discovery/messaging tests passed after those changes.
+No infrastructure repair or index regeneration was attempted.
+
+The final full-suite repeat was interrupted after unrelated managed-state placement stalled; the complete earlier run and baseline reproductions are recorded in the contract.
+The final focused suite passed 146 tests on both Python 3.9 and 3.13, and both independent reviewers cleared their implementation findings.
+This is a code/fixture validation result, not a live cluster or MCP deployment claim.
