@@ -15,6 +15,10 @@ Unix-user sandboxing for AI coding agents.  One account per agent, filesystem-en
 ** Architecture
 
 - [[file:skills-architecture.html][Skills Architecture]] --- agent-agnostic discovery, write control, and compliance auditing.
+- [[file:llm-shadow-values.html][Standing Shadow Values for LLM Use]] --- approximate hourly resource prices for human task timing and SuCoder delegation.
+- [[file:llm-usage-collection.html][LLM Usage Collection]] --- practical design for quota, model-tagged usage, price/supply histories and coverage for rate estimation.
+- [[file:llm-usage-collection-review.html][LLM Usage Collection: Model Identification Review]] --- red-team findings and design response on Fable/Opus attribution and the minimum model-aware pilot.
+- [[file:llm-usage-implementation-charter.html][LLM Usage Implementation Charter]] --- Claude/Codex scope and acceptance criteria for extending the existing llm-accounting project.
 - [[file:persistent-presence.html][Persistent Presence]] --- a standing condo slice on a shared HTC partition: renew, turnover, and handoff.
 - [[file:local-disk-tiering.html][Local-disk Tiering]] --- design note: disposable working tree on node-local disk, git as the sync, WIP snapshots (spike-verified).
 - [[file:codex-remote-control.html][Codex Remote Control]] --- isolated server identities, owned pairing, and simultaneous-node validation.

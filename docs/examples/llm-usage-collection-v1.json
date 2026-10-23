@@ -1,0 +1,1701 @@
+{
+  "scenario_version": "0.1-design",
+  "description": "Synthetic history only; no real account data or adopted history schema.",
+  "batches": [
+    {
+      "format_version": "0.1-design",
+      "data_mode": "synthetic",
+      "dataset_id": "example-dataset",
+      "batch_id": "batch-000",
+      "producer_id": "example-owner",
+      "recorded_at": "2026-10-17T11:59:03Z",
+      "events": [
+        {
+          "event_id": "registry-1",
+          "kind": "registry_publication",
+          "captured_at": "2026-10-17T11:59:00Z",
+          "source_ref": "example-owner",
+          "price_ref": null,
+          "supply_ref": null,
+          "binding_ref": "registry-1",
+          "payload": {
+            "accounting_binding": {
+              "identity_namespace": "00000000000000000000000000000005",
+              "provider_index": {
+                "openai": {
+                  "api": [],
+                  "subscription": []
+                },
+                "anthropic": {
+                  "api": [],
+                  "subscription": [
+                    "a002"
+                  ]
+                }
+              },
+              "accesses": {
+                "a002": {
+                  "provider": "anthropic",
+                  "billing_provider": "anthropic",
+                  "access_type": "subscription",
+                  "product": "claude-code",
+                  "scope_ref": "s004",
+                  "pool_constraints": [
+                    {
+                      "mode": "all",
+                      "members": [
+                        {
+                          "pool_ref": "p002",
+                          "metric_id": "claude-five-hour-used"
+                        },
+                        {
+                          "pool_ref": "p002",
+                          "metric_id": "claude-seven-day-used"
+                        },
+                        {
+                          "pool_ref": "p002",
+                          "metric_id": "claude-fable-weekly-used"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              "scopes": {
+                "s003": {
+                  "provider": "anthropic",
+                  "kind": "organization",
+                  "parent_ref": null,
+                  "binding_generation": 1
+                },
+                "s004": {
+                  "provider": "anthropic",
+                  "kind": "account",
+                  "parent_ref": "s003",
+                  "binding_generation": 1
+                }
+              },
+              "pools": {
+                "p002": {
+                  "provider": "anthropic",
+                  "kind": "allowance",
+                  "scope_ref": "s004"
+                }
+              },
+              "metric_definitions": {
+                "claude-five-hour-used": {
+                  "kind": "quota_utilization",
+                  "window_id": "five_hour",
+                  "applies_to": {
+                    "kind": "all_models"
+                  }
+                },
+                "claude-seven-day-used": {
+                  "kind": "quota_utilization",
+                  "window_id": "seven_day",
+                  "applies_to": {
+                    "kind": "all_models"
+                  }
+                },
+                "claude-fable-weekly-used": {
+                  "kind": "quota_utilization",
+                  "window_id": "weekly_fable",
+                  "applies_to": {
+                    "kind": "model_family",
+                    "family_id": "claude-fable"
+                  }
+                }
+              }
+            },
+            "binding_fingerprint": "sha256:ae4208907f529fc301e397a15b3e8da7a5e8619303bfc858f767cd53ef5f58f6",
+            "routes": {
+              "route-fable": {
+                "model": "synthetic-fable-model",
+                "model_family": "claude-fable",
+                "harness": "claude",
+                "accounting_access_ref": "a002",
+                "accounting_pool_refs": [
+                  "p002"
+                ],
+                "eligibility": "declared_unverified"
+              },
+              "route-other": {
+                "model": "synthetic-other-model",
+                "model_family": null,
+                "harness": "claude",
+                "accounting_access_ref": "a002",
+                "accounting_pool_refs": [
+                  "p002"
+                ],
+                "eligibility": "declared_unverified"
+              }
+            },
+            "sources": {
+              "accounting-claude": {
+                "collector": "llm-accounting",
+                "version": "ed7c851",
+                "passive_policy": "fixture_only"
+              },
+              "synthetic-counter": {
+                "semantics": "cumulative_flow",
+                "verification": "fixture"
+              }
+            }
+          }
+        },
+        {
+          "event_id": "supply-1",
+          "kind": "supply_publication",
+          "captured_at": "2026-10-17T11:59:01Z",
+          "source_ref": "example-owner",
+          "price_ref": null,
+          "supply_ref": "supply-1",
+          "binding_ref": "registry-1",
+          "payload": {
+            "authority": "example-owner",
+            "source_mode": "synthetic",
+            "effective_at": "2026-10-17T11:59:01Z",
+            "routes": {
+              "route-fable": {
+                "included_cash_rate": {
+                  "currency": "USD",
+                  "per": "agent_hour",
+                  "value": "0",
+                  "basis": "declared"
+                },
+                "accounting_pool_refs": [
+                  "p002"
+                ],
+                "api_alternative_status": "unconfigured"
+              },
+              "route-other": {
+                "included_cash_rate": {
+                  "currency": "USD",
+                  "per": "agent_hour",
+                  "value": "0",
+                  "basis": "declared"
+                },
+                "accounting_pool_refs": [
+                  "p002"
+                ],
+                "api_alternative_status": "unconfigured"
+              }
+            },
+            "hourly_api_reference_priors": {
+              "route-fable": "10",
+              "route-other": "4"
+            },
+            "prior_currency": "USD",
+            "hour_convention": "representative_working_agent_hour"
+          }
+        },
+        {
+          "event_id": "price-1",
+          "kind": "price_publication",
+          "captured_at": "2026-10-17T11:59:02Z",
+          "source_ref": "example-owner",
+          "price_ref": "price-1",
+          "supply_ref": "supply-1",
+          "binding_ref": "registry-1",
+          "payload": {
+            "authority": "example-owner",
+            "parent_ref": null,
+            "effective_at": "2026-10-17T11:59:02Z",
+            "clock_uncertainty_seconds": "0",
+            "method_version": "manual/1",
+            "currency": "USD",
+            "per": "agent_hour",
+            "hour_convention": "representative_working_agent_hour",
+            "basis": "declared",
+            "routes": {
+              "route-fable": {
+                "cash_rate": "0",
+                "shadow_rate": "1.00"
+              },
+              "route-other": {
+                "cash_rate": "0",
+                "shadow_rate": "0.50"
+              }
+            }
+          }
+        }
+      ],
+      "artifacts": {}
+    },
+    {
+      "format_version": "0.1-design",
+      "data_mode": "synthetic",
+      "dataset_id": "example-dataset",
+      "batch_id": "batch-001",
+      "producer_id": "example-owner",
+      "recorded_at": "2026-10-17T12:00:00Z",
+      "events": [
+        {
+          "event_id": "sample-1",
+          "kind": "accounting_sample",
+          "captured_at": "2026-10-17T12:00:00Z",
+          "source_ref": "accounting-claude",
+          "price_ref": "price-1",
+          "supply_ref": "supply-1",
+          "binding_ref": "registry-1",
+          "payload": {
+            "nominal_tick": "2026-10-17T12:00:00Z",
+            "started_at": "2026-10-17T12:00:00Z",
+            "finished_at": "2026-10-17T12:00:00Z",
+            "control_status": "ok",
+            "selected_targets": [
+              "t002"
+            ],
+            "collection_policy_ref": "fixture-five-minute/1",
+            "accounting_contract": "1.0",
+            "accounting_version": "ed7c851",
+            "report_ref": "sha256:67c04db4b42d128cd0c749d365dca36f0e46bdd5342ebf2ed4a39476d779be05"
+          }
+        }
+      ],
+      "artifacts": {
+        "sha256:67c04db4b42d128cd0c749d365dca36f0e46bdd5342ebf2ed4a39476d779be05": {
+          "kind": "accounting_report",
+          "value": {
+            "schema_version": "1.0",
+            "data_mode": "synthetic",
+            "identity_namespace": "00000000000000000000000000000005",
+            "generated_at": "2026-10-17T12:00:00Z",
+            "collection_status": "ok",
+            "provider_index": {
+              "openai": {
+                "api": [],
+                "subscription": []
+              },
+              "anthropic": {
+                "api": [],
+                "subscription": [
+                  "a002"
+                ]
+              }
+            },
+            "accesses": {
+              "a002": {
+                "provider": "anthropic",
+                "billing_provider": "anthropic",
+                "access_type": "subscription",
+                "product": "claude-code",
+                "scope_ref": "s004",
+                "pool_constraints": [
+                  {
+                    "mode": "all",
+                    "members": [
+                      {
+                        "pool_ref": "p002",
+                        "metric_id": "claude-five-hour-used"
+                      },
+                      {
+                        "pool_ref": "p002",
+                        "metric_id": "claude-seven-day-used"
+                      },
+                      {
+                        "pool_ref": "p002",
+                        "metric_id": "claude-fable-weekly-used"
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            "scopes": {
+              "s003": {
+                "provider": "anthropic",
+                "kind": "organization",
+                "parent_ref": null,
+                "binding_generation": 1
+              },
+              "s004": {
+                "provider": "anthropic",
+                "kind": "account",
+                "parent_ref": "s003",
+                "binding_generation": 1
+              }
+            },
+            "pools": {
+              "p002": {
+                "provider": "anthropic",
+                "kind": "allowance",
+                "scope_ref": "s004"
+              }
+            },
+            "api_keys": {},
+            "observations": {
+              "o001": {
+                "metric_id": "claude-five-hour-used",
+                "pool_ref": "p002",
+                "measured_scope_ref": "s004",
+                "binding_generation": 1,
+                "identity_binding": "verified",
+                "authenticated_scope_ref": "s004",
+                "dimensions": {
+                  "model": null,
+                  "api_key_ref": null,
+                  "workspace_ref": null
+                },
+                "aggregation": "snapshot",
+                "row_role": "total",
+                "window": {
+                  "kind": "opaque",
+                  "duration_seconds": null,
+                  "resets_at": "2026-10-17T12:30:00Z"
+                },
+                "observed_at": null,
+                "collected_at": "2026-10-17T12:00:00Z",
+                "freshness": {
+                  "status": "fresh",
+                  "assessed_at": "2026-10-17T12:00:00Z",
+                  "max_age_seconds": 300,
+                  "basis": "collected_at"
+                },
+                "measurement": {
+                  "kind": "quota_utilization",
+                  "used_fraction": "0.40"
+                },
+                "source": {
+                  "collector": "claude-oauth-usage",
+                  "interface_class": "compatibility_endpoint",
+                  "version": "2025-04-20",
+                  "verification": "fixture",
+                  "value_basis": "reported",
+                  "derivation": null,
+                  "input_observation_refs": []
+                },
+                "coverage": {
+                  "pagination": "complete",
+                  "accounting": "partial",
+                  "exclusions": [
+                    "other-scoped-limits",
+                    "extra-usage",
+                    "credits"
+                  ]
+                }
+              },
+              "o002": {
+                "metric_id": "claude-seven-day-used",
+                "pool_ref": "p002",
+                "measured_scope_ref": "s004",
+                "binding_generation": 1,
+                "identity_binding": "verified",
+                "authenticated_scope_ref": "s004",
+                "dimensions": {
+                  "model": null,
+                  "api_key_ref": null,
+                  "workspace_ref": null
+                },
+                "aggregation": "snapshot",
+                "row_role": "total",
+                "window": {
+                  "kind": "opaque",
+                  "duration_seconds": null,
+                  "resets_at": "2026-10-24T12:00:00Z"
+                },
+                "observed_at": null,
+                "collected_at": "2026-10-17T12:00:00Z",
+                "freshness": {
+                  "status": "fresh",
+                  "assessed_at": "2026-10-17T12:00:00Z",
+                  "max_age_seconds": 300,
+                  "basis": "collected_at"
+                },
+                "measurement": {
+                  "kind": "quota_utilization",
+                  "used_fraction": "0.47"
+                },
+                "source": {
+                  "collector": "claude-oauth-usage",
+                  "interface_class": "compatibility_endpoint",
+                  "version": "2025-04-20",
+                  "verification": "fixture",
+                  "value_basis": "reported",
+                  "derivation": null,
+                  "input_observation_refs": []
+                },
+                "coverage": {
+                  "pagination": "complete",
+                  "accounting": "partial",
+                  "exclusions": [
+                    "other-scoped-limits",
+                    "extra-usage",
+                    "credits"
+                  ]
+                }
+              },
+              "o003": {
+                "metric_id": "claude-fable-weekly-used",
+                "pool_ref": "p002",
+                "measured_scope_ref": "s004",
+                "binding_generation": 1,
+                "identity_binding": "verified",
+                "authenticated_scope_ref": "s004",
+                "dimensions": {
+                  "model": null,
+                  "api_key_ref": null,
+                  "workspace_ref": null
+                },
+                "aggregation": "snapshot",
+                "row_role": "total",
+                "window": {
+                  "kind": "opaque",
+                  "duration_seconds": null,
+                  "resets_at": "2026-10-23T12:00:00Z"
+                },
+                "observed_at": null,
+                "collected_at": "2026-10-17T12:00:00Z",
+                "freshness": {
+                  "status": "fresh",
+                  "assessed_at": "2026-10-17T12:00:00Z",
+                  "max_age_seconds": 300,
+                  "basis": "collected_at"
+                },
+                "measurement": {
+                  "kind": "quota_utilization",
+                  "used_fraction": "0.91"
+                },
+                "source": {
+                  "collector": "claude-oauth-usage",
+                  "interface_class": "compatibility_endpoint",
+                  "version": "2025-04-20",
+                  "verification": "fixture",
+                  "value_basis": "reported",
+                  "derivation": null,
+                  "input_observation_refs": []
+                },
+                "coverage": {
+                  "pagination": "complete",
+                  "accounting": "partial",
+                  "exclusions": [
+                    "other-scoped-limits",
+                    "extra-usage",
+                    "credits"
+                  ]
+                }
+              }
+            },
+            "metric_definitions": {
+              "claude-five-hour-used": {
+                "kind": "quota_utilization",
+                "window_id": "five_hour",
+                "applies_to": {
+                  "kind": "all_models"
+                }
+              },
+              "claude-seven-day-used": {
+                "kind": "quota_utilization",
+                "window_id": "seven_day",
+                "applies_to": {
+                  "kind": "all_models"
+                }
+              },
+              "claude-fable-weekly-used": {
+                "kind": "quota_utilization",
+                "window_id": "weekly_fable",
+                "applies_to": {
+                  "kind": "model_family",
+                  "family_id": "claude-fable"
+                }
+              }
+            },
+            "collection_targets": {
+              "t002": {
+                "provider": "anthropic",
+                "collector": "claude-oauth-usage",
+                "operation": "quota",
+                "related_access_refs": [
+                  "a002"
+                ],
+                "requested_scope_ref": "s004",
+                "authenticated_scope_ref": "s004",
+                "identity_binding": "verified",
+                "requested_period": null,
+                "started_at": "2026-10-17T12:00:00Z",
+                "finished_at": "2026-10-17T12:00:00Z",
+                "collection_status": "ok",
+                "results": [
+                  {
+                    "metric_id": "claude-five-hour-used",
+                    "capability": "supported",
+                    "status": "available",
+                    "observation_refs": [
+                      "o001"
+                    ],
+                    "previous_observation_refs": [],
+                    "conflicting_observation_refs": [],
+                    "diagnostics": []
+                  },
+                  {
+                    "metric_id": "claude-seven-day-used",
+                    "capability": "supported",
+                    "status": "available",
+                    "observation_refs": [
+                      "o002"
+                    ],
+                    "previous_observation_refs": [],
+                    "conflicting_observation_refs": [],
+                    "diagnostics": []
+                  },
+                  {
+                    "metric_id": "claude-fable-weekly-used",
+                    "capability": "supported",
+                    "status": "available",
+                    "observation_refs": [
+                      "o003"
+                    ],
+                    "previous_observation_refs": [],
+                    "conflicting_observation_refs": [],
+                    "diagnostics": []
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "format_version": "0.1-design",
+      "data_mode": "synthetic",
+      "dataset_id": "example-dataset",
+      "batch_id": "batch-002",
+      "producer_id": "example-owner",
+      "recorded_at": "2026-10-17T12:05:00Z",
+      "events": [
+        {
+          "event_id": "sample-2",
+          "kind": "accounting_sample",
+          "captured_at": "2026-10-17T12:05:00Z",
+          "source_ref": "accounting-claude",
+          "price_ref": "price-1",
+          "supply_ref": "supply-1",
+          "binding_ref": "registry-1",
+          "payload": {
+            "nominal_tick": "2026-10-17T12:05:00Z",
+            "started_at": "2026-10-17T12:05:00Z",
+            "finished_at": "2026-10-17T12:05:00Z",
+            "control_status": "ok",
+            "selected_targets": [
+              "t002"
+            ],
+            "collection_policy_ref": "fixture-five-minute/1",
+            "accounting_contract": "1.0",
+            "accounting_version": "ed7c851",
+            "report_ref": "sha256:133851e205e08cca8c34f15bf932d8152b831fe47ff486bce77b4ae83ee71c82"
+          }
+        },
+        {
+          "event_id": "counter-1",
+          "kind": "counter_sample",
+          "captured_at": "2026-10-17T12:05:00Z",
+          "source_ref": "synthetic-counter",
+          "price_ref": "price-1",
+          "supply_ref": "supply-1",
+          "binding_ref": "registry-1",
+          "payload": {
+            "counter_ref": "session-input",
+            "counter_epoch": "epoch-1",
+            "scope_ref": "session-1",
+            "route_ref": "route-fable",
+            "model_scope": "single_declared_route",
+            "semantics": "cumulative_flow",
+            "observed_at": "2026-10-17T12:05:00Z",
+            "unit": "tokens",
+            "category": "input",
+            "value": "1000",
+            "includes": [],
+            "inclusion_status": "fixture_declared",
+            "verification": "fixture"
+          }
+        }
+      ],
+      "artifacts": {
+        "sha256:133851e205e08cca8c34f15bf932d8152b831fe47ff486bce77b4ae83ee71c82": {
+          "kind": "accounting_report",
+          "value": {
+            "schema_version": "1.0",
+            "data_mode": "synthetic",
+            "identity_namespace": "00000000000000000000000000000005",
+            "generated_at": "2026-10-17T12:05:00Z",
+            "collection_status": "ok",
+            "provider_index": {
+              "openai": {
+                "api": [],
+                "subscription": []
+              },
+              "anthropic": {
+                "api": [],
+                "subscription": [
+                  "a002"
+                ]
+              }
+            },
+            "accesses": {
+              "a002": {
+                "provider": "anthropic",
+                "billing_provider": "anthropic",
+                "access_type": "subscription",
+                "product": "claude-code",
+                "scope_ref": "s004",
+                "pool_constraints": [
+                  {
+                    "mode": "all",
+                    "members": [
+                      {
+                        "pool_ref": "p002",
+                        "metric_id": "claude-five-hour-used"
+                      },
+                      {
+                        "pool_ref": "p002",
+                        "metric_id": "claude-seven-day-used"
+                      },
+                      {
+                        "pool_ref": "p002",
+                        "metric_id": "claude-fable-weekly-used"
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            "scopes": {
+              "s003": {
+                "provider": "anthropic",
+                "kind": "organization",
+                "parent_ref": null,
+                "binding_generation": 1
+              },
+              "s004": {
+                "provider": "anthropic",
+                "kind": "account",
+                "parent_ref": "s003",
+                "binding_generation": 1
+              }
+            },
+            "pools": {
+              "p002": {
+                "provider": "anthropic",
+                "kind": "allowance",
+                "scope_ref": "s004"
+              }
+            },
+            "api_keys": {},
+            "observations": {
+              "o001": {
+                "metric_id": "claude-five-hour-used",
+                "pool_ref": "p002",
+                "measured_scope_ref": "s004",
+                "binding_generation": 1,
+                "identity_binding": "verified",
+                "authenticated_scope_ref": "s004",
+                "dimensions": {
+                  "model": null,
+                  "api_key_ref": null,
+                  "workspace_ref": null
+                },
+                "aggregation": "snapshot",
+                "row_role": "total",
+                "window": {
+                  "kind": "opaque",
+                  "duration_seconds": null,
+                  "resets_at": "2026-10-17T12:30:00Z"
+                },
+                "observed_at": null,
+                "collected_at": "2026-10-17T12:05:00Z",
+                "freshness": {
+                  "status": "fresh",
+                  "assessed_at": "2026-10-17T12:05:00Z",
+                  "max_age_seconds": 300,
+                  "basis": "collected_at"
+                },
+                "measurement": {
+                  "kind": "quota_utilization",
+                  "used_fraction": "0.42"
+                },
+                "source": {
+                  "collector": "claude-oauth-usage",
+                  "interface_class": "compatibility_endpoint",
+                  "version": "2025-04-20",
+                  "verification": "fixture",
+                  "value_basis": "reported",
+                  "derivation": null,
+                  "input_observation_refs": []
+                },
+                "coverage": {
+                  "pagination": "complete",
+                  "accounting": "partial",
+                  "exclusions": [
+                    "other-scoped-limits",
+                    "extra-usage",
+                    "credits"
+                  ]
+                }
+              },
+              "o002": {
+                "metric_id": "claude-seven-day-used",
+                "pool_ref": "p002",
+                "measured_scope_ref": "s004",
+                "binding_generation": 1,
+                "identity_binding": "verified",
+                "authenticated_scope_ref": "s004",
+                "dimensions": {
+                  "model": null,
+                  "api_key_ref": null,
+                  "workspace_ref": null
+                },
+                "aggregation": "snapshot",
+                "row_role": "total",
+                "window": {
+                  "kind": "opaque",
+                  "duration_seconds": null,
+                  "resets_at": "2026-10-24T12:00:00Z"
+                },
+                "observed_at": null,
+                "collected_at": "2026-10-17T12:05:00Z",
+                "freshness": {
+                  "status": "fresh",
+                  "assessed_at": "2026-10-17T12:05:00Z",
+                  "max_age_seconds": 300,
+                  "basis": "collected_at"
+                },
+                "measurement": {
+                  "kind": "quota_utilization",
+                  "used_fraction": "0.47"
+                },
+                "source": {
+                  "collector": "claude-oauth-usage",
+                  "interface_class": "compatibility_endpoint",
+                  "version": "2025-04-20",
+                  "verification": "fixture",
+                  "value_basis": "reported",
+                  "derivation": null,
+                  "input_observation_refs": []
+                },
+                "coverage": {
+                  "pagination": "complete",
+                  "accounting": "partial",
+                  "exclusions": [
+                    "other-scoped-limits",
+                    "extra-usage",
+                    "credits"
+                  ]
+                }
+              },
+              "o003": {
+                "metric_id": "claude-fable-weekly-used",
+                "pool_ref": "p002",
+                "measured_scope_ref": "s004",
+                "binding_generation": 1,
+                "identity_binding": "verified",
+                "authenticated_scope_ref": "s004",
+                "dimensions": {
+                  "model": null,
+                  "api_key_ref": null,
+                  "workspace_ref": null
+                },
+                "aggregation": "snapshot",
+                "row_role": "total",
+                "window": {
+                  "kind": "opaque",
+                  "duration_seconds": null,
+                  "resets_at": "2026-10-23T12:00:00Z"
+                },
+                "observed_at": null,
+                "collected_at": "2026-10-17T12:05:00Z",
+                "freshness": {
+                  "status": "fresh",
+                  "assessed_at": "2026-10-17T12:05:00Z",
+                  "max_age_seconds": 300,
+                  "basis": "collected_at"
+                },
+                "measurement": {
+                  "kind": "quota_utilization",
+                  "used_fraction": "0.91"
+                },
+                "source": {
+                  "collector": "claude-oauth-usage",
+                  "interface_class": "compatibility_endpoint",
+                  "version": "2025-04-20",
+                  "verification": "fixture",
+                  "value_basis": "reported",
+                  "derivation": null,
+                  "input_observation_refs": []
+                },
+                "coverage": {
+                  "pagination": "complete",
+                  "accounting": "partial",
+                  "exclusions": [
+                    "other-scoped-limits",
+                    "extra-usage",
+                    "credits"
+                  ]
+                }
+              }
+            },
+            "metric_definitions": {
+              "claude-five-hour-used": {
+                "kind": "quota_utilization",
+                "window_id": "five_hour",
+                "applies_to": {
+                  "kind": "all_models"
+                }
+              },
+              "claude-seven-day-used": {
+                "kind": "quota_utilization",
+                "window_id": "seven_day",
+                "applies_to": {
+                  "kind": "all_models"
+                }
+              },
+              "claude-fable-weekly-used": {
+                "kind": "quota_utilization",
+                "window_id": "weekly_fable",
+                "applies_to": {
+                  "kind": "model_family",
+                  "family_id": "claude-fable"
+                }
+              }
+            },
+            "collection_targets": {
+              "t002": {
+                "provider": "anthropic",
+                "collector": "claude-oauth-usage",
+                "operation": "quota",
+                "related_access_refs": [
+                  "a002"
+                ],
+                "requested_scope_ref": "s004",
+                "authenticated_scope_ref": "s004",
+                "identity_binding": "verified",
+                "requested_period": null,
+                "started_at": "2026-10-17T12:05:00Z",
+                "finished_at": "2026-10-17T12:05:00Z",
+                "collection_status": "ok",
+                "results": [
+                  {
+                    "metric_id": "claude-five-hour-used",
+                    "capability": "supported",
+                    "status": "available",
+                    "observation_refs": [
+                      "o001"
+                    ],
+                    "previous_observation_refs": [],
+                    "conflicting_observation_refs": [],
+                    "diagnostics": []
+                  },
+                  {
+                    "metric_id": "claude-seven-day-used",
+                    "capability": "supported",
+                    "status": "available",
+                    "observation_refs": [
+                      "o002"
+                    ],
+                    "previous_observation_refs": [],
+                    "conflicting_observation_refs": [],
+                    "diagnostics": []
+                  },
+                  {
+                    "metric_id": "claude-fable-weekly-used",
+                    "capability": "supported",
+                    "status": "available",
+                    "observation_refs": [
+                      "o003"
+                    ],
+                    "previous_observation_refs": [],
+                    "conflicting_observation_refs": [],
+                    "diagnostics": []
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "format_version": "0.1-design",
+      "data_mode": "synthetic",
+      "dataset_id": "example-dataset",
+      "batch_id": "batch-003",
+      "producer_id": "example-owner",
+      "recorded_at": "2026-10-17T12:07:00Z",
+      "events": [
+        {
+          "event_id": "price-2",
+          "kind": "price_publication",
+          "captured_at": "2026-10-17T12:07:00Z",
+          "source_ref": "example-owner",
+          "price_ref": "price-2",
+          "supply_ref": "supply-1",
+          "binding_ref": "registry-1",
+          "payload": {
+            "authority": "example-owner",
+            "parent_ref": "price-1",
+            "effective_at": "2026-10-17T12:07:00Z",
+            "clock_uncertainty_seconds": "0",
+            "method_version": "manual/1",
+            "currency": "USD",
+            "per": "agent_hour",
+            "hour_convention": "representative_working_agent_hour",
+            "basis": "declared",
+            "routes": {
+              "route-fable": {
+                "cash_rate": "0",
+                "shadow_rate": "2.00"
+              },
+              "route-other": {
+                "cash_rate": "0",
+                "shadow_rate": "0.40"
+              }
+            }
+          }
+        }
+      ],
+      "artifacts": {}
+    },
+    {
+      "format_version": "0.1-design",
+      "data_mode": "synthetic",
+      "dataset_id": "example-dataset",
+      "batch_id": "batch-004",
+      "producer_id": "example-owner",
+      "recorded_at": "2026-10-17T12:10:00Z",
+      "events": [
+        {
+          "event_id": "sample-3",
+          "kind": "accounting_sample",
+          "captured_at": "2026-10-17T12:10:00Z",
+          "source_ref": "accounting-claude",
+          "price_ref": "price-2",
+          "supply_ref": "supply-1",
+          "binding_ref": "registry-1",
+          "payload": {
+            "nominal_tick": "2026-10-17T12:10:00Z",
+            "started_at": "2026-10-17T12:10:00Z",
+            "finished_at": "2026-10-17T12:10:00Z",
+            "control_status": "ok",
+            "selected_targets": [
+              "t002"
+            ],
+            "collection_policy_ref": "fixture-five-minute/1",
+            "accounting_contract": "1.0",
+            "accounting_version": "ed7c851",
+            "report_ref": "sha256:0ec9c3222a017bbb1fdc5ddf48f11baa5f4a1a2841520b382cc68d0840b7f726"
+          }
+        },
+        {
+          "event_id": "counter-2",
+          "kind": "counter_sample",
+          "captured_at": "2026-10-17T12:10:00Z",
+          "source_ref": "synthetic-counter",
+          "price_ref": "price-2",
+          "supply_ref": "supply-1",
+          "binding_ref": "registry-1",
+          "payload": {
+            "counter_ref": "session-input",
+            "counter_epoch": "epoch-1",
+            "scope_ref": "session-1",
+            "route_ref": "route-fable",
+            "model_scope": "single_declared_route",
+            "semantics": "cumulative_flow",
+            "observed_at": "2026-10-17T12:10:00Z",
+            "unit": "tokens",
+            "category": "input",
+            "value": "1300",
+            "includes": [],
+            "inclusion_status": "fixture_declared",
+            "verification": "fixture"
+          }
+        }
+      ],
+      "artifacts": {
+        "sha256:0ec9c3222a017bbb1fdc5ddf48f11baa5f4a1a2841520b382cc68d0840b7f726": {
+          "kind": "accounting_report",
+          "value": {
+            "schema_version": "1.0",
+            "data_mode": "synthetic",
+            "identity_namespace": "00000000000000000000000000000005",
+            "generated_at": "2026-10-17T12:10:00Z",
+            "collection_status": "ok",
+            "provider_index": {
+              "openai": {
+                "api": [],
+                "subscription": []
+              },
+              "anthropic": {
+                "api": [],
+                "subscription": [
+                  "a002"
+                ]
+              }
+            },
+            "accesses": {
+              "a002": {
+                "provider": "anthropic",
+                "billing_provider": "anthropic",
+                "access_type": "subscription",
+                "product": "claude-code",
+                "scope_ref": "s004",
+                "pool_constraints": [
+                  {
+                    "mode": "all",
+                    "members": [
+                      {
+                        "pool_ref": "p002",
+                        "metric_id": "claude-five-hour-used"
+                      },
+                      {
+                        "pool_ref": "p002",
+                        "metric_id": "claude-seven-day-used"
+                      },
+                      {
+                        "pool_ref": "p002",
+                        "metric_id": "claude-fable-weekly-used"
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            "scopes": {
+              "s003": {
+                "provider": "anthropic",
+                "kind": "organization",
+                "parent_ref": null,
+                "binding_generation": 1
+              },
+              "s004": {
+                "provider": "anthropic",
+                "kind": "account",
+                "parent_ref": "s003",
+                "binding_generation": 1
+              }
+            },
+            "pools": {
+              "p002": {
+                "provider": "anthropic",
+                "kind": "allowance",
+                "scope_ref": "s004"
+              }
+            },
+            "api_keys": {},
+            "observations": {
+              "o001": {
+                "metric_id": "claude-five-hour-used",
+                "pool_ref": "p002",
+                "measured_scope_ref": "s004",
+                "binding_generation": 1,
+                "identity_binding": "verified",
+                "authenticated_scope_ref": "s004",
+                "dimensions": {
+                  "model": null,
+                  "api_key_ref": null,
+                  "workspace_ref": null
+                },
+                "aggregation": "snapshot",
+                "row_role": "total",
+                "window": {
+                  "kind": "opaque",
+                  "duration_seconds": null,
+                  "resets_at": "2026-10-17T12:30:00Z"
+                },
+                "observed_at": null,
+                "collected_at": "2026-10-17T12:10:00Z",
+                "freshness": {
+                  "status": "fresh",
+                  "assessed_at": "2026-10-17T12:10:00Z",
+                  "max_age_seconds": 300,
+                  "basis": "collected_at"
+                },
+                "measurement": {
+                  "kind": "quota_utilization",
+                  "used_fraction": "0.44"
+                },
+                "source": {
+                  "collector": "claude-oauth-usage",
+                  "interface_class": "compatibility_endpoint",
+                  "version": "2025-04-20",
+                  "verification": "fixture",
+                  "value_basis": "reported",
+                  "derivation": null,
+                  "input_observation_refs": []
+                },
+                "coverage": {
+                  "pagination": "complete",
+                  "accounting": "partial",
+                  "exclusions": [
+                    "other-scoped-limits",
+                    "extra-usage",
+                    "credits"
+                  ]
+                }
+              },
+              "o002": {
+                "metric_id": "claude-seven-day-used",
+                "pool_ref": "p002",
+                "measured_scope_ref": "s004",
+                "binding_generation": 1,
+                "identity_binding": "verified",
+                "authenticated_scope_ref": "s004",
+                "dimensions": {
+                  "model": null,
+                  "api_key_ref": null,
+                  "workspace_ref": null
+                },
+                "aggregation": "snapshot",
+                "row_role": "total",
+                "window": {
+                  "kind": "opaque",
+                  "duration_seconds": null,
+                  "resets_at": "2026-10-24T12:00:00Z"
+                },
+                "observed_at": null,
+                "collected_at": "2026-10-17T12:10:00Z",
+                "freshness": {
+                  "status": "fresh",
+                  "assessed_at": "2026-10-17T12:10:00Z",
+                  "max_age_seconds": 300,
+                  "basis": "collected_at"
+                },
+                "measurement": {
+                  "kind": "quota_utilization",
+                  "used_fraction": "0.47"
+                },
+                "source": {
+                  "collector": "claude-oauth-usage",
+                  "interface_class": "compatibility_endpoint",
+                  "version": "2025-04-20",
+                  "verification": "fixture",
+                  "value_basis": "reported",
+                  "derivation": null,
+                  "input_observation_refs": []
+                },
+                "coverage": {
+                  "pagination": "complete",
+                  "accounting": "partial",
+                  "exclusions": [
+                    "other-scoped-limits",
+                    "extra-usage",
+                    "credits"
+                  ]
+                }
+              },
+              "o003": {
+                "metric_id": "claude-fable-weekly-used",
+                "pool_ref": "p002",
+                "measured_scope_ref": "s004",
+                "binding_generation": 1,
+                "identity_binding": "verified",
+                "authenticated_scope_ref": "s004",
+                "dimensions": {
+                  "model": null,
+                  "api_key_ref": null,
+                  "workspace_ref": null
+                },
+                "aggregation": "snapshot",
+                "row_role": "total",
+                "window": {
+                  "kind": "opaque",
+                  "duration_seconds": null,
+                  "resets_at": "2026-10-23T12:00:00Z"
+                },
+                "observed_at": null,
+                "collected_at": "2026-10-17T12:10:00Z",
+                "freshness": {
+                  "status": "fresh",
+                  "assessed_at": "2026-10-17T12:10:00Z",
+                  "max_age_seconds": 300,
+                  "basis": "collected_at"
+                },
+                "measurement": {
+                  "kind": "quota_utilization",
+                  "used_fraction": "0.91"
+                },
+                "source": {
+                  "collector": "claude-oauth-usage",
+                  "interface_class": "compatibility_endpoint",
+                  "version": "2025-04-20",
+                  "verification": "fixture",
+                  "value_basis": "reported",
+                  "derivation": null,
+                  "input_observation_refs": []
+                },
+                "coverage": {
+                  "pagination": "complete",
+                  "accounting": "partial",
+                  "exclusions": [
+                    "other-scoped-limits",
+                    "extra-usage",
+                    "credits"
+                  ]
+                }
+              }
+            },
+            "metric_definitions": {
+              "claude-five-hour-used": {
+                "kind": "quota_utilization",
+                "window_id": "five_hour",
+                "applies_to": {
+                  "kind": "all_models"
+                }
+              },
+              "claude-seven-day-used": {
+                "kind": "quota_utilization",
+                "window_id": "seven_day",
+                "applies_to": {
+                  "kind": "all_models"
+                }
+              },
+              "claude-fable-weekly-used": {
+                "kind": "quota_utilization",
+                "window_id": "weekly_fable",
+                "applies_to": {
+                  "kind": "model_family",
+                  "family_id": "claude-fable"
+                }
+              }
+            },
+            "collection_targets": {
+              "t002": {
+                "provider": "anthropic",
+                "collector": "claude-oauth-usage",
+                "operation": "quota",
+                "related_access_refs": [
+                  "a002"
+                ],
+                "requested_scope_ref": "s004",
+                "authenticated_scope_ref": "s004",
+                "identity_binding": "verified",
+                "requested_period": null,
+                "started_at": "2026-10-17T12:10:00Z",
+                "finished_at": "2026-10-17T12:10:00Z",
+                "collection_status": "ok",
+                "results": [
+                  {
+                    "metric_id": "claude-five-hour-used",
+                    "capability": "supported",
+                    "status": "available",
+                    "observation_refs": [
+                      "o001"
+                    ],
+                    "previous_observation_refs": [],
+                    "conflicting_observation_refs": [],
+                    "diagnostics": []
+                  },
+                  {
+                    "metric_id": "claude-seven-day-used",
+                    "capability": "supported",
+                    "status": "available",
+                    "observation_refs": [
+                      "o002"
+                    ],
+                    "previous_observation_refs": [],
+                    "conflicting_observation_refs": [],
+                    "diagnostics": []
+                  },
+                  {
+                    "metric_id": "claude-fable-weekly-used",
+                    "capability": "supported",
+                    "status": "available",
+                    "observation_refs": [
+                      "o003"
+                    ],
+                    "previous_observation_refs": [],
+                    "conflicting_observation_refs": [],
+                    "diagnostics": []
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "format_version": "0.1-design",
+      "data_mode": "synthetic",
+      "dataset_id": "example-dataset",
+      "batch_id": "batch-005",
+      "producer_id": "example-owner",
+      "recorded_at": "2026-10-17T12:15:00Z",
+      "events": [
+        {
+          "event_id": "attempt-4",
+          "kind": "attempt",
+          "captured_at": "2026-10-17T12:15:00Z",
+          "source_ref": "accounting-claude",
+          "price_ref": "price-2",
+          "supply_ref": "supply-1",
+          "binding_ref": "registry-1",
+          "payload": {
+            "nominal_tick": "2026-10-17T12:15:00Z",
+            "started_at": "2026-10-17T12:15:00Z",
+            "finished_at": "2026-10-17T12:15:00Z",
+            "status": "failed",
+            "code": "input_unreadable",
+            "retry_not_before": null
+          }
+        }
+      ],
+      "artifacts": {}
+    },
+    {
+      "format_version": "0.1-design",
+      "data_mode": "synthetic",
+      "dataset_id": "example-dataset",
+      "batch_id": "batch-006",
+      "producer_id": "example-owner",
+      "recorded_at": "2026-10-17T12:35:00Z",
+      "events": [
+        {
+          "event_id": "sample-5",
+          "kind": "accounting_sample",
+          "captured_at": "2026-10-17T12:35:00Z",
+          "source_ref": "accounting-claude",
+          "price_ref": "price-2",
+          "supply_ref": "supply-1",
+          "binding_ref": "registry-1",
+          "payload": {
+            "nominal_tick": "2026-10-17T12:35:00Z",
+            "started_at": "2026-10-17T12:35:00Z",
+            "finished_at": "2026-10-17T12:35:00Z",
+            "control_status": "ok",
+            "selected_targets": [
+              "t002"
+            ],
+            "collection_policy_ref": "fixture-five-minute/1",
+            "accounting_contract": "1.0",
+            "accounting_version": "ed7c851",
+            "report_ref": "sha256:d4a5e9122f791c1d1c86dca3005924d36557c54ca030f8094413bddb575f7d64"
+          }
+        }
+      ],
+      "artifacts": {
+        "sha256:d4a5e9122f791c1d1c86dca3005924d36557c54ca030f8094413bddb575f7d64": {
+          "kind": "accounting_report",
+          "value": {
+            "schema_version": "1.0",
+            "data_mode": "synthetic",
+            "identity_namespace": "00000000000000000000000000000005",
+            "generated_at": "2026-10-17T12:35:00Z",
+            "collection_status": "ok",
+            "provider_index": {
+              "openai": {
+                "api": [],
+                "subscription": []
+              },
+              "anthropic": {
+                "api": [],
+                "subscription": [
+                  "a002"
+                ]
+              }
+            },
+            "accesses": {
+              "a002": {
+                "provider": "anthropic",
+                "billing_provider": "anthropic",
+                "access_type": "subscription",
+                "product": "claude-code",
+                "scope_ref": "s004",
+                "pool_constraints": [
+                  {
+                    "mode": "all",
+                    "members": [
+                      {
+                        "pool_ref": "p002",
+                        "metric_id": "claude-five-hour-used"
+                      },
+                      {
+                        "pool_ref": "p002",
+                        "metric_id": "claude-seven-day-used"
+                      },
+                      {
+                        "pool_ref": "p002",
+                        "metric_id": "claude-fable-weekly-used"
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            "scopes": {
+              "s003": {
+                "provider": "anthropic",
+                "kind": "organization",
+                "parent_ref": null,
+                "binding_generation": 1
+              },
+              "s004": {
+                "provider": "anthropic",
+                "kind": "account",
+                "parent_ref": "s003",
+                "binding_generation": 1
+              }
+            },
+            "pools": {
+              "p002": {
+                "provider": "anthropic",
+                "kind": "allowance",
+                "scope_ref": "s004"
+              }
+            },
+            "api_keys": {},
+            "observations": {
+              "o001": {
+                "metric_id": "claude-five-hour-used",
+                "pool_ref": "p002",
+                "measured_scope_ref": "s004",
+                "binding_generation": 1,
+                "identity_binding": "verified",
+                "authenticated_scope_ref": "s004",
+                "dimensions": {
+                  "model": null,
+                  "api_key_ref": null,
+                  "workspace_ref": null
+                },
+                "aggregation": "snapshot",
+                "row_role": "total",
+                "window": {
+                  "kind": "opaque",
+                  "duration_seconds": null,
+                  "resets_at": "2026-10-17T17:30:00Z"
+                },
+                "observed_at": null,
+                "collected_at": "2026-10-17T12:35:00Z",
+                "freshness": {
+                  "status": "fresh",
+                  "assessed_at": "2026-10-17T12:35:00Z",
+                  "max_age_seconds": 300,
+                  "basis": "collected_at"
+                },
+                "measurement": {
+                  "kind": "quota_utilization",
+                  "used_fraction": "0.01"
+                },
+                "source": {
+                  "collector": "claude-oauth-usage",
+                  "interface_class": "compatibility_endpoint",
+                  "version": "2025-04-20",
+                  "verification": "fixture",
+                  "value_basis": "reported",
+                  "derivation": null,
+                  "input_observation_refs": []
+                },
+                "coverage": {
+                  "pagination": "complete",
+                  "accounting": "partial",
+                  "exclusions": [
+                    "other-scoped-limits",
+                    "extra-usage",
+                    "credits"
+                  ]
+                }
+              },
+              "o002": {
+                "metric_id": "claude-seven-day-used",
+                "pool_ref": "p002",
+                "measured_scope_ref": "s004",
+                "binding_generation": 1,
+                "identity_binding": "verified",
+                "authenticated_scope_ref": "s004",
+                "dimensions": {
+                  "model": null,
+                  "api_key_ref": null,
+                  "workspace_ref": null
+                },
+                "aggregation": "snapshot",
+                "row_role": "total",
+                "window": {
+                  "kind": "opaque",
+                  "duration_seconds": null,
+                  "resets_at": "2026-10-24T12:00:00Z"
+                },
+                "observed_at": null,
+                "collected_at": "2026-10-17T12:35:00Z",
+                "freshness": {
+                  "status": "fresh",
+                  "assessed_at": "2026-10-17T12:35:00Z",
+                  "max_age_seconds": 300,
+                  "basis": "collected_at"
+                },
+                "measurement": {
+                  "kind": "quota_utilization",
+                  "used_fraction": "0.47"
+                },
+                "source": {
+                  "collector": "claude-oauth-usage",
+                  "interface_class": "compatibility_endpoint",
+                  "version": "2025-04-20",
+                  "verification": "fixture",
+                  "value_basis": "reported",
+                  "derivation": null,
+                  "input_observation_refs": []
+                },
+                "coverage": {
+                  "pagination": "complete",
+                  "accounting": "partial",
+                  "exclusions": [
+                    "other-scoped-limits",
+                    "extra-usage",
+                    "credits"
+                  ]
+                }
+              },
+              "o003": {
+                "metric_id": "claude-fable-weekly-used",
+                "pool_ref": "p002",
+                "measured_scope_ref": "s004",
+                "binding_generation": 1,
+                "identity_binding": "verified",
+                "authenticated_scope_ref": "s004",
+                "dimensions": {
+                  "model": null,
+                  "api_key_ref": null,
+                  "workspace_ref": null
+                },
+                "aggregation": "snapshot",
+                "row_role": "total",
+                "window": {
+                  "kind": "opaque",
+                  "duration_seconds": null,
+                  "resets_at": "2026-10-23T12:00:00Z"
+                },
+                "observed_at": null,
+                "collected_at": "2026-10-17T12:35:00Z",
+                "freshness": {
+                  "status": "fresh",
+                  "assessed_at": "2026-10-17T12:35:00Z",
+                  "max_age_seconds": 300,
+                  "basis": "collected_at"
+                },
+                "measurement": {
+                  "kind": "quota_utilization",
+                  "used_fraction": "0.91"
+                },
+                "source": {
+                  "collector": "claude-oauth-usage",
+                  "interface_class": "compatibility_endpoint",
+                  "version": "2025-04-20",
+                  "verification": "fixture",
+                  "value_basis": "reported",
+                  "derivation": null,
+                  "input_observation_refs": []
+                },
+                "coverage": {
+                  "pagination": "complete",
+                  "accounting": "partial",
+                  "exclusions": [
+                    "other-scoped-limits",
+                    "extra-usage",
+                    "credits"
+                  ]
+                }
+              }
+            },
+            "metric_definitions": {
+              "claude-five-hour-used": {
+                "kind": "quota_utilization",
+                "window_id": "five_hour",
+                "applies_to": {
+                  "kind": "all_models"
+                }
+              },
+              "claude-seven-day-used": {
+                "kind": "quota_utilization",
+                "window_id": "seven_day",
+                "applies_to": {
+                  "kind": "all_models"
+                }
+              },
+              "claude-fable-weekly-used": {
+                "kind": "quota_utilization",
+                "window_id": "weekly_fable",
+                "applies_to": {
+                  "kind": "model_family",
+                  "family_id": "claude-fable"
+                }
+              }
+            },
+            "collection_targets": {
+              "t002": {
+                "provider": "anthropic",
+                "collector": "claude-oauth-usage",
+                "operation": "quota",
+                "related_access_refs": [
+                  "a002"
+                ],
+                "requested_scope_ref": "s004",
+                "authenticated_scope_ref": "s004",
+                "identity_binding": "verified",
+                "requested_period": null,
+                "started_at": "2026-10-17T12:35:00Z",
+                "finished_at": "2026-10-17T12:35:00Z",
+                "collection_status": "ok",
+                "results": [
+                  {
+                    "metric_id": "claude-five-hour-used",
+                    "capability": "supported",
+                    "status": "available",
+                    "observation_refs": [
+                      "o001"
+                    ],
+                    "previous_observation_refs": [],
+                    "conflicting_observation_refs": [],
+                    "diagnostics": []
+                  },
+                  {
+                    "metric_id": "claude-seven-day-used",
+                    "capability": "supported",
+                    "status": "available",
+                    "observation_refs": [
+                      "o002"
+                    ],
+                    "previous_observation_refs": [],
+                    "conflicting_observation_refs": [],
+                    "diagnostics": []
+                  },
+                  {
+                    "metric_id": "claude-fable-weekly-used",
+                    "capability": "supported",
+                    "status": "available",
+                    "observation_refs": [
+                      "o003"
+                    ],
+                    "previous_observation_refs": [],
+                    "conflicting_observation_refs": [],
+                    "diagnostics": []
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "expected": {
+    "native_interval": {
+      "start": "2026-10-17T12:05:00Z",
+      "end": "2026-10-17T12:10:00Z",
+      "input_tokens": "300",
+      "price_exposure": "mixed",
+      "price_refs": [
+        "price-1",
+        "price-2"
+      ],
+      "allocate_between_prices": false
+    },
+    "failed_tick": "2026-10-17T12:15:00Z",
+    "new_episode_at": "2026-10-17T12:35:00Z",
+    "boundary_reasons": [
+      "gap_over_15_minutes",
+      "reported_window_changed",
+      "utilization_drop"
+    ],
+    "quota_observations_per_report": 3,
+    "duplicate_import_adds_usage": false
+  }
+}

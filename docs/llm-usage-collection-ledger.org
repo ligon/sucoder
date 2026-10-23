@@ -1,0 +1,105 @@
+#+TITLE: Prior-Art Ledger: LLM Usage Collection
+#+AUTHOR: Sue
+#+DATE: 2026-10-17
+
+* 1. Task and search tier
+
+Design collection of model-tagged usage, advertised shadow prices and supply state sufficient to estimate reset-adjusted depletion rates and, later, price-conditional demand.
+The model-identification review requires a native metadata stream in the first model-aware pilot; quota-only readiness is a useful earlier milestone, not completion of that pilot.
+The human's 2026-10-17 scope amendment requires both Claude and Codex adapters and distinct model routes in the [[file:llm-usage-implementation-charter.org][implementation charter]].
+The human subsequently selected the existing =llm-accounting= repository and distribution for implementation, reusing its tooling instead of creating a separate project.
+The deliverable is a practical design and synthetic replay, not a running collector or a change to account credentials.
+The conceptual agreement is in [[file:llm-shadow-values.org][Standing Shadow Values]].
+
+SuCoder baseline is =17a65ae= on =design/llm-shadow-values=; =ligon/main= is newer and must be used to refresh runtime integration anchors before implementation.
+llm-accounting baseline is =ed7c851=.
+Search tier: GitNexus CLI query/context for SuCoder, direct source and named tests in both repositories, installed Codex 0.162.1 protocol generation, and official native-interface documentation.
+GitNexus reports three commits of staleness, so source files are the authority for line numbers and current behavior.
+No conversation histories, credentials or live provider accounts were inspected.
+
+* 2. Existing machinery
+
+- Packaging and CLI :: [[file:../../llm-accounting/pyproject.toml][pyproject.toml]] installs =llm_accounting*= from =src/= and exposes the existing =llm-accounting= command through [[file:../../llm-accounting/src/llm_accounting/cli.py::71][cli.main]].
+  =tests/test_runtime.py:test_config_inspection_and_fixtures_do_not_touch_auth_network_or_native_cli= and =test_absolute_xdg_default_applies_to_all_accounting_commands= cover offline/configuration boundaries.
+  Extend this distribution, namespace and test suite with usage modules and an additional command entrypoint; fresh-wheel coverage for the new resources is new acceptance work.
+- Accounting entrypoint :: [[file:../../llm-accounting/src/llm_accounting/live.py::15][collect_live]] composes normalized API and subscription sources, isolates failures, validates reports and checks binding; =tests/test_subscriptions.py:test_combined_report_keeps_windows_permissions_state_and_api_unconfigured= and =test_complete_source_reading_coalesces_reordered_metric_subsets= cover assembly and one shared reading.
+  Reuse after the passive-collection prerequisite below.
+- Report validation and identity :: [[file:../../llm-accounting/src/llm_accounting/contracts.py::543][validate]], =check_binding= at line 549, =physical_metric= at line 231 and =row_identity= at line 260 define version, binding and within-export row identity.
+  =tests/test_runtime.py:test_report_local_observation_aliases_never_overwrite=, =test_changed_account_generation_rejects_prior= and =test_prior_namespace_mismatch_rejects_import= establish boundaries.
+  Reuse validation; extend identity across exports without treating observation aliases as global IDs.
+- Export provenance :: [[file:../../llm-accounting/src/llm_accounting/reports.py::240][check_public_fields]] and =test_unapproved_public_strings_are_rejected_across_all_export_paths= allowlist public output.
+  Reuse sanitized reports, not private config or provider response bodies.
+- Snapshot and metric semantics :: [[file:../../llm-accounting/docs/schema-contract.md][schema-contract.md]] and [[file:../../llm-accounting/docs/model-limits-ledger.md][model-limits-ledger.md]] define one physical pool, overlapping applicability, unknown denominators and non-additive snapshots.
+  =tests/test_subscriptions.py:test_model_limits_preserve_independent_denominators_windows_and_one_pool= and =tests/test_model_limits_adversarial.py:test_known_claude_quota_cannot_become_model_usage_or_child_scope= cover these distinctions.
+- Credential renewal :: [[file:../../llm-accounting/src/llm_accounting/claude_probe.py::34][refresh_claude_credential]] launches a minimal Claude inference turn; =read_claude_credential= at line 65 invokes it on expiry, and =subscriptions.py:310= uses that reader.
+  =tests/test_live_probes.py:test_claude_expired_token_is_renewed_by_native_cli_and_reread= confirms renewal.
+  =read_stored_claude_credential= at line 79 already supports a passive read, but the combined entrypoint does not expose that choice.
+  Extend the accounting collection policy before scheduled Claude sampling; do not infer passivity from the older CLI/contract prose.
+- SuCoder launch identity :: [[file:../sucoder/cli.py::2334][agents_run]], =collaborate= at line 2451 and the existing harness/model launch machinery select execution routes; =tests/test_cli.py:test_launch_commands_forward_harness_and_model= verifies forwarding.
+  Reuse selection; future metadata emission must exclude command arguments, environment, paths and prelude text.
+- Session visibility :: [[file:../sucoder/session.py::19][RemoteSession]] is a replaceable launcher record, not a usage history; [[file:../sucoder/sessions_report.py::276][SessionEntry]] distinguishes scheduler/tmux presence from an agent process.
+  =tests/test_remote.py:test_session_save_load_roundtrip= and =tests/test_sessions_report.py:test_a_shell_in_the_pane_means_the_agent_exited= cover these boundaries.
+  Extend optional lifecycle metadata later; existing =sucoder sessions= has no JSON interface and must not be scraped as an activity counter.
+- Native Codex metadata :: Codex 0.162.1 generated =ThreadTokenUsageUpdatedNotification=, =ThreadTokenUsage= and =TokenUsageBreakdown= schemas expose thread/turn references and =total=/=last= breakdowns.
+  [[https://learn.chatgpt.com/docs/app-server][Official App Server documentation]] describes token-usage and turn notifications.
+  The token update has no model field; =Thread.model= explicitly describes configured/latest state, while =TurnStartParams.model= and =ModelReroutedNotification= provide separate selection/reroute evidence.
+  Supporting capture needs an owning client's stream and counter-semantics fixtures; a separately started quota app-server does not observe other sessions.
+- Codex OpenTelemetry :: [[https://learn.chatgpt.com/docs/config-file/config-advanced#observability-and-telemetry][Official OpenAI documentation]], checked 2026-10-17, describes model-tagged log metadata and completion token counts, with OTLP HTTP/gRPC export.
+  Select this as the prospective primary Codex quantity source, with source/build/transport-specific verification; documentation does not prove serving-model identity, request deduplication or SSE/WebSocket coverage in the installed build.
+- Native Claude metadata :: [[https://code.claude.com/docs/en/statusline][Official status-line documentation]], checked 2026-10-17, distinguishes context/last-response token snapshots from an accumulated client-side session cost estimate and durations.
+  This source is a candidate optional adapter, not an already implemented or complete token ledger.
+- Model-tagged Claude telemetry :: A subsequent red team found the [[https://code.claude.com/docs/en/monitoring-usage#api-request-event][documented monitoring interface]], which is a stronger prospective source for model-tagged usage than the status line.
+  Its native-reported model evidence and transport semantics still need adapter verification; it does not identify shared subscription metering weights by itself.
+  Select request events as the first adapter's primary quantity source; metrics are corroboration, not additional use.
+- Telemetry transport :: The [[https://opentelemetry.io/docs/specs/otlp/#duplicate-data][OTLP specification]] permits redelivery; the [[https://opentelemetry.io/docs/specs/otel/metrics/data-model/#temporality][metrics data model]] distinguishes cumulative and delta intervals.
+  These are source contracts, not evidence of a locally tested receiver or exact deduplication without native identities.
+
+* 3. Definitions in force
+
+- Pool :: "Pools are explicit resources at a scope" (=llm-accounting/docs/schema-contract.md:79=).
+- Utilization :: "a nonnegative decimal-string fraction consumed, not a percentage added across windows" (=schema-contract.md:187=).
+- Consumption :: "Never sum all token fields or convert utilization changes to consumption" (=schema-contract.md:199=).
+- Identity :: =row_identity= explicitly defines "Identity within an export; observation aliases are deliberately excluded" (=contracts.py:260=).
+- Integration :: "Reports do not reserve quota or promise that concurrent/unrelated activity will fit" (=WORKPLAN.md:339=).
+- Hours :: The conceptual design distinguishes collective draw per clock hour from resource use per agent-hour; residency, open turns and API waiting are different exposure measures.
+- Model identity :: Requested, configured, native-reported and served identities are separate evidence; neither a launch label nor quota applicability proves the model that did work.
+- Coverage :: Completeness of the instrumented population and coverage of the whole account are distinct; missing or external activity is unknown, not zero.
+- Cost :: Native client estimates, provider-rated monetary observations, local API-reference conversions and subscription scarcity values are separate quantities.
+
+* 4. Invariants
+
+Keep observations, counter-derived flows, declared priors and forecasts distinct.
+Preserve original collection/source times, unknowns, binding generations, applicability, quota-window kind and source quality.
+Repeated collection of a snapshot is not another unit of consumption; interval revisions replace compatible source facts rather than adding to them.
+Relevant account-binding or resource-semantic changes break comparability unless an explicit mapping establishes continuity; unrelated catalog additions do not.
+Quota trajectory forecasting may use compatible utilization observations but cannot claim token consumption or attribute a shared-pool change to a particular model.
+Normal sampling must not start inference, renew credentials, inspect another Unix identity or alter existing sessions.
+Model-tagged throughput does not identify shared quota weights without variation and assumptions about background use, windows and workload.
+
+* 5. Reuse decisions
+
+Reuse accounting collection and validation rather than creating new provider quota clients.
+Extend the existing repository/distribution under the proposed =llm_accounting.usage= namespace; install the usage command with the existing package and reuse shared schemas/configuration/CLI conventions where their contracts fit.
+Reuse the existing public resource definitions and sanitized catalogs; add versioned history references around them.
+Add a history store, publication events, attempt records and temporal joins because the current library is export-only and provides no observation database or cross-export history reconciliation.
+Keep history envelopes and report contracts distinct within that repository; new storage must not change the existing accounting CLI defaults or published report semantics implicitly.
+Add a prospective Claude request-metadata adapter as required new work for the model-aware pilot, after its identity, quantity and coverage semantics are verified; never use context-window occupancy as cumulative token use.
+Add the required Codex telemetry adapter and supporting model-selection evidence; reuse shared ingestion/history mechanics while keeping source namespaces, account bindings and inclusion semantics distinct.
+Extend the history envelope with model evidence, request/stream identities and coverage records because the accounting quota contract intentionally does not represent model-attributed use.
+Keep the estimator separate from collection so later methods can replay the original evidence and price publications.
+
+* 6. Design choices and verification
+
+The practical design must choose storage, sampling, clock handling, deduplication, price publication, epoch boundaries and minimum export fields.
+Remaining limitations are unknown provider denominators/replenishment rules, incomplete external activity attribution, and missing passive collection policy in the current combined Claude path.
+These limit interpretation or specific live adapters; they do not block writing the design or collecting already normalized reports offline.
+All 270 existing llm-accounting tests and its validator for three schemas/fourteen examples pass on the inspected baseline.
+Four accounting reports in the original replay pass the same schema and binding checks.
+Independent semantics and operations reviews accepted the final design after rechecking source-fact identity, knowledge snapshots, throttle fallback and descendant cleanup requirements.
+The subsequent [[file:llm-usage-collection-review.org][model-identification red team]] finds that this acceptance did not establish readiness to estimate Fable-versus-Opus use: the first slice lacks a required model-observation stream.
+The response revises that milestone, specifies the required metadata adapter and adds synthetic model-identification cases; native capture and calibration remain implementation work.
+Both original model-identification reviewers accepted the revised specification after rechecking identity, coverage, hour semantics and emitter authentication.
+That acceptance predates the explicit Codex scope extension; the implementation charter requires acceptance of both adapters rather than treating the earlier review as Codex verification.
+Offline validation confirms the 14 scenario projections' referenced artifacts and numerical counterexamples; it does not validate an implemented reader or adapter.
+Runnable artifact validation and review outcomes are recorded in [[file:llm-usage-collection.org][the collection design]].
+The design reuses the definitions in sections 2-4; the history/capture mechanisms in section 5 are specified as new work, not represented as existing tested machinery.

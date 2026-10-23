@@ -1,0 +1,591 @@
+#+TITLE: Practical Design for LLM Usage Collection
+#+AUTHOR: Sue
+#+DATE: 2026-10-17
+#+DESCRIPTION: Quota trajectories, model-tagged native use, advertised prices and coverage for estimating depletion rates.
+#+PROPERTY: header-args :eval never-export :tangle no :exports code
+
+* Deliverable and first useful result
+
+Add =llm-usage= collection and history reading to the existing =llm-accounting= repository and distribution.
+Its first model-aware result combines a time series for each observed quota constraint with model-tagged usage from explicitly instrumented clients, linked to price and supply history.
+It distinguishes observed use of Claude and Codex models within that population, while preserving unknown external use and shared subscription metering weights.
+Neither completed-task labels nor a fitted demand model is required.
+
+This revised proposal is grounded in the [[file:llm-usage-collection-ledger.org][prior-art ledger]] and responds to the [[file:llm-usage-collection-review.org][model-identification red team]].
+The economic objective and meaning of an agent-hour are in [[file:llm-shadow-values.org][Standing Shadow Values]].
+No collector, native hook or timer has been installed by this design work.
+
+There are two readiness milestones within the first delivery.
+Quota-ready collection stores normalized accounting snapshots, immutable price/supply publications and attempt records, then exports quota series and price history.
+The model-aware pilot additionally requires verified Claude and Codex metadata adapters, source coverage records and model-tagged usage exports alongside those quota observations.
+Claude request telemetry and Codex completion telemetry are the selected primary sources; neither a quota-only nor a Claude-only installation completes the implementation charter.
+Lifecycle/exposure-hour measures, harnesses beyond Claude/Codex and decision records can follow without holding up model-tagged throughput per clock hour.
+Planning prices per agent-hour continue to use declared workload assumptions until a compatible exposure-hour measure is available.
+
+* Ownership and interfaces
+
+=llm-accounting= continues to own provider requests, account binding, credential access, quota semantics and sanitized reports.
+=llm-usage= owns sampling, durable history, historical publication versions and temporal joins.
+These are module responsibilities within the existing project, with shared collection, validation, configuration and test tooling.
+It also owns allowlisted native metadata ingestion; these adapters do not issue inference or query provider quota endpoints.
+The rate estimator consumes exports and writes separately versioned estimates; it does not rewrite collected observations.
+SuCoder will emit small optional lifecycle and decision records instead of becoming another provider client.
+
+Use the existing Python 3.11+ package and test infrastructure.
+Place usage modules in the proposed =src/llm_accounting/usage/= namespace and install an additional =llm-usage= command through the existing =pyproject.toml=.
+One installation provides both commands; preserve the current accounting CLI defaults and public report/library contracts while adding history-specific interfaces.
+Call shared accounting machinery directly, without a second distribution, self-dependency, vendored copy or subprocess scraping of the CLI.
+The following are proposed interfaces, not existing commands:
+
+- =llm-usage init= :: Create an owner-private dataset and record the route/source registry from an explicitly selected user configuration.
+- =llm-usage sample= :: Attempt one bounded collection of the configured accounting targets and commit one immutable batch, including partial or failed results.
+- =llm-usage ingest-report PATH= :: Validate and store an existing accounting report with its original times and source mode; do not relabel it as a new live reading.
+- =llm-usage publish-prices PATH= :: Validate a complete route price vector, commit a publication event and return its immutable ID.
+- =llm-usage publish-supply PATH= :: Record commercial terms, API tariffs, availability and declared rate assumptions separately from advertised shadow prices.
+- =llm-usage record= :: Accept a bounded, allowlisted native metadata or decision event through stdin; never accept arbitrary executable adapters from data.
+- =llm-usage export --view quota-series|usage-intervals|model-rate-inputs|price-history|coverage= :: Read committed history offline and emit JSON Lines with explicit evidence and coverage.
+- =llm-usage status= :: Show last attempts, source age, cooldowns, missing price/supply publications and unobserved activity sources.
+
+Configuration lives at =~/.config/llm-usage/config.json=, with the usual absolute =XDG_CONFIG_HOME= override and an explicit =--config= option.
+It names the dataset, state/runtime directories, existing accounting configuration path, selected targets, publication authority, sampling policy and native source/coverage policy.
+Reference the accounting configuration rather than copying its profiles, expected private account IDs or credentials into the history.
+There is no current-directory configuration discovery.
+
+* Quota sources and cadence
+
+** Accounting snapshots
+
+Use the library's =collect_live= entrypoint, followed by its =validate(report, "report")=, =check_binding= and public-field checks.
+Pin the compatible accounting contract and implementation version; record both in the sampling policy.
+Store each complete sanitized source-group report as an artifact once per batch, preserving catalogs, target results, observation times, windows, verification and exclusions.
+Do not reduce it to percentages alone.
+
+Select all relevant subscription constraints in one invocation, reusing the accounting library's source coalescing for overlapping target selections.
+Configure one polling owner per provider reporting identity and pool, independent of the number of models, SuCoder mirrors or remote sessions that draw on it.
+Account-wide quota observations already include external activity to the extent the provider reports it; adding native token use to a quota percentage would double count unlike measures.
+
+There is a required fix before routine Claude polling.
+At accounting commit =ed7c851=, =check_native_context= requires =native_state_policy=forbid_changes=, but the combined collector calls =read_claude_credential=, which can invoke a minimal inference turn on expiry.
+Restore that existing policy by using the stored-only credential reader in the combined passive collection path and testing expired credentials without subprocess launch or auth-file change.
+The direct interactive probe's renewal behavior is a separate interface.
+Until this is fixed and version-gated, refuse both manual and scheduled live Claude samples with =passive_policy_unavailable=; saved-report ingestion remains usable.
+Do not work around this by monkeypatching a reader, checking expiry in a racy preflight or copying credentials.
+
+** Sampling policy
+
+Start with a five-minute subscription cadence, configurable per source, plus an explicit manual sample operation.
+This yields 288 nominal samples per day per polling owner.
+Use a fixed cadence independent of advertised price or observed activity; record deviations so quiet periods are not selectively missing.
+Do not add adaptive high-frequency polling to the first delivery.
+
+Allow one in-flight sample per polling owner under a lock on a local runtime filesystem.
+Start an attempt on the next scheduled tick, with a proposed 120-second dispatch budget and the accounting library's smaller per-source budgets retained.
+Invoke =collect_live= with eligible targets grouped by coalescible source identity; stop starting source groups when the dispatch budget is exhausted and mark the remaining groups skipped.
+Each group produces its own accounting report artifact and result event within the batch.
+Let an in-flight bounded source finish its cleanup before releasing the owner lock; the dispatch budget is not a promise that every process exits at exactly 120 seconds.
+Graceful cancellation must reach the accounting/native collector's cleanup path and reap its children before that lock is released.
+For timer-enforced hard deadlines, require a service scope that contains all descendants, including independently created process sessions, and kills/reaps the entire scope before another attempt can run.
+A systemd user service with control-group cleanup is the proposed Linux mechanism; killing only an outer worker/process group is insufficient.
+If that containment is unavailable, use the dispatch budget and native per-source bounds, report that a hard deadline is unsupported, and do not advertise a kill-and-cleanup guarantee.
+If the previous attempt is still running, skip the tick and record =busy= rather than queueing catch-up requests.
+Record missed ticks after restart as a gap; do not backfill them with later values.
+
+Persist provider =retry_not_before= values across invocations and honor them before another request.
+Throttling without a usable Retry-After and other transport failures use a recorded 5-, 10-, 20-, 40-, then 60-minute backoff, reset by success.
+Key scheduler state by the configured reporting identity/coalescible source, not by individual metric or model; it can be rebuilt from accepted attempt records and their policy version after restart.
+Filter cooled-down groups before invoking =collect_live=, whose current cooldown dictionary is invocation-local; emit skipped attempt events for those groups while other eligible groups proceed.
+An expired or rejected credential remains an explicit failure without login or renewal; check again on the ordinary cadence or after a manual request.
+Every skipped attempt says why it was skipped.
+This provides a recorded observation schedule, including gaps and failures, rather than an apparently regular series containing invented values.
+
+An external user timer invokes =sample= on the owning host; the package need not contain a daemon.
+A timer example is an implementation artifact to supply at quota-ready delivery, and enabling it is a separate operational action.
+Do not start a job on every compute node to poll the same account.
+API reporting targets, where configured, get a separately declared cadence appropriate to their report grain; daily cost buckets are not five-minute resource-flow observations.
+
+** Advertised prices and supply
+
+Price publications contain the whole route vector, including unavailable quotes, currency, hourly convention, method version and declared assumptions.
+Both Claude and Codex models appear as separate selected routes, with versioned model/alias mappings, commercial access and known reasoning/speed context.
+Use explicit configuration or verified native catalog evidence to recognize model IDs, rather than a fixed list; a new or unavailable model retains unknown applicability/tariffs until its mapping is established.
+Assign a dataset-scoped publication ID and publisher capture time; retain a parent publication ID to establish the authorized publication sequence.
+One configured authority publishes a given price series; branches or conflicting successors remain conflicts rather than being resolved by import order.
+Manual prices are valid first inputs and are labeled =declared=.
+
+Keep supply publications separate.
+They contain route/access mappings, usable alternatives, native-unit marginal tariffs, known included-use constraints, effective terms and verification/as-of dates.
+Hourly API replacement rates are declared or estimated conversions of tariffs, not provider-reported bills.
+Unknown tariffs, model availability or API permission remain unknown even if a reference price has been entered.
+
+The publication tool records the versions it actually publishes, with a capture-time uncertainty bound; it does not accept an arbitrary historical effective time for a newly advertised price.
+An imported publication may retain a verified original effective time; otherwise its first local observation is the earliest established time.
+If a separate price producer writes only a latest-value file, polling that file cannot recover intermediate quotes.
+Require it to publish history through this interface, or mark the unobserved price history incomplete.
+
+Price history establishes what was advertised, not what the human saw.
+An optional =quote_read= or SuCoder =decision= event references the exact publication used, including a stale publication if that was the actual input.
+Sampling must not silently replace an older decision quote with the most recent advertised vector.
+Before claiming an observed demand panel, capture the decision's available alternatives, contemplated and selected route, selected/deferred/rejected outcome and controlled availability/throttle context.
+Unobserved decisions and quote reads remain missing; they cannot be reconstructed as zero demand from a published vector.
+
+* Records and identity
+
+Use a provisional =0.2-design= envelope until the implementation contract is reviewed.
+The earlier =0.1-design= replay remains a frozen temporal-join example, not evidence that model-aware collection is ready.
+The committed batch contains =format_version=, =data_mode=, =dataset_id=, =batch_id=, =producer_id=, =recorded_at=, an =events= array and an =artifacts= map.
+Modes =live= and =synthetic= occupy separate datasets.
+Each event has an opaque dataset-scoped =event_id=, =kind=, =captured_at=, =source_ref=, nullable =price_ref=, =supply_ref= and =binding_ref=, plus a kind-specific =payload=.
+IDs identify records; their spelling carries no metric meaning.
+Artifacts are addressed by SHA-256 of their canonical validated JSON value, using sorted keys, compact separators and ASCII escapes; monetary and fraction values remain decimal strings.
+
+The event families are:
+
+- =registry_publication= :: Versioned public route, source and resource mappings; model/harness, commercial access, shared constraints, quality/family labels if declared, and binding/semantic fingerprints.
+- =accounting_sample= :: Attempt start/finish times, selected targets, collection policy/version, control status and the accounting report artifact reference when one exists.
+- =attempt= :: A skipped or failed attempt with controlled reason, nominal tick, start/finish and retry time; no fabricated report or observation.
+- =price_publication= :: Complete advertised vector, parent publication, authority, method/assumption versions and publication-time uncertainty.
+- =supply_publication= :: Commercial terms and tariffs, route availability, source/as-of information and declared hourly conversion assumptions.
+- =counter_sample= :: Native counter identity and epoch, source measurement/capture times, unit/category, value, declared =cumulative_flow=, =interval_flow= or =snapshot= semantics, scope and inclusion relationships.
+- =usage_event= :: A source-native request quantity, original event time, nullable interval/duration, model evidence, pseudonymized native identity, quantity/inclusion semantics and coverage reference.
+- =coverage_event= :: Source/build, selected instrumented population and interval, export/receiver state, known loss/gaps, binding evidence and whether account-wide coverage is established, partial or unknown.
+- =activity_event= :: An observed session/turn lifecycle, model change or liveness state, with a named time basis and opaque source identity.
+- =decision= :: Contemplated/selected route, exact price and supply publications used, decision time and controlled outcome; task text and reasoning transcripts are excluded.
+
+The [[file:examples/llm-usage-collection-v1.json][original replay]] illustrates publications, accounting reports, a declared-route counter crossing a price change, a failed sample and a reset boundary.
+The [[file:examples/llm-usage-collection-v2.json][model-identification scenarios]] add two observed models, identity/coverage failures and calibration counterexamples under the revised contract.
+Both are design fixtures, not adopted public JSON Schemas or live account captures.
+
+** Resource keys
+
+Keep each accounting report's =identity_namespace= and public catalog with its =binding_ref=.
+A binding publication is a sanitized projection of the validated provider/access/pool/scope/metric catalogs and their generations, not a hash or copy of private credential configuration.
+Persist the metric ID and full typed definition, scope ancestry and generations, pool definition, related access constraints and applicability.
+Changing account binding, namespace, physical pool or metric semantics creates a new comparable-series key unless an explicit reviewed continuity mapping establishes equivalence.
+An unrelated catalog addition or a new registry publication alone does not break a trajectory whose relevant resource fingerprint is unchanged.
+
+An observation reference such as =o001= is local to its report.
+The historical reference is the report artifact plus local alias; it never indexes a global row by alias alone.
+Within a binding, the trajectory key excludes source observation time and changing reset timestamps, while retaining the stable physical constraint selector and observation scope/dimensions.
+The complete reported window remains on every point and determines episode boundaries below.
+This permits a series across observed resets without treating different constraints as one resource.
+
+Repeated unchanged quota values at later genuine collection times are useful observations and remain in the trajectory.
+Define a separate candidate quota source-fact key from the bound physical constraint, full normalized original window, source authority/compatible version, data mode, and original =observed_at= and =collected_at=.
+Exclude the measured value from that key so differing values cannot evade conflict detection by becoming different facts.
+Resolve namespace-qualified stable pool/scope references through the binding before using the accounting physical-row identity rules; only observation IDs are report-local.
+Normalize equivalent UTC timestamp spellings.
+For a matching key, compare normalized measurement equality and original source/binding/coverage evidence separately; incompatible values or evidence remain conflicts rather than an arbitrary selected point.
+Export =generated_at=, reassessed freshness and local aliases are assessment evidence, not additions to the source-fact key.
+Retain their report references even when the quota-series view coalesces equal source facts.
+Where the available fields cannot distinguish a re-export from a fresh same-time reading, preserve that ambiguity instead of claiming exact source identity.
+Every locally accepted batch has a mandatory receiving-dataset receipt containing its content hash, local acceptance time and original producer/batch identity.
+Re-ingesting the same artifact or source event creates another receipt at most, not another reading or quantity.
+Import keeps original dataset, producer, event IDs and source times.
+The same event ID with different payload is a conflict; identical imports are idempotent.
+The receiving dataset's receipt is separate from the original batch's =recorded_at=; a late import was not known locally merely because its source timestamp is old.
+
+For interval flows and cumulative counters, keep source-native scope and revision identity separately from local capture identity.
+A provider period report has its original grain and dimensions; a later explicitly identified revision supersedes the compatible previous fact in derived views while both records remain auditable.
+Overlapping periods, parent/child totals and mirrored sources are not summed.
+Where sources lack a reliable revision or request identity, mark the ambiguity rather than asserting exact deduplication or attribution.
+
+* Time, boundaries and joins
+
+Store UTC instants as reported, the collection start/finish bracket, the producer's clock-uncertainty bound if known, and a monotonic duration with boot/process epoch for local attempts.
+Source =observed_at=null= remains null; =collected_at= is not relabeled as a provider activity timestamp.
+Source capture time and later import time remain separate.
+Record clock reversals and uncertain cross-host order explicitly.
+
+Price and supply joins use the publications effective at the observation or decision time, never a future publication or import completion order.
+An accounting sample's =price_ref= says which vector the sampler observed; it does not attribute all earlier resource use to that quote.
+Exports include the price/supply breakpoints spanning an observed interval.
+An interval with a price change or ambiguous publication ordering is marked mixed or uncertain.
+Do not apportion its tokens or quota movement between prices in proportion to elapsed time without an explicitly named estimation assumption.
+
+For quota trajectories, begin a new analysis episode on an observed reset/window change, a binding or metric/source compatibility change, a clock reversal, or a gap beyond the proposed fifteen-minute threshold.
+An unexplained downward utilization jump creates a boundary/anomaly; it does not establish negative consumption or prove that a reset occurred.
+Price changes create exposure boundaries but need not create a new quota episode.
+Retain the raw points so different estimators can choose different justified gap and boundary rules later.
+Opaque or rolling windows remain typed as such, even if observations within one short episode have a useful trend.
+
+* Storage and failure behavior
+
+Default durable storage is =~/.local/state/llm-usage/<dataset-id>/=, honoring an absolute =XDG_STATE_HOME= override.
+Use owner-private directories and files and keep this data outside Git repositories.
+Keep operational locks in a configured private local runtime directory; never depend on a lock or a shared SQLite writer on Lustre/NFS.
+
+Write one immutable JSON batch per invocation under =batches/YYYY-MM-DD/<batch-id>.json=.
+Construct it in a unique private temporary file on the destination filesystem, flush and fsync, and publish under its unique final name without overwriting an existing batch.
+Use an exclusive same-filesystem hard link of the completed file or an equivalent no-replace atomic publication primitive; plain overwrite-capable rename is insufficient.
+Record producer identity and content hashes, and sync the containing directory where the filesystem supports the promised durability.
+On a filesystem that cannot provide the required atomic publication/durability contract, refuse that storage configuration rather than claiming a durable sample.
+Readers process only finalized batches; incomplete temporary files are neither history nor grounds for rewriting another producer's files.
+
+The first reader can scan date-partitioned batches; any later database/index is a rebuildable derived view.
+At the example report's compact size of 5,131 bytes, five-minute reporting alone is about 1.48 MB/day, before event/catalog overhead.
+Measure actual storage and capture cost in the pilot.
+There is no automatic deletion in the first delivery; later compaction must preserve identities and correction history.
+
+A successful source fetch is not a committed sample until publication succeeds.
+The finalized local receipt makes that batch visible to exports, after all referenced artifacts have been durably published.
+An orphan batch without a committed receipt remains outside the visible dataset until an explicit recovery operation validates and accepts it with a new receipt.
+On storage failure return a controlled error; a later invocation can record a gap but cannot recreate the lost source reading.
+Preserve any valid partial accounting report and independent target failures together.
+When collection fails before a report exists, store only an attempt record if storage is still usable.
+Exit behavior proposed for =sample=: zero for a committed all-selected-source success, one for a committed partial/skipped/failed attempt, and two for a control or storage failure without a trustworthy committed batch.
+
+Each host/source writes its own producer stream.
+The initial central dataset is on one selected owning host; importing immutable batches from another host is explicit, preserves IDs and does not establish a distributed polling lease.
+Configure one polling owner per reporting identity, and flag duplicate producers with overlapping scopes rather than summing them.
+Automatic cross-host transfer and leader failover are later work.
+
+* Required native metadata for the model-aware pilot
+
+Only accept metadata from an explicitly configured source owned by the collecting user.
+Filter fields in memory before persistence; never save raw stdin, stdout, stderr, requests, conversation text, tool arguments/results, environment or auth files.
+Use dataset-local random mappings for native session/thread identifiers and a private lookup when necessary; do not derive public IDs from tokens or expose native paths.
+Preserve existing native configuration and require an explicit adapter installation rather than replacing an exporter/status line or attaching to a live session implicitly.
+The pilot includes an adapter setup example and recorded coverage policy; writing this design does not install or enable them.
+
+** Model identity and quantity contract
+
+Every native usage event or counter scope retains these fields, with explicit nulls and reasons when a source cannot establish them:
+
+- Model evidence :: Requested, configured, native-reported and served model IDs are distinct nullable fields; include a versioned family mapping, selected attribution basis and =single_model=, =mixed= or =unknown= scope.
+- Binding and lineage :: Source/build, dataset-local account/access binding and evidence quality; opaque request/client-request/session/turn/child/parent references where observed; process/export-stream epochs and original event sequence where available.
+- Quantities :: Native categories, units, inclusion scope (=request_only=, =includes_children= or =unknown=), cumulative/delta/snapshot semantics, original times, duration basis and nullable native cost estimate.
+- Context and coverage :: Controlled main/subagent/auxiliary/unknown role, supported effort/speed categories, coverage reference and price/supply references with their existing temporal meaning.
+
+Persist only recognized model IDs or a controlled unknown value; unsupported source strings cannot bypass the public-field allowlist.
+Keep the original native label when recognized, and version any mapping from that label to a route or family.
+A configured route is context, not evidence that all its tokens were executed by that model.
+If a source identifies a model only at the native-reported level, export useful rates on that basis and leave served identity unknown.
+The [[https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback#what-the-response-contains][Claude API fallback contract]] can distinguish requested and served models and per-attempt usage; it does not establish that the native telemetry label preserves every attempt.
+Unknown attempt completeness stays unknown without collecting response bodies.
+Keep usage with mixed/unknown identity in explicit buckets rather than dropping it or assigning it to the launch model.
+
+A subagent's own request is attributed using its own model evidence, independently of its parent's configured model.
+Only verified request-only quantities can be added across parent and child; an inclusive parent total is a corroborating aggregate, not additional work.
+Unknown parent/child inclusion blocks an exact combined total but need not invalidate separately observed request-only records.
+
+** Claude request telemetry: required source
+
+The [[https://code.claude.com/docs/en/monitoring-usage#api-request-event][documented monitoring interface]] exposes model-tagged request events with token categories, estimated cost and duration; token/cost metrics offer another view of that work.
+Use allowlisted =claude_code.api_request= events as the primary quantity source, normalized to =usage_event=.
+Metrics can corroborate them; a future metric-only adapter needs separate temporality and identity verification.
+Do not add both views together or infer zero use from absent successful-request events.
+
+Use an allowlisted branch of an existing user-selected collector or a user-owned loopback OTLP receiver on the execution host.
+Loopback is not a Unix-user boundary on a shared host.
+The direct receiver requires an independent random installation-scoped collector credential supplied through OTLP headers and checked before accepting metadata; never use provider credentials for this purpose.
+Keep that credential in private installation state outside history, omit headers from diagnostics, and allow revocation/rotation.
+An existing collector branch must establish equivalent selected-emitter provenance; otherwise its data remain unverified and cannot satisfy pilot readiness.
+Authenticating the emitter does not establish its provider account binding, which still needs the separate check below.
+Filter event names and attributes in memory before any queue, diagnostics or durable write; keep prompt/tool-detail/raw-body capture and detailed tracing off.
+Normalize subsystem names to controlled roles, dropping custom names and unknown attributes.
+Compare available account evidence privately against the selected accounting binding; a device/installation/session ID is not proof of that account.
+An unverified binding keeps the model observations useful but ineligible for account-specific calibration.
+Do not replace existing exporter destinations or bypass managed settings; an unavailable capture path leaves the pilot not model-aware-ready on that host.
+
+Bound receiver message size, queue capacity and flush interval under a versioned policy.
+Accept only sanitized metadata into the queue, acknowledge accepted records after durable receipt publication, and report overload, shutdown loss or export gaps without raw payload diagnostics.
+The receiver runs independently of quota polling and may commit bounded batches per flush; it never invokes =collect_live= in response to a request event.
+Implementation fixtures must establish installed-build field/category semantics, request identity, resume/restart behavior and supported subtype coverage before marking this adapter verified.
+The documentation is a source inventory, not that verification.
+
+** Telemetry identity, transport and coverage
+
+[[https://opentelemetry.io/docs/specs/otlp/#duplicate-data][OTLP delivery can duplicate data]].
+Keep local ingestion IDs separate from native request/event identity; use pseudonymized server/client request IDs only under verified alias and attempt semantics.
+Scope those identities to the verified source authority/backend and compatible account binding, not the local receiver or mirrored producer.
+Repeated equal native facts coalesce; incompatible values or evidence remain conflicts.
+Verified native request identity can establish a fact without a process epoch.
+When relying on event sequence instead, require an established source process epoch, never session alone.
+If neither establishes identity, retain ambiguity and withhold an exact aggregate for that affected scope.
+A receiver restart creates a receiver epoch, not evidence that a native process or counter restarted.
+Mirrored collectors are coalesced only with verified native identity; otherwise select one primary stream for a declared population and mark unresolved overlap.
+
+For metrics, retain the [[https://opentelemetry.io/docs/specs/otel/metrics/data-model/#temporality][source temporality]], original interval endpoints, stream identity and start/reset epoch.
+Two cumulative readings yield a delta only within a compatible epoch; repeated delta intervals are not new quantities.
+Never turn the first cumulative reading after reconnect into use since reconnect.
+
+Coverage records distinguish source health, the selected instrumented population and evidence about the whole account.
+Record intervals with known export loss, unknown shutdown tails, disabled sources or receiver outages.
+No events plus a live receiver does not establish zero requests: producer/exporter health and emission guarantees also matter.
+Zero requires established complete observation for the stated population and quantity; otherwise the rate is partial or unavailable.
+External sessions remain an unknown background contribution even when all selected clients are instrumented.
+API errors without quantities establish neither zero charged use nor a missing quantity's value.
+
+The [[https://code.claude.com/docs/en/costs#report-spend-at-your-contracted-rates][native cost estimate can reflect managed pricing]].
+Preserve it as =native_cost_estimate= separately from published API-reference tariffs and actual provider-rated cost.
+If token categories lack the billing detail required by a tariff, exact revaluation remains unavailable; do not infer that detail from the native cost total.
+
+** Supporting Claude status line
+
+The [[https://code.claude.com/docs/en/statusline][Claude status-line interface]] remains optional supporting evidence.
+Its context/last-response token fields are snapshots, not cumulative consumption; client cost and session/API durations retain their own semantics.
+Repeated or absent callbacks cannot replace request telemetry or establish complete model activity.
+Compose a selected callback only after verifying invocation/cancellation behavior, with bounded ingestion that cannot block rendering on network/storage delays.
+Unverified quota callbacks do not replace the bound accounting source.
+
+** Codex telemetry: required source
+
+[[https://learn.chatgpt.com/docs/config-file/config-advanced#observability-and-telemetry][Official OpenAI documentation]] describes Codex OTel model metadata and completion token counts, exported through OTLP.
+Use allowlisted completion quantities as the prospective primary source, with source/build-specific verification; API-request diagnostics are not another token flow.
+The [[https://learn.chatgpt.com/docs/agent-approvals-security#monitoring-and-telemetry][documented event categories]] include SSE and WebSocket activity, but supported completion fields, identity and transport coverage must be verified separately.
+Do not infer missing WebSocket quantities from SSE behavior or count both representations of one response.
+
+The authenticated receiver can share transport/storage mechanics with Claude while using distinct source-bound installation credentials, allowlists, model mappings and account/access bindings.
+Preserve the selected Codex model ID, supported reasoning/speed context and native evidence basis; a generic Codex family label is insufficient for model-relative rates and quotes.
+Keep prompt logging disabled and drop user/tool content, arbitrary diagnostics and non-allowlisted resource attributes before queueing or persistence.
+Preserve existing exporter configuration and record disabled sources, shutdown tails, missing identities and uninstrumented sessions as coverage limitations.
+An unavailable verified Codex capture path is an implementation blocker, not grounds for silently postponing Codex.
+
+** Supporting Codex App Server evidence
+
+The [[https://learn.chatgpt.com/docs/app-server][official App Server interface]] exposes =thread/tokenUsage/updated= and turn lifecycle notifications.
+Generated schemas from installed Codex 0.162.1 include thread/turn IDs, =total=/=last= token breakdowns, cache categories and reasoning output.
+The token notification has no model field; =Thread.model= is configured/latest state, explicitly not per-turn execution telemetry.
+Preserve reroute/selection evidence separately; a join to the latest thread model must not invent executing-model attribution.
+Capture an allowlisted projection from the owning client's existing stream, with version-specific fixtures for counter behavior, reconnects, model changes and compaction.
+The isolated account-quota app-server used by llm-accounting does not observe other sessions' turns; starting another server is not a substitute for that capture path.
+The current SuCoder remote-control launcher does not yet provide this telemetry sink.
+Capture selected per-turn overrides and reroutes where available without recording turn input, and keep them as evidence rather than allocating every token to the latest setting.
+If telemetry and App Server counters describe the same work, choose the verified primary quantity source and retain the other as corroboration; do not add them.
+
+Do not copy a thread cumulative total into each turn or sum it together with the =last= breakdown.
+Preserve token-category inclusion metadata; unavailable billing-category semantics leave monetary conversion unavailable.
+A reconnection supplies a new observation baseline, not proof that its entire accumulated counter belongs to the reconnection interval.
+
+** Later SuCoder context and exposure hours
+
+Add optional allowlisted =launch=, =observed_running=, =observed_exited=, =model_changed= and =decision= records at the existing launch/session boundaries.
+A remote launcher can know the selected harness/model/access mapping without collecting native content, but an actual model reroute or mid-session change needs native evidence.
+Do not scrape the human =sessions= table or infer that a scheduler allocation/tmux session is active LLM use.
+The current replaceable =RemoteSession= record does not preserve historical launches or ordinary per-turn model selection.
+
+Name each exposure measure separately: clock hours, observed session-resident hours, union of open-turn intervals per session, and reported API-wait hours when available.
+Concurrent sessions add agent-hours; overlapping turns in one session are unioned before counting that session's open-turn hours.
+Tool waits can remain inside open-turn time; this is a workload proxy, not measured inference time.
+Missing heartbeats create unknown intervals rather than proving exit or continuous activity.
+Costs/counters spanning model changes remain mixed unless the source supports model-specific allocation.
+The model-aware pilot starts with quantities per clock hour, retaining source timestamps and boundary uncertainty.
+Neither request duration nor a session-level active-time metric establishes model-specific working agent-hours.
+Add an exposure-hour rate only when its model attribution, union/concurrency rule and completeness are supported; otherwise retain the declared representative-agent-hour prior.
+
+* Estimator-ready exports
+
+** Quota series
+
+Emit one row per genuine source observation, not one copy per consuming route.
+Include trajectory key, original report/observation references, captured/source time and bracket, used fraction, reset/duration/window kind, applicability, binding, source version, freshness, coverage, permission/state signals and analysis-boundary flags.
+Attach the price/supply publications and breakpoints that overlap the relevant interval, with explicit unknown or mixed exposure.
+Include failed/skipped scheduled attempts in a companion coverage stream.
+
+These rows support a signed utilization trend per clock hour within compatible episodes.
+They do not establish gross resource consumption, absolute token allowances or per-model contributions to a shared pool.
+For opaque windows, depletion pressure remains conditional on an explicitly stated forecast/replenishment assumption.
+Provider rounding can conceal small changes; unchanged samples are not a finding of zero consumption.
+Keep reported precision and any source-supported resolution bound, without inventing one from decimal formatting alone.
+
+** Usage intervals and hourly reference costs
+
+Emit counter-derived intervals only for compatible, source-verified cumulative flow semantics or explicit interval-flow records.
+Request quantities retain the original source event time and any verified request interval; an event timestamp alone does not establish when every token was consumed.
+Two cumulative readings define a quantity over their original observation bracket; do not move it into the most recent five-minute bucket.
+An unknown baseline leaves pre-baseline use unallocated; a decrease starts a new counter epoch/anomaly unless a source explicitly identifies a correction.
+Missing endpoints, mixed model scopes or unverified semantics remain unavailable for that rate.
+
+Each row carries quantity/category/inclusions, interval/time basis, nullable route/account scope, model evidence, provenance, attribution quality, applicable tariff version and the named hour denominator with its coverage.
+Report =native_cost_estimate=, =provider_rated_cost= and =local_api_equivalent_estimate= as separate series; native telemetry does not populate the provider-rated field.
+Do not sum inclusive cache/input or reasoning/output categories, nor a session total and its components.
+When the native source lacks sufficient token detail, a declared hourly prior remains preferable to an invented exact cost.
+
+** Model-rate inputs and calibration readiness
+
+Export model-tagged quantities per clock hour over a stated interval and instrumented population, retaining main/subagent/auxiliary/unknown roles and mixed/unattributed quantities.
+The =model-rate-inputs= view aligns these quantities and coverage with compatible quota brackets, price/supply breakpoints and context.
+Do not force unresolved request/counter intervals into a quota bracket by time-proportional allocation; preserve overlap and uncertainty.
+Every row states its model evidence basis, account-binding quality, named denominator and quantity completeness independently.
+The view is input for an estimator, not a model-debit observation or a completed demand panel.
+
+Keep three outputs separate: observed model throughput, collective quota-pressure forecasts and model-specific draw coefficients.
+A Fable-specific constraint is not a Fable token counter, and percentages from different constraints cannot produce an Opus residual.
+Tagged tokens or hours do not disclose shared allowance weights.
+For example, one Fable hour and one Opus hour alongside two points of shared draw is consistent with contributions 1.5/0.5 or 0.5/1.5.
+Repeating that mix cannot distinguish the coefficients.
+
+A later estimator must retain the model mix and other predictors for every comparable interval, test variation/rank, and state its treatment of background activity, source lag, window releases, quantization and workload changes.
+Independent variation is necessary for separate coefficients in the corresponding linear specification; it is not sufficient to identify provider metering or a causal response.
+An unobserved background stream, incompatible binding/window or unresolved mixed quantity can invalidate calibration even when the numerical design matrix has full rank.
+No deliberate inference probes or price experiments are part of this collector.
+
+Each coefficient is =declared=, =estimated=, =unidentified= or =unavailable=, with its input manifest, assumptions, method and uncertainty.
+Use =estimated= only when the chosen specification's evidence and diagnostics support a conditional predictive relationship; do not label it a measured provider debit.
+Insufficient variation yields =unidentified=, while missing required evidence yields =unavailable=.
+A separate declared prior may still support approximate quotes in either case, and remains labeled declared.
+Model-aware collection is ready before coefficients are identified; calibrated hourly shadow charges require the additional evidence appropriate to their stated hour basis.
+
+** Reproducibility and interpretation
+
+Every export records a cutoff, view/method version, source event IDs, binding/catalog versions and boundary/coverage rules.
+Separate the requested source-time range from the receiving dataset's knowledge snapshot.
+An export freezes a content-addressed input manifest listing the exact accepted receipts and artifact hashes visible to that export; its snapshot ID, rather than a wall-clock timestamp alone, defines reproducible replay.
+Resolve the required earlier registry, supply and price publications through that manifest even if they precede the requested time range.
+Missing references remain explicit; the reader must not search newer state outside the manifest to fill them.
+Replaying the same manifest, source-time range and view/method rules produces the same rows; late imports and corrections require a new snapshot ID.
+Recording price vectors and supply state supports future conditional demand models, but does not label price endogeneity, latent unmet demand or quality substitution as solved.
+No rate, price or availability estimate authorizes inference or reserves quota.
+
+* Synthetic acceptance cases
+
+The replay fixture contains quotes changing at 12:07 between quota readings at 12:05 and 12:10, native cumulative readings of 1,000 and 1,300 over that interval, a failed 12:15 sample, and a new reset episode at 12:35.
+The correct export preserves one 300-token interval with mixed price exposure, does not assign its quantity to either quote, records the failed tick, and does not fit a trend across the reset/gap.
+The shared quota readings belong to one constraint each, even though two declared model routes share the allowance.
+The original replay's declared route is not an observed execution-model attribution.
+
+The revised [[file:examples/llm-usage-collection-v2.json][model-identification fixture]] contains independent scenarios, using the original accounting artifacts by immutable reference where needed.
+Its event projections and expected conditions are acceptance inputs, not live captures or a claim that the unimplemented history reader passes them.
+They cover:
+
+- The same quota observations with Fable-heavy and Opus-heavy native quantities, proving that quota-only records cannot distinguish that activity.
+- A constant-proportion model mix with two distinct coefficient vectors producing the same shared draw, and an independently varying mix with full rank but only conditional calibration eligibility.
+- Request-only Opus child use under a Fable parent, with an inclusive parent aggregate excluded from the sum.
+- A configured Fable route reporting Opus use, unknown/mixed fallback attempts, and a configured-only counter that cannot establish executed-model use.
+- Duplicate native request delivery, a repeated sequence after process resume, cumulative/delta metric corroboration and missing native identities.
+- Missing external activity/export loss, rejection of an unauthenticated local emitter, a native cost estimate different from reference revaluation, and complete versus unknown zero observations.
+
+Acceptance requires distinct observed, declared, mixed, unidentified and unavailable results; two model labels in a registry are insufficient.
+
+Before implementation is accepted, synthetic tests must additionally cover:
+
+- Identical batch imports, conflicting payloads under one event ID, local =o001= alias reuse and report re-export without new source collection.
+- Partial metrics, zero versus missing values, stale/prior/conflicting readings, provider lag and unchanged rounded percentages.
+- Changed namespace/account generations, changed applicability, moved reset timestamps, rolling releases and limit revisions.
+- Clock reversal, uncertain cross-host order, late imports and ambiguous price activation boundaries.
+- A missing price publication, an unobserved intermediate quote, stale quote use by a decision and a branched publication history.
+- An expired Claude credential with no inference/auth mutation, provider Retry-After across restart, throttling without a usable retry timestamp, a busy tick and bounded collector failure.
+- An outer cancellation/deadline that reaps independently sessioned native children before another attempt acquires the owner lock; hard-deadline rejection on an unsupported host.
+- Crash before publication, disk full, malformed finalized batches, simultaneous producers and an imported duplicate source stream.
+- Counter restart/reconnect, repeated callback, model switch, partial native coverage and inclusive token categories.
+- Required Codex coverage: at least two synthetic model IDs, turn overrides/reroutes, compaction/reconnect, completion transport overlap, absent request identities, and cached-input/reasoning-output inclusion semantics.
+- Codex model-specific quotes/tariff references with unavailable/new model mappings and one shared account-limit series across consuming models; never one allowance copy per model.
+- Quiet sessions, dead agents with live tmux/Slurm jobs, missing heartbeats and concurrent open-turn intervals.
+- An offline export that touches neither credentials nor providers and contains no canary prompt, token, path or raw diagnostic.
+
+* Implementation sequence and checks performed
+
+1. Restore/test passive combined Claude collection and document the accounting policy in the existing llm-accounting repository.
+2. Extend that package with batch validation/storage, saved-report ingestion, manual price/supply publication and offline quota export; run the replay before enabling live collection.
+3. Implement and fixture-verify both the Claude request and Codex completion adapters, model evidence and coverage contracts, deduplication and offline usage/model-rate-input exports; run the model-identification scenarios and added Codex acceptance cases.
+4. Add the bounded five-minute sampler, durable cooldowns, adapter setup and user-timer examples; pilot quota and model-tagged capture together on one selected owning host/population.
+5. Inspect source lag, quantization, gaps, model/binding coverage, storage size and capture overhead; record which rates are observed and which coefficients remain declared, unidentified or unavailable.
+6. Add verified exposure-hour measures, harnesses beyond Claude/Codex, further context adapters and decision records as needed, followed by calibrated estimates and SuCoder consumption work.
+
+Steps 1-2 establish quota-ready infrastructure; they do not satisfy the model-aware pilot.
+That pilot requires verified source semantics for both harnesses, distinguished observed models including at least two synthetic Codex IDs in acceptance fixtures, explicit binding/coverage and deterministic metadata-only replay.
+Unknown serving models, account-wide background use or quota weights must remain visible; readiness does not require inventing them or fitting a demand model.
+
+On 2026-10-17, all 270 existing llm-accounting tests passed and its offline validator accepted three schemas and fourteen synthetic examples.
+These checks establish the reused baseline; they do not test an unimplemented history collector.
+The installed Codex schema was generated offline without launching a session or accessing credentials.
+The replay contains seven batches and four accounting reports; all report schemas, account bindings, artifact hashes and publication references validate offline.
+Its two counter samples differ by 300 tokens and span the intervening price publication, as expected.
+Org lint, ASCII, whitespace and local source-link checks pass.
+
+Independent reviews of data semantics and operations found gaps in late-import replay, quota re-export identity, throttle fallback and native deadline cleanup.
+The final design resolves them with mandatory receipts and input manifests, candidate source-fact keys, persisted fallback backoff and cleanup/containment requirements.
+Both reviewers rechecked those changes and found no remaining material issue within the design scope.
+The subsequent model-identification review found that this scope omitted mandatory model-use capture.
+This revision makes it part of the first model-aware pilot and specifies identity, coverage, transport, hour semantics and calibration-readiness criteria in response.
+The historical review retains its baseline findings and records their disposition separately.
+Both original model-identification reviewers accepted the revised specification after rechecking its calibration and native-source contracts.
+The human subsequently required Codex and its models in the implementation scope; the [[file:llm-usage-implementation-charter.org][charter]] and this specification now require both harnesses.
+The earlier review acceptance and 14-scenario fixture do not establish verification of the added Codex adapter; its acceptance tests and native-build checks remain implementation work.
+The human also selected the existing llm-accounting repository/distribution for all implementation, reusing its collectors, contracts, CLI conventions and tests.
+The recheck clarified verified request-ID identity without a fabricated process epoch and required selected-emitter authentication on shared hosts.
+The 14 revised scenarios parse, and their original-artifact references, numerical counterexamples, selected aggregation expectations and tariff arithmetic pass the offline check below.
+These checks and review findings establish design consistency, not implementation verification.
+
+From the SuCoder mirror root, the replay's existing accounting artifacts can be revalidated without credentials or provider requests:
+
+#+begin_src sh :eval no
+../llm-accounting/.venv/bin/python - <<'PY'
+from pathlib import Path
+import hashlib, json
+from llm_accounting import validate, check_binding
+fixture = json.loads(Path("docs/examples/llm-usage-collection-v1.json").read_text())
+config = json.loads(Path("../llm-accounting/examples/model-limits/config.json").read_text())
+for batch in fixture["batches"]:
+    for ref, artifact in batch["artifacts"].items():
+        report = artifact["value"]
+        validate(report, "report")
+        check_binding(config, report)
+        encoded = json.dumps(report, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+        assert ref == "sha256:" + hashlib.sha256(encoded).hexdigest()
+print("Replay accounting artifacts validate.")
+PY
+#+end_src
+
+The following offline check verifies the revised fixture's references, numerical counterexamples and selected aggregation expectations.
+It checks acceptance-input consistency, not an implementation of the history reader, native adapter or estimator.
+All quantities and assumptions in the model-identification scenarios are synthetic.
+
+#+begin_src sh :eval no
+python - <<'PY'
+from pathlib import Path
+from fractions import Fraction as F
+from datetime import datetime
+import json
+root = Path("docs/examples")
+v1 = json.loads((root / "llm-usage-collection-v1.json").read_text())
+v2 = json.loads((root / "llm-usage-collection-v2.json").read_text())
+cases = v2["cases"]
+assert v2["data_mode"] == "synthetic" and len(cases) == 14
+artifacts = {ref for b in v1["batches"] for ref in b["artifacts"]}
+for case in cases.values():
+    if "quota_inputs" in case:
+        assert set(case["quota_inputs"]["report_refs"]) <= artifacts
+a, b = (cases[k] for k in ("same_quota_fable_heavy", "same_quota_opus_heavy"))
+assert a["quota_inputs"] == b["quota_inputs"]
+window = v2["common"]["analysis_interval"]
+hours = F(int((datetime.fromisoformat(window["end"]) - datetime.fromisoformat(window["start"])).total_seconds()), 3600)
+for case in (a, b):
+    quantities = {e["native_reported_model"]: F(e["input_tokens"]) for e in case["events"]}
+    assert quantities == {k: F(v) for k, v in case["expected"]["observed_input_tokens"].items()}
+    assert hours == F(case["expected"]["clock_hours"])
+assert a["expected"]["observed_input_tokens"] != b["expected"]["observed_input_tokens"]
+c = cases["constant_mix"]["calibration_inputs"]
+for weights in c["alternative_coefficients"]:
+    assert [sum(F(x)*F(w) for x, w in zip(row, weights)) for row in c["rows"]] == list(map(F, c["draw"]))
+assert c["alternative_coefficients"][0] != c["alternative_coefficients"][1]
+for name, nonzero in (("constant_mix", False), ("independent_mix", True)):
+    x, y = cases[name]["calibration_inputs"]["rows"]
+    assert (F(x[0])*F(y[1]) - F(x[1])*F(y[0]) != 0) == nonzero
+c = cases["fable_limit_not_opus_residual"]
+total = F(c["inputs"]["shared_allowance"])*F(c["inputs"]["shared_fraction_change"])
+fable = [F(q)*F(c["inputs"]["fable_fraction_change"]) for q in c["inputs"]["possible_fable_allowances"]]
+assert fable == list(map(F, c["expected"]["possible_fable_draw"]))
+assert [total-q for q in fable] == list(map(F, c["expected"]["possible_other_draw"]))
+c = cases["opus_child_inclusive_parent"]
+assert sum(F(e["input_tokens"]) for e in c["events"] if e["kind"] == "usage_event") == F(c["expected"]["combined_request_only_tokens"])
+c = cases["duplicate_delivery_and_resumed_sequence"]
+unique = {d["event"]["request_ref"]: d["event"] for d in c["deliveries"]}
+assert len(unique) == c["expected"]["accepted_native_requests"]
+assert sum(F(e["input_tokens"]) for e in unique.values()) == F(c["expected"]["combined_request_only_tokens"])
+c = cases["metric_temporality_and_corroboration"]
+points = {(p["stream_ref"], p["epoch"], p["temporality"], p["start"], p["end"]): F(p["value"]) for p in c["metric_points"]}
+cum = [v for k, v in points.items() if k[2] == "cumulative"]
+delta = [v for k, v in points.items() if k[2] == "delta"]
+assert cum[1]-cum[0] == sum(delta) == F(c["expected"]["primary_input_tokens"])
+c = cases["native_cost_and_reference_tariff"]
+cost = F(c["events"][0]["input_tokens"])*F(c["reference_tariff"]["uncached_input_per_million"])/1000000
+assert cost == F(c["expected"]["local_api_equivalent_estimate"])
+assert cost != F(c["expected"]["native_cost_estimate"])
+print("14 scenarios parse; references and numerical counterexamples are consistent.")
+PY
+#+end_src
+
+The proposal chooses a five-minute quota cadence, immutable batches, no automatic deletion, explicit publication history and required prospective metadata capture for the first model-aware pilot.
+Decisions needed for a live pilot are the owning host/account targets, selected instrumented clients and capture path, initial advertised prices and declared supply/rate assumptions.
+The design and offline replay do not depend on those account-specific choices.

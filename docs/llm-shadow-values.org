@@ -1,0 +1,252 @@
+#+TITLE: Standing Shadow Values for LLM Use
+#+AUTHOR: Sue
+#+DATE: 2026-10-17
+#+DESCRIPTION: Usage and price histories, demand estimation and approximate clearing prices for human task timing and SuCoder delegation.
+
+* Agreed question
+
+Keep a collection of approximate shadow values available to the human and to SuCoder.
+The human uses these values to decide which compute tasks are worth pursuing now; conditional on that decision, SuCoder uses them alongside expected ability to choose how to delegate.
+These are two decisions over the same resource state.
+
+The human agreed this direction in the 2026-10-16 discussion and distinguished supply, demand, market clearing and comparisons of depletion rates on 2026-10-17.
+The first useful version must work with declared hourly estimates and the accounting data already available, without waiting for task completion labels or a well estimated demand model.
+The [[file:llm-usage-collection.org][collection design]] now requires model-tagged native metadata for its first model-aware pilot; quota-only history is an earlier infrastructure milestone.
+The implementation scope includes Claude and Codex and their selected model routes, with separate model prices/rate assumptions and explicit shared account constraints.
+This note records that scope and proposes acceptance checks; it does not report a running integration.
+
+* Economic object
+
+A subscription call may have zero immediate monetary cost while consuming allowance that could support other work before replenishment.
+Its shadow cost is the opportunity cost of using that allowance now.
+API fallback expenditure supplies an initial monetary valuation of displaced work, conditional on the selected fallback route being usable.
+API replacement cost and subscription shadow cost are distinct: ample capacity can have little opportunity cost even when replacing an hour of work through the API would be expensive.
+
+Use dollars per agent-hour as the first planning unit.
+Collective use sums hours across agents: four agents working for fifteen minutes contribute one agent-hour.
+An hour is a unit of workload, not a claim that subscriptions meter elapsed session time.
+Each rate must state its workload assumption, including how idle sessions and tool waits are treated; the first rates may be declared estimates for a representative working hour.
+
+Each execution route identifies the model, harness, commercial access, execution context and allowance pools.
+For that route, estimate API dollars per agent-hour and the allowance drawn per agent-hour under each applicable constraint.
+Different agents can have very different rates because their context, reasoning, tool interactions, retries and review demands differ.
+Coordinator activity belongs in collective demand and shares a resource with delegates whenever the configured pool mapping says so.
+
+The value of shared capacity belongs to the pool; a route's hourly shadow charge depends on its estimated draw on that capacity.
+Do not give each model its own copy of a shared allowance, add quota percentages across windows, or count the same displaced API work once per overlapping constraint.
+A model label alone is insufficient to identify an economic choice.
+
+* Supply, advertised prices and demand
+
+The supply schedule describes feasible compute and its marginal cash cost, given the subscription terms, remaining allowances, replenishment rules and usable API alternatives.
+Conditional on those terms, it does not depend on the shadow values we advertise to the human.
+Included subscription use has zero marginal cash cost until a relevant constraint binds; usable API access supplies a paid alternative at its own marginal cost.
+Represent the shared constraints explicitly rather than assigning each model an independent zero-cost tranche.
+The terms may be known in native billing units while their conversion to representative agent-hours remains estimated.
+
+Advertised prices are decision signals derived from this supply state and our estimates of demand.
+The price vector includes model qualities and access alternatives, with cash rates and scarcity charges separately identified.
+Its accuracy as an estimate of clearing prices is a different question from which prices were actually advertised.
+We can learn about behavior at the advertised prices without first knowing the correct clearing prices.
+
+Demand responds to the whole advertised price vector, available models and the work the human wants done.
+A change in one model's price can change both total collective use and delegation to other qualities.
+Human task timing and SuCoder's conditional allocation contribute to that response.
+Consequently a usage-rate forecast should be conditional on prices and context; a fixed burn rate is only an initial approximation.
+
+* Usage and price history
+
+Collection of usage and advertised prices is a distinct first component.
+It should work with manually declared prices before a demand estimator or automatic price updater exists.
+Keep historical price publications and link usage intervals to the price versions in force during those intervals.
+If an interval crosses a price change, retain that boundary and whatever quantity attribution the source supports; do not assign the entire interval to the latest price.
+
+The history should preserve the following records without requiring task completion labels:
+
+- Usage :: Observation or interval time, route and shared-pool identities, quantity and unit, workload-hour convention, source, completeness and whether activity belongs to SuCoder, the human or an unknown source.
+- Advertised prices :: The published price vector, currency and hourly units, publication and effective times, method and assumption versions, and which snapshot was read for a decision where that is observable.
+- Supply state :: The contemporaneous marginal-cost schedule, remaining allowance observations, reset information, model applicability and availability, together with their versions and uncertainty.
+- Decision context :: Observable concurrency, coordinator activity and workload context; requests, deferrals and throttling when available, with unobserved context left unknown.
+
+The collector records the prices that existed, including stale or inaccurate ones, rather than reconstructing them later with a newer pricing method.
+Publication does not prove the human saw or acted on a quote; retain any observed exposure separately.
+Provider quota snapshots remain snapshots, interval reports retain their original periods, and revised or mirrored reports must not become extra consumption.
+Record source identities and corrections so later estimators can reconcile history without summing incompatible observations.
+
+This history supports demand estimation at observed prices, but it does not by itself identify a causal demand curve.
+A price updater that raises quotes after high use makes prices endogenous to demand conditions; exhaustion and throttling can also censor the quantity that users wanted.
+Distinguish observed use, conditional prediction and causal price response.
+Useful price variation and context are needed to learn substitution and elasticity; any deliberate price experiment is a later explicit design choice.
+
+* Clearing objective
+
+The ideal advertised prices clear the markets for compute qualities over the relevant replenishment horizons, taking substitution and shared constraints into account.
+In a deterministic benchmark with divisible work, positively priced subscription constraints bind by their expiry, and constraints left slack have zero scarcity price.
+Using every allowance is not a separate objective when there is too little valuable demand or when overlapping constraints prevent it.
+Cash costs can remain positive even where the scarcity charge is zero.
+
+Let \(R_{k,t}\) be usable remaining allowance for constraint \(k\), and let \(G_{k,t}(\mathbf p,z_t)\) be predicted draw before its replenishment under advertised prices \(\mathbf p\) and context \(z_t\).
+The benchmark scarcity values \(\lambda_{k,t}\) satisfy:
+
+\[
+G_{k,t}(\mathbf p,z_t) \leq R_{k,t}, \qquad
+\lambda_{k,t} \geq 0, \qquad
+\lambda_{k,t}\bigl(R_{k,t}-G_{k,t}(\mathbf p,z_t)\bigr)=0.
+\]
+
+Each constraint retains its own replenishment horizon; the notation does not impose a common calendar reset or invent an absolute allowance for an opaque source.
+Route-specific hourly scarcity charges reflect the resource draw under these joint constraints.
+The API alternatives and their cash prices enter demand and valuation rather than appearing as additional subscription capacity.
+
+In operation demand is uncertain, the supply state is partly observed, and posted prices affect subsequent observations.
+Choose an explicit forecast and risk convention before interpreting approximate clearing as a prediction of exact exhaustion.
+The initial heuristic supplies provisional quotes while the history accumulates.
+Its eventual replacement can estimate demand conditional on prices and revise the quotes toward clearing; a full equilibrium solver is not a prerequisite for the collector.
+
+* Components
+
+- =llm-accounting= :: Observed account state, quota constraints, applicability, reset information, monetary spending, source quality and binding.
+- =llm-usage= :: Collection of usage, advertised prices and contemporaneous supply state; declared rate priors initially, followed by forecasts and demand estimates conditional on prices and context, with their uncertainty and workload assumptions.
+- =llm-shadow-price= :: Approximate resource valuations and a published collection of route-specific hourly shadow charges, using the supply schedule, price-conditional demand forecasts and explicit API fallback assumptions, with market clearing as the eventual objective.
+- SuCoder :: Supplies contemplated work and execution choices, consumes the published estimates, and delegates according to ability, resource cost and the human's timing decision.
+
+These names describe responsibilities.
+Usage collection and account reporting will share the existing =llm-accounting= repository and distribution, reusing its collection, validation and test tooling.
+The first version needs neither fitted task-cost models nor exact task attribution.
+
+* Relative depletion and price adjustment
+
+Compare the rate at which each constraint approaches exhaustion with the rate that would use its remaining allowance by replenishment.
+Raw utilization percentages and raw use rates are insufficient when allowances and reset times differ.
+For a compatible constraint episode, let \(h_{k,t}\) denote remaining headroom, \(b_{k,t}\) its forecast draw per clock hour at the current advertised prices, and \(\tau_{k,t}\) time until replenishment.
+Express headroom and draw in the same resource units, which may be fractions of one stable allowance rather than tokens.
+Define normalized depletion pressure as:
+
+\[
+\rho_{k,t} = \frac{b_{k,t}}{h_{k,t}/\tau_{k,t}}
+            = \frac{b_{k,t}\tau_{k,t}}{h_{k,t}}.
+\]
+
+A value of one projects exhaustion at replenishment under the stated rate forecast; a value above one projects exhaustion earlier, and a value below one projects slack.
+The draw rate is collective resource use per clock hour, including concurrency and background activity, rather than draw per individual agent-hour.
+The latter rate helps construct the former from a proposed allocation.
+
+For independently constrained models that can substitute on the contemplated work, greater relative depletion pressure supports increasing the more pressured route's advertised price relative to the less pressured route's price.
+For example, four hours of runway with eight hours until reset gives pressure two, while twelve hours of runway with the same reset horizon gives pressure two-thirds.
+At those forecasts, shifting suitable work toward the second route can conserve the first allowance.
+Equalizing prices or raw use rates would not express that objective.
+
+Relative prices address the composition of demand; their overall level addresses collective scarcity.
+If both pressures equal two, changing only their relative prices cannot make both capacities last until reset.
+The response then also needs lower subscription demand, paid alternatives or work deferred, subject to the available supply and the human's preferences.
+For independently binding capacities in the deterministic benchmark, the target pressures are one, not merely equal to each other.
+Constraints that remain slack at zero scarcity price need not attain that target.
+
+Compute pressure on shared constraints before associating it with models.
+A common weekly allowance produces one collective pressure signal; it does not establish separate depletion rates for every model using it.
+Route-specific resource draw and additional model-specific constraints determine how that shared scarcity enters each hourly quote.
+Concurrent use cannot be attributed to individual models from the shared utilization trend alone.
+Native model-tagged throughput supplies a missing input, but separate draw coefficients still require useful variation and assumptions about workload, windows and background activity.
+When those coefficients are unidentified or unavailable, route quotes may continue to use declared priors.
+
+This comparison gives a direction for relative adjustment, not an estimate of a price elasticity or a ratio of optimal dollar prices.
+API replacement costs anchor the monetary scale; declared responsiveness assumptions or later demand estimates determine adjustment size.
+Use bounded adjustments and preserve their method version in the price history.
+
+Pressure is conditional on a compatible forecast and replenishment rule.
+Observed utilization trends may inform a forecast of approach to a limit, but they are not measured token consumption or evidence of a fixed denominator across a reset or limit revision.
+Rolling releases, opaque windows, revisions and changing workload mix require their own forecast assumptions.
+Missing rate or reset information leaves pressure unknown; exhausted headroom and a reached reset are explicit states rather than division by zero or a fabricated finite value.
+
+* First approximation
+
+Begin collecting usage and the advertised price history, using manually declared prices if necessary.
+For initial automatic quotes, use operator-declared API replacement rates, allowance-use rates and expected collective activity at the current prices before the relevant resets.
+Preserve their status as assumptions even when accounting observations are current.
+Where compatible forecasts exist, use normalized depletion pressures to compare models and constraints, adjusting relative prices to shift suitable work away from capacity projected to exhaust too early.
+Adjust the overall price level for collective scarcity as well as changing the allocation across models.
+Plentiful capacity expected to expire unused receives a low shadow value, while API replacement cost supplies the monetary scale for scarce capacity.
+
+This is a heuristic, not an identified optimal policy.
+The exact scarcity rule, rate priors and treatment of overlapping limits must be explicit and reproducible from a saved input snapshot.
+For a shared pool, use collective demand and the fallback value of competing work; independently multiplying each model's own API rate by its own exhaustion risk can miss the cost imposed on the coordinator.
+Unrelated account activity can be represented by a declared background rate before it can be estimated from history.
+
+Subscription utilization fractions have unknown denominators in the current accounting contract.
+Forecast reported utilization separately from measured token quantities; changes in quota percentage are not measured token consumption.
+Opaque windows, unknown applicability and provider permission signals retain their existing meanings.
+A reported reset does not establish a complete replenishment rule for an opaque window.
+
+The first prices can guide judgment despite these limitations.
+As rate evidence accumulates, update estimates without changing the distinction between observation, assumption, forecast and valuation.
+Reassess predicted demand when prices change rather than assuming that the old usage rate will persist at any quote.
+
+* Standing collection
+
+Publishing and reading are separate operations.
+A refresh produces a complete versioned snapshot; reading the latest snapshot is cheap and does not require provider calls or start inference work.
+An explicit refresh is the first producer interface; periodic refresh can keep the collection available during routine use once its cadence is selected.
+Publish atomically so readers see one complete generation.
+
+Each route entry should carry its economic estimates and enough information to interpret them:
+
+- Identity :: Stable route, model/harness, access and pool references, with the accounting context to which they are bound.
+- Values :: Currency, hourly unit, immediate cash rate, subscription shadow rate and API replacement rate, each separately identified.
+- Evidence :: Accounting observation times, declared or estimated usage rates, forecast assumptions and the price vector they condition on, supply-schedule version, fallback route, method version and relevant constraints.
+- Validity :: Assessment time, reassessment boundary, data age, source health, uncertainty or declared confidence, and whether the entry is current, stale or unavailable.
+
+For an API route, its direct usage rate supplies a cash cost; do not add the same replacement expenditure again as a subscription shadow charge.
+For a subscription route, the replacement rate is a reference value rather than a current bill.
+Additional subscription charges and any separate API budget constraints require their own explicit treatment.
+
+Reading an old snapshot reassesses its age and relevant reset boundaries.
+A failed refresh may leave the last estimate visible with its original time and a current failure status; it must not silently relabel that estimate as fresh or replace unknown prices with zero.
+Account changes invalidate incompatible values.
+An assumed fallback price does not establish that the corresponding API account, model or permission is available.
+
+The human view compares current prices, shared constraints and relevant reset times.
+The machine view supplies the same facts to SuCoder.
+Neither view claims that a price reserves quota or guarantees that an assignment will fit alongside concurrent activity.
+
+* Proposed first milestone
+
+Start with persistent collection of usage, advertised prices and supply state, then produce the standing price collection from a sanitized accounting report and declared hourly priors.
+Expose human and machine views and let SuCoder inspect the price collection before delegation.
+The first milestone informs the human's timing decision and SuCoder's allocation judgment; it need not automatically start or defer tasks.
+The following checks define the proposed implementation bar:
+
+- [ ] A synthetic example produces useful hourly prices without task histories or completion labels, identifying the rates as declared priors.
+- [ ] The usage collector accepts manually declared prices and retains their historical effective versions independently of any automatic pricing method.
+- [ ] A replay across a price change preserves the usage intervals, the advertised price vector and contemporaneous marginal-cost schedule without assigning old use to new quotes or inventing unavailable interval attribution.
+- [ ] Duplicate sources, late corrections and failed observations preserve their identities and completeness rather than producing additive false usage.
+- [ ] Replaying the same state, priors and method at the same assessment time reproduces the same collection.
+- [ ] Controlled examples show prices responding to headroom, time to replenishment and collective demand in the directions specified by the chosen heuristic.
+- [ ] Comparable constraints with different allowance sizes and reset horizons are compared using normalized depletion pressure; an example shifts relative prices toward conserving the more pressured substitute.
+- [ ] Equal pressures above one remain collective excess demand rather than a clearing outcome; zero-scarcity slack constraints need not exhaust.
+- [ ] Shared-pool pressure is calculated once from collective draw, without assigning the full trajectory to every model; absent rates, opaque replenishment rules and exhausted headroom retain explicit states.
+- [ ] Forecasts identify the prices and context they condition on; collected use alone is not labeled a causally identified demand response or latent unmet demand.
+- [ ] Benchmark examples distinguish binding, positively priced constraints from slack, zero-scarcity constraints; the method does not force every overlapping allowance to be exhausted.
+- [ ] Model-specific limits and shared session/weekly limits remain distinct; the coordinator and its delegates contribute to the same configured pool without duplicating capacity or displaced work.
+- [ ] Concurrent agent-hours add correctly, and each rate's workload assumption is displayed.
+- [ ] Human and machine views expose matching values, evidence, units and validity; API replacement cost stays distinct from cash cost and shadow cost.
+- [ ] Missing rates, stale observations, failed refreshes, changed bindings and crossed reset boundaries produce explicit states rather than falsely cheap current prices.
+- [ ] SuCoder can map an inspected route to the intended harness/model/access context and explain the resource estimate used in a delegation decision.
+- [ ] Reading a saved collection requires no credential resolution, provider requests or inference; publication never exposes a partially written generation.
+
+* Grounding and implementation sequence
+
+The [[file:llm-usage-collection.org][practical collection design]] specifies the first data-gathering component, including sampling, record identity, price history, storage and estimator-ready exports.
+The existing [[file:../../llm-accounting/WORKPLAN.md][llm-accounting workplan]], especially its SuCoder integration phase, assigns scheduling policy to SuCoder and keeps task attribution separate from account reporting.
+Its [[file:../../llm-accounting/docs/schema-contract.md][schema contract]] defines resource identity, units, freshness, unknown values and the distinction between quota snapshots and consumption flows.
+The [[file:../../llm-accounting/docs/subscription-contract.md][subscription contract]] and [[file:../../llm-accounting/docs/model-limits-design.md][model-limit design]] establish shared pools, verified context and overlapping model applicability.
+These documents were inspected at llm-accounting commit =ed7c851=; the SuCoder checkout is =17a65ae=, with a newer =ligon/main= already available locally.
+
+Before runtime edits, refresh the implementation map and targeted test inventory against the selected current SuCoder baseline.
+Reuse the accounting contract and existing harness/model launch machinery rather than adding another collector or defining a second account identity system.
+First settle the usage-and-price history contract and collect observations at declared prices; then implement a reproducible heuristic using relative depletion and collective scarcity, price publication and the two views, followed by SuCoder consumption.
+Demand estimation and improvements to the clearing rule can use that history without becoming prerequisites for collecting it.
+Any new SuCoder configuration must update =README.org= and =config.example.yaml= alongside the parser.
+
+The remaining design choices are the workload-hour convention, history grain and reconciliation, initial price and rate priors, fallback routes, the first scarcity rule for joint constraints, snapshot location and refresh cadence, and SuCoder's treatment of stale or unavailable estimates.
+Later demand estimation must specify what price variation and context support identification, how rationed use is handled, and which forecast or risk convention defines approximate clearing.
+These choices should be explicit in the implementation proposal; they need not wait for sophisticated statistical estimation.
