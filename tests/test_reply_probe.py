@@ -603,3 +603,27 @@ def test_a_symlinked_stale_or_oversize_mailbox_file_is_ignored(tmp_path):
     path.symlink_to(real)
     assert rp.read_mailbox([str(box)], ID, SENT) is None                    # symlink
     assert rp.read_mailbox([str(box)], "../../etc", SENT) is None           # not an id
+
+
+def test_a_symlinked_home_reads_one_transcript_once_not_as_two(tmp_path, monkeypatch):
+    # HPC homes often reach ~/.claude through a symlink to scratch; the path
+    # and its realpath must not count as two transcripts (``ambiguous``).
+    real, _ = _claude_home(tmp_path, c_user(FRAME), c_text(f"REPLY {ID}: ok"))
+    link = tmp_path / "linked-home"
+    link.symlink_to(real)
+    monkeypatch.setenv("HOME", str(link))
+    for identity in ({}, {"claude_session_id": None}):     # named session, then the project fallback
+        got = rp.probe(_spec(mailboxes=[], **identity), str(tmp_path / "noproc"))
+        assert got["status"] == "replied" and got["reply"] == "ok", got
+
+
+def test_a_mailbox_answers_only_its_own_recipients_id(tmp_path, monkeypatch):
+    # A broadcast gives each recipient its own id, so A's mailbox file under
+    # the shared ~/.sucoder/mail does not answer for B.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    box, _ = _mail(tmp_path)
+    other = "77aa0b1c"
+    spec_b = probe_spec({"harness": None, "mailboxes": [str(box)]}, msg_id=other,
+                        header=f"[message {other} from {SENDER} via sucoder, 2026-10-23 06:59]", sent_at=SENT)
+    assert rp.probe(_spec(mailboxes=[str(box)]), str(tmp_path / "noproc"))["status"] == "replied"
+    assert rp.probe(spec_b, str(tmp_path / "noproc"))["status"] == "no-adapter"

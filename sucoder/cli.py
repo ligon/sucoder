@@ -5004,14 +5004,25 @@ def message(
         raise typer.Exit(code=1)
 
     who = sender or f"{getpass.getuser()}@{_socket.gethostname()}"
-    msg_id = new_message_id()
     when = _dt.datetime.now().strftime("%Y-%m-%d %H:%M %Z").strip()
-    line = frame(text, who, when, msg_id)
-    header = frame_header(who, when, msg_id)
+    # One id per recipient, not per send.  A mailbox reply is named by the
+    # id alone, and recipients under one uid share ``~/.sucoder/mail`` (and
+    # two sessions of one mirror share its mailbox), so a broadcast with one
+    # id would credit A's mailbox answer to B as well.
+    ids: Dict[int, str] = {}
+    for r in chosen:
+        msg_id = new_message_id()
+        for _ in range(8):             # 32 bits rarely collide; never loop forever
+            if msg_id not in ids.values():
+                break
+            msg_id = new_message_id()
+        ids[id(r)] = msg_id
+    lines = {id(r): frame(text, who, when, ids[id(r)]) for r in chosen}
     for r in chosen:
         typer.echo(f"  {'would send' if dry_run else 'sending'} to {r.label}")
     if dry_run:
-        typer.echo(f"  line: {line}")
+        for r in chosen:
+            typer.echo(f"  line: {lines[id(r)]}")
         return
 
     # One round trip per host, every recipient there in one script.
@@ -5023,7 +5034,7 @@ def message(
     delivered = []
     sent_at: List[float] = []                 # per delivered recipient, taken before its trip
     for host, recipients in by_host.items():
-        script = "\n".join(send_keys_command(r, line) for r in recipients)
+        script = "\n".join(send_keys_command(r, lines[id(r)]) for r in recipients)
         control = _control_for_recipient(config, hosts, host, recipients[0], debug_ssh)
         if control is None:
             typer.echo(f"! {host}: no target configuration to reach it with", err=True)
@@ -5059,12 +5070,14 @@ def message(
     account = relay_caller or getpass.getuser()
     waits: List[_ReplyWait] = []
     for r, stamp in zip(delivered, sent_at):
+        msg_id = ids[id(r)]
+        header = frame_header(who, when, msg_id)
         identity = _reply_identity(config, r)
         spec = None if identity is None else _replies.probe_spec(
             identity, msg_id=msg_id, header=header, sent_at=stamp)
-        waits.append(_ReplyWait(r, spec))
+        waits.append(_ReplyWait(r, spec, msg_id))
         entry = {
-            "id": msg_id, "frame": line, "header": header,
+            "id": msg_id, "frame": lines[id(r)], "header": header,
             "sent_at": _replies.utc_iso(stamp), "sent_epoch": stamp,
             "account": account, "relay_account": getpass.getuser() if relay_caller else None,
             "recipient": _recipient_fields(r), "identity": identity,
@@ -5076,18 +5089,21 @@ def message(
 
     codes: List[int] = []
     if wait > 0 and waits:
-        typer.echo(f"  waiting up to {int(wait)}s for a `REPLY {msg_id}:` line ...")
+        shown = sorted({w.msg_id for w in waits})
+        tag = shown[0] if len(shown) == 1 else "<id>"
+        typer.echo(f"  waiting up to {int(wait)}s for a `REPLY {tag}:` line"
+                   + ("" if len(shown) == 1 else f" (ids {', '.join(shown)})") + " ...")
         pending = list(waits)
         deadline = time.monotonic() + wait
         while pending:
             for w in list(pending):
-                if _poll_reply(config, hosts, w, msg_id, logger=logger, debug_ssh=debug_ssh):
+                if _poll_reply(config, hosts, w, w.msg_id, logger=logger, debug_ssh=debug_ssh):
                     pending.remove(w)
             if not pending or time.monotonic() >= deadline:
                 break
             _message_sleep(_MESSAGE_POLL_SECONDS)
         for w in waits:
-            codes.append(_report_reply(w, msg_id, within=f"within {int(wait)}s",
+            codes.append(_report_reply(w, w.msg_id, within=f"within {int(wait)}s",
                                        peek_hint=mirror or w.recipient.session[len('sucoder-'):]))
     if unreachable:
         if unseen and everyone:
@@ -5105,9 +5121,10 @@ class _ReplyWait:
     """One delivered recipient's reply search: the probe while it has an
     identity and answers, the screen reader otherwise."""
 
-    def __init__(self, recipient, spec):
+    def __init__(self, recipient, spec, msg_id: str = ""):
         self.recipient = recipient
         self.spec = spec               # None: no recorded identity, screen only
+        self.msg_id = msg_id           # this recipient's own id (one per recipient)
         self.route = "login"           # where the probe runs; "job" once the login host saw nothing
         self.answer = None             # the probe's last answer
         self.failed = 0                # polls that failed in transport
@@ -5688,7 +5705,7 @@ def _peek_reply(ctx, config, msg_id: str, *, mirror: Optional[str], verbose: boo
         if isinstance(identity, dict) and isinstance(entry.get("sent_epoch"), (int, float)):
             spec = _replies.probe_spec(identity, msg_id=msg_id, header=entry.get("header") or "",
                                        sent_at=float(entry["sent_epoch"]))
-        w = _ReplyWait(r, spec)
+        w = _ReplyWait(r, spec, msg_id)
         if _control_for_recipient(config, {}, r.host, r, debug_ssh) is None:
             typer.echo(f"! {r.host}: no target configuration to reach it with", err=True)
             codes.append(EXIT_UNAVAILABLE)

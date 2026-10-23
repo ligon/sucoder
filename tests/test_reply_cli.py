@@ -117,6 +117,23 @@ def test_each_delivered_recipient_appends_one_line_to_the_sent_log(home, monkeyp
     assert replies.lookup_sent(ID) == entries
 
 
+def test_a_broadcast_gives_each_recipient_its_own_id(home, monkeypatch):
+    # A mailbox file is named by the id alone, under a ~/.sucoder/mail the
+    # recipients share, so one id across a broadcast would let A's mailbox
+    # answer for B.
+    fresh = iter(["aaaa0001", "aaaa0001", "bbbb0002"])     # a collision is drawn again
+    monkeypatch.setattr(messaging, "new_message_id", lambda: next(fresh))
+    monkeypatch.setattr(replies, "sent_log_path", replies.default_sent_log_path)
+    code, trips = _run(monkeypatch, everyone=True, recipient="hello all", wait=0)
+    assert code == 0
+    entries = [json.loads(line) for line in (home / ".sucoder" / "sent.jsonl").read_text().splitlines()]
+    assert sorted(e["id"] for e in entries) == ["aaaa0001", "bbbb0002"]
+    for entry in entries:
+        assert entry["frame"].startswith(f"[message {entry['id']} ")
+    typed = "\n".join(c for _, c in trips if "send-keys" in c)
+    assert "[message aaaa0001 " in typed and "[message bbbb0002 " in typed
+
+
 def test_message_ids_are_eight_hex_characters():
     assert re.fullmatch(r"[0-9a-f]{8}", messaging.new_message_id())
 

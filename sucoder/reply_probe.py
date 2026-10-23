@@ -434,9 +434,24 @@ def _uniq(items):
 # ----------------------------------------------------------------- identification
 
 def _evaluate(paths, harness, spec):
-    """``[(path, result)]`` for each transcript in *paths*."""
+    """``[(path, result)]`` for each transcript in *paths*.
+
+    One file reached by two names -- a symlinked ``$HOME``, ``~/.claude``
+    or ``~/.codex``, common on HPC where they point at scratch, plus the
+    realpath :func:`_paths` adds -- is read once: counted twice it would
+    be two deliveries, and ``combine`` would call an answered message
+    ``ambiguous``."""
     results = []
+    seen = set()
     for path in paths:
+        try:
+            st = os.stat(path)
+            key = (st.st_dev, st.st_ino)
+        except OSError:
+            key = os.path.realpath(path)
+        if key in seen:
+            continue
+        seen.add(key)
         try:
             data = read_file(path)
         except Unreadable as exc:

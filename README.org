@@ -1050,7 +1050,9 @@ The probe also checks a *mailbox*: an agent may write its answer to
 when its sandbox refuses =$HOME=) on the host it runs on.  A regular
 file owned by the agent's uid, written after the send, of at most 64 KB
 counts as a reply; a symlink, an older file or a larger one is ignored.
-SuCoder never deletes mailbox files.
+SuCoder never deletes mailbox files.  Because a mailbox file is named by
+the id alone, a message sent to several sessions gives each recipient
+its own id, so one agent's mailbox answer is never credited to another.
 
 Each recipient ends with one status, and =--wait= (and =peek --reply=)
 exit with the worst of them, in the order 3, 1, 4, 0:

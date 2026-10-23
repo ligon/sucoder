@@ -172,6 +172,10 @@ The laptop sanitises, caps, and prints.
 
 - Ids become 8 hex characters (=token_hex(4)=).  Agents copy the id, so
   its length costs nothing, and 16 bits was too few for content matching.
+  Each /recipient/ of a send gets its own id, not one per send.  The
+  mailbox is named by id alone and is shared by every session under one
+  uid, so a shared id would let one agent's mailbox answer for all of
+  them (found by the engine's red-team).
 - Each send appends to =~/.sucoder/sent.jsonl= on the sender: id, the
   exact frame, recipient (mirror, target, job, host, session), the
   transcript identity if known, the send time (UTC), and the sending
