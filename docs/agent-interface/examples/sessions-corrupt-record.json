@@ -1,0 +1,159 @@
+{
+  "schema_version": "1.0",
+  "operation": "list_sessions",
+  "observation_id": "00000000-0000-4000-8000-000000000001",
+  "started_at": "2026-10-22T20:00:00Z",
+  "finished_at": "2026-10-22T20:00:01Z",
+  "elapsed_ms": 1000,
+  "status": "partial",
+  "observer": {
+    "host": "worker.example",
+    "account": "coder",
+    "configuration_authority": "coder@worker.example",
+    "discovery_account": null
+  },
+  "coverage": [
+    {
+      "source_id": "src:1111111111111111111111111111111111111111111111111111111111111111",
+      "scope": "scheduler",
+      "state": "complete",
+      "count": 1,
+      "reason": null
+    },
+    {
+      "source_id": "src:2222222222222222222222222222222222222222222222222222222222222222",
+      "scope": "scheduler",
+      "state": "complete",
+      "count": 1,
+      "reason": null
+    },
+    {
+      "source_id": "src:1111111111111111111111111111111111111111111111111111111111111111",
+      "scope": "panes",
+      "state": "skipped",
+      "count": null,
+      "reason": "FAST_MODE"
+    },
+    {
+      "source_id": "src:1111111111111111111111111111111111111111111111111111111111111111",
+      "scope": "login_hosts",
+      "state": "skipped",
+      "count": null,
+      "reason": "FAST_MODE"
+    },
+    {
+      "source_id": "src:2222222222222222222222222222222222222222222222222222222222222222",
+      "scope": "panes",
+      "state": "skipped",
+      "count": null,
+      "reason": "FAST_MODE"
+    },
+    {
+      "source_id": "src:2222222222222222222222222222222222222222222222222222222222222222",
+      "scope": "login_hosts",
+      "state": "skipped",
+      "count": null,
+      "reason": "FAST_MODE"
+    },
+    {
+      "source_id": "records",
+      "scope": "session_records",
+      "state": "partial",
+      "count": 1,
+      "reason": "RECORD_CORRUPT"
+    }
+  ],
+  "errors": [
+    {
+      "code": "RECORD_CORRUPT",
+      "source_id": "records",
+      "message": "A session record could not be decoded."
+    }
+  ],
+  "truncated": false,
+  "data": {
+    "scope": "configured_remote_targets",
+    "selected_targets": [
+      "cluster-a",
+      "cluster-b"
+    ],
+    "sessions": [
+      {
+        "key": {
+          "source_id": "src:1111111111111111111111111111111111111111111111111111111111111111",
+          "kind": "slurm",
+          "job_id": "42",
+          "socket": null,
+          "session_name": null
+        },
+        "targets": [
+          "cluster-a"
+        ],
+        "mirror_candidates": [
+          "project"
+        ],
+        "scheduler_state": "RUNNING",
+        "node": "n001",
+        "pane": "not_probed",
+        "record_keys": []
+      },
+      {
+        "key": {
+          "source_id": "src:2222222222222222222222222222222222222222222222222222222222222222",
+          "kind": "slurm",
+          "job_id": "42",
+          "socket": null,
+          "session_name": null
+        },
+        "targets": [
+          "cluster-b"
+        ],
+        "mirror_candidates": [
+          "project"
+        ],
+        "scheduler_state": "RUNNING",
+        "node": "n999",
+        "pane": "not_probed",
+        "record_keys": []
+      }
+    ],
+    "records": [
+      {
+        "key": "broken--cluster-a",
+        "source_id": null,
+        "state": "corrupt",
+        "jobs": []
+      }
+    ]
+  },
+  "sources": [
+    {
+      "source_id": "src:1111111111111111111111111111111111111111111111111111111111111111",
+      "kind": "scheduler",
+      "targets": [
+        "cluster-a"
+      ],
+      "configuration_authority": "coder@worker.example",
+      "discovery_account": "cluster-user"
+    },
+    {
+      "source_id": "src:2222222222222222222222222222222222222222222222222222222222222222",
+      "kind": "scheduler",
+      "targets": [
+        "cluster-b"
+      ],
+      "configuration_authority": "coder@worker.example",
+      "discovery_account": "cluster-user"
+    },
+    {
+      "source_id": "records",
+      "kind": "records",
+      "targets": [
+        "cluster-a",
+        "cluster-b"
+      ],
+      "configuration_authority": "coder@worker.example",
+      "discovery_account": null
+    }
+  ]
+}

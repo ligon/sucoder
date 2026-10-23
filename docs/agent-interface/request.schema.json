@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Proposed SuCoder observation request 1.0",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "const": "session_context"
+        },
+        "arguments": {
+          "type": "object",
+          "properties": {
+            "timeout_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 30,
+              "default": 5
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "operation",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "const": "list_sessions"
+        },
+        "arguments": {
+          "type": "object",
+          "properties": {
+            "target": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 256,
+              "default": null
+            },
+            "fast": {
+              "type": "boolean",
+              "default": false
+            },
+            "login_nodes": {
+              "type": "boolean",
+              "default": true
+            },
+            "timeout_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 45,
+              "default": 30
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "operation",
+        "arguments"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

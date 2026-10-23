@@ -795,6 +795,37 @@ that path yet --- it reuses via the record and adopts by node --- but
 without the name an allocation is invisible to =sucoder sessions=, which
 filters on the =sucoder-= prefix.
 
+*** Structured observations for agents
+
+Use =sucoder context --json= in the working checkout to observe its git root, branch, HEAD, and any uniquely configured mirror mapping.
+Use =sucoder sessions --json= to inspect configured remote targets without interactive authentication or tunnel repair.
+These commands use schema version =1.0= and emit one JSON object, including domain failures.
+
+#+begin_src shell
+sucoder context --json --timeout 5
+sucoder sessions --json --fast --timeout 30
+sucoder -T savio-node sessions --json --timeout 30
+#+end_src
+
+Exit 0 means complete coverage of the requested scope; exit 3 means partial or unavailable observation, exit 2 invalid arguments/configuration, and exit 1 an internal or response failure.
+Parsing errors before dispatch may have only stderr; interrupted requests need not return JSON.
+Read =sources=, =coverage=, =errors= and =truncated= before interpreting the rows.
+Fast mode skips login and pane probes; it does not establish their absence.
+Job IDs are scoped by source and account, and session keys identify only this observation.
+Uninspected records remain unknown; mixed replacement holders are never reported as wholly absent.
+
+The JSON route uses one monotonic budget (context 1-30 seconds, sessions 1-45), bounded output and owned subprocess cleanup.
+Scheduler panes are batched through existing allocation routes; login enumeration and pane status are fused per host.
+Local isolation also bounds configuration/record parsing; uninterruptible kernel I/O remains a platform limit.
+A configured relay must advertise structured support and enforce its own deadline; older relays return unavailable without a human-table fallback.
+No credential minting, record writes, lifecycle operations, SSH master creation, or forwarding creation occur on the observation path.
+
+Context always describes the caller's local checkout, even when session discovery uses a relay.
+Configured durability and environment allocation IDs are reported claims, not publication or live-allocation proofs.
+These observations provide no authorization to release a job, delete a clone or message a peer.
+The full contract and examples are in [[file:docs/agent-interface-contract.org][the agent observation contract]].
+No MCP adapter is shipped by this change.
+
 *** Listing your sessions
 
 =sucoder sessions= lists every SuCoder job across all configured

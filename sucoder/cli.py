@@ -78,7 +78,9 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
-app = typer.Typer(help="sucoder – Unix-sandboxed agent collaboration toolkit for managing agent mirrors.")
+from .observation_cli import ObservationGroup
+
+app = typer.Typer(cls=ObservationGroup, help="sucoder – Unix-sandboxed agent collaboration toolkit for managing agent mirrors.")
 list_app = typer.Typer(help="Discover configured resources and supported choices.")
 app.add_typer(list_app, name="list")
 
@@ -1806,6 +1808,12 @@ def main(
     ),
 ) -> None:
     """Load configuration once and store it on the Typer context."""
+    if ctx.meta.get("observation"):
+        # JSON observation owns configuration reads and all subprocess budgets.
+        # Never run the interactive startup/privilege checks on this route.
+        ctx.obj = {"observation_config": str(config) if config else None,
+                   "target_name": target, "config_path": config or _default_config_path()}
+        return
     config_explicitly_set = config is not None
     default_path = _default_config_path()
     is_default_config = False
@@ -4773,6 +4781,28 @@ def renew(
 _PARTITION_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_,.-]*\Z")
 
 
+def _observation_output(ctx, operation, timeout, **flags):
+    from .observation_cli import dispatch, exit_code
+    obj = ctx.obj or {}
+    value = dispatch(dict(operation=operation, timeout=timeout,
+                          config=obj.get("observation_config"), target=obj.get("target_name"),
+                          relay=ctx.parent is not None and ctx.parent.info_name == "relay", **flags))
+    typer.echo(json.dumps(value, ensure_ascii=True))
+    raise typer.Exit(exit_code(value))
+
+
+@app.command("context")
+def context(
+    ctx: typer.Context,
+    json_output: bool = typer.Option(False, "--json", help="Inspect this local git workspace."),
+    timeout: int = typer.Option(5, "--timeout", min=1, max=30),
+) -> None:
+    """Observe local workspace identity without allocation or relay setup."""
+    if not json_output:
+        raise typer.BadParameter("context requires --json")
+    _observation_output(ctx, "session_context", timeout)
+
+
 @app.command("sessions")
 def sessions(
     ctx: typer.Context,
@@ -4786,6 +4816,8 @@ def sessions(
              "--no-login-nodes skips that sweep; sessions there are then "
              "reported as not inspected, never as absent.",
     ),
+    json_output: bool = typer.Option(False, "--json", help="Bounded noninteractive observation."),
+    timeout: int = typer.Option(30, "--timeout", min=1, max=45, help="JSON observation budget in seconds."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
 ) -> None:
     """List every SuCoder job on the configured clusters, with its state.
@@ -4817,6 +4849,9 @@ def sessions(
         group_targets_by_cluster, parse_squeue, render_report, split_fused,
     )  # noqa: F401 -- PANE_PROBE_SH is imported by the probe helper
 
+    if json_output is True:
+        _observation_output(ctx, "list_sessions", timeout, fast=fast, login_nodes=login_nodes)
+        return
     config = _get_config(ctx)
     _delegate_to_session_relay(config, "sessions", [
         *(["--fast"] if fast else []), "--login-nodes" if login_nodes else "--no-login-nodes",
@@ -5169,15 +5204,29 @@ def _relay_sender(sender: Optional[str]) -> str:
     return f"{sender} (via {caller})" if sender else f"{caller}@{socket.gethostname()} (relay)"
 
 
+@relay_app.command("capabilities")
+def relay_capabilities(json_output: bool = typer.Option(False, "--json")) -> None:
+    """Report structured observation support; never connect or provision."""
+    if not json_output:
+        raise typer.BadParameter("capabilities requires --json")
+    typer.echo(json.dumps({"schema_version": "1.0", "operations": ["list_sessions"]}))
+
+
 @relay_app.command("sessions")
 def relay_sessions(
     ctx: typer.Context,
     fast: bool = typer.Option(False, "--fast"),
     login_nodes: bool = typer.Option(True, "--login-nodes/--no-login-nodes"),
+    json_output: bool = typer.Option(False, "--json"),
+    timeout: int = typer.Option(30, "--timeout", min=1, max=45),
+    target: Optional[str] = typer.Option(None, "--target", "-T"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """``sucoder sessions``, for the relay's caller."""
-    sessions(ctx, fast=fast, login_nodes=login_nodes, verbose=verbose)
+    if json_output is True:
+        ctx.obj["target_name"] = target
+        _observation_output(ctx, "list_sessions", timeout, fast=fast, login_nodes=login_nodes)
+    sessions(ctx, fast=fast, login_nodes=login_nodes, verbose=verbose, json_output=False)
 
 
 @relay_app.command("message")

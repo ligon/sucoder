@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "operation": "list_sessions",
+  "observation_id": "00000000-0000-4000-8000-000000000001",
+  "started_at": "2026-10-22T20:00:00Z",
+  "finished_at": "2026-10-22T20:00:01Z",
+  "elapsed_ms": 1000,
+  "status": "complete",
+  "observer": {
+    "host": "worker.example",
+    "account": "coder",
+    "configuration_authority": "coder@worker.example",
+    "discovery_account": null
+  },
+  "coverage": [],
+  "errors": [],
+  "truncated": false,
+  "data": {
+    "scope": "configured_remote_targets",
+    "selected_targets": [],
+    "sessions": [],
+    "records": []
+  },
+  "sources": []
+}
