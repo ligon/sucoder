@@ -414,3 +414,235 @@ Slice 1 implemented, 2026-10-15 (Sue): `sucoder/codex_state_runner.py`,
 - GitNexus cannot run on this node image (`libssl.so.3` missing for its
   native database); impact was checked by grepping callers and is listed
   in the wiring commit.
+
+---
+
+# Prior-Art Ledger - Message replies from the agent's transcript (2026-10-23)
+
+Task: charter `.coder/charter-reply-from-transcript.md` (signed off 2026-10-23),
+design `docs/reply-from-transcript.org` draft 3, evidence
+`docs/reply-transcripts-evidence.org`. Branch `feat/reply-from-transcript`,
+baseline `60f25b9`. Prepared by the prior-art pass of the workshop engine;
+read-only except this section. Search tier: source and named tests, GitNexus
+CLI `impact` (repo sucoder), shape-only parses of the two lyn transcripts
+the charter allows (entry types and counts, no text dumped).
+
+## R1. Existing machinery (reuse or extend)
+
+- `sucoder/messaging.py`: `new_message_id` (4 hex today), `frame`,
+  `REPLY_PREFIX`, `_BARE_REPLY`, `capture_pane_command`, `extract_reply`
+  (screen reader, stays as the fallback), `Recipient`, `send_keys_command`,
+  `_in_job`, `parse_send_output`, `plan_recipients`. Pure; the CLI does I/O.
+- `sucoder/sessions_report.py:job_tmux_command` (l.124): srun --overlap step,
+  falling back to `ssh -n node` for a default-socket session; *inner* is
+  `shlex.quote`d. The probe's job route reuses it unchanged (via
+  `messaging._in_job`). `SessionEntry.session_keys` (l.327) already maps a
+  job to its `<mirror>--<target>` records: the bridge from a Recipient to
+  its RemoteSession.
+- `sucoder/cli.py`: `message` (l.4885, the `--wait` loop polls
+  `capture_pane_command` every `_MESSAGE_POLL_SECONDS`, sleeps through
+  `_message_sleep`), `EXIT_UNAVAILABLE = 3` (l.5083), `_session_relay_applies`,
+  `_delegate_to_session_relay` (forwards argv; must forward `--reply`),
+  `relay_app` with `relay_main` (HOME/config refusal), `_relay_sender`
+  (reads `SUDO_USER`), `relay_message`, `relay_peek`, `peek` (l.5284),
+  `_plan_session_recipients`, `_control_for_recipient`,
+  `_capture_over_tunnel` (l.4014; a nonzero remote rc is not a transport
+  failure).
+- `sucoder/session.py:RemoteSession`: optional fields loaded with
+  `data.get`, saved atomically; legacy files load blank. `managed_owner`
+  carries `scope` and `durable_root` (the managed-Codex identity).
+- `sucoder/mirror.py:launch_agent` (l.3480): `_detect_agent_type`
+  (l.7853) gives `AgentType.CLAUDE`; argv is built before nvm/tmux wrapping.
+  The "record only when the tmux session is created" pattern exists for
+  `managed_owner` (has-session probe at l.3835, `_record_managed_owner`
+  l.3912; confined record at l.3427).
+- `sucoder/codex_state_runner.py`: run layout
+  `DURABLE/codex/<scope>/runs/<run>/{run.json,rollouts/<thread>.jsonl}`,
+  `run.json.allocation = {"job": "<SLURM_JOB_ID as string>", "node": ...}`
+  (l.3580); `status.json["replica"]` with `lag_bytes` and per-thread
+  `local_bytes/replicated_bytes/relative_path` (l.2262), node-local only.
+  Precedent for a 3.6-clean standalone helper and its tests:
+  `tests/test_codex_remote_identity.py:99` (`ast.parse(feature_version=(3,6))`),
+  `tests/test_codex_state.py:184` (py_compile under python3.6, skipped if absent).
+- Tests to keep green: `tests/test_messaging.py` (33), `tests/test_session_relay.py`
+  (18), `tests/test_cli.py` message/peek block (`_message_report` l.4845,
+  `_run_message`, `test_message_wait_*` l.4950-4988, `_run_peek`).
+
+## R2. Definitions and conventions observed
+
+- Frame: `[message <id> from <sender> via sucoder, <local %Y-%m-%d %H:%M %Z>] <flat text>`.
+  Relay sender: `"<from> (via <SUDO_USER>)"` or `"<SUDO_USER>@<host> (relay)"`.
+- Remote helpers are standalone stdlib files, 3.6-clean; laptop code 3.9+.
+- GitNexus impact (upstream): `message`, `peek`, `extract_reply`,
+  `new_message_id`, `RemoteSession`, `launch_agent` LOW;
+  `_build_tmux_launch_command` HIGH (7 impacted, 3 processes) -> do not
+  edit it; insert `--session-id` at the argv stage in `launch_agent`.
+- Tooling: `.venv/bin/pytest` and `.venv/bin/mypy` have a broken shebang
+  (`/home/ligon/Projects/Assistant/.venv/bin/python`). Use
+  `umask 022; .venv/bin/python -m pytest -q` and `.venv/bin/python -m mypy`.
+
+## R3. Facts added by this pass (lyn, shape-only)
+
+- Claude 2.1.x turn-end dequeue (charter section 5, first risk): observed 3
+  times in the lyn session. Shape: `queue-operation enqueue` (content =
+  frame) -> `queue-operation dequeue` (no content) -> ... ->
+  `type: user` with string content byte-equal to the enqueued text. So the
+  `user` form is the dequeued delivery; `queued` must mean "enqueue seen and
+  no delivery of any shape", not "no remove/attachment".
+- Mid-turn absorb confirmed again (8 times): enqueue -> remove
+  (`absorbed_mid_turn`) -> `attachment queued_command` with `prompt` == frame.
+- Codex rollout top keys `{ordinal, payload, timestamp, type}`;
+  `session_meta.payload.thread_source == "user"`; non-sucoder user messages
+  (AGENTS/environment preambles, `<send_user_message_question_reply>`)
+  are `role: user` items too, so "stop at next delivery of any input" may
+  close a window early (gives `seen`, never a wrong reply: acceptable).
+  `task_complete` carries `turn_id`; `compacted.payload.replacement_history`.
+
+## R4. Invariants the implementation must keep
+
+- Never `replied` without a tagged line in an assistant text block (or a
+  valid mailbox file); never `absent` without an entry stamped after
+  send-minus-skew.
+- Existing screen-path tests pass unchanged: in them the recipient has
+  `pane="claude"` and NO session record, and a pane timeout exits 0. So
+  the adapter must be chosen from a recorded identity (session record
+  matched by `session_keys`/mirror--target and the same job id), not from
+  the pane name; no identity -> `no-adapter` -> screen path with today's
+  exit semantics (0 on timeout). `test_messaging.py:207` (id length 4) is
+  the one test the documented change rewrites.
+- The pane name is not a reliable harness signal anyway: managed Codex runs
+  under `python3` (the runner); Claude's exe is a versioned file.
+- Record the Claude uuid only when SuCoder creates the session (same rule
+  as `managed_owner`); a reattach keeps the old uuid. A stale or missing
+  uuid file, or one with nothing newer than the send, must fall through to
+  the design's step-4 fallback rather than end the search.
+- `codex-remote-control` recipients stay refused for `message`.
+- Relay: the sent log is the relay account's; each line records the
+  caller (`SUDO_USER`), and `relay peek --reply` refuses others' ids.
+  Sanitise and cap in the printing process, which in the relay is the
+  relay process itself, before output reaches the caller.
+- Mixed recipients: the exit is the worst status. "Worst" needs an explicit
+  order; proposed 3 (could not look) > 1 (ambiguous / delivery failure) >
+  4 (no answer) > 0, with a screen-fallback recipient contributing 0 or 1
+  as today.
+
+## R5. Reuse decisions
+
+| quantity | decision | why |
+|---|---|---|
+| message id | extend `new_message_id` to `token_hex(4)` | one-line change; callers monkeypatch it |
+| frame | reuse `frame` | unchanged by charter |
+| frame anchoring / delivery match | new pure fn in a reader module | anchored whole-frame, optional `<pasted_content ...>` |
+| sent log `~/.sucoder/sent.jsonl` | new small module (append/lookup) | no prior art; mirror `session.py` path style |
+| Claude `--session-id` | extend `launch_agent` argv stage + new optional `RemoteSession` field | avoid HIGH-risk `_build_tmux_launch_command` |
+| transcript readers (Claude, Codex) | new pure adapters + shared core | no prior art |
+| managed-Codex identification | new, reading `run.json`/`rollouts/` layout of the runner | runner is the authority on layout |
+| probe | new standalone 3.6 module, shipped zlib+base64 via `python3 -I -c` | precedent: `codex_state_runner.py` tests |
+| probe transport | reuse `job_tmux_command` / `_capture_over_tunnel` | already handles srun vs ssh -n |
+| mailbox | new, inside the probe | no prior art |
+| statuses / exit codes | new table; reuse `EXIT_UNAVAILABLE` (3) | 4 is new |
+| sanitising/caps | new pure fn in `messaging.py` | applies in direct and relay printing |
+| screen fallback | reuse `capture_pane_command` + `extract_reply` | charter keeps it |
+| `peek --reply` / relay restriction | extend `peek`, `relay_peek`, `_delegate_to_session_relay` args | |
+| docs | extend `default_system_prompt.org` l.122-130, README `*** Messaging a running session` l.981 | config.example.yaml only if config added |
+
+## R6. Open questions (non-blocking; engine decides and reports)
+
+- Baseline test failures differ from charter section 3. Full run at
+  `60f25b9` (295s): failed `test_restore_refusals_place_nothing_and_never_start_codex`,
+  `test_a_real_codex_thread_resumes_from_a_restored_generation`,
+  `test_a_durable_root_below_absent_directories_is_created` (NOT listed);
+  `test_restore_places_a_sealed_generation_in_another_allocation` and
+  `test_reuse_keeps...` passed. A targeted rerun failed only the first.
+  All are in `tests/test_codex_state_runner.py`, which this task does not
+  touch; they are order/timing-dependent. Judge the hygiene line as "no
+  new failures outside that file's restore/reuse tests, reproduced on the
+  baseline".
+- Mailbox under `<mirror>/.sucoder/mail` when the agent's cwd is a
+  node-local clone (`/local/job<J>/mirrors/<token>`): readable only by the
+  job route; a login-host probe reads `~/.sucoder/mail` only.
+- `CLAUDE_CONFIG_DIR` via `/proc` is only visible on the agent's node; a
+  login-host probe uses the default `~/.claude` unless the record says
+  otherwise.
+- Renewal replacement records: whether the new uuid rides in
+  `replacement` and is promoted, or is simply written on the successor's
+  launch; fallback covers the gap either way.
+
+---
+
+# Implementation notes - Message replies from the agent's transcript (2026-10-23)
+
+Engine implementation pass on `feat/reply-from-transcript`, after the
+prior-art section above. Decisions taken where the charter or design left
+room:
+
+- **Where the reader lives.** All transcript logic (adapters, shared reader,
+  identification, mailbox) is in the standalone probe `sucoder/reply_probe.py`
+  (stdlib, Python 3.6) because it must run on the cluster; the tests import
+  its pure functions. `sucoder/replies.py` is the laptop half (sent log,
+  identity from the session record, shipped command, status/exit table).
+- **Frame match.** The anchored match is against the frame *header*
+  (`[message <id> from <sender> via sucoder, <time>]`, `messaging.frame_header`),
+  which is what the design calls the whole frame; the body is not compared.
+- **Freshness** (`absent` vs `unrecognized`): any entry stamped at or after
+  send minus 30s, in the parsed region or in up to 256 KB before the frame's
+  first copy.
+- **Probe route.** Login host first (shared home, managed-Codex replica);
+  if nothing is identified there and the recipient is a job, inside the job
+  via `job_tmux_command`, and it stays there.
+- **Screen fallback.** No identity -> screen only (today's exit codes).
+  `no-adapter`, `unrecognized` and `unreadable` also read the pane each poll;
+  a screen reply wins (0), otherwise the probe status stands.
+- **Worst-of order** 3 > 1 > 4 > 0, as proposed above; failed deliveries
+  contribute 1 and unreachable clusters 3, as before.
+- **Recorded identity.** New optional `RemoteSession.harness` and
+  `claude_session_id`. Unmanaged Codex is identified only when `harness:
+  codex` was recorded, which happens on the confined path (no tmux probe was
+  added to unconfined non-Claude launches).
+- **`_launch_confined`** (GitNexus HIGH) got one additive line recording the
+  identity beside `managed_owner`; `_build_tmux_launch_command` is untouched.
+- **Test isolation.** No test fixture isolated HOME, so `tests/conftest.py`
+  now redirects `replies.sent_log_path`; one early run (before that fixture)
+  created the real `~/.sucoder/sent.jsonl` with 7 fixture lines, which was
+  deleted.
+- **mypy.** `cli.py` carries 66 pre-existing errors (typer/click Context
+  typing); none on changed lines. `mirror.py`'s two pre-existing errors were
+  fixed (typing only).
+
+## 2026-10-23 — reply-from-transcript: red-team round 1 revisions
+
+Supersedes the "Screen fallback" and "Recorded identity" notes above (left
+as written); each item answers one red-team finding.
+
+- **Screen only for `no-adapter`.** `unrecognized`/`unreadable` no longer
+  read the pane; they exit 3 whatever it shows (a pane row can be a tool
+  call quoting `REPLY <id>`). The test that locked in exit 0 was replaced.
+- **Recorded harness decides.** `transcript_identity` uses the `harness`
+  field first; records without it fall back to `managed_owner`, then the
+  Claude id. A harness with no adapter (`gemini`, ...) is now recorded by
+  name and gets the screen path. Every unconfined launch that creates the
+  tmux session rewrites `harness` and `claude_session_id` (Claude fresh or
+  resumed, Codex managed or not), and also probes `has-session` when the
+  record still holds an identity a different harness must clear
+  (`_identity_to_record`). `_launch_remote_service` (GitNexus HIGH) was not
+  touched: `message` refuses remote-control services anyway.
+- **Timeouts are not re-run.** The probe runs under remote coreutils
+  `timeout -s TERM 75` (local limit 90) and the shell prints the
+  `ProbeTimeout` answer itself, exiting 0 so the transport never reads it
+  as a wedged tunnel. `_run_probe` calls `_run_remote_capture` itself (not
+  `_capture_over_tunnel`, HIGH, untouched, which reconnects and re-runs on
+  124): a local 124 is a timeout answer, only 255/transient reconnect and
+  retry once. A timeout ends the recipient's polling, the job route is not
+  tried after a login-route timeout, and an earlier answer stands.
+- **Claude fallback needs our frame.** The project-directory scan counts
+  only files with a delivery, a queue entry, the frame in an unclaimed
+  shape, or an unreadable file. A file merely newer than the send no
+  longer yields `absent`; nothing identified becomes `no-adapter`, so the
+  job route and then the screen are tried.
+- **Every printed probe field is cleaned.** `parse_probe_output` returns
+  `why`, `source`, `transcript`, `harness`, `candidates` (max 20) and reply
+  sources through `replies.clean_field` (the reply sanitiser, folded to one
+  line, 512 bytes); `_report_reply` and `_echo_reply` clean again at print.
+- **Tests.** Full suite: 1930 passed, 8 skipped, 1 failed
+  (`test_codex_app_server.py::test_a_restored_thread_works_in_the_successors_clone`,
+  which fails the same way on baseline 60f25b9; a bwrap sandbox path).

@@ -122,12 +122,17 @@
 - A line shaped =[message <id> from <who> via sucoder, <time>] ...= was
   typed into your session by =sucoder message= from another machine.
   The sender cannot be reached from here: a cluster has no route back to
-  a laptop. Your reply is whatever you print on your own screen, which
-  the sender reads back with =sucoder peek= or =message --wait=. So
-  answer, briefly, on a line that starts with =REPLY <id>:= using the
-  id from the message, and finish the reply before your next tool call
-  so it is on screen when the sender looks. Anything longer than a few
-  lines belongs in the bulletin; say so in the reply.
+  a laptop. It reads your reply back from your session transcript (or
+  your screen). So reply with a line =REPLY <id>: ...= using the id from
+  the message, in your own message text -- never only in a tool call or
+  a file -- as soon as you see the message, even in the middle of other
+  work; a short line is enough. A message you take in and do not answer
+  is reported to the sender as seen and unanswered. Optionally, for a
+  longer or more durable answer, also write it to the mailbox
+  =~/.sucoder/mail/<id>.reply= (or =<mirror>/.sucoder/mail/<id>.reply=
+  when your sandbox refuses =$HOME=), e.g. =mkdir -p ~/.sucoder/mail &&
+  printf '%s\n' "..." > ~/.sucoder/mail/<id>.reply=. Anything longer
+  than a few lines belongs in the bulletin; say so in the reply.
 
 * Handoff
 - Record non-obvious design choices as you make them — in commit messages

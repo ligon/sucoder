@@ -204,7 +204,8 @@ def test_a_session_seen_via_the_gateway_and_its_own_node_is_one_recipient():
 def test_frame_carries_an_id_a_reply_can_name():
     line = frame("hi", "me@lyn", "2026-09-22 11:11", "ab12")
     assert line == "[message ab12 from me@lyn via sucoder, 2026-09-22 11:11] hi"
-    assert len(new_message_id()) == 4 and new_message_id() != new_message_id()
+    assert len(new_message_id()) == 8 and new_message_id() != new_message_id()
+    assert all(c in "0123456789abcdef" for c in new_message_id())
 
 
 def test_capture_goes_through_the_allocation_like_the_send():

@@ -4897,8 +4897,10 @@ def message(
     ),
     wait: float = typer.Option(
         0, "--wait", metavar="SECONDS",
-        help="After sending, keep reading the recipient's pane this long for a "
-             "`REPLY <id>:` line, and print it.  0 sends and returns.",
+        help="After sending, poll this long for the recipient's `REPLY <id>:` line "
+             "(from its transcript, or its pane when no transcript is identified), and "
+             "print it.  Exit 4 when the message was delivered but not answered.  "
+             "0 sends and returns.",
     ),
     force: bool = typer.Option(
         False, "--force",
@@ -4928,17 +4930,21 @@ def message(
     runs on two.
 
     Nothing on a cluster can reach a laptop behind NAT, so a reply cannot
-    be pushed back; it is pulled.  ``--wait`` reads the pane after the send
-    for a line ``REPLY <id>: ...``, which the default system prompt asks
-    agents to answer with, and prints it.  ``sucoder peek`` reads a pane
-    at any other time.
+    be pushed back; it is pulled.  ``--wait`` polls for a line ``REPLY
+    <id>: ...``, which the default system prompt asks agents to answer
+    with, and prints it: read from the agent's transcript by the reply
+    probe when the session record identifies it (Claude ``--session-id``,
+    managed Codex), else from the pane (docs/reply-from-transcript.org).
+    Every delivery is appended to ``~/.sucoder/sent.jsonl``, which
+    ``sucoder peek --reply <id>`` reads to ask again later.
     """
     import datetime as _dt
     import getpass
     import socket as _socket
 
+    from . import replies as _replies
     from .messaging import (
-        capture_pane_command, extract_reply, frame, new_message_id,
+        capture_pane_command, extract_reply, frame, frame_header, new_message_id,
         parse_send_output, send_keys_command,
     )
 
@@ -4998,12 +5004,25 @@ def message(
         raise typer.Exit(code=1)
 
     who = sender or f"{getpass.getuser()}@{_socket.gethostname()}"
-    msg_id = new_message_id()
-    line = frame(text, who, _dt.datetime.now().strftime("%Y-%m-%d %H:%M %Z").strip(), msg_id)
+    when = _dt.datetime.now().strftime("%Y-%m-%d %H:%M %Z").strip()
+    # One id per recipient, not per send.  A mailbox reply is named by the
+    # id alone, and recipients under one uid share ``~/.sucoder/mail`` (and
+    # two sessions of one mirror share its mailbox), so a broadcast with one
+    # id would credit A's mailbox answer to B as well.
+    ids: Dict[int, str] = {}
+    for r in chosen:
+        msg_id = new_message_id()
+        for _ in range(8):             # 32 bits rarely collide; never loop forever
+            if msg_id not in ids.values():
+                break
+            msg_id = new_message_id()
+        ids[id(r)] = msg_id
+    lines = {id(r): frame(text, who, when, ids[id(r)]) for r in chosen}
     for r in chosen:
         typer.echo(f"  {'would send' if dry_run else 'sending'} to {r.label}")
     if dry_run:
-        typer.echo(f"  line: {line}")
+        for r in chosen:
+            typer.echo(f"  line: {lines[id(r)]}")
         return
 
     # One round trip per host, every recipient there in one script.
@@ -5013,13 +5032,15 @@ def message(
     failures = 0
     unreachable = bool(unseen and everyone)   # a broadcast that missed a cluster
     delivered = []
+    sent_at: List[float] = []                 # per delivered recipient, taken before its trip
     for host, recipients in by_host.items():
-        script = "\n".join(send_keys_command(r, line) for r in recipients)
+        script = "\n".join(send_keys_command(r, lines[id(r)]) for r in recipients)
         control = _control_for_recipient(config, hosts, host, recipients[0], debug_ssh)
         if control is None:
             typer.echo(f"! {host}: no target configuration to reach it with", err=True)
             failures += len(recipients)
             continue
+        stamp = time.time()
         try:
             result = _capture_over_tunnel(
                 control, host, script, logger=logger, config=config, debug=debug_ssh, timeout=90,
@@ -5034,6 +5055,7 @@ def message(
             if r.session in sent:
                 typer.echo(f"  sent to {r.label}")
                 delivered.append(r)
+                sent_at.append(stamp)
             else:
                 failures += 1
                 detail = result.stderr.strip()
@@ -5041,40 +5063,307 @@ def message(
                     f"! not delivered to {r.label}" + (f": {detail}" if detail else ""), err=True,
                 )
 
-    if wait > 0 and delivered:
-        typer.echo(f"  waiting up to {int(wait)}s for a `REPLY {msg_id}:` line ...")
-        pending = list(delivered)
+    # The sent-message log: what `peek --reply <id>` and the relay's
+    # own-ids rule read back.  Through the relay, the sending account is
+    # the caller (SUDO_USER), not this one.
+    relay_caller = (ctx.obj or {}).get("relay_caller") if ctx else None
+    account = relay_caller or getpass.getuser()
+    waits: List[_ReplyWait] = []
+    for r, stamp in zip(delivered, sent_at):
+        msg_id = ids[id(r)]
+        header = frame_header(who, when, msg_id)
+        identity = _reply_identity(config, r)
+        spec = None if identity is None else _replies.probe_spec(
+            identity, msg_id=msg_id, header=header, sent_at=stamp)
+        waits.append(_ReplyWait(r, spec, msg_id))
+        entry = {
+            "id": msg_id, "frame": lines[id(r)], "header": header,
+            "sent_at": _replies.utc_iso(stamp), "sent_epoch": stamp,
+            "account": account, "relay_account": getpass.getuser() if relay_caller else None,
+            "recipient": _recipient_fields(r), "identity": identity,
+        }
+        try:
+            _replies.append_sent(entry)
+        except OSError as exc:
+            logger.warning("could not append to the sent-message log: %s", exc)
+
+    codes: List[int] = []
+    if wait > 0 and waits:
+        shown = sorted({w.msg_id for w in waits})
+        tag = shown[0] if len(shown) == 1 else "<id>"
+        typer.echo(f"  waiting up to {int(wait)}s for a `REPLY {tag}:` line"
+                   + ("" if len(shown) == 1 else f" (ids {', '.join(shown)})") + " ...")
+        pending = list(waits)
         deadline = time.monotonic() + wait
         while pending:
-            for r in list(pending):
-                control = _control_for_recipient(config, hosts, r.host, r, debug_ssh)
-                try:
-                    got = _capture_over_tunnel(
-                        control, r.host, capture_pane_command(r), logger=logger,
-                        config=config, debug=debug_ssh, timeout=90,
-                    )
-                except Exception as exc:  # noqa: BLE001 -- keep polling the others
-                    logger.info("%s: pane read failed (%s)", r.host, exc)
-                    continue
-                reply = extract_reply(got.stdout or "", msg_id)
-                if reply is not None:
-                    typer.echo(f"  {r.label} replied: {reply}")
-                    pending.remove(r)
+            for w in list(pending):
+                if _poll_reply(config, hosts, w, w.msg_id, logger=logger, debug_ssh=debug_ssh):
+                    pending.remove(w)
             if not pending or time.monotonic() >= deadline:
                 break
             _message_sleep(_MESSAGE_POLL_SECONDS)
-        for r in pending:
-            typer.echo(
-                f"  no reply from {r.label} within {int(wait)}s; "
-                f"`sucoder peek {mirror or r.session[len('sucoder-'):]}` reads its pane later"
-            )
+        for w in waits:
+            codes.append(_report_reply(w, w.msg_id, within=f"within {int(wait)}s",
+                                       peek_hint=mirror or w.recipient.session[len('sucoder-'):]))
     if unreachable:
         if unseen and everyone:
             typer.echo(f"! not inspected: {', '.join(unseen)}; sessions there got nothing.", err=True)
         typer.echo("! delivery was unavailable for some recipients." + _unavailable_hint(config), err=True)
-        raise typer.Exit(code=EXIT_UNAVAILABLE)
+        codes.append(EXIT_UNAVAILABLE)
     if failures:
-        raise typer.Exit(code=1)
+        codes.append(1)
+    worst = _replies.worst_exit(codes)
+    if worst:
+        raise typer.Exit(code=worst)
+
+
+class _ReplyWait:
+    """One delivered recipient's reply search: the probe while it has an
+    identity and answers, the screen reader otherwise."""
+
+    def __init__(self, recipient, spec, msg_id: str = ""):
+        self.recipient = recipient
+        self.spec = spec               # None: no recorded identity, screen only
+        self.msg_id = msg_id           # this recipient's own id (one per recipient)
+        self.route = "login"           # where the probe runs; "job" once the login host saw nothing
+        self.answer = None             # the probe's last answer
+        self.failed = 0                # polls that failed in transport
+        self.timed_out = False         # a probe ran out of time: never re-run blind
+        self.screen_reply = None       # a reply read from the screen (no-adapter only)
+
+
+def _recipient_fields(r) -> Dict[str, Any]:
+    return {
+        "label": r.label, "host": r.host, "session": r.session, "socket": r.socket,
+        "job_id": r.job_id, "node": r.node, "target": r.target, "pane": r.pane,
+        "agent_mode": r.agent_mode, "mirror": r.mirror, "session_keys": list(r.session_keys),
+    }
+
+
+def _recipient_from_fields(fields: Dict[str, Any]):
+    from .messaging import Recipient
+
+    known = {k: fields[k] for k in (
+        "label", "host", "session", "socket", "job_id", "node", "target", "pane", "agent_mode", "mirror",
+    ) if k in fields and fields[k] is not None}
+    return Recipient(session_keys=tuple(fields.get("session_keys") or ()), **known)
+
+
+def _reply_identity(config, r) -> Optional[Dict[str, Any]]:
+    """The transcript identity of recipient *r*, from the session record
+    for its mirror and target (the report's ``session_keys`` for a job, the
+    configured mirror whose token the session carries otherwise); None when
+    no record identifies the agent, and the screen path is used."""
+    from .replies import transcript_identity
+    from .session import RemoteSession
+
+    target = r.target
+    if not target:
+        return None
+    token = r.session[len("sucoder-"):] if r.session.startswith("sucoder-") else r.session
+    suffix = f"--{target}"
+    keys = list(r.session_keys) or [
+        f"{name}{suffix}" for name in config.mirrors if _sanitize_session_token(name) == token
+    ]
+    remote = config.targets.get(target)
+    for key in keys:
+        if not key.endswith(suffix):
+            continue
+        name = key[:-len(suffix)]
+        record = RemoteSession.load(name, target_name=target)
+        settings = config.mirrors.get(name)
+        root = record.remote_mirror_root or (str(remote.mirror_root) if getattr(remote, "mirror_root", None) else None)
+        dirname = getattr(settings, "mirror_dirname", None) or name
+        local_root = None
+        slurm = getattr(remote, "slurm", None)
+        if r.job_id is not None and slurm is not None:
+            disk = getattr(slurm, "local_disk", None)
+            base = disk if isinstance(disk, str) and disk else "/local"
+            local_root = f"{base.rstrip('/')}/job{r.job_id}"
+        identity = transcript_identity(
+            record, r, mirror_path=f"{root.rstrip('/')}/{dirname}" if root else None,
+            local_root=local_root, token=token,
+        )
+        if identity is not None:
+            return identity
+    return None
+
+
+def _run_probe(config, hosts, w, route: str, *, logger, debug_ssh) -> Optional[Dict[str, Any]]:
+    """One probe run on *route*; None when it failed in transport or never
+    answered.  A run that outlived the local wall clock (exit 124) is the
+    probe's timeout answer, so neither this poll nor a later one re-runs it
+    blind (15c9510): the read may still be stuck on the far side.  That is
+    also why this calls :func:`_run_remote_capture` itself rather than
+    :func:`_capture_over_tunnel`, which reconnects and re-runs on a 124;
+    only an ssh failure (255, or a transient transport error) reconnects
+    and tries once more."""
+    from .messaging import _in_job
+    from .replies import PROBE_SCHEMA, PROBE_TIMEOUT, PROBE_TRANSPORT_TIMEOUT, parse_probe_output, probe_command
+
+    r = w.recipient
+    control = _control_for_recipient(config, hosts, r.host, r, debug_ssh)
+    if control is None:
+        return None
+    command = probe_command(w.spec)
+    if route == "job" and r.job_id is not None:
+        command = _in_job(r, command)
+    timed_out = {"schema": PROBE_SCHEMA, "status": "unrecognized", "why": PROBE_TIMEOUT, "replies": []}
+    try:
+        got = _run_remote_capture(control, r.host, command, debug=debug_ssh, timeout=PROBE_TRANSPORT_TIMEOUT)
+        if got is not None and got.returncode == 124:
+            return timed_out
+        if _needs_tunnel_setup(got):
+            _connect_with_retry(control, r.host, logger, config=config)
+            got = _run_remote_capture(control, r.host, command, debug=debug_ssh,
+                                      timeout=PROBE_TRANSPORT_TIMEOUT)
+    except Exception as exc:  # noqa: BLE001 -- a failed poll; the caller counts it
+        logger.info("%s: reply probe failed (%s)", r.host, exc)
+        return None
+    if getattr(got, "returncode", 0) == 124:
+        return timed_out
+    if getattr(got, "returncode", 0) in _SSH_TRANSPORT_RC:
+        return None
+    return parse_probe_output(getattr(got, "stdout", "") or "")
+
+
+def _probe_timed_out(answer: Optional[Dict[str, Any]]) -> bool:
+    from .replies import PROBE_TIMEOUT
+
+    return answer is not None and answer.get("why") == PROBE_TIMEOUT
+
+
+def _probe_reply(config, hosts, w, *, logger, debug_ssh) -> Optional[Dict[str, Any]]:
+    """The probe's answer for *w*.  It runs on the login host first, where
+    shared storage holds a login-node Claude transcript, a compute-node one
+    on the shared home, and the managed-Codex replica; when nothing is
+    identified there and the recipient is a job, it runs inside the job
+    (``job_tmux_command``'s route) and stays there."""
+    answer = _run_probe(config, hosts, w, w.route, logger=logger, debug_ssh=debug_ssh)
+    # Not after a timeout: the login host's read may still be running.
+    if (w.route == "login" and w.recipient.job_id is not None and not _probe_timed_out(answer)
+            and (answer is None or answer.get("status") == "no-adapter")):
+        inside = _run_probe(config, hosts, w, "job", logger=logger, debug_ssh=debug_ssh)
+        if inside is not None and (answer is None or inside.get("status") != "no-adapter"):
+            w.route, answer = "job", inside
+    return answer
+
+
+def _echo_reply(label: str, text: str, source: Optional[str] = None) -> None:
+    """Print a peer's reply, sanitised and capped, labelled as its text."""
+    from .messaging import sanitize_reply
+    from .replies import clean_field
+
+    lines = sanitize_reply(text).split("\n")
+    tag = f" ({clean_field(source)})" if source else ""
+    typer.echo(f"  {label} replied{tag}: {lines[0]}")
+    for extra in lines[1:]:
+        typer.echo(f"    {extra}")
+
+
+def _poll_reply(config, hosts, w, msg_id: str, *, logger, debug_ssh) -> bool:
+    """One poll of *w*; True when its search is over (a reply, or a turn
+    that ended after the delivery, or a probe that timed out and must not
+    be re-run blind).
+
+    The screen is read only for ``no-adapter`` (or no recorded identity):
+    when the reader found the transcript but could not read or interpret
+    it, the answer is "could not look" (exit 3), and a ``REPLY <id>`` row on
+    the pane -- which may be a tool call quoting the protocol -- does not
+    overrule it."""
+    from .messaging import capture_pane_command, extract_reply
+
+    r = w.recipient
+    if w.spec is not None:
+        answer = _probe_reply(config, hosts, w, logger=logger, debug_ssh=debug_ssh)
+        if answer is None:
+            w.failed += 1
+            return False
+        if _probe_timed_out(answer):
+            w.timed_out = True
+            # A timeout says nothing new: an earlier answer still stands.
+            if w.answer is None:
+                w.answer = answer
+            return True
+        w.answer = answer
+        status = answer.get("status")
+        if status == "replied":
+            for item in answer.get("replies") or [{"source": answer.get("source"), "text": answer.get("reply") or ""}]:
+                _echo_reply(r.label, item.get("text") or "", item.get("source") or "transcript")
+            return True
+        if status == "seen" and answer.get("turn_ended"):
+            return True
+        if status != "no-adapter":
+            return False
+    control = _control_for_recipient(config, hosts, r.host, r, debug_ssh)
+    try:
+        got = _capture_over_tunnel(
+            control, r.host, capture_pane_command(r), logger=logger,
+            config=config, debug=debug_ssh, timeout=90,
+        )
+    except Exception as exc:  # noqa: BLE001 -- keep polling the others
+        logger.info("%s: pane read failed (%s)", r.host, exc)
+        return False
+    reply = extract_reply(got.stdout or "", msg_id)
+    if reply is not None:
+        w.screen_reply = reply
+        _echo_reply(r.label, reply)
+        return True
+    return False
+
+
+_STATUS_TEXT = {
+    "seen": "took the message in but has not replied",
+    "queued": "has the message queued; the agent has not taken it up yet",
+    "absent": "its transcript was read past the send and shows no delivery",
+    "ambiguous": "several transcripts hold the message, so which one is the session's is unknown",
+    "unreadable": "its transcript could not be read",
+    "unrecognized": "its transcript could not be interpreted",
+}
+
+
+def _report_reply(w, msg_id: str, *, within: str, peek_hint: str) -> int:
+    """Say how *w*'s search ended; its exit code (0 replied, 4 no answer,
+    1 ambiguous, 3 could not look; the screen path's 0 without an identity)."""
+    from .replies import STATUS_EXIT
+
+    from .replies import clean_field
+
+    r = w.recipient
+    answer = w.answer
+    if answer is not None and answer.get("status") == "replied":
+        return 0
+    if w.screen_reply is not None and (answer is None or answer.get("status") == "no-adapter"):
+        return 0
+    if _probe_timed_out(answer):
+        typer.echo(f"! {r.label}: the reply probe timed out, so whether it replied is unknown; "
+                   f"it is not re-run blind; `sucoder peek --reply {msg_id}` asks again later", err=True)
+        return EXIT_UNAVAILABLE
+    if w.spec is not None and answer is None and w.failed:
+        typer.echo(f"! {r.label}: every reply probe failed in transport, so whether it replied "
+                   "is unknown", err=True)
+        return EXIT_UNAVAILABLE
+    if answer is None or answer.get("status") == "no-adapter":
+        typer.echo(f"  no reply from {r.label} {within}; `sucoder peek {peek_hint}` reads its pane later")
+        return 0
+    status = answer["status"]
+    code = STATUS_EXIT.get(status)
+    detail = _STATUS_TEXT.get(status, status)
+    if status == "seen" and answer.get("turn_ended"):
+        detail += " (its turn has ended since)"
+    why = answer.get("why")
+    if why and status in ("unreadable", "unrecognized"):
+        detail += f" ({clean_field(why)})"
+    if status == "ambiguous":
+        detail += ": " + ", ".join(clean_field(c) for c in answer.get("candidates") or [])
+    if w.timed_out:
+        detail += " (a later probe timed out and was not re-run)"
+    later = f"; `sucoder peek --reply {msg_id}` asks again later"
+    if code in (EXIT_UNAVAILABLE, 1):
+        typer.echo(f"! {r.label}: {status}: {detail}{later}", err=True)
+    else:
+        typer.echo(f"  {r.label}: {status}: {detail} {within}{later}")
+    return code if code is not None else 0
 
 
 # Exit status when discovery or delivery could not reach a cluster (issue
@@ -5194,6 +5483,10 @@ def relay_main(ctx: typer.Context) -> None:
     if path is None or os.path.realpath(path) != os.path.realpath(_default_config_path()):
         typer.echo(f"relay refused: it reads only {_default_config_path()}.", err=True)
         raise typer.Exit(code=2)
+    # Who is asking, for the sent-message log (``message`` records the
+    # caller as the sending account) and ``peek --reply``'s own-ids rule.
+    if isinstance(ctx.obj, dict):
+        ctx.obj["relay_caller"] = os.environ.get("SUDO_USER") or "unknown"
     # Nobody at the relay can type a PIN/OTP: reuse live connections or a
     # valid certificate, and otherwise fail fast as unavailable.
     from .tunnel import set_noninteractive
@@ -5264,14 +5557,16 @@ def relay_message(
 @relay_app.command("peek")
 def relay_peek(
     ctx: typer.Context,
-    mirror: str = typer.Argument(...),
+    mirror: Optional[str] = typer.Argument(None),
     target: Optional[str] = typer.Option(None, "--target", "-T"),
     lines: int = typer.Option(40, "-n", "--lines"),
+    reply: Optional[str] = typer.Option(None, "--reply", metavar="ID"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
-    """``sucoder peek``, for the relay's caller."""
+    """``sucoder peek``, for the relay's caller; ``--reply`` answers only
+    for messages that caller sent."""
     _relay_target(ctx, target)
-    peek(ctx, mirror=mirror, lines=lines, verbose=verbose)
+    peek(ctx, mirror=mirror, lines=lines, reply=reply, verbose=verbose)
 
 
 # A pane read is one ssh session open (~10s on a BRC login node), so a poll
@@ -5283,8 +5578,14 @@ _message_sleep = time.sleep
 @app.command("peek")
 def peek(
     ctx: typer.Context,
-    mirror: str = typer.Argument(..., help="The mirror whose session's pane to read."),
+    mirror: Optional[str] = typer.Argument(None, help="The mirror whose session's pane to read."),
     lines: int = typer.Option(40, "-n", "--lines", help="How many rows of the pane to show."),
+    reply: Optional[str] = typer.Option(
+        None, "--reply", metavar="ID",
+        help="Instead of the pane, the status and reply of message ID, from the "
+             "sent-message log and the recipient's transcript.  MIRROR narrows "
+             "a broadcast to one recipient.",
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
 ) -> None:
     """Show the tail of a running session's pane, from here.
@@ -5294,16 +5595,29 @@ def peek(
     how that screen is read -- through ``srun --overlap`` for a job, as the
     pane probe does.  A pane that is a bare shell is fine to read; only
     typing into one is refused.
+
+    ``--reply ID`` asks once what ``message --wait`` polls for: whether the
+    agent took message ID in and what it answered, read from its transcript
+    (docs/reply-from-transcript.org), with the same statuses and exit codes.
     """
     from .messaging import capture_pane_command, pane_tail
     from .agent_mode import CODEX_REMOTE_CONTROL
 
+    reply = reply if isinstance(reply, str) else None
+    mirror = mirror if isinstance(mirror, str) else None
     config = _get_config(ctx)
     target_name = ((ctx.obj or {}).get("target_name") if ctx else None)
     _delegate_to_session_relay(config, "peek", [
         *(["-T", target_name] if target_name else []), "--lines", str(lines),
-        *(["--verbose"] if verbose else []), "--", mirror,
+        *(["--reply", reply] if reply is not None else []),
+        *(["--verbose"] if verbose else []), "--", *([mirror] if mirror else []),
     ])
+    if reply is not None:
+        _peek_reply(ctx, config, reply, mirror=mirror, verbose=verbose)
+        return
+    if mirror is None:
+        typer.echo("Usage: sucoder peek MIRROR, or sucoder peek --reply ID.", err=True)
+        raise typer.Exit(code=2)
     if not config.targets:
         typer.echo("No targets configured; nothing to read.", err=True)
         raise typer.Exit(code=1)
@@ -5357,6 +5671,51 @@ def peek(
         typer.echo(pane_tail(got.stdout or "", lines))
     if failures:
         raise typer.Exit(code=1)
+
+
+def _peek_reply(ctx, config, msg_id: str, *, mirror: Optional[str], verbose: bool) -> None:
+    """``peek --reply``: one probe (or screen read) per logged recipient of
+    *msg_id*.  Through the relay only ids the caller sent are answered; any
+    other id is as unknown as one never sent."""
+    from . import replies as _replies
+
+    if not _replies.valid_message_id(msg_id):
+        typer.echo(f"--reply needs a message id of 8 hex characters, not {msg_id!r}.", err=True)
+        raise typer.Exit(code=2)
+    entries = _replies.lookup_sent(msg_id)
+    caller = (ctx.obj or {}).get("relay_caller") if ctx else None
+    if caller is not None:
+        entries = [e for e in entries if e.get("account") == caller]
+    if mirror is not None:
+        token = _sanitize_session_token(mirror)
+        entries = [e for e in entries if (e.get("recipient") or {}).get("mirror") == mirror
+                   or (e.get("recipient") or {}).get("session") == f"sucoder-{token}"]
+    if not entries:
+        typer.echo(f"unknown message id {msg_id}: it is not in the sent-message log "
+                   f"({_replies.sent_log_path()})" + (f" for mirror {mirror}" if mirror else "") + ".", err=True)
+        raise typer.Exit(code=2)
+    logger = setup_logger("sucoder.peek", config.log_dir, verbose)
+    debug_ssh = _get_debug_ssh(ctx)
+    set_progress(True)
+    codes: List[int] = []
+    for entry in entries:
+        r = _recipient_from_fields(entry.get("recipient") or {})
+        identity = entry.get("identity")
+        spec = None
+        if isinstance(identity, dict) and isinstance(entry.get("sent_epoch"), (int, float)):
+            spec = _replies.probe_spec(identity, msg_id=msg_id, header=entry.get("header") or "",
+                                       sent_at=float(entry["sent_epoch"]))
+        w = _ReplyWait(r, spec, msg_id)
+        if _control_for_recipient(config, {}, r.host, r, debug_ssh) is None:
+            typer.echo(f"! {r.host}: no target configuration to reach it with", err=True)
+            codes.append(EXIT_UNAVAILABLE)
+            continue
+        _poll_reply(config, {}, w, msg_id, logger=logger, debug_ssh=debug_ssh)
+        codes.append(_report_reply(w, msg_id, within="so far",
+                                   peek_hint=r.mirror or r.session[len("sucoder-"):]))
+    worst = _replies.worst_exit(codes)
+    if worst:
+        raise typer.Exit(code=worst)
 
 
 def _plan_session_recipients(
