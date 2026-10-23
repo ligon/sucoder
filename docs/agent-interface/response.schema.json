@@ -1,0 +1,637 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "operation": {
+      "enum": [
+        "session_context",
+        "list_sessions"
+      ]
+    },
+    "observation_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "finished_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "elapsed_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "status": {
+      "enum": [
+        "complete",
+        "partial",
+        "unavailable",
+        "error"
+      ]
+    },
+    "observer": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "account": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "configuration_authority": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        },
+        "discovery_account": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "host",
+        "account",
+        "configuration_authority",
+        "discovery_account"
+      ],
+      "additionalProperties": false
+    },
+    "coverage": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "scope": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "state": {
+            "enum": [
+              "complete",
+              "partial",
+              "unavailable",
+              "timeout",
+              "skipped"
+            ]
+          },
+          "count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "source_id",
+          "scope",
+          "state",
+          "count",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 256
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "enum": [
+              "TIMEOUT",
+              "CANCELLED",
+              "OUTPUT_LIMIT",
+              "AUTH_UNAVAILABLE",
+              "ROUTE_UNAVAILABLE",
+              "PROBE_FAILED",
+              "RELAY_UNSUPPORTED",
+              "SCHEMA_UNSUPPORTED",
+              "INVALID_RESPONSE",
+              "INVALID_ARGUMENT",
+              "CONFIG_INVALID",
+              "INTERNAL_ERROR",
+              "WORKSPACE_CHANGED",
+              "WORKSPACE_UNAVAILABLE",
+              "RECORD_CORRUPT",
+              "RECORD_UNREADABLE",
+              "IDENTITY_AMBIGUOUS"
+            ]
+          },
+          "source_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 4096
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "code",
+          "source_id",
+          "message"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 100
+    },
+    "truncated": {
+      "type": "boolean"
+    },
+    "data": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/context"
+        },
+        {
+          "$ref": "#/$defs/sessions"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "sources": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source_id",
+          "kind",
+          "targets",
+          "configuration_authority",
+          "discovery_account"
+        ],
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "kind": {
+            "enum": [
+              "workspace",
+              "scheduler",
+              "login",
+              "records",
+              "aggregate"
+            ]
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "maxItems": 100
+          },
+          "configuration_authority": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 4096
+          },
+          "discovery_account": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 4096
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "operation",
+    "observation_id",
+    "started_at",
+    "finished_at",
+    "elapsed_ms",
+    "status",
+    "observer",
+    "coverage",
+    "errors",
+    "truncated",
+    "data",
+    "sources"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Proposed SuCoder observation response 1.0",
+  "$defs": {
+    "fact": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        },
+        "state": {
+          "enum": [
+            "observed",
+            "reported",
+            "unknown",
+            "ambiguous"
+          ]
+        },
+        "source": {
+          "enum": [
+            "local",
+            "configuration",
+            "environment",
+            "record",
+            "probe",
+            "none"
+          ]
+        }
+      },
+      "required": [
+        "value",
+        "state",
+        "source"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "unknown",
+                  "ambiguous"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "binding": {
+          "enum": [
+            "valid",
+            "changed",
+            "unavailable"
+          ]
+        },
+        "requested_workspace": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "git_root": {
+          "$ref": "#/$defs/fact"
+        },
+        "branch": {
+          "$ref": "#/$defs/fact"
+        },
+        "head": {
+          "$ref": "#/$defs/fact"
+        },
+        "mirror": {
+          "$ref": "#/$defs/fact"
+        },
+        "durable_mirror": {
+          "$ref": "#/$defs/fact"
+        },
+        "allocation_id": {
+          "$ref": "#/$defs/fact"
+        },
+        "local_root": {
+          "$ref": "#/$defs/fact"
+        },
+        "confinement": {
+          "$ref": "#/$defs/fact"
+        }
+      },
+      "required": [
+        "binding",
+        "requested_workspace",
+        "git_root",
+        "branch",
+        "head",
+        "mirror",
+        "durable_mirror",
+        "allocation_id",
+        "local_root",
+        "confinement"
+      ],
+      "additionalProperties": false
+    },
+    "sessions": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "const": "configured_remote_targets"
+        },
+        "selected_targets": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "maxItems": 100
+        },
+        "sessions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "object",
+                "properties": {
+                  "source_id": {
+                    "type": "string",
+                    "maxLength": 4096
+                  },
+                  "kind": {
+                    "enum": [
+                      "slurm",
+                      "login"
+                    ]
+                  },
+                  "job_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 4096
+                  },
+                  "socket": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 4096
+                  },
+                  "session_name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 4096
+                  }
+                },
+                "required": [
+                  "source_id",
+                  "kind",
+                  "job_id",
+                  "socket",
+                  "session_name"
+                ],
+                "additionalProperties": false,
+                "allOf": [
+                  {
+                    "if": {
+                      "properties": {
+                        "kind": {
+                          "const": "login"
+                        }
+                      }
+                    },
+                    "then": {
+                      "properties": {
+                        "job_id": {
+                          "type": "null"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "if": {
+                      "properties": {
+                        "kind": {
+                          "const": "slurm"
+                        }
+                      }
+                    },
+                    "then": {
+                      "properties": {
+                        "job_id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "targets": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 4096
+                },
+                "maxItems": 100
+              },
+              "mirror_candidates": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 4096
+                },
+                "maxItems": 100
+              },
+              "scheduler_state": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 4096
+              },
+              "node": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 4096
+              },
+              "pane": {
+                "enum": [
+                  "recognized_agent_command",
+                  "shell_command",
+                  "service_marker",
+                  "unknown",
+                  "not_probed"
+                ]
+              },
+              "record_keys": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 4096
+                },
+                "maxItems": 100
+              }
+            },
+            "required": [
+              "key",
+              "targets",
+              "mirror_candidates",
+              "scheduler_state",
+              "node",
+              "pane",
+              "record_keys"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 500
+        },
+        "records": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string",
+                "maxLength": 4096
+              },
+              "source_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 4096
+              },
+              "state": {
+                "enum": [
+                  "matched",
+                  "absent",
+                  "unknown",
+                  "ambiguous",
+                  "corrupt"
+                ]
+              },
+              "jobs": {
+                "type": "array",
+                "maxItems": 100,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "job_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "state": {
+                      "enum": [
+                        "matched",
+                        "absent",
+                        "unknown"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "job_id",
+                    "state"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "key",
+              "source_id",
+              "state",
+              "jobs"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 500
+        }
+      },
+      "required": [
+        "scope",
+        "selected_targets",
+        "sessions",
+        "records"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "error"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "if": {
+          "properties": {
+            "operation": {
+              "const": "session_context"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/context"
+            }
+          }
+        },
+        "else": {
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/sessions"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

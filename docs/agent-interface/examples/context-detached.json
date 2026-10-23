@@ -1,0 +1,79 @@
+{
+  "schema_version": "1.0",
+  "operation": "session_context",
+  "observation_id": "00000000-0000-4000-8000-000000000001",
+  "started_at": "2026-10-22T20:00:00Z",
+  "finished_at": "2026-10-22T20:00:01Z",
+  "elapsed_ms": 1000,
+  "status": "complete",
+  "observer": {
+    "host": "worker.example",
+    "account": "coder",
+    "configuration_authority": "coder@worker.example",
+    "discovery_account": null
+  },
+  "coverage": [
+    {
+      "source_id": "workspace",
+      "scope": "git",
+      "state": "complete",
+      "count": 1,
+      "reason": null
+    }
+  ],
+  "errors": [],
+  "truncated": false,
+  "data": {
+    "binding": "valid",
+    "requested_workspace": "/work/project",
+    "git_root": {
+      "value": "/work/project",
+      "state": "observed",
+      "source": "local"
+    },
+    "branch": {
+      "value": null,
+      "state": "observed",
+      "source": "local"
+    },
+    "head": {
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "state": "observed",
+      "source": "local"
+    },
+    "mirror": {
+      "value": "project",
+      "state": "reported",
+      "source": "configuration"
+    },
+    "durable_mirror": {
+      "value": null,
+      "state": "unknown",
+      "source": "none"
+    },
+    "allocation_id": {
+      "value": null,
+      "state": "unknown",
+      "source": "none"
+    },
+    "local_root": {
+      "value": null,
+      "state": "unknown",
+      "source": "none"
+    },
+    "confinement": {
+      "value": null,
+      "state": "unknown",
+      "source": "none"
+    }
+  },
+  "sources": [
+    {
+      "source_id": "workspace",
+      "kind": "workspace",
+      "targets": [],
+      "configuration_authority": "coder@worker.example",
+      "discovery_account": null
+    }
+  ]
+}

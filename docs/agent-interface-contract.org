@@ -1,0 +1,293 @@
+#+TITLE: SuCoder agent observation contract - P0
+#+DATE: 2026-10-22
+#+AUTHOR: Sue
+#+STATUS: P1/P2 implemented and reviewed; validation limits recorded below
+
+* Outcome and decisions
+
+Provide one noninteractive observation interface with CLI and optional MCP adapters.
+The public wire contract is version 1.0; v1 consumers accept exactly that version and reject other versions, including minor revisions, until an explicit compatibility upgrade. Changes to fields, enum values or semantics require a new declared version.
+The CLI commands below are implemented in the P1/P2 working tree.
+MCP tools remain a conditional P3 proposal; the synthetic examples are fixtures, not live observations.
+The prior-art ledger is [[file:agent-interface-ledger.org][agent-interface-ledger.org]]; the phased plan and earlier red-team record are [[file:agent-interface-plan.org][agent-interface-plan.org]].
+
+The human approved P1/P2 after contract review on 2026-10-22.
+Keep P3 conditional on a separate go/no-go after CLI-plus-skills are usable.
+For P3 recommend a companion =sucoder-mcp= distribution requiring Python >=3.10, rather than an optional extra that silently disappears under Python 3.9.
+Keep the base SuCoder requirement unchanged.
+This is a packaging proposal requiring approval, not a dependency change.
+
+* Requests and transport mapping
+
+The normative request and response shapes are [[file:agent-interface/request.schema.json][request.schema.json]] and [[file:agent-interface/response.schema.json][response.schema.json]].
+Unknown input fields are errors; missing optional inputs take the schema defaults.
+
+- =sucoder context --json [--timeout SECONDS]= :: Inspect the invocation cwd locally; equivalent to =session_context= against the MCP server's bound workspace. Default budget 5 seconds, range 1-30.
+- =sucoder [-T TARGET] sessions --json [--fast] [--no-login-nodes] [--timeout SECONDS]= :: Equivalent to =list_sessions= with =target=, =fast= and =login_nodes= inputs. Default budget 30 seconds, range 1-45. This path is always noninteractive.
+- MCP =session_context= :: Accept only timeout; no cwd, config path, account or executable arguments.
+- MCP =list_sessions= :: Accept only an optional configured target name and bounded inspection flags/budget. No arbitrary host, shell, mirror path or credentials.
+
+CLI emits exactly one JSON object and newline on stdout for recognized JSON requests, including domain failures; diagnostics go to stderr.
+CLI usage/parsing failures before dispatch may retain the existing stderr-only behavior and exit 2.
+Exit 0 means complete observation within the explicitly requested scope, 3 means partial or unavailable observation, 2 means invalid arguments/configuration, and 1 means internal failure.
+Interruption may exit 130 without a JSON result; callers must not interpret absent output as empty discovery.
+No targets configured is a complete empty result, with scope explicitly =configured_remote_targets=.
+The first list interface does not claim to enumerate every local process or every node on a cluster.
+Login coverage is limited to configured/discovered hosts, and fast mode skips login/pane probes as the existing fast CLI does.
+
+MCP returns the same envelope in =structuredContent= and a serialized text fallback.
+For a valid partial observation use =isError=false=; for unavailable/error use =isError=true= with the envelope retained where the SDK permits it.
+Invalid protocol input is an MCP protocol error, not an invented successful observation.
+Use =readOnlyHint=true=, =destructiveHint=false=, =idempotentHint=true=, =openWorldHint=true=; these annotations describe behavior and do not grant authority.
+No resource endpoints, prompts, subscriptions, elicitation, sampling, or lifecycle operations are part of v1.
+
+* Response rules
+
+Every response carries a source catalog, schema version, operation, observation UUID, UTC collection start/end timestamps, monotonic elapsed milliseconds, result status, observer identity, coverage, errors, and data (or null for an error).
+An observation is an interval, not an atomic snapshot of the cluster.
+Clock adjustments cannot extend the monotonic budget; clients must not infer ordering from wall-clock end >= start.
+Equivalent CLI/MCP fixtures mean equivalent data/coverage/errors after normalizing observation UUIDs, clocks and transport-specific observer metadata.
+
+Status =complete= means all requested sources finished successfully, including a proven empty source.
+=partial= means useful results exist but a requested source or required context fact is unknown, ambiguous, failed, or truncated.
+=unavailable= means no useful requested data could be obtained; keep known local observer facts.
+=error= means rejected configuration/input or internal failure and has null data.
+Intentionally skipped sources do not make a fast or narrowed request partial; their coverage must still say skipped.
+A missing optional fact (for example no mirror mapping for an ordinary git checkout) is not a failure; return it explicitly unknown.
+The required context fact is a validated workspace binding with readable git-root/HEAD state; an unborn repository has known git root but null HEAD, which is valid.
+Detached HEAD is valid with null branch.
+
+Facts carry =value=, =state= and =source=.
+=observed= is a local/probe observation; =reported= is a configuration, environment or record claim; =unknown= and =ambiguous= have null value.
+Configured durability is not proof that commits have been published, and an installed post-commit hook is not proof of a successful push.
+Do not expose a generic =safe_to_release=, =safe_to_delete=, or =all_work_saved= field.
+Unknown is never encoded as false or an empty string.
+
+Each coverage entry identifies source, scope, state, collected count (nullable), and a reason code (nullable).
+States are =complete=, =partial=, =unavailable=, =timeout=, =skipped=.
+Only complete collection with count 0 establishes inspected-empty; a command returning success after masking an error does not qualify.
+Corrupt/unreadable session records get record coverage errors; they are not indistinguishable from missing files.
+
+Public errors use stable codes and fixed safe messages, never raw exceptions, stderr, command strings, config values or unparsed scheduler rows.
+Messages are at most 256 characters; sanitize before logging in default mode too.
+Detailed local debugging is separately opt-in and must not enter the protocol response.
+Maximum result size is 256 KiB UTF-8, 500 returned sessions, 500 records, 256 coverage entries, and 100 errors.
+Bound each field to 4096 characters and captured subprocess streams to 1 MiB; stop a probe that exceeds its cap.
+Output-limit status takes precedence over unavailable, even when no session rows survive: the collection is partial, not evidence of an empty or unreachable scope.
+On any output cap return a valid partial envelope with =OUTPUT_LIMIT= and =truncated=true=; retain coverage for omitted sources using an aggregate entry if necessary.
+The reserved aggregate source has kind =aggregate=, scope =omitted_sources= and unknown count/account; its empty target list explicitly means omitted attribution, not zero affected targets.
+=truncated=true= forbids any completeness claim about targets not represented; narrow and rerun.
+No pagination or opaque resume tokens in v1: narrow by configured target and repeat, without claiming a stable snapshot.
+
+* Identity and record reconciliation
+
+Remote source IDs are opaque SHA-256 fingerprints of a canonical tuple containing configuration authority, configured endpoint identity, effective remote account or an unresolved-target discriminator, and discovery kind.
+Reserved local IDs are =workspace= and =records=; =aggregate:omitted= identifies output omitted by a size cap, not a discoverable remote source.
+Never put raw credential/options strings in an ID input or output.
+Keep the exact tuple and canonicalization in service tests; clients must not reverse-engineer the hash.
+Different remote accounts must not share a scheduler result even if the gateway name matches.
+Unknown SSH-account identity prevents cross-target deduplication; use separate source IDs and label the account unknown.
+Alias endpoints may remain separate until equivalence is demonstrated; no DNS or naming guess may collapse them.
+
+The source catalog maps every source ID used by coverage, errors, records and sessions to discovery kind, candidate targets, configuration authority and discovery account (nullable when unknown).
+Even an empty or unavailable source retains that mapping; a record with unresolved source has null source_id and explicit unknown state.
+Workspace, scheduler, login-host and record-read stages are separately identified; subordinate pane coverage may use its scheduler source with scope =panes=.
+Do not emit orphaned source references.
+
+Target filtering selects sources first, then rows: on a shared scheduler source include rows whose uniquely matched target is selected; omit uniquely matched nonselected rows.
+Retain unassigned/ambiguous rows from the selected source with their full candidate target list and an ambiguity error rather than guessing they belong elsewhere.
+Thus a narrowed result can still contain unresolved rows; selected_targets describes the request, not a guarantee of unique target membership.
+Read and reconcile only records for selected targets, plus unresolved records whose available provenance could belong to those sources; mark unresolved associations unknown.
+
+A returned session key is an observation-scoped tuple =(source_id, kind, job_id, socket, session_name)=.
+For Slurm, job_id is a string, and socket/session fields may be null when not probed; for login sessions, job_id is null.
+This is NOT a durable allocation-generation identity: job IDs and tmux names can be reused.
+No future mutation API may accept this key alone as an authorization or stale-state precondition.
+
+Preserve source provenance before calling report-building joins.
+Match session records only after resolving their target and authority to the same source.
+For each record report per-job =matched=, =absent= or =unknown= outcomes; absent requires complete live enumeration of its source.
+The aggregate record state is corrupt for an unreadable structure, ambiguous for unresolved target/mirror association, matched only when all job outcomes match, absent only when all are absent, and unknown otherwise (including mixed replacement-holder outcomes or no job references).
+A mixed-holder record makes the result partial and must not suggest clearing the record; preserve its per-job evidence.
+Reuse =RemoteSession.pending_replacement_job= for replacement-state semantics; include the main slurm_job_id as well.
+=holders_of_job= and =recorded_jobs= show existing consumers, but their global scans must not be used as provenance-aware joins.
+Return every candidate mirror name when sanitization collides; choose none.
+Pane classification is evidence, not readiness: =recognized_agent_command= requires an observed process command matching the existing supported-harness executable set; =shell_command= requires an observed recognized shell; =service_marker= means the existing SuCoder service-mode probe returned a marker.
+Unrecognized commands and unsuccessful probes are unknown; omitted probes are not_probed.
+A service marker may be stale and does not establish health, current ownership or a live conversation.
+No category permits an automatic release decision.
+A missing record means unrecorded, not permission to stop a job.
+An unconfigured target leaves its records unknown, not absent.
+
+* Workspace binding and local context
+
+CLI context binds to the invocation cwd for that call.
+The proposed stdio executable =sucoder-mcp --workspace ABSOLUTE_PATH= binds once at startup; the argument is installation/launch configuration, never a model tool argument.
+Accept symlinks at startup by resolving the real root, and report both the requested path and canonical git root.
+Require a readable git worktree; resolve linked-worktree git directories with git's own path machinery.
+Record filesystem identity (device/inode) for the canonical root and git directory internally, and verify it on each call; deletion, replacement or symlink retargeting returns =WORKSPACE_CHANGED= and requires restarting the server.
+Normal branch/HEAD changes are observations, not rebinding.
+This check is a consistency guard, not protection against a malicious same-account process or inode reuse.
+
+Observe cwd/root/branch/HEAD locally with bounded subprocesses, =GIT_OPTIONAL_LOCKS=0=, no fetch or hooks, and no external diff or credential helper.
+Do not relay context.
+Report process host/account separately from discovery authority and record provenance.
+=SLURM_JOB_ID= and =SUCODER_LOCAL_ROOT= are reported environment facts; they do not prove the scheduler allocation is live.
+A durable mirror path is reported only when local trusted configuration plus a unique path mapping supports it; otherwise unknown.
+An origin URL alone is insufficient and is never exposed raw.
+Confinement is reported from applicable configuration if identifiable, otherwise unknown; do not infer it from the presence of SLURM_JOB_ID.
+
+A server configured globally with a stale absolute workspace would describe the wrong agent.
+For initial P3 tests use a per-invocation/per-workspace configuration pointing to the actual clone, generated after existing local-tier preparation.
+Use the same final-cwd boundary as =codex_context.run=; do not write MCP configuration into the shared home or managed Codex stores.
+A restored session on another node starts a newly bound server; do not reuse a predecessor's path.
+Automatic production wiring is deferred until P3 demonstrates this for both harnesses.
+If binding cannot be established, use CLI context in the worker's cwd rather than a global MCP fallback.
+
+* Noninteractive execution and authority
+
+Run under the agent's existing effective uid; no privilege changes by the server.
+Reuse configured routes and existing credentials only.
+Allow bounded SSH BatchMode connection attempts; forbid prompting, certificate minting, known-host acceptance prompts, persistent tunnel repair, forwarding creation and session-record saves.
+A missing route produces unavailable coverage, not an invitation to call provisioning helpers.
+Existing user-owned SSH configuration remains trusted local execution policy; this interface is not a sandbox against malicious SSH ProxyCommand configuration.
+
+Use one request-wide monotonic deadline including queue/lock acquisition, retries, sudo, SSH, decoding and cleanup.
+Reserve min(2 seconds, 20 percent of the request budget) for cleanup; stop scheduling work at the earlier collection cutoff.
+At most four concurrent source probes, one per existing control socket at a time; no deadline-resetting nested retries.
+Reuse pure grouping/parsing helpers but do not route structured observation through =_capture_over_tunnel= or the unbounded login-pool completion path.
+On timeout/cancellation terminate and reap only request-owned local subprocess groups under the observer account; never kill an existing ControlMaster, agent, tmux server or allocation.
+Remote probes are short, nonpersistent commands; locally disconnecting cannot prove immediate remote termination during a partition.
+Therefore narrow D5 to bounded local cleanup plus remote command timeout where supported; report remote completion unknown rather than claiming guaranteed remote cancellation.
+OS-uninterruptible processes remain an explicit platform limit, not a reason to block all subsequent requests indefinitely.
+Tests must cover a successful next request after timeout/cancellation.
+
+For relay discovery, keep the existing fixed-config/home and approved executable boundary.
+Add a read-only =relay capabilities --json= query, then a structured noninteractive =relay sessions --json= path; neither may call the interactive discovery fallback.
+Use =sudo -n= and the same remaining request budget for the authorization check, capability probe and invocation.
+Transmit the remaining duration (not a monotonic timestamp from another process) to the relay.
+The relay establishes and enforces its own monotonic deadline and owns/reaps all its probes, even when the caller disappears; do not rely on the caller being permitted to signal relay-account children.
+The caller deadline remains authoritative for its response; transport/startup overhead can make relay cleanup finish later, bounded by the duration granted to the relay.
+Test caller disconnect and relay cleanup independently of terminating sudo.
+Do not claim a hard synchronized cleanup deadline across privilege or network boundaries.
+An older relay that rejects the capability command yields =RELAY_UNSUPPORTED= without trying legacy sessions or parsing terminal tables.
+Any response schema version other than exactly =1.0=, or malformed output, yield =SCHEMA_UNSUPPORTED= or =INVALID_RESPONSE=.
+The relay computes source identity under its own authority and reports it separately; the caller does not substitute its own config or cwd.
+No automatic update of a privileged installation is part of this plan.
+
+* Compatibility and packaging decision
+
+Observed locally on 2026-10-22: =codex-cli 0.163.0= and =Claude Code 2.1.309=.
+Only version/help/config parsing checks were performed; no model calls, MCP server connections or real config edits.
+
+| Component | Evidence | Proposed route | Unverified until P3 |
+|-----------+----------+----------------+---------------------|
+| Base SuCoder | pyproject Python ^3.9; CI 3.9/3.11 | Keep dependency/support policy | Built-wheel installation matrix |
+| Claude 2.1.309 | --mcp-config and --strict-mcp-config in installed help | Disposable JSON with absolute command and --workspace argument | Discovery/calls and restart after removal |
+| Codex 0.163.0 | mcp add/get help and successful inert -c override/get --json parsing; official config docs | Per-invocation mcp_servers overrides or isolated test config with cwd/args | Discovery/calls and restore binding |
+| Other harnesses | No current integration verification | CLI-plus-skills only | Native MCP support not claimed |
+| MCP SDK | PyPI mcp 2.3.0, Requires-Python >=3.10 | Pin mcp==2.3.0 for P3 spike | Resolver, stdio handshake, actual harness compatibility |
+
+PyPI's 2.3.0 artifacts were uploaded 2026-10-02; SDK documentation identifies v2 as stable.
+Protocol acceptance targets for the spike are 2025-11-25 initialize/list/call and 2026-07-28 discovery/list/call, delegated to the SDK's supported negotiation.
+No handwritten compatibility transport is proposed; a failed installed-harness handshake blocks P3 integration.
+SDK docs describe both eras, but that is not evidence that these installed harnesses negotiate both.
+
+Packaging alternatives:
+
+- Recommended :: Separate optional =sucoder-mcp= distribution, Python >=3.10, using the same released SuCoder service version and mcp==2.3.0 for the spike. Base SuCoder remains usable on 3.9; an explicit adapter installation on 3.9 fails through Requires-Python. Added cost: a second package and coordinated versioning.
+- Alternative :: =sucoder[mcp]= with a Python marker. This preserves base installability but can silently omit the SDK on 3.9; an explicit command-time error is possible, but does not meet the plan's installation-time rejection criterion without revising that criterion.
+- Rejected for this scope :: Raising SuCoder's Python floor or maintaining a custom MCP protocol implementation solely to retain Python 3.9.
+
+The companion package is not approved or created by P0.
+P1/P2 add no MCP dependency; their implementation is authorized.
+
+* Validation and reproducibility
+
+Synthetic responses cover local/login/confined/unconfined context, replaced workspaces, unborn/detached HEAD, login discovery, multi-cluster equal job IDs, unavailable/partial/empty discovery, corrupt records, target narrowing, ambiguity, truncation and domain errors.
+Scheduler examples use fast=true (explicit skipped pane/login coverage); the login-session example uses fast=false.
+Examples are keyed by their filenames; valid null HEAD/branch facts mean unborn/detached respectively, not a failed query.
+They are fixture expectations, not observations of live infrastructure.
+Validate the schemas with a Draft 2020-12 validator and format checking, then validate each example against the response schema.
+The schema constrains shapes; cross-field and temporal semantics above require service tests in P1.
+Existing relevant baseline tests: =tests/test_sessions_report.py=, =tests/test_session_relay.py=, =tests/test_messaging.py=, =tests/test_mcp_discovery.py=; prior run 112 passed.
+Implementation tests are in =tests/test_observations.py=; see the implementation validation record below.
+
+Disposable configuration examples are [[file:agent-interface/claude.example.json][claude.example.json]] and [[file:agent-interface/codex.example.toml][codex.example.toml]].
+Their executable/workspace paths are intentionally fictitious; do not install or run them.
+The proposed executable is not currently shipped.
+
+* Sources checked
+
+- [[https://pypi.org/pypi/mcp/2.3.0/json][PyPI release metadata for mcp 2.3.0]] :: Package version and Python requirement.
+- [[https://py.sdk.modelcontextprotocol.io/protocol-versions/][SDK protocol versions]] :: Modern and handshake-era behavior; validate actual transport support in P3.
+- [[https://py.sdk.modelcontextprotocol.io/run/legacy-clients/][SDK legacy clients]] :: Compatibility discussion, primarily HTTP; does not substitute for stdio tests.
+- [[https://modelcontextprotocol.io/specification/2025-11-25/basic/transports][MCP stdio transport]] :: Protocol-only stdout and stderr diagnostics.
+- [[https://modelcontextprotocol.io/specification/2025-11-25/server/tools][MCP tools]] :: Structured results and output schemas.
+- [[https://developers.openai.com/codex/config-reference][Official Codex configuration reference]] :: command, args, cwd, enabled_tools and timeout settings.
+- Local installed =codex mcp add --help=, =codex mcp get --help= and =claude --help= :: Installed command capabilities, not verified service integration.
+
+* Approval boundary
+
+P0 delivers these proposed contracts and compatibility findings.
+P1/P2 inspection semantics, snapshot-only identity, CLI commands and the narrowed cancellation guarantee were approved before implementation.
+P3 remains conditional; its packaging recommendation and production binding still need approval and implementation evidence.
+P0 changed no production code, dependencies, shared configuration, permissions or infrastructure.
+P1/P2 implement the CLI/service and skills, without changing dependencies, shared configuration, permissions or infrastructure.
+A disposable /tmp virtualenv received jsonschema solely to validate the document artifacts.
+
+* P0 validation and red-team disposition
+
+Both independent reviewers examined the contract and schemas after the earlier plan review.
+Their concrete findings were accepted: add source descriptors for unavailable/empty targets; define target narrowing and exact-version rejection; correct the replacement-holder helper reference; expose per-job record outcomes; weaken pane labels to observable evidence; and make the relay enforce its own deadline.
+Expanded the synthetic cases to cover replacement holders, null-data errors, corrupt records, duplicate job IDs across sources, output truncation, and changed/unborn/detached workspaces.
+An installed Codex =mcp get --json= call parsed an inert per-invocation override successfully, with command/args/cwd/tool allowlist/timeouts preserved; it did not start the proposed executable.
+Validation: both Draft 2020-12 schemas passed meta-schema checks; all 18 synthetic response fixtures passed validation with format checking and source-reference checks.
+Empty/default requests passed; arbitrary cwd input and out-of-range budgets were rejected.
+Both inert harness configurations parsed, with matching workspace arguments; Org links and ASCII checks passed.
+Both independent reviewers (architecture and acceptance) confirmed no remaining blocker to P1/P2 contract approval after the revisions.
+P3 packaging and installed-harness interoperability remain conditional and unverified.
+These checks validate P0 artifacts only; no live infrastructure or server integration was exercised.
+
+* P1/P2 implementation and validation (2026-10-22)
+
+Authorized by the human's "Yes, carry on" after the P0 recommendation.
+Implemented the shared observation service, bounded process runner, CLI context/sessions JSON routes, relay capability negotiation, source-aware reconciliation and local workspace binding.
+The adapters emit the frozen 1.0 contract; no MCP server or new runtime dependency was added.
+The companion skills add sucoder-session and update sucoder-peers, with capability detection and explicit old-CLI/absent-MCP/unavailable-relay fallbacks.
+
+Both independent reviewers found and then confirmed corrections to endpoint/account attribution, malformed replacement records, confined pane routing, local-tier mapping, tmux-empty handling, batching and existing-socket provenance.
+Their final rereads reported no remaining blockers, subject to completion of the full-suite run.
+The local context and session schemas are unchanged from the approved P0 contract.
+The packaged response schema is checked byte-for-byte against the published schema.
+
+Reproducible checks:
+
+#+begin_src shell
+python -m pytest -q tests/test_observations.py tests/test_sessions_report.py tests/test_session_relay.py tests/test_messaging.py tests/test_mcp_discovery.py
+uv build --wheel --out-dir /tmp/sucoder-observation-wheel
+# In sucoder-skills, with its lint dependencies available:
+make check
+#+end_src
+
+- Focused suite :: 146 passed on Python 3.13 and Python 3.9.25; includes 34 new observation tests.
+- Wire validation :: All 18 P0 examples and every response passing the observation tests also passed Draft 2020-12 validation with format checking.
+- Built distribution :: Built the wheel and installed it into a disposable Python 3.9 environment; context and empty sessions JSON succeeded from a temporary git checkout outside the source tree.
+- Process ownership :: Timeout, output overflow, cancellation, next-request recovery, owned-descendant cleanup and caller-disconnect supervisor tests passed with local fake commands.
+- Relay scope :: Capability, version, response-shape, authority and budget checks use fixtures; supervisor disconnect uses fake SSH. Real sudo/account transitions, live clusters and partitioned-network remote cleanup were not exercised.
+- Skills :: 38 skills passed catalog lint; residue lint passed. Local prelude rendering found both skills and the new reference file; skill packaging validation passed. No collaborate allocation or model call was used for the smoke test.
+- GitNexus :: Impact and pre-commit detect-changes attempts both failed to load the existing native library (libssl.so.3 unavailable). Manual caller/diff review and the focused compatibility tests supplied the scope check; no repair was attempted.
+
+The complete suite's first run was 1812 passed and 8 failed while implementation was still being finalized.
+One failure was the new cwd/worker import case, subsequently fixed and passing on both interpreters and in the installed wheel.
+All seven other failures reproduced on an untouched git archive of starting commit =164913d2e67c782d4a25e70b3710888a03edbb2e= under the same interpreter/environment: three Codex remote lifecycle tests, two direct-SSH configuration tests, and two runtime-directory permission-assumption tests.
+The direct-SSH failures report system ssh-config ownership/permissions; no system configuration was changed.
+The final repeat was interrupted after 668 seconds with 694 passed and 5 failed, after it stopped advancing for over three minutes during an unchanged managed-state placement test.
+Three failures repeated the known Codex remote failures; two were placement timeouts in =test_runner_places_databases_and_rollout_locally_and_forwards_sigterm= and =test_a_malformed_drain_request_is_rejected_and_stops_nothing=.
+The first placement test passed alone on both the untouched baseline and modified tree; both placement tests had passed in the initial complete run.
+No clean final full-suite result is claimed.
+The interrupted pytest process and its observed child processes exited; no production process or infrastructure setting was changed.
+The final focused suite, standard schema validation, built-wheel checks and independent code reviews passed.
+The skills were committed separately as sucoder-skills =3e589c5= (version 1.4.0).
+
+P3 remains a separate decision: optional adapter packaging, actual harness interoperability, launch binding, and any live pilot/deployment need their own scope.
