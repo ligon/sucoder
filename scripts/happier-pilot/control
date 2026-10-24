@@ -47,6 +47,7 @@ fi
 chmod 700 "$pilot_home"
 export HAPPIER_HOME_DIR="$pilot_home"
 export HAPPIER_NO_BROWSER_OPEN=1 HAPPIER_CLI_UPDATE_CHECK=0
+export DISABLE_AUTOUPDATER=1
 export HAPPIER_TRANSCRIPT_STORAGE="$transcript_storage"
 export HAPPIER_SESSION_AUTOSTART_DAEMON=0
 

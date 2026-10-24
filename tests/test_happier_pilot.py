@@ -18,7 +18,7 @@ def pilot(tmp_path):
         "#!/usr/bin/env python3\n"
         "import json, os, sys\n"
         "print(json.dumps({'args': sys.argv[1:], 'env': {k:v for k,v in os.environ.items() "
-        "if k.startswith('HAPPIER_') or k == 'CLAUDE_CONFIG_DIR'}}))\n"
+        "if k.startswith('HAPPIER_') or k in ('CLAUDE_CONFIG_DIR', 'DISABLE_AUTOUPDATER')}}))\n"
     )
     fake.chmod(0o700)
     local = tmp_path / "local"
@@ -46,6 +46,7 @@ def test_adapter_preserves_provider_arguments_and_config(pilot):
     assert data["env"]["CLAUDE_CONFIG_DIR"] == env["CLAUDE_CONFIG_DIR"]
     assert data["env"]["HAPPIER_HOME_DIR"] == str(local / "happier-pilot-1234")
     assert data["env"]["HAPPIER_SESSION_AUTOSTART_DAEMON"] == "0"
+    assert data["env"]["DISABLE_AUTOUPDATER"] == "1"
     assert data["env"]["HAPPIER_TRANSCRIPT_STORAGE"] == "persisted"
     assert (local / "happier-pilot-1234").stat().st_mode & 0o777 == 0o700
 

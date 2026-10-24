@@ -77,6 +77,7 @@ absolute =SUCODER_LOCAL_ROOT=. It supplies:
 | =HAPPIER_HOME_DIR= | =$SUCODER_LOCAL_ROOT/happier-pilot-$SLURM_JOB_ID=, mode 0700 |
 | =HAPPIER_NO_BROWSER_OPEN= | =1= |
 | =HAPPIER_CLI_UPDATE_CHECK= | =0= |
+| =DISABLE_AUTOUPDATER= | =1=, for native Claude |
 | =HAPPIER_TRANSCRIPT_STORAGE= | =persisted= |
 | =HAPPIER_SESSION_AUTOSTART_DAEMON= | =0= |
 | =control claude= startup | =--happy-starting-mode remote --permission-mode default= |
