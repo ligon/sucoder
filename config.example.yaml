@@ -198,6 +198,16 @@ mirrors:
       # command: [opencode]
       # Goose's interactive entry point is: [goose, run, --interactive]
       # Native Kimi Code CLI: [kimi]
+      # Disposable Happier/Claude pilot: docs/happier-pilot.org.
+      # Upload all of scripts/happier-pilot/ together; the adapter keeps
+      # Claude's flag profile and requested session UUID. The live pilot
+      # found SDK UUID drift; see the runbook. Set needs_yolo: false
+      # for the pilot's browser approval check.
+      # command: [/absolute/private/pilot/adapter/claude]
+      # env:
+      #   HAPPIER_TRANSCRIPT_STORAGE: persisted  # default; direct reproduces handoff echoes
+      #   HAPPIER_CLAUDE_PATH: /absolute/path/to/the/real/claude
+      #   SUCODER_HAPPIER_PILOT_ARCHIVE: /absolute/private/pilot/happier-v0.2.17-linux-x64.tar.gz
       # Remote Codex service: [codex, remote-control]
       # [codex, remote-control, start] also works; SuCoder keeps it in the foreground.
       # Context is also installed in the working clone's local AGENTS.override.md,

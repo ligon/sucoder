@@ -21,6 +21,8 @@ Unix-user sandboxing for AI coding agents.  One account per agent, filesystem-en
 - [[file:codex-local-state.html][Codex Local State]] --- proposed SQLite placement, durable recovery, lifecycle handoff, and Savio validation gates.
 - [[file:codex-local-state-pilot.html][Codex Local State: Pilot Runbook]] --- the Slice 4 pilot from a laptop: config, the step-by-step turnover, what to bring back, what refusals mean.
 - [[file:codex-local-state-spike.html][Codex Local State: Slice 0 Spike]] --- measured on Savio with Codex 0.162.1: what follows =sqlite_home=, what stays in =CODEX_HOME=, the rollout dependency on restore, abrupt-stop captures, queue and goal replay, two writers, and local-versus-Lustre latency.
+- [[file:happier-harness.html][Happier as a Common Harness]] --- research note: what Happier's one-CLI-over-every-agent surface would buy SuCoder, the shared-home machine-identity and daemon mechanics read from its source, and a Claude-first trial plan (issue 58).
+- [[file:happier-pilot.html][Happier: Disposable Claude Pilot]] --- pinned CLI, allocation-scoped adapter, browser/message acceptance checks, and release evidence.
 
 ** Examples
 

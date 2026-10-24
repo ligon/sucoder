@@ -201,6 +201,16 @@ sucoder list skills
 =list harnesses= shows every built-in profile plus custom harness commands found in configuration, where each is configured, its default model, and native shell, file-tool, Agent Skills, MCP, subagent, provider, and approval capabilities.  =suggest= means the harness can print a command but does not expose a model-driven shell tool; =?= means SuCoder has no built-in metadata for a custom harness.  =list models= queries the sole credentialed provider automatically; with several credentialed providers, select one using =--provider=.  The resulting names include the provider prefix and can be passed directly to =--model=.  If no provider is configured, the command falls back to configured model defaults.  =--harness aider=, =--harness opencode=, and =--harness kimi= instead query the selected harness under the configured agent user.  Kimi reports configured aliases.  =list providers= shows endpoints and credential references without invoking =pass= or displaying secrets.  The optional positional argument filters the selected model catalog.
 
 The older =mirrors-list= and =skills-list= spellings remain supported for compatibility.
+
+The experimental [[file:docs/happier-pilot.org][Happier Claude pilot]] uses a pinned release and a
+disposable Savio allocation to test browser control alongside SuCoder messaging.
+Its isolated adapter is in =scripts/happier-pilot/=; no Happier-specific
+configuration keys are added to SuCoder's parser.
+The helper defaults to persisted history, remote startup, and default
+permissions after the measured browser/terminal pilot. Explicit =direct=
+storage remains available for comparison. Manual browser approval and
+SuCoder named-socket attachment remain acceptance gates; see the runbook.
+
 - --target/-T :: Select a named remote execution target (e.g., =--target savio=) to run the agent on a remote host.
 - --version/-V :: Print the installed sucoder version (CalVer, derived from git tags).
 - --dry-run :: Available on modifying commands to review logged operations without executing.
