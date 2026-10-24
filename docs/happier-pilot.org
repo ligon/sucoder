@@ -1,0 +1,296 @@
+#+TITLE: Happier: experimental Claude pilot
+#+DATE: 2026-10-24
+#+STATUS: Bounded comparison complete; experimental integration
+#+OPTIONS: toc:2 num:nil
+
+* Result and scope
+
+The disposable Savio pilot supports an opt-in Claude adapter using
+=persisted= history and =remote= startup. Both direct and persisted modes
+retained context through API, terminal, and browser turns. Direct mode
+introduced duplicate browser rows after a local-mode handoff; persisted
+mode displayed each measured turn once. Native transcripts and compact
+CLI histories contained one copy in both modes.
+
+| Phase | Direct browser copies | Persisted browser copies | Native turn copies |
+|-------+-----------------------+--------------------------+--------------------|
+| Initial remote READY, including reported reload | 1 | 1 | 1 |
+| Terminal LOCAL after switching to local | 2 | 1 | 1 |
+| Browser BROWSER after returning to remote | 2 | 1 | 1 |
+
+This is an experiment adapter, not a built-in Happier harness. SuCoder's
+launcher, context injection, transcript probing, and tmux ownership stay
+in use. The background is [[file:happier-harness.org][the research note]] and issue 58.
+
+| Gate | Measured result |
+|------+-----------------|
+| Released CLI on Savio glibc 2.28 | Passed with CLI 0.2.17 and Claude 2.1.310 |
+| Context and API/terminal/browser continuity | Passed, with distinct remembered nonces |
+| SuCoder framed message waits | Three correlated replies, including a browser nonce |
+| Standard =sucoder attach= | Passed in the first pilot |
+| Separate =happier attach= | Passed with explicit private/default tmux metadata; failed without it |
+| Native requested UUID | SDK chose another UUID; existing cwd/frame fallback recovered replies |
+| Default local startup | Failed: missing =ensureMetadataSnapshot=; remote startup works |
+| Manual browser tool approval | A pending request and one successful execution were observed; decision attribution is incomplete |
+| Allocation release | Pilot processes independently observed absent |
+| Named tmux sockets, concurrent nodes, renewal, Codex | Subsequent gates |
+
+* Pinned installation
+
+The tested CLI is =cli-v0.2.17=, commit
+=a2c45c86804b24e60ac0b76146a3ef36dfcaa15b=, published 2026-10-22.
+The =0.2.19= releases checked during the pilot were UI bundles. Do not
+substitute a UI version for the CLI pin.
+
+| Linux asset | Pinned SHA256 |
+|-------------+---------------|
+| =happier-v0.2.17-linux-x64.tar.gz= | =969328ed5296119d18e3ca48839e0baafb5d05d1ed7047afacfbac064fd8cbc4= |
+| =happier-v0.2.17-linux-arm64.tar.gz= | =80e3110dc55a2a22f0cca6d26903715b67581eb5509be4e4a403b5898214bb44= |
+
+[[file:../scripts/happier-pilot/install][install]] accepts an absolute, fresh destination and an optional cached
+release tarball. Otherwise it downloads the exact pinned asset. It checks
+SHA256 before unpacking, changes no shell profile, installs no service,
+and does not update Claude. Its version probe uses a temporary home.
+The checksum is pinned from the upstream HTTPS release; the helper does
+not verify the separate minisign signature.
+
+Cache the compressed archive on shared storage and unpack it on local
+disk. There are about 31,000 archive entries. Keep the full runtime payload
+for agent use: the executable needs adjacent launchers and dependencies.
+
+* Adapter contract
+
+SuCoder detects the provider from the executable basename. The isolated
+[[file:../scripts/happier-pilot/claude][claude]] adapter preserves the native Claude launch profile and forwards
+model, system prompt, and requested =--session-id= arguments. The measured
+SDK UUID drift means forwarding does not guarantee runtime UUID identity.
+
+=HAPPIER_CLAUDE_PATH= must name the real Claude executable by absolute path;
+a recursive adapter path is refused. Standalone =--version= and =--help=
+probes go to native Claude without an allocation, pairing, or daemon.
+
+[[file:../scripts/happier-pilot/control][control]] requires a numeric =SLURM_JOB_ID= and an existing writable,
+absolute =SUCODER_LOCAL_ROOT=. It supplies:
+
+| Setting | Pilot default |
+|---------+---------------|
+| =HAPPIER_HOME_DIR= | =$SUCODER_LOCAL_ROOT/happier-pilot-$SLURM_JOB_ID=, mode 0700 |
+| =HAPPIER_NO_BROWSER_OPEN= | =1= |
+| =HAPPIER_CLI_UPDATE_CHECK= | =0= |
+| =DISABLE_AUTOUPDATER= | =1=, for native Claude |
+| =HAPPIER_TRANSCRIPT_STORAGE= | =persisted= |
+| =HAPPIER_SESSION_AUTOSTART_DAEMON= | =0= |
+| =control claude= startup | =--happy-starting-mode remote --permission-mode default= |
+
+Explicit provider options follow the pilot defaults, allowing deliberate
+reproductions with =--happy-starting-mode local=. An explicit
+=HAPPIER_TRANSCRIPT_STORAGE=direct= enables the echo comparison. Values
+other than =direct= and =persisted= are rejected before starting Happier.
+An inherited conflicting home or a symlinked pilot home is refused.
+
+=SLURM_JOB_ID= is a launch guard, not proof of confinement. Record the
+runner's and daemon's actual =/proc/self/cgroup= during acceptance.
+Both entry points inherit =CLAUDE_CONFIG_DIR= and provider authentication;
+no credentials are copied into the repository or evidence bundle.
+
+Set =SUCODER_HAPPIER_PILOT_ARCHIVE= to the cached release tarball. On first
+use the control helper installs it into
+=$SUCODER_LOCAL_ROOT/happier-cli-0.2.17=. Alternatively,
+=SUCODER_HAPPIER_PILOT_CLI= may name an already unpacked absolute executable;
+the caller is responsible for that executable's provenance.
+
+A daemon is optional for a terminal-started session. When needed, use
+=control daemon start-sync= in another allocation-owned tmux window.
+The helper rejects setup/service installation, detached =daemon start=,
+and =daemon stop --all=. A shell, tmux, or setsid does not escape Slurm's
+allocation cgroup.
+
+* Run another bounded pilot
+
+Create a throwaway canonical repository and private config based on the
+existing cluster target. Keep normal project mirrors out of that config.
+Preserve its account, partition, QOS, and certificate; use a short time
+limit, =confined: true=, =local_disk: true=,
+=wip_snapshot_minutes: 0=, and =codex_state: {enabled: false}=.
+Upload the complete =scripts/happier-pilot/= directory and compressed
+release to a private remote pilot directory.
+
+#+begin_src yaml
+agent_launcher:
+  command: [/absolute/private/pilot/adapter/claude]
+  model: sonnet
+  needs_yolo: false
+  env:
+    HAPPIER_CLAUDE_PATH: /absolute/path/to/the/real/claude
+    SUCODER_HAPPIER_PILOT_ARCHIVE: /absolute/private/pilot/happier-v0.2.17-linux-x64.tar.gz
+    HAPPIER_TRANSCRIPT_STORAGE: persisted
+#+end_src
+
+The mirror prompt should contain a unique context marker and SuCoder's
+=REPLY <id>:= convention. Use no tools during continuity turns. Keep the
+native transcript for independent message and tool-execution counts.
+
+#+begin_src sh
+python -m pytest -q tests/test_happier_pilot.py tests/test_reply_launch.py
+sucoder --no-agent-sudo -c "$PILOT_CONFIG" -T carleton-htc agents-clone "$PILOT_MIRROR"
+sucoder --no-agent-sudo -c "$PILOT_CONFIG" -T carleton-htc --time 00:45:00 agents-run "$PILOT_MIRROR" --no-sync
+sucoder --no-agent-sudo -c "$PILOT_CONFIG" -T carleton-htc attach "$PILOT_MIRROR"
+#+end_src
+
+Here =--no-agent-sudo= uses the human account for the laptop-side access
+check; remote execution still uses the target's SSH account. The library
+path is =ensure_remote_clone(context)= followed by
+=launch_agent(context, sync=False, detached=True)=; local =ensure_clone=
+does not stage a remote mirror.
+
+Complete the original terminal's pairing request in the human's browser.
+Do not start parallel authentication requests for the same home. Fresh
+per-allocation homes require fresh pairing; do not archive their access
+keys. Record the job id, node, private tmux identity, Happier id, requested
+Claude UUID, and actual provider transcript UUID separately.
+
+Use the same control helper, inside that allocation, for:
+
+#+begin_src sh
+/absolute/private/pilot/adapter/control session list --json
+/absolute/private/pilot/adapter/control session history "$HAPPIER_SESSION" --json
+/absolute/private/pilot/adapter/control session status "$HAPPIER_SESSION" --live --json
+/absolute/private/pilot/adapter/control session send "$HAPPIER_SESSION" 'Report the context marker and remembered nonce without tools.' --wait --timeout 90 --json
+#+end_src
+
+Verify SuCoder's own framed reply path before and after browser input:
+
+#+begin_src sh
+sucoder --no-agent-sudo -c "$PILOT_CONFIG" -T carleton-htc message "$PILOT_MIRROR" \
+  'Report the marker and nonce. Answer with REPLY <the incoming message id>: ...' --wait 120
+#+end_src
+
+For a display comparison, use distinct direct/persisted working directories
+and nonces. Observe initial remote turns, a terminal LOCAL turn after
+Ctrl-T, and a browser BROWSER turn after switching back to remote. Record
+browser counts before and after a full reload; count native frames
+separately. Persisted mode stores encrypted relay history; native Claude
+JSONL is still written and remains available to SuCoder's transcript probe.
+
+* Attachment boundary
+
+Daemon-first alone did not make the unregistered control attachable.
+Separate Happier attachment passed when the session was started with:
+
+#+begin_src sh
+--happy-terminal-mode tmux --happy-terminal-requested tmux \
+--happy-tmux-target SESSION:WINDOW --happy-tmux-tmpdir PRIVATE_DIRECTORY
+#+end_src
+
+Those checks used a dedicated default socket under
+=$TMUX_TMPDIR/tmux-UID/default=. Happier's attach plan assumes that socket
+name. SuCoder uses a named socket, so this does not establish named-socket
+compatibility. Standard =sucoder attach= passed separately in the first
+pilot and remains the measured route for the SuCoder-owned terminal.
+
+* Approval evidence and remaining gate
+
+The final persisted test requested exactly one harmless Bash call:
+
+#+begin_src sh
+python3 -c 'print("HAPPIER_APPROVAL_R3_OK")'
+#+end_src
+
+Live status first showed one pending request. The native transcript had a
+tool call without a result. A later result printed the marker once, and
+pending requests returned to zero. The human did not see an approval
+request. A pending count is not evidence that a browser card was visible.
+
+Retrospective inspection of the complete native JSONL found:
+
+- A =hook_permission_decision= attachment at 09:54:33 Pacific, with
+  =PermissionRequest=, =decision: allow=, and the matching tool-use id.
+- The successful result at 09:54:41 records
+  =permissionDecision: {decision: accept, source: hook, reasonType: hook,
+  reasonCode: bashMiss:no-rule-match}=.
+- Native =permission-mode= records say =auto=, while Happier's status said
+  =default=. Status alone is not authoritative for every permission layer.
+
+This identifies a hook grant. A subsequent read-only audit, authenticated
+through a temporary client, recovered the encrypted completed-request record:
+
+| Field | Recorded value (2026-10-24, Pacific) |
+|-------+------------------------------------|
+| Request created | 09:53:10.145 |
+| Marked push-notified | 09:53:10.148 |
+| Request completed | 09:54:33.230, about 83 seconds later |
+| Status | =approved= |
+| Pending request | absent |
+| Completed permission requests in this session | 1 |
+| Permission mode change, saved allow rules, decision reason | absent from the completion |
+
+Happier's metadata still reports the original default permission mode and
+its original timestamp. The suggested allow rule in the request is not a
+record of a rule being saved. The record's shape is consistent with a
+one-time permission response. In the pinned bridge, expiry is recorded as
+cancellation, and mode-based auto-completion includes its mode. Thus the
+record does not support a timeout-to-allow explanation.
+
+The approving device/actor is not retained in this record, so it cannot
+establish which client or action supplied the approval. Manual browser UI
+approval remains unverified. The temporary audit credentials were removed.
+Do not describe the marker as an approval-UI pass or ask the human to
+approve this already-settled request.
+
+For a future synthetic approval test, retain a private diagnostic trace
+before starting the session:
+
+#+begin_src sh
+export DEBUG=1 HAPPIER_STACK_TOOL_TRACE=1
+export HAPPIER_STACK_TOOL_TRACE_FILE="$PRIVATE_EVIDENCE/tool-trace.jsonl"
+#+end_src
+
+Capture request id, effective permission modes, hook source, completed
+request status/reason, and the response time before release. Preserve the
+native =permissionDecision= and =hook_permission_decision= fields when
+sanitizing evidence. Test deny and allow separately. Do not change to YOLO
+or install broad allow rules to make this gate pass. Review diagnostic
+logs before sharing them; keep credentials and unrelated content private.
+
+* Release and evidence
+
+Save synthetic turn counts, versions/digests, cgroups, session identities,
+and targeted approval records. Stop only the pilot's sessions and daemon,
+then release its exact allocation:
+
+#+begin_src sh
+sucoder --no-agent-sudo -c "$PILOT_CONFIG" -T carleton-htc release "$PILOT_MIRROR" --force
+#+end_src
+
+Check scheduler termination and, from a separate authorized allocation on
+the same node, absence of the pilot's process identities. Check the browser
+offline indicator separately; scheduler state does not prove that UI state.
+Retain the compressed archive and sanitized evidence, not account keys or
+the disposable runtime home.
+
+The first pilot job =40423899= was released; observer =40425532= saw its
+processes disappear. Follow-up job =40429332= timed out. The successful
+comparison ran as =40439415= on =n0035.savio4= and was cancelled at
+10:00:17 Pacific on 2026-10-24. Observer =40439597= saw live processes,
+then two empty scans, and completed successfully at 10:00:21. All recorded
+Happier pilot allocations from the previous day were also confirmed ended.
+Other mirror allocations were not changed.
+
+Private local and Savio evidence is under
+=~/.sucoder/pilots/happier-ab-20261024T163620Z/=. It includes
+=browser-observations.json=, =native-final.json=, compact histories,
+=approval-decision-audit.json=, =completed-approval-audit.json=,
+=observer-40439597.jsonl=, and final
+allocation accounting. Earlier SuCoder message evidence is under
+=~/.sucoder/pilots/happier-20261024T000415Z/=.
+
+* References
+
+- [[https://github.com/happier-dev/happier/releases/tag/cli-v0.2.17][Pinned CLI release and checksums]].
+- [[https://github.com/happier-dev/happier/blob/cli-v0.2.17/apps/cli/scripts/claude_launcher_runtime.cjs][Released native Claude path override]].
+- [[https://github.com/happier-dev/happier/blob/cli-v0.2.17/apps/cli/src/cli/providerSessionArgPartition.ts][Provider argument forwarding]].
+- [[https://github.com/happier-dev/happier/blob/cli-v0.2.17/apps/cli/src/agent/runtime/startup/DeferredApiSessionClient.ts][Deferred startup client]] and [[https://github.com/happier-dev/happier/blob/cli-v0.2.17/apps/cli/src/backends/claude/sessionControls/publishClaudeSessionModelsMetadataBestEffort.ts][model metadata publisher]].
+- [[https://github.com/happier-dev/happier/blob/cli-v0.2.17/apps/cli/src/backends/claude/localPermissions/localPermissionBridge.ts][Permission hook bridge]] and [[https://github.com/happier-dev/happier/blob/cli-v0.2.17/apps/cli/src/backends/claude/utils/permissionHookTimeout.ts][hook timeout policy]].
+- [[https://github.com/happier-dev/happier/blob/cli-v0.2.17/apps/cli/src/agent/permissions/agentStateRequestStore.ts][Completed permission record writer]] and [[https://github.com/happier-dev/happier/blob/cli-v0.2.17/apps/cli/src/backends/claude/utils/permissionHandler.ts][remote permission responses]].
+- [[https://github.com/happier-dev/happier/blob/cli-v0.2.17/apps/cli/src/terminal/attachment/terminalAttachPlan.ts][Terminal attachment plan]].
+- [[https://github.com/happier-dev/happier/blob/ui-web-v0.2.19/apps/ui/sources/sync/sync.ts][UI direct-history ingestion]], [[https://github.com/happier-dev/happier/blob/ui-web-v0.2.19/apps/ui/sources/sync/engine/sessions/sessionSocketUpdate.ts][relay ingestion]], and [[https://github.com/happier-dev/happier/blob/ui-web-v0.2.19/apps/ui/sources/sync/reducer/phases/userAndText.ts][message identity checks]].
