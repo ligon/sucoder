@@ -210,12 +210,31 @@ Retrospective inspection of the complete native JSONL found:
 - Native =permission-mode= records say =auto=, while Happier's status said
   =default=. Status alone is not authoritative for every permission layer.
 
-This identifies a hook grant. It does not identify the originating client
-or policy decision behind the hook. The old runtime logs did not retain
-that response, and its allocation-local credentials were deliberately not
-archived. Manual browser approval is still unverified. Do not describe the
-marker as an approval-UI pass or ask the human to approve an already-settled
-request.
+This identifies a hook grant. A subsequent read-only audit, authenticated
+through a temporary client, recovered the encrypted completed-request record:
+
+| Field | Recorded value (2026-10-24, Pacific) |
+|-------+------------------------------------|
+| Request created | 09:53:10.145 |
+| Marked push-notified | 09:53:10.148 |
+| Request completed | 09:54:33.230, about 83 seconds later |
+| Status | =approved= |
+| Pending request | absent |
+| Completed permission requests in this session | 1 |
+| Permission mode change, saved allow rules, decision reason | absent from the completion |
+
+Happier's metadata still reports the original default permission mode and
+its original timestamp. The suggested allow rule in the request is not a
+record of a rule being saved. The record's shape is consistent with a
+one-time permission response. In the pinned bridge, expiry is recorded as
+cancellation, and mode-based auto-completion includes its mode. Thus the
+record does not support a timeout-to-allow explanation.
+
+The approving device/actor is not retained in this record, so it cannot
+establish which client or action supplied the approval. Manual browser UI
+approval remains unverified. The temporary audit credentials were removed.
+Do not describe the marker as an approval-UI pass or ask the human to
+approve this already-settled request.
 
 For a future synthetic approval test, retain a private diagnostic trace
 before starting the session:
@@ -259,7 +278,8 @@ Other mirror allocations were not changed.
 Private local and Savio evidence is under
 =~/.sucoder/pilots/happier-ab-20261024T163620Z/=. It includes
 =browser-observations.json=, =native-final.json=, compact histories,
-=approval-decision-audit.json=, =observer-40439597.jsonl=, and final
+=approval-decision-audit.json=, =completed-approval-audit.json=,
+=observer-40439597.jsonl=, and final
 allocation accounting. Earlier SuCoder message evidence is under
 =~/.sucoder/pilots/happier-20261024T000415Z/=.
 
@@ -270,5 +290,6 @@ allocation accounting. Earlier SuCoder message evidence is under
 - [[https://github.com/happier-dev/happier/blob/cli-v0.2.17/apps/cli/src/cli/providerSessionArgPartition.ts][Provider argument forwarding]].
 - [[https://github.com/happier-dev/happier/blob/cli-v0.2.17/apps/cli/src/agent/runtime/startup/DeferredApiSessionClient.ts][Deferred startup client]] and [[https://github.com/happier-dev/happier/blob/cli-v0.2.17/apps/cli/src/backends/claude/sessionControls/publishClaudeSessionModelsMetadataBestEffort.ts][model metadata publisher]].
 - [[https://github.com/happier-dev/happier/blob/cli-v0.2.17/apps/cli/src/backends/claude/localPermissions/localPermissionBridge.ts][Permission hook bridge]] and [[https://github.com/happier-dev/happier/blob/cli-v0.2.17/apps/cli/src/backends/claude/utils/permissionHookTimeout.ts][hook timeout policy]].
+- [[https://github.com/happier-dev/happier/blob/cli-v0.2.17/apps/cli/src/agent/permissions/agentStateRequestStore.ts][Completed permission record writer]] and [[https://github.com/happier-dev/happier/blob/cli-v0.2.17/apps/cli/src/backends/claude/utils/permissionHandler.ts][remote permission responses]].
 - [[https://github.com/happier-dev/happier/blob/cli-v0.2.17/apps/cli/src/terminal/attachment/terminalAttachPlan.ts][Terminal attachment plan]].
 - [[https://github.com/happier-dev/happier/blob/ui-web-v0.2.19/apps/ui/sources/sync/sync.ts][UI direct-history ingestion]], [[https://github.com/happier-dev/happier/blob/ui-web-v0.2.19/apps/ui/sources/sync/engine/sessions/sessionSocketUpdate.ts][relay ingestion]], and [[https://github.com/happier-dev/happier/blob/ui-web-v0.2.19/apps/ui/sources/sync/reducer/phases/userAndText.ts][message identity checks]].

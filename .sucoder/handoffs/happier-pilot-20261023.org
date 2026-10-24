@@ -1,9 +1,9 @@
 #+TITLE: Happier experimental PR and approval audit
-#+STATUS: ACTIVE
+#+STATUS: REVIEW
 
-* Current task
+* Current result
 
-Human approved tracing the settled approval and packaging an experimental PR.
+Experimental PR scope: settled-approval audit and an opt-in Claude adapter.
 The helper now defaults to persisted history and explicit remote/default
 startup; 35 targeted helper/reply-launch checks pass. Provider arguments,
 requested UUID, native config directory, and standalone probes are preserved.
@@ -15,20 +15,24 @@ said default, but native permission-mode records say auto. This does not
 prove a human browser approval. User settings have no PermissionRequest
 hooks; enabled Lean plugin has only a Bash PreToolUse guardrail.
 
-Temporary read-only audit client prepared on Savio login node (no agent,
-daemon or compute allocation): ~/.sucoder/pilots/happier-approval-audit-20261024/.
-Browser pairing requested, expires 11:17 a.m. Pacific 2026-10-24. The private
-Node audit script reads only the persisted session's completed request using
-GET, decrypts in memory, and writes selected evidence. No credentials should
-be archived or printed. Auth process is local exec session 21866.
+Retrospective cloud audit completed through a newly paired temporary client.
+The retained record has one completed permission request, marked push-notified
+at 09:53:10.148 and approved at 09:54:33.230 Pacific. No saved rule, mode
+change, decision reason, or actor/device is stored. Its shape is consistent
+with a one-time permission response; pinned bridge expiry records cancellation.
+Native grant came from the PermissionRequest hook. Exact approving client is
+not recoverable from retained evidence; do not claim a browser UI approval.
+Audit credentials and temporary executable removed; no agent, daemon or
+compute allocation started for this read-only audit.
 
-Branch pilot/happier-claude currently includes local progress fix 35b2d55
-above origin/main. Before publishing the experimental PR, exclude that older
-unpublished commit (commit helper changes, then rebase only the new commit
-onto origin/main). A switch before committing was refused because README
-has staged/unstaged changes; nothing was lost. No feature commit or PR yet.
-Run detect_changes before committing. Python/test impact low; shell helper
-unindexed, verified by targeted tests. Do not push unrelated main work.
+Private completed-approval-audit.json and approval-decision-audit.json are
+saved beside the synthetic pilot evidence. Public runbook summarizes facts
+and distinguishes the one-time-response inference from proven attribution.
+
+Branch pilot/happier-claude rebased onto origin/main; only Happier changes
+remain (the older local progress fix remains on local main). The branch is prepared for review as a draft PR; no feature merge is
+authorized by this task. Pre-commit GitNexus analysis low risk,
+no affected flows; shell helper unindexed, covered by targeted tests.
 
 * Measured pilot and cleanup
 
