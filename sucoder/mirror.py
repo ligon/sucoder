@@ -1320,9 +1320,8 @@ class MirrorManager:
     def _pull_from_remote(self, ctx: MirrorContext) -> bool:
         """Fetch agent commits from the remote mirror into canonical.
 
-        Returns whether the mirror's state was successfully accounted
-        for — see ``_pull_from_url`` for what the verdict means and why
-        callers must honour it before force-pushing.
+        Returns whether the selected mirror tip was successfully accounted
+        for; see ``_pull_from_url`` for the reconciliation choices.
         """
         self._require_sync_authority(ctx)
         return self._pull_from_url(
@@ -1496,8 +1495,8 @@ class MirrorManager:
             f"Mirror and canonical have diverged.\nCommits only on mirror ({url}):\n{mirror_only}"
             f"\nCommits only in canonical:\n{local_only}\nFetched tip: {tmp_ref}",
             [("m", "Merge mirror commits into canonical (default)"),
-             ("s", "Save mirror commits on a local branch, then sync"),
-             ("d", "Discard mirror-only commits"), ("n", "Abort for manual reconciliation")], default="m",
+             ("s", "Save mirror commits on a local branch"),
+             ("d", "Leave canonical unchanged"), ("n", "Abort for manual reconciliation")], default="m",
         )
         if self._canonical_read(canon, "rev-parse", f"refs/heads/{base}").stdout.strip() != local_head:
             raise MirrorError("Canonical branch changed during reconciliation; refusing to continue.")
@@ -1525,11 +1524,11 @@ class MirrorManager:
         """Attempt to merge mirror-only commits into canonical.
 
         If the merge applies cleanly, the canonical branch incorporates
-        both histories and the subsequent push brings the mirror up to
-        date with a fast-forward.
+        both histories. A later sync publishes that result as a baseline
+        for the agent to integrate.
 
         If there are conflicts, the merge is aborted and the caller is
-        given the choice to discard or reconcile manually.
+        given the choice to leave canonical unchanged or reconcile manually.
         """
         if self.executor.dry_run:
             self.logger.info("DRY-RUN: merge %s into %s", tmp_ref, base)
@@ -1564,7 +1563,7 @@ class MirrorManager:
             f"\n⚠  Automatic merge failed due to conflicts."
             f"\n  Mirror branch is available locally at {tmp_ref}\n",
             [
-                ("d", "Discard mirror-only commits and continue"),
+                ("d", "Leave canonical unchanged and continue"),
                 ("n", "Abort so you can reconcile manually"),
             ],
             default="n",
@@ -1572,8 +1571,7 @@ class MirrorManager:
 
         if fallback == "d":
             self.logger.info(
-                "Discarding mirror-only commits; canonical will "
-                "overwrite the mirror on next push"
+                "Leaving canonical at its existing tip"
             )
             return False
 
@@ -1593,8 +1591,7 @@ class MirrorManager:
 
         Creates ``mirror-stash/<base>/<YYYY-MM-DD>`` (with a numeric
         suffix if the name is already taken) so the work is preserved
-        for later merging.  The sync then proceeds as a discard —
-        canonical overwrites the mirror on the next push.
+        for later merging. The canonical base branch stays at its current tip.
         """
         if self.executor.dry_run:
             self.logger.info("DRY-RUN: save mirror commits from %s", tmp_ref)
