@@ -2030,6 +2030,98 @@ def test_run_on_login_node_bounds_the_remote_command(
     assert "timeout -s TERM 10 true" in seen["remote"]
 
 
+def test_run_on_login_node_announces_the_command_not_its_wrapper(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The progress line names what the round trip is for.
+
+    The ssh argv carries the whole remote script and the line keeps 60
+    characters of it, so a scaffolding command in a mirror read
+    ``cd /global/home/users/ligon/mirrors/Emu-GMM && if command...`` --
+    the ``cd`` and the ``timeout`` guard, and not the command.
+    """
+    import subprocess
+
+    from sucoder.logging_utils import set_progress
+
+    executor = _make_remote_executor(
+        scaffolding_node="ln001", scaffolding_socket_path="/tmp/login.sock",
+    )
+    seen = {}
+
+    def fake_run(args, **kwargs):
+        seen["remote"] = args[-1]
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    set_progress(True)
+    try:
+        executor.run_on_login_node(
+            ["git", "status", "--porcelain"],
+            cwd="/global/home/users/ligon/mirrors/Emu-GMM",
+        )
+    finally:
+        set_progress(False)
+    assert capsys.readouterr().err == "\u00b7 ln001  git status --porcelain\n"
+    # Display only: the wrapper still ran.
+    assert seen["remote"].startswith(
+        "cd /global/home/users/ligon/mirrors/Emu-GMM && "
+        "if command -v timeout >/dev/null 2>&1; then timeout -s TERM "
+    )
+
+
+def test_remote_run_agent_announces_the_command_without_its_preamble(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The same for the agent's own hops, whose ``export``/``cd`` preamble
+    was eating the width before the ``timeout`` guard existed."""
+    import subprocess
+
+    from sucoder.logging_utils import set_progress
+
+    executor = _make_remote_executor(control_socket_path="/tmp/ln.sock")
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda args, **kwargs: subprocess.CompletedProcess(args, 0, "", ""),
+    )
+    set_progress(True)
+    try:
+        executor.run_agent(
+            ["git", "status"],
+            cwd="/var/tmp/coder-mirrors/Emu-GMM",
+            env={"GIT_TERMINAL_PROMPT": "0"},
+        )
+    finally:
+        set_progress(False)
+    assert capsys.readouterr().err == "\u00b7 ln003  git status\n"
+
+
+def test_interactive_hop_announces_the_command_without_its_preamble(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The line before an interactive session names the session command."""
+    import subprocess
+
+    from sucoder.logging_utils import set_progress
+
+    executor = _make_remote_executor(control_socket_path="/tmp/ln.sock")
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda args, **kwargs: subprocess.CompletedProcess(args, 0, "", ""),
+    )
+    set_progress(True)
+    try:
+        executor.run_agent_interactive(
+            ["tmux", "new-session", "-s", "sucoder-Emu-GMM"],
+            cwd="/var/tmp/coder-mirrors/Emu-GMM",
+        )
+    finally:
+        set_progress(False)
+    assert capsys.readouterr().err == (
+        "\u00b7 ln003  tmux new-session -s sucoder-Emu-GMM\n"
+    )
+
+
 @pytest.mark.parametrize("shell", ["sh", "bash", "zsh"])
 def test_bounded_remote_command_runs_in_common_shells(shell: str) -> None:
     """The wrapper stops a slow command (exit 124) and passes a fast one."""
