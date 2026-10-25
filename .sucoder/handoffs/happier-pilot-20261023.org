@@ -1,0 +1,56 @@
+#+TITLE: Happier experimental PR and approval audit
+#+STATUS: REVIEW
+
+* Current result
+
+Experimental PR scope: settled-approval audit and an opt-in Claude adapter.
+The helper now defaults to persisted history and explicit remote/default
+startup; 35 targeted helper/reply-launch checks pass. Provider arguments,
+requested UUID, native config directory, and standalone probes are preserved.
+Runbook rewritten around measured behavior and current defaults.
+
+Native approval audit proves hook_permission_decision allow and a matching
+permissionDecision accept/source hook at 09:54:33-41 Pacific. Happier status
+said default, but native permission-mode records say auto. This does not
+prove a human browser approval. User settings have no PermissionRequest
+hooks; enabled Lean plugin has only a Bash PreToolUse guardrail.
+
+Retrospective cloud audit completed through a newly paired temporary client.
+The retained record has one completed permission request, marked push-notified
+at 09:53:10.148 and approved at 09:54:33.230 Pacific. No saved rule, mode
+change, decision reason, or actor/device is stored. Its shape is consistent
+with a one-time permission response; pinned bridge expiry records cancellation.
+Native grant came from the PermissionRequest hook. Exact approving client is
+not recoverable from retained evidence; do not claim a browser UI approval.
+Audit credentials and temporary executable removed; no agent, daemon or
+compute allocation started for this read-only audit.
+
+Private completed-approval-audit.json and approval-decision-audit.json are
+saved beside the synthetic pilot evidence. Public runbook summarizes facts
+and distinguishes the one-time-response inference from proven attribution.
+
+Branch pilot/happier-claude rebased onto origin/main; only Happier changes
+remain (the older local progress fix remains on local main). The branch is prepared for review as a draft PR; no feature merge is
+authorized by this task. Pre-commit GitNexus analysis low risk,
+no affected flows; shell helper unindexed, covered by targeted tests.
+
+* Measured pilot and cleanup
+
+Run happier-ab-20261024T163620Z. Job 40439415 on n0035 cancelled at 10:00:17
+Pacific; independent observer 40439597 saw live processes then two empty
+scans and completed successfully at 10:00:21. All recorded earlier Happier
+jobs ended; unrelated mirror jobs untouched. No compute allocation active
+for this task. API/terminal/browser context continuity passed in both modes.
+Direct browser replies: initial 1, local 2, browser return 2. Persisted: 1
+throughout. Native and compact CLI turns single. Default local startup
+crashes; named-socket attach, renewal, concurrent nodes and Codex remain gates.
+
+Persisted session cmvmmivemfy6bqq57a52vr44o; native f000aee6-aa10-45d8-a27b-58a4ebb9344c.
+Direct session cmvmmiwpefy6yqq57xyjq6rwa; native da51ec43-4ebf-4f43-b971-38b2f8bf7af4.
+Pending request is already settled: toolu_013DAzRqYmXwFWe7dq6ffJvJ. Do not ask
+the human to approve it again. Retrospective audit concerns its decision source.
+
+Evidence locally and on Savio under ~/.sucoder/pilots/happier-ab-20261024T163620Z/.
+Original runbook archived privately as runbook-before-pr.org. Current public
+runbook docs/happier-pilot.org. Earlier SuCoder framed reply evidence under
+~/.sucoder/pilots/happier-20261024T000415Z/.

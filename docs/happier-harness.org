@@ -1,0 +1,195 @@
+#+TITLE: Happier as a common harness for SuCoder
+#+DATE: 2026-10-23
+#+AUTHOR: Sue
+#+STATUS: Historical pre-pilot research, 2026-10-23. Extends issue 58.
+#+OPTIONS: toc:2 num:nil
+
+The follow-up [[file:happier-pilot.org][disposable Claude pilot]] pins the released CLI separately
+from the UI, preserves the native Claude launch profile through an isolated
+adapter, and records measured preflight and browser acceptance results.
+Its measured persisted-history and remote-start recommendations supersede
+this note's original preference for direct storage and local startup.
+
+* Question
+
+SuCoder already selects among harnesses (=--harness=, harness profiles, =sucoder list harnesses=; =sucoder/cli.py= =_resolve_harness_command=, =sucoder/config.py:662=).
+What it doesn't have is anything harness-independent above the launch.
+=sucoder/reply_probe.py= reads Claude's and Codex's JSONL transcripts with two hand-written adapters; remote control exists for Codex only (=sucoder/codex_remote.py=, =sucoder/codex_remote_client.py=); =mirror.py=, =session.py= and =sessions_report.py= each branch on the harness.
+The human's question (2026-10-23) was whether [[https://github.com/happier-dev/happier][Happier]] could be the one harness under which the agents become interchangeable, so that those per-harness layers collapse.
+Issue 58, recorded the day before, frames Happier more narrowly as an optional wrapper for browser access.
+This note answers the wider question from Happier's documentation and, where the documentation is silent, from its source.
+
+* Summary
+
+Happier is not itself a harness.
+It runs each vendor's own CLI (=claude=, =codex=, =gemini=, ...) as a subprocess under your login, relays the conversation end-to-end encrypted to web, desktop and mobile clients, and exposes one CLI surface over every backend: create, list, send, wait, history, status, stop, set model, set permission mode, attach, resume.
+That uniform surface is the thing SuCoder lacks, and it is real: the same =happier session send <id> "<text>" --wait= works whether the session underneath is Claude, Codex or Gemini.
+What differs by agent is depth.
+Claude is the deepest integration (three remote implementations, stable cross-machine handoff, Claude's own transcripts still written); Codex is solid but can't adopt a natively started session and its handoff is experimental; Gemini and the ACP agents are thinner and marked experimental.
+
+Two mechanics decide whether it fits a cluster, and both are workable.
+A Happier machine identity is a random id persisted in =settings.json= under =HAPPIER_HOME_DIR= (default =~/.happier=), so nodes sharing a home directory present as one machine unless each allocation gets its own home directory, which the CLI supports natively.
+The daemon that a session command auto-starts is a plain detached process when =systemctl --user= is absent, so on a compute node it lives and dies inside the allocation, and the session continues even if the daemon never comes up.
+
+Recommendation: keep issue 58's wrapper model (=happier <agent>= selectable through the existing =--harness= machinery, SuCoder still owning context, skills, config directories and tmux), add Happier's session surface as an optional messaging and remote-access layer, and run the bounded trial issue 58 proposes with Claude first rather than Codex.
+
+* What Happier is
+
+** Project health (checked 2026-10-23)
+
+- Repository :: =happier-dev/happier=, MIT, created 2025-12-16, 2,043 stars, 195 forks, 119 open issues, at least 100 commits in the preceding 14 days, default branch =dev=.
+- Releases :: UI bundles =v0.2.19= (web, mobile, desktop) published 2026-10-23.  Three lanes: stable (=happier=), preview (=hprev=), dev (=hdev=); the hosted cloud runs stable, so preview and dev features may not work against it.
+- Lineage :: the team began as contributors to =slopus/happy= (19.7k stars; its CLI is now in maintenance mode) and split for faster iteration.  The README says Happier "would not exist without" Happy.
+- Install :: =curl -fsSL https://happier.dev/install | bash= verifies a signed release, unpacks a Bun-compiled binary into =~/.happier= and adds =~/.local/bin= to the shell profile; no Node needed.  The npm package =@happier-dev/cli= lags (0.2.17).  The binary's glibc floor is undocumented.
+
+** Architecture
+
+- Agents :: each vendor CLI runs on your machine as an ordinary subprocess, under your login, talking to its own model provider.  Happier doesn't host the agent or sit between it and the model.
+- Relay :: a sync server, hosted (=https://api.happier.dev=, web app =https://cloud.happier.dev=) or self-hosted.  Clients connect over HTTPS with Socket.IO at =/v1/updates=.
+- Daemon :: a per-user background process that keeps a machine reachable, starts sessions requested from the app, and spawns one "session runner" process per session.  On Linux it installs as a =systemd --user= service.
+- Encryption :: session content is encrypted on the devices; the server sees account identifiers, session ids, timestamps, turn status, usage metadata and ciphertext.  A self-hosted operator can set a storage policy of =required_e2ee= (default), =optional= or =plaintext_only=.
+- Self-hosting :: a "light" flavor is a single server with SQLite or PGlite and local files (port 3005 by default; =HAPPIER_SERVER_LIGHT_DATA_DIR=); the "full" flavor wants Postgres or MySQL plus S3.  Docker Compose and Kubernetes recipes exist, and =happier relay host install --mode system= installs a managed relay.  The README says the self-hosted relay runs the same apps, encryption and features as the hosted one.
+
+* Multi-agent support
+
+** Agents and integration depth
+
+Thirteen agents have guides: Claude Code (the default; =happier= alone starts it), Codex, OpenCode, Cursor, Gemini, Copilot, Qwen Code, Kimi, Kilo, Kiro, Auggie, Pi and Grok.
+Four more run without guides (Devin, Antigravity, FX, Droid).
+Any CLI that speaks the Agent Client Protocol can be added as a backend (=--backend acpBackend:<id>=), which is the route for goose if that is ever wanted.
+The docs call capabilities "the intersection of what Happier supports and what the agent's own CLI exposes", and a dash in their matrix means the agent lacks the capability, not that Happier hasn't got to it.
+
+#+NAME: tbl:happier-agents
+#+CAPTION: Per-agent capabilities from =docs.happier.dev/agents/capabilities=, 2026-10-23.
+| Agent       | Resume       | Fork | Plan mode         | Steer a running turn | Notes                                          |
+|-------------+--------------+------+-------------------+----------------------+------------------------------------------------|
+| Claude Code | yes          | no   | yes               | yes                  | deepest integration; stable machine handoff     |
+| Codex       | experimental | yes  | runtime-dependent | no                   | app-server backend; handoff partial            |
+| Gemini CLI  | yes          | no   | no                | no                   | experimental; ACP-compatible messaging         |
+| OpenCode    | yes          | yes  | runtime-dependent | no                   | shared control; stable machine handoff         |
+| Cursor      | experimental | no   | runtime-dependent | no                   |                                                |
+| Copilot     | yes          | no   | runtime-dependent | no                   |                                                |
+| Qwen Code   | yes          | no   | runtime-dependent | no                   |                                                |
+| Pi          | yes          | no   | no                | yes                  | experimental                                   |
+
+- Claude :: /Local mode/ is Claude's own TUI in your terminal, with Happier tailing =~/.claude/projects/*.jsonl=.  /Remote mode/ has three implementations, tried in order: an opt-in "unified terminal" that hosts the real TUI, the Agent SDK (default), and a legacy =--output-format stream-json= shim.  =happier attach <id>= takes exclusive local control of a remote session; app messages sent meanwhile are queued until Claude is idle.  =claudeArgs= pass =--resume=, =--continue= and =--model= through; =CLAUDE_CONFIG_DIR= is honoured; cross-machine handoff exports the JSONL, rehydrates it under the target's config dir and vendor-resumes.  Auth detection prefers =ANTHROPIC_API_KEY=, then =ANTHROPIC_AUTH_TOKEN=, then =~/.claude/.credentials.json=.  An experimental "local permission bridge" forwards terminal permission prompts to the app.
+- Codex :: app-server backend by default (ACP and MCP only when chosen; no silent fallback).  "If you started a thread in Codex CLI, Happier cannot join its running app-server"; shared terminal-and-app control needs Codex CLI 0.131.0 or newer on macOS and Linux.  =CODEX_HOME= is passed through and recorded in session metadata.  Sandbox policy may be fixed at session start.  Resume is strict (a failed resume is never replaced with a fresh session) and cross-machine handoff is "experimental" and "less mature than Claude or OpenCode handoff".
+- Gemini :: "integrates Gemini through the local Gemini CLI/runtime and ACP-compatible messaging"; =HAPPIER_GEMINI_PATH= overrides the binary; explicitly "an experimental integration".
+
+** The uniform session surface
+
+These work across backends, and most take =--json=:
+
+- Start :: =happier claude=, =happier codex=, =happier gemini= (local mode in this terminal), or =happier session create --backend agent:<id> --path <dir> [--title <t>] [--message <m>]= for a daemon-run session.  =--profile <name>= selects a backend profile.
+- Observe :: =happier session list [--resumable] [--json]=, =session status=, =session history=.
+- Talk :: =happier session send <id> "<text>" [--wait] [--timeout <s>]=, =session wait <id> --timeout <s>=.
+- Control :: =session set-model=, =session set-permission-mode= (=read_only=, =default=, =auto=, =yolo=; plan mode is a separate Claude session mode), =session stop|archive=.
+- Come back :: =happier attach [id]= (running), =happier resume [id]= (running or stopped; strict).
+- Extras :: =happier mcp serve= (an MCP server over Happier), =happier notify -p "<msg>"=, =happier tools call=, saved automations.
+
+Cross-agent features that nothing in SuCoder offers today: a session can spawn subagents in another agent (Claude asking Codex for a review), the engine can be changed mid-session, and a live Claude or OpenCode session can be handed to another machine.
+
+* Mechanics that matter on a cluster
+
+The documentation doesn't cover state paths, machine identity or shared home directories; the source does (=apps/cli/src=, branch =dev=, 2026-10-23).
+
+** State directory
+
+Everything is keyed under =HAPPIER_HOME_DIR=, default =~/.happier= (=configuration.ts:99-107=): =settings.json=, =servers/<server>/access.key= (the account keypair for that relay), =logs/=, =installation-identity.json=, and the daemon's lifecycle directory and lock file (=configuration.ts:375-422=).
+The dev lane runs with =HAPPIER_HOME_DIR=~/.happier-dev=, so a separate home per node or allocation is a first-class pattern rather than a hack.
+
+** Machine identity
+
+A machine id is a random id created by the CLI and persisted in =settings.json=, keyed per server and per account (=auth/machineIdentitySettings.ts=: =machineIdByServerId=, =machineIdByServerIdByAccountId=).
+The server keeps "machine replacement" forward pointers (=packages/protocol/.../canonicalMachineId.ts=).
+Two nodes sharing =$HOME= therefore present as one machine and will replace each other's registration; this is the shared-home collision issue 58 asked about, and it's the same shape as the Codex remote-control collision in [[file:codex-remote-control.org][codex-remote-control.org]].
+The fix is on SuCoder's side: one =HAPPIER_HOME_DIR= per allocation, naturally under the local-disk tier ([[file:local-disk-tiering.org][local-disk-tiering.org]]), each registering as its own machine.
+Pairing a fresh home without a browser is supported: =happier auth login= prints a URL and a QR code (=HAPPIER_NO_BROWSER_OPEN=1= stops it trying to open one), =happier auth pair-remote --ssh user@host= pairs a remote machine from the laptop, and =auth request= / =auth approve --public-key= / =auth wait --public-key= are the scriptable steps.
+
+** Daemon
+
+A session command sets =HAPPIER_SESSION_AUTOSTART_DAEMON=1= when the variable is unset and starts a detached daemon if no compatible one is running; if the daemon never reports ready the CLI logs it and the session continues (=daemon/ensureDaemon.ts:61-125=).
+Happier itself sets the variable to =0= for =happier codex= on a TTY (=cli/dispatch.ts:51-58=), so exporting =0= is the supported way to run without one.
+Without =systemctl=, =happier daemon start= lasts for the current login only, which is what SuCoder wants: a daemon started inside the job's cgroup ends with the allocation.
+App-initiated work (a new session from the browser, reconnection to a hosted terminal) needs that daemon; terminal-started local sessions don't.
+Daemon and runtime state are scoped per server profile, and two relays can be served by two services (=daemon service install --instance <name>=).
+
+** Relay reachability
+
+The CLI and daemon need outbound HTTPS to the relay: =https://api.happier.dev= or your own (=HAPPIER_SERVER_URL=, =--server-url=, or a saved profile via =happier server add --name <n> --server-url <url> --webapp-url <url> --use=).
+The human confirmed on 2026-10-23 that Savio compute nodes have outbound access.
+All configured cluster targets (=savio=, =savio-node=, =savio-htc=, =carleton-htc=) are Savio partitions, so this covers them, though the trial should still check from the partition it lands on.
+A self-hosted light relay on the laptop or a login node, reached through the existing tunnel machinery, is the fallback if a future site lacks egress.
+
+** Transcripts and managed state
+
+=HAPPIER_TRANSCRIPT_STORAGE=direct= keeps transcripts provider-owned: Claude's JSONL and Codex rollouts are read in place rather than persisted to the relay (=api/session/sessionClient.ts=, =backends/claude/session.ts=, =backends/codex/appServer/runtime.ts=).
+That is the setting to prefer: less content leaves the node, and =reply_probe.py= keeps finding the frames it looks for today.
+=CODEX_HOME= and =CLAUDE_CONFIG_DIR= pass through, so the managed Codex placement in [[file:codex-local-state.org][codex-local-state.org]] and SuCoder's per-launch config directories survive in principle; issue 58's second investigation item (whether Happier's app-server launch accepts them) still needs the trial.
+
+** tmux
+
+App-started sessions can be hosted in tmux, zellij or Herdr ("Terminal host for new sessions" in the app), and =happier attach= reattaches to that host.
+A session started in a terminal runs in that terminal, so SuCoder's =sucoder-<mirror>= session stays in charge of placement.
+Whether =message= and =peek= can still address the pane when Happier is in unified-terminal mode is a trial item.
+
+** Known rough edges
+
+- Linux without systemd dead-ended desktop onboarding and left a stale unit file that blocked =happier daemon start= (#516, #517, #520, all closed 2026-10-11).
+- #674 (opened 2026-10-23): on 0.2.17 =doctor repair= repeats indefinitely after a Linux service-definition drift.
+- #448 (closed): a self-hosted relay showed "No machines found" while a remote worker daemon was paired and healthy.
+- Documentation describes features that only exist in the dev lane (issue 58 noticed this too; the Claude page's "Show sessions in Claude Code" is one).
+
+* What it would buy SuCoder
+
+1. One messaging path for every harness started through it.  =session send --wait= and =session history --json= replace the per-harness transcript adapters and the screen scraping in =messaging.extract_reply= for those sessions; the transcript probe stays as the fallback for native launches ([[file:reply-from-transcript.org][reply-from-transcript.org]]).
+2. Browser and phone access for Claude, Gemini and the rest, where today only Codex has remote control, and that path cost a design note of its own.
+3. Uniform mid-session model and permission-mode changes, and plan mode for Claude.
+4. Capabilities SuCoder doesn't have: cross-agent subagents, engine switching, and for Claude a stable machine handoff.  If that handoff holds up, allocation renewal for Claude sessions could become an export-and-resume rather than the Codex-specific checkpoint machinery in =codex_state_runner.py= and =slurm_timer.py=.  Codex gets no renewal relief yet: its handoff is partial and it can't adopt a native session.
+
+* Costs and risks
+
+- Youth :: ten months old, 0.2.x, =dev= as default branch, a hundred commits a fortnight.  Pin the installer version and budget for churn.
+- Dependencies :: a relay and (for app features) a daemon.  With the hosted relay, encrypted content transits a third party and routing metadata is visible to it.  Self-hosting is real but is one more service.
+- Our side of the contract :: per-allocation =HAPPIER_HOME_DIR=, headless pairing, cleanup on release and failed start, exactly the work the Codex local state needed.
+- Codex :: no adoption of native sessions, shared control needs 0.131.0 or newer, handoff experimental, sandbox fixed at start.
+- Thin integrations :: Gemini and ACP backends get fewer features and carry the experimental label.
+- Platform :: Bun binary with an undocumented glibc floor; the installer writes to =~/.happier= and =~/.local/bin=.
+
+* Recommendation
+
+Adopt the wrapper model from issue 58 and widen it.
+=happier <agent>= becomes a harness selectable through the existing =--harness= and profile machinery; SuCoder keeps assembling context, skills, config directories and tmux placement, all of which pass through because Happier only wraps the vendor CLI.
+On top of that, Happier's session surface becomes an optional messaging and remote-access layer for sessions started through it.
+
+Run the bounded trial issue 58 proposes, with four changes:
+
+1. Start with Claude, not Codex.  It's the deepest integration, has the stable handoff, and is the harness where SuCoder has no remote control today.  Codex second.
+2. Set =HAPPIER_HOME_DIR= per allocation, =HAPPIER_NO_BROWSER_OPEN=1= and =HAPPIER_TRANSCRIPT_STORAGE=direct=.  Run once with =HAPPIER_SESSION_AUTOSTART_DAEMON=0= (local mode only), then once with a daemon started inside the job.
+3. Check the glibc floor on the node image before anything else; egress is already confirmed.
+4. Confirm =--session-id= passes through to =claude= so =sucoder message= keeps its reply identity.
+
+Issue 58's effort estimate still reads right: two to four hours for the trial, about a day for launcher support, forwarding, tests and documentation, and one to four more days for concurrent-node ownership, cleanup and renewal validation.
+
+** Trial checklist
+
+- [ ] Pin a stable installer version; record =happier --version= and the Claude and Codex versions on the node.
+- [ ] =HAPPIER_HOME_DIR= under the local tier; =happier setup --cloud --yes= then headless pairing; =happier status= clean.
+- [ ] =happier claude= in the mirror's tmux, local mode, daemon autostart off: transcript in =~/.claude/projects=, =sucoder message= and =--wait= still work.
+- [ ] Same with a daemon inside the job: session visible in the browser, =session send --wait= round trip, approval from the browser, =happier attach= from a second terminal.
+- [ ] Release the allocation: no Happier process outlives it; machine shows offline in the app.
+- [ ] Two concurrent allocations with distinct homes: two machines, no cross-control.
+- [ ] Repeat the minimum with =happier codex= and managed =CODEX_HOME=.
+
+* Open questions
+
+- Does =happier claude= pass unknown flags (=--session-id=) through, or only the handled ones?
+- In unified-terminal mode, what does the pane look like to =capture-pane=?
+- What does the hosted relay's account policy say about an account used from a shared service account like =coder=?
+- Can a per-allocation home reuse the account keypair from the human's laptop, or must each home pair separately?
+
+* Sources
+
+Documentation at =docs.happier.dev= (=/getting-started=, =/apps/cli=, =/apps/daemon=, =/agents=, =/agents/capabilities=, =/agents/claude=, =/agents/codex=, =/agents/gemini=, =/sessions/attach-to-session=, =/accounts/multi-server=, =/self-hosting=, =/security/encryption=, =/server/encryption=), the repository README and =docs/*.md= feature matrices, and the CLI source on branch =dev=, all read 2026-10-23.
+Repository statistics from the GitHub API the same day.
+Savio egress: human confirmation, 2026-10-23.

@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Unpack one immutable upstream release into an explicit, fresh directory.
+# No shell profile changes, service installation, or vendor CLI upgrades.
+set -euo pipefail
+umask 077
+
+if [[ $# -lt 1 || $# -gt 2 || "$1" != /* ]]; then
+    echo 'Usage: install ABSOLUTE_DESTINATION [CACHED_TARBALL]' >&2
+    exit 2
+fi
+destination=$1
+if [[ -e "$destination" || -L "$destination" ]]; then
+    echo 'Choose a fresh destination for the pinned release' >&2
+    exit 2
+fi
+case "$(uname -s)/$(uname -m)" in
+    Linux/x86_64) arch=x64; checksum=969328ed5296119d18e3ca48839e0baafb5d05d1ed7047afacfbac064fd8cbc4 ;;
+    Linux/aarch64) arch=arm64; checksum=80e3110dc55a2a22f0cca6d26903715b67581eb5509be4e4a403b5898214bb44 ;;
+    *) echo 'This pilot installer supports Linux x86_64 and aarch64' >&2; exit 2 ;;
+esac
+asset="happier-v0.2.17-linux-$arch.tar.gz"
+mkdir -p "$(dirname "$destination")"
+staging=$(mktemp -d "${destination}.install.XXXXXX")
+trap 'rm -rf -- "$staging"' EXIT
+archive=${2:-$staging/$asset}
+if [[ $# == 1 ]]; then
+    curl --fail --location --retry 2 --connect-timeout 15 --max-time 300 \
+        "https://github.com/happier-dev/happier/releases/download/cli-v0.2.17/$asset" \
+        --output "$archive"
+fi
+actual=$(sha256sum "$archive")
+actual=${actual%% *}
+if [[ "$actual" != "$checksum" ]]; then
+    echo "SHA256 mismatch for $asset; refusing to unpack" >&2
+    exit 1
+fi
+mkdir "$staging/payload"
+tar --no-same-owner -xzf "$archive" --strip-components=1 -C "$staging/payload"
+test -x "$staging/payload/happier"
+mv "$staging/payload" "$destination"
+printf 'release=cli-v0.2.17\nasset=%s\nsha256=%s\n' "$asset" "$checksum" > "$destination/pilot-release.txt"
+HAPPIER_HOME_DIR="$staging/version-home" HAPPIER_SESSION_AUTOSTART_DAEMON=0 \
+    HAPPIER_CLI_UPDATE_CHECK=0 "$destination/happier" --version

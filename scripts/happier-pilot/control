@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Run only the pilot's Happier instance, from inside its Slurm allocation.
+set -euo pipefail
+umask 077
+
+if [[ ! "${SLURM_JOB_ID:-}" =~ ^[0-9]+$ ]]; then
+    echo 'Run this command inside the disposable Slurm allocation' >&2
+    exit 2
+fi
+: "${SUCODER_LOCAL_ROOT:?Set SUCODER_LOCAL_ROOT to the allocation local disk root}"
+if [[ "$SUCODER_LOCAL_ROOT" != /* || ! -d "$SUCODER_LOCAL_ROOT" || ! -w "$SUCODER_LOCAL_ROOT" ]]; then
+    echo 'SUCODER_LOCAL_ROOT must be an existing writable absolute directory' >&2
+    exit 2
+fi
+transcript_storage=${HAPPIER_TRANSCRIPT_STORAGE:-persisted}
+case "$transcript_storage" in
+    direct|persisted) ;;
+    *) echo 'HAPPIER_TRANSCRIPT_STORAGE must be direct or persisted for this pilot' >&2; exit 2 ;;
+esac
+if [[ -z "${SUCODER_HAPPIER_PILOT_CLI:-}" ]]; then
+    : "${SUCODER_HAPPIER_PILOT_ARCHIVE:?Set SUCODER_HAPPIER_PILOT_ARCHIVE to the pinned release tarball}"
+    destination="$SUCODER_LOCAL_ROOT/happier-cli-0.2.17"
+    if [[ ! -x "$destination/happier" ]]; then
+        "$(dirname "$0")/install" "$destination" "$SUCODER_HAPPIER_PILOT_ARCHIVE"
+    fi
+    export SUCODER_HAPPIER_PILOT_CLI="$destination/happier"
+fi
+if [[ "$SUCODER_HAPPIER_PILOT_CLI" != /* || ! -x "$SUCODER_HAPPIER_PILOT_CLI" ]]; then
+    echo 'SUCODER_HAPPIER_PILOT_CLI must name an absolute executable' >&2
+    exit 2
+fi
+
+pilot_home="$SUCODER_LOCAL_ROOT/happier-pilot-$SLURM_JOB_ID"
+if [[ -n "${HAPPIER_HOME_DIR:-}" && "$HAPPIER_HOME_DIR" != "$pilot_home" ]]; then
+    echo 'HAPPIER_HOME_DIR conflicts with this allocation; refusing to use another instance' >&2
+    exit 2
+fi
+if [[ -L "$pilot_home" ]]; then
+    echo 'The pilot home must not be a symlink' >&2
+    exit 2
+fi
+mkdir -p -m 700 "$pilot_home"
+if [[ ! -O "$pilot_home" ]]; then
+    echo 'The pilot home belongs to another user' >&2
+    exit 2
+fi
+chmod 700 "$pilot_home"
+export HAPPIER_HOME_DIR="$pilot_home"
+export HAPPIER_NO_BROWSER_OPEN=1 HAPPIER_CLI_UPDATE_CHECK=0
+export DISABLE_AUTOUPDATER=1
+export HAPPIER_TRANSCRIPT_STORAGE="$transcript_storage"
+export HAPPIER_SESSION_AUTOSTART_DAEMON=0
+
+# Pair without setup/service install. An explicit start-sync keeps the daemon
+# in the job step; a shell, setsid or tmux does not escape the Slurm cgroup.
+case "${1:-}" in
+    claude|auth|session|status|attach|resume|--version|--help) ;;
+    daemon)
+        for argument in "$@"; do
+            if [[ "$argument" == --all ]]; then
+                echo 'The pilot must only control its own daemon' >&2
+                exit 2
+            fi
+        done
+        case "${2:-}" in
+            start-sync|status|stop) ;;
+            *) echo 'Use daemon start-sync, status, or stop for this pilot' >&2; exit 2 ;;
+        esac
+        ;;
+    *) echo 'Supported: claude, auth, session, status, attach, resume, daemon start-sync/status/stop' >&2; exit 2 ;;
+esac
+
+# The pinned release's local startup crashes, and direct history echoed after
+# mode handoffs in the live comparison. Keep explicit caller options last so
+# a deliberate reproduction can still select another mode.
+if [[ "${1:-}" == claude ]]; then
+    set -- claude --happy-starting-mode remote --permission-mode default "${@:2}"
+fi
+exec "$SUCODER_HAPPIER_PILOT_CLI" "$@"
