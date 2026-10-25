@@ -85,6 +85,14 @@ def test_wait_returns_zero_for_explicit_worker_success(monkeypatch):
     assert runner.invoke(cli.app, ["dispatch", "wait", ID]).exit_code == 0
 
 
+def test_wait_honors_supervisor_failure_even_with_stale_success_label(monkeypatch):
+    _no_interactive(monkeypatch)
+    monkeypatch.setattr(dispatch, "wait", lambda *a, **k: {
+        "state": "succeeded", "result": {"state": "succeeded", "exit_code": 0,
+                                          "supervisor_exit_code": 74}})
+    assert runner.invoke(cli.app, ["dispatch", "wait", ID]).exit_code == 74
+
+
 def test_wait_task_requirement_is_distinct_from_infrastructure(monkeypatch):
     _no_interactive(monkeypatch)
     monkeypatch.setattr(dispatch, "wait", lambda *a, **k: {

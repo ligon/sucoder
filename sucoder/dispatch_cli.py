@@ -106,7 +106,8 @@ def wait(
         _error(exc)
     _emit(value)
     result = value.get("result") or {}
-    if result.get("state") == "succeeded" and result.get("exit_code") == 0:
+    if (result.get("state") == "succeeded" and result.get("exit_code") == 0
+            and result.get("supervisor_exit_code", 0) == 0):
         if require_task_complete and result.get("task", {}).get("status") != "completed":
             raise typer.Exit(4)
         return
