@@ -1817,8 +1817,10 @@ def main(
         explicit_startup = [
             "/".join(parameter.opts + parameter.secondary_opts)
             for parameter in ctx.command.params
-            if isinstance(parameter, click.Option) and parameter.name != "version"
-            and ctx.get_parameter_source(parameter.name) is click.core.ParameterSource.COMMANDLINE
+            # Recent Typer versions vendor Click: its Option/ParameterSource
+            # classes differ from the separately installed click module.
+            if hasattr(parameter, "opts") and parameter.name != "version"
+            and getattr(ctx.get_parameter_source(parameter.name), "name", None) == "COMMANDLINE"
         ]
         if explicit_startup:
             raise typer.BadParameter(

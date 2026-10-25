@@ -137,3 +137,15 @@ def test_dispatch_keeps_clear_config_routing_refusal(monkeypatch):
     result = runner.invoke(cli.app, ["--config", "/shared/config.yaml", "dispatch", "--help"])
     assert result.exit_code == 2, result.output
     assert "current Slurm cluster" in result.output
+
+
+def test_global_resource_override_refuses_actual_dispatch_submission(monkeypatch):
+    _no_interactive(monkeypatch)
+    def unexpected(*args, **kwargs):
+        raise AssertionError("global resource option was silently ignored")
+    monkeypatch.setattr(dispatch, "submit", unexpected)
+    result = runner.invoke(cli.app, ["--time", "00:05:00", "dispatch", "submit", "/shared/repo",
+        "--ref", "main", "--task-file", "/shared/task", "--agent", "claude",
+        "--account", "a", "--partition", "p"])
+    assert result.exit_code == 2, result.output
+    assert "global startup options" in " ".join(result.output.split())
