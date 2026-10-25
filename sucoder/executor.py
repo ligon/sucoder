@@ -131,6 +131,7 @@ class CommandExecutor:
         timeout: Optional[int] = None,
         input: Optional[str] = None,
         show_progress: bool = True,
+        progress_command: Optional[str] = None,
     ) -> CommandResult:
         requested_args = list(args)
         executed_args = (
@@ -190,7 +191,19 @@ class CommandExecutor:
         # a hang rather than as a wait.  Such a caller announces the wait
         # once itself; the suppressed trips stay visible in the debug log
         # below, so -v loses nothing.
+        #
+        # ``progress_command`` is what a caller that wrapped the command
+        # wants named instead of the wrapper.  The ssh argv carries the
+        # whole remote script -- ``export``, ``cd``, the ``timeout``
+        # guard -- and the line keeps 60 characters of it, so a
+        # scaffolding command in a mirror read ``cd /global/home/users/
+        # ligon/mirrors/Emu-GMM && if command...`` and lost the one word
+        # that says what the round trip is for.  Display only: the
+        # ``[human] ssh ...`` debug record above and the error lines
+        # keep the exact argv.
         remote = describe_remote(executed_args)
+        if remote is not None and progress_command is not None:
+            remote = (remote[0], progress_command)
         if remote is not None and show_progress:
             progress(*remote)
         started = time.monotonic()
@@ -390,6 +403,7 @@ class RemoteExecutor(CommandExecutor):
                 timeout=effective_timeout,
                 input=input,
                 show_progress=show_progress,
+                progress_command=_format_display(args),
             )
             if self.debug_ssh and result.stderr:
                 self.logger.debug(
@@ -502,6 +516,7 @@ class RemoteExecutor(CommandExecutor):
                 as_agent=False,
                 capture_output=True,
                 timeout=effective_timeout,
+                progress_command=_format_display(args),
             )
             if self.debug_ssh and result.stderr:
                 self.logger.debug(
@@ -644,6 +659,7 @@ class RemoteExecutor(CommandExecutor):
             env=None,
             as_agent=False,
             capture_output=False,
+            progress_command=_format_display(args),
         )
 
     def _build_ssh_command(
