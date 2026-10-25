@@ -641,3 +641,41 @@ def test_legacy_shared_ref_is_retired_once_a_newer_job_ref_exists(shared):
     assert r.returncode == 0, r.stderr
     assert _remote_wip_refs(mirror) == {_ref(5)}
     assert "refs/sucoder/wip/K" in r.stdout          # named as retired
+
+
+@_bash
+@_needs_git
+@pytest.mark.parametrize("prefix", ["ligon", "origin"])
+def test_published_canonical_refs_are_visible_without_moving_the_local_checkout(shared, tmp_path, prefix):
+    mirror, local = shared
+    old = _git(mirror, "rev-parse", "HEAD")
+    source = tmp_path / "human"
+    _git(tmp_path, "clone", "-q", str(mirror), str(source))
+    (source / "accepted.txt").write_text("accepted canonical work\n")
+    _git(source, "add", "accepted.txt")
+    _git(source, "commit", "-qm", "accepted work")
+    accepted = _git(source, "rev-parse", "HEAD")
+    _git(source, "push", "origin", f"HEAD:refs/remotes/{prefix}/main")
+    script = build_prepare_script(mirror_path=str(mirror), mirror_token="K",
+                                  local_disk_root=str(local), job_id=5, canonical_remote=prefix)
+    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    work = local / "job5/mirrors/K"
+    assert _git(work, "rev-parse", f"refs/sucoder-canonical/{prefix}/main") == accepted
+    assert _git(work, "rev-parse", "origin/main") == old
+    assert _git(work, "rev-parse", "HEAD") == old
+    assert _git(mirror, "rev-parse", "HEAD") == old
+    assert not (work / "accepted.txt").exists()
+
+
+@_bash
+@_needs_git
+@pytest.mark.parametrize("prefix", [None, "ligon"])
+def test_prepare_allows_no_published_namespace_without_creating_one(shared, prefix):
+    mirror, local = shared
+    script = build_prepare_script(mirror_path=str(mirror), mirror_token="K",
+                                  local_disk_root=str(local), job_id=5, canonical_remote=prefix)
+    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    work = local / "job5/mirrors/K"
+    assert _git(work, "for-each-ref", "refs/sucoder-canonical/") == ""

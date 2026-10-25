@@ -1409,8 +1409,9 @@ def test_sync_remote_calls_push_via_login_node(
     url = push_cmd[2]
     assert "ln001:" in url
     assert "rproj" in url
-    assert "--all" in push_cmd
-    assert "--force" in push_cmd
+    assert push_cmd[-1].endswith(":refs/remotes/ligon/main")
+    assert "--all" not in push_cmd
+    assert "--force" not in push_cmd
     # GIT_SSH_COMMAND should reference the ControlMaster socket
     env = calls[0]["kwargs"].get("env", {})
     assert "GIT_SSH_COMMAND" in env
@@ -1437,14 +1438,11 @@ def test_ensure_remote_clone_refuses_push_over_unverified_mirror(tmp_path, monke
     from sucoder.mirror import MirrorError
     manager, ctx, path = _local_bootstrap_manager(tmp_path, monkeypatch)
     subprocess.run(["git", "clone", str(ctx.canonical_path), str(path)], check=True, capture_output=True)
-    monkeypatch.setattr(manager, "_pull_from_remote", lambda ctx: False)
-    pushed = []
-    monkeypatch.setattr(manager, "_sync_remote", lambda ctx: pushed.append(True))
-    with pytest.raises(MirrorError, match="Refusing to push"):
-        manager.ensure_remote_clone(ctx)
-    assert not pushed
+    monkeypatch.setattr(manager, "_pull_from_remote", lambda ctx: pytest.fail("publication reconciled receiver"))
+    before = subprocess.check_output(["git", "-C", str(path), "rev-parse", "HEAD"], text=True)
+    assert manager.ensure_remote_clone(ctx)
     manager.ensure_remote_clone(ctx, allow_unverified_mirror=True)
-    assert pushed == [True]
+    assert subprocess.check_output(["git", "-C", str(path), "rev-parse", "HEAD"], text=True) == before
 
 
 def test_ensure_remote_clone_mirror_not_exists_inits_and_syncs(tmp_path, monkeypatch):
@@ -1722,16 +1720,22 @@ def test_pull_fails_over_to_dtn(
     fetches: list = []
 
     def fake_run_human(args, **kwargs):
+        if args[1] == "update-ref":
+            subprocess.run(args, cwd=ctx.canonical_path, check=True, capture_output=True)
+            return _transport_result(args, 0)
         url = args[2]
         fetches.append(url)
         if url.startswith("ln001"):
             return _transport_result(
                 args, 128, "fatal: the remote end hung up unexpectedly")
-        return _transport_result(args, 0)  # DTN connects
+        ref = args[-1].split(":")[-1]
+        subprocess.run(["git", "update-ref", ref, "HEAD"], cwd=ctx.canonical_path,
+                       check=True, capture_output=True)
+        return _transport_result(args, 0)  # DTN connects and populates its scratch ref
 
     monkeypatch.setattr(manager.executor, "run_human", fake_run_human)
 
-    manager._pull_from_remote(ctx)  # reconciliation no-ops (tmp ref absent)
+    manager._pull_from_remote(ctx)  # fetched tips match, so no branch update
 
     assert len(fetches) == 2
     assert fetches[0].startswith("ln001:")
@@ -1816,7 +1820,7 @@ def test_ensure_remote_mirror_exists_timeout_is_graceful(
     def fake_run_agent(args, **kwargs):
         # The git probe is what hangs; the `echo $HOME` path-resolution
         # call that precedes it must still succeed.
-        if "rev-parse" in args:
+        if any("HEAD^{commit}" in str(arg) for arg in args):
             raise CommandError(
                 "Command timed out after 120s",
                 CommandResult(list(args), list(args), "", "(timed out)", -1),

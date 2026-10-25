@@ -419,6 +419,11 @@ class MirrorSettings:
     skills: List[Path] = field(default_factory=list)
     mcp_servers: Dict[str, McpServerConfig] = field(default_factory=dict)
     remote: Optional[RemoteConfig] = None
+    sync_policy: Literal["canonical", "external"] = "canonical"
+
+    def __post_init__(self) -> None:
+        if self.sync_policy not in ("canonical", "external"):
+            raise ConfigError(f"Mirror `{self.name}` sync_policy must be canonical or external.")
 
     @property
     def mirror_dirname(self) -> str:
@@ -1108,6 +1113,7 @@ def _parse_mirrors(
             skills=skills,
             mcp_servers=mcp_servers,
             remote=remote,
+            sync_policy=value.get("sync_policy", "canonical"),
         )
 
     _reject_token_collisions(list(mirrors))

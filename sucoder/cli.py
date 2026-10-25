@@ -466,6 +466,14 @@ def _build_executor(
     local_disk_root_override: Optional[str] = None,
     cli_ctx: Optional[click.Context] = None,
 ) -> CommandExecutor:
+    if dry_run:
+        # Constructing a remote executor connects, saves session state, and can
+        # allocate a node. Planning must return before any of those effects.
+        return CommandExecutor(
+            human_user=config.human_user, agent_user=config.agent_user,
+            agent_group=config.agent_group, logger=logger, dry_run=True,
+            use_sudo_for_agent=use_sudo_for_agent,
+        )
     # Callers that hand over only the click context (e.g. `list models`)
     # still get the --local-disk / --local-disk-root overrides.
     if local_disk_override is None:
@@ -1901,6 +1909,15 @@ def main(
     }
 
 
+def _require_managed_sync(config: Config, mirror: str) -> None:
+    settings = config.mirrors.get(mirror)
+    if settings is not None and settings.sync_policy == "external":
+        raise typer.BadParameter(
+            "sync_policy: external forbids managed repository operations; "
+            "use the project's integration workflow."
+        )
+
+
 @app.command("agents-clone")
 def agents_clone(
     ctx: typer.Context,
@@ -1915,13 +1932,13 @@ def agents_clone(
     allow_unverified_mirror: bool = typer.Option(
         False,
         "--allow-unverified-mirror",
-        help="Push even if the mirror could not be read first "
-             "(discards any unpulled mirror commits).",
+        help="Legacy compatibility option; publication is always non-forced and leaves working branches unchanged.",
     ),
 ) -> None:
     """Clone the canonical repository into an agent-controlled mirror."""
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
+    _require_managed_sync(config, mirror)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     manager = _build_manager_for_mirror(config, logger, dry_run, mirror, cli_ctx=ctx)
     mirror_ctx = manager.context_for(mirror)
@@ -1958,6 +1975,7 @@ def prepare_canonical(
     """Fix ownership and permissions on the canonical repository."""
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
+    _require_managed_sync(config, mirror)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     manager = _build_manager(config, logger, dry_run=dry_run, cli_ctx=ctx)
     try:
@@ -1981,6 +1999,7 @@ def _push_to_mirror(
     """Shared body of the ``push``/``sync`` pair."""
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
+    _require_managed_sync(config, mirror)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     manager = _build_manager_for_mirror(config, logger, dry_run, mirror, cli_ctx=ctx)
     try:
@@ -2002,19 +2021,13 @@ def push(
     allow_unverified_mirror: bool = typer.Option(
         False,
         "--allow-unverified-mirror",
-        help="Push even if the mirror could not be read first "
-             "(discards any unpulled mirror commits).",
+        help="Legacy compatibility option; publication is always non-forced and leaves working branches unchanged.",
     ),
 ) -> None:
-    """Send canonical's commits to the mirror (the inverse of `pull`).
+    """Make canonical commits visible through the human's remote-tracking refs.
 
-    Agent commits on the mirror are pulled back first, so this cannot
-    overwrite work that has not been retrieved.
-
-    For remote mirrors the mirror's branches are overwritten to match
-    canonical.  For local mirrors canonical's commits are made *visible*
-    in the mirror (as remote-tracking refs); the mirror's own branches
-    are left where the agent put them.
+    Existing working branches and checkout files are left where the agent put
+    them in either local or remote mirrors. Explicit pull reconciles agent work.
     """
     _push_to_mirror(ctx, mirror, verbose, dry_run, allow_unverified_mirror)
 
@@ -2028,8 +2041,7 @@ def sync(
     allow_unverified_mirror: bool = typer.Option(
         False,
         "--allow-unverified-mirror",
-        help="Push even if the mirror could not be read first "
-             "(discards any unpulled mirror commits).",
+        help="Legacy compatibility option; publication is always non-forced and leaves working branches unchanged.",
     ),
 ) -> None:
     """Alias for `push`, kept for compatibility."""
@@ -2062,6 +2074,7 @@ def pull(
     """
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
+    _require_managed_sync(config, mirror)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
 
     # Check session health before reconnecting.
@@ -2166,6 +2179,7 @@ def start_task(
     """Create and check out a task branch for the agent."""
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
+    _require_managed_sync(config, mirror)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     manager = _build_manager(config, logger, dry_run=dry_run, cli_ctx=ctx)
     try:
@@ -2650,6 +2664,16 @@ def _codex_state_selection(from_generation: Optional[str], fresh: bool) -> None:
         raise typer.BadParameter("--codex-state-fresh conflicts with --codex-state-from.")
 
 
+def _resolve_launch_sync(config: Config, mirror: str, sync: Optional[bool], task: Optional[str]) -> bool:
+    settings = config.mirrors.get(mirror)
+    if settings is None:
+        raise typer.BadParameter(f"Mirror {mirror!r} is not configured.")
+    external = settings.sync_policy == "external"
+    if external and (sync is True or task):
+        raise typer.BadParameter("sync_policy: external forbids --sync and --task; use the project's integration workflow.")
+    return not external if sync is None else sync
+
+
 @app.command("agents-run")
 def agents_run(
     ctx: typer.Context,
@@ -2666,10 +2690,10 @@ def agents_run(
         "-b",
         help="Base branch to use when creating a task branch.",
     ),
-    sync: bool = typer.Option(
-        True,
+    sync: Optional[bool] = typer.Option(
+        None,
         "--sync/--no-sync",
-        help="Fetch latest canonical changes before launching (ignored when --task is used).",
+        help="Synchronize before launch; --no-sync is incompatible with --task and requires an existing remote mirror.",
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print commands without executing."),
@@ -2746,10 +2770,13 @@ def agents_run(
     ),
 ) -> None:
     """Launch the configured agent inside the mirror working tree."""
+    if task and sync is False:
+        raise typer.BadParameter("--task cannot be combined with --no-sync.")
     remote_mode = _codex_remote_mode(remote_control, remote_control_only)
     _codex_state_selection(codex_state_from, codex_state_fresh)
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
+    sync = _resolve_launch_sync(config, mirror, sync, task)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     _tmux_launch_preamble(ctx, config, mirror, wrap=wrap_tmux, dry_run=dry_run, logger=logger)
     manager = _build_manager_for_mirror(config, logger, dry_run, mirror, cli_ctx=ctx)
@@ -2794,10 +2821,10 @@ def collaborate(
         "-b",
         help="Base branch to use when creating a task branch (defaults to mirror setting).",
     ),
-    sync: bool = typer.Option(
-        True,
+    sync: Optional[bool] = typer.Option(
+        None,
         "--sync/--no-sync",
-        help="Fetch latest canonical changes before launching (ignored when --task is used).",
+        help="Synchronize before launch; --no-sync is incompatible with --task and requires an existing remote mirror.",
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print commands without executing."),
@@ -2892,16 +2919,19 @@ def collaborate(
     ),
 ) -> None:
     """Prepare canonical, ensure the mirror exists, and launch the agent in one step."""
+    if task and sync is False:
+        raise typer.BadParameter("--task cannot be combined with --no-sync.")
     remote_mode = _codex_remote_mode(remote_control, remote_control_only)
     _codex_state_selection(codex_state_from, codex_state_fresh)
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
+    sync = _resolve_launch_sync(config, mirror, sync, task)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     _tmux_launch_preamble(ctx, config, mirror, wrap=wrap_tmux, dry_run=dry_run, logger=logger)
 
     # If --node is specified, inject it into the session so that
     # _ensure_slurm_node uses --nodelist to request that node.
-    if node:
+    if node and not dry_run:
         from .session import RemoteSession
         # A direct SSH target has exactly one host and no scheduler, so
         # there is no node to request.  Reject it here rather than

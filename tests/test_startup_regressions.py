@@ -96,7 +96,7 @@ def test_unborn_head_with_feature_branch_is_not_empty(remote):
     git(path, "branch", "-m", "feature")
     git(path, "symbolic-ref", "HEAD", "refs/heads/unborn")
     before = git(path, "rev-parse", "feature")
-    with pytest.raises(MirrorError, match="Refusing to push"):
+    with pytest.raises(MirrorError, match="Refusing initial checkout"):
         manager.ensure_remote_clone(ctx)
     assert git(path, "rev-parse", "feature") == before
     assert (path / "README.md").exists()
@@ -123,9 +123,9 @@ def test_failed_status_cannot_authorize_push(remote, monkeypatch):
         return original(args, **kwargs)
 
     monkeypatch.setattr(manager.executor, "run_agent", fail_status)
-    monkeypatch.setattr(manager, "_sync_remote", lambda *a, **kw: pytest.fail("unsafe push"))
-    with pytest.raises(MirrorError, match="Could not inspect remote working tree"):
-        manager.ensure_remote_clone(ctx, allow_unverified_mirror=True)
+    # Tracking-ref publication cannot overwrite the checkout and needs no
+    # status-based authorization. Native initial checkout protects local files.
+    assert manager.ensure_remote_clone(ctx, allow_unverified_mirror=True)
     assert (path / "precious").read_text() == "keep"
 
 
@@ -157,7 +157,6 @@ def test_fresh_push_cannot_overwrite_concurrent_commit(remote, monkeypatch):
         return original(ctx, **kwargs)
 
     monkeypatch.setattr(manager, "_sync_remote", concurrent_writer)
-    with pytest.raises(MirrorError, match="Failed to push"):
-        manager.ensure_remote_clone(ctx)
+    assert manager.ensure_remote_clone(ctx)
     assert git(path, "rev-parse", "HEAD") == remote_commit[0]
     assert (path / "precious").read_text() == "keep"

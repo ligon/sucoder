@@ -180,7 +180,7 @@ def test_clone_sync_and_start_task(tmp_path: Path) -> None:
     head = run_git(["rev-parse", "--abbrev-ref", "HEAD"], mirror_path).stdout.strip()
     assert head == branch
 
-    run_git(["show-ref", "--verify", f"refs/heads/{ctx.remote_name}/main"], mirror_path)
+    run_git(["show-ref", "--verify", f"refs/remotes/{ctx.remote_name}/main"], mirror_path)
 
     status = manager.status(ctx)
     assert branch.split("/")[-1] in status
@@ -1002,7 +1002,8 @@ def test_launch_agent_unconfined_local_tier_clones_then_launches_in_clone(tmp_pa
     stage = next(c for c in calls if c["args"][0] == "sh" and "local-tier-sample.sh" in c["args"][2])
     assert "MIRROR=/global/home/users/coder/mirrors/sample\n" in stage["kwargs"]["input"]
     assert "LOCAL_ROOT=/local/job1234567\n" in stage["kwargs"]["input"]
-    run = next(c for c in calls if c["args"][:1] == ["bash"])
+    run = next(c for c in calls if c["args"][:1] == ["bash"]
+               and c["args"][1].endswith("local-tier-sample.sh"))
     assert run["args"] == ["bash", "/global/home/users/coder/.cache/sucoder/local-tier-sample.sh"]
     tmux = calls[-1]
     assert tmux["args"][0] == "tmux"
@@ -4105,10 +4106,6 @@ def test_pull_from_local_refetches_after_mirror_rewrite(
 
     assert prompted, "divergence handling was never reached"
 
-    scratch = run_git(
-        ["rev-parse", "refs/sucoder/mirror-head"], canonical
-    ).stdout.strip()
-    assert scratch == rewritten, "scratch ref was not force-updated"
     merged = subprocess.run(
         ["git", "merge-base", "--is-ancestor", rewritten, "HEAD"],
         cwd=canonical, capture_output=True,
@@ -4233,24 +4230,23 @@ def test_pull_verdict_false_when_probe_cannot_read_the_mirror(
 def test_sync_refuses_to_push_over_unverified_mirror(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """sync() raises instead of force-pushing when the pull came back False."""
+    """Publication does not reconcile or overwrite the mirror's working branch."""
     manager = build_manager(tmp_path)
     ctx = manager.context_for("sample")
     monkeypatch.setattr(type(ctx), "is_remote", property(lambda self: True))
-    monkeypatch.setattr(manager, "_pull_from_remote", lambda ctx: False)
+    monkeypatch.setattr(manager, "_pull_from_remote", lambda ctx: pytest.fail("publication reconciled agent work"))
     monkeypatch.setattr(
         manager, "_resolve_base_branch", lambda ctx: "master")
 
     pushed: list = []
     monkeypatch.setattr(manager, "_sync_remote", lambda ctx: pushed.append(ctx))
 
-    with pytest.raises(MirrorError, match="Refusing to push"):
-        manager.sync(ctx)
-    assert not pushed, "force-push ran despite an unverified mirror"
+    manager.sync(ctx)
+    assert pushed == [ctx]
 
-    # The flag is the documented escape hatch.
+    # The legacy flag cannot enable destructive reconciliation.
     manager.sync(ctx, allow_unverified_mirror=True)
-    assert len(pushed) == 1
+    assert len(pushed) == 2
 
 
 def test_pull_from_local_raises_when_mirror_missing(tmp_path: Path) -> None:
@@ -4289,7 +4285,7 @@ def test_bootstrap_invokes_steps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         ctx,
         use_sudo=True,
         setup_agent_remote=False,
-        sync=False,
+        sync=True,
         task_name="demo",
         base_branch="dev",
         extra_args=["--flag"],
@@ -4299,7 +4295,7 @@ def test_bootstrap_invokes_steps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         "prepare:True:False",
         "clone",
         (
-            "launch:{'sync': False, 'task_name': 'demo', 'base_branch': 'dev', "
+            "launch:{'sync': True, 'task_name': 'demo', 'base_branch': 'dev', "
             "'extra_args': ['--flag'], 'command_override': None, 'model_override': None, "
             "'env_override': None, "
             "'supports_inline_prompt': None, 'codex_remote_control': None, "

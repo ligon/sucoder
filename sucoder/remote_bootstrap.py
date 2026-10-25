@@ -5,6 +5,25 @@ of the two markers authorizes the caller to continue. SSH failures, shell
 noise, inaccessible paths and broken repositories are not absence proofs.
 """
 
+VERIFY_LAUNCH_MIRROR_SH = r'''set -eu
+export GIT_ALLOW_PROTOCOL= GIT_NO_LAZY_FETCH=1 GIT_OPTIONAL_LOCKS=0 GIT_TERMINAL_PROMPT=0
+path=$1
+if [ ! -e "$path" ]; then
+    echo "mirror path is absent" >&2
+    exit 10
+fi
+[ -d "$path" ] && [ -e "$path/.git" ] || {
+    echo "mirror is not a working repository" >&2; exit 11;
+}
+# Ref resolution must never hydrate a partial clone or refresh its index.
+git -c protocol.allow=never -c protocol.file.allow=never \
+    -c core.fsmonitor=false --no-optional-locks -C "$path" \
+    rev-parse --verify --quiet 'HEAD^{commit}' || {
+    echo "mirror HEAD cannot be verified offline" >&2; exit 11;
+}
+'''
+
+
 INITIALIZE_MIRROR_SH = r'''set -eu
 umask 077
 path=$1
