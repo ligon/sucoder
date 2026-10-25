@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 
 try:
     from .dispatch_protocol import ENVIRONMENT_ALLOWLIST, SCHEMA_VERSION, TERMINAL_STATES, atomic_json
@@ -356,6 +357,12 @@ def seed_home(manifest, environment):
             os.mkdir(os.path.join(config, name), mode=0o700)
         with open(os.path.join(config, "history.jsonl"), "x"):
             pass
+        # Codex 0.164 locks this file during every initialization. Keep a
+        # stable private seed, but let prepare_binds place the live lockfile
+        # on node-local disk. Never reuse the coordinator's native identity.
+        fd = os.open(os.path.join(config, "installation_id"), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as stream:
+            stream.write(str(uuid.uuid4()))
         for name in ("auth.json", "config.toml", "AGENTS.md", "AGENTS.override.md"):
             copy_private(os.path.join(source, name) if source else None, os.path.join(config, name))
         environment["CODEX_HOME"] = config
@@ -556,10 +563,10 @@ def inspect_placement(child, runner, root, home, proc_root="/proc", expected_env
         path = os.path.join(proc_root, str(pid), "fd")
         try:
             entries = os.listdir(path)
-        except OSError:
-            if os.path.exists(os.path.join(proc_root, str(pid))):
-                raise Refused("cannot inspect an owned child's file descriptors")
-            continue
+        except OSError as exc:
+            if exc.errno in (errno.ENOENT, errno.ESRCH):
+                continue  # process teardown can remove fd/ before its proc dir
+            raise Refused("cannot inspect owned child file descriptors (pid=%s errno=%s)" % (pid, exc.errno))
         # Descriptor links are proc metadata: never stat a magic FD link,
         # which would touch the target filesystem and could block on NFS.
         for entry in entries:
@@ -568,7 +575,7 @@ def inspect_placement(child, runner, root, home, proc_root="/proc", expected_env
                 os.readlink(descriptor)
             except OSError as exc:
                 if exc.errno not in (errno.ENOENT, errno.ESRCH):
-                    raise Refused("cannot inspect an owned child's descriptor links")
+                    raise Refused("cannot inspect owned child descriptor links (pid=%s errno=%s)" % (pid, exc.errno))
         readable.append(pid)
     environment_verified = False
     if expected_environment is not None and child.pid in readable:
@@ -577,7 +584,7 @@ def inspect_placement(child, runner, root, home, proc_root="/proc", expected_env
                 effective = dict(entry.split(b"=", 1) for entry in stream.read().split(b"\x00") if b"=" in entry)
         except OSError as exc:
             if exc.errno not in (errno.ENOENT, errno.ESRCH):
-                raise Refused("cannot inspect the owned child's effective environment")
+                raise Refused("cannot inspect owned child effective environment (pid=%s errno=%s)" % (child.pid, exc.errno))
         else:
             for key in ("HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "SUCODER_LOCAL_ROOT"):
                 if key in expected_environment and effective.get(key.encode()) != expected_environment[key].encode():
@@ -679,12 +686,20 @@ def preserve_claude(manifest, home, heartbeat=None):
     """Only stopped JSON/text state is copied; SQLite is never file-copied."""
     target = os.path.join(manifest["directory"], "state", "claude")
     os.makedirs(target, mode=0o700, exist_ok=True)
-    copied, excluded, unsupported_stores = [], [], []
+    copied, excluded, unsupported_stores, excluded_subtrees = [], [], [], []
     private_seeds = {".claude/.credentials.json", ".claude/settings.json", ".claude/.claude.json", ".claude.json",
                      ".codex/auth.json", ".codex/config.toml"}
     for directory, dirs, files in os.walk(home, followlinks=False):
-        dirs[:] = [name for name in dirs if not os.path.islink(os.path.join(directory, name))
-                   and name not in ("cache", "tmp", "node_modules", "backups")]
+        kept = []
+        for name in dirs:
+            path = os.path.join(directory, name)
+            relative = os.path.relpath(path, home)
+            if (os.path.islink(path) or name in ("cache", "tmp", "node_modules", "backups", ".git")
+                    or relative in (os.path.join(".claude", "plugins"), os.path.join(".claude", "skills"))):
+                excluded_subtrees.append(relative)
+            else:
+                kept.append(name)
+        dirs[:] = kept
         for name in files:
             if heartbeat is not None:
                 heartbeat()
@@ -709,7 +724,8 @@ def preserve_claude(manifest, home, heartbeat=None):
             copy_private(source, destination)
             copied.append(relative)
     return {"state": "unsupported" if unsupported_stores else "text_preserved", "path": target,
-            "files": copied, "excluded": excluded, "unsupported_stores": unsupported_stores,
+            "files": copied, "excluded": excluded, "excluded_subtrees": sorted(excluded_subtrees),
+            "unsupported_stores": unsupported_stores,
             "sqlite": "unsupported; database files and sidecars are excluded"}
 
 

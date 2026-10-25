@@ -79,12 +79,14 @@ No observed SQLite is reported explicitly and is not presented as proof that an 
 Codex runs through the existing managed state runner, with a fresh dispatch-specific scope and the existing checkpoint lifecycle.
 Its private canonical home has a stable name in the dispatch directory; the runner binds hot state to local storage and passes the local SQLite override.
 Cold configuration/authentication copies remain private and outside conversation generations.
+The installation identity seed is unique to the dispatch, and its live lockfile uses the existing node-local file binding rather than NFS locking.
 The result records process exit, placement and state preservation separately.
 The independent final-seal race tracked by issue 70 can still prevent a sealed preservation claim after a clean exit.
 Dispatch does not ignore that failure or substitute a raw Codex process.
 
 Claude runs in native headless print mode with a private local home and configuration directory.
 Stopped text/JSON state can be preserved privately; raw SQLite databases and sidecars are not copied as ordinary files.
+Reproducible plugin/skill inventories, Git metadata and caches are excluded from that conversation archive; project memory remains eligible, and exclusions are recorded.
 Agent-specific recovery guarantees remain explicit rather than treating every agent's state format as interchangeable.
 
 Each private artifact directory includes the source/worker manifest, scheduler receipt, status, final result, logs and =results.git=.

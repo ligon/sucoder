@@ -1,5 +1,6 @@
 """Portable worker tests: fake native agent, no real SQLite or model calls."""
 import json
+import errno
 import hashlib
 import os
 from pathlib import Path
@@ -8,6 +9,7 @@ import signal
 import subprocess
 import sys
 import time
+import uuid
 from types import SimpleNamespace
 
 import pytest
@@ -54,8 +56,14 @@ class FakeJobOwnership:
 
 
 def fake_run(staged, inherited, pid_file=None):
-    return worker.run(str(staged.path), inherited, str(staged.mounts),
-                      ownership_factory=lambda job_id: FakeJobOwnership(job_id, pid_file))
+    previous_umask = os.umask(0o077)
+    try:
+        return worker.run(str(staged.path), inherited, str(staged.mounts),
+                          ownership_factory=lambda job_id: FakeJobOwnership(job_id, pid_file))
+    finally:
+        # The standalone supervisor owns its process umask; this in-process
+        # fake must not leak that state into unrelated filesystem tests.
+        os.umask(previous_umask)
 
 
 def git(directory, *args):
@@ -291,6 +299,8 @@ def test_codex_canonical_home_and_recovery_identity_survive_new_job_roots(staged
     source.mkdir(mode=0o700)
     auth = source / "auth.json"
     auth.write_text('{"test":"private-auth"}')
+    source_identity = "ffffffff-ffff-4fff-8fff-ffffffffffff"
+    (source / "installation_id").write_text(source_identity)
     staged.manifest["source_agent_home"] = str(source)
     first = worker.environment_for(staged.manifest, {}, str(staged.disk / "job234"))
     worker.seed_home(staged.manifest, first)
@@ -299,6 +309,11 @@ def test_codex_canonical_home_and_recovery_identity_survive_new_job_roots(staged
     assert not str(canonical).startswith(str(staged.disk))
     assert (canonical / "auth.json").read_bytes() == auth.read_bytes()
     assert (canonical / "auth.json").stat().st_mode & 0o077 == 0
+    installation = (canonical / "installation_id").read_text()
+    assert str(uuid.UUID(installation)) == installation
+    assert installation != source_identity
+    assert (canonical / "installation_id").stat().st_mode & 0o077 == 0
+    assert (source / "installation_id").read_text() == source_identity
     runner = worker.load_runner(staged.manifest["runner_path"])
     assert all((canonical / name).is_dir() for name in runner.BIND_DIRS)
     second = dict(first, HOME=str(staged.disk / "job999/home"), SUCODER_LOCAL_ROOT=str(staged.disk / "job999"))
@@ -380,7 +395,13 @@ def test_cannot_inspect_owned_live_process_is_a_refusal(staged, monkeypatch):
     proc = staged.control / "proc"
     (proc / "123").mkdir(parents=True)
     runner = SimpleNamespace(descendants=lambda pid: [], inspect_file_mounts=lambda pids, **kwargs: [])
-    with pytest.raises(worker.Refused, match="cannot inspect"):
+    original_listdir = worker.os.listdir
+    def denied(path):
+        if str(path) == str(proc / "123/fd"):
+            raise PermissionError(errno.EACCES, "permission denied")
+        return original_listdir(path)
+    monkeypatch.setattr(worker.os, "listdir", denied)
+    with pytest.raises(worker.Refused, match="pid=123 errno=%s" % errno.EACCES):
         worker.inspect_placement(SimpleNamespace(pid=123), runner, str(staged.disk), str(staged.disk), str(proc))
 
 
@@ -817,3 +838,33 @@ def test_unknown_live_process_uid_refuses_instead_of_skipping(tmp_path, status):
     owner = worker.JobOwnership("234", str(proc), supervisor_pid=999)
     with pytest.raises(worker.Refused, match="membership|uid credentials"):
         owner.members()
+
+
+@pytest.mark.parametrize("disappearance", [errno.ENOENT, errno.ESRCH])
+def test_fd_directory_teardown_is_not_live_inspection_denial(staged, monkeypatch, disappearance):
+    proc = staged.control / "proc"
+    (proc / "123").mkdir(parents=True)
+    runner = SimpleNamespace(descendants=lambda pid: [], inspect_file_mounts=lambda pids, **kwargs: [])
+    original_listdir = worker.os.listdir
+    def disappeared(path):
+        if str(path) == str(proc / "123/fd"):
+            raise OSError(disappearance, "process teardown")
+        return original_listdir(path)
+    monkeypatch.setattr(worker.os, "listdir", disappeared)
+    observed = worker.inspect_placement(SimpleNamespace(pid=123), runner, str(staged.disk), str(staged.disk), str(proc))
+    assert observed["inspected_pids"] == []
+    assert observed["observed"] == observed["misplaced"] == []
+
+
+def test_claude_preservation_skips_install_inventory_but_keeps_project_memories(staged):
+    home = staged.control / "local-home"
+    paths = (".claude/plugins/marketplaces/example/README.md", ".claude/skills/example/SKILL.md",
+             ".claude/projects/project/.git/config.json",
+             ".claude/projects/project/memory/skills/note.md", ".claude/projects/project/session.jsonl")
+    for relative in paths:
+        path = home / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("private conversation or install inventory\n")
+    report = worker.preserve_claude(staged.manifest, str(home))
+    assert set(report["files"]) == {".claude/projects/project/memory/skills/note.md", ".claude/projects/project/session.jsonl"}
+    assert set(report["excluded_subtrees"]) == {".claude/plugins", ".claude/skills", ".claude/projects/project/.git"}

@@ -148,7 +148,7 @@ import uuid
 PLACEHOLDER_DEFAULT = "__SUCODER_CODEX_STATE_DB__"
 BIND_DIRS = ["sessions", ".tmp", "tmp", "thread-writer-locks", "shell_snapshots", "app-server-control"]
 COPY_DIRS = ["skills"]
-BIND_FILES = ["AGENTS.md", "AGENTS.override.md", "history.jsonl"]
+BIND_FILES = ["AGENTS.md", "AGENTS.override.md", "history.jsonl", "installation_id"]
 REQUIRED_DIRS = ["sessions"]
 SAFE_PATH = re.compile(r"^[A-Za-z0-9/_.-]+$")
 EXIT_REFUSED = 70
