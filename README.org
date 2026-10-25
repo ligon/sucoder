@@ -713,6 +713,40 @@ pushes, and changes to the launching checkout's remote configuration.
 integration workflow first. A dry run of this path does not probe or launch
 the remote agent and does not establish that the mirror exists.
 
+Set a per-mirror =sync_policy: external= to make this behavior the default
+when a separate repository owns integration:
+
+#+begin_src yaml
+mirrors:
+  AggregationWithLimitedCommitment:
+    canonical_repo: ~/Research/AggregationWithLimitedCommitment
+    mirror_name: AggregationWithLimitedCommitment
+    default_base_branch: master
+    sync_policy: external
+#+end_src
+
+Then =sucoder -T carleton-htc collaborate AggregationWithLimitedCommitment=
+launches the existing satellite without changing either repository's Git
+state during launch preparation. Agent setup may still install prompts and
+launch services; subsequent agent work has its own effects. =--sync=,
+=--task=, and SuCoder's push/pull/clone/prepare/start-task operations refuse
+under this policy, including attempts using =--allow-unverified-mirror=.
+Missing mirrors require explicit initialization through the project's own
+workflow. Use its filtered gate-to-laptop updates and laptop-to-inbox topic
+submissions; accepting satellite work remains a separate gate operation.
+
+The default =sync_policy: canonical= keeps ordinary synchronization enabled.
+Remote publication updates only the selected base branch. Reconciled rewrites
+use an exact lease on the fetched mirror tip; unrelated branches are never
+force-pushed. Canonical updates require a clean tracked/index state with that
+base checked out and no other worktree holding it. Updates preserve untracked
+and ignored collisions by refusing the merge, and never hard-reset a checkout.
+Partial-clone reconciliation retains its configured filter, disables diffstats,
+and refuses object transfer when the source does not advertise filtering.
+Automatic divergent-history merges in partial clones refuse; use the external
+integration workflow to avoid hydrating excluded blobs during the merge.
+Dry runs do not reconcile cached refs or mutate repository state.
+
 =tunnel forward= defaults the node to the one your collaborate session
 is on (override with =--node n0030.savio4=) and terminates the forward
 *on the node*, so services bound to =127.0.0.1= work.  Open the app's

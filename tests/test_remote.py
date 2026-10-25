@@ -1409,8 +1409,9 @@ def test_sync_remote_calls_push_via_login_node(
     url = push_cmd[2]
     assert "ln001:" in url
     assert "rproj" in url
-    assert "--all" in push_cmd
-    assert "--force" in push_cmd
+    assert push_cmd[-1].endswith(":refs/heads/main")
+    assert "--all" not in push_cmd
+    assert "--force" not in push_cmd
     # GIT_SSH_COMMAND should reference the ControlMaster socket
     env = calls[0]["kwargs"].get("env", {})
     assert "GIT_SSH_COMMAND" in env
@@ -1612,6 +1613,7 @@ def test_sync_remote_prefers_login_node(
     """The push goes to the login node first; the DTN is not touched."""
     manager = _build_remote_manager(tmp_path)
     ctx = manager.context_for("rproj")
+    monkeypatch.setattr(manager, "_verify_remote_update_paths", lambda *a: None)
     manager.executor = _remote_exec_with_scaffolding(tmp_path)
     monkeypatch.setattr(
         manager, "_resolve_remote_path",
@@ -1640,6 +1642,7 @@ def test_sync_remote_fails_over_to_dtn(
 
     manager = _build_remote_manager(tmp_path)
     ctx = manager.context_for("rproj")
+    monkeypatch.setattr(manager, "_verify_remote_update_paths", lambda *a: None)
     manager.executor = _remote_exec_with_scaffolding(tmp_path)
     monkeypatch.setattr(
         manager, "_resolve_remote_path",
@@ -1680,6 +1683,7 @@ def test_sync_remote_no_failover_on_real_error(
 
     manager = _build_remote_manager(tmp_path)
     ctx = manager.context_for("rproj")
+    monkeypatch.setattr(manager, "_verify_remote_update_paths", lambda *a: None)
     manager.executor = _remote_exec_with_scaffolding(tmp_path)
     monkeypatch.setattr(
         manager, "_resolve_remote_path",
@@ -1722,16 +1726,22 @@ def test_pull_fails_over_to_dtn(
     fetches: list = []
 
     def fake_run_human(args, **kwargs):
+        if args[1] == "update-ref":
+            subprocess.run(args, cwd=ctx.canonical_path, check=True, capture_output=True)
+            return _transport_result(args, 0)
         url = args[2]
         fetches.append(url)
         if url.startswith("ln001"):
             return _transport_result(
                 args, 128, "fatal: the remote end hung up unexpectedly")
-        return _transport_result(args, 0)  # DTN connects
+        ref = args[-1].split(":")[-1]
+        subprocess.run(["git", "update-ref", ref, "HEAD"], cwd=ctx.canonical_path,
+                       check=True, capture_output=True)
+        return _transport_result(args, 0)  # DTN connects and populates its scratch ref
 
     monkeypatch.setattr(manager.executor, "run_human", fake_run_human)
 
-    manager._pull_from_remote(ctx)  # reconciliation no-ops (tmp ref absent)
+    manager._pull_from_remote(ctx)  # fetched tips match, so no branch update
 
     assert len(fetches) == 2
     assert fetches[0].startswith("ln001:")

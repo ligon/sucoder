@@ -466,6 +466,14 @@ def _build_executor(
     local_disk_root_override: Optional[str] = None,
     cli_ctx: Optional[click.Context] = None,
 ) -> CommandExecutor:
+    if dry_run:
+        # Constructing a remote executor connects, saves session state, and can
+        # allocate a node. Planning must return before any of those effects.
+        return CommandExecutor(
+            human_user=config.human_user, agent_user=config.agent_user,
+            agent_group=config.agent_group, logger=logger, dry_run=True,
+            use_sudo_for_agent=use_sudo_for_agent,
+        )
     # Callers that hand over only the click context (e.g. `list models`)
     # still get the --local-disk / --local-disk-root overrides.
     if local_disk_override is None:
@@ -2650,6 +2658,16 @@ def _codex_state_selection(from_generation: Optional[str], fresh: bool) -> None:
         raise typer.BadParameter("--codex-state-fresh conflicts with --codex-state-from.")
 
 
+def _resolve_launch_sync(config: Config, mirror: str, sync: Optional[bool], task: Optional[str]) -> bool:
+    settings = config.mirrors.get(mirror)
+    if settings is None:
+        raise typer.BadParameter(f"Mirror {mirror!r} is not configured.")
+    external = settings.sync_policy == "external"
+    if external and (sync is True or task):
+        raise typer.BadParameter("sync_policy: external forbids --sync and --task; use the project's integration workflow.")
+    return not external if sync is None else sync
+
+
 @app.command("agents-run")
 def agents_run(
     ctx: typer.Context,
@@ -2666,8 +2684,8 @@ def agents_run(
         "-b",
         help="Base branch to use when creating a task branch.",
     ),
-    sync: bool = typer.Option(
-        True,
+    sync: Optional[bool] = typer.Option(
+        None,
         "--sync/--no-sync",
         help="Synchronize before launch; --no-sync is incompatible with --task and requires an existing remote mirror.",
     ),
@@ -2746,12 +2764,13 @@ def agents_run(
     ),
 ) -> None:
     """Launch the configured agent inside the mirror working tree."""
-    if task and not sync:
+    if task and sync is False:
         raise typer.BadParameter("--task cannot be combined with --no-sync.")
     remote_mode = _codex_remote_mode(remote_control, remote_control_only)
     _codex_state_selection(codex_state_from, codex_state_fresh)
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
+    sync = _resolve_launch_sync(config, mirror, sync, task)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     _tmux_launch_preamble(ctx, config, mirror, wrap=wrap_tmux, dry_run=dry_run, logger=logger)
     manager = _build_manager_for_mirror(config, logger, dry_run, mirror, cli_ctx=ctx)
@@ -2796,8 +2815,8 @@ def collaborate(
         "-b",
         help="Base branch to use when creating a task branch (defaults to mirror setting).",
     ),
-    sync: bool = typer.Option(
-        True,
+    sync: Optional[bool] = typer.Option(
+        None,
         "--sync/--no-sync",
         help="Synchronize before launch; --no-sync is incompatible with --task and requires an existing remote mirror.",
     ),
@@ -2894,12 +2913,13 @@ def collaborate(
     ),
 ) -> None:
     """Prepare canonical, ensure the mirror exists, and launch the agent in one step."""
-    if task and not sync:
+    if task and sync is False:
         raise typer.BadParameter("--task cannot be combined with --no-sync.")
     remote_mode = _codex_remote_mode(remote_control, remote_control_only)
     _codex_state_selection(codex_state_from, codex_state_fresh)
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
+    sync = _resolve_launch_sync(config, mirror, sync, task)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     _tmux_launch_preamble(ctx, config, mirror, wrap=wrap_tmux, dry_run=dry_run, logger=logger)
 

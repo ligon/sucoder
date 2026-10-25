@@ -462,6 +462,7 @@ class RemoteExecutor(CommandExecutor):
         cwd: Optional[str] = None,
         env: Optional[Mapping[str, str]] = None,
         timeout: Optional[int] = None,
+        input: Optional[str] = None,
     ) -> CommandResult:
         """Run a command on the scaffolding node (the login node).
 
@@ -485,7 +486,7 @@ class RemoteExecutor(CommandExecutor):
         )
         if not scaffolding:
             return self.run_agent(
-                args, check=check, cwd=cwd, env=env, timeout=timeout,
+                args, check=check, cwd=cwd, env=env, timeout=timeout, input=input,
             )
         remote_cwd = self._translate_path(cwd) if cwd else None
         effective_timeout = timeout if timeout is not None else self.DEFAULT_SSH_TIMEOUT
@@ -502,6 +503,7 @@ class RemoteExecutor(CommandExecutor):
                 as_agent=False,
                 capture_output=True,
                 timeout=effective_timeout,
+                input=input,
             )
             if self.debug_ssh and result.stderr:
                 self.logger.debug(
@@ -542,7 +544,7 @@ class RemoteExecutor(CommandExecutor):
                     self.scaffolding_node, self.login_node,
                 )
                 return self.run_agent(
-                    args, check=check, cwd=cwd, env=env, timeout=timeout,
+                    args, check=check, cwd=cwd, env=env, timeout=timeout, input=input,
                 )
             raise
 

@@ -4106,10 +4106,7 @@ def test_pull_from_local_refetches_after_mirror_rewrite(
 
     assert prompted, "divergence handling was never reached"
 
-    scratch = run_git(
-        ["rev-parse", "refs/sucoder/mirror-head"], canonical
-    ).stdout.strip()
-    assert scratch == rewritten, "scratch ref was not force-updated"
+    assert manager._sync_leases[(str(canonical), "sample", "main")] == rewritten
     merged = subprocess.run(
         ["git", "merge-base", "--is-ancestor", rewritten, "HEAD"],
         cwd=canonical, capture_output=True,
@@ -5910,6 +5907,7 @@ def test_sync_remote_unpacker_error_mentions_disk(tmp_path: Path) -> None:
     """
     manager = build_manager(tmp_path)
     ctx = manager.context_for("sample")
+    manager._verify_remote_update_paths = lambda *a: None
 
     manager._git_transports = (  # type: ignore[method-assign]
         lambda _ctx: [("login node", "ln000:/global/home/u/mirrors/sample", None)]
