@@ -186,7 +186,8 @@ mirrors:
   sample:
     canonical_repo: /home/<your-username>/src/project.git
     mirror_name: project
-    # canonical (default): SuCoder reconciles and synchronizes this checkout.
+    # canonical (default): publish/fetch canonical tracking refs; explicit
+    # pull reconciles a full canonical checkout. Existing mirror branches stay put.
     # external: a separate integration gate owns sync; launches default to
     # --no-sync, require an existing mirror, and reject --sync / --task.
     # SuCoder push/pull/clone/prepare/start-task also refuse in external mode.

@@ -180,7 +180,7 @@ def test_clone_sync_and_start_task(tmp_path: Path) -> None:
     head = run_git(["rev-parse", "--abbrev-ref", "HEAD"], mirror_path).stdout.strip()
     assert head == branch
 
-    run_git(["show-ref", "--verify", f"refs/heads/{ctx.remote_name}/main"], mirror_path)
+    run_git(["show-ref", "--verify", f"refs/remotes/{ctx.remote_name}/main"], mirror_path)
 
     status = manager.status(ctx)
     assert branch.split("/")[-1] in status
@@ -4106,7 +4106,6 @@ def test_pull_from_local_refetches_after_mirror_rewrite(
 
     assert prompted, "divergence handling was never reached"
 
-    assert manager._sync_leases[(str(canonical), "sample", "main")][0] == rewritten
     merged = subprocess.run(
         ["git", "merge-base", "--is-ancestor", rewritten, "HEAD"],
         cwd=canonical, capture_output=True,
@@ -4231,24 +4230,23 @@ def test_pull_verdict_false_when_probe_cannot_read_the_mirror(
 def test_sync_refuses_to_push_over_unverified_mirror(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """sync() raises instead of force-pushing when the pull came back False."""
+    """Publication does not reconcile or overwrite the mirror's working branch."""
     manager = build_manager(tmp_path)
     ctx = manager.context_for("sample")
     monkeypatch.setattr(type(ctx), "is_remote", property(lambda self: True))
-    monkeypatch.setattr(manager, "_pull_from_remote", lambda ctx: False)
+    monkeypatch.setattr(manager, "_pull_from_remote", lambda ctx: pytest.fail("publication reconciled agent work"))
     monkeypatch.setattr(
         manager, "_resolve_base_branch", lambda ctx: "master")
 
     pushed: list = []
     monkeypatch.setattr(manager, "_sync_remote", lambda ctx: pushed.append(ctx))
 
-    with pytest.raises(MirrorError, match="Refusing to push"):
-        manager.sync(ctx)
-    assert not pushed, "force-push ran despite an unverified mirror"
+    manager.sync(ctx)
+    assert pushed == [ctx]
 
-    # The flag is the documented escape hatch.
+    # The legacy flag cannot enable destructive reconciliation.
     manager.sync(ctx, allow_unverified_mirror=True)
-    assert len(pushed) == 1
+    assert len(pushed) == 2
 
 
 def test_pull_from_local_raises_when_mirror_missing(tmp_path: Path) -> None:
@@ -5907,7 +5905,6 @@ def test_sync_remote_unpacker_error_mentions_disk(tmp_path: Path) -> None:
     """
     manager = build_manager(tmp_path)
     ctx = manager.context_for("sample")
-    manager._verify_remote_update_paths = lambda *a: None
 
     manager._git_transports = (  # type: ignore[method-assign]
         lambda _ctx: [("login node", "ln000:/global/home/u/mirrors/sample", None)]

@@ -19,7 +19,7 @@ from typing import Any, Callable, Dict, List, Literal, Mapping, NamedTuple, NoRe
 
 import yaml
 
-from .remote_bootstrap import INITIALIZE_MIRROR_SH, VERIFY_LAUNCH_MIRROR_SH, VERIFY_PUSH_PATHS_PY
+from .remote_bootstrap import INITIALIZE_MIRROR_SH, VERIFY_LAUNCH_MIRROR_SH
 from .agent_mode import (
     SERVICE_LAUNCH_PROBE_SH, codex_remote_command, config_override,
     service_launch, service_marker,
@@ -796,23 +796,16 @@ class MirrorManager:
         *,
         allow_unverified_mirror: bool = False,
     ) -> None:
-        """Fetch updates from the canonical repository.
+        """Make canonical commits available through the mirror's tracking refs.
 
-        For remote mirrors, pushes from the local canonical to the
-        remote mirror via SSH tunnel to the data transfer node.
-
-        The pull must succeed before the push: ``_sync_remote`` force-
-        pushes every branch, so syncing on top of an unread mirror can
-        destroy agent commits.  *allow_unverified_mirror* overrides that
-        refusal for the case where the mirror is known to be expendable.
+        Neither local nor remote publication integrates agent work or changes
+        existing working branches. Explicit pull performs reconciliation.
         """
         self._require_sync_authority(ctx)
         if self.executor.dry_run:
             self.logger.info("DRY-RUN: synchronize mirror; no repository state changed")
             return
         if ctx.is_remote:
-            if not self._pull_from_remote(ctx) and not allow_unverified_mirror:
-                raise MirrorError(self._unverified_mirror_message(ctx))
             self._sync_remote(ctx)
             return
 
@@ -825,8 +818,7 @@ class MirrorManager:
             check=True,
             cwd=str(mirror_path),
         )
-        # Say what actually happened.  Unlike the remote path above, this
-        # does not move the mirror's branches — it only makes canonical's
+        # Say what actually happened: this only makes canonical's
         # commits visible — and callers reading "sync" or "push" would
         # otherwise reasonably assume the mirror now matches canonical.
         self.logger.info(
@@ -1270,6 +1262,14 @@ class MirrorManager:
         return next(iter(filters), None)
 
     def _require_clean_base(self, canon: str, base: str) -> None:
+        for marker in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD",
+                       "rebase-merge", "rebase-apply", "sequencer"):
+            location = self._canonical_read(canon, "rev-parse", "--git-path", marker).stdout.strip()
+            path = Path(location)
+            if not path.is_absolute():
+                path = Path(canon) / path
+            if os.path.lexists(path):
+                raise MirrorError("Refusing reconciliation: a Git operation is already in progress; complete or preserve it first.")
         current = self._canonical_read(canon, "symbolic-ref", "--quiet", "HEAD", check=False)
         if current.returncode != 0 or current.stdout.strip() != f"refs/heads/{base}":
             raise MirrorError(
@@ -1397,8 +1397,8 @@ class MirrorManager:
     ) -> bool:
         """Account for the selected mirror branch without discarding local work.
 
-        Only a fetched, immutable tip licenses a leased push of that same base.
-        Fetch failures are not absence proofs; cached refs are never consulted.
+        Fetched and accounted sender tips are immutable. Fetch failures are
+        not absence proofs; cached refs are never consulted.
         Successful reads retire their private scratch ref; refused reconciliations
         retain it for inspection. No dry run reads cached refs or mutates Git.
         """
@@ -1408,10 +1408,6 @@ class MirrorManager:
             return False
         base = self._resolve_base_branch(ctx)
         canon = str(ctx.canonical_path)
-        leases = getattr(self, "_sync_leases", {})
-        lease_key = (canon, ctx.settings.name, base)
-        leases.pop(lease_key, None)
-        self._sync_leases = leases
         clone_filter = self._canonical_filter(canon)
         tmp_ref = f"refs/sucoder/incoming/{secrets.token_hex(12)}"
         flags = ["--no-tags", "--no-recurse-submodules", "--no-auto-maintenance",
@@ -1457,8 +1453,6 @@ class MirrorManager:
 
         local_head = self._canonical_read(canon, "rev-parse", "--verify", f"refs/heads/{base}^{{commit}}").stdout.strip()
         mirror_head = self._canonical_read(canon, "rev-parse", "--verify", f"{tmp_ref}^{{commit}}").stdout.strip()
-        # Save only this fetched tip. A later push uses an exact force-with-lease
-        # and never force-overwrites unrelated branch names.
         def accounted(sender_tip: str):
             current = self._canonical_read(canon, "rev-parse", f"refs/heads/{base}").stdout.strip()
             if current != sender_tip:
@@ -1466,7 +1460,6 @@ class MirrorManager:
             self.executor.run_human(
                 ["git", "update-ref", "-d", tmp_ref, mirror_head], cwd=canon, check=True,
             )
-            leases[lease_key] = (mirror_head, sender_tip)
             return True
 
         def ancestor(older, newer):
@@ -1477,6 +1470,11 @@ class MirrorManager:
 
         if mirror_head == local_head or ancestor(mirror_head, local_head):
             return accounted(local_head)
+        if clone_filter:
+            raise MirrorError(
+                "Refusing automatic integration in a partial clone; use the project's "
+                f"external update workflow. Filtered incoming tip retained at {tmp_ref}."
+            )
         self._require_clean_base(canon, base)
         self._require_safe_update_paths(canon, mirror_head)
         if ancestor(local_head, mirror_head):
@@ -1492,11 +1490,6 @@ class MirrorManager:
                 ) from exc
             return accounted(mirror_head)
 
-        if clone_filter:
-            raise MirrorError(
-                "Partial clone has diverged; reconcile through the integration workflow "
-                f"to avoid hydrating excluded blobs. Fetched tip retained at {tmp_ref}."
-            )
         mirror_only = self._canonical_read(canon, "log", "--oneline", f"{local_head}..{mirror_head}").stdout.strip()
         local_only = self._canonical_read(canon, "log", "--oneline", f"{mirror_head}..{local_head}").stdout.strip()
         answer = self._prompt_choice(
@@ -1798,36 +1791,22 @@ class MirrorManager:
             cwd=remote_path,
         )
 
-    def _sync_remote(self, ctx: MirrorContext, *, force: bool = True) -> None:
-        """Push local canonical commits to the remote mirror.
+    def _sync_remote(self, ctx: MirrorContext) -> str:
+        """Publish a pinned canonical tip to its remote-tracking ref, without force.
 
-        Pushes over the executor's target (the login node, or an salloc
-        target's compute node); if a distinct scaffolding node (the login
-        node) is present it is tried only as a fallback should that
-        transport break.  A genuine git
-        error (e.g. a rejected ref) is *not* retried — it would fail the
-        same way on the other transport and the original message is
-        clearer.  See ``_git_transports`` for the ordering rationale.
+        Existing branches, HEAD, index and checkout files are never updated.
+        Git's ordinary non-forced ref transaction protects concurrent publishers.
         """
         self._require_sync_authority(ctx)
         if self.executor.dry_run:
-            self.logger.info("DRY-RUN: publish only the selected base branch; no push performed")
-            return
+            self.logger.info("DRY-RUN: publish canonical base to a tracking ref; no push performed")
+            return ""
+        canon = str(ctx.canonical_path)
+        if self._canonical_filter(canon):
+            raise MirrorError("Refusing publication from a partial clone: pushing may hydrate missing objects. Use the project's external integration workflow.")
         base = self._resolve_base_branch(ctx)
-        ref = f"refs/heads/{base}"
-        accounted = getattr(self, "_sync_leases", {}).pop(
-            (str(ctx.canonical_path), ctx.settings.name, base), None,
-        )
-        lease = accounted[0] if accounted else None
-        tip = self._canonical_read(
-            str(ctx.canonical_path), "rev-parse", "--verify", f"{ref}^{{commit}}",
-        ).stdout.strip()
-        if accounted and tip != accounted[1]:
-            raise MirrorError("Canonical branch changed after reconciliation; refusing publication until it is re-accounted.")
-        self._verify_remote_update_paths(ctx, tip, lease)
-        push_flags = ["--no-follow-tags", "--recurse-submodules=no"]
-        if force and lease:
-            push_flags.append(f"--force-with-lease={ref}:{lease}")
+        ref = f"refs/remotes/{ctx.remote_name}/{base}"
+        tip = self._canonical_read(canon, "rev-parse", "--verify", f"refs/heads/{base}^{{commit}}").stdout.strip()
         transports = self._git_transports(ctx)
         for idx, (label, url, env) in enumerate(transports):
             is_last = idx + 1 >= len(transports)
@@ -1836,13 +1815,14 @@ class MirrorManager:
             )
             try:
                 self.executor.run_human(
-                    ["git", "push", url, *push_flags, f"{tip}:{ref}"],
+                    ["git", "push", url, "--no-follow-tags", "--recurse-submodules=no", f"{tip}:{ref}"],
                     check=True,
                     cwd=str(ctx.canonical_path),
                     env=env,
                     timeout=self._GIT_REMOTE_TIMEOUT,
                 )
-                return
+                self.logger.info("Canonical base is available as %s/%s; existing mirror branches and checkout were not moved", ctx.remote_name, base)
+                return tip
             except CommandError as exc:
                 # Only fail over when the connection itself broke; a real
                 # git rejection would fail the same way on the other
@@ -1865,33 +1845,7 @@ class MirrorManager:
                     transports[idx + 1][0],
                 )
 
-    def _verify_remote_update_paths(
-        self, ctx: MirrorContext, tip: str, old: Optional[str],
-    ) -> None:
-        """Check destination collisions before updateInstead can overwrite them."""
-        canon = str(ctx.canonical_path)
-        if old:
-            names = self._canonical_read(
-                canon, "diff", "--name-status", "--no-renames", "--no-ext-diff",
-                "--no-textconv", "-z", old, tip, "--",
-            ).stdout.split("\0")
-            changes = list(zip(names[::2], names[1::2]))
-        else:
-            names = self._canonical_read(
-                canon, "ls-tree", "--full-tree", "-r", "--name-only", "-z", tip,
-            ).stdout.split("\0")
-            changes = [("A", name) for name in names if name]
-        run = getattr(self.executor, "run_on_login_node", self.executor.run_agent)
-        try:
-            result = run(
-                ["python3", "-c", VERIFY_PUSH_PATHS_PY, self._resolve_remote_path(ctx)],
-                input=json.dumps({"known_base": old is not None, "changes": changes}),
-                check=False, timeout=self._GIT_REMOTE_TIMEOUT,
-            )
-        except (CommandError, OSError) as exc:
-            raise MirrorError("Refusing push: destination paths could not be verified.") from exc
-        if result.returncode != 0:
-            raise MirrorError(f"Refusing push: destination paths are unverified or would be overwritten: {result.stderr.strip()}")
+        raise MirrorError("No transport available for canonical publication.")
 
     def _remote_repo_has_content(
         self,
@@ -1958,28 +1912,18 @@ class MirrorManager:
         *,
         allow_unverified_mirror: bool = False,
     ) -> bool:
-        """Ensure the mirror exists on the remote host.
+        """Initialize absent/empty mirrors and publish a canonical tracking ref.
 
-        Initialises a bare-ish clone on the remote if it does not
-        already exist, then publishes only canonical's selected base branch.
-
-        Filesystem scaffolding (mkdir, git init, git config, etc.) is
-        routed through the login node when targeting a compute node,
-        because the mirror lives on a shared filesystem (Lustre) that
-        is accessible from any node.  This avoids the fragile three-hop
-        SSH chain to the compute node for operations that don't need
-        compute resources.
-
-        Returns ``True`` if canonical was pushed to the remote (the
-        normal path), or ``False`` if the user chose to leave the
-        remote untouched in response to a dirty-worktree prompt.  The
-        latter lets callers (notably ``start_with_agent``) suppress a
-        follow-on ``sync()`` that would just re-prompt or fail.
+        Existing initialized checkouts are left untouched, including dirty trees.
+        An unborn mirror gets a non-forced, non-overwriting initial checkout.
+        The legacy unverified flag never authorizes overwriting files or refs.
         """
         self._require_sync_authority(ctx)
         if self.executor.dry_run:
             self.logger.info("DRY-RUN: initialize or reconcile remote mirror; no repository state changed")
             return False
+        if self._canonical_filter(str(ctx.canonical_path)):
+            raise MirrorError("Refusing initialization/publication from a partial clone; use --no-sync with an existing mirror or sync_policy: external.")
         remote = ctx.settings.remote
         if remote is None:
             raise MirrorError("ensure_remote_clone called on a non-remote mirror.")
@@ -2018,41 +1962,38 @@ class MirrorManager:
             "Initialized" if fresh else "Using existing", remote_path,
         )
 
-        # Always ensure the config is correct (may have been missed
-        # by a failed earlier init).
-        run(
-            ["git", "config", "receive.denyCurrentBranch", "updateInstead"],
-            check=True,
-            cwd=abs_remote_path,
+        tip = self._sync_remote(ctx)
+        head = run(
+            ["env", "GIT_ALLOW_PROTOCOL=", "GIT_NO_LAZY_FETCH=1", "GIT_OPTIONAL_LOCKS=0",
+             "git", "rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
+            cwd=abs_remote_path, check=False,
         )
-
-        # Reconcile existing repositories before overwriting any branches.
-        # This invocation's fresh init has nothing to fetch yet.
-        if not fresh and not self._pull_from_remote(ctx) and not allow_unverified_mirror:
-            raise MirrorError(self._unverified_mirror_message(ctx))
-
-        # The remote mirror uses receive.denyCurrentBranch=updateInstead,
-        # which requires a clean working tree.  If the agent (or a
-        # previous failed sync) left unstaged changes the push will be
-        # rejected.  Detect this and let the user decide what to do.
-        should_push = self._ensure_remote_worktree_clean(run, abs_remote_path)
-
-        if not should_push:
-            # User picked "skip push" — leave the remote working tree
-            # alone.  We deliberately skip the HEAD / reset --hard
-            # below too: those would clobber the very state the user
-            # is trying to preserve.
-            return False
-
-        # Initial publication must not overwrite a concurrent writer. Git's
-        # updateInstead populates the unborn checked-out branch on receipt.
-        if fresh:
-            self._sync_remote(ctx, force=False)
-            return True
-        self._sync_remote(ctx)
-
-        # receive.denyCurrentBranch=updateInstead updates the checked-out base
-        # safely. Never switch or reset a different branch or linked worktree.
+        if head.returncode == 1:
+            refs = run(["git", "for-each-ref", "--format=%(refname)"],
+                       cwd=abs_remote_path, check=False)
+            published = f"refs/remotes/{ctx.remote_name}/{base}"
+            if refs.returncode != 0 or any(
+                ref != published for ref in refs.stdout.splitlines()
+            ):
+                raise MirrorError(
+                    "Refusing initial checkout: an unborn HEAD with other refs is "
+                    "not an empty repository. Published baseline and existing work are preserved."
+                )
+            # -b refuses an existing branch name; --no-overwrite-ignore makes
+            # Git's initial full checkout protect ignored/untracked collisions.
+            try:
+                run(["git", "checkout", "--no-overwrite-ignore", "-b", base, tip],
+                    cwd=abs_remote_path, check=True)
+            except CommandError as exc:
+                raise MirrorError("Initial mirror checkout refused; tracking ref is published and existing files were preserved.") from exc
+        elif head.returncode != 0:
+            raise MirrorError("Mirror HEAD is unverified; publication did not move any working branch.")
+        slurm = remote.slurm
+        if getattr(self.executor, "local_disk_root", None) or (slurm and slurm.local_disk):
+            # Node-local agent hooks still publish their own branch commits to
+            # this managed mailbox. Canonical publication never uses this mode.
+            run(["git", "config", "receive.denyCurrentBranch", "updateInstead"],
+                cwd=abs_remote_path, check=True)
         return True
 
     # (Tunnel helper removed — git transport now goes through the login
@@ -2077,9 +2018,7 @@ class MirrorManager:
 
         base = base_branch or self._resolve_base_branch(ctx)
         remote_ref = f"refs/remotes/{ctx.remote_name}/{base}"
-        human_branch = f"{ctx.remote_name}/{base}"
-
-        self.logger.info("Updating local tracking branch %s", human_branch)
+        self.logger.info("Using published task baseline %s", remote_ref)
         try:
             self.executor.run_agent(
                 ["git", "show-ref", "--verify", remote_ref],
@@ -2092,22 +2031,22 @@ class MirrorManager:
                 "Ensure the canonical repository has that branch or specify --base."
             ) from exc
 
-        self.executor.run_agent(
-            ["git", "branch", "-f", human_branch, remote_ref],
-            check=True,
-            cwd=str(mirror_path),
-        )
-
         sanitized_task = _sanitize_task_name(task_name)
         stamp = timestamp or _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%d%H%M%S")
         agent_branch = f"{ctx.agent_prefix}/{sanitized_task}-{stamp}"
         self.logger.info("Creating task branch %s", agent_branch)
 
-        self.executor.run_agent(
-            ["git", "checkout", "-B", agent_branch, remote_ref],
-            check=True,
-            cwd=str(mirror_path),
-        )
+        try:
+            self.executor.run_agent(
+                ["git", "checkout", "--no-overwrite-ignore", "-b", agent_branch, remote_ref],
+                check=True,
+                cwd=str(mirror_path),
+            )
+        except CommandError as exc:
+            raise MirrorError(
+                f"Task branch creation refused; existing branches and local files "
+                f"were preserved: {exc.result.stderr.strip()}"
+            ) from exc
 
         return agent_branch
 
@@ -2773,6 +2712,7 @@ class MirrorManager:
         script = build_prepare_script(
             mirror_path=mirror_path, mirror_token=token,
             local_disk_root=local_disk_root, job_id=int(job_id),
+            canonical_remote=(ctx.remote_name if getattr(ctx.settings, "sync_policy", "canonical") == "canonical" else None),
         )
         self.executor.run_agent(
             [
@@ -3439,6 +3379,7 @@ class MirrorManager:
             prepare_script = build_prepare_script(
                 mirror_path=mirror_path, mirror_token=safe,
                 local_disk_root=local_disk_root,
+                canonical_remote=(ctx.remote_name if getattr(ctx.settings, "sync_policy", "canonical") == "canonical" else None),
             )
             self.executor.run_agent(
                 [
@@ -6916,6 +6857,22 @@ If you find issues, describe each one clearly with the filename and specific con
         if workspace_block:
             blocks.append(workspace_block)
 
+        if getattr(ctx.settings, "sync_policy", "canonical") == "external":
+            blocks.append(
+                "REPOSITORY AUTHORITY\n"
+                "This project's external integration workflow owns acceptance and submission. "
+                "The launching checkout may be a filtered follower. Follow the project's "
+                "policy for integration, initialization and task baselines; this launch "
+                "does not authorize reconciling independent histories."
+            )
+        elif ctx.is_remote and not workspace_block:
+            blocks.append(
+                "CANONICAL BASELINE\n"
+                f"Human-owned baseline refs are published under refs/remotes/{ctx.remote_name}/. "
+                "Publication does not move your working branch. Inspect the baseline before "
+                "choosing a checkout update, and keep your working commits on your own branches."
+            )
+
         agent_doc = self._agent_doc_block(ctx)
         if agent_doc:
             blocks.append(agent_doc)
@@ -7048,7 +7005,7 @@ If you find issues, describe each one clearly with the filename and specific con
             f"- Shared mirror (origin; durable; the human's push/pull target): {mirror_path}",
             "  Never edit its working tree by hand: an uncommitted tracked change there blocks every publish from this clone.",
             "- Every commit is published to the shared mirror by a post-commit hook the moment it exists; the commit output",
-            "  shows 'SUCODER: published'.  A 'REJECTED' line means the human pushed first: `git pull --ff-only`, then commit",
+            "  shows 'SUCODER: published'. A 'REJECTED' line means a peer advanced the shared branch: `git pull --ff-only`, then commit",
             "  again.  Never force-push to origin.",
             f"- Uncommitted work (tracked or untracked, not ignored) is snapshotted to {wip_ref} on the shared",
             f"  mirror {cadence}; the next launch restores it if no commit has landed since.  The ref is per job, so a",
@@ -7064,6 +7021,13 @@ If you find issues, describe each one clearly with the filename and specific con
             "  names a directory on this node).  Pointing the job at the shared mirror instead reads whatever branch",
             "  the mirror has checked out -- not the branch you pushed, and it will not say so.",
         ]
+        if getattr(ctx.settings, "sync_policy", "canonical") == "canonical":
+            lines.extend([
+                f"- Canonical baseline refs are imported under refs/sucoder-canonical/{ctx.remote_name}/.",
+                "  Inspect them before choosing a checkout update; publication does not move your working branch.",
+            ])
+        else:
+            lines.append("- Integration is managed externally; follow this project's gate/inbox workflow.")
         return "\n".join(lines)
 
     def _agent_doc_block(self, ctx: MirrorContext) -> Optional[str]:

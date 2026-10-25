@@ -19,6 +19,13 @@ def filtered_topology(tmp_path, monkeypatch):
     return manager, ctx, laptop, satellite
 
 
+def full_topology(tmp_path, monkeypatch):
+    manager, ctx, laptop, satellite = filtered_topology(tmp_path, monkeypatch)
+    git(laptop, "sparse-checkout", "disable")
+    git(laptop, "config", "remote.gate.promisor", "false")
+    return manager, ctx, laptop, satellite
+
+
 def offline_object(path, oid):
     return git(path, "-c", "protocol.allow=never", "-c", "protocol.file.allow=never",
                "cat-file", "-e", oid, check=False).returncode == 0
@@ -91,7 +98,7 @@ def test_cli_external_policy_refuses_before_tmux(tmp_path, monkeypatch, command,
 
 @pytest.mark.parametrize("dirty", ["tracked", "staged", "topic", "linked"])
 def test_reconciliation_preserves_dirty_or_other_worktrees(tmp_path, monkeypatch, dirty):
-    manager, ctx, laptop, satellite = filtered_topology(tmp_path, monkeypatch)
+    manager, ctx, laptop, satellite = full_topology(tmp_path, monkeypatch)
     advance(satellite, "remote.txt")
     if dirty == "topic":
         git(laptop, "checkout", "-qb", "work/topic")
@@ -110,7 +117,7 @@ def test_reconciliation_preserves_dirty_or_other_worktrees(tmp_path, monkeypatch
 
 @pytest.mark.parametrize("ignored", [False, True])
 def test_fast_forward_refuses_untracked_and_ignored_collisions(tmp_path, monkeypatch, ignored):
-    manager, ctx, laptop, satellite = filtered_topology(tmp_path, monkeypatch)
+    manager, ctx, laptop, satellite = full_topology(tmp_path, monkeypatch)
     advance(satellite, "collision.txt")
     if ignored:
         (laptop / ".git/info/exclude").write_text("collision.txt\n")
@@ -134,8 +141,12 @@ def test_explicit_filtered_pull_does_not_download_excluded_blobs(tmp_path, monke
     new = git(satellite, "rev-parse", "HEAD:formal/model/lib/new.txt").stdout.strip()
     assert not offline_object(laptop, old)
     assert not offline_object(laptop, new)
-    assert manager._pull_from_remote(ctx)
-    assert git(laptop, "rev-parse", "HEAD").stdout == git(satellite, "rev-parse", "HEAD").stdout
+    before = state(laptop) if base == "main" else git(laptop, "rev-parse", "HEAD").stdout
+    with pytest.raises(MirrorError, match="Refusing automatic integration"):
+        manager._pull_from_remote(ctx)
+    after = state(laptop) if base == "main" else git(laptop, "rev-parse", "HEAD").stdout
+    assert after == before
+    assert git(laptop, "for-each-ref", "--format=%(objectname)", "refs/sucoder/incoming/").stdout == git(satellite, "rev-parse", "HEAD").stdout
     assert not offline_object(laptop, old)
     assert not offline_object(laptop, new)
     assert not (laptop / "formal/model/lib/new.txt").exists()
@@ -170,7 +181,7 @@ def test_dry_run_ignores_a_cached_ahead_tip_and_preserves_all_git_state(tmp_path
 
 
 def test_base_only_push_preserves_unrelated_branch_names(tmp_path, monkeypatch):
-    manager, ctx, laptop, satellite = filtered_topology(tmp_path, monkeypatch)
+    manager, ctx, laptop, satellite = full_topology(tmp_path, monkeypatch)
     git(laptop, "checkout", "-qb", "unrelated")
     advance(laptop, "unrelated.txt")
     git(laptop, "checkout", "-q", "main")
@@ -180,20 +191,24 @@ def test_base_only_push_preserves_unrelated_branch_names(tmp_path, monkeypatch):
     assert manager._pull_from_remote(ctx)
     manager._sync_remote(ctx)
     assert git(satellite, "rev-parse", "unrelated").stdout == remote_unrelated
-    assert git(satellite, "rev-parse", "main").stdout == git(laptop, "rev-parse", "main").stdout
+    assert git(satellite, "rev-parse", "refs/remotes/ligon/main").stdout == git(laptop, "rev-parse", "main").stdout
+    assert git(satellite, "rev-parse", "main").stdout == remote_unrelated
 
 
 def test_exact_push_lease_refuses_a_concurrent_mirror_writer(tmp_path, monkeypatch):
-    manager, ctx, laptop, satellite = filtered_topology(tmp_path, monkeypatch)
+    manager, ctx, laptop, satellite = full_topology(tmp_path, monkeypatch)
     assert manager._pull_from_remote(ctx)
+    manager._sync_remote(ctx)
+    advance(laptop, "accepted.txt")
     concurrent = advance(satellite, "concurrent.txt")
+    git(satellite, "update-ref", "refs/remotes/ligon/main", concurrent)
     with pytest.raises(MirrorError, match="Failed to push"):
         manager._sync_remote(ctx)
     assert git(satellite, "rev-parse", "main").stdout.strip() == concurrent
 
 
 def test_reconciliation_refuses_branch_changes_during_the_prompt(tmp_path, monkeypatch):
-    manager, ctx, laptop, satellite = filtered_topology(tmp_path, monkeypatch)
+    manager, ctx, laptop, satellite = full_topology(tmp_path, monkeypatch)
     git(laptop, "config", "remote.gate.promisor", "false")
     advance(satellite, "remote.txt")
     advance(laptop, "local.txt")
@@ -204,7 +219,6 @@ def test_reconciliation_refuses_branch_changes_during_the_prompt(tmp_path, monke
     with pytest.raises(MirrorError, match="changed during"):
         manager._pull_from_remote(ctx)
     assert (laptop / "concurrent.txt").exists()
-    assert not manager._sync_leases
 
 
 @pytest.mark.parametrize("transport", ["ssh", "https"])
@@ -284,7 +298,7 @@ def test_divergent_partial_clone_refuses_automatic_merge_without_hydration(tmp_p
     git(laptop, "commit", "-qm", "local work")
     assert not offline_object(laptop, oid)
     before = state(laptop)
-    with pytest.raises(MirrorError, match="Partial clone has diverged"):
+    with pytest.raises(MirrorError, match="Refusing automatic integration"):
         manager._pull_from_remote(ctx)
     assert state(laptop) == before
     assert not offline_object(laptop, oid)
@@ -313,57 +327,33 @@ def test_real_no_sync_launch_preparation_preserves_repositories(tmp_path, monkey
 
 
 def test_push_preserves_ignored_remote_collision(tmp_path, monkeypatch):
-    manager, ctx, laptop, satellite = filtered_topology(tmp_path, monkeypatch)
+    manager, ctx, laptop, satellite = full_topology(tmp_path, monkeypatch)
     advance(laptop, "collision.txt")
     (satellite / ".git/info/exclude").write_text("collision.txt\n")
     (satellite / "collision.txt").write_text("irreplaceable remote file\n")
     assert manager._pull_from_remote(ctx)
     before = state(satellite)
-    with pytest.raises(MirrorError, match="Refusing push"):
-        manager._sync_remote(ctx)
+    manager._sync_remote(ctx)
     assert state(satellite) == before
-
-
-@pytest.mark.parametrize("route", ["agent", "login", "fallback"])
-def test_login_node_probe_preserves_stdin_on_every_route(tmp_path, monkeypatch, route):
-    from sucoder.executor import CommandError, CommandResult
-    from tests.test_remote import _remote_exec_with_scaffolding
-    executor = _remote_exec_with_scaffolding(tmp_path)
-    if route == "agent":
-        executor.scaffolding_node = None
-    seen = []
-    payload = '{"changes": [["A", "a path with spaces"]]}'
-    def agent(args, **kwargs):
-        seen.append(("agent", kwargs.get("input")))
-        return CommandResult(list(args), list(args), "", "", 0)
-    def login(args, **kwargs):
-        seen.append(("login", kwargs.get("input")))
-        if route == "fallback":
-            raise CommandError("SSH failed", CommandResult(list(args), list(args), "", "", 255))
-        return CommandResult(list(args), list(args), "", "", 0)
-    monkeypatch.setattr(executor, "run_agent", agent)
-    monkeypatch.setattr(executor, "_run", login)
-    executor.run_on_login_node(["python3", "-c", "pass"], input=payload)
-    assert all(data == payload for _, data in seen)
-    expected = {"agent": ["agent"], "login": ["login"], "fallback": ["login", "agent"]}
-    assert [name for name, _ in seen] == expected[route]
+    assert git(satellite, "rev-parse", "refs/remotes/ligon/main").stdout == git(laptop, "rev-parse", "main").stdout
 
 
 def test_publication_refuses_a_sender_rewrite_after_reconciliation(tmp_path, monkeypatch):
-    manager, ctx, laptop, satellite = filtered_topology(tmp_path, monkeypatch)
+    manager, ctx, laptop, satellite = full_topology(tmp_path, monkeypatch)
     old = git(laptop, "rev-parse", "HEAD").stdout.strip()
     reconciled = advance(satellite, "remote-only.txt")
     assert manager._pull_from_remote(ctx)
+    manager._sync_remote(ctx)
     git(laptop, "reset", "--hard", old)
     replacement = advance(laptop, "replacement.txt")
-    with pytest.raises(MirrorError, match="changed after reconciliation"):
+    with pytest.raises(MirrorError, match="Failed to push"):
         manager._sync_remote(ctx)
     assert git(satellite, "rev-parse", "HEAD").stdout.strip() == reconciled
     assert git(laptop, "rev-parse", "HEAD").stdout.strip() == replacement
 
 
 def test_publication_pins_the_accounted_tip_even_if_sender_changes_before_push(tmp_path, monkeypatch):
-    manager, ctx, laptop, satellite = filtered_topology(tmp_path, monkeypatch)
+    manager, ctx, laptop, satellite = full_topology(tmp_path, monkeypatch)
     old = git(laptop, "rev-parse", "HEAD").stdout.strip()
     reconciled = advance(satellite, "remote-only.txt")
     assert manager._pull_from_remote(ctx)
@@ -378,8 +368,9 @@ def test_publication_pins_the_accounted_tip_even_if_sender_changes_before_push(t
         return run(args, **kwargs)
     monkeypatch.setattr(manager.executor, "run_human", rewrite_before_push)
     manager._sync_remote(ctx)
-    assert git(satellite, "rev-parse", "HEAD").stdout.strip() == pinned
-    assert git(satellite, "merge-base", "--is-ancestor", reconciled, "HEAD").returncode == 0
+    assert git(satellite, "rev-parse", "refs/remotes/ligon/main").stdout.strip() == pinned
+    assert git(satellite, "rev-parse", "HEAD").stdout.strip() == reconciled
+    assert git(satellite, "merge-base", "--is-ancestor", reconciled, "refs/remotes/ligon/main").returncode == 0
 
 
 @pytest.mark.parametrize("command", ["agents-clone", "prepare-canonical", "push", "sync", "pull", "start-task"])
@@ -398,3 +389,163 @@ def test_external_policy_cli_refuses_before_executor_construction(tmp_path, monk
     result = CliRunner().invoke(cli.app, args)
     assert result.exit_code != 0
     assert "external" in result.output
+
+
+def test_tracking_publication_preserves_a_file_created_immediately_before_push(tmp_path, monkeypatch):
+    manager, ctx, laptop, satellite = full_topology(tmp_path, monkeypatch)
+    advance(laptop, "collision.txt")
+    (satellite / ".git/info/exclude").write_text("collision.txt\n")
+    old = git(satellite, "rev-parse", "HEAD").stdout
+    index = (satellite / ".git/index").read_bytes()
+    run = manager.executor.run_human
+    def inject(args, **kwargs):
+        if args[:2] == ["git", "push"]:
+            (satellite / "collision.txt").write_text("concurrent irreplaceable file\n")
+        return run(args, **kwargs)
+    monkeypatch.setattr(manager.executor, "run_human", inject)
+    monkeypatch.setattr(manager, "_pull_from_remote", lambda *a: pytest.fail("sync integrated agent work"))
+    manager.sync(ctx)
+    assert (satellite / "collision.txt").read_text() == "concurrent irreplaceable file\n"
+    assert git(satellite, "rev-parse", "HEAD").stdout == old
+    assert (satellite / ".git/index").read_bytes() == index
+    assert git(satellite, "rev-parse", "refs/remotes/ligon/main").stdout == git(laptop, "rev-parse", "HEAD").stdout
+
+
+def test_tracking_publication_preserves_a_concurrent_agent_commit(tmp_path, monkeypatch):
+    manager, ctx, laptop, satellite = full_topology(tmp_path, monkeypatch)
+    source = advance(laptop, "accepted.txt")
+    run = manager.executor.run_human
+    agent = []
+    def inject(args, **kwargs):
+        if args[:2] == ["git", "push"]:
+            agent.append(advance(satellite, "agent-only.txt"))
+        return run(args, **kwargs)
+    monkeypatch.setattr(manager.executor, "run_human", inject)
+    manager.sync(ctx)
+    assert git(satellite, "rev-parse", "HEAD").stdout.strip() == agent[0]
+    assert git(satellite, "rev-parse", "refs/remotes/ligon/main").stdout.strip() == source
+    assert (satellite / "agent-only.txt").exists()
+    assert not (laptop / "agent-only.txt").exists()
+
+
+def test_existing_dirty_mirror_publication_never_rescues_stashes_or_resets(tmp_path, monkeypatch):
+    manager, ctx, laptop, satellite = full_topology(tmp_path, monkeypatch)
+    advance(laptop, "accepted.txt")
+    (satellite / "README.md").write_text("unsaved agent edit\n")
+    (satellite / "untracked.txt").write_text("untracked agent work\n")
+    git(satellite, "add", "README.md")
+    before = state(satellite), (satellite / ".git/config").read_bytes()
+    monkeypatch.setattr(manager, "_prompt_choice", lambda *a, **k: pytest.fail("publication prompted about checkout"))
+    assert manager.ensure_remote_clone(ctx)
+    assert (state(satellite), (satellite / ".git/config").read_bytes()) == before
+
+
+def test_initial_checkout_refuses_a_late_ignored_collision(tmp_path, monkeypatch):
+    from tests.test_remote import _local_bootstrap_manager
+    manager, ctx, path = _local_bootstrap_manager(tmp_path, monkeypatch)
+    run = manager.executor.run_agent
+    def inject(args, **kwargs):
+        if args[:2] == ["git", "checkout"]:
+            (path / ".git/info/exclude").write_text("README.md\n")
+            (path / "README.md").write_text("concurrent initial work\n")
+        return run(args, **kwargs)
+    monkeypatch.setattr(manager.executor, "run_agent", inject)
+    with pytest.raises(MirrorError, match="Initial mirror checkout refused"):
+        manager.ensure_remote_clone(ctx)
+    assert (path / "README.md").read_text() == "concurrent initial work\n"
+    assert git(path, "rev-parse", "--verify", "HEAD", check=False).returncode != 0
+
+
+def test_remote_task_uses_published_baseline_without_rewriting_human_alias(tmp_path, monkeypatch):
+    manager, ctx, laptop, satellite = full_topology(tmp_path, monkeypatch)
+    old = git(satellite, "rev-parse", "HEAD").stdout
+    git(satellite, "branch", "ligon/main", "HEAD")
+    accepted = advance(laptop, "accepted.txt")
+    monkeypatch.setattr(manager, "_ensure_mirror_exists", lambda c: satellite)
+    task = manager.start_task(ctx, task_name="review", timestamp="20261025")
+    assert git(satellite, "rev-parse", "HEAD").stdout.strip() == accepted
+    assert git(satellite, "rev-parse", "ligon/main").stdout == old
+    assert git(satellite, "rev-parse", "main").stdout == old
+    assert git(satellite, "symbolic-ref", "--short", "HEAD").stdout.strip() == task
+    agent = advance(satellite, "agent-work.txt")
+    with pytest.raises(MirrorError, match="Task branch creation refused"):
+        manager.start_task(ctx, task_name="review", timestamp="20261025")
+    assert git(satellite, "rev-parse", "HEAD").stdout.strip() == agent
+    assert (satellite / "agent-work.txt").exists()
+
+
+def test_explicit_full_pull_protects_a_file_created_after_preflight(tmp_path, monkeypatch):
+    manager, ctx, laptop, satellite = full_topology(tmp_path, monkeypatch)
+    advance(satellite, "collision.txt")
+    (laptop / ".git/info/exclude").write_text("collision.txt\n")
+    old = git(laptop, "rev-parse", "HEAD").stdout
+    run = manager.executor.run_human
+    def inject(args, **kwargs):
+        if args[:2] == ["git", "merge"]:
+            (laptop / "collision.txt").write_text("concurrent local work\n")
+        return run(args, **kwargs)
+    monkeypatch.setattr(manager.executor, "run_human", inject)
+    with pytest.raises(MirrorError, match="Cannot safely fast-forward"):
+        manager._pull_from_remote(ctx)
+    assert (laptop / "collision.txt").read_text() == "concurrent local work\n"
+    assert git(laptop, "rev-parse", "HEAD").stdout == old
+
+
+def test_partial_publication_refuses_before_any_transfer(tmp_path, monkeypatch):
+    manager, ctx, laptop, satellite = filtered_topology(tmp_path, monkeypatch)
+    before = snapshot(laptop), snapshot(satellite)
+    monkeypatch.setattr(manager, "_git_transports", lambda *a: pytest.fail("prepared transfer from partial follower"))
+    with pytest.raises(MirrorError, match="partial clone"):
+        manager.sync(ctx)
+    assert (snapshot(laptop), snapshot(satellite)) == before
+
+
+def test_fresh_local_tier_mailbox_still_accepts_agent_publication(tmp_path, monkeypatch):
+    from sucoder.config import SlurmConfig
+    from sucoder.local_tier import build_prepare_script
+    from tests.test_remote import _local_bootstrap_manager
+    import subprocess
+    manager, ctx, path = _local_bootstrap_manager(tmp_path, monkeypatch)
+    ctx.settings.remote.slurm = SlurmConfig(partition="test", account="test", local_disk="/local")
+    assert manager.ensure_remote_clone(ctx)
+    assert git(path, "config", "receive.denyCurrentBranch").stdout.strip() == "updateInstead"
+    root = tmp_path / "node-local"
+    script = build_prepare_script(mirror_path=str(path), mirror_token="rproj",
+                                  local_disk_root=str(root), job_id=7, canonical_remote="ligon")
+    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    work = root / "job7/mirrors/rproj"
+    agent = advance(work, "agent.txt")
+    assert git(path, "rev-parse", "main").stdout.strip() == agent
+    assert (path / "agent.txt").exists()
+
+
+@pytest.mark.parametrize("policy, expected", [("canonical", "refs/remotes/ligon/"), ("external", "external integration workflow")])
+def test_agent_context_reports_the_actual_authority_without_probing_a_base(tmp_path, monkeypatch, policy, expected):
+    manager, ctx, laptop, satellite = filtered_topology(tmp_path, monkeypatch)
+    ctx.settings.sync_policy = policy
+    for name in ("_system_prompt_block", "_target_prompt_block", "_workspace_block", "_agent_doc_block"):
+        monkeypatch.setattr(manager, name, lambda *a: None)
+    monkeypatch.setattr(manager, "_skill_blocks", lambda *a: [])
+    monkeypatch.setattr(manager, "_warn_if_skills_base_unusable", lambda *a: None)
+    monkeypatch.setattr(manager, "_resolve_base_branch", lambda *a: pytest.fail("probed a base during context rendering"))
+    before = snapshot(laptop), snapshot(satellite)
+    assert expected in manager._compose_context_prelude(ctx)
+    assert (snapshot(laptop), snapshot(satellite)) == before
+
+
+@pytest.mark.parametrize("marker", ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "sequencer"])
+def test_explicit_pull_preserves_a_pending_operation_even_with_a_clean_index(tmp_path, monkeypatch, marker):
+    manager, ctx, laptop, satellite = full_topology(tmp_path, monkeypatch)
+    advance(satellite, "incoming.txt")
+    path = laptop / ".git" / marker
+    if marker.endswith("HEAD"):
+        path.write_text(git(laptop, "rev-parse", "HEAD").stdout)
+    else:
+        path.mkdir()
+        (path / "saved-operation").write_text("preserve state\n")
+    before = state(laptop), snapshot(path) if path.is_dir() else path.read_bytes()
+    monkeypatch.setattr(manager, "_prompt_choice", lambda *a, **k: pytest.fail("prompted during a pending operation"))
+    with pytest.raises(MirrorError, match="already in progress"):
+        manager._pull_from_remote(ctx)
+    assert (state(laptop), snapshot(path) if path.is_dir() else path.read_bytes()) == before

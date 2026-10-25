@@ -24,39 +24,6 @@ git -c protocol.allow=never -c protocol.file.allow=never \
 '''
 
 
-VERIFY_PUSH_PATHS_PY = r'''
-import json
-import os
-import subprocess
-import sys
-
-root = os.path.abspath(sys.argv[1])
-payload = json.load(sys.stdin)
-os.chdir(root)
-env = dict(os.environ, GIT_ALLOW_PROTOCOL="", GIT_NO_LAZY_FETCH="1",
-           GIT_OPTIONAL_LOCKS="0", GIT_TERMINAL_PROMPT="0")
-index = subprocess.check_output(
-    ["git", "-c", "core.fsmonitor=false", "--no-optional-locks", "ls-files", "-t", "-z"],
-    env=env,
-).decode("utf-8", "surrogateescape").split("\0")
-tracked = {entry[2:] for entry in index if entry}
-skipped = {entry[2:] for entry in index if entry.startswith("S ")}
-for status, name in payload["changes"]:
-    if os.path.isabs(name) or ".." in name.split("/"):
-        sys.exit("Invalid incoming path")
-    path = os.path.join(root, name)
-    added = status == "A" and (payload["known_base"] or name not in tracked)
-    if os.path.lexists(path) and (added or name in skipped):
-        sys.exit("Refusing push: local file would be overwritten: " + name)
-    if status != "D":
-        parent = os.path.dirname(path)
-        while parent != root:
-            if os.path.islink(parent) or (os.path.exists(parent) and not os.path.isdir(parent)):
-                sys.exit("Refusing push: local path blocks incoming files: " + parent)
-            parent = os.path.dirname(parent)
-'''
-
-
 INITIALIZE_MIRROR_SH = r'''set -eu
 umask 077
 path=$1

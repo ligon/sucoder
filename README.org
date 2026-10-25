@@ -170,7 +170,7 @@ The canonical repository remains unwritable by the agent throughout.
 
 * Key Features
 - agents-clone :: Clone a canonical repository into an agent-owned mirror with strict permissions.
-- push :: Send the canonical repository's commits to the mirror without granting write access.  Pulls the agent's commits back first, and refuses rather than force-push over a mirror it could not read.  Available as =sync= too.
+- push :: Make canonical commits visible through a mirror tracking ref without moving its working branches or importing agent work. Available as =sync= too.
 - start-task :: Create a new agent task branch based on a human branch while preserving branch naming conventions.
 - status :: Summarize the state of a mirror, including permissions and git remotes.
 - collaborate :: Prepare canonical, ensure mirror, and launch agent in one step.
@@ -231,10 +231,9 @@ sucoder status project
 #+end_src
 
 ** Moving commits between canonical and the mirror
-- push :: canonical --> mirror.  For remote mirrors the mirror's branches
-  are overwritten to match canonical.  For local mirrors canonical's
-  commits become *visible* in the mirror as =<remote>/<branch>=; the
-  mirror's own branches are left where the agent put them.
+- push :: canonical --> mirror. Commits become visible through the human's
+  tracking refs in either local or remote mirrors. Existing working branches
+  and checkout files remain where the agent put them.
 - pull :: mirror --> canonical.  Brings the agent's commits back, with a
   prompt when the two histories have diverged.
 - sync :: an alias for =push=, kept for compatibility.
@@ -245,23 +244,18 @@ a directory because a probe failed or a repository has no default branch.
 Unreadable, invalid, symlinked, or non-repository nonempty paths stop startup
 with a diagnostic; inspect them before retrying.
 
-** Mirror safety: the pull must succeed before the push
-=push= (and =agents-clone=) send to the mirror with =git push --all
---force=, so they first pull whatever the agent committed there.  If that
-pull cannot read the mirror --- host unreachable, allocation gone, the
-agent's work sitting on a branch other than the configured base --- the
-push is refused rather than allowed to overwrite unretrieved commits.
+** Mirror safety: publication leaves existing checkouts alone
+=push= and =agents-clone= publish one pinned canonical base commit to
+=refs/remotes/<human>/<base>= without force. They never overwrite agent
+branches or require automatic integration of agent history into canonical.
+Concurrent or divergent tracking-ref updates refuse. Empty/unborn mirrors
+receive a protected initial checkout; existing files and branch names are
+preserved on refusal.
+An unborn HEAD with feature branches, tags, or WIP refs requires an explicit
+checkout choice; it is not treated as an empty repository.
 
-An empty or half-initialised mirror is *not* treated as unreadable, so
-first-time bootstrap is unaffected: sucoder asks the mirror whether it
-holds any commits instead of guessing from the error text.
-Any ref (including feature branches, tags, and WIP refs) counts as content,
-even with an unborn HEAD. A repository initialized by this invocation skips
-the initial fetch and receives a non-forcing first push. The
-=--allow-unverified-mirror= override does not bypass initialization checks.
-
-- --allow-unverified-mirror :: Push anyway, discarding any unpulled
-  mirror commits.  Use when the mirror is known to be expendable.
+=--allow-unverified-mirror= remains accepted for compatibility. It cannot
+enable forced publication or bypass initialization checks.
 
 Likewise =pull= exits non-zero when it could not read the mirror,
 instead of reporting =Pull complete.= after pulling nothing.
@@ -736,16 +730,33 @@ workflow. Use its filtered gate-to-laptop updates and laptop-to-inbox topic
 submissions; accepting satellite work remains a separate gate operation.
 
 The default =sync_policy: canonical= keeps ordinary synchronization enabled.
-Remote publication updates only the selected base branch. Reconciled rewrites
-use an exact lease on the fetched mirror tip; unrelated branches are never
-force-pushed. Canonical updates require a clean tracked/index state with that
-base checked out and no other worktree holding it. Updates preserve untracked
-and ignored collisions by refusing the merge, and never hard-reset a checkout.
-Partial-clone reconciliation retains its configured filter, disables diffstats,
-and refuses object transfer when the source does not advertise filtering.
-Automatic divergent-history merges in partial clones refuse; use the external
-integration workflow to avoid hydrating excluded blobs during the merge.
-Dry runs do not reconcile cached refs or mutate repository state.
+Both local and remote sync make canonical commits available in
+=refs/remotes/<human-prefix>/<base>=, for example =refs/remotes/ligon/main=.
+Remote publication pins one source commit and uses a non-forced push. It never
+updates existing working branches, HEAD, the index, or checkout files, and it
+never imports agent commits into canonical. A divergent published ref refuses;
+preserve and reconcile its history explicitly instead of overwriting it.
+=--allow-unverified-mirror= is retained for command compatibility and cannot
+enable forced publication.
+
+For an existing mirror, start a fresh task with =--task= to use the published
+baseline, or let the agent review and update its checkout. Task creation refuses
+an existing task name and preserves human branch aliases. Only fresh/unborn
+mirrors get an initial checkout, with overwrite protection for local files.
+Under node-local tiering, published baselines are imported into
+=refs/sucoder-canonical/<human-prefix>/<base>= in the working clone, separately
+from =origin/*=. External-policy launches do not import those baselines.
+Managed local-tier mailboxes retain their existing agent post-commit publication
+mode; that agent durability path is separate from canonical tracking-ref sync.
+
+Explicit =pull= performs canonical reconciliation. Full checkouts require clean
+tracked/index state, the selected base checked out, no other worktree holding it,
+no pending Git operation, and no untracked/ignored path collisions. Partial-clone pulls retain their filter
+and require server filtering support, but retain incoming refs for inspection and
+refuse automatic integration. Partial clones also refuse publication that could
+hydrate missing objects. Use the project's external update/submission workflow
+for those operations. Dry runs do not reconcile cached refs or mutate repository
+state, connect remote services, or allocate jobs.
 
 =tunnel forward= defaults the node to the one your collaborate session
 is on (override with =--node n0030.savio4=) and terminates the forward

@@ -71,8 +71,8 @@ def cache_exports_sh(local_disk_root: str, job_id: Optional[int] = None) -> str:
     )
 
 
-# Installed into the working clone.  Never forces (a force would clobber
-# the laptop's push into the shared mirror); never fails the commit.
+# Installed into the working clone. Never forces over another agent's
+# publication to the shared branch; never fails the commit.
 # The ``sucoder local-tier`` marker is how the prepare script recognises
 # its own hook on a re-run and leaves any other hook alone.
 POST_COMMIT_HOOK = r'''#!/bin/bash
@@ -94,6 +94,7 @@ MIRROR=@MIRROR@
 TOKEN=@TOKEN@
 LOCAL_ROOT=@LOCAL_ROOT@
 JOB=@JOB_REF@
+CANONICAL_REMOTE=@CANONICAL_REMOTE@
 WORK="$LOCAL_ROOT/mirrors/$TOKEN"
 umask 077
 mkdir -p "$LOCAL_ROOT/mirrors" "$LOCAL_ROOT/cache/uv" "$LOCAL_ROOT/cache/pip" \
@@ -137,6 +138,15 @@ fi
 cd "$WORK" || exit 1
 git remote set-url origin "$MIRROR"
 git fetch --quiet origin || echo "SUCODER: fetch from $MIRROR failed; continuing with the clone as is" >&2
+if [ -n "$CANONICAL_REMOTE" ]; then
+    # A clone copies heads, not the publisher's tracking refs. Keep these
+    # separate from origin/*, including when the human prefix is "origin".
+    git fetch --quiet --no-tags --no-recurse-submodules origin \
+        "refs/remotes/$CANONICAL_REMOTE/*:refs/sucoder-canonical/$CANONICAL_REMOTE/*" || {
+        echo "SUCODER: canonical baseline refs could not be refreshed" >&2
+        exit 1
+    }
+fi
 if ! git checkout --quiet "$branch" 2>/dev/null; then
     git checkout --quiet -b "$branch" "origin/$branch" || exit 1
 fi
@@ -345,6 +355,7 @@ def build_prepare_script(
     mirror_token: str,
     local_disk_root: str = DEFAULT_LOCAL_DISK,
     job_id: Optional[int] = None,
+    canonical_remote: Optional[str] = None,
 ) -> str:
     """Render the prepare script for one mirror.
 
@@ -366,5 +377,6 @@ def build_prepare_script(
         .replace("@TOKEN@", shlex.quote(mirror_token))
         .replace("@LOCAL_ROOT@", local_root_shell(local_disk_root, job_id))
         .replace("@JOB_REF@", '"${SLURM_JOB_ID:-}"' if job_id is None else shlex.quote(str(job_id)))
+        .replace("@CANONICAL_REMOTE@", shlex.quote(canonical_remote or ""))
         .replace("@HOOK@", hook)
     )

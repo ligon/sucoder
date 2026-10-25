@@ -1932,8 +1932,7 @@ def agents_clone(
     allow_unverified_mirror: bool = typer.Option(
         False,
         "--allow-unverified-mirror",
-        help="Push even if the mirror could not be read first "
-             "(discards any unpulled mirror commits).",
+        help="Legacy compatibility option; publication is always non-forced and leaves working branches unchanged.",
     ),
 ) -> None:
     """Clone the canonical repository into an agent-controlled mirror."""
@@ -2022,19 +2021,13 @@ def push(
     allow_unverified_mirror: bool = typer.Option(
         False,
         "--allow-unverified-mirror",
-        help="Push even if the mirror could not be read first "
-             "(discards any unpulled mirror commits).",
+        help="Legacy compatibility option; publication is always non-forced and leaves working branches unchanged.",
     ),
 ) -> None:
-    """Send canonical's commits to the mirror (the inverse of `pull`).
+    """Make canonical commits visible through the human's remote-tracking refs.
 
-    Agent commits on the mirror are pulled back first, so this cannot
-    overwrite work that has not been retrieved.
-
-    For remote mirrors the mirror's branches are overwritten to match
-    canonical.  For local mirrors canonical's commits are made *visible*
-    in the mirror (as remote-tracking refs); the mirror's own branches
-    are left where the agent put them.
+    Existing working branches and checkout files are left where the agent put
+    them in either local or remote mirrors. Explicit pull reconciles agent work.
     """
     _push_to_mirror(ctx, mirror, verbose, dry_run, allow_unverified_mirror)
 
@@ -2048,8 +2041,7 @@ def sync(
     allow_unverified_mirror: bool = typer.Option(
         False,
         "--allow-unverified-mirror",
-        help="Push even if the mirror could not be read first "
-             "(discards any unpulled mirror commits).",
+        help="Legacy compatibility option; publication is always non-forced and leaves working branches unchanged.",
     ),
 ) -> None:
     """Alias for `push`, kept for compatibility."""

@@ -1409,7 +1409,7 @@ def test_sync_remote_calls_push_via_login_node(
     url = push_cmd[2]
     assert "ln001:" in url
     assert "rproj" in url
-    assert push_cmd[-1].endswith(":refs/heads/main")
+    assert push_cmd[-1].endswith(":refs/remotes/ligon/main")
     assert "--all" not in push_cmd
     assert "--force" not in push_cmd
     # GIT_SSH_COMMAND should reference the ControlMaster socket
@@ -1438,14 +1438,11 @@ def test_ensure_remote_clone_refuses_push_over_unverified_mirror(tmp_path, monke
     from sucoder.mirror import MirrorError
     manager, ctx, path = _local_bootstrap_manager(tmp_path, monkeypatch)
     subprocess.run(["git", "clone", str(ctx.canonical_path), str(path)], check=True, capture_output=True)
-    monkeypatch.setattr(manager, "_pull_from_remote", lambda ctx: False)
-    pushed = []
-    monkeypatch.setattr(manager, "_sync_remote", lambda ctx: pushed.append(True))
-    with pytest.raises(MirrorError, match="Refusing to push"):
-        manager.ensure_remote_clone(ctx)
-    assert not pushed
+    monkeypatch.setattr(manager, "_pull_from_remote", lambda ctx: pytest.fail("publication reconciled receiver"))
+    before = subprocess.check_output(["git", "-C", str(path), "rev-parse", "HEAD"], text=True)
+    assert manager.ensure_remote_clone(ctx)
     manager.ensure_remote_clone(ctx, allow_unverified_mirror=True)
-    assert pushed == [True]
+    assert subprocess.check_output(["git", "-C", str(path), "rev-parse", "HEAD"], text=True) == before
 
 
 def test_ensure_remote_clone_mirror_not_exists_inits_and_syncs(tmp_path, monkeypatch):
@@ -1613,7 +1610,6 @@ def test_sync_remote_prefers_login_node(
     """The push goes to the login node first; the DTN is not touched."""
     manager = _build_remote_manager(tmp_path)
     ctx = manager.context_for("rproj")
-    monkeypatch.setattr(manager, "_verify_remote_update_paths", lambda *a: None)
     manager.executor = _remote_exec_with_scaffolding(tmp_path)
     monkeypatch.setattr(
         manager, "_resolve_remote_path",
@@ -1642,7 +1638,6 @@ def test_sync_remote_fails_over_to_dtn(
 
     manager = _build_remote_manager(tmp_path)
     ctx = manager.context_for("rproj")
-    monkeypatch.setattr(manager, "_verify_remote_update_paths", lambda *a: None)
     manager.executor = _remote_exec_with_scaffolding(tmp_path)
     monkeypatch.setattr(
         manager, "_resolve_remote_path",
@@ -1683,7 +1678,6 @@ def test_sync_remote_no_failover_on_real_error(
 
     manager = _build_remote_manager(tmp_path)
     ctx = manager.context_for("rproj")
-    monkeypatch.setattr(manager, "_verify_remote_update_paths", lambda *a: None)
     manager.executor = _remote_exec_with_scaffolding(tmp_path)
     monkeypatch.setattr(
         manager, "_resolve_remote_path",
