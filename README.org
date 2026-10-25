@@ -705,6 +705,14 @@ sucoder -T savio tunnel forwards           # list forwards + master liveness
 sucoder -T savio tunnel forward 8888 --cancel
 #+end_src
 
+For a remote mirror managed through a separate integration gate, use
+=sucoder -T savio collaborate --no-sync=. This requires an existing working
+repository with a usable HEAD and skips initialization, reconciliation,
+pushes, and changes to the launching checkout's remote configuration.
+=--task --no-sync= is rejected; create the branch through the project's
+integration workflow first. A dry run of this path does not probe or launch
+the remote agent and does not establish that the mirror exists.
+
 =tunnel forward= defaults the node to the one your collaborate session
 is on (override with =--node n0030.savio4=) and terminates the forward
 *on the node*, so services bound to =127.0.0.1= work.  Open the app's

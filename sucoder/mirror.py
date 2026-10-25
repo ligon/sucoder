@@ -19,7 +19,7 @@ from typing import Any, Callable, Dict, List, Literal, Mapping, NamedTuple, NoRe
 
 import yaml
 
-from .remote_bootstrap import INITIALIZE_MIRROR_SH
+from .remote_bootstrap import INITIALIZE_MIRROR_SH, VERIFY_LAUNCH_MIRROR_SH
 from .agent_mode import (
     SERVICE_LAUNCH_PROBE_SH, codex_remote_command, config_override,
     service_launch, service_marker,
@@ -3527,6 +3527,11 @@ class MirrorManager:
         recorded normally.  Only ``_launch_confined`` adopts by scheduler
         name, so the authorization has no effect on other paths.
         """
+        if task_name and not sync:
+            raise MirrorError("--task cannot be combined with --no-sync; create the branch through your integration workflow first.")
+        if ctx.is_remote and not sync and self.executor.dry_run:
+            self.logger.info("DRY-RUN: verify an existing mirror and launch without synchronization; remote state is unverified.")
+            return 0
         launcher = ctx.agent_launcher
         base_command = list(command_override) if command_override else list(launcher.command)
         if not base_command:
@@ -5051,13 +5056,18 @@ class MirrorManager:
         skip_lfs: bool = True,
     ) -> int:
         """One-shot helper to prepare canonical, ensure clone, and launch the agent."""
+        if task_name and not sync:
+            raise MirrorError("--task cannot be combined with --no-sync; create the branch through your integration workflow first.")
+        if ctx.is_remote and not sync and self.executor.dry_run:
+            self.logger.info("DRY-RUN: launch an existing remote mirror without synchronization or repository configuration changes; remote state is unverified.")
+            return 0
         if not ctx.is_remote:
             self.prepare_canonical(
                 ctx,
                 use_sudo=use_sudo,
                 setup_agent_remote=setup_agent_remote,
             )
-        if ctx.is_remote:
+        if ctx.is_remote and sync:
             pushed = self.ensure_remote_clone(ctx)
             self._configure_target_remote(ctx)
             if not pushed and sync:
@@ -5071,7 +5081,7 @@ class MirrorManager:
                     "at the user's request.",
                 )
                 sync = False
-        else:
+        elif not ctx.is_remote:
             self.ensure_clone(ctx, skip_lfs=skip_lfs)
         return self.launch_agent(
             ctx,
@@ -5653,6 +5663,26 @@ class MirrorManager:
             return None
         return home
 
+    def _existing_launch_mirror(self, ctx: MirrorContext) -> Path:
+        """Verify an initialized remote checkout without reconciling any Git state."""
+        path = self._resolve_remote_path(ctx)
+        run = getattr(self.executor, "run_on_login_node", self.executor.run_agent)
+        try:
+            result = run(
+                ["bash", "-c", VERIFY_LAUNCH_MIRROR_SH, "sucoder-verify", path],
+                check=False, timeout=self._GIT_REMOTE_TIMEOUT,
+            )
+        except (CommandError, OSError) as exc:
+            raise MirrorError(f"Remote mirror {path} is unavailable: the remote host is not responding. No repository was initialized or synchronized.") from exc
+        if result.returncode == 10:
+            raise MirrorError(f"Remote mirror {path} is absent; --no-sync requires an existing initialized mirror.")
+        if result.returncode != 0:
+            raise MirrorError(
+                f"Remote mirror {path} is unavailable or unverified: {result.stderr.strip()}. "
+                "No repository was initialized or synchronized."
+            )
+        return ctx.mirror_path
+
     def _ensure_mirror_exists(self, ctx: MirrorContext) -> Path:
         if ctx.is_remote:
             return self._ensure_remote_mirror_exists(ctx)
@@ -5662,39 +5692,8 @@ class MirrorManager:
         return mirror_path
 
     def _ensure_remote_mirror_exists(self, ctx: MirrorContext) -> Path:
-        """Verify the remote mirror exists, returning the local mirror_path placeholder.
-
-        For remote mirrors the actual mirror lives on the remote host.
-        We check via SSH and return ``ctx.mirror_path`` as a local
-        reference (the executor translates paths automatically).
-        """
-        remote_path = ctx.remote_mirror_path
-        assert remote_path is not None
-        abs_path = self._resolve_remote_path(ctx)
-        try:
-            check = self.executor.run_agent(
-                ["git", "rev-parse", "--git-dir"],
-                check=False,
-                cwd=abs_path,
-            )
-        except CommandError as exc:
-            # A timeout (or wedged SSH transport) here means the remote
-            # host is unresponsive, not that the mirror is missing.  This
-            # is the first command actually run *on* a freshly allocated
-            # compute node, so a transient node/Lustre stall lands here.
-            # Surface a clean, actionable error instead of a raw traceback.
-            raise MirrorError(
-                f"Timed out probing the remote mirror at {remote_path}: the "
-                "remote host is not responding.  This is usually a transient "
-                "compute-node or Lustre stall, not a missing mirror.  Retry "
-                "the command; if it persists, check the node is healthy "
-                "(squeue / ssh in) and the filesystem is responsive."
-            ) from exc
-        if check.returncode != 0:
-            raise MirrorError(
-                f"Remote mirror at {remote_path} does not exist. Run agents-clone first."
-            )
-        return ctx.mirror_path
+        """Verify an initialized remote checkout without changing its Git state."""
+        return self._existing_launch_mirror(ctx)
 
     def _validate_canonical(self, ctx: MirrorContext) -> None:
         canonical = ctx.canonical_path

@@ -2669,7 +2669,7 @@ def agents_run(
     sync: bool = typer.Option(
         True,
         "--sync/--no-sync",
-        help="Fetch latest canonical changes before launching (ignored when --task is used).",
+        help="Synchronize before launch; --no-sync is incompatible with --task and requires an existing remote mirror.",
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print commands without executing."),
@@ -2746,6 +2746,8 @@ def agents_run(
     ),
 ) -> None:
     """Launch the configured agent inside the mirror working tree."""
+    if task and not sync:
+        raise typer.BadParameter("--task cannot be combined with --no-sync.")
     remote_mode = _codex_remote_mode(remote_control, remote_control_only)
     _codex_state_selection(codex_state_from, codex_state_fresh)
     mirror = _resolve_mirror_name(ctx, mirror)
@@ -2797,7 +2799,7 @@ def collaborate(
     sync: bool = typer.Option(
         True,
         "--sync/--no-sync",
-        help="Fetch latest canonical changes before launching (ignored when --task is used).",
+        help="Synchronize before launch; --no-sync is incompatible with --task and requires an existing remote mirror.",
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print commands without executing."),
@@ -2892,6 +2894,8 @@ def collaborate(
     ),
 ) -> None:
     """Prepare canonical, ensure the mirror exists, and launch the agent in one step."""
+    if task and not sync:
+        raise typer.BadParameter("--task cannot be combined with --no-sync.")
     remote_mode = _codex_remote_mode(remote_control, remote_control_only)
     _codex_state_selection(codex_state_from, codex_state_fresh)
     mirror = _resolve_mirror_name(ctx, mirror)
@@ -2901,7 +2905,7 @@ def collaborate(
 
     # If --node is specified, inject it into the session so that
     # _ensure_slurm_node uses --nodelist to request that node.
-    if node:
+    if node and not dry_run:
         from .session import RemoteSession
         # A direct SSH target has exactly one host and no scheduler, so
         # there is no node to request.  Reject it here rather than

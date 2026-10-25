@@ -1816,7 +1816,7 @@ def test_ensure_remote_mirror_exists_timeout_is_graceful(
     def fake_run_agent(args, **kwargs):
         # The git probe is what hangs; the `echo $HOME` path-resolution
         # call that precedes it must still succeed.
-        if "rev-parse" in args:
+        if any("HEAD^{commit}" in str(arg) for arg in args):
             raise CommandError(
                 "Command timed out after 120s",
                 CommandResult(list(args), list(args), "", "(timed out)", -1),

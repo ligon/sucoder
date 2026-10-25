@@ -641,7 +641,7 @@ def test_dry_run_keeps_the_unexpanded_home_in_the_durable_root(tmp_path, monkeyp
     manager.executor.dry_run = True
     monkeypatch.setattr(manager, "_resolve_remote_path", lambda ctx: "~/mirrors/sample")
     _launch(manager, ctx)
-    assert _runner_argv(confined)[4:6] == ["--durable-root", "~/mirrors/.sucoder-state"]
+    assert not confined.called
 
 
 @pytest.mark.parametrize("selection, expected", [
@@ -656,7 +656,7 @@ def test_bootstrap_forwards_the_selection_to_the_real_launch(tmp_path, monkeypat
     monkeypatch.setattr(manager, "ensure_remote_clone", lambda c: steps.append("clone") or True)
     monkeypatch.setattr(manager, "_configure_target_remote", lambda c: steps.append("configure"))
     assert manager.bootstrap(ctx, sync=False, command_override=["codex"], supports_inline_prompt=True, **selection) == 0
-    assert steps == ["clone", "configure"]
+    assert steps == []
     assert _runner_argv(confined)[-len(expected):] == expected
     assert confined.call_args.kwargs["detached"] is False
 

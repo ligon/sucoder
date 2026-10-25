@@ -1002,7 +1002,8 @@ def test_launch_agent_unconfined_local_tier_clones_then_launches_in_clone(tmp_pa
     stage = next(c for c in calls if c["args"][0] == "sh" and "local-tier-sample.sh" in c["args"][2])
     assert "MIRROR=/global/home/users/coder/mirrors/sample\n" in stage["kwargs"]["input"]
     assert "LOCAL_ROOT=/local/job1234567\n" in stage["kwargs"]["input"]
-    run = next(c for c in calls if c["args"][:1] == ["bash"])
+    run = next(c for c in calls if c["args"][:1] == ["bash"]
+               and c["args"][1].endswith("local-tier-sample.sh"))
     assert run["args"] == ["bash", "/global/home/users/coder/.cache/sucoder/local-tier-sample.sh"]
     tmux = calls[-1]
     assert tmux["args"][0] == "tmux"
@@ -4289,7 +4290,7 @@ def test_bootstrap_invokes_steps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         ctx,
         use_sudo=True,
         setup_agent_remote=False,
-        sync=False,
+        sync=True,
         task_name="demo",
         base_branch="dev",
         extra_args=["--flag"],
@@ -4299,7 +4300,7 @@ def test_bootstrap_invokes_steps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         "prepare:True:False",
         "clone",
         (
-            "launch:{'sync': False, 'task_name': 'demo', 'base_branch': 'dev', "
+            "launch:{'sync': True, 'task_name': 'demo', 'base_branch': 'dev', "
             "'extra_args': ['--flag'], 'command_override': None, 'model_override': None, "
             "'env_override': None, "
             "'supports_inline_prompt': None, 'codex_remote_control': None, "
