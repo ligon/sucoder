@@ -4106,7 +4106,7 @@ def test_pull_from_local_refetches_after_mirror_rewrite(
 
     assert prompted, "divergence handling was never reached"
 
-    assert manager._sync_leases[(str(canonical), "sample", "main")] == rewritten
+    assert manager._sync_leases[(str(canonical), "sample", "main")][0] == rewritten
     merged = subprocess.run(
         ["git", "merge-base", "--is-ancestor", rewritten, "HEAD"],
         cwd=canonical, capture_output=True,

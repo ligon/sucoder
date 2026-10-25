@@ -347,3 +347,54 @@ def test_login_node_probe_preserves_stdin_on_every_route(tmp_path, monkeypatch, 
     assert all(data == payload for _, data in seen)
     expected = {"agent": ["agent"], "login": ["login"], "fallback": ["login", "agent"]}
     assert [name for name, _ in seen] == expected[route]
+
+
+def test_publication_refuses_a_sender_rewrite_after_reconciliation(tmp_path, monkeypatch):
+    manager, ctx, laptop, satellite = filtered_topology(tmp_path, monkeypatch)
+    old = git(laptop, "rev-parse", "HEAD").stdout.strip()
+    reconciled = advance(satellite, "remote-only.txt")
+    assert manager._pull_from_remote(ctx)
+    git(laptop, "reset", "--hard", old)
+    replacement = advance(laptop, "replacement.txt")
+    with pytest.raises(MirrorError, match="changed after reconciliation"):
+        manager._sync_remote(ctx)
+    assert git(satellite, "rev-parse", "HEAD").stdout.strip() == reconciled
+    assert git(laptop, "rev-parse", "HEAD").stdout.strip() == replacement
+
+
+def test_publication_pins_the_accounted_tip_even_if_sender_changes_before_push(tmp_path, monkeypatch):
+    manager, ctx, laptop, satellite = filtered_topology(tmp_path, monkeypatch)
+    old = git(laptop, "rev-parse", "HEAD").stdout.strip()
+    reconciled = advance(satellite, "remote-only.txt")
+    assert manager._pull_from_remote(ctx)
+    advance(laptop, "accepted.txt")
+    assert manager._pull_from_remote(ctx)
+    pinned = git(laptop, "rev-parse", "HEAD").stdout.strip()
+    run = manager.executor.run_human
+    def rewrite_before_push(args, **kwargs):
+        if args[:2] == ["git", "push"]:
+            git(laptop, "reset", "--hard", old)
+            advance(laptop, "replacement.txt")
+        return run(args, **kwargs)
+    monkeypatch.setattr(manager.executor, "run_human", rewrite_before_push)
+    manager._sync_remote(ctx)
+    assert git(satellite, "rev-parse", "HEAD").stdout.strip() == pinned
+    assert git(satellite, "merge-base", "--is-ancestor", reconciled, "HEAD").returncode == 0
+
+
+@pytest.mark.parametrize("command", ["agents-clone", "prepare-canonical", "push", "sync", "pull", "start-task"])
+def test_external_policy_cli_refuses_before_executor_construction(tmp_path, monkeypatch, command):
+    path = _write_config(tmp_path, skills_entry=tmp_path / "skills")
+    raw = yaml.safe_load(path.read_text())
+    raw["mirrors"]["sample"]["sync_policy"] = "external"
+    raw["targets"] = {"test": {"gateway": "fake.invalid", "transfer_host": "data.invalid",
+                                    "slurm": {"partition": "test", "account": "test"}}}
+    path.write_text(yaml.safe_dump(raw))
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_build_executor", lambda *a, **k: pytest.fail("constructed executor for forbidden operation"))
+    args = ["--config", str(path), "-T", "test", command, "sample"]
+    if command == "start-task":
+        args.append("topic")
+    result = CliRunner().invoke(cli.app, args)
+    assert result.exit_code != 0
+    assert "external" in result.output

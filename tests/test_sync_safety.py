@@ -135,12 +135,14 @@ def test_no_sync_task_refuses_before_setup(tmp_path, monkeypatch, entry):
 
 
 @pytest.mark.parametrize("command", ["collaborate", "agents-run"])
-def test_no_sync_task_cli_refuses_before_setup(monkeypatch, command):
+def test_no_sync_task_cli_refuses_before_setup(tmp_path, monkeypatch, command):
+    from tests.test_cli import _plain_output, _write_config
+    config = _write_config(tmp_path, skills_entry=tmp_path / "skills")
     monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **k: None)
     monkeypatch.setattr(cli, "_tmux_launch_preamble", lambda *a, **k: pytest.fail("created session"))
-    result = CliRunner().invoke(cli.app, [command, "sample", "--no-sync", "--task", "demo"])
+    result = CliRunner().invoke(cli.app, ["--config", str(config), command, "sample", "--no-sync", "--task", "demo"])
     assert result.exit_code != 0
-    assert "--task cannot" in result.output
+    assert "--task cannot" in _plain_output(result)
 
 
 def test_unavailable_is_not_reported_as_missing(tmp_path, monkeypatch):

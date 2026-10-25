@@ -1459,11 +1459,14 @@ class MirrorManager:
         mirror_head = self._canonical_read(canon, "rev-parse", "--verify", f"{tmp_ref}^{{commit}}").stdout.strip()
         # Save only this fetched tip. A later push uses an exact force-with-lease
         # and never force-overwrites unrelated branch names.
-        def accounted():
+        def accounted(sender_tip: str):
+            current = self._canonical_read(canon, "rev-parse", f"refs/heads/{base}").stdout.strip()
+            if current != sender_tip:
+                raise MirrorError("Canonical branch changed while accounting for mirror history; retry reconciliation.")
             self.executor.run_human(
                 ["git", "update-ref", "-d", tmp_ref, mirror_head], cwd=canon, check=True,
             )
-            leases[lease_key] = mirror_head
+            leases[lease_key] = (mirror_head, sender_tip)
             return True
 
         def ancestor(older, newer):
@@ -1473,7 +1476,7 @@ class MirrorManager:
             return answer.returncode == 0
 
         if mirror_head == local_head or ancestor(mirror_head, local_head):
-            return accounted()
+            return accounted(local_head)
         self._require_clean_base(canon, base)
         self._require_safe_update_paths(canon, mirror_head)
         if ancestor(local_head, mirror_head):
@@ -1487,7 +1490,7 @@ class MirrorManager:
                     f"Cannot safely fast-forward canonical: {exc.result.stderr.strip()}. "
                     f"Fetched tip retained at {tmp_ref}."
                 ) from exc
-            return accounted()
+            return accounted(mirror_head)
 
         if clone_filter:
             raise MirrorError(
@@ -1506,13 +1509,18 @@ class MirrorManager:
         if self._canonical_read(canon, "rev-parse", f"refs/heads/{base}").stdout.strip() != local_head:
             raise MirrorError("Canonical branch changed during reconciliation; refusing to continue.")
         self._require_clean_base(canon, base)
+        sender_tip = local_head
         if answer == "m":
-            self._merge_mirror_commits(canon, base, mirror_head, url)
+            merged = self._merge_mirror_commits(canon, base, mirror_head, url)
+            if merged:
+                sender_tip = self._canonical_read(canon, "rev-parse", f"refs/heads/{base}").stdout.strip()
+                if not ancestor(local_head, sender_tip) or not ancestor(mirror_head, sender_tip):
+                    raise MirrorError("Canonical branch lost accounted history after the merge; refusing publication.")
         elif answer == "s":
             self._stash_mirror_commits(canon, mirror_head, base)
         elif answer != "d":
             raise MirrorError(f"Aborting sync; fetched mirror branch retained at {tmp_ref}.")
-        return accounted()
+        return accounted(sender_tip)
 
     def _merge_mirror_commits(
         self,
@@ -1520,7 +1528,7 @@ class MirrorManager:
         base: str,
         tmp_ref: str,
         url: str,
-    ) -> None:
+    ) -> bool:
         """Attempt to merge mirror-only commits into canonical.
 
         If the merge applies cleanly, the canonical branch incorporates
@@ -1532,7 +1540,7 @@ class MirrorManager:
         """
         if self.executor.dry_run:
             self.logger.info("DRY-RUN: merge %s into %s", tmp_ref, base)
-            return
+            return False
         self._require_clean_base(canon, base)
 
         self.logger.info("Attempting to merge mirror commits into canonical")
@@ -1548,7 +1556,7 @@ class MirrorManager:
             self.logger.info(
                 "Merge succeeded — canonical now includes mirror commits"
             )
-            return
+            return True
 
         # Merge failed (conflicts).  Abort and let the user decide.
         self.logger.warning("Merge has conflicts — aborting merge")
@@ -1574,7 +1582,7 @@ class MirrorManager:
                 "Discarding mirror-only commits; canonical will "
                 "overwrite the mirror on next push"
             )
-            return
+            return False
 
         raise MirrorError(
             "Aborting sync — merge had conflicts.  The mirror branch "
@@ -1807,12 +1815,15 @@ class MirrorManager:
             return
         base = self._resolve_base_branch(ctx)
         ref = f"refs/heads/{base}"
-        lease = getattr(self, "_sync_leases", {}).pop(
+        accounted = getattr(self, "_sync_leases", {}).pop(
             (str(ctx.canonical_path), ctx.settings.name, base), None,
         )
+        lease = accounted[0] if accounted else None
         tip = self._canonical_read(
             str(ctx.canonical_path), "rev-parse", "--verify", f"{ref}^{{commit}}",
         ).stdout.strip()
+        if accounted and tip != accounted[1]:
+            raise MirrorError("Canonical branch changed after reconciliation; refusing publication until it is re-accounted.")
         self._verify_remote_update_paths(ctx, tip, lease)
         push_flags = ["--no-follow-tags", "--recurse-submodules=no"]
         if force and lease:

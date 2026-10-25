@@ -1909,6 +1909,15 @@ def main(
     }
 
 
+def _require_managed_sync(config: Config, mirror: str) -> None:
+    settings = config.mirrors.get(mirror)
+    if settings is not None and settings.sync_policy == "external":
+        raise typer.BadParameter(
+            "sync_policy: external forbids managed repository operations; "
+            "use the project's integration workflow."
+        )
+
+
 @app.command("agents-clone")
 def agents_clone(
     ctx: typer.Context,
@@ -1930,6 +1939,7 @@ def agents_clone(
     """Clone the canonical repository into an agent-controlled mirror."""
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
+    _require_managed_sync(config, mirror)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     manager = _build_manager_for_mirror(config, logger, dry_run, mirror, cli_ctx=ctx)
     mirror_ctx = manager.context_for(mirror)
@@ -1966,6 +1976,7 @@ def prepare_canonical(
     """Fix ownership and permissions on the canonical repository."""
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
+    _require_managed_sync(config, mirror)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     manager = _build_manager(config, logger, dry_run=dry_run, cli_ctx=ctx)
     try:
@@ -1989,6 +2000,7 @@ def _push_to_mirror(
     """Shared body of the ``push``/``sync`` pair."""
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
+    _require_managed_sync(config, mirror)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     manager = _build_manager_for_mirror(config, logger, dry_run, mirror, cli_ctx=ctx)
     try:
@@ -2070,6 +2082,7 @@ def pull(
     """
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
+    _require_managed_sync(config, mirror)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
 
     # Check session health before reconnecting.
@@ -2174,6 +2187,7 @@ def start_task(
     """Create and check out a task branch for the agent."""
     mirror = _resolve_mirror_name(ctx, mirror)
     config = _get_config(ctx)
+    _require_managed_sync(config, mirror)
     logger = setup_logger(f"sucoder.{mirror}", config.log_dir, verbose)
     manager = _build_manager(config, logger, dry_run=dry_run, cli_ctx=ctx)
     try:
