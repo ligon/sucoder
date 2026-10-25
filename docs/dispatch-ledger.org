@@ -70,3 +70,8 @@ No production research repository or installed CLI is a test fixture.
 The final code reuses the ledger machinery rather than replacing interactive lifecycle paths.
 GitNexus remains unavailable because its native library requires =libssl.so.3=; manual callers and the four-file existing-code diff bound review scope.
 The user selected generic core first, with project bootstrap/data/runtime acceptance deferred to the LSMS follow-up.
+
+Live native startup found that Codex 0.164 locks =CODEX_HOME/installation_id= even when SQLite is local.
+Extend existing =BIND_FILES= for an existing regular installation identity; the dispatch seeds its own UUID, and the later remote-control identity binding keeps precedence.
+This optional file binding is the only existing managed-runner behavior extension; unknown hot state still requires observed placement evidence.
+The new in-process fake-worker wrapper restores its caller umask so standalone supervisor setup cannot leak into unrelated tests.
