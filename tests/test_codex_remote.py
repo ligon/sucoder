@@ -135,7 +135,10 @@ def test_confined_remote_launch_stages_toml_context_inside_batch(tmp_path, monke
 
 
 @pytest.fixture
-def fake_codex(tmp_path):
+def fake_codex(tmp_path, monkeypatch):
+    # These tests own an unmanaged fake server, not the parent agent's runtime.
+    for name in ("SUCODER_CODEX_REMOTE_HELPER", "SUCODER_CODEX_STATE_RUN", "SUCODER_CODEX_REMOTE_ID"):
+        monkeypatch.delenv(name, raising=False)
     binary = tmp_path / "fake codex"
     binary.write_text("#!" + sys.executable + "\n" + r'''
 import json, os, signal, socket, sys, time

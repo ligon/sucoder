@@ -9,6 +9,7 @@ sessions alike, and a job is reached through its allocation.
 
 from __future__ import annotations
 
+from pathlib import Path
 import subprocess
 
 import pytest
@@ -313,7 +314,11 @@ def two_tmps(tmp_path):
     the step's or the host's directory, and log that they were called --
     the same split a private job /tmp makes on savio3.
     """
-    step, host, bindir = tmp_path / "step", tmp_path / "host", tmp_path / "bin"
+    # Unix sockets must fit even when pytest's temporary root is very long.
+    from tempfile import TemporaryDirectory
+    socket_root = TemporaryDirectory(prefix="sucoder-tmux-", dir="/tmp")
+    step, host = Path(socket_root.name) / "step", Path(socket_root.name) / "host"
+    bindir = tmp_path / "bin"
     for d in (step, host, bindir):
         d.mkdir()
     calls = tmp_path / "calls"
@@ -351,6 +356,7 @@ def two_tmps(tmp_path):
     for d in servers:
         subprocess.run(["tmux", "kill-server"], capture_output=True,
                        env={**env, "TMUX_TMPDIR": str(d)})
+    socket_root.cleanup()
 
 
 def test_a_host_side_session_is_reached_through_the_node(two_tmps):
