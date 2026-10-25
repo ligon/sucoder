@@ -710,6 +710,11 @@ the remote agent and does not establish that the mirror exists.
 Set a per-mirror =sync_policy: external= to make this behavior the default
 when a separate repository owns integration:
 
+Install a release that supports this policy before adding the setting.
+Older binaries ignore unknown YAML keys, so the setting alone provides no
+protection. Validate the installed command from outside a source checkout;
+an older release's dry run is not a safety check for this workflow.
+
 #+begin_src yaml
 mirrors:
   AggregationWithLimitedCommitment:
