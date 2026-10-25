@@ -1,0 +1,62 @@
+#+TITLE: LSMS integration after the generic dispatch core
+#+DATE: 2026-10-25
+#+AUTHOR: Sue
+
+* Scope and source
+
+The user selected a generic-core PR first, followed by LSMS integration.
+The acceptance input is =~/tmp/lsms_library_dispatch_user_story.org= (2026-10-25), reviewed in full.
+It applies to bounded country implementers and independent reviewers; infrastructure completion does not establish a scientifically verified fix.
+The original reviewed design hash is =01c5b77ad3c618414b6aa7e684eb81b1c5e417b9642b0498e5b3a46fa3da7574=.
+The original ledger hash is =18a2e43657cbbab465502269ee1c0ae9ec1be8a1cf99de1e781a93e46326fe34=.
+
+* R1: Freeze a project bootstrap and assert runtime identity
+
+Add a generic project bootstrap/profile boundary rather than hardcoding LSMS into the launcher.
+The LSMS profile must set =LSMS_VENV_SHARE= explicitly because private =results.git= is intentionally the worker's origin.
+Reuse the pinned source's =bin/savio_venv.sh mount= to mount/extract the approved image, never its =update= path, writable master or a silent fresh install.
+Freeze the image identity/digest and bootstrap with the assignment; copy or validate the actual image used on the receiving node.
+Before tests, assert =lsms_library.__file__= and the effective countries root are under the worker's exact checkout.
+Bind local harmonized data, DVC mutable metadata and bounded numerical/build workers explicitly.
+Read-only inspection confirmed the existing helper's origin-based discovery and its explicit =LSMS_VENV_SHARE= override.
+
+* R2: Verify private commits without source publication
+
+Adapt the existing deterministic project runner to accept an explicit repository and immutable commit, including a worker's private =results.git=.
+Confirm the current runner path before editing; do not create a second LLM dispatcher to solve a deterministic test task.
+Assert source and imports again in the verification allocation.
+Prove a control failure and candidate pass while the human mirror remains unchanged.
+
+* R3: Separate project data access from model authentication
+
+The generic native-agent credential allowlist is not an LSMS data-access profile.
+Freeze explicit nonsecret project bindings and stage approved reader credentials privately, without inheriting the coordinator's full environment.
+Respect =LSMS_CONFIG_DIR=, =LSMS_S3_CREDS=, private local L2 outputs and DVC metadata, and the sanctioned shared content-addressed L1 reader.
+Do not clear shared caches or enable raw in-tree access to obtain a pass.
+Read-only inspection confirmed =lsms_library/config.py= resolves its user configuration independently from native agent authentication.
+The credentialed pilot must positively open the real =requires_s3= gate; the synthetic pilot uses empty private roots and reports unexecuted data checks.
+
+* R4-R6: Consume generic evidence, result and observation contracts
+
+The core supplies a private selected-evidence directory and hash manifest separate from Git and conversation state.
+The LSMS task/profile must declare required JUnit, operand and guard receipts without exporting raw microdata or household identifiers to public outputs.
+Test retrieval after turnover, required-evidence failure, failed Git publication, failed sealing, owned-child shutdown, TERM with dirty work and SIGKILL after a periodic snapshot.
+Read execution, placement, publication, preservation and worker task outcome separately; coordinator acceptance remains a separate step.
+Use phases and heartbeat age to observe supervisor liveness without claiming scientific progress.
+
+* R7: Freeze the complete assignment context
+
+The core freezes initial task/helper bytes and requested model; a project profile must additionally freeze bootstrap/assets and supported nonsecret runtime/data configuration.
+Native credentials remain private, and their values do not enter public manifests.
+Steering is an explicitly mutable channel, separate from the initial assignment.
+Record dispatcher/adapter/runner/native executable versions and actual project import/configuration/runtime identity.
+Change pending source task/configuration in a test and prove the worker consumes the frozen assignment or refuses a mismatch.
+
+* Acceptance pilot
+
+Run an implementer and an independent reviewer on different nodes, using the installed entry point outside a source checkout.
+Start with the documented GH1225 hermetic selection and independent dtype probes, then one approved bounded credentialed country verification.
+Identify exact test paths, source/control commits, runtime image and credential policy from the current LSMS checkout before allocating that work.
+Preserve all survey semantics and country instructions; the dispatcher never infers scientific conclusions.
+Measure source snapshot cost before adding repository caching or other optimizations.
+Keep automatic retries, merging and scientific acceptance outside the first integration release.

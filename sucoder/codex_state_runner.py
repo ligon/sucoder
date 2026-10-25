@@ -1943,6 +1943,50 @@ def open_files(pids):
     return out
 
 
+def inspect_file_mounts(pids, proc_root="/proc"):
+    """Descriptor mount evidence without following paths onto remote storage.
+
+    The headless supervisor needs to reject shared live stores even when their
+    filesystem is stalled. Reading fdinfo and the owner's mount namespace
+    avoids stat() on descriptor targets. Disappearing processes/descriptors
+    are normal races; other metadata errors remain inspection failures.
+    """
+    records = []
+    for pid in pids:
+        base = os.path.join(proc_root, str(pid))
+        try:
+            mounts = {}
+            with open(os.path.join(base, "mountinfo")) as stream:
+                for line in stream:
+                    before, after = line.rstrip("\n").split(" - ", 1)
+                    fields = before.split()
+                    point = re.sub(r"\\([0-7]{3})", lambda match: chr(int(match.group(1), 8)), fields[4])
+                    mounts[fields[0]] = (after.split()[0], point)
+            descriptors = os.listdir(os.path.join(base, "fd"))
+        except OSError as exc:
+            if exc.errno in (errno.ENOENT, errno.ESRCH):
+                continue
+            raise
+        for descriptor in descriptors:
+            try:
+                path = os.readlink(os.path.join(base, "fd", descriptor))
+                if not path.startswith("/"):
+                    continue
+                with open(os.path.join(base, "fdinfo", descriptor)) as stream:
+                    metadata = dict(line.split(":", 1) for line in stream if ":" in line)
+                mount_id = metadata["mnt_id"].strip()
+                flags = int(metadata["flags"].strip(), 8)
+            except OSError as exc:
+                if exc.errno in (errno.ENOENT, errno.ESRCH):
+                    continue
+                raise
+            filesystem, mountpoint = mounts.get(mount_id, (None, None))
+            records.append({"pid": pid, "fd": descriptor, "path": path,
+                            "mount_id": mount_id, "flags": flags,
+                            "filesystem": filesystem, "mountpoint": mountpoint})
+    return records
+
+
 def holders_of(directory):
     """Pids (readable to us) with a descriptor open under the directory, by
     the link text alone: no stat of any descriptor (a stat follows the link

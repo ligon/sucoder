@@ -260,6 +260,17 @@ enable forced publication or bypass initialization checks.
 Likewise =pull= exits non-zero when it could not read the mirror,
 instead of reporting =Pull complete.= after pulling nothing.
 
+** Headless workers on Slurm
+
+=sucoder dispatch= lets a coordinating agent submit independent headless
+Codex and Claude workers to the current Slurm cluster.
+Workers use a pinned source commit, a private branch and result repository,
+and their receiving node's local storage for writable agent state and caches.
+The source checkout stays untouched; the coordinator reviews returned work
+before integration.
+See [[file:docs/dispatch.org][headless dispatch]] for the complete submission,
+status, wait and result commands and the supported state guarantees.
+
 * Configuration
 Skip this section if zero-config mode works for you.
 
