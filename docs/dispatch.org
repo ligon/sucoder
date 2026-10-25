@@ -25,7 +25,8 @@ The coordinator reviews and integrates the resulting work explicitly.
 
 * Submit and observe
 
-This is the compute-side entry point; global =--target= and =--config= are not remote-routing options for dispatch.
+This is the compute-side entry point; explicitly supplied global startup options are refused rather than ignored.
+Place resource and local-root options after =dispatch submit=; global =--target= and =--config= do not route this command remotely.
 Supply resource requests explicitly, within the account and partition available to the coordinating agent.
 The following paths are examples, and the task file must already contain the worker's concrete assignment.
 

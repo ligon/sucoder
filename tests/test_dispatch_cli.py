@@ -1,6 +1,8 @@
 """Headless dispatch bypasses interactive launch and propagates job evidence."""
 import json
 
+import pytest
+
 from typer.testing import CliRunner
 
 from sucoder import cli, dispatch
@@ -114,3 +116,24 @@ def test_invalid_id_cannot_escape_result_root(monkeypatch):
     result = runner.invoke(cli.app, ["dispatch", "status", "../other"])
     assert result.exit_code == 2
     assert json.loads(result.output)["state"] == "error"
+
+
+@pytest.mark.parametrize("global_options", [
+    ["--time", "00:10:00"], ["--local-disk-root", "/different"],
+    ["--local-disk"], ["--no-local-disk"], ["--login-node", "ln001"],
+    ["--debug-ssh"], ["--agent-sudo"], ["--no-agent-sudo"], ["--x11"], ["--no-x11"],
+])
+def test_dispatch_refuses_explicit_global_startup_options(monkeypatch, global_options):
+    _no_interactive(monkeypatch)
+    result = runner.invoke(cli.app, [*global_options, "dispatch", "--help"])
+    assert result.exit_code == 2, result.output
+    normalized = " ".join(result.output.split())
+    assert "global startup options" in normalized
+    assert "dispatch submit" in normalized
+
+
+def test_dispatch_keeps_clear_config_routing_refusal(monkeypatch):
+    _no_interactive(monkeypatch)
+    result = runner.invoke(cli.app, ["--config", "/shared/config.yaml", "dispatch", "--help"])
+    assert result.exit_code == 2, result.output
+    assert "current Slurm cluster" in result.output

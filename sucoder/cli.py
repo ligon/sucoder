@@ -1814,6 +1814,17 @@ def main(
                 "dispatch uses the current Slurm cluster; supply its resource "
                 "flags after 'dispatch submit', without --config or --target."
             )
+        explicit_startup = [
+            "/".join(parameter.opts + parameter.secondary_opts)
+            for parameter in ctx.command.params
+            if isinstance(parameter, click.Option) and parameter.name != "version"
+            and ctx.get_parameter_source(parameter.name) is click.core.ParameterSource.COMMANDLINE
+        ]
+        if explicit_startup:
+            raise typer.BadParameter(
+                "dispatch does not accept global startup options: " + ", ".join(explicit_startup) +
+                ". Place supported dispatch options after 'dispatch submit'."
+            )
         ctx.obj = {}
         return
     if ctx.meta.get("observation"):
