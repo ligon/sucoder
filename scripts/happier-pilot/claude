@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Pilot adapter: pass native Claude flags, including the requested session UUID.
+set -euo pipefail
+
+: "${HAPPIER_CLAUDE_PATH:?Set HAPPIER_CLAUDE_PATH to the real Claude executable}"
+if [[ "$HAPPIER_CLAUDE_PATH" != /* || ! -x "$HAPPIER_CLAUDE_PATH" ]]; then
+    echo 'HAPPIER_CLAUDE_PATH must name an absolute executable' >&2
+    exit 2
+fi
+if [[ "$(readlink -f "$HAPPIER_CLAUDE_PATH")" == "$(readlink -f "$0")" ]]; then
+    echo 'HAPPIER_CLAUDE_PATH points back to the pilot adapter' >&2
+    exit 2
+fi
+
+# SuCoder probes the binary before allocating. A probe must neither pair nor
+# create a Happier daemon; report the actual provider's version and help.
+if [[ $# == 1 && ( "$1" == --version || "$1" == --help ) ]]; then
+    exec "$HAPPIER_CLAUDE_PATH" "$@"
+fi
+exec "$(dirname "$0")/control" claude "$@"
