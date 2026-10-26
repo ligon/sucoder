@@ -1,0 +1,79 @@
+#+TITLE: Prior-art ledger — project preparation for dispatched LSMS work
+#+DATE: 2026-10-25
+
+* 1. Task
+
+Extend the reviewed dispatch core at ac7c151 with an optional frozen project
+profile. An LSMS implementer and independent reviewer must use exact source,
+an approved runtime, private writable data and durable proof. Keep the human
+mirror unchanged. The deterministic verifier must consume the private result
+repository and commit. The user authorized implementation and selected the
+country-fix/independent-review workflow.
+
+* 2. Existing machinery
+
+Search tier: fresh GitNexus CLI index, upstream impact including tests, source
+and named tests; Sue independently reviewed the receiving-node boundary.
+
+- =dispatch.submit= :: Already pins source, stages private helpers/digests and
+  handles unknown submission; =tests/test_dispatch.py=. Extend its staging.
+- =dispatch_worker.environment_for= :: Receiving-node environment and CPU
+  budgets; =test_environment_rebinds_node_and_narrowly_inherits_credentials=.
+  Reuse unchanged; project preparation has a separate explicit environment.
+- =dispatch_worker.run_script= :: Bounded helpers, cancellation, heartbeat,
+  private diagnostics; existing helper timeout/cancellation tests. Extend with
+  cwd and reuse its supervision instead of adding another process monitor.
+- =dispatch_worker.verify_checkout= :: Exact clone and source identity; reuse
+  before project preparation and before starting the native agent.
+- =JobOwnership= / =stop_allocation= :: Allocation-scoped cleanup, including
+  reparented helpers. Extend cleanup to pre-agent setup failures.
+- =dispatch_protocol.atomic_json= :: Private atomic receipts; reuse.
+- =dispatch_artifacts= :: Selected evidence and explicit task outcomes; reuse.
+- LSMS =bin/savio_venv.sh mount= :: Approved-image mount/extract and import
+  checks. Reuse with an explicit image share; never call its update path.
+- Existing Savio =burst/burst.sbatch= :: Deterministic verification, inspected
+  SHA256 4570bde91164a2fd2f2432ce6587fef18eb4bb017d8237fc507dbef664c3c8b6.
+  Adapt its repository/commit and runtime inputs; do not add a model dispatcher
+  for deterministic tests or replace the live shared runner during development.
+
+* 3. Definitions
+
+A profile is explicit nonsecret configuration plus a frozen bootstrap and
+approved input identities. Reader credentials are private files, separate from
+native model authentication. Dynamic worker paths are resolved only in the
+receiving allocation. A bootstrap receipt configures the later process through
+validated JSON; exports from a terminated child shell do not configure it.
+Infrastructure completion, worker task claims and scientific acceptance are
+separate. Reviewers verify the candidate privately, before a human integrates
+the LSMS development PR.
+
+* 4. Invariants
+
+Preserve existing dispatch behavior when no profile is supplied. Profiles may
+not overwrite HOME, native homes, scheduler/control/Git identities or increase
+CPU budgets. Writable paths and returned PATH prefixes stay on the receiving
+node. Bootstrap receives no provider secrets by default. Freeze initial helper
+bytes and profile choices; copy and verify approved assets before using them.
+Wrong assets/imports or setup failure prevent native launch. TERM and setup
+failure clean up owned mount/helpers even before a native child exists.
+Never clear shared L2 caches, repoint the mirror's venv or silently copy its
+writable venv master. Preserve missing/unexecuted credentialed checks explicitly.
+
+* 5. Reuse decisions
+
+Extend submit/worker/CLI at the existing verified-checkout boundary. New:
+a portable project-profile preparation helper, because the core intentionally
+has no project contract. Its preparation is shared with deterministic jobs.
+LSMS bootstrap/profile examples and a verifier adaptation belong at that
+boundary, rather than LSMS-specific branches in the generic supervisor.
+
+* 6. Acceptance and remaining decisions
+
+Hermetic tests cover frozen inputs, wrong assets/imports, protected environment,
+private credentials, bounded setup/cancellation and source-preserving private
+commit verification. Replay the existing GH1225 control/candidate selection,
+then a bounded credentialed country check on Savio with positive reader-gate
+evidence. Sue owns independent review and Savio observations after a reviewable
+commit exists. No scientific changes or shared-runner deployment are authorized
+by infrastructure success. Campaign scheduling and automatic retry remain later
+work.
