@@ -769,7 +769,7 @@ def test_runner_places_databases_and_rollout_locally_and_forwards_sigterm(home):
         assert (run_dir / "db" / "state_5.sqlite").exists()
         assert list((run_dir / "home" / "sessions").rglob("rollout-*.jsonl")), "rollout must land in the bound local directory"
         assert not list((home["codex_home"] / "sessions").rglob("*")), "the shared sessions directory stays untouched"
-        assert sorted(status["skipped"]) == sorted([".tmp", "tmp", "shell_snapshots", "app-server-control", "AGENTS.override.md", "history.jsonl"])
+        assert sorted(status["skipped"]) == sorted([".tmp", "tmp", "shell_snapshots", "app-server-control", "AGENTS.override.md", "history.jsonl", "installation_id"])
         owner = json.loads((run_dir / "owner.json").read_text())
         assert {b["target"] for b in owner["bound"]} == {str(home["codex_home"] / d) for d in ("sessions", "thread-writer-locks", "skills", "AGENTS.md")}
         assert (run_dir / "runner.log").read_text().count("SUCODER codex-state") >= 2

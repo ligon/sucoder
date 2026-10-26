@@ -380,3 +380,83 @@ def build_prepare_script(
         .replace("@CANONICAL_REMOTE@", shlex.quote(canonical_remote or ""))
         .replace("@HOOK@", hook)
     )
+
+
+def build_post_commit_hook(remote: str = "origin") -> str:
+    """Reuse the publication hook, optionally pinning a private absolute target."""
+    if remote == "origin":
+        return POST_COMMIT_HOOK
+    if not remote.startswith("/") or "\x00" in remote:
+        raise ValueError("worker publication target must be an absolute path")
+    return (POST_COMMIT_HOOK
+            .replace("git push --quiet origin HEAD:", "git push --quiet " + shlex.quote(remote) + " HEAD:")
+            .replace("run 'git pull --ff-only' and commit again", "inspect the private result publication before continuing")
+            .replace(" -> origin/$branch", " -> private results/$branch"))
+
+
+def build_worker_prepare_script(*, results_path: str, dispatch_id: str, commit: str,
+                                local_disk_root: str = DEFAULT_LOCAL_DISK) -> str:
+    """Prepare an independent pinned worker; never reconcile a shared checkout."""
+    import re
+    if not re.fullmatch(r"[0-9a-f]{32}", dispatch_id):
+        raise ValueError("invalid dispatch id")
+    if not re.fullmatch(r"[0-9a-f]{40,64}", commit):
+        raise ValueError("invalid pinned commit")
+    return "\n".join([
+        "#!/bin/bash", "set -eu", "umask 077",
+        'case "${SLURM_JOB_ID:-}" in ""|*[!0-9]*) exit 1;; esac',
+        cache_exports_sh(local_disk_root),
+        'mkdir -p "$SUCODER_LOCAL_ROOT/mirrors" "$TMPDIR" "$UV_CACHE_DIR" "$PIP_CACHE_DIR" "$npm_config_cache"',
+        "WORK=" + work_path_shell(local_disk_root, "dispatch_" + dispatch_id),
+        'if [ -e "$WORK" ]; then echo "dispatch clone already exists" >&2; exit 1; fi',
+        "git -c protocol.file.allow=always clone --quiet --no-local --no-hardlinks --no-checkout " + shlex.quote(results_path) + ' "$WORK"',
+        'cd "$WORK"',
+        "git checkout --quiet -b " + shlex.quote("dispatch/" + dispatch_id) + " " + commit,
+        "git config user.name 'Sue the Coder'", "git config user.email coder@sucoder.dev",
+        "cat > .git/hooks/post-commit <<'SUCODER_HOOK'", build_post_commit_hook(results_path).rstrip(),
+        "SUCODER_HOOK", "chmod 700 .git/hooks/post-commit", "",
+    ])
+
+
+def build_worker_snapshot_script(*, results_path: str, dispatch_id: str,
+                                 local_disk_root: str = DEFAULT_LOCAL_DISK) -> str:
+    """Capture dirty files with a temporary index into a unique, nonforced ref."""
+    if not results_path.startswith("/") or "\x00" in results_path:
+        raise ValueError("worker publication target must be an absolute path")
+    import re
+    if not re.fullmatch(r"[0-9a-f]{32}", dispatch_id):
+        raise ValueError("invalid dispatch id")
+    return "\n".join([
+        "#!/bin/bash", "set -eu", "umask 077",
+        'case "${SLURM_JOB_ID:-}" in ""|*[!0-9]*) exit 1;; esac',
+        "WORK=" + work_path_shell(local_disk_root, "dispatch_" + dispatch_id),
+        # Tasks may reconfigure Git. Automatic publication must not follow a
+        # new linked worktree, symlink or shared Git metadata redirection.
+        'if [ "$(readlink -f "$WORK")" != "$WORK" ] || [ ! -O "$WORK" ] || [ ! -d "$WORK/.git" ] || [ -L "$WORK/.git" ] || [ ! -O "$WORK/.git" ]; then',
+        '  echo "dispatch snapshot refused: working clone or Git metadata was redirected" >&2; exit 1',
+        'fi',
+        'metadata_symlink=$(find "$WORK/.git" -type l -print -quit) || { echo "dispatch snapshot refused: Git metadata cannot be inspected" >&2; exit 1; }',
+        'if [ -n "$metadata_symlink" ]; then',
+        '  echo "dispatch snapshot refused: Git metadata contains a symlink" >&2; exit 1',
+        'fi',
+        'cd "$WORK"',
+        'actual_git_dir=$(git rev-parse --absolute-git-dir)',
+        'actual_common_dir=$(git rev-parse --git-common-dir)',
+        'actual_common_dir=$(readlink -f "$actual_common_dir")',
+        'actual_top=$(git rev-parse --show-toplevel)',
+        'if [ "$actual_git_dir" != "$WORK/.git" ] || [ "$actual_common_dir" != "$WORK/.git" ] || [ "$actual_top" != "$WORK" ]; then',
+        '  echo "dispatch snapshot refused: Git directory, common directory or worktree was redirected" >&2; exit 1',
+        'fi',
+        # The nonforced commit hook reports a failure without failing a local
+        # commit. Re-publish here so a clean tree cannot hide lost commits.
+        "git push --quiet " + shlex.quote(results_path) + " HEAD:refs/heads/dispatch/" + dispatch_id,
+        'GIT_INDEX_FILE=$(mktemp "$(git rev-parse --git-dir)/dispatch-index.XXXXXXXX")',
+        "export GIT_INDEX_FILE", "trap 'rm -f \"$GIT_INDEX_FILE\"' EXIT",
+        "git read-tree HEAD", "git add -A", "tree=$(git write-tree)",
+        'if [ "$tree" = "$(git rev-parse HEAD^{tree})" ]; then printf \'{"clean":true}\\n\'; exit 0; fi',
+        "snapshot=$(git -c user.name=sucoder-wip -c user.email=sucoder-wip@localhost commit-tree \"$tree\" -p HEAD -m 'Dispatch dirty snapshot')",
+        'nonce=$(basename "$GIT_INDEX_FILE")',
+        'ref="refs/sucoder/dispatch-snapshots/' + dispatch_id + '/${SLURM_JOB_ID}/$(date +%s)-$nonce"',
+        'git push --quiet ' + shlex.quote(results_path) + ' "$snapshot:$ref"',
+        'printf \'{"ref":"%s","commit":"%s"}\\n\' "$ref" "$snapshot"', "",
+    ])

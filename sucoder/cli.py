@@ -84,6 +84,9 @@ app = typer.Typer(cls=ObservationGroup, help="sucoder – Unix-sandboxed agent c
 list_app = typer.Typer(help="Discover configured resources and supported choices.")
 app.add_typer(list_app, name="list")
 
+from .dispatch_cli import app as dispatch_app
+app.add_typer(dispatch_app, name="dispatch")
+
 _SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 
@@ -1803,6 +1806,29 @@ def main(
     ),
 ) -> None:
     """Load configuration once and store it on the Typer context."""
+    if ctx.invoked_subcommand == "dispatch":
+        # Compute-side workers use the current uid and local scheduler, never
+        # interactive SSH, sudo, agent detection, or mirror synchronization.
+        if config is not None or target is not None:
+            raise typer.BadParameter(
+                "dispatch uses the current Slurm cluster; supply its resource "
+                "flags after 'dispatch submit', without --config or --target."
+            )
+        explicit_startup = [
+            "/".join(parameter.opts + parameter.secondary_opts)
+            for parameter in ctx.command.params
+            # Recent Typer versions vendor Click: its Option/ParameterSource
+            # classes differ from the separately installed click module.
+            if hasattr(parameter, "opts") and parameter.name != "version"
+            and getattr(ctx.get_parameter_source(parameter.name), "name", None) == "COMMANDLINE"
+        ]
+        if explicit_startup:
+            raise typer.BadParameter(
+                "dispatch does not accept global startup options: " + ", ".join(explicit_startup) +
+                ". Place supported dispatch options after 'dispatch submit'."
+            )
+        ctx.obj = {}
+        return
     if ctx.meta.get("observation"):
         # JSON observation owns configuration reads and all subprocess budgets.
         # Never run the interactive startup/privilege checks on this route.

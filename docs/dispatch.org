@@ -1,0 +1,133 @@
+#+TITLE: Headless agent dispatch from a compute allocation
+#+DATE: 2026-10-25
+#+AUTHOR: Sue
+
+* Contract
+
+=sucoder dispatch= submits an independent headless agent to the current Slurm cluster.
+It supports Codex and Claude through explicit adapters, with one bounded allocation per worker.
+It does not create tmux sessions, attach a terminal, impersonate another user or synchronize the source repository.
+The first PR supplies this generic lifecycle; project bootstrap and data-access profiles are a separate follow-up.
+The LSMS requirements are recorded in [[file:dispatch-lsms-followup.org][the LSMS integration plan]].
+The dispatch command runs under the coordinating agent's current account and bypasses interactive SuCoder startup checks.
+Use a release containing this command, and check =sucoder dispatch --help= outside a source checkout before relying on the installed executable.
+
+The source repository, native configuration/authentication source, agent executable and result directory must be available from the receiving node.
+The source must be a full repository on shared storage.
+Partial/promisor repositories refuse before dispatch rather than hydrate excluded objects.
+The coordinator's =/local/job...= checkout is not a shared source.
+Uncommitted source edits are not included.
+
+Dispatch resolves =--ref= to an immutable commit and snapshots that source into a private bare result repository.
+The worker creates its full clone on its own =/local/job$SLURM_JOB_ID= and checks out =dispatch/<dispatch-id>= at the pinned commit.
+Normal commits and append-only dirty snapshots publish to the private result repository, not the source repository.
+The coordinator reviews and integrates the resulting work explicitly.
+
+* Submit and observe
+
+This is the compute-side entry point; explicitly supplied global startup options are refused rather than ignored.
+Place resource and local-root options after =dispatch submit=; global =--target= and =--config= do not route this command remotely.
+Supply resource requests explicitly, within the account and partition available to the coordinating agent.
+The following paths are examples, and the task file must already contain the worker's concrete assignment.
+
+#+begin_src shell
+sucoder dispatch --root /shared/private/dispatch submit /shared/project \
+  --ref <full-commit> --agent codex --task-file /shared/private/task.txt \
+  --account co_carleton --partition savio4_htc --qos carleton_htc4_normal \
+  --cpus 1 --mem 8G --time 00:30:00 --exclude <coordinator-node>
+#+end_src
+
+Use =--agent claude= for Claude's headless print mode.
+=--model= selects a native model; =--executable= selects an executable available on every receiving node.
+=--agent-home= selects a shared native configuration/authentication source.
+The default source is the user's native =~/.codex= or =~/.claude=, not an inherited managed coordinator home.
+=--claude-user-config= overrides the shared Claude user configuration seed.
+The worker copies selected configuration/authentication seeds into private homes; Codex retains a stable private canonical home for recovery while the managed runner binds its hot state onto local storage.
+An allowlist carries supported provider credentials through a private file rather than command arguments or the entire coordinator environment.
+Task content, requested model, worker helpers and required evidence names are frozen at submission.
+Native authentication/configuration seeds are read at worker startup; freezing a complete project/runtime profile is part of the follow-up rather than a guarantee of this initial interface.
+
+Submission prints JSON containing the dispatch ID, pinned commit, private artifact directory and Slurm receipt.
+The dispatch ID is distinct from the numeric Slurm job ID.
+Use =--dry-run= to validate the request and inspect the planned submission without writing artifacts or contacting Slurm.
+
+#+begin_src shell
+sucoder dispatch --root /shared/private/dispatch status <dispatch-id>
+sucoder dispatch --root /shared/private/dispatch wait <dispatch-id> --timeout 60
+sucoder dispatch --root /shared/private/dispatch logs <dispatch-id> --stream stderr
+sucoder dispatch --root /shared/private/dispatch result <dispatch-id>
+#+end_src
+
+=wait= succeeds only for an explicit successful worker result.
+It propagates a nonzero worker exit when available; a timeout or unavailable result exits nonzero.
+An empty queue query never establishes successful completion.
+A timed-out or malformed submission receipt is =submission_unknown=, because Slurm may already have accepted the job.
+Reconcile the recorded =sucoder-dispatch:<dispatch-id>= job comment before submitting a replacement.
+Do not retry an unknown submission blindly.
+Automatic Slurm requeue is disabled for the single-use staged launch.
+The request reserves a 120-second early TERM window and refuses time limits shorter than two minutes.
+
+The scheduler allocation ends when the worker supervisor exits.
+The coordinator can use the recorded native job ID with Slurm's cancellation tools; dispatch does not keep a persistent allocation alive.
+
+* State and results
+
+The worker discards inherited coordinator runtime/control bindings, uses the receiving allocation's own root and verifies its actual filesystem.
+Its writable home, agent state, temporary files and caches live on local storage.
+Observed agent database, WAL and SHM descriptors must be local; misplaced or unreadable placement evidence refuses successful completion.
+No observed SQLite is reported explicitly and is not presented as proof that an agent never opens SQLite.
+
+Codex runs through the existing managed state runner, with a fresh dispatch-specific scope and the existing checkpoint lifecycle.
+Its private canonical home has a stable name in the dispatch directory; the runner binds hot state to local storage and passes the local SQLite override.
+Cold configuration/authentication copies remain private and outside conversation generations.
+The installation identity seed is unique to the dispatch, and its live lockfile uses the existing node-local file binding rather than NFS locking.
+The result records process exit, placement and state preservation separately.
+The independent final-seal race tracked by issue 70 can still prevent a sealed preservation claim after a clean exit.
+Dispatch does not ignore that failure or substitute a raw Codex process.
+
+Claude runs in native headless print mode with a private local home and configuration directory.
+Stopped text/JSON state can be preserved privately; raw SQLite databases and sidecars are not copied as ordinary files.
+Reproducible plugin/skill inventories, Git metadata and caches are excluded from that conversation archive; project memory remains eligible, and exclusions are recorded.
+Agent-specific recovery guarantees remain explicit rather than treating every agent's state format as interchangeable.
+
+Each private artifact directory includes the source/worker manifest, scheduler receipt, status, final result, logs and =results.git=.
+=MESSAGES_TO_AGENT.txt= and =QUESTIONS_FROM_AGENT.txt= in the shared dispatch directory provide a file channel for steering and questions, created before the agent starts.
+The prelude names their absolute paths; checkout symlinks are conveniences and never replace source files with those names.
+The task prelude tells the worker to inspect that channel at checkpoints; it does not make an otherwise interactive prompt usable headlessly.
+Ignored files are not included in Git snapshots, consistent with the existing local-tier convention.
+That exclusion does not apply to selected verification evidence.
+The worker receives =SUCODER_DISPATCH_EVIDENCE_DIR= naming a private shared =evidence/= directory for chosen logs, JUnit and proof operands.
+It never automatically copies a data cache or scans ignored source files for publication.
+Final =evidence-manifest.json= records selected filenames, sizes and SHA256 digests; symlinks, database files, changing files, public files and oversized artifacts make publication incomplete.
+The initial limits are 64 MiB per file and 256 MiB total; larger project outputs require a separate explicit publishing policy.
+Use repeatable =--require-evidence junit.xml= options to make missing proof files a failed infrastructure result.
+
+Git/WIP snapshots run every =--snapshot-minutes= (default ten minutes) and on orderly exit or TERM cleanup.
+Snapshot refs are append-only, and the result/status records the latest observed publication and time.
+SIGKILL cannot trigger a final snapshot; only the already published refs and evidence are durable.
+Codex's own final checkpoint remains inside the existing runner lifecycle and can precede the supervisor's final Git snapshot.
+No result claims that an unpublished interval was preserved.
+
+The result schema is versioned independently from the CLI's human help.
+It separates native and supervisor exit, placement, Git/evidence publication, conversation preservation and the worker's reported task outcome.
+An exit-zero agent with failed placement, failed publication or a required unsealed conversation does not yield infrastructure success.
+The worker can write =SUCODER_DISPATCH_TASK_RESULT= with =status= (=completed=, =blocked=, =unfinished= or =scientific_disagreement=), =summary= and =unexecuted= checks.
+Missing or malformed task reports remain explicit; they are never inferred from native exit status.
+Coordinator scientific acceptance always remains pending.
+=wait= reports infrastructure completion by default; =--require-task-complete= additionally requires the worker's completion claim and exits 4 otherwise.
+
+Status includes the current phase, observation/heartbeat time, heartbeat age, publication facts and preservation status.
+A fresh heartbeat establishes supervisor liveness, not task progress.
+Receipt and result identity include dispatch ID, cluster, uid and scheduler job ID; missing source identity remains unknown.
+Automatic merging, automatic retry and a second checkpoint/recovery protocol are outside this command's initial scope.
+
+* Implementation and validation
+
+The reuse inventory and invariants are recorded in [[file:dispatch-ledger.org][the dispatch ledger]].
+Local-tier preparation has a dedicated exact-commit path so the existing interactive branch and WIP behavior remains unchanged.
+The standalone receiving-node supervisor uses the existing managed runner and descriptor helpers.
+Shared protocol constants keep controller and worker environment and status contracts consistent.
+
+Deterministic tests use disposable repositories and fake Slurm/agent processes.
+Live acceptance must run in separate allocations, including concurrent workers on different nodes, and retain actual descriptor/mount and source-preservation evidence.
+Never test nested real Codex workers under a managed coordinator whose placement monitor owns its descendants.

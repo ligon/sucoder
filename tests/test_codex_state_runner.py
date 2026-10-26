@@ -1319,6 +1319,53 @@ def _log(tmp_path):
     return (tmp_path / "runner.log").read_text()
 
 
+def test_installation_identity_is_bound_to_private_local_file(runner, tmp_path):
+    canonical, local = tmp_path / "canonical", tmp_path / "local"
+    (canonical / "sessions").mkdir(parents=True)
+    local.mkdir()
+    identity = "11111111-1111-4111-8111-111111111111"
+    (canonical / "installation_id").write_text(identity)
+    binds, skipped = runner.prepare_binds(str(canonical), str(local))
+    assert (str(local / "installation_id"), str(canonical / "installation_id")) in binds
+    assert (local / "installation_id").read_text() == identity
+    assert (local / "installation_id").stat().st_mode & 0o077 == 0
+    (local / "installation_id").write_text("local native update")
+    assert (canonical / "installation_id").read_text() == identity
+
+
+def test_reused_local_installation_identity_is_not_overwritten(runner, tmp_path):
+    canonical, local = tmp_path / "canonical", tmp_path / "local"
+    (canonical / "sessions").mkdir(parents=True)
+    local.mkdir()
+    (canonical / "installation_id").write_text("cold seed")
+    runner.prepare_binds(str(canonical), str(local))
+    (local / "installation_id").write_text("existing native identity")
+    (canonical / "installation_id").write_text("changed cold seed")
+    binds, skipped = runner.prepare_binds(str(canonical), str(local), keep_existing=True)
+    assert (str(local / "installation_id"), str(canonical / "installation_id")) in binds
+    assert (local / "installation_id").read_text() == "existing native identity"
+
+
+def test_remote_owner_identity_binding_still_overrides_normal_identity(runner, tmp_path):
+    canonical, local, database = tmp_path / "canonical", tmp_path / "local", tmp_path / "db"
+    (canonical / "sessions").mkdir(parents=True)
+    local.mkdir()
+    database.mkdir()
+    identity = "11111111-1111-4111-8111-111111111111"
+    (canonical / "installation_id").write_text(identity)
+    binds, skipped = runner.prepare_binds(str(canonical), str(local))
+    remote_identity, remote_binding = runner.prepare_remote_identity(str(database), str(local), str(canonical))
+    binds.append(remote_binding)  # run() preserves this ordering
+    argv = runner.bwrap_argv(binds, ["true"])
+    target = str(canonical / "installation_id")
+    sources = [argv[index + 1] for index, value in enumerate(argv)
+               if value == "--bind" and argv[index + 2] == target]
+    assert sources == [str(local / "installation_id"), remote_binding[0]]
+    assert Path(remote_binding[0]).read_text() == remote_identity
+    assert remote_identity != identity
+    assert (canonical / "installation_id").read_text() == identity
+
+
 class InProcess:
     """A Checkpointer over real stores, a real rollout and a real Replicator
     whose passes the test drives by hand; nothing is started, a capture is

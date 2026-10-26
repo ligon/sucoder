@@ -1,0 +1,77 @@
+#+TITLE: Prior-art ledger - headless worker dispatch
+#+DATE: 2026-10-25
+#+AUTHOR: Sue
+
+* 1. Task and evidence
+
+Implement a compute-side =sucoder dispatch= command for independent headless Codex and Claude workers on Slurm.
+The user broadened issue 72 from Codex SQLite placement to agent-independent workspace, cache and state tiering, and explicitly selected Codex and Claude as the first adapters.
+The implementation base is =debae3ff2071ee27cb9c6bc20963d16d09c88b52=.
+Read the existing =.coder/ledger.md= and its recent history; preserve its managed-state ownership and recovery invariants.
+Search uses git, ripgrep, AST inspection, installed Claude help, and existing tests.
+GitNexus upstream impact for =cli.main= was attempted before editing; its existing native dependency cannot load =libssl.so.3= on this host.
+Do not claim a successful graph analysis; review source callers and execution routes and run the command again before committing.
+
+* 2. Existing machinery and tests
+
+- =sucoder/local_tier.py:local_root_shell=, =work_path=, =work_path_shell=, =cache_exports_sh= :: Reuse receiving-allocation paths and cache environment. Covered by =tests/test_local_tier.py=.
+- =sucoder/local_tier.py:POST_COMMIT_HOOK= :: Reuse nonforced commit publication, with an absolute private publication target pinned independently of mutable origin configuration. Never install this against the source repository.
+- =sucoder/local_tier.py:build_prepare_script= :: Existing interactive preparation follows the shared branch, reconciles and restores WIP. A headless worker needs a separate pinned path; do not silently change interactive semantics.
+- =sucoder/slurm_timer.py:WIP_SNAPSHOT_SH= :: Existing temporary-index/commit-tree snapshot technique preserves the real index. Dispatch needs append-only private snapshot refs rather than overwriting the existing WIP ref.
+- =sucoder/mirror.py:_build_batch_script= :: Existing implementation depends on tmux and a keeper. Reuse resource and path conventions, not that interactive process lifecycle. Covered by =tests/test_batch_script.py= and =tests/test_sbatch_command.py=.
+- =sucoder/codex_state.py:scope_id=, =with_sqlite_home_placeholder=, =runner_command=, =runner_source= :: Reuse the managed runner contract and checkpoint lifecycle. Covered by =tests/test_codex_state.py= and =tests/test_codex_state_runner.py=.
+- =sucoder/codex_state_runner.py:inspect_file_mounts= :: Add a metadata-only descriptor/mount query for dispatch; it never stats remote descriptor targets and does not change the interactive monitor. Covered by =tests/test_dispatch_mounts.py=.
+- =sucoder/codex_state_runner.py= :: Standard-library staged helper, process supervision, private local state, descriptor inspection and checkpointing. Worker startup must rebind the receiving job root and clear inherited coordinator bindings before invoking it.
+- =sucoder/config.py:AgentType= and =AGENT_PROFILES= :: Existing harness identities and permission/model conventions. Interactive profile commands are not automatically headless commands.
+- =sucoder/mirror.py:_write_agent_environment_file= :: Existing credential precedent: private file, no secret in argv or logs. Dispatch must use a private credential file rather than exporting the coordinator's complete environment.
+- =sucoder/cli.py:main= :: Interactive startup checks must be bypassed for the compute-side dispatch group. Keep all other command routes unchanged.
+- =sucoder/observation_cli.py:ObservationGroup= :: Precedent for identifying a noninteractive command before startup checks; do not widen observation privilege or relay authority.
+- =docs/agent-interface-contract.org= :: Unknown is not absence; job IDs require source identity. Dispatch records the cluster and owning uid and does not infer successful completion from an empty scheduler query.
+
+* 3. Definitions and conventions
+
+A dispatch is a bounded Slurm job with one independent headless worker and a unique dispatch ID.
+The source is an immutable, committed Git object available from a shared repository; the coordinator's node-local checkout is not a cross-node source.
+The source repository is read-only to dispatch; worker commits and dirty snapshots are durable in a separate private bare result repository.
+The worker uses a full clone, not a Git worktree with its index on shared storage.
+Live agent state belongs on the receiving node; durable snapshots and results belong on shared storage.
+Codex and Claude command adapters are explicit; an unknown harness must refuse rather than inherit interactive flags.
+Headless means no terminal, tmux, app-server attachment or interactive approval prompt.
+
+* 4. Invariants
+
+Never reuse an inherited coordinator =SUCODER_LOCAL_ROOT=, runtime identity or remote-control receipt.
+Resolve =SLURM_JOB_ID= inside the receiving allocation and verify its local filesystem.
+Do not hydrate partial source repositories or mutate their refs, index, checkout or configuration.
+Pin and recheck the requested source commit; never guess from the source's checked-out branch.
+Private prompts, credentials, logs and state require private directories and files; secrets never belong in command arguments or diagnostics.
+No success claim without an explicit worker result; scheduler failure and absent/unreadable result remain distinct.
+Process exit and state preservation are separate facts; issue 70 can still produce a crash generation after a clean Codex exit.
+Do not copy live SQLite databases and sidecars as ordinary files.
+Preserve current interactive launch, synchronization and recovery behavior.
+
+* 5. Reuse decisions
+
+- Reuse :: Local path/cache helpers, nonforced commit hook, managed Codex runner and its standard-library descriptor helpers.
+- Extend :: Shared local-tier preparation with an exact-commit worker path, keeping the interactive path intact.
+- New :: Dispatch manifest, private job/result directory and bounded Slurm submission/status/wait interfaces, because interactive session records and tmux panes do not represent headless jobs.
+- New :: Shared protocol constants and atomic receipts, selected evidence hashes and explicit task outcomes, because Git/conversation preservation does not represent scientific verification operands.
+- New :: Headless adapter boundary and receiving-node worker supervisor, because installed interactive commands do not supply these contracts.
+- Defer :: Automatic integration and automatic resubmission/recovery. Preserve explicit state lineage and existing managed-runner recovery artifacts rather than creating a second recovery protocol.
+
+* 6. Validation and decisions
+
+The first adapters are Codex and Claude, selected by the user.
+Unit tests must cover stale inherited bindings, source pinning, private results, refusal of shared state placement, bounded submission/wait failures and exact exit propagation.
+Use fake executables for deterministic tests and separate Slurm allocations for real-agent acceptance, including concurrent workers on different nodes.
+Do not run nested real Codex processes under this managed coordinator; its placement monitor treats their stores as this session's descendants.
+No production research repository or installed CLI is a test fixture.
+
+The final code reuses the ledger machinery rather than replacing interactive lifecycle paths.
+GitNexus remains unavailable because its native library requires =libssl.so.3=; manual callers and the four-file existing-code diff bound review scope.
+The user selected generic core first, with project bootstrap/data/runtime acceptance deferred to the LSMS follow-up.
+
+Live native startup found that Codex 0.164 locks =CODEX_HOME/installation_id= even when SQLite is local.
+Extend existing =BIND_FILES= for an existing regular installation identity; the dispatch seeds its own UUID, and the later remote-control identity binding keeps precedence.
+This optional file binding is the only existing managed-runner behavior extension; unknown hot state still requires observed placement evidence.
+The new in-process fake-worker wrapper restores its caller umask so standalone supervisor setup cannot leak into unrelated tests.
