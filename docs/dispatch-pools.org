@@ -1,0 +1,82 @@
+#+title: Workers in an existing Slurm allocation
+
+* Scope
+=dispatch pool= attaches to an already held, owned, running single-node allocation.
+It does not create or release allocations, install tools, or start raw Codex.
+The ordinary =dispatch submit= whole-job path is unchanged.
+Each pool worker is one numeric Slurm step with its own receiving-node root:
+=/local/job<ID>/workers/<dispatch-id>=.
+Managed SQLite, HOME, checkout, data, caches and temporary files live below it.
+Do not use a project bootstrap that hardcodes the allocation-wide runtime path.
+
+* Attach and submit
+Use a new private directory on shared storage for each allocation pool.
+CPU and memory budgets below are the TOTAL worker budget, after subtracting
+coordinator, keeper and verifier capacity. The pool does not change the parent
+batch step's affinity or prove that its mask is disjoint from the workers.
+The scheduler must support exclusive exact steps inside the held allocation.
+Node names must match Slurm's NodeList and receiving SLURMD_NODENAME exactly.
+Cutoffs are finite Unix timestamps, interpreted against the scheduler EndTime.
+
+#+begin_src sh
+sucoder dispatch pool attach /shared/private/pool-A \
+  --job-id 123 --node node.example --cpus 4 --mem 32G \
+  --submit-before 1793000000 --worker-deadline 1793003600 --expires 1793005400 \
+  --source /local/job123/assets/source.git \
+  --image /local/job123/assets/venv.sqfs --image-sha256 FULL_SHA256
+sucoder dispatch --root /shared/private/workers pool submit \
+  /shared/private/pool-A /shared/full/source-repository \
+  --ref FULL_COMMIT_SHA --task-file /shared/private/task.org \
+  --agent codex --executable /shared/tools/codex \
+  --agent-home /shared/private/cold-auth-home \
+  --project-profile /shared/private/profile.json \
+  --cpus 1 --mem 8G --time 01:00:00
+#+end_src
+
+An explicit private, self-contained =results.git= is staged before launch.
+Receiving preparation clones the immutable allocation cache, then fetches the
+exact requested SHA from that worker's private results repository. A new author
+commit can therefore be reviewed without mutating the allocation cache.
+No moving branch or remote provider hydration is used.
+Cold credentials retain the existing per-worker private seeding contract and
+are never part of the allocation asset cache.
+
+* Asset and bootstrap contract
+The controller records allocation-local paths but cannot inspect another node's
+=/local=. The receiver verifies the image SHA256, read-only mode and actual local
+mount; the bare source must be full, self-contained and non-promisor.
+A private allocation-local receipt plus atomic mkdir lock verifies image bytes
+and source connectivity once per pool. Subsequent workers verify the recorded
+inode/size/mtime/mode and source refs. This is cooperative same-uid immutability,
+not protection against a malicious process with the same Unix identity.
+No mount daemon is shared: a project may mount the immutable image privately.
+
+The supervisor supplies these protected bootstrap inputs:
+- =SUCODER_LOCAL_ROOT=: unique worker-local root.
+- =SUCODER_POOL_IMAGE=: verified allocation-local image file.
+- =SUCODER_POOL_IMAGE_SHA256=: pinned image digest.
+- =SUCODER_POOL_SOURCE_REPOSITORY=: immutable allocation-local bare source cache.
+
+* Observation, stop and conservative reservations
+=dispatch pool status POOL= reconciles exact receiving step receipts and queries
+that step, never the parent job or a sibling with a similar numeric prefix.
+=dispatch pool stop-worker POOL DISPATCH_ID= requests TERM for =job.step= only.
+The supervisor traps TERM, enumerates every owned step member (including detached
+daemons), rechecks PID incarnation before signals, and publishes stopped state.
+All error/normal-exit cleanup uses the same step owner. No pool command cancels
+the allocation. Ordinary dispatch status/result/logs also accept pooled workers.
+
+CPU/memory reservations are serialized by atomic directory creation, not NFS
+flock. Locks are not stolen by age. A launch without a receiving receipt remains
+submission_unknown; it is never retried automatically. A late receiving receipt
+can be reconciled without launching anything. Budget is released only on exact
+step-terminal scheduler evidence, not native exit zero or a task completion file.
+Unknown scheduler state and pre-submission failures retain their reservation;
+manual reconciliation is required rather than assuming no step exists.
+The detached srun frontend remains on the submitting host; loss of that host is
+not claimed to provide portable frontend recovery or automatic resubmission.
+
+The worker begins shutdown 120 seconds before the earlier requested-duration or
+pool worker deadline. Slurm's time request is an additional hard bound.
+Publication receipts distinguish complete, incomplete and unverified outcomes;
+no CLI exit alone proves scientific or infrastructure acceptance.

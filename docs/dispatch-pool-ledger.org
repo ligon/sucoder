@@ -42,3 +42,30 @@ coordinator and sibling workers. Explicit binding and negative tests are require
 * Outcome
 Implementation and deterministic test results will be recorded additively.
 No actual worker or scheduler acceptance has run under this change.
+
+** Source implementation qualification
+Reuse now includes immutable base cloning followed by an exact-SHA fetch from
+the already staged private results.git. This supports a newly authored reviewer
+candidate without changing cache refs. Both source and worker-child actual
+mounts are checked before managed state/project writes.
+Slurm step state is queried through scontrol, not job-format %T on squeue -s.
+Blank accounting step UID is accepted only with exact parent UID/node/StartTime,
+receiving step proof, and exact step node/start-time bounds. A terminal parent
+alone is never a worker release proof.
+The requested duration and global cutoff both bound the publication deadline.
+New Git transfers pin pack.threads=1 only on the pool path.
+
+** Deterministic verification before scheduler release
+Fake-only suite v8: 282 passed, 480 pre-existing Typer deprecation warnings.
+Final targeted suite v9: 52 passed, including independently authored ownership
+and actual-Slurm-output fixtures. No real Slurm or native model was started.
+Logs/JUnit are under /local/job40498884/control/pool77-tests-v*. Earlier failed
+preparations remain: missing pytest in the old private interpreter; test-fixture
+import path; and a synthetic step date that was future in the local timezone.
+The latter was corrected in test data only, preserving start-time refusal.
+Final full exact-commit confirmation will be recorded separately.
+GitNexus detect-changes was attempted before commit and failed with the same
+libssl.so.3 native-module error; no tool installation was changed. Manual
+call-site review and independent source review cover the high-impact ownership
+boundary. Actual supervisor/sibling/daemon survival and native local-SQLite
+placement remain root-owned release gates.

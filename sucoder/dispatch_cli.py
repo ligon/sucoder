@@ -28,6 +28,10 @@ def _error(exc):
     raise typer.Exit(2)
 
 
+from .dispatch_pool_cli import app as pool_app
+app.add_typer(pool_app, name="pool")
+
+
 @app.callback()
 def main(ctx: typer.Context, root: Path = typer.Option(
         control.DEFAULT_DIRECTORY_ROOT, "--root", help="Private dispatch records on shared storage.")):
