@@ -86,3 +86,14 @@ The requested ownership/cleanup/mount AST closure is identical too, recorded in
 /local/job40498884/control/pool77-actual-cleanup-closure.json. This is narrow
 cleanup acceptance, not complete dispatch.run/project/native placement proof.
 Root retains those native canary release and interpretation responsibilities.
+
+** Additive pool-only clone transport correction
+Root observed pool source staging spend several minutes in upload-pack/pack-objects
+before any worker was launched. This is a measured transport cost, not a filesystem
+failure diagnosis. The original transaction and its eventual result stay intact.
+Plan: use Git's local-copy path with --no-hardlinks only for explicitly owned,
+full, non-alternate/non-shallow pool sources, preserving the ordinary job path.
+Receiving immutable-cache cloning uses the same independent-copy transport.
+Verify copied object inode separation, self-contained closure and unchanged source
+bytes/refs with disposable repositories; do not accept alternates or symlinked
+objects. Existing exact-SHA private-results fetch remains unchanged.
