@@ -1,0 +1,44 @@
+#+title: Existing-allocation worker dispatch -- issue 77
+
+* Scope and existing machinery
+Based on aa79d455447f9b297e425a1ec874fbb5c284faad, including accepted
+34070a0. Extend dispatch submission, private publication, managed runner,
+project profiles and receiving-node placement checks. Do not launch raw Codex.
+No scientific LSMS changes, pool creation daemon, shared installation or runtime
+mount ownership change is included.
+
+* Ownership and invariants
+JobOwnership remains the default for independent jobs. A validated pool binding
+selects StepOwnership(job_id, step_id, proc_root, uid, supervisor_pid), matching
+numeric step components in every observed Slurm hierarchy and PID incarnation.
+All existing cleanup call sites use that owner; no pool action cancels a job.
+Each worker uses /local/job<ID>/workers/<dispatch-id> for managed state, SQLite,
+checkout, data, caches and temporary files. Shared immutable image bytes may be
+read from an explicitly pinned allocation asset cache; mounts remain private.
+
+* Reuse plan
+Reuse dispatch.submit staging and durable results.git publication. An internal
+execution binding changes only scheduling to srun in an already owned allocation.
+Pool attach validates scheduler uid, node, capacity and end time. Atomic mkdir
+locking serializes conservative CPU/memory reservations; unknown submissions
+retain budget until exact step terminal proof. No age-based lock stealing.
+Reuse project profiles without new generic scientific or credential policy.
+
+* Verification plan
+Fake /proc and scheduler tests cover step 4 versus 40, sibling/batch/extern,
+UID/incarnation changes, inconsistent hierarchies, resource overcommit,
+expiry, ambiguous submission, asset identity and cleanup. Existing job dispatch
+tests must retain behavior. Native/scheduler acceptance belongs to root release.
+
+* Impact map and tooling limitation
+Before edits, gitnexus impact JobOwnership --direction upstream failed because
+its native LadybugDB module cannot load libssl.so.3, the same limitation recorded
+in dispatch-ledger.org. No shared tool repair. Manual review covers every
+stop_allocation call in dispatch_worker.run, receiving_root/environment_for,
+local_tier prepare/snapshot builders, dispatch receipt/status matching and CLI.
+Step cleanup has high impact: accidentally selecting JobOwnership would signal
+coordinator and sibling workers. Explicit binding and negative tests are required.
+
+* Outcome
+Implementation and deterministic test results will be recorded additively.
+No actual worker or scheduler acceptance has run under this change.
