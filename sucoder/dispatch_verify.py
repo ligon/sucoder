@@ -141,7 +141,7 @@ def source_identity(work, commit, environment):
     metadata = Path(work) / ".git"
     if metadata.is_symlink() or not metadata.is_dir():
         raise ValueError("verification Git metadata is no longer a private directory")
-    command = ["git", "--no-optional-locks", "-C", work, "-c", "core.fsmonitor=false",
+    command = ["git", "--no-replace-objects", "--no-optional-locks", "-C", work, "-c", "core.fsmonitor=false",
                "-c", "core.untrackedCache=false"]
 
     def git(*args, **kwargs):

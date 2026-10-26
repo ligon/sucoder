@@ -200,3 +200,28 @@ def test_source_is_checked_after_detached_writer_stops(verification, tmp_path):
     assert events == ["identity", "stopped", "identity"]
     result = json.loads((Path(report["directory"]) / "verification-result.json").read_text())
     assert result["source_identity"]["state"] == "drifted"
+
+
+def test_git_replacement_objects_cannot_substitute_the_frozen_tree(verification, tmp_path):
+    case = verification
+    command = '''import subprocess
+from pathlib import Path
+def git(*args):
+    return subprocess.check_output(['git', *args]).decode().strip()
+original = git('rev-parse', 'HEAD')
+Path('answer.py').write_text('OK = True\\n')
+git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qam', 'substitute')
+replacement = git('rev-parse', 'HEAD')
+git('replace', original, replacement)
+git('update-ref', 'HEAD', original)
+assert git('rev-parse', 'HEAD') == original
+import answer
+assert answer.OK
+'''
+    case["command"].write_text(json.dumps(["{python}", "-c", command]))
+    report = freeze(case, tmp_path, case["control"], "replace-objects")
+    assert run(case, report, 234) == 70
+    result = json.loads((Path(report["directory"]) / "verification-result.json").read_text())
+    assert result["command_exit_code"] == 0
+    assert result["source_identity"] == {"state": "drifted", "actual_commit": case["control"],
+        "expected_commit": case["control"], "index_clean": False, "tracked_clean": False}
