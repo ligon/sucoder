@@ -419,3 +419,20 @@ def test_promisor_marker_refuses_even_without_config(source):
     (metadata / 'objects/pack/empty.promisor').write_bytes(b'')
     with pytest.raises(ValueError, match='promisor'):
         assets.validate_local_source(str(metadata))
+
+
+def test_pool_batch_resolves_absolute_receiving_python_without_exported_path(attached, source, monkeypatch):
+    monkeypatch.setattr(pool, 'launch_step', lambda directory, manifest, argv, report, timeout: report)
+    report = pool.submit(attached, **request(source))
+    directory = Path(report['directory'])
+    # Only this disposable staged worker is replaced: no managed runner,
+    # provider, model, or scheduler runs. Exercise the actual generated batch.
+    (directory / 'worker.py').write_text('import json, sys\nprint(json.dumps({"executable": sys.executable, "manifest": sys.argv[1]}))\n')
+    completed = subprocess.run(['/bin/bash', str(directory / 'batch.sh')], env={'LC_ALL': 'C'},
+                               cwd='/tmp', text=True, capture_output=True, timeout=10)
+    assert completed.returncode == 0, completed.stderr
+    observed = json.loads(completed.stdout)
+    assert os.path.isabs(observed['executable'])
+    assert observed['manifest'] == str(directory / 'manifest.json')
+    assert os.access(observed['executable'], os.X_OK)
+    assert 'SUCODER_RECEIVING_PYTHON' in (directory / 'batch.sh').read_text()

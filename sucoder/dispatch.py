@@ -309,7 +309,17 @@ def submit(repo, ref, task_file, agent, executable, resources, *, model=None,
     if project is not None:
         _private_write(directory / "dispatch_project.py", Path(__file__).with_name("dispatch_project.py").read_text())
         project_files.append("dispatch_project.py")
-    _private_write(directory / "batch.sh", "#!/bin/bash\nset -eu\numask 077\nexec python3 " + shlex.quote(str(directory / "worker.py")) + " " + shlex.quote(str(directory / "manifest.json")) + "\n", True)
+    interpreter = "exec python3 "
+    if _execution is not None:
+        # Resolve on the receiver, not the controller. With --export=NONE,
+        # Bash can have an unexported default PATH; CPython started as bare
+        # 'python3' may then report sys.executable == ''. The managed runner
+        # must receive an actual interpreter path for its own subprocess.
+        interpreter = ('SUCODER_RECEIVING_PYTHON=$(command -v python3)\n'
+                       'case "$SUCODER_RECEIVING_PYTHON" in /*) ;; *) exit 70;; esac\n'
+                       'test -x "$SUCODER_RECEIVING_PYTHON"\n'
+                       'exec "$SUCODER_RECEIVING_PYTHON" ')
+    _private_write(directory / "batch.sh", "#!/bin/bash\nset -eu\numask 077\n" + interpreter + shlex.quote(str(directory / "worker.py")) + " " + shlex.quote(str(directory / "manifest.json")) + "\n", True)
     _write_json(directory / "digests.json", {name: hashlib.sha256((directory / name).read_bytes()).hexdigest() for name in ["task.txt", "prepare.sh", "snapshot.sh", "runner.py", "worker.py", "dispatch_protocol.py", "dispatch_artifacts.py", "environment.json", "manifest.json"] + project_files})
     # Persist the token before contacting Slurm. A crash here is conservatively unknown.
     report["state"] = "submission_unknown"
