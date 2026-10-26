@@ -565,6 +565,28 @@ def prompt_for(manifest, work):
                       manifest["directory"], manifest["directory"]) + task).encode("utf-8")
 
 
+def process_has_exited(pid, proc_root):
+    """Confirm a proc-inspection race, preserving ledger section 4's live guard.
+
+    Linux revokes fd access for zombies before their proc directory vanishes.
+    Missing or unreadable stat inside an existing process directory is NOT
+    proof of exit. Never stat a descriptor target to decide liveness.
+    """
+    base = os.path.join(proc_root, str(pid))
+    try:
+        with open(os.path.join(base, "stat")) as stream:
+            return stream.read().rsplit(")", 1)[1].split()[0] in ("Z", "X")
+    except OSError as exc:
+        if exc.errno in (errno.ENOENT, errno.ESRCH):
+            try:
+                os.stat(base)
+            except OSError as gone:
+                return gone.errno in (errno.ENOENT, errno.ESRCH)
+    except IndexError:
+        pass
+    return False
+
+
 def inspect_placement(child, runner, root, home, proc_root="/proc", expected_environment=None,
                       ownership=None, manifest=None):
     """Reuse the managed runner's process/FD machinery, checking readability."""
@@ -576,26 +598,33 @@ def inspect_placement(child, runner, root, home, proc_root="/proc", expected_env
         try:
             entries = os.listdir(path)
         except OSError as exc:
-            if exc.errno in (errno.ENOENT, errno.ESRCH):
+            if (exc.errno in (errno.ENOENT, errno.ESRCH)
+                    or exc.errno in (errno.EACCES, errno.EPERM) and process_has_exited(pid, proc_root)):
                 continue  # process teardown can remove fd/ before its proc dir
             raise Refused("cannot inspect owned child file descriptors (pid=%s errno=%s)" % (pid, exc.errno))
         # Descriptor links are proc metadata: never stat a magic FD link,
         # which would touch the target filesystem and could block on NFS.
+        exited = False
         for entry in entries:
             try:
                 descriptor = os.path.join(path, entry)
                 os.readlink(descriptor)
             except OSError as exc:
                 if exc.errno not in (errno.ENOENT, errno.ESRCH):
+                    if exc.errno in (errno.EACCES, errno.EPERM) and process_has_exited(pid, proc_root):
+                        exited = True
+                        break
                     raise Refused("cannot inspect owned child descriptor links (pid=%s errno=%s)" % (pid, exc.errno))
-        readable.append(pid)
+        if not exited:
+            readable.append(pid)
     environment_verified = False
     if expected_environment is not None and child.pid in readable:
         try:
             with open(os.path.join(proc_root, str(child.pid), "environ"), "rb") as stream:
                 effective = dict(entry.split(b"=", 1) for entry in stream.read().split(b"\x00") if b"=" in entry)
         except OSError as exc:
-            if exc.errno not in (errno.ENOENT, errno.ESRCH):
+            if (exc.errno not in (errno.ENOENT, errno.ESRCH)
+                    and not (exc.errno in (errno.EACCES, errno.EPERM) and process_has_exited(child.pid, proc_root))):
                 raise Refused("cannot inspect owned child effective environment (pid=%s errno=%s)" % (child.pid, exc.errno))
         else:
             for key in ("HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "SUCODER_LOCAL_ROOT"):
@@ -603,7 +632,15 @@ def inspect_placement(child, runner, root, home, proc_root="/proc", expected_env
                     raise Refused("owned child did not receive isolated " + key)
             environment_verified = True
     observed, misplaced, databases, checkpoint_copies = [], [], [], []
-    for descriptor in runner.inspect_file_mounts(readable, proc_root=proc_root):
+    descriptors = []
+    for pid in readable:
+        try:
+            descriptors.extend(runner.inspect_file_mounts([pid], proc_root=proc_root))
+        except OSError as exc:
+            if exc.errno in (errno.EACCES, errno.EPERM) and process_has_exited(pid, proc_root):
+                continue
+            raise Refused("cannot inspect owned child descriptor mounts (pid=%s errno=%s)" % (pid, exc.errno))
+    for descriptor in descriptors:
         pid, path = descriptor["pid"], descriptor["path"]
         path = re.sub(r" \(deleted\)$", "", path)
         base = os.path.basename(path)
