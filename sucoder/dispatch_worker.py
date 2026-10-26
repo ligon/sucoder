@@ -598,8 +598,7 @@ def inspect_placement(child, runner, root, home, proc_root="/proc", expected_env
         try:
             entries = os.listdir(path)
         except OSError as exc:
-            if (exc.errno in (errno.ENOENT, errno.ESRCH)
-                    or exc.errno in (errno.EACCES, errno.EPERM) and process_has_exited(pid, proc_root)):
+            if exc.errno in (errno.ENOENT, errno.ESRCH) or process_has_exited(pid, proc_root):
                 continue  # process teardown can remove fd/ before its proc dir
             raise Refused("cannot inspect owned child file descriptors (pid=%s errno=%s)" % (pid, exc.errno))
         # Descriptor links are proc metadata: never stat a magic FD link,
@@ -611,7 +610,7 @@ def inspect_placement(child, runner, root, home, proc_root="/proc", expected_env
                 os.readlink(descriptor)
             except OSError as exc:
                 if exc.errno not in (errno.ENOENT, errno.ESRCH):
-                    if exc.errno in (errno.EACCES, errno.EPERM) and process_has_exited(pid, proc_root):
+                    if process_has_exited(pid, proc_root):
                         exited = True
                         break
                     raise Refused("cannot inspect owned child descriptor links (pid=%s errno=%s)" % (pid, exc.errno))
@@ -623,8 +622,7 @@ def inspect_placement(child, runner, root, home, proc_root="/proc", expected_env
             with open(os.path.join(proc_root, str(child.pid), "environ"), "rb") as stream:
                 effective = dict(entry.split(b"=", 1) for entry in stream.read().split(b"\x00") if b"=" in entry)
         except OSError as exc:
-            if (exc.errno not in (errno.ENOENT, errno.ESRCH)
-                    and not (exc.errno in (errno.EACCES, errno.EPERM) and process_has_exited(child.pid, proc_root))):
+            if exc.errno not in (errno.ENOENT, errno.ESRCH) and not process_has_exited(child.pid, proc_root):
                 raise Refused("cannot inspect owned child effective environment (pid=%s errno=%s)" % (child.pid, exc.errno))
         else:
             for key in ("HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "SUCODER_LOCAL_ROOT"):
@@ -637,7 +635,7 @@ def inspect_placement(child, runner, root, home, proc_root="/proc", expected_env
         try:
             descriptors.extend(runner.inspect_file_mounts([pid], proc_root=proc_root))
         except OSError as exc:
-            if exc.errno in (errno.EACCES, errno.EPERM) and process_has_exited(pid, proc_root):
+            if process_has_exited(pid, proc_root):
                 continue
             raise Refused("cannot inspect owned child descriptor mounts (pid=%s errno=%s)" % (pid, exc.errno))
     for descriptor in descriptors:

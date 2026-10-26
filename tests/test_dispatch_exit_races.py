@@ -14,7 +14,8 @@ from sucoder import dispatch_worker as worker
 
 @pytest.mark.parametrize("boundary", ["directory", "link", "environment", "mounts"])
 @pytest.mark.parametrize("state", ["Z", "R", "unknown"])
-def test_permission_race_requires_fresh_exit_proof(tmp_path, monkeypatch, boundary, state):
+@pytest.mark.parametrize("metadata_errno", [errno.EACCES, errno.EPERM, errno.EINVAL])
+def test_permission_race_requires_fresh_exit_proof(tmp_path, monkeypatch, boundary, state, metadata_errno):
     process = tmp_path / "123"
     (process / "fd").mkdir(parents=True)
     status = process / "stat"
@@ -26,7 +27,7 @@ def test_permission_race_requires_fresh_exit_proof(tmp_path, monkeypatch, bounda
             status.unlink()
         else:
             status.write_text("123 (native child) " + state + " 1 2\n")
-        raise PermissionError(errno.EACCES, "process changed during inspection")
+        raise OSError(metadata_errno, "process changed during inspection")
 
     def listdir(path):
         if str(path) == str(process / "fd"):
@@ -119,3 +120,26 @@ def test_unreadable_stat_is_not_exit(tmp_path, monkeypatch):
 
     monkeypatch.setattr(builtins, "open", denied)
     assert not worker.process_has_exited(123, str(tmp_path))
+
+
+def test_real_exit_between_readability_and_mount_metadata_inspection(tmp_path):
+    child = subprocess.Popen(["/bin/cat"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL)
+    runner = worker.load_runner(str(Path(worker.__file__).with_name("codex_state_runner.py")))
+    ownership = SimpleNamespace(members=lambda: [{"pid": child.pid}])
+
+    class ExitingRunner:
+        def inspect_file_mounts(self, pids, **kwargs):
+            child.stdin.close()
+            os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOWAIT)
+            assert worker.process_has_exited(child.pid, "/proc")
+            # Real proc mountinfo can return EINVAL once the mount namespace
+            # is gone. This pass must use the same fresh terminal proof.
+            return runner.inspect_file_mounts(pids, **kwargs)
+
+    try:
+        result = worker.inspect_placement(child, ExitingRunner(), str(tmp_path), str(tmp_path), ownership=ownership)
+        assert result["databases"] == []
+    finally:
+        if not child.stdin.closed:
+            child.stdin.close()
+        child.wait(timeout=5)
