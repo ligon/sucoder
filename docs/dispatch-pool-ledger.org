@@ -123,3 +123,17 @@ node with command -v, require an absolute executable path, and exec that path.
 No controller-local Python path, worker cleanup change or ordinary-job change.
 Test the generated batch with a disposable JSON-only worker in an empty local
 environment; no native model/managed runner or Slurm launch in author tests.
+
+** Receiving-Python correction verification
+Production/test pin 23dcf397fb51bbe8e2484dff724b413d0545b4c8 passes 123 finite
+pool/control cases. The added actual generated-batch control first failed on the
+old template because sys.executable was the empty string, then passed with an
+absolute receiving interpreter under the same empty environment. Only a
+JSON-emitting disposable worker ran; no native model/managed runner/Slurm actor.
+Root separately confirmed the same bare-versus-absolute Python distinction in an
+owned held-allocation step and retained step-python-executable-proof.json.
+The ordinary-job template and dispatch_worker.py remain unchanged. The latter's
+SHA256 is still b09ef8620c4e4ab80c867044dafc9dc0c84e10d67c0eb68eea49767068d6f762.
+Original canary failures remain preserved; new productive/native canaries are
+root-owned releases, not implied by this local test. GitNexus remains unavailable
+with the recorded native libssl.so.3 load error; static/compile checks passed.
