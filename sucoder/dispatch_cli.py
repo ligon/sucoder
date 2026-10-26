@@ -7,10 +7,12 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import List, Optional
+import uuid
 
 import typer
 
 from . import dispatch as control
+from . import dispatch_verify
 
 
 app = typer.Typer(help="Dispatch independent headless agent jobs on the current Slurm cluster.",
@@ -58,6 +60,7 @@ def submit(
     claude_user_config: Optional[Path] = typer.Option(None, "--claude-user-config"),
     require_evidence: List[str] = typer.Option(None, "--require-evidence", help="Required evidence filename, relative to the private evidence directory; repeatable."),
     snapshot_minutes: float = typer.Option(10, "--snapshot-minutes", min=0.1, help="Periodic Git/WIP publication cadence; final publication also runs on orderly exit."),
+    project_profile: Optional[Path] = typer.Option(None, "--project-profile", help="Explicit project JSON profile; bootstrap and configuration are frozen before submission."),
     local_disk_root: str = typer.Option("/local", "--local-disk-root"),
     timeout: float = typer.Option(30, "--timeout", min=0.1, help="Submission subprocess deadline in seconds."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Validate and describe; write no files and submit no job."),
@@ -73,6 +76,7 @@ def submit(
             source_agent_home=agent_home, source_claude_user_config=claude_user_config,
             required_evidence=require_evidence or [],
             snapshot_minutes=snapshot_minutes,
+            project_profile=project_profile,
             timeout=timeout, dry_run=dry_run,
         )
     except (ValueError, OSError, subprocess.SubprocessError) as exc:
@@ -80,6 +84,32 @@ def submit(
     _emit(value)
     if value.get("state") in ("submission_unknown", "submission_failed"):
         raise typer.Exit(3 if value["state"] == "submission_unknown" else 1)
+
+
+@app.command()
+def verify_stage(
+    ctx: typer.Context,
+    repository: Path = typer.Argument(..., help="Shared source or private results.git; never modified."),
+    ref: str = typer.Option(..., "--ref", help="Resolved and frozen before the verification job is submitted."),
+    project_profile: Path = typer.Option(..., "--project-profile"),
+    directory: Optional[Path] = typer.Option(None, "--directory", help="New private shared directory for one verification job."),
+    command_file: Optional[Path] = typer.Option(None, "--command-file", help="JSON argv array; supports {python}, {worktree}, {evidence}."),
+    script_file: Optional[Path] = typer.Option(None, "--script-file", help="Existing deterministic burst RUN script; its bytes are frozen."),
+    require_evidence: List[str] = typer.Option(None, "--require-evidence", help="Required selected proof filename; repeatable."),
+    cpus: int = typer.Option(1, "--cpus", min=1),
+    timeout: int = typer.Option(600, "--timeout", min=1),
+    local_disk_root: str = typer.Option("/local", "--local-disk-root"),
+):
+    """Freeze a deterministic request for the existing burst job; submit no job."""
+    try:
+        destination = directory or (ctx.obj["root"] / ("verify-" + uuid.uuid4().hex))
+        value = dispatch_verify.freeze(repository, ref, project_profile, command_file, destination,
+                                       control._shared_path, control._git, script_file=script_file,
+                                       timeout=timeout, cpus=cpus, local_disk_root=local_disk_root,
+                                       required_evidence=require_evidence or [])
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        _error(exc)
+    _emit(value)
 
 
 @app.command()

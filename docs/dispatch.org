@@ -9,6 +9,8 @@ It supports Codex and Claude through explicit adapters, with one bounded allocat
 It does not create tmux sessions, attach a terminal, impersonate another user or synchronize the source repository.
 The first PR supplies this generic lifecycle; project bootstrap and data-access profiles are a separate follow-up.
 The LSMS requirements are recorded in [[file:dispatch-lsms-followup.org][the LSMS integration plan]].
+The optional [[file:dispatch-projects.org][project-profile stage]] implements explicit frozen
+bootstrap/runtime/data bindings, shared with deterministic verification jobs.
 The dispatch command runs under the coordinating agent's current account and bypasses interactive SuCoder startup checks.
 Use a release containing this command, and check =sucoder dispatch --help= outside a source checkout before relying on the installed executable.
 

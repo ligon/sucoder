@@ -1,0 +1,144 @@
+#+TITLE: Explicit project preparation and LSMS verification
+
+* Project profile
+
+=dispatch submit --project-profile PROFILE.json= freezes an optional project
+bootstrap and nonsecret configuration before submitting the job. With no
+profile, the existing dispatch lifecycle is unchanged. The bootstrap runs
+after the exact worker checkout is verified and before any native agent starts.
+It uses the receiving node's paths and a separate =project_setup= phase.
+
+A profile is versioned JSON. Unknown fields refuse. =bootstrap= names a shell
+script relative to the profile file (an absolute path is also accepted); its
+bytes are copied privately, so a later edit to that original file is irrelevant.
+Fields are:
+
+| Field | Meaning |
+|-------+---------|
+| =schema_version= | =1= |
+| =timeout_seconds= | Total deadline for supervised asset copying and bootstrap; at most one day |
+| =environment= | Explicit nonsecret environment strings |
+| =local_directories= | Environment names mapped to private relative output directories |
+| =assets= | Relative input names mapped to absolute shared file paths and SHA256 |
+| =credentials= | Explicit private reader files, copied privately at submission |
+| =credential_environment= | Environment names mapped to declared credential names |
+| =output_environment= | Names the bootstrap may supply through its JSON result |
+| =thread_limits= | Positive pool limits no greater than the receiving CPU budget |
+| =require_absent_environment= | Provider keys whose presence would violate the project data policy |
+
+Environment strings support ={worktree}=, ={project_root}=, ={assets}=,
+={credentials}= and ={local_root}=. Dynamic paths are resolved only after the
+receiving root is verified. Assets are copied to private local files and the
+copied bytes are checked against their declared digest. A queued image change
+therefore refuses setup. No mutable master venv is substituted.
+
+The bootstrap receives =SUCODER_PROJECT_WORKTREE=, =SUCODER_PROJECT_ROOT=,
+=SUCODER_PROJECT_ASSETS= and =SUCODER_PROJECT_RESULT=. It writes a private JSON
+receipt at the last path:
+
+#+begin_src json
+{"schema_version":1,"state":"ready","environment":{"PROJECT_PYTHON":"/local/job123/venv_img/bin/python"},"path_prepend":["/local/job123/venv_img/bin"],"runtime":{"image_generation":"example"}}
+#+end_src
+
+Only declared output names are applied. PATH prefixes must resolve to local
+directories; the native agent/Node toolchain remains available.
+PATH prefixes containing =node=, =codex=, =claude=, =git=, =bash= or =sh= refuse
+so project tools cannot shadow the native agent or supervisor toolchain.
+HOME, native homes, scheduler/control/Git identities and baseline environment protections
+cannot be replaced. Local and credential bindings cannot be returned as new
+bootstrap outputs. A child shell's =export= is not an environment result.
+
+Provider credential environment variables are excluded from bootstrap. Project reader files
+use a separate private channel; their values are absent from manifests and
+receipts. The single-use staged copies are removed after local staging.
+=project-runtime.json= records nonsecret runtime facts durably and is also
+published under the existing hashed evidence manifest. The worker prelude
+names this receipt and the prepared runtime convention. Setup failures
+and TERM clean up owned helpers/mount processes even before a native child
+exists, and retain a failed setup result and private diagnostics.
+
+* LSMS profile
+
+=examples/lsms/make_profile.py= generates a concrete profile for an explicitly
+selected image. It hashes the image and snapshots the bootstrap through the
+normal profile contract. It does not select an image or discover credentials.
+
+#+begin_src shell
+python3 examples/lsms/make_profile.py --image /shared/LSMS_Library/.venv.sqfs --output /shared/private/lsms-synthetic.json
+#+end_src
+
+The bootstrap reuses =bin/savio_venv.sh mount= from the PINNED LSMS checkout.
+=LSMS_VENV_SHARE= points to the verified local image, independently of the
+worker's private Git origin. Existing mounted/extracted runtimes refuse rather
+than using the mounter's fast path for a potentially different image. Runtime
+identity includes the fresh image input, generation, interpreter/prefix, actual
+package import, effective countries root, and local config/data/DVC paths.
+It never invokes =update= or uses the writable Lustre master.
+
+Synthetic work has empty private project configuration/data and no staged
+reader. Ambient AWS provider keys refuse, including in the credentialed
+profile, so an unrelated model credential cannot silently open the data gate.
+The example therefore targets Codex/Claude authentication that does not require
+those AWS keys. It disables instance metadata discovery and import-time auth;
+this is an explicit execution profile, not a network sandbox.
+
+For approved data work, additionally pass =--reader /private/s3_creds=. Opening
+the real project's credential gate and running the selected country checks are
+required evidence; having a reader file alone is not a successful data test.
+To reuse approved immutable L1 inputs, also pass =--shared-l1 PATH --country C=
+(repeat =--country= as needed). Only read-only content-addressed blob files
+referenced by that scope are projected into private directories. Missing blobs
+remain misses; new data and all writable metadata stay private. No shared
+directory is symlinked as a writable cache and no shared cache is cleared.
+The receipt records the scope and linked/missing counts. L2 outputs are private
+for each implementer, verifier and reviewer.
+
+* Deterministic verification of a private commit
+
+The existing LSMS burst runner must accept an explicit repository and immutable
+commit. =dispatch verify-stage= freezes those inputs, the project profile,
+helpers and either a JSON command array or the bytes of an existing RUN script.
+It allocates no resources and starts no model process. Each job needs a fresh
+stage; automatic retries and stage reuse refuse.
+Run the receiving command through a new burst allocation. A stage prepared in
+a coordinator allocation records that job ID and refuses execution inside it;
+allocation-wide helper cleanup must never be pointed at the coordinator.
+
+#+begin_src shell
+sucoder dispatch verify-stage /shared/private/worker/results.git --ref FULL_COMMIT --project-profile /shared/private/lsms-synthetic.json --command-file /shared/private/tests.json --directory /shared/private/check-candidate --cpus 2 --require-evidence junit.xml
+sbatch --account ACCOUNT --partition PARTITION --qos QOS --export=NONE examples/lsms/burst.sbatch /shared/private/check-candidate
+#+end_src
+
+The adapter in =examples/lsms/burst.sbatch= is a reviewable replacement for the
+hardcoded branch/mirror/runtime prologue of the existing shared burst script.
+It is not installed over that shared script automatically. Resource flags
+remain explicit Slurm inputs. =--script-file RUN.sh= preserves the existing
+=PY=, =CLONE=, =DATA= and =JOBDIR= contract with receiving-allocation values.
+
+A command file is a JSON argv array, for example:
+
+#+begin_src json
+["{python}","-m","pytest","tests/test_gh798_datetime_mixed.py","-k","not warm_interview_date","--junitxml={evidence}/junit.xml","-q","-p","no:cacheprovider"]
+#+end_src
+
+The standalone driver fetches one exact commit and its complete current tree
+without alternates, records its shallow verification-history policy, prepares
+the SAME project profile and runs from the verified checkout. Full history for
+an implementer's prior-art work remains the generic agent dispatch policy.
+Source/profile failures, test exit, cleanup and evidence publication remain
+separate facts. Receipts and command logs are private in the stage; selected
+JUnit/operands under =evidence/= get the existing hash manifest.
+Use repeatable =--require-evidence= names for mandatory proof files; an exit-zero
+test command with missing required evidence is a failed verification result.
+Scientific acceptance remains with the coordinator.
+
+* First acceptance
+
+Replay the already reviewed GH1225 control/candidate selection, then one
+bounded credentialed country check. An implementer publishes only to its
+private results Git, a deterministic job tests that exact candidate, and an
+independent reviewer on another node uses the same pinned candidate and its own
+writable data. Require control failure/candidate pass, runtime/import identity,
+selected proof after turnover and unchanged human-mirror Git state. Country
+briefs must require the full =CONTENTS.org= and relevant caveats; correct the
+known stale import/cache passages before copying project skills into a brief.

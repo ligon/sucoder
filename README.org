@@ -271,6 +271,14 @@ before integration.
 See [[file:docs/dispatch.org][headless dispatch]] for the complete submission,
 status, wait and result commands and the supported state guarantees.
 
+=dispatch submit --project-profile PROFILE.json= adds an explicit frozen
+project bootstrap, runtime assets and private data-reader bindings. The LSMS
+example mounts the selected image and verifies source/configuration identity.
+=dispatch verify-stage= freezes an exact repository/commit and deterministic
+test command for the existing burst-job workflow, including private worker
+commits. See [[file:docs/dispatch-projects.org][project profiles and LSMS verification]]
+for the JSON schema, environment protections and acceptance sequence.
+
 * Configuration
 Skip this section if zero-config mode works for you.
 

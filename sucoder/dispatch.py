@@ -22,6 +22,7 @@ from typing import Any, Dict, Mapping, Optional
 from . import __version__
 from .codex_state import runner_source, scope_id
 from .dispatch_protocol import ENVIRONMENT_ALLOWLIST, SCHEMA_VERSION, TERMINAL_STATES
+from .dispatch_project import read_profile, stage_profile
 from .local_tier import build_worker_prepare_script, build_worker_snapshot_script
 
 DEFAULT_DIRECTORY_ROOT = Path.home() / ".sucoder" / "dispatch"
@@ -160,7 +161,7 @@ def _resources(values):
 def submit(repo, ref, task_file, agent, executable, resources, *, model=None,
            directory_root=None, local_disk_root="/local", source_agent_home=None,
            source_claude_user_config=None, required_evidence=None, snapshot_minutes=10,
-           dry_run=False, timeout=30):
+           dry_run=False, timeout=30, project_profile=None):
     """Pin an offline commit, stage a private worker and submit exactly once.
 
     Dry runs validate and report the planned command without writing artifacts
@@ -172,6 +173,9 @@ def submit(repo, ref, task_file, agent, executable, resources, *, model=None,
     if agent not in ("codex", "claude"):
         raise ValueError("headless agent must be codex or claude")
     resources = _resources(resources)
+    project = read_profile(project_profile, shared_path=_shared_path) if project_profile is not None else None
+    if project is not None and any(value > resources["cpus"] for value in project["profile"]["thread_limits"].values()):
+        raise ValueError("project thread limit exceeds requested CPU budget")
     if required_evidence is not None and not isinstance(required_evidence, (list, tuple)):
         raise ValueError("required evidence must be a list of relative POSIX file paths")
     required_evidence = [] if required_evidence is None else list(required_evidence)
@@ -248,6 +252,10 @@ def submit(repo, ref, task_file, agent, executable, resources, *, model=None,
         argv.insert(3, "--exclude=" + resources["exclude"])
     report = dict(schema_version=SCHEMA_VERSION, dispatch_id=dispatch_id, uid=os.getuid(), cluster=cluster,
                   directory=str(directory), commit=commit, command=argv, state="dry_run" if dry_run else "preparing")
+    if project is not None:
+        manifest["project"] = {"profile": "project.json", "sha256": project["sha256"],
+                               "helper": "dispatch_project.py"}
+        report["project"] = {"schema_version": 1, "sha256": project["sha256"]}
     if dry_run:
         return report
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -255,6 +263,7 @@ def submit(repo, ref, task_file, agent, executable, resources, *, model=None,
         raise ValueError("result root must be owned by the submitting uid")
     directory.mkdir(mode=0o700)
     (directory / "evidence").mkdir(mode=0o700)
+    project_files = stage_profile(project, directory) if project is not None else []
     # Private self-contained source snapshot. No source ref/config/index changes.
     _git(repo, "clone", "--bare", "--no-local", "--no-hardlinks", str(repo), str(directory / "results.git"), timeout=timeout, file_protocol=True)
     _git(directory / "results.git", "cat-file", "-e", commit + "^{commit}")
@@ -273,8 +282,11 @@ def submit(repo, ref, task_file, agent, executable, resources, *, model=None,
     _private_write(directory / "worker.py", Path(__file__).with_name("dispatch_worker.py").read_text())
     _private_write(directory / "dispatch_protocol.py", Path(__file__).with_name("dispatch_protocol.py").read_text())
     _private_write(directory / "dispatch_artifacts.py", Path(__file__).with_name("dispatch_artifacts.py").read_text())
+    if project is not None:
+        _private_write(directory / "dispatch_project.py", Path(__file__).with_name("dispatch_project.py").read_text())
+        project_files.append("dispatch_project.py")
     _private_write(directory / "batch.sh", "#!/bin/bash\nset -eu\numask 077\nexec python3 " + shlex.quote(str(directory / "worker.py")) + " " + shlex.quote(str(directory / "manifest.json")) + "\n", True)
-    _write_json(directory / "digests.json", {name: hashlib.sha256((directory / name).read_bytes()).hexdigest() for name in ("task.txt", "prepare.sh", "snapshot.sh", "runner.py", "worker.py", "dispatch_protocol.py", "dispatch_artifacts.py", "environment.json", "manifest.json")})
+    _write_json(directory / "digests.json", {name: hashlib.sha256((directory / name).read_bytes()).hexdigest() for name in ["task.txt", "prepare.sh", "snapshot.sh", "runner.py", "worker.py", "dispatch_protocol.py", "dispatch_artifacts.py", "environment.json", "manifest.json"] + project_files})
     # Persist the token before contacting Slurm. A crash here is conservatively unknown.
     report["state"] = "submission_unknown"
     report["submission_started_at"] = time.time()
