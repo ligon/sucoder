@@ -4,7 +4,49 @@ import json
 import os
 import stat
 import subprocess
+import sys
 import time
+
+
+def validate_local_source(gitdir):
+    """Local-copy transport is only for owned, full, independent Git objects."""
+    if os.path.realpath(gitdir) != gitdir or os.lstat(gitdir).st_uid != os.getuid():
+        raise ValueError("pool local-copy Git metadata must be nonredirected and owned")
+    for name in ("shallow", "objects/info/alternates", "objects/info/http-alternates"):
+        if os.path.lexists(os.path.join(gitdir, name)):
+            raise ValueError("pool local-copy sources must be full and have no alternates")
+    objects = os.path.join(gitdir, "objects")
+    if os.path.islink(objects) or not os.path.isdir(objects):
+        raise ValueError("pool local-copy object directory must not be redirected")
+    for parent, directories, files in os.walk(objects):
+        for name in directories + files:
+            path = os.path.join(parent, name)
+            info = os.lstat(path)
+            if name.endswith(".promisor"):
+                raise ValueError("pool local-copy source must not contain promisor objects")
+            if (info.st_uid != os.getuid() or
+                    not (stat.S_ISDIR(info.st_mode) if name in directories else stat.S_ISREG(info.st_mode))):
+                raise ValueError("pool local-copy objects must be owned regular files/directories, without symlinks")
+
+
+def verify_copy(source_gitdir, destination_gitdir):
+    """Prove local transport made separate files, not alternates or hardlinks."""
+    validate_local_source(source_gitdir)
+    validate_local_source(destination_gitdir)
+    objects = os.path.join(destination_gitdir, "objects")
+    count = 0
+    for parent, directories, files in os.walk(objects):
+        for name in files:
+            destination = os.path.join(parent, name)
+            if os.stat(destination).st_nlink != 1:
+                raise ValueError("pool private source copy retained a hardlinked object")
+            original = os.path.join(source_gitdir, os.path.relpath(destination, destination_gitdir))
+            if os.path.exists(original):
+                left, right = os.stat(original), os.stat(destination)
+                if (left.st_dev, left.st_ino) == (right.st_dev, right.st_ino):
+                    raise ValueError("pool private source copy retained a hardlinked object")
+                count += 1
+    return {"independent_object_files": count, "hardlinks": False, "alternates": False, "shallow": False}
 
 
 def _identity(path, directory=False):
@@ -25,6 +67,7 @@ def verify(execution, commit, root, environment):
         if not path.startswith(allocation_root + "/") or os.path.realpath(path) != path:
             raise ValueError("pool assets must be on receiving allocation-local disk")
     source, image = assets["source"], assets["image"]
+    validate_local_source(source)
     env = dict(environment, GIT_NO_LAZY_FETCH="1", GIT_ALLOW_PROTOCOL="", GIT_OPTIONAL_LOCKS="0")
     def git(*args):
         return subprocess.check_output(["git", "-C", source] + list(args), env=env,
@@ -75,3 +118,9 @@ def verify(execution, commit, root, environment):
         return dict(identity, verification_receipt=receipt, commit=commit)
     finally:
         os.rmdir(lock)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 4 or sys.argv[1] != "--verify-copy":
+        sys.exit("internal pool helper: expected --verify-copy SOURCE_GIT DESTINATION_GIT")
+    print(json.dumps(verify_copy(sys.argv[2], sys.argv[3]), sort_keys=True))

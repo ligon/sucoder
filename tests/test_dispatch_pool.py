@@ -252,6 +252,7 @@ def test_cached_base_can_prepare_new_private_candidate_without_cache_mutation(tm
     subprocess.check_call(['git', 'clone', '-q', '--bare', '--no-hardlinks', str(source), str(results)])
     root = tmp_path / 'job234/workers' / ('a' * 32)
     root.mkdir(parents=True)
+    (tmp_path / 'dispatch_pool_assets.py').write_bytes(Path(assets.__file__).read_bytes())
     script = build_worker_prepare_script(results_path=str(results), dispatch_id='a' * 32, commit=commit, isolated=True)
     env = dict(os.environ, SLURM_JOB_ID='234', SUCODER_LOCAL_ROOT=str(root), SUCODER_POOL_SOURCE_REPOSITORY=str(cache),
                TMPDIR=str(root / 'tmp'), UV_CACHE_DIR=str(root / 'cache/uv'), PIP_CACHE_DIR=str(root / 'cache/pip'),
@@ -263,6 +264,8 @@ def test_cached_base_can_prepare_new_private_candidate_without_cache_mutation(tm
     assert not (work / '.git/objects/info/alternates').exists()
     assert (work / 'tracked').read_text() == 'private candidate'
     assert git(cache, 'show-ref') == cache_refs
+    receipt = json.loads((tmp_path / 'source-copy-receiving.json').read_text())
+    assert receipt['independent_object_files'] > 0 and receipt['hardlinks'] is False
     assert subprocess.run(['git', '-C', str(cache), 'cat-file', '-e', commit], stderr=subprocess.DEVNULL).returncode != 0
 
 
@@ -341,3 +344,78 @@ def test_pool_cli_preserves_evidence_and_snapshot_contract(monkeypatch, tmp_path
     assert result.exit_code == 0, result.output
     assert seen['required_evidence'] == ['owner-status.json', 'handoff.org']
     assert seen['snapshot_minutes'] == 2 and seen['directory_root'] == tmp_path
+
+
+def test_pool_staging_uses_independent_local_object_copy(attached, source, monkeypatch):
+    real = dispatch._git
+    calls = []
+    def git(path, *args, **kwargs):
+        calls.append(args)
+        return real(path, *args, **kwargs)
+    monkeypatch.setattr(dispatch, '_git', git)
+    monkeypatch.setattr(pool, 'launch_step', lambda directory, manifest, argv, report, timeout: report)
+    original = source['repo'] / '.git'
+    before = {str(p.relative_to(original)): p.read_bytes() for p in original.rglob('*') if p.is_file()}
+    report = pool.submit(attached, **request(source))
+    clone = next(args for args in calls if 'clone' in args)
+    assert '--local' in clone and '--no-hardlinks' in clone and '--no-local' not in clone
+    destination = Path(report['directory']) / 'results.git'
+    assert report['source_copy']['independent_object_files'] > 0
+    for p in (destination / 'objects').rglob('*'):
+        other = original / p.relative_to(destination)
+        if p.is_file() and other.exists():
+            assert (p.stat().st_dev, p.stat().st_ino) != (other.stat().st_dev, other.stat().st_ino)
+    after = {str(p.relative_to(original)): p.read_bytes() for p in original.rglob('*') if p.is_file()}
+    assert before == after
+    assert not (destination / 'objects/info/alternates').exists()
+
+
+@pytest.mark.parametrize('kind', ['alternates', 'http-alternates', 'shallow', 'object-symlink'])
+def test_pool_local_copy_refuses_dependent_or_redirected_sources(attached, source, monkeypatch, kind):
+    metadata = source['repo'] / '.git'
+    if kind in ('alternates', 'http-alternates'):
+        (metadata / 'objects/info' / kind).write_text('/unread/foreign/objects\n')
+    elif kind == 'shallow':
+        commit = subprocess.check_output(['git', '-C', str(source['repo']), 'rev-parse', 'HEAD'], text=True).strip()
+        (metadata / 'shallow').write_text(commit + '\n')
+    else:
+        (metadata / 'objects/link').symlink_to(source['repo'] / 'tracked')
+    monkeypatch.setattr(pool, 'launch_step', lambda *a: pytest.fail('unsafe source reached launch'))
+    with pytest.raises(ValueError, match='alternates|symlinks'):
+        pool.submit(attached, **request(source))
+    assert not dispatch.DEFAULT_DIRECTORY_ROOT.exists()
+
+
+def test_hardlinked_copy_is_rejected(source, tmp_path):
+    destination = tmp_path / 'unsafe.git'
+    subprocess.check_call(['git', 'clone', '--bare', '--local', '-q', str(source['repo']), str(destination)])
+    with pytest.raises(ValueError, match='hardlinked'):
+        assets.verify_copy(str(source['repo'] / '.git'), str(destination))
+
+
+def test_independent_job_keeps_no_local_transport(source, monkeypatch):
+    from tests.test_dispatch import scheduler
+    scheduler(monkeypatch)
+    real = dispatch._git
+    calls = []
+    def git(path, *args, **kwargs):
+        calls.append(args)
+        return real(path, *args, **kwargs)
+    monkeypatch.setattr(dispatch, '_git', git)
+    dispatch.submit(**source)
+    clone = next(args for args in calls if 'clone' in args)
+    assert '--no-local' in clone and '--local' not in clone
+
+
+def test_nonregular_object_refuses_without_opening_fifo(source):
+    metadata = source['repo'] / '.git'
+    os.mkfifo(metadata / 'objects/owned-fifo')
+    with pytest.raises(ValueError, match='regular files'):
+        assets.validate_local_source(str(metadata))
+
+
+def test_promisor_marker_refuses_even_without_config(source):
+    metadata = source['repo'] / '.git'
+    (metadata / 'objects/pack/empty.promisor').write_bytes(b'')
+    with pytest.raises(ValueError, match='promisor'):
+        assets.validate_local_source(str(metadata))

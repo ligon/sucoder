@@ -80,3 +80,16 @@ The worker begins shutdown 120 seconds before the earlier requested-duration or
 pool worker deadline. Slurm's time request is an additional hard bound.
 Publication receipts distinguish complete, incomplete and unverified outcomes;
 no CLI exit alone proves scientific or infrastructure acceptance.
+
+* Pool-only source transport
+Pool staging and receiving-cache preparation use =git clone --local --no-hardlinks=
+for explicitly owned, full repositories. This copies object files without the
+upload-pack recompression used by =--no-local=. It does not hardlink or use
+alternates. Object metadata must contain owned regular files/directories,
+without symlinks, shallow boundaries, alternate stores or promisor objects.
+Each copy checks that destination objects have link count one and differ from
+matching source inodes, then validates Git connectivity. Receiving proof is
+retained as =source-copy-receiving.json= in the private dispatch directory.
+The ordinary independent-job transport retains =--no-local=.
+These checks refuse an incomplete/racing copy before native launch; they do
+not make concurrent source garbage collection an atomic repository snapshot.

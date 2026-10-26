@@ -211,6 +211,11 @@ def submit(repo, ref, task_file, agent, executable, resources, *, model=None,
     # Git metadata can itself be redirected into node-local storage by a worktree.
     _shared_path(gitdir, "source Git metadata")
     _shared_path(common, "source common Git metadata")
+    if _execution is not None:
+        from .dispatch_pool_assets import validate_local_source, verify_copy
+        if any(path.stat().st_uid != os.getuid() for path in (repo, gitdir, common)):
+            raise ValueError("pool local-copy source and Git metadata must be owned by this uid")
+        validate_local_source(str(common))
     commit = _git(repo, "rev-parse", "--verify", ref + "^{commit}")
     if not re.fullmatch(r"[0-9a-f]{40,64}", commit):
         raise ValueError("source did not resolve to a commit")
@@ -278,8 +283,11 @@ def submit(repo, ref, task_file, agent, executable, resources, *, model=None,
     (directory / "evidence").mkdir(mode=0o700)
     project_files = stage_profile(project, directory) if project is not None else []
     # Private self-contained source snapshot. No source ref/config/index changes.
-    _git(repo, *(["-c", "pack.threads=1"] if _execution is not None else []), "clone", "--bare", "--no-local", "--no-hardlinks", str(repo), str(directory / "results.git"), timeout=timeout, file_protocol=True)
+    _git(repo, *(["-c", "pack.threads=1"] if _execution is not None else []), "clone", "--bare", "--local" if _execution is not None else "--no-local", "--no-hardlinks", str(repo), str(directory / "results.git"), timeout=timeout, file_protocol=True)
     _git(directory / "results.git", "cat-file", "-e", commit + "^{commit}")
+    if _execution is not None:
+        report["source_copy"] = verify_copy(str(common), str(directory / "results.git"))
+        _git(directory / "results.git", "fsck", "--connectivity-only", "--no-reflogs", timeout=timeout)
     # Make the private initial reference explicit; this never touches source.
     _git(directory / "results.git", "update-ref", "refs/heads/" + manifest["branch"], commit)
     _write_json(directory / "manifest.json", manifest)
