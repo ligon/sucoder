@@ -227,3 +227,52 @@ def test_synthetic_profile_refuses_ambient_provider_data_credentials(staged, tmp
 def test_local_directory_escape_refuses(tmp_path, name):
     with pytest.raises(ValueError, match="relative POSIX"):
         project.read_profile(profile_file(tmp_path, local_directories={"PROJECT_DATA": name}))
+
+
+@pytest.mark.parametrize("key", ["PYTHONPYCACHEPREFIX", "PYTHONUSERBASE"])
+@pytest.mark.parametrize("binding", ["environment", "local_directories", "output_environment"])
+def test_profile_cannot_redirect_python_writable_state(tmp_path, key, binding):
+    value = [key] if binding == "output_environment" else {key: "/shared/cache"}
+    with pytest.raises(ValueError, match="protected"):
+        project.read_profile(profile_file(tmp_path, **{binding: value}))
+
+
+@pytest.mark.parametrize("invalid", ["colon", "nul"])
+def test_runtime_path_entries_cannot_split_into_unchecked_components(staged, tmp_path, invalid):
+    script = r'''set -eu
+python3 - <<'PY'
+import json, os
+path = os.path.join(os.environ['SUCODER_LOCAL_ROOT'], 'colon-bin:/tmp/unchecked')
+os.makedirs(path)
+if INVALID == 'nul':
+    path += '\x00suffix'
+with open(os.environ['SUCODER_PROJECT_RESULT'], 'w') as f:
+    json.dump({'schema_version': 1, 'state': 'ready', 'path_prepend': [path]}, f)
+PY
+'''.replace("INVALID", repr(invalid))
+    stage_worker(staged, profile_file(tmp_path, script=script))
+    assert run_worker(staged) != 0
+    result = json.loads((staged.control / "result.json").read_text())
+    assert "PATH prefixes" in result["reason"]
+    assert not (staged.control / "native-version.log").exists()
+    assert result["exit_code"] is None
+
+
+@pytest.mark.parametrize("boundary", ["checkout", "version"])
+def test_pending_cancellation_prevents_next_native_process(staged, tmp_path, monkeypatch, boundary):
+    stage_worker(staged, profile_file(tmp_path))
+    original = worker.verify_checkout if boundary == "checkout" else worker.native_version
+
+    def cancel_at_boundary(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if boundary == "version" or kwargs.get("require_clean"):
+            signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+        return result
+
+    monkeypatch.setattr(worker, "verify_checkout" if boundary == "checkout" else "native_version", cancel_at_boundary)
+    assert run_worker(staged) == 143
+    result = json.loads((staged.control / "result.json").read_text())
+    assert result["state"] == "interrupted"
+    assert result["exit_code"] is None
+    assert (staged.control / "native-version.log").exists() == (boundary == "version")
+    assert not (staged.control / "final.txt").exists()

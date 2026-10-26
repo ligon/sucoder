@@ -12,6 +12,7 @@ import shlex
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 
@@ -131,6 +132,41 @@ def read_request(directory):
     return request
 
 
+def source_identity(work, commit, environment):
+    """Compare HEAD, the real index and tracked bytes with the frozen commit.
+
+    A fresh index avoids trusting assume-unchanged/skip-worktree flags left by
+    the command. Untracked and ignored runtime outputs remain permitted.
+    """
+    metadata = Path(work) / ".git"
+    if metadata.is_symlink() or not metadata.is_dir():
+        raise ValueError("verification Git metadata is no longer a private directory")
+    command = ["git", "--no-optional-locks", "-C", work, "-c", "core.fsmonitor=false",
+               "-c", "core.untrackedCache=false"]
+
+    def git(*args, **kwargs):
+        return subprocess.check_output(command + list(args), env=kwargs.get("env", environment),
+                                       stderr=subprocess.DEVNULL, timeout=30).decode().strip()
+
+    def clean(args, env):
+        process = subprocess.run(command + args, env=env, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL, timeout=30)
+        if process.returncode not in (0, 1):
+            raise ValueError("verification source comparison failed")
+        return process.returncode == 0
+
+    head = git("rev-parse", "--verify", "HEAD^{commit}")
+    index_clean = clean(["diff", "--cached", "--no-ext-diff", "--no-textconv", "--quiet", commit, "--"], environment)
+    with tempfile.TemporaryDirectory(prefix="source-check-", dir=environment["TMPDIR"]) as scratch:
+        fresh = dict(environment, GIT_INDEX_FILE=os.path.join(scratch, "index"))
+        git("read-tree", commit, env=fresh)
+        clean(["update-index", "--refresh"], fresh)
+        tracked_clean = clean(["diff-files", "--no-ext-diff", "--no-textconv", "--quiet", "--"], fresh)
+    return {"state": "matched" if head == commit and index_clean and tracked_clean else "drifted",
+            "expected_commit": commit, "actual_commit": head,
+            "index_clean": index_clean, "tracked_clean": tracked_clean}
+
+
 def run(directory, inherited=None, mountinfo_path="/proc/self/mountinfo", ownership_factory=None):
     """Run a frozen deterministic request inside the existing burst allocation."""
     directory = Path(directory)
@@ -138,6 +174,9 @@ def run(directory, inherited=None, mountinfo_path="/proc/self/mountinfo", owners
     project.private_bytes(directory / "started.json", json.dumps({"pid": os.getpid(), "started_at": time.time()}).encode("utf-8"))
     old_umask = os.umask(0o077)
     environment = None
+    supervisor_environment = None
+    work = None
+    source_config = None
     ownership = None
     stopped = [None]
     handlers = {}
@@ -177,18 +216,18 @@ def run(directory, inherited=None, mountinfo_path="/proc/self/mountinfo", owners
         project.private_bytes(directory / "verify-clone.sh", clone.encode("utf-8"))
         worker.run_script(str(directory / "verify-clone.sh"), environment, request["timeout_seconds"],
                           cancellation=stopped, heartbeat=publish)
+        source_config = project.digest_file(Path(work) / ".git" / "config")
         record["phase"] = "project_setup"
         publish()
         supervisor_environment = environment
         environment, runtime = project.prepare(str(directory), work, root, environment, worker.run_script,
                                                 int(environment["OMP_NUM_THREADS"]), heartbeat=publish, cancellation=stopped)
         record["project"] = runtime
-        head = subprocess.check_output(["git", "-C", work, "rev-parse", "HEAD"], env=supervisor_environment, timeout=10).decode().strip()
-        if head != request["commit"]:
-            raise ValueError("verification checkout changed during project setup")
-        dirty = subprocess.check_output(["git", "-C", work, "status", "--porcelain", "--untracked-files=no"], env=supervisor_environment, timeout=10)
-        if dirty:
-            raise ValueError("verification bootstrap changed tracked source")
+        if project.digest_file(Path(work) / ".git" / "config") != source_config:
+            raise ValueError("verification bootstrap changed Git configuration")
+        record["source_identity"] = source_identity(work, request["commit"], supervisor_environment)
+        if record["source_identity"]["state"] != "matched":
+            raise ValueError("verification bootstrap changed tracked source, index or HEAD")
         replacements = {"{worktree}": work, "{python}": environment.get("PROJECT_PYTHON", ""),
                         "{evidence}": environment["SUCODER_DISPATCH_EVIDENCE_DIR"]}
         command = []
@@ -216,11 +255,25 @@ def run(directory, inherited=None, mountinfo_path="/proc/self/mountinfo", owners
     except Exception as exc:
         record.update(state="interrupted" if stopped[0] else "failed", reason=str(exc), failure_type=type(exc).__name__)
     finally:
+        cleanup_complete = ownership is not None
         if ownership is not None:
             try:
                 worker.stop_allocation(ownership, 5)
             except Exception as exc:
+                cleanup_complete = False
                 record.update(state="failed", cleanup_error=str(exc))
+        if source_config is not None and supervisor_environment is not None:
+            try:
+                if not cleanup_complete:
+                    raise ValueError("source identity cannot be verified before owned processes stop")
+                if project.digest_file(Path(work) / ".git" / "config") != source_config:
+                    raise ValueError("verification command changed Git configuration")
+                record["source_identity"] = source_identity(work, request["commit"], supervisor_environment)
+                if record["source_identity"]["state"] != "matched":
+                    record.update(state="failed", reason="verification source changed from the frozen commit")
+            except Exception as exc:
+                record.update(state="failed", source_identity={"state": "unverified", "expected_commit": request["commit"],
+                                                              "reason": str(exc)})
         for signum, handler in handlers.items():
             signal.signal(signum, handler)
         if environment is not None:
@@ -232,6 +285,7 @@ def run(directory, inherited=None, mountinfo_path="/proc/self/mountinfo", owners
                 record.update(state="failed", evidence_error=str(exc))
         record.update(phase="finished", finished_at=time.time())
         if stopped[0]:
+            record["state"] = "interrupted"
             code = 128 + stopped[0]
         elif record["state"] == "succeeded":
             code = 0

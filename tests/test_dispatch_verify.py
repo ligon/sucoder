@@ -137,3 +137,66 @@ def test_exit_zero_without_required_proof_is_failed_verification(verification, t
     assert result["command_exit_code"] == 0
     assert result["state"] == "failed"
     assert result["evidence"]["state"] == "incomplete"
+
+
+@pytest.mark.parametrize("mutation", [
+    "open('answer.py', 'w').write('OK = True\\n')",
+    "import subprocess; subprocess.check_call(['git', 'update-index', '--assume-unchanged', 'answer.py']); open('answer.py', 'w').write('OK = True\\n')",
+    "import subprocess; subprocess.check_call(['git', 'update-index', '--skip-worktree', 'answer.py']); open('answer.py', 'w').write('OK = True\\n')",
+    "import subprocess; open('answer.py', 'w').write('OK = True\\n'); subprocess.check_call(['git', 'add', 'answer.py'])",
+    "import subprocess; subprocess.check_call(['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '--allow-empty', '-qm', 'different head'])",
+])
+def test_successful_command_cannot_attest_to_changed_source(verification, tmp_path, mutation):
+    case = verification
+    case["command"].write_text(json.dumps(["{python}", "-c", mutation]))
+    report = freeze(case, tmp_path, case["control"], "source-drift")
+    assert run(case, report, 234) == 70
+    result = json.loads((Path(report["directory"]) / "verification-result.json").read_text())
+    assert result["command_exit_code"] == 0
+    assert result["state"] == "failed"
+    identity = result["source_identity"]
+    assert identity["state"] == "drifted"
+    assert identity["expected_commit"] == case["control"]
+    assert not (identity["actual_commit"] == case["control"] and identity["index_clean"] and identity["tracked_clean"])
+
+
+def test_untracked_outputs_do_not_invalidate_verification(verification, tmp_path):
+    case = verification
+    case["command"].write_text(json.dumps(["{python}", "-c", "open('generated.txt', 'w').write('output')"]))
+    report = freeze(case, tmp_path, case["candidate"], "outputs")
+    assert run(case, report, 234) == 0
+    result = json.loads((Path(report["directory"]) / "verification-result.json").read_text())
+    assert result["source_identity"]["state"] == "matched"
+
+
+def test_source_is_checked_after_detached_writer_stops(verification, tmp_path):
+    case = verification
+    pid_file = tmp_path / "writer.pid"
+    helper = ("import os, signal, sys; from pathlib import Path; "
+              "signal.signal(signal.SIGTERM, lambda *args: (Path('answer.py').write_text('OK = False\\n'), sys.exit(0))); "
+              "Path(%r).write_text(str(os.getpid())); signal.pause()" % str(pid_file))
+    command = ("import subprocess, sys, time; from pathlib import Path\n"
+               "subprocess.Popen([sys.executable, '-c', %r], start_new_session=True)\n"
+               "while not Path(%r).exists(): time.sleep(.01)\n" % (helper, str(pid_file)))
+    case["command"].write_text(json.dumps(["{python}", "-c", command]))
+    report = freeze(case, tmp_path, case["candidate"], "cleanup-order")
+    events = []
+    original_stop = verify.worker.stop_allocation
+    original_identity = verify.source_identity
+
+    def stop_then_mutate(ownership, timeout):
+        original_stop(ownership, timeout)
+        events.append("stopped")
+
+    def observe_identity(*args):
+        events.append("identity")
+        return original_identity(*args)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(verify.worker, "stop_allocation", stop_then_mutate)
+        patch.setattr(verify, "source_identity", observe_identity)
+        assert verify.run(report["directory"], {"SLURM_JOB_ID": "234", "SLURM_CPUS_PER_TASK": "1"},
+                          str(case["mounts"]), ownership_factory=lambda job: FakeJobOwnership(job, pid_file)) == 70
+    assert events == ["identity", "stopped", "identity"]
+    result = json.loads((Path(report["directory"]) / "verification-result.json").read_text())
+    assert result["source_identity"]["state"] == "drifted"

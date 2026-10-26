@@ -26,6 +26,7 @@ VERSION = 1
 MAX_JSON = 1024 * 1024
 PROTECTED = frozenset((
     "HOME", "USER", "LOGNAME", "SHELL", "PATH", "TMPDIR", "PYTHONHOME",
+    "PYTHONPYCACHEPREFIX", "PYTHONUSERBASE",
     "LD_PRELOAD", "LD_LIBRARY_PATH", "BASH_ENV", "ENV", "SHELLOPTS",
     "NODE_OPTIONS", "NODE_PATH", "NODE_EXTRA_CA_CERTS",
     "UV_CACHE_DIR", "PIP_CACHE_DIR", "npm_config_cache",
@@ -305,7 +306,8 @@ def prepare(directory, work, root, environment, run_helper, cpus, heartbeat=None
             raise ValueError("invalid project bootstrap environment value")
         result_environment[key] = value
     paths = receipt.get("path_prepend", [])
-    if (not isinstance(paths, list) or any(not isinstance(p, str) or not os.path.isabs(p)
+    if (not isinstance(paths, list) or any(not isinstance(p, str) or os.pathsep in p or "\x00" in p
+            or not os.path.isabs(p)
             or not inside(p, root) or not os.path.isdir(p) for p in paths)):
         raise ValueError("project PATH prefixes must be receiving-node directories")
     if any(os.path.lexists(os.path.join(path, name)) for path in paths

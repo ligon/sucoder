@@ -864,6 +864,8 @@ def run(manifest_path, inherited=None, mountinfo_path="/proc/self/mountinfo", ow
                        "names that interpreter. Do not replace the runtime or mutate shared caches.\n" % directory).encode("utf-8")
         runner = load_runner(manifest["runner_path"])
         command = command_for(manifest, environment)
+        if stop_signal[0] is not None:
+            raise Refused("cancelled before native version inspection")
         record["versions"]["native"] = native_version(manifest, environment)
         state_before = native_state_files(environment["HOME"])
         # File-backed input avoids a full pipe blocking the supervisor before
@@ -872,6 +874,8 @@ def run(manifest_path, inherited=None, mountinfo_path="/proc/self/mountinfo", ow
         with open(input_path, "wb") as stream:
             stream.write(prompt)
         with open(input_path, "rb") as stdin, open(record["logs"]["stdout"], "wb") as stdout, open(record["logs"]["stderr"], "wb") as stderr:
+            if stop_signal[0] is not None:
+                raise Refused("cancelled before native launch")
             child = subprocess.Popen(command, cwd=work, env=environment, stdin=stdin,
                                      stdout=stdout, stderr=stderr, start_new_session=True)
             record.update(state="running", pid=child.pid)

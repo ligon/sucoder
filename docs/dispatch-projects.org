@@ -130,6 +130,10 @@ separate facts. Receipts and command logs are private in the stage; selected
 JUnit/operands under =evidence/= get the existing hash manifest.
 Use repeatable =--require-evidence= names for mandatory proof files; an exit-zero
 test command with missing required evidence is a failed verification result.
+After owned processes stop, the driver rechecks HEAD, the real index and tracked
+bytes against the frozen commit. Source drift fails verification even when the
+test exits zero; untracked and ignored outputs remain allowed. The receipt
+records the observed final source identity.
 Scientific acceptance remains with the coordinator.
 
 * First acceptance

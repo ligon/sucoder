@@ -78,7 +78,8 @@ if shared_l1:
             target.symlink_to(source)
         linked += 1
     l1_receipt = {'policy': 'immutable-file-projection', 'root': str(shared),
-                  'countries': selected, 'requested_blobs': len(hashes), 'linked_blobs': linked}
+                  'countries': selected, 'requested_blobs': len(hashes), 'linked_blobs': linked,
+                  'missing_blobs': len(hashes) - linked}
 generation = runtime / 'VENV_GENERATION'
 receipt = {'schema_version': 1, 'state': 'ready',
            'environment': {'PROJECT_PYTHON': str(work / '.venv' / 'bin' / 'python')},
