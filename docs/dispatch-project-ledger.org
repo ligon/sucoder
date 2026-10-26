@@ -26,7 +26,12 @@ and named tests; Sue independently reviewed the receiving-node boundary.
 - =dispatch_worker.verify_checkout= :: Exact clone and source identity; reuse
   before project preparation and before starting the native agent.
 - =JobOwnership= / =stop_allocation= :: Allocation-scoped cleanup, including
-  reparented helpers. Extend cleanup to pre-agent setup failures.
+  reparented helpers. Extend cleanup to pre-agent setup failures. Its
+  =_record= already excludes Z/X; placement rechecks those same terminal
+  states when proc metadata becomes inaccessible after the ownership scan.
+- Local-tier temporary Git index :: =dispatch_verify.source_identity= reuses
+  the comparison pattern without commit/push operations. Ignore replacement
+  objects and rebuild index flags so comparisons use the requested tree.
 - =dispatch_protocol.atomic_json= :: Private atomic receipts; reuse.
 - =dispatch_artifacts= :: Selected evidence and explicit task outcomes; reuse.
 - LSMS =bin/savio_venv.sh mount= :: Approved-image mount/extract and import
@@ -52,10 +57,17 @@ the LSMS development PR.
 Preserve existing dispatch behavior when no profile is supplied. Profiles may
 not overwrite HOME, native homes, scheduler/control/Git identities or increase
 CPU budgets. Writable paths and returned PATH prefixes stay on the receiving
-node. Bootstrap receives no provider secrets by default. Freeze initial helper
+node; reject PATH separators/NUL and recognized Python writable-state overrides.
+Bootstrap receives no provider secrets by default. Freeze initial helper
 bytes and profile choices; copy and verify approved assets before using them.
 Wrong assets/imports or setup failure prevent native launch. TERM and setup
 failure clean up owned mount/helpers even before a native child exists.
+Pending cancellation prevents version inspection and native launch. A verifier
+checks HEAD, the actual index and tracked bytes after owned cleanup; source
+drift invalidates a zero test exit. Ignored/untracked outputs remain permitted.
+Placement ignores permission errors only when fresh kernel metadata proves
+the process is a zombie/dead or its PID directory is gone. A live or unknown
+process remains an inspection failure, including the second mount-info pass.
 Never clear shared L2 caches, repoint the mirror's venv or silently copy its
 writable venv master. Preserve missing/unexecuted credentialed checks explicitly.
 
@@ -69,11 +81,70 @@ boundary, rather than LSMS-specific branches in the generic supervisor.
 
 * 6. Acceptance and remaining decisions
 
-Hermetic tests cover frozen inputs, wrong assets/imports, protected environment,
-private credentials, bounded setup/cancellation and source-preserving private
-commit verification. Replay the existing GH1225 control/candidate selection,
-then a bounded credentialed country check on Savio with positive reader-gate
-evidence. Sue owns independent review and Savio observations after a reviewable
-commit exists. No scientific changes or shared-runner deployment are authorized
-by infrastructure success. Campaign scheduling and automatic retry remain later
-work.
+At code revision 34070a0, 311 local dispatch/local-tier tests pass, including
+real replacement refs, hidden index flags, a detached TERM writer and 45
+process-exit race cases. Real Linux zombies reproduce fd errno 13 and
+mountinfo errno 22 between inspection passes. Sue's independent acceptance
+has 327 passes (job 40511473), including a live nondumpable refusal check.
+GitHub Python 3.9, Python 3.11 and documentation checks pass. Standalone helpers parse as Python
+3.6; the wheel's helper bytes match source and its CLI works outside a checkout.
+
+Live GH1225 replay: control 0102af8cf696127ef410bb7b530db557ee90b9b8 has 21
+failures/37 passes (job 40510170); candidate
+5123365b9a3d3fe93004399dd23b4bf2c913d0f2 has 58 passes (job 40510171).
+Both deselect two warm tests, with zero skips/collection errors, matched final
+source and complete proof verified after exit. Both use the SAME frozen test
+asset and approved image, exact imports and private writable paths; no reader
+or shared L1. The approved image SHA256 is
+12c7eab8ae37da2fd0adee71d4f741ea81c4c1937fc53644ced43d282a21f86e.
+
+The bounded Serbia/2007 cluster_features check passes once with zero skips
+(job 40510537), using development 8aa4d86b6594eb0b03bdd50fe3ca04f4f4ac6b26,
+the same sanctioned reader in a private copy, and fresh private L1/L2. Exact
+final source and required proof hashes match. Original reader permissions,
+shared source, image and runner remain unchanged. This is one API invariant,
+not full-country or full-corpus scientific acceptance.
+
+Full Savio suite at f1c7430: 2300 pass and two state-runner failures. The known
+final-seal signature remains issue 70; the second failed once and passed three
+isolated main and three feature reruns, now tracked as issue 76. Do not claim
+the full suite was green or that issue 76 is a confirmed baseline failure.
+
+The first native author published private 7dcbbd183a29a8f7d2357363d08fe953d623cf23
+with complete proof (job 40510679), and deterministic job 40511028 passed its
+exact commit with 58 passes and matched final source. Author/reviewer
+infrastructure failed on proc permission errors. Their original failed PID
+states were not captured; a real-zombie reproduction motivates the strict
+terminal-state check above. Do not relabel those failed runs successful.
+On corrected runtime 34070a0, Codex author 40511604/n0028 completed with native
+and supervisor exits zero and sealed state, publishing private
+67744b1612fd8692c2542d6ff26562075690286e. Deterministic verifier 40511743
+passed all 58 checks with matched final source. Claude reviewer
+40511806/n0033 independently passed the same 58 checks and recommended accept;
+native/supervisor exits zero, text state preserved, candidate HEAD/index
+unchanged. One informational attrs-copy note requests no change to the vetted
+reference. Full-suite/country builds were explicitly outside these native
+assignments; the separate Serbia pilot supplies the bounded real-data check.
+All 12 author, four verifier and seven reviewer evidence hashes were verified
+after exit. The three roles share frozen profile SHA256
+152b2c76394934de349eaa7a6221ac34360add5a037224ef1ade123cc6188d96.
+Native source retains full ancestry: staging took 4m10s for 5413 commits and
+643359478 pack bytes, with no shallow boundary or alternates. Deterministic
+verification deliberately uses one commit/current tree. Submission-unknown
+markers were reconciled within their original transactions, with unique live
+Slurm comments; no blind duplicate was submitted.
+
+Final scoped human-source snapshot matches initial HEAD, refs, tracked status,
+Git config/index, image, venv/master metadata and selected shared DVC metadata.
+Shared runner and mounter hashes match their recorded pins. This does not
+claim a recursive inventory of all untracked files or cache objects. All
+acceptance allocations have ended; the existing coordinator remains active.
+Machine-readable evidence and reconciliation/source snapshots remain on Savio
+under =~/.sucoder/reviews/issue72/lsms-d739279-20261026/=, particularly
+=native-workflow-acceptance.json=; scripts/wheel/JUnit are under
+=~/.sucoder/reviews/issue72/profile-34070a0/=. Sue recommends PR 75 ready for
+review, stacked on PR 74. No active installation or shared runner was replaced.
+Companion LSMS guidance PR 1306 at 26b7ef0b has independent review with no
+remaining findings and green CI. No scientific integration or shared-runner
+deployment follows from infrastructure success. Campaign scheduling and
+automatic retry remain later work.
