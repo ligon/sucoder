@@ -19,14 +19,19 @@ def test_permission_race_requires_fresh_exit_proof(tmp_path, monkeypatch, bounda
     process = tmp_path / "123"
     (process / "fd").mkdir(parents=True)
     status = process / "stat"
-    status.write_text("123 (native child) R 1 2\n")
+    def write_state(value):
+        fields = [value] + ["0"] * 19
+        fields[19] = "42"
+        status.write_text("123 (native child) " + " ".join(fields) + "\n")
+    (process / "status").write_text("Uid:\t%s\t%s\t%s\t%s\n" % ((os.getuid(),) * 4))
+    write_state("R")
     original_listdir, original_readlink, original_open = os.listdir, os.readlink, builtins.open
 
     def deny_after_transition():
         if state == "unknown":
             status.unlink()
         else:
-            status.write_text("123 (native child) " + state + " 1 2\n")
+            write_state(state)
         raise OSError(metadata_errno, "process changed during inspection")
 
     def listdir(path):

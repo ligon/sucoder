@@ -645,18 +645,98 @@ def process_has_exited(pid, proc_root):
     return False
 
 
+def process_identity(pid, proc_root):
+    """Read only kernel identity metadata; an incomplete snapshot is unknown."""
+    base = os.path.join(proc_root, str(pid))
+    try:
+        with open(os.path.join(base, "stat")) as stream:
+            first = stream.read().rsplit(")", 1)[1].split()
+        with open(os.path.join(base, "status")) as stream:
+            match = re.search(r"^Uid:\s+([0-9]+)\s+", stream.read(), re.M)
+        with open(os.path.join(base, "stat")) as stream:
+            last = stream.read().rsplit(")", 1)[1].split()
+        if match is None or first[19] != last[19] or first[0] != last[0]:
+            return None
+        return {"uid": int(match.group(1)), "starttime": int(last[19]), "state": last[0]}
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def terminal_proof_after_error(pid, proc_root, expected, deadline=None):
+    """Wait briefly for terminal proof, never accept an unreadable live PID.
+
+    UID/incarnation changes refuse even if a reused PID is now a zombie. All
+    failures in one inspection share the caller's <=50ms monotonic deadline.
+    """
+    began = time.monotonic()
+    deadline = min(began + .05, deadline) if deadline is not None else began + .05
+    proof = {"terminal": False, "reason": "unknown_identity", "expected": expected,
+             "attempts": 0, "last_identity": None}
+    if not isinstance(expected, dict) or any(type(expected.get(key)) is not int for key in ("uid", "starttime")):
+        proof["elapsed_seconds"] = max(0, time.monotonic() - began)
+        return proof
+    for attempt in range(11):
+        proof["attempts"] = attempt + 1
+        try:
+            os.stat(os.path.join(proc_root, str(pid)))
+        except OSError as exc:
+            if exc.errno in (errno.ENOENT, errno.ESRCH):
+                proof.update(terminal=True, reason="proc_directory_gone")
+                break
+        current = process_identity(pid, proc_root)
+        proof["last_identity"] = current
+        if current is not None:
+            if any(current[key] != expected[key] for key in ("uid", "starttime")):
+                proof["reason"] = "identity_changed"
+                break
+            if current["state"] in ("Z", "X"):
+                proof.update(terminal=True, reason="same_incarnation_" + current["state"])
+                break
+            proof["reason"] = "still_live"
+        else:
+            proof["reason"] = "unknown_identity"
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or attempt == 10:
+            break
+        time.sleep(min(.005, remaining))
+    proof["elapsed_seconds"] = max(0, time.monotonic() - began)
+    return proof
+
+
 def inspect_placement(child, runner, root, home, proc_root="/proc", expected_environment=None,
                       ownership=None, manifest=None):
     """Reuse the managed runner's process/FD machinery, checking readability."""
     members = ownership.members() if ownership is not None else []
     pids = [record["pid"] for record in members] if ownership is not None else [child.pid] + runner.descendants(child.pid)
+    identities = {record["pid"]: {"uid": getattr(ownership, "uid", os.getuid()), "starttime": record.get("starttime")}
+                  for record in members if type(record.get("starttime")) is int}
+    races, grace = [], [None]
+    def terminal_after_error(pid, exc, boundary):
+        if grace[0] is None:
+            grace[0] = time.monotonic() + .05
+        proof = terminal_proof_after_error(pid, proc_root, identities.get(pid), deadline=grace[0])
+        filename = getattr(exc, "filename", None)
+        context = {"pid": pid, "boundary": boundary, "errno": exc.errno,
+                   "filename": filename if isinstance(filename, str) and beneath_text(filename, os.path.join(proc_root, str(pid))) else None,
+                   "proof": proof}
+        if proof["terminal"]:
+            races.append(context)
+            return True
+        failure = Refused("cannot inspect owned child %s (pid=%s errno=%s identity=%s proof=%s)" %
+                          (boundary, pid, exc.errno, identities.get(pid), proof["reason"]))
+        failure.inspection_failure = context
+        raise failure
     readable = []
     for pid in pids:
+        if pid not in identities:
+            captured = process_identity(pid, proc_root)
+            if captured is not None:
+                identities[pid] = {key: captured[key] for key in ("uid", "starttime")}
         path = os.path.join(proc_root, str(pid), "fd")
         try:
             entries = os.listdir(path)
         except OSError as exc:
-            if exc.errno in (errno.ENOENT, errno.ESRCH) or process_has_exited(pid, proc_root):
+            if exc.errno in (errno.ENOENT, errno.ESRCH) or terminal_after_error(pid, exc, "file descriptors"):
                 continue  # process teardown can remove fd/ before its proc dir
             raise Refused("cannot inspect owned child file descriptors (pid=%s errno=%s)" % (pid, exc.errno))
         # Descriptor links are proc metadata: never stat a magic FD link,
@@ -668,7 +748,7 @@ def inspect_placement(child, runner, root, home, proc_root="/proc", expected_env
                 os.readlink(descriptor)
             except OSError as exc:
                 if exc.errno not in (errno.ENOENT, errno.ESRCH):
-                    if process_has_exited(pid, proc_root):
+                    if terminal_after_error(pid, exc, "descriptor links"):
                         exited = True
                         break
                     raise Refused("cannot inspect owned child descriptor links (pid=%s errno=%s)" % (pid, exc.errno))
@@ -680,7 +760,7 @@ def inspect_placement(child, runner, root, home, proc_root="/proc", expected_env
             with open(os.path.join(proc_root, str(child.pid), "environ"), "rb") as stream:
                 effective = dict(entry.split(b"=", 1) for entry in stream.read().split(b"\x00") if b"=" in entry)
         except OSError as exc:
-            if exc.errno not in (errno.ENOENT, errno.ESRCH) and not process_has_exited(child.pid, proc_root):
+            if exc.errno not in (errno.ENOENT, errno.ESRCH) and not terminal_after_error(child.pid, exc, "effective environment"):
                 raise Refused("cannot inspect owned child effective environment (pid=%s errno=%s)" % (child.pid, exc.errno))
         else:
             for key in ("HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "SUCODER_LOCAL_ROOT"):
@@ -693,7 +773,7 @@ def inspect_placement(child, runner, root, home, proc_root="/proc", expected_env
         try:
             descriptors.extend(runner.inspect_file_mounts([pid], proc_root=proc_root))
         except OSError as exc:
-            if process_has_exited(pid, proc_root):
+            if terminal_after_error(pid, exc, "descriptor mounts"):
                 continue
             raise Refused("cannot inspect owned child descriptor mounts (pid=%s errno=%s)" % (pid, exc.errno))
     for descriptor in descriptors:
@@ -727,7 +807,7 @@ def inspect_placement(child, runner, root, home, proc_root="/proc", expected_env
     return {"observed": sorted(set(observed)), "databases": sorted(set(databases)),
             "misplaced": sorted(set(misplaced)), "inspected_pids": readable,
             "environment_verified": environment_verified, "members": members,
-            "durable_checkpoint_copies": sorted(set(checkpoint_copies))}
+            "durable_checkpoint_copies": sorted(set(checkpoint_copies)), "inspection_races": races}
 
 
 def stop_owned(child, timeout):
@@ -1010,6 +1090,8 @@ def run(manifest_path, inherited=None, mountinfo_path="/proc/self/mountinfo", ow
                 record["placement"].update(observed=sorted(observed), sqlite="observed_local" if databases else "not_observed",
                                            databases=sorted(databases), inspected_pids=evidence["inspected_pids"])
                 record["placement"]["durable_checkpoint_copies"] = evidence["durable_checkpoint_copies"]
+                if evidence.get("inspection_races"):
+                    record["placement"].setdefault("inspection_races", []).extend(evidence["inspection_races"])
                 record["placement"]["environment_verified"] = (record["placement"].get("environment_verified", False)
                                                                   or evidence["environment_verified"])
                 if evidence["misplaced"]:
@@ -1068,6 +1150,8 @@ def run(manifest_path, inherited=None, mountinfo_path="/proc/self/mountinfo", ow
         else:
             record["state"] = "failed"
     except Exception as exc:
+        if getattr(exc, "inspection_failure", None) is not None:
+            record["inspection_failure"] = exc.inspection_failure
         if record.get("project", {}).get("state") == "preparing":
             record["project"].update(state="failed", reason=str(exc))
         # Project setup can start mount daemons before any native child exists.
