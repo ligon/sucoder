@@ -151,3 +151,22 @@ targets. Keep failure category/errno/proc filename and incarnation/proof diagnos
 Use fake clock/proc controls before production commit; enrich old synthetic
 fixtures with actual UID/starttime fields where needed without weakening their
 assertions. Root owns actual lifecycle probes and new managed transactions.
+
+** Incarnation-bound terminal continuation verification
+Exact production/test pin a76c753e9358599ce410b8795a5681c06af37fc8 passes 206
+finite fake/core/pool cases in20.75s, including52 separately authored immutable
+fake-clock negative/positive controls. Both delayed fd-directory and mount cases
+fail meaningfully against the unchanged5ca baseline worker, before its one-shot
+proof can observe the later terminal transition. Baseline carrier differs only
+in importing that frozen module; original logs and carrier remain preserved.
+The34070 assertions are unchanged; their fake UID/stat fixture now supplies the
+original-incarnation metadata needed for stronger proof. Unknown original
+identity cannot use later absence, and reused/changed-UID zombies refuse.
+
+Independent source review at a76c found no remaining blocker. Worker SHA256:
+c53c405017a7b7a2f7022031061d4834f56a95347713394ad4dcd38be04a2702.
+GitNexus still fails on libssl.so.3; static and receiving-Python3.6 compilation
+passed. These synthetic controls establish the mechanism, not the cause of old
+actor failures. Root retains the real transition probe, partial-state recovery
+and any new productive managed transaction release. No author native/Slurm
+launch, state alteration, cancellation or retry occurred.
