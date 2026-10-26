@@ -111,3 +111,15 @@ GitNexus detect-changes again failed with the recorded libssl.so.3 limitation;
 static checks and Python 3.6 helper compilation passed. Real-repository latency
 and a new canary transaction remain root-owned release measurements. Preserve
 original Tanzania staging timeout and its explicit prelaunch reconciliation.
+
+** Additive receiving-Python batch binding
+Root reports the first local-copy canary completed project bootstrap, then
+refused before managed-child Popen with PermissionError naming an empty path.
+The code uses sys.executable to launch the managed runner; an unexported Bash
+PATH can leave CPython's executable unresolved when argv[0] is only python3.
+Root owns the exact empty-environment Slurm reproduction and original failures.
+Plan: change only pooled batch generation to resolve python3 on the receiving
+node with command -v, require an absolute executable path, and exec that path.
+No controller-local Python path, worker cleanup change or ordinary-job change.
+Test the generated batch with a disposable JSON-only worker in an empty local
+environment; no native model/managed runner or Slurm launch in author tests.
