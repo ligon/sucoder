@@ -5,6 +5,12 @@ mirror_root: /var/tmp/coder-mirrors
 log_dir: /home/<your-username>/.sucoder/logs
 system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 
+# Compute-side dispatch project settings are explicit JSON profiles, separate
+# from this interactive-mirror YAML. Use `dispatch submit --project-profile
+# /shared/private/project.json` or `dispatch verify-stage --project-profile ...`.
+# Schema, LSMS image/reader examples and deterministic burst adaptation:
+# docs/dispatch-projects.org (examples/lsms/make_profile.py builds a profile).
+
 # Agent account only (optional): reach live cluster sessions through the
 # human's warm SSH for `sessions`, `message` and `peek`, via
 # `sudo -n -u <user> <command> relay ...`.  Needs a sudoers rule such as

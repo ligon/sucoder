@@ -222,6 +222,13 @@ def load_manifest(path):
     required = {os.path.basename(manifest[key]) for key in
                 ("task_file", "prepare_script", "snapshot_script", "runner_path", "worker_path", "environment_file")}
     required.update((os.path.basename(path), "dispatch_protocol.py", "dispatch_artifacts.py"))
+    if manifest.get("project") is not None:
+        project = manifest["project"]
+        if (not isinstance(project, dict) or project.get("profile") != "project.json"
+                or project.get("helper") != "dispatch_project.py"
+                or not re.fullmatch(r"[0-9a-f]{64}", str(project.get("sha256", "")))):
+            raise Refused("invalid project profile binding")
+        required.update(("project.json", "project-bootstrap.sh", "project-inputs.sh", "dispatch_project.py"))
     if not isinstance(digests, dict) or not required.issubset(digests):
         raise Refused("dispatch integrity record is incomplete")
     for name, expected in digests.items():
@@ -233,6 +240,9 @@ def load_manifest(path):
             actual = hashlib.sha256(stream.read()).hexdigest()
         if actual != expected:
             raise Refused("staged dispatch file differs from its integrity record: " + name)
+    if manifest.get("project") is not None:
+        if digests["project.json"] != manifest["project"]["sha256"]:
+            raise Refused("project profile differs from immutable submission")
     return manifest
 
 
@@ -440,9 +450,9 @@ def command_for(manifest, environment):
     return command
 
 
-def run_script(path, environment, timeout, cancellation=None, heartbeat=None):
+def run_script(path, environment, timeout, cancellation=None, heartbeat=None, cwd=None):
     process = subprocess.Popen(["/bin/bash", path], env=environment, stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE, start_new_session=True)
+                               stderr=subprocess.PIPE, start_new_session=True, cwd=cwd)
     deadline = time.monotonic() + timeout
     def diagnostics(stdout, stderr):
         logs = []
@@ -494,7 +504,7 @@ def run_script(path, environment, timeout, cancellation=None, heartbeat=None):
     return stdout.decode("utf-8").strip()
 
 
-def verify_checkout(manifest, work, environment):
+def verify_checkout(manifest, work, environment, require_clean=False):
     def git(*args):
         return subprocess.check_output(["git", "-C", work] + list(args), env=environment,
                                        stderr=subprocess.DEVNULL,
@@ -506,6 +516,8 @@ def verify_checkout(manifest, work, environment):
     origin = git("remote", "get-url", "origin")
     if os.path.realpath(origin) != os.path.join(manifest["directory"], "results.git"):
         raise Refused("worker origin is not the private results repository")
+    if require_clean and git("status", "--porcelain", "--untracked-files=no"):
+        raise Refused("project bootstrap changed tracked source or index before native launch")
     # Native HOME isolation intentionally excludes shared user Git config.
     git("config", "user.name", "Sue the Coder")
     git("config", "user.email", "coder@sucoder.dev")
@@ -553,6 +565,28 @@ def prompt_for(manifest, work):
                       manifest["directory"], manifest["directory"]) + task).encode("utf-8")
 
 
+def process_has_exited(pid, proc_root):
+    """Confirm a proc-inspection race, preserving ledger section 4's live guard.
+
+    Linux revokes fd access for zombies before their proc directory vanishes.
+    Missing or unreadable stat inside an existing process directory is NOT
+    proof of exit. Never stat a descriptor target to decide liveness.
+    """
+    base = os.path.join(proc_root, str(pid))
+    try:
+        with open(os.path.join(base, "stat")) as stream:
+            return stream.read().rsplit(")", 1)[1].split()[0] in ("Z", "X")
+    except OSError as exc:
+        if exc.errno in (errno.ENOENT, errno.ESRCH):
+            try:
+                os.stat(base)
+            except OSError as gone:
+                return gone.errno in (errno.ENOENT, errno.ESRCH)
+    except IndexError:
+        pass
+    return False
+
+
 def inspect_placement(child, runner, root, home, proc_root="/proc", expected_environment=None,
                       ownership=None, manifest=None):
     """Reuse the managed runner's process/FD machinery, checking readability."""
@@ -564,26 +598,31 @@ def inspect_placement(child, runner, root, home, proc_root="/proc", expected_env
         try:
             entries = os.listdir(path)
         except OSError as exc:
-            if exc.errno in (errno.ENOENT, errno.ESRCH):
+            if exc.errno in (errno.ENOENT, errno.ESRCH) or process_has_exited(pid, proc_root):
                 continue  # process teardown can remove fd/ before its proc dir
             raise Refused("cannot inspect owned child file descriptors (pid=%s errno=%s)" % (pid, exc.errno))
         # Descriptor links are proc metadata: never stat a magic FD link,
         # which would touch the target filesystem and could block on NFS.
+        exited = False
         for entry in entries:
             try:
                 descriptor = os.path.join(path, entry)
                 os.readlink(descriptor)
             except OSError as exc:
                 if exc.errno not in (errno.ENOENT, errno.ESRCH):
+                    if process_has_exited(pid, proc_root):
+                        exited = True
+                        break
                     raise Refused("cannot inspect owned child descriptor links (pid=%s errno=%s)" % (pid, exc.errno))
-        readable.append(pid)
+        if not exited:
+            readable.append(pid)
     environment_verified = False
     if expected_environment is not None and child.pid in readable:
         try:
             with open(os.path.join(proc_root, str(child.pid), "environ"), "rb") as stream:
                 effective = dict(entry.split(b"=", 1) for entry in stream.read().split(b"\x00") if b"=" in entry)
         except OSError as exc:
-            if exc.errno not in (errno.ENOENT, errno.ESRCH):
+            if exc.errno not in (errno.ENOENT, errno.ESRCH) and not process_has_exited(child.pid, proc_root):
                 raise Refused("cannot inspect owned child effective environment (pid=%s errno=%s)" % (child.pid, exc.errno))
         else:
             for key in ("HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "SUCODER_LOCAL_ROOT"):
@@ -591,7 +630,15 @@ def inspect_placement(child, runner, root, home, proc_root="/proc", expected_env
                     raise Refused("owned child did not receive isolated " + key)
             environment_verified = True
     observed, misplaced, databases, checkpoint_copies = [], [], [], []
-    for descriptor in runner.inspect_file_mounts(readable, proc_root=proc_root):
+    descriptors = []
+    for pid in readable:
+        try:
+            descriptors.extend(runner.inspect_file_mounts([pid], proc_root=proc_root))
+        except OSError as exc:
+            if process_has_exited(pid, proc_root):
+                continue
+            raise Refused("cannot inspect owned child descriptor mounts (pid=%s errno=%s)" % (pid, exc.errno))
+    for descriptor in descriptors:
         pid, path = descriptor["pid"], descriptor["path"]
         path = re.sub(r" \(deleted\)$", "", path)
         base = os.path.basename(path)
@@ -828,9 +875,32 @@ def run(manifest_path, inherited=None, mountinfo_path="/proc/self/mountinfo", ow
                    heartbeat=publish)
         publish("agent_setup", force=True)
         verify_checkout(manifest, work, environment)
+        if manifest.get("project") is not None:
+            publish("project_setup", force=True)
+            record["project"] = {"state": "preparing", "sha256": manifest["project"]["sha256"]}
+            module_name = (__package__ + ".dispatch_project") if __package__ else "sucoder_dispatch_project"
+            spec = importlib.util.spec_from_file_location(module_name, os.path.join(directory, "dispatch_project.py"))
+            project_helper = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(project_helper)
+            cpus = int(environment["OMP_NUM_THREADS"])
+            supervisor_environment = environment
+            environment, receipt = project_helper.prepare(directory, work, root, environment, run_script, cpus,
+                                                           heartbeat=publish, cancellation=stop_signal)
+            record["project"].update(receipt)
+            # Project setup can inspect source but cannot change the pinned
+            # starting checkout before the native worker receives its task.
+            verify_checkout(manifest, work, supervisor_environment, require_clean=True)
+            publish("agent_setup", force=True)
         prompt = prompt_for(manifest, work)
+        if record.get("project", {}).get("state") == "ready":
+            prompt += ("\nPROJECT RUNTIME: setup has completed. Read %s/project-runtime.json for the verified "
+                       "interpreter, source/configuration paths and pool limits. Use the project's prepared runtime "
+                       "and declared data bindings for verification. PROJECT_PYTHON, when supplied by the profile, "
+                       "names that interpreter. Do not replace the runtime or mutate shared caches.\n" % directory).encode("utf-8")
         runner = load_runner(manifest["runner_path"])
         command = command_for(manifest, environment)
+        if stop_signal[0] is not None:
+            raise Refused("cancelled before native version inspection")
         record["versions"]["native"] = native_version(manifest, environment)
         state_before = native_state_files(environment["HOME"])
         # File-backed input avoids a full pipe blocking the supervisor before
@@ -839,6 +909,8 @@ def run(manifest_path, inherited=None, mountinfo_path="/proc/self/mountinfo", ow
         with open(input_path, "wb") as stream:
             stream.write(prompt)
         with open(input_path, "rb") as stdin, open(record["logs"]["stdout"], "wb") as stdout, open(record["logs"]["stderr"], "wb") as stderr:
+            if stop_signal[0] is not None:
+                raise Refused("cancelled before native launch")
             child = subprocess.Popen(command, cwd=work, env=environment, stdin=stdin,
                                      stdout=stdout, stderr=stderr, start_new_session=True)
             record.update(state="running", pid=child.pid)
@@ -911,10 +983,16 @@ def run(manifest_path, inherited=None, mountinfo_path="/proc/self/mountinfo", ow
         else:
             record["state"] = "failed"
     except Exception as exc:
+        if record.get("project", {}).get("state") == "preparing":
+            record["project"].update(state="failed", reason=str(exc))
+        # Project setup can start mount daemons before any native child exists.
+        if ownership is not None:
+            try:
+                stop_allocation(ownership, manifest["checkpoint_timeout"])
+            except Exception as cleanup_error:
+                record["cleanup_error"] = "%s: %s" % (type(cleanup_error).__name__, cleanup_error)
         if child is not None:
             try:
-                if ownership is not None:
-                    stop_allocation(ownership, manifest["checkpoint_timeout"])
                 stop_owned(child, manifest["checkpoint_timeout"])
             except Exception as cleanup_error:
                 record["cleanup_error"] = "%s: %s" % (type(cleanup_error).__name__, cleanup_error)

@@ -1,0 +1,53 @@
+#+TITLE: Bounded LSMS country implementer / independent reviewer
+
+* Assignment (fill before submission; task bytes are frozen)
+
+Role: IMPLEMENTER or REVIEWER
+Issue: NUMBER and exact scope
+Country/table: COUNTRY / TABLE
+Allowed edits: explicit paths inside this private checkout
+Candidate repository/commit: exact private repository and full SHA
+Control repository/commit: exact repository and full SHA
+Verification budget: named tests/data reads, CPUs/memory/time, warm/cold policy
+Data profile: synthetic or approved reader; explicit L1 scope where applicable
+
+* Required context
+
+Read AGENTS.md and the FULL
+=lsms_library/countries/COUNTRY/_/CONTENTS.org=, including TODO, WAITING and
+LOGBOOK. Name the relevant survey idiosyncrasy in the report. Quote and report
+any contradiction with recorded decisions. Read the relevant feature/wave
+skill; follow current AGENTS runtime/import/cache guidance where an older
+skill passage contradicts it. Preserve survey detail, country identity, index
+grain and documented units. A missing file is not evidence a question was not
+asked. Use the actual receiving paths and role from the dispatch prelude.
+
+* Implementation / independent review
+
+Implementers edit only the allowed paths in their private clone. Reproduce the
+control failure, run the candidate checks, and record healthy-country or
+structural controls appropriate to the change. A config/assembly defect may
+be verifiable warm; request a scoped cold build where the affected build path
+actually needs one. Never clear a shared cache or use the writable shared venv.
+
+Reviewers independently check the exact published candidate with their own
+writable data/cache and the approved runtime. Do not change the author's tree
+or its result refs. Report requested amendments and scientific disagreement
+explicitly. A clean native exit is an execution fact; coordinator acceptance
+and the development PR remain later decisions.
+
+Heavy verification uses the deterministic repo/SHA adapter. Do not push an
+unreviewed candidate into the human mirror merely to make a test job find it.
+Inspect steering/questions at checkpoints and report blockers without waiting
+in an interactive prompt. Stay within the declared data/read/resource budget;
+metadata-labelled reads can still materialize full source frames.
+
+* Durable outputs
+
+Commit the patch to this dispatch's private result branch. Save selected
+JUnit, control/candidate results, exact commands, runtime/import identities and
+guard receipts under =SUCODER_DISPATCH_EVIDENCE_DIR=. Keep raw microdata,
+household identifiers and coordinates out of public commits and summaries.
+Write the structured task outcome at =SUCODER_DISPATCH_TASK_RESULT=, identifying
+all unexecuted checks and any residual issue drafts. Infrastructure success,
+task completion claims and scientific acceptance are separate facts.
