@@ -97,3 +97,17 @@ Receiving immutable-cache cloning uses the same independent-copy transport.
 Verify copied object inode separation, self-contained closure and unchanged source
 bytes/refs with disposable repositories; do not accept alternates or symlinked
 objects. Existing exact-SHA private-results fetch remains unchanged.
+
+** Clone-transport amendment verification
+Production/test amendment cd40f6c3bfcf21b8f76d9a628752f7a5a9e7a863 passed the
+finite pool/control/local-tier selection (153 passed), then the final pool-only
+selection (34 passed, including FIFO/promisor refusal controls). Tests exercised
+actual disposable-Git local copying, inode/link-count separation, unchanged source
+bytes/refs, a newer private SHA absent the immutable cache, hardlink rejection,
+and the unchanged independent-job --no-local transport. No model, scheduler or
+real-project staging was performed by the author. The receiving worker module
+remains byte-identical to root's proven ownership/cleanup helper.
+GitNexus detect-changes again failed with the recorded libssl.so.3 limitation;
+static checks and Python 3.6 helper compilation passed. Real-repository latency
+and a new canary transaction remain root-owned release measurements. Preserve
+original Tanzania staging timeout and its explicit prelaunch reconciliation.
