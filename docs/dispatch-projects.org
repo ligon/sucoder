@@ -93,6 +93,38 @@ directory is symlinked as a writable cache and no shared cache is cleared.
 The receipt records the scope and linked/missing counts. L2 outputs are private
 for each implementer, verifier and reviewer.
 
+* Country fix followed by independent review
+
+Run dispatch from the Savio coordinator; keep the source repository, profile,
+task briefs and result root on shared storage. Fill
+=examples/lsms/task-template.org= with one country/table, allowed edits, exact
+control, evidence requirements and a bounded data/read/resource budget.
+Select synthetic or approved-reader preparation explicitly.
+
+#+begin_src shell
+sucoder dispatch --root /shared/private/dispatch submit /shared/LSMS_Library \
+  --ref FULL_CONTROL_COMMIT --agent codex \
+  --task-file /shared/private/implementer.org \
+  --project-profile /shared/private/lsms-profile.json \
+  --account co_carleton --partition savio4_htc --qos carleton_htc4_normal \
+  --cpus 1 --mem 8G --time 00:30:00 --exclude COORDINATOR_NODE
+#+end_src
+
+Inspect the explicit dispatch result and private =results.git=. Select the
+published =final_head= only after checking task outcome, publication and proof;
+a job disappearing from the queue does not select a candidate. Use that exact
+repository/SHA for the deterministic job below. Preserve a meaningful control
+failure and candidate pass with the same regression selection.
+
+Give the reviewer a separate filled brief, the exact candidate and proof
+identities. Submit another worker from the implementer's private =results.git=
+with =--ref FULL_CANDIDATE_COMMIT= and the same explicit project profile.
+Exclude the implementer's node as well as the coordinator when requiring
+cross-node acceptance. Each allocation gets its own source, runtime and
+writable data; the reviewer publishes to its own result repository. Requested
+amendments return to the implementer as a new explicit assignment. The human's
+development PR follows review and coordinator acceptance.
+
 * Deterministic verification of a private commit
 
 The existing LSMS burst runner must accept an explicit repository and immutable

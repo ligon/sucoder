@@ -7,7 +7,7 @@
 =sucoder dispatch= submits an independent headless agent to the current Slurm cluster.
 It supports Codex and Claude through explicit adapters, with one bounded allocation per worker.
 It does not create tmux sessions, attach a terminal, impersonate another user or synchronize the source repository.
-The first PR supplies this generic lifecycle; project bootstrap and data-access profiles are a separate follow-up.
+The generic lifecycle accepts an optional frozen project profile for runtime and data preparation.
 The LSMS requirements are recorded in [[file:dispatch-lsms-followup.org][the LSMS integration plan]].
 The optional [[file:dispatch-projects.org][project-profile stage]] implements explicit frozen
 bootstrap/runtime/data bindings, shared with deterministic verification jobs.
@@ -47,7 +47,9 @@ The default source is the user's native =~/.codex= or =~/.claude=, not an inheri
 The worker copies selected configuration/authentication seeds into private homes; Codex retains a stable private canonical home for recovery while the managed runner binds its hot state onto local storage.
 An allowlist carries supported provider credentials through a private file rather than command arguments or the entire coordinator environment.
 Task content, requested model, worker helpers and required evidence names are frozen at submission.
-Native authentication/configuration seeds are read at worker startup; freezing a complete project/runtime profile is part of the follow-up rather than a guarantee of this initial interface.
+Native authentication/configuration seeds are read at worker startup.
+When =--project-profile= is supplied, its configuration and bootstrap bytes are
+frozen at submission and approved assets are verified on the receiving node.
 
 Submission prints JSON containing the dispatch ID, pinned commit, private artifact directory and Slurm receipt.
 The dispatch ID is distinct from the numeric Slurm job ID.
