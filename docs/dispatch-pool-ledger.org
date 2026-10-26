@@ -69,3 +69,20 @@ libssl.so.3 native-module error; no tool installation was changed. Manual
 call-site review and independent source review cover the high-impact ownership
 boundary. Actual supervisor/sibling/daemon survival and native local-SQLite
 placement remain root-owned release gates.
+
+** Exact committed confirmation
+At production/test commit 0340f0b1fe3c319db9ed2e26ff9061d9afcdabba the complete
+finite fake-only selection passed: 290 passed, 0 failed/errors/skips,
+480 inherited Typer deprecation warnings, 59.44 seconds. This includes both
+independent fake-proc and actual-Slurm-output fixture modules plus existing
+dispatch, project, worker, CLI and local-tier tests. Full log and JUnit:
+/local/job40498884/control/pool77-tests-final.log and pool77-tests-final.xml.
+
+Root's actual step-survival-v2 test exercised two numeric steps on job 40513023,
+with detached own-child cleanup and sibling synthetic SQLite/WAL descriptors
+and keeper progress preserved. Candidate dispatch_worker.py is byte-identical
+to that proven helper: b09ef8620c4e4ab80c867044dafc9dc0c84e10d67c0eb68eea49767068d6f762.
+The requested ownership/cleanup/mount AST closure is identical too, recorded in
+/local/job40498884/control/pool77-actual-cleanup-closure.json. This is narrow
+cleanup acceptance, not complete dispatch.run/project/native placement proof.
+Root retains those native canary release and interpretation responsibilities.
