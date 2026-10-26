@@ -108,7 +108,7 @@ Unknown denominators, window release rules, background use and served-model iden
 - Review and response :: [[file:llm-usage-collection-review.org][Model Identification Review]].
 - Economic objective :: [[file:llm-shadow-values.org][Standing Shadow Values]].
 - Acceptance inputs :: [[file:examples/llm-usage-collection-v1.json][Original temporal replay]] and [[file:examples/llm-usage-collection-v2.json][14 model-identification scenarios]].
-- Method :: [[file:/home/ligon/.sucoder/skills/workshop-problem/SKILL.md][workshop-problem]] and its charter template; phases 2-6 run by hand in this harness after approval.
+- Method :: =workshop-problem= (installed locally at =~/.sucoder/skills/workshop-problem/SKILL.md=) and its charter template; phases 2-6 run by hand in this harness after approval.
 
 * 5. Open questions and risks
 

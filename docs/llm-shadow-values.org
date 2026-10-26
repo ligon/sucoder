@@ -236,9 +236,9 @@ The following checks define the proposed implementation bar:
 * Grounding and implementation sequence
 
 The [[file:llm-usage-collection.org][practical collection design]] specifies the first data-gathering component, including sampling, record identity, price history, storage and estimator-ready exports.
-The existing [[file:../../llm-accounting/WORKPLAN.md][llm-accounting workplan]], especially its SuCoder integration phase, assigns scheduling policy to SuCoder and keeps task attribution separate from account reporting.
-Its [[file:../../llm-accounting/docs/schema-contract.md][schema contract]] defines resource identity, units, freshness, unknown values and the distinction between quota snapshots and consumption flows.
-The [[file:../../llm-accounting/docs/subscription-contract.md][subscription contract]] and [[file:../../llm-accounting/docs/model-limits-design.md][model-limit design]] establish shared pools, verified context and overlapping model applicability.
+The existing llm-accounting workplan (=llm-accounting/WORKPLAN.md=), especially its SuCoder integration phase, assigns scheduling policy to SuCoder and keeps task attribution separate from account reporting.
+Its schema contract (=llm-accounting/docs/schema-contract.md=) defines resource identity, units, freshness, unknown values and the distinction between quota snapshots and consumption flows.
+The subscription contract (=llm-accounting/docs/subscription-contract.md=) and model-limit design (=llm-accounting/docs/model-limits-design.md=) establish shared pools, verified context and overlapping model applicability.
 These documents were inspected at llm-accounting commit =ed7c851=; the SuCoder checkout is =17a65ae=, with a newer =ligon/main= already available locally.
 
 Before runtime edits, refresh the implementation map and targeted test inventory against the selected current SuCoder baseline.

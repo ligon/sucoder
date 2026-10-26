@@ -15,7 +15,8 @@ Model-tagged capture should accompany the first pilot intended to improve those 
 
 Reviewed baseline: SuCoder =cc48d19= and llm-accounting =ed7c851=.
 The line references below identify that baseline.
-After revision, file links navigate the current documents; recover the reviewed collection text with =git show cc48d19:docs/llm-usage-collection.org=.
+Line-specific SuCoder citations below link to that immutable reviewed baseline; links in the revision response navigate the current documents.
+The original collection text is also available with =git show cc48d19:docs/llm-usage-collection.org=.
 Two fresh independent reviewers examined identification and native telemetry sources; the earlier reviews primarily established storage and accounting consistency and missed the minimum model-data requirement.
 
 * Response in the revised design
@@ -46,22 +47,22 @@ The human also chose the existing llm-accounting repository/distribution for imp
 - Contribution to shared draw :: The Fable-specific percentage and the shared percentage do not establish per-model shares of one common resource quantity.
 - Declared model quotes :: The price vector can distinguish model routes, even while the quantities demanded at those quotes remain unobserved.
 
-The accounting implementation explicitly sets quota observations' model dimensions to null in [[file:../../llm-accounting/src/llm_accounting/subscriptions.py::237][subscriptions.py:237-244]].
-Its [[file:../../llm-accounting/tests/test_model_limits_adversarial.py::333][model-usage rejection test]] protects that distinction.
-The [[file:../../llm-accounting/src/llm_accounting/subscriptions.py::93][Claude normalizer]] retains =five_hour=, =seven_day= and =weekly_fable=; it does not normalize an Opus consumption series or the raw weekly breakdown/share fields.
+The accounting implementation explicitly sets quota observations' model dimensions to null in =subscriptions.py:237-244= (=llm-accounting/src/llm_accounting/subscriptions.py:237=).
+Its model-usage rejection test (=llm-accounting/tests/test_model_limits_adversarial.py:333=) protects that distinction.
+The Claude normalizer (=llm-accounting/src/llm_accounting/subscriptions.py:93=) retains =five_hour=, =seven_day= and =weekly_fable=; it does not normalize an Opus consumption series or the raw weekly breakdown/share fields.
 That is deliberate source-contract behavior, not evidence that a provider breakdown could never be collected.
 
 * Findings
 
 ** P1: The minimum milestone does not observe the model-use vector
 
-[[file:llm-usage-collection.org::18][Collection design:18-21]] defers counters and lifecycle observations to optional Slice B.
-The [[file:llm-shadow-values.org::29][economic design:29-34]] needs route-specific resource draw to translate shared scarcity into hourly model charges.
+[[https://github.com/ligon/sucoder/blob/cc48d19dfd46c5934436f1bcf23469fc2c3433d7/docs/llm-usage-collection.org#L18][Collection design:18-21]] defers counters and lifecycle observations to optional Slice B.
+The [[https://github.com/ligon/sucoder/blob/cc48d19dfd46c5934436f1bcf23469fc2c3433d7/docs/llm-shadow-values.org#L29][economic design:29-34]] needs route-specific resource draw to translate shared scarcity into hourly model charges.
 Quota histories alone cannot supply that vector, and merely recording a distinct price for each route does not change what is observed.
 
 There is a practical source missing from the inventory.
 Claude's [[https://code.claude.com/docs/en/monitoring-usage#api-request-event][documented monitoring interface]] provides model-tagged request metadata and token/cost metrics, including request durations and subsystem attribution.
-The [[file:llm-usage-collection.org::234][proposed Claude adapter:234-244]] examines only status-line callbacks, whose token snapshots are a weaker source for this purpose.
+The [[https://github.com/ligon/sucoder/blob/cc48d19dfd46c5934436f1bcf23469fc2c3433d7/docs/llm-usage-collection.org#L234][proposed Claude adapter:234-244]] examines only status-line callbacks, whose token snapshots are a weaker source for this purpose.
 The documented telemetry interface is not yet a locally verified adapter, but it is sufficient evidence to design a prospective model-aware pilot rather than leave the source unspecified.
 
 Required revision: make a selected model-tagged metadata source and its coverage contract part of the minimum model-aware pilot.
@@ -69,7 +70,7 @@ Keep the quota-only collector useful as a separate readiness level; do not make 
 
 ** P1: Model-tagged activity still does not identify shared allowance weights automatically
 
-[[file:llm-usage-collection.org::280][Collection design:280-282]] correctly denies that quota trends establish per-model contributions.
+[[https://github.com/ligon/sucoder/blob/cc48d19dfd46c5934436f1bcf23469fc2c3433d7/docs/llm-usage-collection.org#L280][Collection design:280-282]] correctly denies that quota trends establish per-model contributions.
 However, the implementation sequence has no explicit criterion for when a model-specific draw estimate becomes supported, as opposed to remaining a prior.
 
 Suppose each sampling interval contains one Fable agent-hour and one Opus agent-hour, while shared utilization rises two percentage points.
@@ -90,7 +91,7 @@ Declared coefficients remain a useful short-run fallback.
 
 ** P2: A route label is not an execution-model observation
 
-The [[file:llm-usage-collection.org::260][design:260-269]] mentions switches and reroutes but does not define their identity evidence in the record contract.
+The [[https://github.com/ligon/sucoder/blob/cc48d19dfd46c5934436f1bcf23469fc2c3433d7/docs/llm-usage-collection.org#L260][design:260-269]] mentions switches and reroutes but does not define their identity evidence in the record contract.
 The replay's only usage counters have =route-fable= and =model_scope: single_declared_route=; it has no observed Opus counter, model switch or differently modeled child.
 
 Distinguish requested, configured, native-reported and served model identities, with null/mixed states and an explicit evidence basis.
@@ -107,7 +108,7 @@ An adapter may establish one of these distinctions without establishing all of t
 
 ** P2: Telemetry needs source-specific deduplication and hour semantics
 
-The generic rules at [[file:llm-usage-collection.org::172][design:172-175]] are sound but do not yet define the prospective telemetry source's natural identity and stream epochs.
+The generic rules at [[https://github.com/ligon/sucoder/blob/cc48d19dfd46c5934436f1bcf23469fc2c3433d7/docs/llm-usage-collection.org#L172][design:172-175]] are sound but do not yet define the prospective telemetry source's natural identity and stream epochs.
 [[https://opentelemetry.io/docs/specs/otlp/#duplicate-data][OTLP transport]] can redeliver data, and the [[https://opentelemetry.io/docs/specs/otel/metrics/data-model/#temporality][metrics data model]] distinguishes delta from cumulative intervals.
 Store original stream/process epochs, interval endpoints and temporality; a local receive timestamp is not a fresh unit of usage.
 Keep request events and metric totals as corroborating views, never additive copies of the same work.
@@ -124,7 +125,7 @@ Required revision: choose request events or compatible metrics as the primary qu
 
 ** P2: The replay proves temporal joins, not model identification
 
-[[file:llm-usage-collection.org::309][Design:309-325]] includes a synthetic single-route cumulative counter and general future tests for model switches.
+[[https://github.com/ligon/sucoder/blob/cc48d19dfd46c5934436f1bcf23469fc2c3433d7/docs/llm-usage-collection.org#L309][Design:309-325]] includes a synthetic single-route cumulative counter and general future tests for model switches.
 That does not show that the minimum collector distinguishes two models, prevents parent/child double counting, or admits that a shared-draw model is unidentified.
 
 Required revision: add adversarial scenarios with the same quota observations but different Fable/Opus activity; independently varying model activity; a constant-proportion, unidentified mix; an Opus child under a Fable parent; switches/fallback; and a missing external source.
