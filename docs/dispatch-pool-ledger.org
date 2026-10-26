@@ -137,3 +137,17 @@ SHA256 is still b09ef8620c4e4ab80c867044dafc9dc0c84e10d67c0eb68eea49767068d6f762
 Original canary failures remain preserved; new productive/native canaries are
 root-owned releases, not implied by this local test. GitNexus remains unavailable
 with the recorded native libssl.so.3 load error; static/compile checks passed.
+
+** Bounded terminal-proof continuation after metadata refusal
+Root retained four native-owner failures at descriptor directory/mount guards
+(errno13/22); current survivors must remain untouched. EINVAL/EACCES alone are
+not exit proof, and vanished PIDs after cleanup do not explain original cause.
+Extend the34070 terminal-proof precedent with a <=50ms total inspection-pass
+polling budget after metadata errors, max11 attempts at5ms intervals. Anchor
+proof to owned real UID and original starttime. Only that incarnation's fresh
+Z/X or a fully missing proc directory authorizes skipping it; changed UID/starttime,
+live or unreadable/unknown existing processes never pass. Do not stat descriptor
+targets. Keep failure category/errno/proc filename and incarnation/proof diagnostics.
+Use fake clock/proc controls before production commit; enrich old synthetic
+fixtures with actual UID/starttime fields where needed without weakening their
+assertions. Root owns actual lifecycle probes and new managed transactions.
