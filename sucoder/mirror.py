@@ -884,6 +884,7 @@ class MirrorManager:
 
     def _remote_git_env(
         self, ctx: MirrorContext, *, use_scaffolding: bool = True,
+        use_gateway: bool = False,
     ) -> tuple:
         """Return ``(url, env)`` for git operations against the remote mirror.
 
@@ -897,6 +898,10 @@ class MirrorManager:
         Pass ``use_scaffolding=False`` to build transport against the
         executor's target (the login node, or the compute node of an
         salloc target) instead.
+
+        Pass ``use_gateway=True`` to ride the warm gateway ControlMaster
+        itself (no login-node socket); returns ``("", {})`` for a target
+        without a gateway.
         """
         remote = ctx.settings.remote
         assert remote is not None
@@ -939,6 +944,22 @@ class MirrorManager:
         proxy_hardening = (
             f"-o BatchMode=yes {proxy_quiet}-o ConnectTimeout={connect_timeout} "
         )
+
+        if use_gateway:
+            if not gateway:
+                return "", {}
+            from .tunnel import _control_socket_path as _gw_sock
+            ssh_cmd_parts = ["ssh"]
+            if debug_ssh:
+                ssh_cmd_parts.append("-vvv")
+            ssh_cmd_parts.extend(hardening)
+            ssh_cmd_parts.extend([
+                "-o", "ControlMaster=auto",
+                "-o", f"ControlPath={_gw_sock(gateway)}",
+            ])
+            env = dict(os.environ)
+            env["GIT_SSH_COMMAND"] = " ".join(shlex.quote(p) for p in ssh_cmd_parts)
+            return f"{gateway}:{remote_path}", env
 
         # The scaffolding node sees the same Lustre filesystem and avoids
         # the fragile compute-node chain.
@@ -1025,8 +1046,14 @@ class MirrorManager:
         distinct from the primary, is the fallback.  The data-transfer
         node is not used: it is for bulk data, commonly caps concurrent
         SSH sessions to ~1, and its view of the shared filesystem can
-        wedge on its own.  Without a distinct scaffolding node only one
-        transport is returned (no pointless retry).
+        wedge on its own.
+
+        Last resort for a gateway target is the warm gateway mux itself.
+        It may land on the same login node, but it is a separate SSH
+        connection, so it survives a wedged login-node socket — the one
+        case where a confined target (whose primary *is* the login node)
+        otherwise had no fallback at all (2026-10-28: a 2 MB publication
+        push hung 300s on ln001 and succeeded in 2s afterwards).
 
         Note: for a SLURM compute-node target the "primary" is the
         compute node (where the agent runs and the executor is pinned),
@@ -1050,6 +1077,9 @@ class MirrorManager:
             # (no distinct fallback).
             if scaffold_url != url:
                 transports.append(("login node", scaffold_url, scaffold_env))
+        gw_url, gw_env = self._remote_git_env(ctx, use_gateway=True)
+        if gw_url and gw_url not in {t[1] for t in transports}:
+            transports.append(("gateway", gw_url, gw_env))
         return transports
 
     @staticmethod
