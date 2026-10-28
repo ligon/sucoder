@@ -810,6 +810,58 @@ def inspect_placement(child, runner, root, home, proc_root="/proc", expected_env
             "durable_checkpoint_copies": sorted(set(checkpoint_copies)), "inspection_races": races}
 
 
+def inspect_placement_rechecked(child, runner, root, home, proc_root="/proc", expected_environment=None,
+                                ownership=None, manifest=None):
+    """Retry one complete inspection after a recoverable same-incarnation error.
+
+    Readability can recover while a process remains alive. A second complete
+    pass must actually inspect it; elapsed time or a live identity never
+    authorizes skipping unreadable metadata. The original terminal proof and
+    every placement check remain in force on both passes.
+    """
+    arguments = dict(proc_root=proc_root, expected_environment=expected_environment,
+                     ownership=ownership, manifest=manifest)
+    try:
+        return inspect_placement(child, runner, root, home, **arguments)
+    except Refused as initial:
+        context = getattr(initial, "inspection_failure", None)
+        if not isinstance(context, dict) or context.get("proof", {}).get("reason") != "still_live":
+            raise
+        pid, expected = context["pid"], context["proof"]["expected"]
+
+        def verified_identity():
+            current = process_identity(pid, proc_root)
+            if current is not None:
+                if any(current[key] != expected[key] for key in ("uid", "starttime")):
+                    return None
+                return current
+            proof = terminal_proof_after_error(pid, proc_root, expected)
+            if proof["terminal"]:
+                return {"state": "terminal", "proof": proof}
+            return None
+
+        before = verified_identity()
+        if before is None:
+            raise
+        try:
+            result = inspect_placement(child, runner, root, home, **arguments)
+        except Refused as final:
+            previous = getattr(final, "inspection_failure", None)
+            final.inspection_failure = dict(context, reinspection={
+                "outcome": "refused", "failure": previous, "reason": str(final)})
+            raise
+        after = verified_identity()
+        if after is None or (after["state"] not in ("Z", "X", "terminal")
+                             and pid not in result["inspected_pids"]):
+            initial.inspection_failure = dict(context, reinspection={
+                "outcome": "identity_unknown_changed_or_not_inspected", "after": after})
+            raise initial
+        result["inspection_retries"] = [{"initial_failure": context,
+                                         "before": before, "after": after,
+                                         "outcome": "full_inspection_completed"}]
+        return result
+
+
 def stop_owned(child, timeout):
     # Popen(start_new_session=True) makes the child the owner of this group.
     # Signal the group even if its leader has exited but left descendants.
@@ -1083,8 +1135,8 @@ def run(manifest_path, inherited=None, mountinfo_path="/proc/self/mountinfo", ow
             while child.poll() is None:
                 if manifest.get("execution") is not None and time.time() >= manifest["execution"]["deadline"] - 120:
                     stop_signal[0] = signal.SIGTERM
-                evidence = inspect_placement(child, runner, root, environment["HOME"], expected_environment=environment,
-                                             ownership=ownership, manifest=manifest)
+                evidence = inspect_placement_rechecked(child, runner, root, environment["HOME"], expected_environment=environment,
+                                                       ownership=ownership, manifest=manifest)
                 observed.update(evidence["observed"])
                 databases.update(evidence["databases"])
                 record["placement"].update(observed=sorted(observed), sqlite="observed_local" if databases else "not_observed",
@@ -1092,6 +1144,8 @@ def run(manifest_path, inherited=None, mountinfo_path="/proc/self/mountinfo", ow
                 record["placement"]["durable_checkpoint_copies"] = evidence["durable_checkpoint_copies"]
                 if evidence.get("inspection_races"):
                     record["placement"].setdefault("inspection_races", []).extend(evidence["inspection_races"])
+                if evidence.get("inspection_retries"):
+                    record["placement"].setdefault("inspection_retries", []).extend(evidence["inspection_retries"])
                 record["placement"]["environment_verified"] = (record["placement"].get("environment_verified", False)
                                                                   or evidence["environment_verified"])
                 if evidence["misplaced"]:

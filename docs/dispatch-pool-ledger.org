@@ -170,3 +170,52 @@ passed. These synthetic controls establish the mechanism, not the cause of old
 actor failures. Root retains the real transition probe, partial-state recovery
 and any new productive managed transaction release. No author native/Slurm
 launch, state alteration, cancellation or retry occurred.
+
+** One complete reinspection after recoverable live metadata failure -- 2026-10-28
+
+Prior art is the105d08f terminal-proof mechanism above, process_identity and
+inspect_placement, plus the immutable managed runner FD/mount reader.
+A real owned-child counterfactual changed dumpability from0 to1 after20ms:
+FD access recovered while the same UID/starttime remained S; the original
+50ms identity-only proof still refused. A second complete placement inspection
+passed. A persistent nondumpable child remained refused. This demonstrates a
+mechanism limitation, not the cause of five native country-worker failures.
+
+Reuse the original full inspection unchanged as an inner pass. Allow exactly
+ONE new full pass only after an inspection_failure with still_live proof and
+fresh identical UID/starttime. Reinspect every process/environment/descriptor
+and placement rule. After successful retry require the original failed PID to
+be fully inspected at the same live incarnation, or fresh terminal/gone proof.
+Changed/unknown identities, persistent unreadability, misplaced stores and all
+other refusals must still stop. Never exempt a live unreadable process.
+Preserve initial failure and retry outcome in result/status/final failure.
+The two inner passes retain their existing <=50ms proof budgets; no recursive
+retry, age-based skip, target stat, deployment or worker restart is implied.
+
+Impact analysis was attempted with installed GitNexus CLI in the new isolated
+clone, but native LadybugDB cannot load libssl.so.3. The same missing-library
+limitation is recorded in the preceding accepted ledger. Static call analysis
+finds one production caller in dispatch_worker's run supervision loop,
+plus direct placement/exit/grace tests. The change affects the placement gate
+for both agent modes; this is security-sensitive. Frozen105d08f source and all
+running workers remain untouched. Independent review and real probes precede
+any new frozen release/native acceptance transaction.
+
+Independent source review found a reused-PID race in the first wrapper draft:
+a known changed UID/starttime fell through to a later gone-directory proof.
+Refuse a known changed identity immediately; disappearance cannot erase that
+observation. Separate before/after-success disappearing-reuse controls are
+required. Initial18cases passed after a fake-clock rounding assertion fix;
+first full targeted cohort256passed. Preserve those earlier results as draft
+mechanism checks, not acceptance of the review correction or deployment.
+
+Final corrected worker86f9f524 passes260 targeted tests in29.16seconds,
+including22 newcases (two actual Linux nondumpable-child controls) and four
+independent disappearing-reuse regressions. Those four fail meaningfully on
+the exact prior13ea draft, pass on corrected86f; eleven additional pure-policy
+controls retain their outcomes. The actual original inspect_placement AST is
+unchanged; only new inspect_placement_rechecked and the run caller/diagnostic
+persistence differ. Python3.6 grammar parses. GitNexus detect_changes was
+attempted and fails the same missing libssl3; manual AST scope check passes.
+These checks are not native lifecycle acceptance, deployment, scientific data
+verification or an explanation of the five original country failures.
