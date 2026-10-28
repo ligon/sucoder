@@ -5137,7 +5137,7 @@ def test_collaborate_outside_tmux_reexecs_into_a_local_session(tmp_path, monkeyp
     assert result.exit_code == 0, _output(result)
     assert execs == [(
         "tmux",
-        ["tmux", "new-session", "-s", "sucoder-sample", "-c", os.getcwd(),
+        ["tmux", "new-session", "-s", "sucoder-sample", "-c", os.getcwd(), "-n", "sample",
          "sucoder collaborate sample"],
     )]
     assert "Starting the agent in local tmux session sucoder-sample" in _output(result)

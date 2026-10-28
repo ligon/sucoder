@@ -170,14 +170,23 @@ def command_argv(argv: Optional[Sequence[str]] = None) -> List[str]:
     return argv
 
 
-def new_session_argv(session: str, command: Sequence[str], cwd: str) -> List[str]:
+def new_session_argv(
+    session: str, command: Sequence[str], cwd: str, window_name: Optional[str] = None,
+) -> List[str]:
     """``tmux new-session`` running *command* in *cwd* as session *session*.
 
     The command is one shell-quoted string, as the remote launch builds
     it; ``-c`` keeps the working directory, which zero-config mode reads
-    the canonical repository from.
+    the canonical repository from.  ``window_name`` (the mirror name, not
+    a path basename, which differs between local and remote checkouts)
+    labels the window with ``-n``; tmux then turns ``automatic-rename``
+    off for it, so the agent's command does not replace the label.
     """
-    return ["tmux", "new-session", "-s", session, "-c", cwd, shlex.join(list(command))]
+    window_flags = ["-n", window_name] if window_name else []
+    return [
+        "tmux", "new-session", "-s", session, "-c", cwd, *window_flags,
+        shlex.join(list(command)),
+    ]
 
 
 def attach_argv(session: str) -> List[str]:

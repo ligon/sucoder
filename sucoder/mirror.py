@@ -2308,6 +2308,7 @@ class MirrorManager:
     def _build_tmux_launch_command(
         tmux_name: str, agent_cmd_str: str, *, detached: bool,
         selection: Optional[str] = None,
+        window_name: Optional[str] = None,
     ) -> List[str]:
         """Build the ``tmux new-session`` command that wraps the agent.
 
@@ -2321,13 +2322,19 @@ class MirrorManager:
         already exists would silently discard it.  Without ``-A`` tmux
         refuses with ``duplicate session`` (exit 1) instead, which
         :meth:`launch_agent` turns into the refusal that names the session.
+
+        ``window_name`` (the mirror name) labels the window with ``-n``;
+        tmux then turns ``automatic-rename`` off for it, so the agent's
+        command (``sudo``, ``claude``, ``bash``) does not replace the label.
+        It is ignored when ``-A`` attaches to an existing session.
         """
         session_flags = [] if selection is not None else ["-A"]
         if detached:
             session_flags.append("-d")
+        window_flags = ["-n", window_name] if window_name else []
         return [
             "tmux", "new-session", *session_flags,
-            "-s", tmux_name, agent_cmd_str,
+            "-s", tmux_name, *window_flags, agent_cmd_str,
         ]
 
     def _externalize_prelude(
@@ -2541,6 +2548,7 @@ class MirrorManager:
         prepare_path: Optional[str] = None,
         local_disk_root: Optional[str] = None,
         mirror_token: Optional[str] = None,
+        window_name: Optional[str] = None,
     ) -> str:
         """sbatch script body for a ``confined`` launch (shared partitions).
 
@@ -2591,6 +2599,9 @@ class MirrorManager:
         recomputed here from the same inputs rather than sourced from the
         script, so an early ``exit`` in the script cannot take the batch
         body with it.
+
+        ``window_name`` (the mirror name) labels the window with ``-n``;
+        see :meth:`_build_tmux_launch_command`.
         """
         q_sess = shlex.quote(tmux_session)
         q_sock = shlex.quote(socket)
@@ -2616,6 +2627,7 @@ class MirrorManager:
                 for k, v in env.items()
             )
         q_win = shlex.quote(exports + agent_cmd_str)
+        q_name = f"-n {shlex.quote(window_name)} " if window_name else ""
         # Capture new-session's rc and emit a marker on failure: the agent
         # runs detached, so a silent new-session failure would otherwise let
         # the keeper loop fall through and the job COMPLETE with exit 0
@@ -2624,7 +2636,7 @@ class MirrorManager:
             "#!/bin/bash\n"
             "set -u\n"
             + cd_lines +
-            f"tmux -L {q_sock} new-session -A -d -s {q_sess} {q_win}\n"
+            f"tmux -L {q_sock} new-session -A -d -s {q_sess} {q_name}{q_win}\n"
             "rc=$?\n"
             "if [ \"$rc\" -ne 0 ]; then\n"
             "    echo \"SUCODER: tmux new-session failed (rc=$rc)\" >&2\n"
@@ -3322,6 +3334,7 @@ class MirrorManager:
             mirror_path=mirror_path, agent_cmd_str=windowed_cmd, env=env,
             timer_path=timer_path, prepare_path=prepare_path,
             local_disk_root=local_disk_root, mirror_token=safe,
+            window_name=ctx.settings.name,
         )
         self.executor.run_agent(
             [
@@ -3849,6 +3862,7 @@ class MirrorManager:
                 )
             command = self._build_tmux_launch_command(
                 tmux_name, agent_cmd_str, detached=detached, selection=selection,
+                window_name=ctx.settings.name,
             )
             if selection is not None:
                 exclusive_tmux = tmux_name
@@ -4654,7 +4668,10 @@ class MirrorManager:
         exists = shlex.join([
             "tmux", "has-session", "-t", f"={tmux_name}" if selection is not None else tmux_name,
         ])
-        create = shlex.join(["tmux", "new-session", "-d", "-s", tmux_name, command])
+        create = shlex.join([
+            "tmux", "new-session", "-d", "-s", tmux_name,
+            "-n", ctx.settings.name, command,
+        ])
         script = (
             f"if {exists} 2>/dev/null; then :; "
             f"elif {create}; then printf 'SUCODER_CREATED\\n'; "

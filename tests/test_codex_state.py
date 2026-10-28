@@ -484,6 +484,7 @@ def test_launch_with_a_selection_starts_the_tui_session_when_none_exists(tmp_pat
     # the argv that carries the selection.
     assert launched[:5] == ["tmux", "new-session", "-d", "-s", "sucoder-sample"] and "--fresh -- " in launched[-1]
     assert "-A" not in launched and not confined.called
+    assert launched[5:7] == ["-n", ctx.settings.name]
 
 
 def test_tmux_launch_command_drops_attach_or_create_only_for_a_selection():
