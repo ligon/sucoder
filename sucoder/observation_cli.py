@@ -33,6 +33,11 @@ class ObservationGroup(TyperGroup):
         ctx.meta["observation"] = (("--json" in tail or "--help" in tail) and bool(route) and
             (route[0] in ("sessions", "context") or
              route[:2] in (["relay", "sessions"], ["relay", "capabilities"])))
+        # Click reaches a subcommand's --help only after this group's callback
+        # has loaded configuration, so flag it here for main() to skip that.
+        # Tokens after "--" are operands, never the help option.
+        options = route[:route.index("--")] if "--" in route else route
+        ctx.meta["help_only"] = bool(command) and "--help" in options
         return remaining
 
 

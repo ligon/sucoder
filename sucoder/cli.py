@@ -1835,6 +1835,15 @@ def main(
         ctx.obj = {"observation_config": str(config) if config else None,
                    "target_name": target, "config_path": config or _default_config_path()}
         return
+    if ctx.meta.get("help_only"):
+        # Help renders from the command definitions: no config file, no
+        # zero-config repository probe, no startup checks, so --help works
+        # outside a repository and before any config exists.  relay_main still
+        # checks config_path.  Like the observation route, a literal --help
+        # given as an option value also lands here; the command then exits 2
+        # from _get_config.
+        ctx.obj = {"target_name": target, "config_path": config or _default_config_path()}
+        return
     config_explicitly_set = config is not None
     default_path = _default_config_path()
     is_default_config = False
