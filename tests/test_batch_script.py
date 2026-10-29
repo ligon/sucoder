@@ -174,3 +174,16 @@ def test_local_tier_requires_root_and_token():
 def test_local_tier_script_parses(tmp_path):
     s = MirrorManager._build_batch_script(**_BASE, **_TIER, timer_path="/t.sh")
     assert _bash_n(s).returncode == 0
+
+
+def test_window_name_labels_the_window():
+    s = MirrorManager._build_batch_script(**_BASE, window_name="K-Aggregators")
+    assert "new-session -A -d -s sucoder-K-Aggregators -n K-Aggregators " in s
+    assert "-n " not in MirrorManager._build_batch_script(**_BASE)
+
+
+@_bash_only
+def test_window_name_is_quoted():
+    s = MirrorManager._build_batch_script(**_BASE, window_name="a b'; rm -rf x")
+    assert _bash_n(s).returncode == 0
+    assert "-n 'a b'\"'\"'; rm -rf x' " in s

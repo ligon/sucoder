@@ -2633,7 +2633,9 @@ def _tmux_launch_preamble(
         )
         logger.info("Attaching to existing local tmux session %s", session)
         os.execvp("tmux", tmux_env.attach_argv(session))
-    argv = tmux_env.new_session_argv(session, tmux_env.command_argv(), os.getcwd())
+    argv = tmux_env.new_session_argv(
+        session, tmux_env.command_argv(), os.getcwd(), window_name=mirror,
+    )
     if dry_run:
         # The dry run itself stays here: re-run inside tmux it would print
         # and exit, closing the session it had just opened.
