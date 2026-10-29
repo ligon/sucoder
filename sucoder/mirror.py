@@ -7399,23 +7399,45 @@ If you find issues, describe each one clearly with the filename and specific con
     def _parse_skill_catalog(self, catalog: Path, content: str) -> List[Path]:
         references: List[Path] = []
         seen: set[Path] = set()
+        skipped: set[Path] = set()
+        own = catalog.resolve()
 
-        def add_reference(raw: str) -> None:
+        def target_path(raw: str) -> Optional[Path]:
             target = raw.strip()
             if not target:
-                return
+                return None
             target = target.strip('<>"\'')
             target = target.split("::", 1)[0]
-            path = (
+            return (
                 Path(target).expanduser()
                 if target.startswith("~") or target.startswith("/")
                 else catalog.parent / target
             )
+
+        def add_reference(raw: str, *, bare: bool = False) -> None:
+            path = target_path(raw)
+            if path is None:
+                return
+            # A bare "- word" bullet is an entry only when it names something
+            # on disk; otherwise it is prose ("- LSMS_Library: lives in ...").
+            if bare and not any(
+                candidate.exists()
+                for candidate in (path, path.parent / f"{path.name}.org", path.parent / f"{path.name}.md")
+            ):
+                return
             normalized = (
                 self._normalize_skill_file_path(path)
                 or self._normalize_catalog_path(path)
                 or path
             )
+            if normalized.resolve() == own:
+                # The normalizers fall back to a sibling SKILLS file, so a path
+                # that names nothing here lands on this catalog, which would
+                # then list itself as a skill.
+                if path not in skipped:
+                    skipped.add(path)
+                    self.logger.warning("Skill catalog %s: entry %s names no skill; skipped.", catalog, path)
+                return
             if normalized not in seen:
                 seen.add(normalized)
                 references.append(normalized)
@@ -7432,7 +7454,7 @@ If you find issues, describe each one clearly with the filename and specific con
             elif stripped.startswith("- "):
                 candidate = stripped[2:].split()[0]
                 if candidate and not candidate.startswith("file:") and "://" not in candidate:
-                    add_reference(candidate)
+                    add_reference(candidate, bare=True)
 
         return references
 

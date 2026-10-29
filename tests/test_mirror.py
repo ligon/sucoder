@@ -6543,6 +6543,38 @@ def test_skill_catalog_labels_unparseable_skill_by_directory(
         assert not line.startswith("- SKILL"), line
 
 
+def test_skill_catalog_lists_only_entries_that_name_skills(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Prose bullets and a prose ``file:`` mention used to render as a bogus
+    "SKILLS" entry: a path naming nothing fell back to the catalog itself."""
+    manager = build_manager(tmp_path)
+    catalog_dir = tmp_path / "skills_catalog"
+    for name in ("good", "bare"):
+        (catalog_dir / name).mkdir(parents=True)
+        (catalog_dir / name / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: A {name} skill.\n---\nBody.\n", encoding="utf-8"
+        )
+    catalog = catalog_dir / "SKILLS.md"
+    catalog.write_text(
+        "# Catalog\n\n"
+        "- file:good/SKILL.md — explicit entry.\n"
+        "- bare/SKILL.md — bare path that exists.\n"
+        "- LSMS_Library: `add-wave` lives with its project.\n"
+        "- missing/SKILL.md — bare path naming nothing.\n"
+        "List new skills with a `file:` link.\n",
+        encoding="utf-8",
+    )
+
+    with caplog.at_level(logging.WARNING, logger=manager.logger.name):
+        rendered = manager._render_skill_catalog(catalog, set())
+
+    entries = [line for line in rendered.splitlines() if line.startswith("- ")]
+    assert [line.split(" — ")[0] for line in entries] == ["- good", "- bare"]
+    # The prose file: mention is reported once instead of listed as a skill.
+    assert len([r for r in caplog.records if "names no skill" in r.getMessage()]) == 1
+
+
 # ----------------------------------------------------------------------
 # Issue 19 option 3: never allocate a second job for a mirror that has one
 # ----------------------------------------------------------------------
