@@ -2224,8 +2224,9 @@ def test_launch_confined_session_not_ready_surfaces_log(tmp_path, monkeypatch):
     calls = []
     manager.executor.run_agent = _confined_responder(
         calls, sbatch_out="13", poll_states=["RUNNING|n0001.savio4|None|N/A"], ready_rc=1,
+        live_state="RUNNING",
     )
-    with pytest.raises(MirrorError, match="did not come up") as exc:
+    with pytest.raises(MirrorError, match="has not come up") as exc:
         manager._launch_confined(
             ctx, ["claude"], remote_prelude_text=None,
             prelude_sentinel="__X__", env=None, detached=False,
@@ -2239,6 +2240,92 @@ def test_launch_confined_session_not_ready_surfaces_log(tmp_path, monkeypatch):
     assert not any(
         c["args"][0] == "srun" and "attach-session" in c["args"] for c in calls
     )
+
+
+def test_launch_confined_session_not_ready_and_job_gone_says_it_ended(tmp_path, monkeypatch):
+    """A job that left the queue while we waited is reported as ended (with
+    its sacct state), not as RUNNING-without-a-session."""
+    manager, ctx = _confined_manager(tmp_path, monkeypatch)
+    calls = []
+    manager.executor.run_agent = _confined_responder(
+        calls, sbatch_out="13", ready_rc=1, live_state="", sacct_state="FAILED",
+    )
+    with pytest.raises(MirrorError, match="ended before its tmux session came up"):
+        manager._launch_confined(
+            ctx, ["claude"], remote_prelude_text=None,
+            prelude_sentinel="__X__", env=None, detached=True,
+        )
+
+
+def _extend_stub(probe_rcs, states, du="412\t/local/job77/mirrors/sample\n"):
+    """run_agent stub for the extended wait: has-session rcs, squeue states
+    and a ``du`` answer, each consumed in order (the last one repeats)."""
+    probes, live = list(probe_rcs), list(states)
+    calls = []
+
+    def run_agent(args, **kwargs):
+        a = list(args)
+        calls.append(a)
+        if "has-session" in a:
+            rc = probes.pop(0) if len(probes) > 1 else probes[0]
+            out = ""
+        elif a[0] == "squeue":
+            rc, out = 0, (live.pop(0) if len(live) > 1 else live[0])
+        elif "du" in a:
+            rc, out = 0, du
+        else:
+            rc, out = 0, ""
+        return CommandResult(requested_args=a, executed_args=a,
+                             stdout=out, stderr="", returncode=rc)
+    return run_agent, calls
+
+
+def test_session_ready_keeps_waiting_while_the_job_runs(tmp_path, monkeypatch, caplog):
+    """A slow local-disk clone outlasts the base budget; a RUNNING job is
+    waited for (with the clone's size on the heartbeat), not abandoned."""
+    import logging
+
+    manager, _ctx = _confined_manager(tmp_path, monkeypatch)
+    monkeypatch.setattr(mirror.time, "sleep", lambda s: None)
+    # 2 base probes fail, then 5 extended probes fail, the 6th finds tmux.
+    manager.executor.run_agent, calls = _extend_stub([1] * 7 + [0], ["RUNNING"])
+
+    with caplog.at_level(logging.INFO, logger=manager.logger.name):
+        assert manager._confined_session_ready(
+            77, "s", "s", attempts=2, delay=3,
+            extend_seconds=600, extend_delay=15,
+            progress_path="/local/job77/mirrors/sample",
+        ) is True
+
+    blob = "\n".join(r.getMessage() for r in caplog.records)
+    assert "still RUNNING" in blob and "sucoder attach" in blob
+    assert "412 MB on local disk" in blob
+    assert ["srun", "--jobid=77", "--overlap", "du", "-sm",
+            "/local/job77/mirrors/sample"] in calls
+
+
+def test_session_ready_stops_waiting_when_the_job_leaves_running(tmp_path, monkeypatch):
+    manager, _ctx = _confined_manager(tmp_path, monkeypatch)
+    monkeypatch.setattr(mirror.time, "sleep", lambda s: None)
+    manager.executor.run_agent, calls = _extend_stub([1], ["RUNNING", "RUNNING", ""])
+
+    assert manager._confined_session_ready(
+        77, "s", "s", attempts=2, delay=3, extend_seconds=3600, extend_delay=15,
+    ) is False
+    # 2 base probes, then 2 extended ones: it gave up as soon as squeue
+    # stopped listing the job, not after an hour.
+    assert sum("has-session" in c for c in calls) == 4
+
+
+def test_session_ready_extension_is_bounded(tmp_path, monkeypatch):
+    manager, _ctx = _confined_manager(tmp_path, monkeypatch)
+    monkeypatch.setattr(mirror.time, "sleep", lambda s: None)
+    manager.executor.run_agent, calls = _extend_stub([1], ["RUNNING"])
+
+    assert manager._confined_session_ready(
+        77, "s", "s", attempts=2, delay=3, extend_seconds=60, extend_delay=15,
+    ) is False
+    assert sum("has-session" in c for c in calls) == 2 + 4
 
 
 def test_launch_agent_raises_on_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
