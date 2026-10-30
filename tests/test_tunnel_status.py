@@ -90,10 +90,21 @@ def test_deep_status_announces_each_probe_and_bypasses_cache(
     monkeypatch.setattr(cli.typer, "echo", echo)
     monkeypatch.setattr(tunnel.SshControl, "_probe_end_to_end", probe)
     args = status_target + ["--deep"] + (["--json"] if json_output else [])
-    result = CliRunner().invoke(cli.app, args)
+    # Match test_cli's stream-isolation pattern across Click versions.
+    import inspect
+    from click.testing import CliRunner as ClickRunner
+    from typer.main import get_command
+
+    if "mix_stderr" in inspect.signature(ClickRunner.__init__).parameters:
+        runner = ClickRunner(mix_stderr=False)
+    else:
+        runner = ClickRunner()
+    result = runner.invoke(get_command(cli.app), args)
     assert result.exit_code == 0, (result.output, result.exception)
     assert probed == list(HOSTS)
     assert len(announcements) == len(HOSTS)
+    assert "Checking " in result.stderr
+    assert "Checking " not in result.stdout
     if json_output:
         assert [hop["active"] for hop in json.loads(result.stdout)["hops"]] == [True, False, True]
     else:
