@@ -1753,13 +1753,48 @@ def test_a_thread_discovered_after_the_backup_waits_for_its_replica(home):
             return entry is not None and entry["replicated_bytes"] == entry["local_bytes"] == size2
         _wait(home, discovered, "the second thread's replica", timeout=30)
         status = _request(home)
-        assert status["checkpoint"]["last_outcome"] == "published"
+        checkpoint = status["checkpoint"]
+        assert checkpoint["last_outcome"] == "published", checkpoint
         thread = _manifest(status)["threads"][tid2]
         assert thread["replica_bytes"] == size2 and thread["next_rollout_byte_offset"] == 0
         assert (m.durable_run / "rollouts" / f"{tid2}.jsonl").read_bytes() == local2.read_bytes()
         assert thread["rollout_sha256_prefix"] == _sha256(local2)
     finally:
         m.close()
+
+
+@pytest.mark.parametrize("boundary,reason", [
+    ("backup_store", "capture overdue before state_5.sqlite"),
+    ("publish", "publication overdue before state_5.sqlite"),
+])
+def test_replica_catchup_does_not_bypass_capture_deadline(runner, tmp_path, monkeypatch, boundary, reason):
+    """A caught-up replica is one proof, not a fresh capture budget (ledger §§3–4)."""
+    from types import SimpleNamespace
+
+    now = [0.0]
+    clock = SimpleNamespace(**vars(time))
+    clock.monotonic = lambda: now[0]
+    monkeypatch.setattr(runner, "time", clock)
+    h = InProcess(runner, tmp_path, timeout=2)
+    h.replicator.pass_once()
+    assert h.replica.read_bytes() == h.local_rollout.read_bytes()
+    assert h.capture() == ("published", None)
+    previous = h.cp.last_generation
+
+    target = runner if boundary == "backup_store" else h.cp
+    original = getattr(target, boundary)
+
+    def delayed(*args, **kwargs):
+        now[0] += h.cp.timeout + 0.01
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(target, boundary, delayed)
+    assert h.capture() == ("failed", reason)
+    checkpoint = h.status_json()["checkpoint"]
+    assert checkpoint["last_outcome"] == "failed" and checkpoint["reason"] == reason
+    assert h.cp.last_generation == previous
+    assert sorted(os.listdir(h.generations)) == [previous["name"]]
+    assert h.replica.read_bytes() == h.local_rollout.read_bytes()
 
 
 def test_holders_of_reads_the_links_and_stats_nothing(runner, tmp_path, monkeypatch):
