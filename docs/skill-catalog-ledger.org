@@ -1,0 +1,24 @@
+#+TITLE: Skill catalog candidate filtering (issue 65)
+#+DATE: 2026-10-30
+
+* 1. Task
+Deliver and verify existing local commit c9dafdb on GitHub main. Base 52cc04f40f3858a5cf7d8063f009a4f10db6a07c has the same mirror.py bytes as that commit's parent; do not rewrite the parser or absorb issue 57's consuming-host checks.
+
+* 2. Existing machinery
+- =sucoder/mirror.py:7399=, MirrorManager._parse_skill_catalog :: Collects file links and bare bullet candidates, deduplicates normalized paths. Its sole direct caller is _render_skill_catalog at line 7389; rendered catalog entries feed agent preludes.
+- =sucoder/mirror.py:7276=, _normalize_skill_file_path and line 7307 _normalize_catalog_path :: Shared normalizers may fall back to a sibling skill/catalog. Preserve shared behavior and filter inappropriate candidates locally.
+- =tests/test_mirror.py= :: Existing catalog expansion and malformed-frontmatter tests; c9dafdb adds the reported bogus-catalog regression.
+
+Search tier: rg/direct source and git comparison. Upstream GitNexus impact was attempted but libssl.so.3 prevents native loading. Manual risk: moderate, bounded to catalog entries in agent preludes; no sync, allocation or worker-state changes. No automated graph risk is claimed.
+
+* 3. Definitions
+Bare bullet prose is not an explicit skill reference. Existing file links retain their semantics. A catalog must never list itself as a skill; normalized paths deduplicate entries, and skipped explicit references remain diagnosable through warnings.
+
+* 4. Invariants
+Retain valid explicit file links, existing bare paths, extension fallback, nested skills and metadata labels. Preserve original issue reproduction. No new configuration, shared-normalizer changes or consuming-host existence policy.
+
+* 5. Reuse decision
+Reuse the existing c9dafdb implementation and regression rather than create a second parser fix. Extend coverage only if a demonstrated acceptance gap remains. Verify the regression fails on base and passes on the delivered patch; run relevant mirror/prelude tests from this worktree and confirm imports.
+
+* 6. Open questions
+No design question for delivery. GitHub integration and target-source verification remain outstanding until the focused PR is reviewed/merged; deployment is separate.
