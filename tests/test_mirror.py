@@ -6575,6 +6575,27 @@ def test_skill_catalog_lists_only_entries_that_name_skills(
     assert len([r for r in caplog.records if "names no skill" in r.getMessage()]) == 1
 
 
+@pytest.mark.parametrize(
+    ("reference", "actual_name"),
+    [
+        ("nested/SKILL.md", "SKILL.org"),
+        ("nested/SKILL.org", "SKILL.md"),
+        ("nested/SKILL", "SKILL.org"),
+    ],
+)
+def test_skill_catalog_bare_entries_preserve_extension_fallback(
+    tmp_path: Path, reference: str, actual_name: str
+) -> None:
+    manager = build_manager(tmp_path)
+    catalog = tmp_path / "skills_catalog" / "SKILLS.md"
+    skill = catalog.parent / "nested" / actual_name
+    skill.parent.mkdir(parents=True)
+    skill.write_text("A nested skill.\n", encoding="utf-8")
+    catalog.write_text(f"- {reference}\n", encoding="utf-8")
+
+    assert manager._parse_skill_catalog(catalog, catalog.read_text()) == [skill.resolve()]
+
+
 # ----------------------------------------------------------------------
 # Issue 19 option 3: never allocate a second job for a mirror that has one
 # ----------------------------------------------------------------------

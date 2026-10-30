@@ -7422,7 +7422,7 @@ If you find issues, describe each one clearly with the filename and specific con
             # on disk; otherwise it is prose ("- LSMS_Library: lives in ...").
             if bare and not any(
                 candidate.exists()
-                for candidate in (path, path.parent / f"{path.name}.org", path.parent / f"{path.name}.md")
+                for candidate in (path, path.parent / f"{path.stem}.org", path.parent / f"{path.stem}.md")
             ):
                 return
             normalized = (
