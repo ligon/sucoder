@@ -22,7 +22,20 @@ Search tier: rg, direct source/caller inspection. GitNexus query, upstream impac
 Retain the first non-durable outcome and local manifest, required captured rollout length even with projection offset zero, and full prefix/hash equality on successful publication. Preserve capture/shutdown budgets, ownership, placement and other-holder refusal. Do not infer the historical cause from a newly injected failure. Run nested managed/native tests in a separate test allocation, not beneath the coordinator's placement monitor. Retain only bounded checkpoint diagnostics in public reports; keep full logs private.
 
 * 5. Reuse decision
-Extend the existing assertion with its checkpoint dictionary so failures expose the already computed reason. Reuse runner and fixture machinery for baseline/full-suite and controlled-delay diagnosis. No production hook, new configuration or runtime correction is justified before evidence. Refine this ledger when the failure is classified.
+Extend the existing assertion with its checkpoint dictionary so failures expose the already computed reason. Reuse runner and fixture machinery for baseline/full-suite and controlled-delay diagnosis. The added parametric test reuses InProcess, real stores and real replicas; a private runner-module clock crosses the deadline exactly at backup/publication. It requires honest failure, the specific reason, and retention of the previous acknowledged generation. No production hook, new configuration or runtime correction is justified before evidence.
 
-* 6. Open questions
-Did the original capture exhaust its two-second budget during backup/publication, or fail an independent proof/storage check? Can a bounded full-suite repeat retain the actual reason? Is the wall-clock fixture's discovery ordering reliable under load? These are investigative questions, not user-approval gates.
+* 6. Open questions and validation
+The original cause remains unclassified. Its retained XML failure is only 252 characters and has no capture reason. Three focused repetitions and the full suite on the diagnostic assertion commit did not reproduce it. A scheduling/filesystem delay consuming the two-second capture budget is plausible, not established. Keep issue 76 open; retain the next actual failed checkpoint reason before proposing a runtime correction. No timeout increase or fixture relaxation is supported by this evidence.
+
+Dedicated Slurm job =40654245= on =n0034.savio4= used one CPU/8 GiB under =co_carleton/savio4_htc/carleton_htc4_normal=. Three focused repetitions passed in 18.53, 17.27 and 17.38 seconds. The full suite on =8cd3f31f53b648ef7ce9d4cb9f50916db201f0b6= had *2480 passed*, zero failures/errors/skips, in 325.60 seconds; the reported test passed in 17.286 seconds. This full run predates only the two added deadline cases, not any production change.
+
+Dedicated job =40654291= exercised the final code/test pin =4f7a573e5aaa4f107b3a96fe1dab5b7161db271b=: the two controlled deadline cases plus the existing shared-shutdown-deadline regression had *3 passed, 101 deselected* in 2.82 seconds. The injected failures classify the controlled experiment only; they do not recreate historical scheduling or prove the original failure's cause. Both jobs completed with scheduler exit 0:0 and released normally. Source-head and import-path receipts identify each receiving-node checkout.
+
+Durable private evidence: =/global/scratch/fsa/fc_jevons/ligon/burst/sucoder-issue76-2f7275wc/=, with =test.sh=, =deadline.sh=, =test-head=, =deadline-test-head=, import receipts, focused logs/XML, =full.log/xml= and =deadline.log/xml=. Test commands run from the receiving SuCoder root:
+#+begin_src sh
+.venv/bin/python -m pytest -q -o showlocals=false --tb=short tests/test_codex_state_runner.py::test_a_thread_discovered_after_the_backup_waits_for_its_replica
+.venv/bin/python -m pytest -q -o showlocals=false --tb=short
+.venv/bin/python -m pytest -q -o showlocals=false --tb=short tests/test_codex_state_runner.py -k 'replica_catchup_does_not_bypass_capture_deadline or final_shares_one_shutdown_deadline'
+#+end_src
+
+Independent source review found no blocking issue and confirmed clock isolation, existing timeout/refusal semantics and preservation of the original replica/prefix assertions. Reviewer did not run tests. Ledger verification: OK anchored on sections 2–5; no duplicate runtime mechanism or definition contradiction. GitNexus detect-changes remains unavailable (libssl.so.3); manual comparison limits this branch to the diagnostic assertion, two test cases and this ledger. The coordinator and shared installation were unchanged. Priority-account usage at session start was 75,938.47 SUs of 1,500,000; both test jobs used co_carleton rather than that billed account.
