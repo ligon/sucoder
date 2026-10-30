@@ -1,0 +1,60 @@
+#+title: Issue 79: owned-process inspection during kernel exit
+#+author: Sue
+#+date: 2026-10-29
+
+* 1. Task
+Prevent a short-lived owned tool process's kernel exit cleanup from aborting an otherwise correctly placed dispatcher.
+Require fresh terminal proof before excluding an unreadable process; keep local SQLite verification, ownership, and preservation rules intact.
+Base is GitHub main =115e9a25f495231eaad4400964b9a2e2c06cd7e6=.
+Related draft [[https://github.com/ligon/sucoder/pull/78][PR 78]] is =b1ecf3d5878723cf58cfd01fe52cd3ca57e8d372=; its pool implementation and full-reinspection retry are outside this change.
+
+* 2. Existing machinery
+- =sucoder/dispatch_worker.py:JobOwnership._record= :: Selects same-UID job-cgroup members and captures starttime; tested in test_dispatch_worker.py.
+- =sucoder/dispatch_worker.py:process_has_exited= :: Main's immediate Z/X or absent-directory proof; does not wait for exit cleanup or bind the observation to a prior incarnation.
+- =sucoder/dispatch_worker.py:inspect_placement= :: Its one production caller is run; checks FD directory/links, effective environment, and descriptor mounts before classifying database paths.
+- =sucoder/codex_state_runner.py:inspect_file_mounts= :: Uses mountinfo/fdinfo metadata without dereferencing descriptor targets; tested in test_dispatch_mounts.py.
+- =tests/test_dispatch_exit_races.py= :: Permission-boundary tests, live/unknown refusal, and real child exit during mount inspection.
+- PR 78 =process_identity= and =terminal_proof_after_error= :: Existing same-incarnation proof with a shared 50 ms grace, tested in test_dispatch_terminal_grace.py; reuse these rather than invent a second ownership mechanism.
+- PR 78 =reinspect_placement= :: Retries a complete inspection for a still-live process; later native country workers still failed both inspections, so this alone does not establish resolution of issue 79.
+
+Search tier: direct source, ripgrep, git history/diffs, and Linux primary source.
+GitNexus query and upstream impact were attempted but the native library cannot load libssl.so.3.
+No shared installation repair is attempted.
+
+* 3. Definitions and evidence
+PID alone is not process identity: require the ownership scan's UID and starttime, with fresh observations before accepting a terminal state.
+State I means TASK_IDLE, not a kernel-worker classification.
+Linux v4.18 defines PF_EXITING as 0x4 and PF_RANDOMIZE as 0x400000 in [[https://github.com/torvalds/linux/blob/v4.18/include/linux/sched.h][sched.h]].
+The three normal-QOS issue-79 receipts have flags 4194308 = 0x400004, matching before/after starttime and ownership, state I, and ENOENT for exe/cwd/root.
+These flags establish exit-in-progress, not completed cleanup or safe preservation.
+[[https://github.com/torvalds/linux/blob/v4.18/kernel/exit.c][do_exit]] sets PF_EXITING before exit_mm, exit_files, exit_fs, and exit_task_namespaces; exit_notify follows later.
+[[https://github.com/torvalds/linux/blob/v4.18/fs/proc_namespace.c][mounts_open_common]] can return EINVAL after nsproxy is removed.
+The node runs vendor kernel 4.18.0-553.150.1.el8_10; upstream ordering explains the observed error family but is not a claim to have audited every vendor patch.
+
+A bounded own-process probe on n0232 observed 23 FD/mount errors across 200 ordinary Git exits; nonterminal observations included PF_EXITING with state R, followed by the same PID/starttime reaching Z within 6.3 ms from launch.
+The first namespace probe failed its shell redirection because /dev was not device-bound; its receipts are retained as a setup failure, not Git acceptance.
+Corrected namespace and native-profile results are to be recorded after verification.
+Raw metadata and diagnostic scripts are under =/local/job40618485/issue79-kernel= until copied to the durable evidence directory.
+No environment, FD-target, database, transcript, or survey contents are inspected by these probes.
+
+* 4. Invariants
+PF_EXITING, I, EACCES, EPERM, and EINVAL never independently authorize skipping a PID.
+Only fresh same-incarnation Z/X or a proven gone proc directory permits exclusion after metadata failure.
+Any observed UID/starttime change refuses immediately; later disappearance cannot erase that evidence.
+Unknown original identity, malformed metadata, or persistent live unreadability still refuses.
+Every actual misplaced descriptor remains a failure; no inspection retry erases a placement observation.
+Use a shared finite deadline and finite poll count, not an additional full allowance for each PID.
+Do not change final sealing, checkpoint deadlines, cleanup ownership, or native-state success classification.
+
+* 5. Reuse decisions
+- Reuse PR 78's identity and terminal-proof helpers, its inspect_placement integration, and terminal-grace regressions independently of pool code.
+- Extend identity metadata with kernel flags and allow a bounded longer terminal-proof wait only for an observed same-incarnation PF_EXITING process.
+- Keep the short generic grace for other metadata races; both paths require the same terminal proof.
+- Retain bounded diagnostic records and aggregate counts in placement results, with the failure context preserved on refusal.
+- New deterministic cases cover delayed I/PF_EXITING -> Z, persistent exiting state, PID/UID reuse, malformed/raced flags, shared budget exhaustion, and continued misplaced-store refusal.
+
+* 6. Open questions and acceptance
+The exact duration of the three historical I-state intervals was not captured; do not present a proposed wait bound as a measured maximum.
+Independent review must assess the wait policy and identity binding before native acceptance.
+Run a finite same-profile concurrent separate-allocation pilot through final checkpoint/publication, preserving failed receipts and distinguishing task, native, supervisor, and preservation outcomes.
+Do not deploy to an installed CLI or replace peer workers as part of this branch.
