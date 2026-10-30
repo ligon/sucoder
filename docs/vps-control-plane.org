@@ -1,7 +1,7 @@
 #+TITLE: An always-on control plane: VPS as launcher and canonical host
 #+DATE: 2026-10-29
 #+AUTHOR: Sue
-#+STATUS: Proposed; nothing provisioned
+#+STATUS: Built 2026-10-30 as vantage; measurement week in progress
 
 * Problem
 

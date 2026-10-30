@@ -19,7 +19,7 @@ Unix-user sandboxing for AI coding agents.  One account per agent, filesystem-en
 - [[file:llm-usage-collection.html][LLM Usage Collection]] --- practical design for quota, model-tagged usage, price/supply histories and coverage for rate estimation.
 - [[file:llm-usage-collection-review.html][LLM Usage Collection: Model Identification Review]] --- red-team findings and design response on Fable/Opus attribution and the minimum model-aware pilot.
 - [[file:llm-usage-implementation-charter.html][LLM Usage Implementation Charter]] --- Claude/Codex scope and acceptance criteria for extending the existing llm-accounting project.
-- [[file:vps-control-plane.html][Always-on Control Plane]] --- proposal: a VPS as launcher and canonical host, the laptop as a mosh client; the canonical inventory and provisioning checklist.
+- [[file:vps-control-plane.html][Always-on Control Plane]] --- an EC2 instance, vantage, as launcher and canonical host and the laptop as a mosh client: the decision, the build record, the minimal-secrets posture, and the procedure that moves live sessions.
 - [[file:tunnel-keep.html][tunnel keep]] --- design: a supervisor that re-warms the gateway mux, asks for an OTP only when the certificate cannot, and logs every mux lifetime.
 - [[file:persistent-presence.html][Persistent Presence]] --- a standing condo slice on a shared HTC partition: renew, turnover, and handoff.
 - [[file:local-disk-tiering.html][Local-disk Tiering]] --- design note: disposable working tree on node-local disk, git as the sync, WIP snapshots (spike-verified).
