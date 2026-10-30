@@ -17,6 +17,10 @@ TERMINAL = frozenset(('COMPLETED', 'CANCELLED', 'FAILED', 'TIMEOUT', 'NODE_FAIL'
                       'OUT_OF_MEMORY', 'PREEMPTED', 'BOOT_FAIL', 'DEADLINE', 'REVOKED'))
 
 
+class ReservationLockHeld(ValueError):
+    """A cooperating operation currently owns the pool reservation lock."""
+
+
 def memory_mib(value):
     match = re.fullmatch(r'([1-9][0-9]*)([KMGT]?)', str(value), re.I)
     if not match:
@@ -104,7 +108,7 @@ def _locked(path):
     try:
         lock.mkdir(mode=0o700)
     except FileExistsError:
-        raise ValueError('pool reservation lock held; no automatic stale lock stealing')
+        raise ReservationLockHeld('pool reservation lock held; no automatic stale lock stealing')
     try:
         yield
     finally:
@@ -175,10 +179,17 @@ def submit(directory, repo, ref, task_file, agent, executable, *, cpus=1, mem='8
         # There may already be a staged or live srun after an interrupted call.
         # Retain budget; only exact scheduler terminal proof releases it.
         raise
-    with _locked(path):
-        reservations = json.loads((path / 'reservations.json').read_text())
-        reservations[dispatch_id].update(directory=report['directory'], submission=report)
-        atomic_json(str(path / 'reservations.json'), reservations)
+    try:
+        with _locked(path):
+            reservations = json.loads((path / 'reservations.json').read_text())
+            reservations[dispatch_id].update(directory=report['directory'], submission=report)
+            atomic_json(str(path / 'reservations.json'), reservations)
+    except ReservationLockHeld:
+        # The reservation already binds its directory, and control.submit has
+        # persisted the authoritative submission receipt there. A duplicate
+        # summary is optional: never disguise a launched step as a failed
+        # submission, steal the other operation's lock, or launch again.
+        report = dict(report, reservation_update='deferred; reconcile with pool status')
     return report
 
 

@@ -103,6 +103,27 @@ def test_lock_is_atomic_and_not_stolen(attached, source):
         pool.submit(attached, **request(source))
 
 
+def test_late_summary_lock_conflict_preserves_submission_and_budget(attached, source, monkeypatch):
+    launches = []
+    def launched(directory, manifest, argv, report, timeout):
+        launches.append(manifest['dispatch_id'])
+        report.update(state='submitted', job_id=234, step_id='4')
+        (directory / 'submission.json').write_text(json.dumps(report))
+        (attached / '.reservation-lock').mkdir()
+        return report
+    monkeypatch.setattr(pool, 'launch_step', launched)
+    report = pool.submit(attached, **request(source))
+    assert report['state'] == 'submitted' and report['step_id'] == '4'
+    assert report['reservation_update'].startswith('deferred')
+    rows = json.loads((attached / 'reservations.json').read_text())
+    assert list(rows) == launches == [report['dispatch_id']]
+    assert rows[report['dispatch_id']]['state'] == 'reserved'
+    assert rows[report['dispatch_id']]['directory'] == report['directory']
+    assert (attached / '.reservation-lock').is_dir()
+    receipt = json.loads((Path(report['directory']) / 'submission.json').read_text())
+    assert receipt['state'] == 'submitted' and receipt['step_id'] == '4'
+
+
 def test_staged_pool_command_has_exact_step_and_private_publication(attached, source, monkeypatch):
     seen = {}
     def launch(directory, manifest, argv, report, timeout):

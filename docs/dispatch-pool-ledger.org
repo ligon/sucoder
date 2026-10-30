@@ -274,3 +274,20 @@ Python 3.6 worker grammar passes. GitNexus impact/detect-changes again failed
 on libssl.so.3; manual review covers submit/resource validation, both CLI callers,
 receiver validation and the worker's two publication calls and deadline checks.
 No original worker, result or native state was edited for this correction.
+
+** Late reservation-summary contention -- 2026-10-29
+
+The follow-on concurrent trial on allocation 40631087 exposed a distinct
+controller race: both workers launched with durable submission receipts, but
+one CLI reported a reservation-lock error while writing its duplicate summary.
+Its original reservation already bound the dispatch directory; pool status
+reconciled that receipt without resubmission. Preserve the successful submission
+report if only that final summary lock is busy, with an explicit deferred-update
+annotation. Initial reservation contention still refuses, no lock is stolen,
+and no budget is released. Other metadata errors still propagate.
+
+The 40 pool tests pass, including the new late-lock control and the existing
+prelaunch lock refusal. Production scope is the lock exception type and the
+post-submission summary update; receiving helpers are byte-identical to 78f43ad,
+the native-trial pin. GitNexus impact/detect-changes remain unavailable; manual
+callers are pool submit/status and their existing ValueError-handling CLIs.
