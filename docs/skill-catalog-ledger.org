@@ -1,0 +1,33 @@
+#+TITLE: Skill catalog candidate filtering (issue 65)
+#+DATE: 2026-10-30
+
+* 1. Task
+Deliver and verify existing local commit c9dafdb on GitHub main. Base 52cc04f40f3858a5cf7d8063f009a4f10db6a07c has the same mirror.py bytes as that commit's parent; do not rewrite the parser or absorb issue 57's consuming-host checks.
+
+* 2. Existing machinery
+- =sucoder/mirror.py:7399=, MirrorManager._parse_skill_catalog :: Collects file links and bare bullet candidates, deduplicates normalized paths. Its sole direct caller is _render_skill_catalog at line 7389; rendered catalog entries feed agent preludes.
+- =sucoder/mirror.py:7276=, _normalize_skill_file_path and line 7307 _normalize_catalog_path :: Shared normalizers may fall back to a sibling skill/catalog. Preserve shared behavior and filter inappropriate candidates locally.
+- =tests/test_mirror.py= :: Existing catalog expansion and malformed-frontmatter tests; c9dafdb adds the reported bogus-catalog regression.
+
+Search tier: rg/direct source and git comparison. Upstream GitNexus impact was attempted but libssl.so.3 prevents native loading. Manual risk: moderate, bounded to catalog entries in agent preludes; no sync, allocation or worker-state changes. No automated graph risk is claimed.
+
+* 3. Definitions
+Bare bullet prose is not an explicit skill reference. Existing file links retain their semantics. A catalog must never list itself as a skill; normalized paths deduplicate entries, and skipped explicit references remain diagnosable through warnings.
+
+* 4. Invariants
+Retain valid explicit file links, existing bare paths, extension fallback, nested skills and metadata labels. Preserve original issue reproduction. No new configuration, shared-normalizer changes or consuming-host existence policy.
+
+* 5. Reuse decision
+Reuse the existing c9dafdb implementation and regression rather than create a second parser fix. Independent review demonstrated an extension-fallback gap in its bare-candidate check: nested/SKILL.md was discarded when nested/SKILL.org existed, whereas the existing normalizer accepts that counterpart. Match the candidate check to the normalizer's path.stem plus .org/.md, with a parametric nested-entry regression. Shared normalizers remain unchanged. Verify both the original baseline failure and this compatibility counterfactual before delivery.
+
+* 6. Open questions and validation
+GitHub integration remains outstanding until the focused PR is reviewed/merged; deployment is separate. Local implementation c9dafdb was applied as accbe11 with identical source/test bytes and original author metadata. Its new regression passed (1), all catalog tests passed (3), and all mirror tests passed (263), importing this issue65 worktree. The same new regression on unchanged main failed, rendering the bogus SKILLS and missing-path entries. Initial verification was retained in tool outputs, not durable log files. The separate disposable baseline worktree was removed.
+
+Independent review demonstrated the extension fallback incompatibility above with an isolated filesystem probe. The correction uses path.stem instead of path.name for the two counterpart candidates. On accbe11 before correction, the new parametric regression had *2 failed, 1 passed*: both cross-extension references were lost, while the extensionless control already passed. After correction, *3 passed*; the complete mirror module had *266 passed* in 20.97 seconds. Independent source re-review confirms the original finding resolved and no additional concrete issue in that correction; reviewer did not run pytest. Ledger verification: OK anchored on sections 2–5, with the section 4 contradiction corrected through reuse of the existing normalizer's semantics. No shared-normalizer redesign or consuming-host validation was introduced.
+
+Durable private compatibility evidence: =/global/home/users/ligon/.sucoder/reviews/issue65/compatibility-RL9Z7R/=, containing =accbe11-counterfactual.log=, =patched-targeted.log=, =patched-mirror.log=, =import-path.txt= and =detect-changes.log=. Import receipts point to this branch's checkout. Commands were run from the SuCoder worktree root:
+#+begin_src sh
+python -m pytest -q -o showlocals=false --tb=short tests/test_mirror.py -k skill_catalog_bare_entries_preserve_extension_fallback
+python -m pytest -q -o showlocals=false --tb=short tests/test_mirror.py
+#+end_src
+The available pytest interpreter supplied the dependencies; no shared package installation changed. GitNexus impact/change detection were attempted before edits/commits, but its native library cannot load libssl.so.3. Manual caller/diff review confines production scope to _parse_skill_catalog. The original checkout remains clean. This delivery has targeted and mirror-module coverage; no new full-suite/native-worker acceptance is claimed for the parser change. CI is checked on the published PR.
