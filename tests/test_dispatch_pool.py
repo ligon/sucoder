@@ -175,6 +175,33 @@ def step_receipt(step='0'):
                 allocation_start='2020-01-01T01:00:00', step_source=source)
 
 
+@pytest.mark.parametrize('missing_state', ['', ' '])
+def test_incomplete_accounting_state_retains_budget_and_reconciles_siblings(attached, monkeypatch, missing_state):
+    rows = {name: dict(state='reserved', cpus=1, mem_mib=8192, directory=name)
+            for name in ('incomplete', 'completed')}
+    (attached / 'reservations.json').write_text(json.dumps(rows))
+    monkeypatch.setattr(pool, '_worker_receipt', lambda directory, profile:
+                        (None, None, step_receipt('0' if directory == 'incomplete' else '1')))
+
+    def run(argv, **kwargs):
+        if argv[0] == 'scontrol':
+            return SimpleNamespace(returncode=1, stdout='')
+        return SimpleNamespace(returncode=0, stdout=(
+            '234|%s|RUNNING|0:0|n1|2020-01-01T01:00:00\n'
+            '234.0||%s|0:0|n1|2020-01-01T01:01:00\n'
+            '234.1||COMPLETED|0:0|n1|2020-01-01T01:02:00\n'
+        ) % (os.getuid(), missing_state))
+
+    monkeypatch.setattr(dispatch, '_run', run)
+    result = pool.status(attached)
+    assert result['used_cpus'] == 1 and result['used_mem_mib'] == 8192
+    assert result['reservations']['incomplete']['state'] == 'reserved'
+    assert 'release_proof' not in result['reservations']['incomplete']
+    assert result['reservations']['completed']['state'] == 'released'
+    assert result['reservations']['completed']['release_proof']['target'] == '234.1'
+    assert json.loads((attached / 'reservations.json').read_text()) == result['reservations']
+
+
 def test_step_scheduler_never_accepts_parent_or_sibling(monkeypatch):
     calls = []
     def run(argv, **kwargs):

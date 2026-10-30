@@ -219,3 +219,27 @@ persistence differ. Python3.6 grammar parses. GitNexus detect_changes was
 attempted and fails the same missing libssl3; manual AST scope check passes.
 These checks are not native lifecycle acceptance, deployment, scientific data
 verification or an explanation of the five original country failures.
+
+** Pool-status reconciliation review -- 2026-10-29
+
+Reviewed integration head 5166d258fdaba5465534791dffad6239954bc9ba, which includes
+main's bounded exit proof. Its 363 dispatch tests pass locally. A new accounting
+control reproduced an IndexError when an exact step row had an empty or
+whitespace-only State. This stopped reconciliation before a completed sibling
+could release its reservation. Require a nonempty state before testing terminal
+membership; incomplete observations retain their budget and evidence.
+
+Both new controls fail on the integration head and pass with the correction.
+The pool/reinspection selection passes 61 tests. Manual AST comparison finds
+only dispatch_pool.status changed in production; its caller is the pool-status
+CLI. Receiving worker/asset helpers still parse as Python 3.6. GitNexus analyze
+(with --skip-agents-md), query, upstream impact and compare detect-changes were
+attempted but cannot load libssl.so.3. No shared tool installation was changed.
+
+PR 78 remains draft. Its recorded sequential source-only native canaries do not
+establish long-running concurrent native-state preservation. Remaining release
+gates are current-head long-running concurrent workers, interrupted-state
+preservation, and scientific/source/API checks. The retained native failures
+remain evidence of an unresolved acceptance boundary; this accounting fix
+neither explains them nor changes live-process inspection policy. Allocation
+creation/requested-node convenience remains outside this attach-only PR.

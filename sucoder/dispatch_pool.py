@@ -250,7 +250,8 @@ def status(directory, *, timeout=10):
             except (ValueError, OSError):
                 continue
             row['scheduler'] = observation
-            if observation.get('available') and observation.get('state', '').split()[0].rstrip('+') in TERMINAL:
+            states = observation.get('state', '').split()
+            if observation.get('available') and states and states[0].rstrip('+') in TERMINAL:
                 row.update(state='released', release_proof=observation, released_at=time.time())
         atomic_json(str(path / 'reservations.json'), reservations)
     return dict(pool=profile, reservations=reservations,
