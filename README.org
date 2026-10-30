@@ -271,6 +271,10 @@ before integration.
 =sucoder dispatch pool= adds explicitly budgeted, step-owned workers inside an
 already held allocation. See [[file:docs/dispatch-pools.org][existing-allocation pools]] for isolation,
 immutable assets, conservative reservations and stop semantics.
+Both submit commands accept =--publication-timeout= (seconds, default 30,
+maximum 300) for each Git/WIP publication. Larger values extend the early
+shutdown window to at least that budget plus 60 seconds; managed-state
+checkpoint and process-cleanup timeouts remain separate.
 
 See [[file:docs/dispatch.org][headless dispatch]] for the complete submission,
 status, wait and result commands and the supported state guarantees.

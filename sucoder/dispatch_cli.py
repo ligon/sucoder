@@ -64,6 +64,7 @@ def submit(
     claude_user_config: Optional[Path] = typer.Option(None, "--claude-user-config"),
     require_evidence: List[str] = typer.Option(None, "--require-evidence", help="Required evidence filename, relative to the private evidence directory; repeatable."),
     snapshot_minutes: float = typer.Option(10, "--snapshot-minutes", min=0.1, help="Periodic Git/WIP publication cadence; final publication also runs on orderly exit."),
+    publication_timeout: float = typer.Option(30, "--publication-timeout", help="Seconds per workspace publication (positive, at most 300); extends the early shutdown window."),
     project_profile: Optional[Path] = typer.Option(None, "--project-profile", help="Explicit project JSON profile; bootstrap and configuration are frozen before submission."),
     local_disk_root: str = typer.Option("/local", "--local-disk-root"),
     timeout: float = typer.Option(30, "--timeout", min=0.1, help="Submission subprocess deadline in seconds."),
@@ -80,6 +81,7 @@ def submit(
             source_agent_home=agent_home, source_claude_user_config=claude_user_config,
             required_evidence=require_evidence or [],
             snapshot_minutes=snapshot_minutes,
+            publication_timeout=publication_timeout,
             project_profile=project_profile,
             timeout=timeout, dry_run=dry_run,
         )

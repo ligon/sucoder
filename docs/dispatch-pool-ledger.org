@@ -243,3 +243,34 @@ preservation, and scientific/source/API checks. The retained native failures
 remain evidence of an unresolved acceptance boundary; this accounting fix
 neither explains them nor changes live-process inspection policy. Allocation
 creation/requested-node convenience remains outside this attach-only PR.
+
+** Measured publication budget -- 2026-10-29
+
+At 606c40e, fresh allocation 40629482/n0043 ran source-only LSMS workers through
+the pool CLI. Step 0 completed 58 synthetic scientific/API tests and 660 source
+churn cycles, exited native zero and sealed state, but final Git/WIP publication
+exceeded its 30-second allowance (supervisor 74). A bounded trace in that stopped
+worker's private checkout measured one Git push at 31.92 seconds, including
+17.97 seconds in receive-side connectivity traversal. Its original failed result
+is retained; the later diagnostic publication does not repair that result.
+Step 1 sealed state too but its workload stopped at a separate 30-second Git
+commit deadline before scientific tests; that is a harness limit, not native
+acceptance. Both original transactions remain under
+=/global/scratch/fsa/fc_jevons/ligon/burst/sucoder-pr78-acceptance-dyb0orpw=.
+
+Add =--publication-timeout= to both submit CLIs: positive seconds, default 30,
+maximum 300, frozen in the manifest and validated on the receiver. Periodic
+and final Git/WIP publication use it; native checkpoints and cleanup do not.
+Early shutdown reserves =max(120, ceil(publication_timeout) + 60)= seconds,
+including the ordinary-job scheduler notice and pool deadline checks. Requests
+too short for that window refuse. Legacy manifests retain checkpoint_timeout
+as their publication budget. This is a finite budget, not a guarantee that all
+shared-storage operations complete. The follow-on harness separately allows
+120 seconds for its documentation commit and still performs no retry.
+
+382 dispatch tests pass, including invalid-budget refusal, immutable budget,
+extended scheduler/step window, and both periodic/final worker propagation.
+Python 3.6 worker grammar passes. GitNexus impact/detect-changes again failed
+on libssl.so.3; manual review covers submit/resource validation, both CLI callers,
+receiver validation and the worker's two publication calls and deadline checks.
+No original worker, result or native state was edited for this correction.

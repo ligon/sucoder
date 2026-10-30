@@ -37,6 +37,20 @@ def request(source):
     return {key: source[key] for key in ('repo', 'ref', 'task_file', 'agent', 'executable')}
 
 
+def test_publication_budget_refuses_short_pool_duration_before_reservation(attached, source):
+    with pytest.raises(ValueError, match='180-second'):
+        pool.submit(attached, **request(source), publication_timeout=120, time_limit='00:02:00')
+    assert json.loads((attached / 'reservations.json').read_text()) == {}
+
+
+def test_execution_requires_the_extended_publication_window():
+    execution = dict(scope='step', dispatch_id='a' * 32, pool_id='b' * 32,
+                     job_id=234, node='n1', cluster='cluster', deadline=time.time() + 150)
+    pool.validate_execution(execution, {})
+    with pytest.raises(ValueError, match='expired'):
+        pool.validate_execution(execution, {}, shutdown_seconds=180)
+
+
 def test_attach_rejects_wrong_uid_or_multi_node_scheduler(monkeypatch):
     monkeypatch.setattr(dispatch, '_run', lambda *a, **kw: SimpleNamespace(returncode=0, stdout=(
         'JobId=234 UserId=x(%d) JobState=RUNNING NodeList=n1 NumNodes=2 AllocTRES=cpu=8,mem=48G EndTime=2099-01-01T00:00:00' % os.getuid())))

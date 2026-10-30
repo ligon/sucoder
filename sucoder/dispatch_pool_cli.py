@@ -49,6 +49,7 @@ def submit(ctx: typer.Context, pool: Path, repository: Path,
            mem: str = typer.Option('8G', '--mem'), time: str = typer.Option('00:30:00', '--time'),
            require_evidence: List[str] = typer.Option(None, '--require-evidence'),
            snapshot_minutes: float = typer.Option(10, '--snapshot-minutes', min=0.1),
+           publication_timeout: float = typer.Option(30, '--publication-timeout', help='Seconds per workspace publication (positive, at most 300).'),
            timeout: float = typer.Option(30, '--timeout')):
     """Reserve budget and start exactly one existing-allocation step.
 
@@ -60,7 +61,8 @@ def submit(ctx: typer.Context, pool: Path, repository: Path,
                                cpus=cpus, mem=mem, time_limit=time, timeout=timeout,
                                directory_root=ctx.obj['root'], source_agent_home=agent_home,
                                project_profile=project_profile, model=model,
-                               required_evidence=require_evidence or [], snapshot_minutes=snapshot_minutes)
+                               required_evidence=require_evidence or [], snapshot_minutes=snapshot_minutes,
+                               publication_timeout=publication_timeout)
     except (ValueError, OSError, subprocess.SubprocessError) as exc:
         _error(exc)
     _emit(value)

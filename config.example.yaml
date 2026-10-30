@@ -10,6 +10,10 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 # /shared/private/project.json` or `dispatch verify-stage --project-profile ...`.
 # Schema, LSMS image/reader examples and deterministic burst adaptation:
 # docs/dispatch-projects.org (examples/lsms/make_profile.py builds a profile).
+# Workspace publication is a dispatch CLI setting, not a YAML key:
+# `dispatch submit --publication-timeout 120` (also `dispatch pool submit`).
+# Seconds per Git/WIP publication: default 30, positive, maximum 300.
+# Early shutdown reserves max(120, ceil(publication_timeout) + 60) seconds.
 
 # Agent account only (optional): reach live cluster sessions through the
 # human's warm SSH for `sessions`, `message` and `peek`, via

@@ -76,8 +76,12 @@ manual reconciliation is required rather than assuming no step exists.
 The detached srun frontend remains on the submitting host; loss of that host is
 not claimed to provide portable frontend recovery or automatic resubmission.
 
-The worker begins shutdown 120 seconds before the earlier requested-duration or
-pool worker deadline. Slurm's time request is an additional hard bound.
+The worker begins shutdown at least 120 seconds before the earlier requested-duration or
+pool worker deadline. =--publication-timeout= bounds each periodic/final Git/WIP
+publication (default 30 seconds, positive, maximum 300). The early shutdown
+window is =max(120, ceil(publication_timeout) + 60)= seconds, and a shorter
+requested duration is refused. This does not increase managed-state or process
+cleanup timeouts. Slurm's time request is an additional hard bound.
 Publication receipts distinguish complete, incomplete and unverified outcomes;
 no CLI exit alone proves scientific or infrastructure acceptance.
 

@@ -111,14 +111,14 @@ def _locked(path):
         lock.rmdir()
 
 
-def validate_execution(value, resources):
+def validate_execution(value, resources, shutdown_seconds=120):
     if (value.get('scope') != 'step' or not re.fullmatch(r'[0-9a-f]{32}', str(value.get('dispatch_id', '')))
             or not re.fullmatch(r'[0-9a-f]{32}', str(value.get('pool_id', '')))
             or type(value.get('job_id')) is not int or value['job_id'] < 1
             or not re.fullmatch(r'[A-Za-z0-9_.-]+', str(value.get('node', '')))
             or not re.fullmatch(r'[A-Za-z0-9_.-]+', str(value.get('cluster', '')))
             or type(value.get('deadline')) not in (int, float) or not math.isfinite(value['deadline'])
-            or value['deadline'] <= time.time() + 120):
+            or value['deadline'] <= time.time() + shutdown_seconds):
         raise ValueError('invalid or expired pool execution binding')
     if resources.get('exclude'):
         raise ValueError('pool workers use the bound node, not exclusion routing')
@@ -127,6 +127,10 @@ def validate_execution(value, resources):
 def submit(directory, repo, ref, task_file, agent, executable, *, cpus=1, mem='8G',
            time_limit='00:30:00', timeout=30, **options):
     path, profile = _load(directory)
+    publication_timeout = control._finite_seconds(options.get('publication_timeout', 30), 'publication timeout')
+    if publication_timeout > 300:
+        raise ValueError('publication timeout must not exceed 300 seconds')
+    shutdown_seconds = max(120, math.ceil(publication_timeout) + 60)
     if os.environ.get('SLURM_CLUSTER_NAME') != profile['cluster']:
         raise ValueError('pool submission requires its original current Slurm cluster')
     if options.get('dry_run'):
@@ -137,7 +141,7 @@ def submit(directory, repo, ref, task_file, agent, executable, *, cpus=1, mem='8
             or facts['StartTime'] != profile['allocation_evidence']['StartTime']):
         raise ValueError('allocation identity/budget changed since attach')
     resources = control._resources(dict(account=facts['Account'], partition=facts['Partition'],
-                                       qos=facts.get('QOS'), cpus=cpus, mem=mem, time=time_limit))
+                                       qos=facts.get('QOS'), cpus=cpus, mem=mem, time=time_limit), shutdown_seconds)
     # Slurm time strings are normalized independently of the scheduler. Worker
     # deadline is an additional hard cap, not a fresh full duration per retry.
     days, clock = time_limit.split('-', 1) if '-' in time_limit else ('0', time_limit)

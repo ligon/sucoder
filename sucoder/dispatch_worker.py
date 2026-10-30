@@ -242,6 +242,10 @@ def load_manifest(path):
         if type(manifest.get(key)) is not int or manifest[key] <= 0:
             raise Refused("invalid " + key)
     cadence = manifest.get("snapshot_minutes", manifest["checkpoint_minutes"])
+    publication_timeout = manifest.get("publication_timeout", manifest["checkpoint_timeout"])
+    if (type(publication_timeout) not in (int, float) or not math.isfinite(publication_timeout)
+            or not 0 < publication_timeout <= 300):
+        raise Refused("invalid publication timeout")
     if type(cadence) not in (int, float) or not math.isfinite(cadence) or cadence <= 0:
         raise Refused("invalid workspace snapshot cadence")
     digest_path = os.path.join(directory, "digests.json")
@@ -1017,6 +1021,8 @@ def native_state_files(home):
 def run(manifest_path, inherited=None, mountinfo_path="/proc/self/mountinfo", ownership_factory=None):
     os.umask(0o077)
     manifest = load_manifest(manifest_path)
+    publication_timeout = manifest.get("publication_timeout", manifest["checkpoint_timeout"])
+    shutdown_seconds = max(120, math.ceil(publication_timeout) + 60)
     directory = manifest["directory"]
     record = {"schema_version": SCHEMA_VERSION, "dispatch_id": manifest["dispatch_id"], "uid": os.getuid(),
               "agent": manifest["agent"], "commit": manifest["commit"], "branch": manifest["branch"],
@@ -1055,7 +1061,7 @@ def run(manifest_path, inherited=None, mountinfo_path="/proc/self/mountinfo", ow
         publish("final_publication", force=True)
         try:
             snapshot = json.loads(run_script(manifest["snapshot_script"], environment,
-                                             manifest["checkpoint_timeout"], heartbeat=publish))
+                                             publication_timeout, heartbeat=publish))
             record["workspace_snapshot"] = snapshot
             head = subprocess.check_output(["git", "-C", work, "rev-parse", "HEAD"], env=environment,
                                            stderr=subprocess.DEVNULL,
@@ -1143,7 +1149,7 @@ def run(manifest_path, inherited=None, mountinfo_path="/proc/self/mountinfo", ow
                        "names that interpreter. Do not replace the runtime or mutate shared caches.\n" % directory).encode("utf-8")
         runner = load_runner(manifest["runner_path"])
         command = command_for(manifest, environment)
-        if manifest.get("execution") is not None and time.time() >= manifest["execution"]["deadline"] - 120:
+        if manifest.get("execution") is not None and time.time() >= manifest["execution"]["deadline"] - shutdown_seconds:
             raise Refused("pool worker reached its publication cutoff before native launch")
         if stop_signal[0] is not None:
             raise Refused("cancelled before native version inspection")
@@ -1164,7 +1170,7 @@ def run(manifest_path, inherited=None, mountinfo_path="/proc/self/mountinfo", ow
             observed, databases = set(), set()
             deadline = time.monotonic() + manifest.get("snapshot_minutes", manifest["checkpoint_minutes"]) * 60
             while child.poll() is None:
-                if manifest.get("execution") is not None and time.time() >= manifest["execution"]["deadline"] - 120:
+                if manifest.get("execution") is not None and time.time() >= manifest["execution"]["deadline"] - shutdown_seconds:
                     stop_signal[0] = signal.SIGTERM
                 evidence = inspect_placement_rechecked(child, runner, root, environment["HOME"], expected_environment=environment,
                                                        ownership=ownership, manifest=manifest)
@@ -1196,7 +1202,7 @@ def run(manifest_path, inherited=None, mountinfo_path="/proc/self/mountinfo", ow
                 if time.monotonic() >= deadline:
                     try:
                         record["workspace_snapshot"] = json.loads(run_script(manifest["snapshot_script"], environment,
-                                                                             manifest["checkpoint_timeout"], stop_signal,
+                                                                             publication_timeout, stop_signal,
                                                                              heartbeat=publish))
                     except Exception as exc:
                         record["workspace_snapshot"] = {"state": "failed", "reason": str(exc)}

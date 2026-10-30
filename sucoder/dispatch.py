@@ -123,7 +123,7 @@ def _read_json(path: Path):
         return None, "unreadable"
 
 
-def _resources(values):
+def _resources(values, shutdown_seconds=120):
     required = {"account", "partition", "qos", "cpus", "mem", "time"}
     if not required.issubset(values) or set(values) - required - {"exclude"}:
         raise ValueError("resources require account, partition, qos, cpus, mem and time; optional exclude")
@@ -153,26 +153,31 @@ def _resources(values):
         seconds = fields[0] * 60 + fields[1]
     else:
         seconds = fields[0] * 3600 + fields[1] * 60 + fields[2]
-    if seconds < 120:
-        raise ValueError("dispatch time must allow the 120-second shutdown signal window")
+    if seconds < shutdown_seconds:
+        raise ValueError("dispatch time must allow the %s-second shutdown signal window" % shutdown_seconds)
     return values
 
 
 def submit(repo, ref, task_file, agent, executable, resources, *, model=None,
            directory_root=None, local_disk_root="/local", source_agent_home=None,
            source_claude_user_config=None, required_evidence=None, snapshot_minutes=10,
-           dry_run=False, timeout=30, project_profile=None, _execution=None):
+           dry_run=False, timeout=30, project_profile=None, _execution=None,
+           publication_timeout=30):
     """Pin an offline commit, stage a private worker and submit exactly once.
 
     Dry runs validate and report the planned command without writing artifacts
     or contacting Slurm. They do not reserve their reported random dispatch ID.
     """
     timeout = _finite_seconds(timeout, "timeout")
+    publication_timeout = _finite_seconds(publication_timeout, "publication timeout")
+    if publication_timeout > 300:
+        raise ValueError("publication timeout must not exceed 300 seconds")
+    shutdown_seconds = max(120, math.ceil(publication_timeout) + 60)
     if type(snapshot_minutes) not in (int, float) or not math.isfinite(snapshot_minutes) or snapshot_minutes <= 0:
         raise ValueError("snapshot_minutes must be finite and positive")
     if agent not in ("codex", "claude"):
         raise ValueError("headless agent must be codex or claude")
-    resources = _resources(resources)
+    resources = _resources(resources, shutdown_seconds)
     project = read_profile(project_profile, shared_path=_shared_path) if project_profile is not None else None
     if project is not None and any(value > resources["cpus"] for value in project["profile"]["thread_limits"].values()):
         raise ValueError("project thread limit exceeds requested CPU budget")
@@ -232,10 +237,11 @@ def submit(repo, ref, task_file, agent, executable, resources, *, model=None,
                     worker_path=str(directory / "worker.py"), environment_file=str(directory / "environment.json"),
                     source_agent_home=None, source_claude_user_config=None, resources=resources,
                     scope=scope_id(cluster or "unknown", str(os.getuid()), str(repo), dispatch_id),
-                    checkpoint_minutes=10, checkpoint_timeout=30, snapshot_minutes=float(snapshot_minutes))
+                    checkpoint_minutes=10, checkpoint_timeout=30, snapshot_minutes=float(snapshot_minutes),
+                    publication_timeout=publication_timeout)
     if _execution is not None:
         from .dispatch_pool import validate_execution
-        validate_execution(_execution, resources)
+        validate_execution(_execution, resources, shutdown_seconds)
         manifest["execution"] = _execution
         manifest["cluster"] = cluster = _execution["cluster"]
     source_home = source_agent_home if source_agent_home is not None else Path.home() / (".codex" if agent == "codex" else ".claude")
@@ -249,7 +255,7 @@ def submit(repo, ref, task_file, agent, executable, resources, *, model=None,
         raise ValueError("Claude user config must be an existing file")
     if agent == "claude" and claude_config.exists():
         manifest["source_claude_user_config"] = str(_shared_path(claude_config, "Claude user config"))
-    argv = ["sbatch", "--parsable", "--no-requeue", "--signal=B:TERM@120", "--export=NONE", "--chdir=/tmp", "--nodes=1", "--ntasks=1",
+    argv = ["sbatch", "--parsable", "--no-requeue", "--signal=B:TERM@" + str(shutdown_seconds), "--export=NONE", "--chdir=/tmp", "--nodes=1", "--ntasks=1",
             "--account=" + resources["account"], "--partition=" + resources["partition"],
             "--cpus-per-task=" + str(resources["cpus"]),
             "--mem=" + resources["mem"], "--time=" + resources["time"],
