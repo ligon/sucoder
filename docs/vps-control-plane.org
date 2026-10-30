@@ -1,0 +1,293 @@
+#+TITLE: An always-on control plane: VPS as launcher and canonical host
+#+DATE: 2026-10-29
+#+AUTHOR: Sue
+#+STATUS: Proposed; nothing provisioned
+
+* Problem
+
+The laptop is the control plane for every remote agent session: it holds the canonical repositories, the warm SSH ControlMasters to Savio, the =~/.sucoder/sessions/= records, and the tmux windows through which the human watches four or more sessions at once.
+It is not always on.
+Each sleep or network change kills the gateway mux, and each wake costs a certificate or OTP plus one =sucoder attach= per session.
+The laptop's root filesystem is also full: 125 of 128 GiB used, 1.3 GiB free on 2026-10-29, down from 1.6 GiB on 2026-10-20 and 161 MiB on 2026-10-23 (the Savio transition handoff, =AggregationWithLimitedCommitment/.sucoder/handoff-2026-10-23-savio-transition.org= in the mirror tree).
+
+Three decisions are tangled in "move the control center off the laptop", and only the first removes the re-authentication churn:
+
+1. Where the control plane lives: the muxes, the launcher, the attach windows.
+2. Where canonical lives.
+   SuCoder's launch model pushes the launcher's canonical to the mirror (=MirrorManager._sync_remote=), so the launcher must hold canonical unless the sync model changes; issue 66 records what goes wrong when it does not.
+3. How attention is paid to N sessions.
+   Moving the control plane does not reduce the window cycling; it removes the OTP between cycles.
+
+* Decision
+
+A small virtual private server with a static public IP becomes both the launcher and the canonical host.
+The laptop becomes a client: it keeps full or partial clones for editing, pushes to the VPS, and reaches the VPS's tmux over =mosh=, which survives sleep and roaming.
+Savio keeps the mirrors, the allocations and the agent tmux sessions exactly as today.
+GitHub, rsync.net and Bitbucket remain the downstream publication and backup remotes they are now.
+One repository, =AggregationWithLimitedCommitment=, keeps its canonical on Savio scratch because its integration gate needs the formal archives and compute; the VPS holds a follower clone of that gate for launching.
+
+Decision 3 is deferred.
+The first measure is =sucoder sessions= in a =watch= window on the VPS; the next is an agent-side status push; a coordinator session that owns the others waits on the dispatch path becoming reliable (issue 79).
+
+* Evidence
+
+** What kills a mux, and what the certificate changed
+
+The pre-certificate design (=d9f95e3=, 2026-03-16) and the current one are the same mechanism: one =ssh -fN -o ControlMaster=yes= to the gateway, authenticated once with PIN and OTP, with every later command multiplexed over the socket (=sucoder/tunnel.py:205=).
+June made =ControlPersist= and the keepalive pair configurable with longer defaults (=3bcdbcd=).
+The certificate work (=31d7747= through =795cf8e=) changed how a dead mux is re-warmed, from an OTP to a 12-hour certificate the MSM CA caps at that lifetime (=sucoder/cert.py=); it did not change how long a mux lives.
+
+A mux dies for two reasons the FAQ names ([[file:connection-faq.org][connection FAQ, "Do tunnels survive a laptop suspend"]]): the server or a stateful firewall drops the TCP connection during a long suspend, or the client's IP changes.
+Neither applies to a VPS with a static IP that never sleeps.
+What remains is BRC's server-side policy, gateway maintenance, and a network stall longer than the keepalive budget (=30 s x 120 = 1 h=), which can be raised on a host that never sleeps.
+BRC's ceiling is not recorded anywhere in this repository; measuring it is the first task after provisioning.
+
+BRC's =sshd= sets =MaxSessions 1= (=sucoder/tunnel.py:131=, measured 2026-09-20).
+The gateway mux therefore carries only =-W= forwarding channels, and each login-node mux is its own connection authenticated by public key through that forward.
+Only the gateway hop ever needs the OTP; everything behind it re-warms without one while the gateway's single TCP connection lives.
+
+** What the laptop holds
+
+Sizes measured 2026-10-29 with =du= over the canonical paths in =~ligon/.sucoder/config.yaml=.
+The =.git= column is the history alone.
+
+| Mirror                 |   MB | .git MB | Remote      |
+|------------------------+------+---------+-------------|
+| LSMS_Library           | 2726 |    1444 | GitHub      |
+| GradApps               | 1323 |     617 | none        |
+| CovariateRiskSharing   | 1304 |     102 | GitHub      |
+| EEP153                 | 1186 |      13 | GitHub      |
+| LSMS                   |  888 |     189 | Bitbucket   |
+| UCBFaculty             |  671 |       1 | GitHub      |
+| K-Aggregators          |  451 |     220 | GitHub      |
+| SuCoder                |  443 |      39 | GitHub      |
+| CFEDemands             |  397 |       3 | GitHub      |
+| LigonLibrary           |  330 |       1 | GitHub      |
+| EEP153_Materials       |   68 |      37 | GitHub      |
+| HomeMisc               |   58 |      36 | rsync.net   |
+| Exercise               |   52 |      16 | rsync.net   |
+| ManifoldGMM            |   48 |       4 | GitHub      |
+| Miscellaneous          |   36 |       7 | Bitbucket        |
+| FacultyExplorer        |   17 |       3 | rsync.net   |
+| RawData                |   13 |      12 | GitHub      |
+| sucoder-skills         |    4 |       3 | GitHub      |
+| EEP153_Exercises       |    1 |       0 | GitHub      |
+| LSMS-ISA_Ag            |    - |       - | missing     |
+
+The configured canonicals total about 10 GB; =AggregationWithLimitedCommitment=, not configured in SuCoder, adds 2.9 GB.
+Only =GradApps= and =Miscellaneous= have no off-laptop copy.
+=LSMS-ISA_Ag= is configured at =~ligon/Data/LSMS-ISA_Ag= but absent.
+
+** What SuCoder assumes about canonical
+
+- Non-bare :: =_configure_agent_remote= (=sucoder/mirror.py:7610=) skips remote setup when canonical has no =.git= directory, and issue 66 records that =_pull_from_url= (=sucoder/mirror.py:1388=) resets the launching checkout's working tree.
+  The VPS canonicals are therefore ordinary checkouts, as the laptop's are.
+  A bare canonical would need =pull= taught to update refs instead; that is hours, not a redesign, and is not required for this plan.
+- One launcher per remote target :: a mirror's session record lives on the host that launched it (=~/.sucoder/sessions/<mirror>--<target>.yaml=), and =sucoder sessions= flags a job no local record points at as =! no session record= ([[file:../README.org][README, "Listing your sessions"]]).
+  Once the VPS launches a mirror's Savio session, the laptop must not.
+- Sync policy :: =sync_policy: external= exists for a launcher that is not the authority, but issue 66 shows =--no-sync= and dry-run can still mutate Git state.
+  With canonical on the VPS this policy is needed only for the ALC follower, and the fix is no longer on the critical path.
+
+* Topology and roles
+
+#+begin_example
+laptop --mosh--> VPS: ligon   --ssh mux (static IP)--> hpc.brc.berkeley.edu
+                      |                                   |-W-> ln00N.brc --> compute nodes
+                      |                                   |-W-> dtn.brc.berkeley.edu
+                      +-- canonicals, ~/.sucoder, tmux attach windows, cron
+                 VPS: coder   --local mirrors for sessions that need no compute
+#+end_example
+
+- =ligon= on the VPS :: the canonical checkouts, =~/.sucoder/config.yaml=, the =pass= store, the SSH keys and the BRC certificate, the warm muxes, the session records, and a tmux server holding one attach window per live session.
+  The keeper described in [[file:tunnel-keep.org][tunnel keep]] runs here.
+- =coder= on the VPS :: local mirrors under =mirror_root= for work that needs no allocation: editing, documentation, small test runs.
+  This is the ordinary local SuCoder model and removes those sessions from Savio altogether.
+  Memory, not disk, bounds how many run at once.
+- cron :: =mirror-sync --pull= / =--push= on a schedule against the downstream remotes; =sucoder sessions --json= on a schedule into a status file; the keeper's lifetime log.
+  None of these could run on the laptop.
+- The laptop :: =mosh= into the VPS's tmux.
+  Clones of the VPS canonicals for editing, full or partial; the ALC laptop clone is already a =blob:none= partial clone with =gate= and =inbox= remotes on Savio, and the hook obstacle recorded in the partial-clone plan (=AggregationWithLimitedCommitment/.sucoder/plan-2026-10-20-laptop-partial-clone.org= in the mirror tree) applies to any repository whose pre-commit hook reads omitted blobs.
+
+* Sizing and placement
+
+- Disk :: 13 GB of canonicals, about double if =coder= keeps local mirrors of the same repositories, plus the OS, Node, Python environments and history growth.
+  80 GB is comfortable to start, and on EC2 the number is not a commitment: an EBS volume grows in place while the instance runs, up to 16 TB for =gp3= at 0.08 per GB-month, and the filesystem is extended online with =growpart= and =resize2fs=.
+  A volume never shrinks, and each accepts one resize per six hours.
+  Keep the operating system on the root volume and everything that grows on a second volume mounted at =/home=, so the data grows and is snapshotted on its own terms; cold archives belong on rsync.net or S3, not on HDD-class EBS, whose throughput tiers suit streaming and not git's small random reads.
+  This is the dimension where the laptop's fixed 128 GB loses outright.
+- Memory :: 4 GB runs the control plane and one local agent session; 8 GB runs two or three.
+  A Claude Code or Codex session is bounded by API round trips, not bandwidth or CPU; a faster uplink does not make it faster.
+- CPU :: two virtual cores, arm64.
+  The laptop is =aarch64=, so a Graviton instance changes nothing about the toolchain; see the install step below.
+- Region :: us-west.
+  Every keystroke in an attached session now round-trips laptop, VPS, gateway, login node and compute node, so the VPS hop should add single-digit milliseconds.
+- Address :: a static public IPv4, allocated 2026-10-30 as 32.184.189.233.
+  This is the property that removes NAT expiry as a cause of mux death.
+- Provider :: AWS EC2 on Graviton in =us-west-2=, in the =ligon-research= account under Berkeley's bCloud AWS Central Organization; DigitalOcean SFO3 is the fallback.
+  The =hhsurveys= target already runs on a droplet, so a second droplet would be the least new surface; the AWS account is already billed, settles the data-classification question, and offers Bedrock as a harness backend.
+  The table lists the candidates at the 8 GB shape and the 4 GB price beside it, taken 2026-10-29 from provider pages and third-party listings; verify at order time.
+
+#+NAME: tbl-providers
+| Provider (region)          | 8 GB shape                 | USD/mo | 4 GB USD/mo |
+|----------------------------+----------------------------+--------+-------------|
+| DigitalOcean (SFO3)        | 4 vCPU, 160 GB, 5 TB       |     48 |          24 |
+| AWS Lightsail (Oregon)     | 2 vCPU, 160 GB, 5 TB       |     44 |          24 |
+| Akamai Linode (Fremont)    | 4 vCPU, 160 GB             |     48 |          24 |
+| AWS EC2 t3.large (Oregon)  | 2 vCPU, 80 GB EBS, IPv4    |     71 |          40 |
+| AWS EC2 t4g.large (Oregon) | 2 vCPU arm64, 80 GB, IPv4  |     59 |          35 |
+
+  The EC2 rows are on-demand in Oregon with an 80 GB gp3 volume and the public IPv4 charge; a one-year reservation brings t3.large to about 48 and t4g.large to about 41, and N. California runs about a fifth higher.
+  Egress beyond 100 GB a month is 0.09 per GB, which the git traffic here will not reach.
+  EC2 earns its premium over Lightsail only if the campus AWS agreement, IAM, Bedrock as a harness backend, or EBS snapshots are wanted; Lightsail is EC2 with fixed bundles and a static address included, and can be exported to EC2 later.
+  Hetzner was the cheap option until its June 2026 CPX increase (CPX22 from EUR 7.99 to 19.49, CPX52 from 36.49 to 100.49) and the withdrawal of its CX and CAX lines from sale; it is omitted from the table.
+  Hosting-provider address ranges have drawn Cloudflare challenges on the Claude Code login path (anthropics/claude-code issue 21678 for Hetzner, a similar report for DigitalOcean); this matters only for sessions run on the VPS itself, and the first provisioning step tests it.
+
+* Security posture
+
+The VPS holds the Savio key and certificate, the =pass= store with API keys, and the GitHub, rsync.net and Bitbucket credentials.
+
+The instance lives in the =ligon-research= account, reached through IAM Identity Center at Berkeley's portal; the SSO profiles are already in =~ligon/.aws/config= and the account details in =~ligon/Organization/refile_dfly.org=.
+SSO credentials are short-lived and minted in a browser, so every AWS API call in this plan runs from the laptop after =aws sso login=; the instance needs no AWS credentials to exist, and the snapshot policy runs inside AWS.
+An agent session that works the account logs in itself with =aws sso login --use-device-code= under the =ligon-research-user= profile in its own =~/.aws=, and the human approves the device code in a browser; the human's token files stay private, which the CLI enforces by recreating them =0600= at every login, and the agent never holds the admin role.
+If Bedrock is ever wanted as a harness backend it comes through an instance role, never keys on disk; the dispatch execution profile refuses ambient AWS keys and disables instance-metadata discovery for its own reasons ([[file:dispatch-projects.org][dispatch projects]]), so that choice stays confined to sessions run on the VPS.
+Account numbers stay out of this note; the repository is public.
+
+- =sshd= with public-key authentication only, password authentication off, reachable over Tailscale or from known addresses with =fail2ban= in front.
+- =mosh-server= needs UDP 60000--61000.
+- =unattended-upgrades=.
+- SuCoder's own separation holds on the box: =coder= cannot read =ligon='s =~/.ssh= or =pass= store, and the only sudo path is the =relay= rule from =config.example.yaml=.
+- No laptop secret lives on vantage.
+After a first =rsync= of =~/.ssh=, =~/.gnupg= and =~/.password-store= the set was pruned on 2026-10-30, before the first daily snapshot, to what the launcher uses: the BRC certificate key pair minted on vantage itself, which covers every hop including the login nodes and DTN; a vantage-only passphrase-less ed25519 key for rsync.net and Bitbucket, registered there and nowhere else; GitHub over HTTPS through =gh='s credential helper, so no GitHub key exists on the box; a vantage-only passphrase-less GPG key with a =pass= store holding the single entry the config names; and =known_hosts= trimmed to the six hosts in use.
+The laptop's seven GPG secret keys, eighteen store entries, the 2009 RSA key that BRC's =authorized_keys= lists, the passphrase-protected =id_ed25519= and the root key for the =hhsurveys= droplet were removed; every one of them is revocable or re-copyable from the laptop, and none is needed because the certificate and the per-service keys do the work.
+Passphrase-less is deliberate: =collaborate=, =pull= and the keeper run unattended, the store protects a model-API key and later the BRC PIN, and the laptop's store key has no passphrase either.
+The TOTP seed stays in the human's authenticator.
+  The keeper asks for an OTP when it needs one and never stores it; the BRC PIN may live in =pass= because it is useless without the second factor.
+  Whether a second factor may live on a server the human does not hold is a BRC terms question, not an engineering one; it is open below.
+
+* Provisioning
+
+** DONE Discover the account's guardrails
+A campus organization usually carries service control policies, and the two actions most likely to be denied are allocating a public address and opening an inbound rule.
+From the laptop, after =aws sso login= under =ligon-research-user= (the agent, by device code) or =ligon-research-admin= (the human), in the candidate region:
+
+#+begin_example
+aws sts get-caller-identity
+aws ec2 describe-regions --query 'Regions[].RegionName'
+aws ec2 describe-vpcs
+aws ec2 describe-subnets --query 'Subnets[].[SubnetId,MapPublicIpOnLaunch]'
+aws ec2 describe-instance-type-offerings --location-type region \
+    --filters Name=instance-type,Values=t4g.large
+aws service-quotas get-service-quota --service-code ec2 --quota-code L-1216C47A
+aws ec2 allocate-address --domain vpc
+#+end_example
+
+The profiles default to =us-west-1=; =us-west-2= is the plan's preference and is at least the organization's SSO region.
+An empty VPC listing means a default VPC must be created or a bCloud network requested.
+The quota is the on-demand standard-instance vCPU ceiling, which new accounts can start below the two needed.
+Keep the Elastic IP if the allocation succeeds; it is the instance's address.
+The =ligon-research-user= profile (PowerUserAccess) suffices for the reads and the address; creating the instance's IAM role, launching with an instance profile and creating the snapshot policy all need =iam:PassRole=, which only =ligon-research-admin= has.
+
+Run 2026-10-30: no guardrail refused anything; every default region is enabled, the standard-instance vCPU quota in =us-west-2= is 1920, Graviton is offered, and the Elastic IP allocated.
+=us-west-2= already held a VPC of the human's with an internet gateway and three public subnets, four stopped instances from 2013 to 2018 with 88 GB of =gp2= volumes and a parked Elastic IP, and no snapshots at all; those are left as found and are the human's to snapshot or retire.
+Retired 2026-10-30 at the human's direction: =server2016='s two volumes snapshotted (=snap-096910d9942716e1c=, =snap-020e13c4820291eec=), all four instances terminated and the surviving 64 GB volume deleted; the parked Elastic IP 52.36.25.100 released once the human confirmed no DNS record named it.
+
+** DONE Provision the instance
+Create the instance in a west-coast region with a static address and the sizing above.
+On EC2 the choices are:
+- =t4g.large= (2 vCPU, 8 GB, Graviton) on-demand in =us-west-2=, Ubuntu 24.04 LTS arm64 from Canonical's AMI, burst credits left in =unlimited= mode; =m7g.large= costs about 11 more a month if credit accounting is unwelcome.
+- An Elastic IP associated before the first =ssh=, so =known_hosts= and the mux never see a second address; the auto-assigned address changes on every stop.
+- Termination and stop protection on; a 30 GB =gp3= root for the operating system and a second encrypted =gp3= volume of 100 GB mounted at =/home= for both accounts, both with =DeleteOnTermination= off.
+  The data volume is formatted whole, without a partition table, so growing it later is a console resize and =resize2fs= alone; the root grows itself through =cloud-init= on the next boot.
+- A Data Lifecycle Manager policy selecting both volumes by tag and taking a daily snapshot kept fourteen days; this is the second copy of =GradApps= and =Miscellaneous=.
+- A security group admitting 22/tcp from the laptop's addresses or Tailscale only, and 60000--61000/udp for mosh; the SSM agent stays installed as the way back in without port 22.
+- No Spot: a reclaimed instance is the mux death the plan exists to remove.
+- A one-year no-upfront savings plan after the measurement week, not before.
+- A scheduled maintenance event reboots the instance with notice, perhaps yearly; agent sessions live on Savio and survive it, the keeper re-warms the muxes, and an OTP is needed only if the certificate lapsed in between.
+Harden =sshd=, open the mosh UDP range, enable unattended upgrades, and set a snapshot schedule.
+Before anything else, run =claude login= and one =claude -p= call, and the Codex equivalent, from the instance; if the provider's range is challenged, local sessions are out of scope for this instance or the harness points at Bedrock.
+
+Built 2026-10-30 in the human's existing VPC: =i-0eed4281dde86c8a0=, =t4g.large=, =us-west-2a=, AMI =ami-0dcf79589cb11e193= (Ubuntu 24.04 arm64), hostname =vantage=, address 32.184.189.233, named =vantage.ligonresearch.org= in the DreamHost zone.
+Root =vol-074b1f20eb1d3696d= (30 GB) and data =vol-0e4ce3a7b0f16e5df= (100 GB, mounted at =/home= by UUID with =nofail=), both encrypted =gp3= tagged =Backup: daily=; security group =sg-01a2746e6ad50bb43=; instance profile =sucoder-control-plane= carrying =AmazonSSMManagedInstanceCore=; snapshot policy =policy-085b24772d9431952= (daily at 09:00 UTC, keep 14); EBS default encryption switched on for the region; IMDSv2 required; termination and stop protection on.
+The authorized key is coder's =hhsurveys_droplet= key at the human's direction, and =cloud-init= installed tmux, mosh, bubblewrap, git, fail2ban and unattended-upgrades.
+Two things the CLI refused on the way: the instance profile is not usable for about ten seconds after creation, so =run-instances= needs a retry, and a snapshot policy description may contain only letters, digits, space, underscore and hyphen.
+The savings plan still waits for the measurement week.
+
+** DONE Install SuCoder and the harnesses
+Run =make env-setup= from a SuCoder checkout as the human user; it creates =coder=, fixes permissions, and clones the skills ([[file:host-environment-setup.org][host environment setup]]).
+Install Node, Codex, Claude Code, =bwrap= for Codex's sandbox, tmux and =mosh-server=.
+The architecture question is already answered: the laptop is =aarch64= (Debian 12) and runs the whole stack natively, measured 2026-10-30: Claude Code 2.1.314, Codex 0.164.0, Node 22.22.2 as an ARM ELF, bubblewrap 0.8.0, and the GitNexus index in this mirror.
+Graviton is the same architecture, so the laptop's versions and install methods transfer as they are; the one component not installed on the laptop is =mosh-server=, an Ubuntu arm64 package.
+Record the installed versions; =sucoder doctor= reports the tool floors.
+
+Done 2026-10-30: =ligon= created with passwordless sudo and the same authorized key, =ubuntu= kept as the break-glass account; Node 22.23.4 arm64 into =/usr/local= with its checksum verified, Codex 0.164.0 by =npm -g=, Claude Code 2.1.314 by the native installer for =ligon= and for =coder=; =make create-agent-user= and then the remaining =env-setup= targets as =ligon=.
+Ubuntu 24.04 refuses =pip install .= outside a virtual environment, so =sucoder= (2026.7.1.dev360+gc09d361) lives in a root-owned venv at =/opt/sucoder= linked from =/usr/local/bin/sucoder=, the laptop's shape (issue 52), and =coder='s =~/bin/sucoder= is the same thin wrapper as on the laptop.
+=/home/ligon= is =2750 ligon:coder= as on the laptop, so the agent can traverse to the group-readable =~/.sucoder=.
+Two scripting traps: =sudo -i= backslash-escapes its argument, so a multi-line command passed through it collapses into one line; and Ubuntu's =Defaults use_pty= means a command under =sudo= does not see the ssh session's stdin, so =cat > file= under =sudo= writes an empty file and a script fed on stdin never runs.
+Ship files with =scp= to a path the login user owns, =install= them from there, and run anything long inside a detached =tmux= session as the target user.
+
+** TODO Move the human's SuCoder state
+Copy =~/.sucoder/config.yaml= with every =canonical_repo= rewritten to the VPS path.
+Initialise a GPG key and =pass= with the OpenRouter entry.
+Copy the SSH keys and =known_hosts=; mint the first certificate with =sucoder -T savio-node cert=.
+Add the =session_relay= sudoers rule.
+
+Done 2026-10-30 for the non-secret part: both users' =config.yaml=, =prompts/= and the system prompt copied verbatim, since the paths are identical on the two machines, and the relay sudoers rule installed.
+Done 2026-10-30 by the human: =~/.ssh=, =~/.gnupg= and =~/.password-store= copied by =rsync=; the store is encrypted to a key whose secret decrypts unattended on vantage, so =pass show openrouter.ai/apikey= works without a prompt; the first certificate minted at 15:09 UTC.
+One gap the laptop never showed: SuCoder's generated =savio-node-ln= and =-dtn= blocks name no identity, and on the laptop those hops succeed only because its ssh-agent holds the passphrase-protected =id_rsa=; vantage runs no agent, so both hops were refused with the gateway ACTIVE.
+The BRC login nodes and the DTN accept the CA certificate when it is offered, verified against =ln002= and =dtn00=, so =~ligon/.ssh/config= on vantage carries a =Match host ln*.brc,dtn.brc.berkeley.edu= stanza offering it; =Match host= applies after =HostName= substitution, which is how it reaches the generated aliases without editing the managed block.
+The durable fix is for SuCoder to offer =cert_file= on every hop behind the gateway, not only the gateway; that is a code change with a test, not done here.
+
+** DONE Clone the canonicals from their remotes
+Clone from GitHub, rsync.net and Bitbucket as the human user, not from the laptop.
+=Miscellaneous= clones from Bitbucket too; the laptop inventory had shown it without a remote only because git's ownership guard refused the agent, which also hid that the laptop's =master= may be ahead of the remote.
+=GradApps= is the one canonical with no other copy, and on the laptop it is a repository with no commits at all, fifteen untracked paths and 1.3 GB, so there is nothing to push until the human decides what to commit and whether it may live here (the classification question below).
+Clone =AggregationWithLimitedCommitment= from the Savio gate as a follower with =sync_policy: external=.
+
+Done 2026-10-30, 15:43 to 15:51 UTC, by a generated script run in a detached =tmux= session as =ligon=: fifteen canonicals cloned to the laptop's exact paths from their service remotes, GitHub over HTTPS, with the laptop's other service remotes added and submodules recursed; =SuCoder= and =sucoder-skills= were already present and =Miscellaneous= came separately from Bitbucket; =GradApps= and =LSMS-ISA_Ag= skipped as above.
+3.4 GB on =/home= afterwards, against about 13 GB on the laptop, because the laptop trees carry untracked data and build products that git never saw.
+Two things the log surfaced: the launcher config names =main= as =EEP153='s base branch but the repository has only =master=, on the laptop too, so that entry is wrong on both machines; and =FacultyExplorer='s bare repository on rsync.net has a =HEAD= that points at a branch that does not exist, harmless since =main= checks out, and not fixable without a shell there.
+The ALC follower is still to do.
+
+** TODO Launch one session and measure
+Launch one GitHub-backed mirror on =savio-node= from the VPS, =mosh= in from the laptop, and close the laptop at night for a week.
+Run =sucoder -T savio-node tunnel status --deep --json= every ten minutes into a log until the keeper exists to do it.
+The quantity of interest is the gateway mux's lifetime from establishment to the first dead probe.
+
+Tunnels first warmed from vantage 2026-10-30, the gateway mux at 15:12:35 UTC by its socket's mtime, all three hops ACTIVE on a deep probe; the measurement week runs from there.
+First sessions 2026-10-30: =LigonLibrary= launched fresh from vantage on =carleton-htc=, and the laptop's live =LSMS_Library= session (job 40561868) attached from vantage after its record moved; the human reports the tmux frame on Savio appearing in the same terminal windows as before, via =mosh= to vantage instead of =ssh= to Savio.
+The probe is =~ligon/bin/tunnel-measure= on vantage under cron: a structural =tunnel status --json= every ten minutes, which costs BRC nothing, and a =--deep= probe at five past each hour, which spends each hop's single session slot briefly; one JSON line per probe in =~/.sucoder/logs/tunnel-measure.jsonl= with a UTC timestamp and the mode.
+
+** TODO Migrate the remaining mirrors
+One at a time, GitHub-backed first.
+After each, retire the laptop as that mirror's launcher and convert its laptop clone to a partial clone where the repository's hooks allow.
+
+What moving a live session needs, established 2026-10-30 with =LSMS_Library= on =carleton-htc= (job 40561868, launched from the laptop in July): the session record =~/.sucoder/sessions/<mirror>--<target>.yaml= copied to vantage, the vantage canonical put on the branch the laptop's was on, =prepare-canonical= run, and the target's tunnels warmed; =sucoder sessions= on vantage then lists the job against its record, and =attach= routes by job id through =srun --overlap= on whatever login node the tunnel reaches, since the managed run's scope hashes cluster, user and mirror path and nothing about the launcher.
+The tmux session lives inside the job, so the laptop only detaches.
+Retiring the laptop as launcher is then three removals there, all the human's: its copy of the record, any =renew= duty for that target, and the habit of =pull= into its canonical.
+
+The other four followed the same evening, and the canonical step is where they differed, because the laptop's =origin/*= refs were weeks stale and "ahead of origin" there said nothing about GitHub:
+- =CerealDemand= and =Emu-GMM= are not in the launcher config at all; the laptop attached from inside their working trees, which =_resolve_mirror_name= accepts as an ephemeral mirror (=cli.py:1594=), so vantage got clones at the same paths to stand in.
+  The laptop's =CerealDemand= was strictly ahead of GitHub and vantage fast-forwarded to it; the laptop's =Emu-GMM= was strictly behind GitHub, so vantage's clone was already the superset.
+- =AggregationWithLimitedCommitment= is Savio-canonical; the laptop holds a blob-less partial clone, and a push from it to vantage fails with "unpacker error" because the receiver cannot get the promised blobs.
+  Vantage's clone fetched the gate with =--filter=blob:none= and fast-forwarded =master= to =gate/master= (207 ahead of GitHub, level with the laptop); three laptop-only branches (=task/aristotle-methods-review=, =tim=, =work/savio-helpers-20261023=) still have to travel laptop to inbox to vantage.
+- =SuCoder= had diverged, four laptop commits against GitHub's twenty-five, pushed to vantage as =laptop-main= with a clean dry merge; the merge itself is the human's commit.
+Through the login-node alias the ALC remotes contend for =ln002='s single session slot with the muxes and fall back to a fresh certificate connection, which is slower and harmless.
+
+* Acceptance
+
+- A laptop sleep of any length costs no OTP and no =attach=.
+- The gateway mux's measured lifetime is recorded for at least one week.
+- =sucoder sessions= on the VPS lists every live session with a local record.
+- No mirror has two launchers.
+- =Miscellaneous= has a second copy (Bitbucket and vantage); =GradApps= is deliberately excluded until cleaned.
+- A harness login from the instance succeeds, or local sessions are recorded as out of scope.
+- The laptop root filesystem has recovered enough space to work in; the number is set when the partial-clone conversions are chosen.
+
+* Open questions
+
+- Provider and instance size.
+- Whether BRC's terms permit a second factor on a server; the keeper is designed so this can be answered no.
+- Whether the Savio-canonical inbox pattern should become a SuCoder =sync_policy= or remain ALC's scripts.
+- What becomes of =LSMS-ISA_Ag=, configured but absent.
+- Answered 2026-10-30: =GradApps= mixes code and documents with possible PII on applicants to the PhD program, so it is not propagated anywhere, vantage included, until it has been cleaned up; its entry stays in the launcher config as a reminder, and =sucoder= reports its canonical as absent on vantage.
+- Whether bCloud's guardrails permit a public IPv4, an internet-facing security group and =us-west-2=; the discovery step answers it, and a denial routes the laptop in over Tailscale instead.

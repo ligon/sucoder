@@ -15,6 +15,8 @@ Unix-user sandboxing for AI coding agents.  One account per agent, filesystem-en
 ** Architecture
 
 - [[file:skills-architecture.html][Skills Architecture]] --- agent-agnostic discovery, write control, and compliance auditing.
+- [[file:vps-control-plane.html][Always-on Control Plane]] --- proposal: a VPS as launcher and canonical host, the laptop as a mosh client; the canonical inventory and provisioning checklist.
+- [[file:tunnel-keep.html][tunnel keep]] --- design: a supervisor that re-warms the gateway mux, asks for an OTP only when the certificate cannot, and logs every mux lifetime.
 - [[file:persistent-presence.html][Persistent Presence]] --- a standing condo slice on a shared HTC partition: renew, turnover, and handoff.
 - [[file:local-disk-tiering.html][Local-disk Tiering]] --- design note: disposable working tree on node-local disk, git as the sync, WIP snapshots (spike-verified).
 - [[file:codex-remote-control.html][Codex Remote Control]] --- isolated server identities, owned pairing, and simultaneous-node validation.
