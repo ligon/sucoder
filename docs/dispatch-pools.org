@@ -1,6 +1,8 @@
 #+title: Workers in an existing Slurm allocation
 
 * Scope
+The bounded native acceptance and retained limitations are recorded in
+[[file:dispatch-pool-acceptance.org][PR 78 pool acceptance]].
 =dispatch pool= attaches to an already held, owned, running single-node allocation.
 It does not create or release allocations, install tools, or start raw Codex.
 The ordinary =dispatch submit= whole-job path is unchanged.
