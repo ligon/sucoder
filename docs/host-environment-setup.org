@@ -33,6 +33,15 @@ container), pass =--no-agent-sudo= to all =sucoder= commands to skip sudo.
 - =~/.sucoder/skills=: symlink to skills checkout (see below).
 - =~/.sucoder/system_prompt.org=: global system prompt loaded before sessions.
 - Optional logs: =/home/ligon/.sucoder/logs= (or another path referenced in config).
+- The configured =mirror_root= must be owned by the human, with group =coder=
+  and mode =2770=, even when it lives under the agent's home directory.
+  Local cloning adjusts this directory's mode as the human before cloning as
+  the agent; an agent-owned root fails with =chmod: Operation not permitted=.
+  For example:
+  #+begin_src shell
+  sudo install -d -o ligon -g coder -m 2770 /home/coder/mirrors
+  #+end_src
+  This adjusts only the root directory; existing mirrors stay agent-owned.
 
 * Configuration
 - Copy =config.example.yaml= (or =default_config.yaml=) to =~/.sucoder/config.yaml= and adjust:
@@ -76,6 +85,46 @@ container), pass =--no-agent-sudo= to all =sucoder= commands to skip sudo.
 - Python + Poetry (for =sucoder= CLI): =poetry install= inside the project to get dependencies and run =poetry run sucoder --help=.
 - Node via nvm if you want to pin the agent's Node runtime; configure =agent_launcher.nvm= in the mirror config when used.
 - Agent CLI (Codex, Claude Code, Gemini CLI, etc.) installed and callable for the human; =sucoder= injects the appropriate write-access flag automatically when launching agents (e.g., =--yolo= for Codex; see the flag template table in =README.org=).
+- GitNexus installed in the system Node prefix so both users can run it:
+  #+begin_src shell
+  sudo npm install --global --prefix /usr/local gitnexus
+  gitnexus --version
+  sudo -u coder gitnexus --version
+  #+end_src
+  Run repository indexing as the repository owner, and pass
+  =--skip-agents-md= when indexing SuCoder to preserve its project instructions.
+
+** Managed Codex state on a new host
+Initialize Codex once as the agent user, in an agent-owned directory, before
+the first managed launch.
+Authentication alone does not create the profile's =installation_id= or
+=sessions/= directory.
+After exiting that initial Codex session, ensure the session directory exists:
+#+begin_src shell
+sudo -u coder bash -c 'umask 0077; cd /home/coder; exec codex'
+sudo -u coder mkdir -p -m 700 /home/coder/.codex/sessions
+#+end_src
+The managed runner requires existing bind targets and deliberately refuses to
+create them in the shared profile.
+
+On Ubuntu 24.04, also verify Bubblewrap can create a user namespace as the agent:
+#+begin_src shell
+sudo -u coder bwrap --dev-bind / / --unshare-user -- true
+#+end_src
+If the kernel log reports AppArmor denials for =bwrap= in
+=unprivileged_userns=, enable Ubuntu's supplied Bubblewrap profile:
+#+begin_src shell
+sudo apt install apparmor-profiles
+sudo install -o root -g root -m 644 \
+  /usr/share/apparmor/extra-profiles/bwrap-userns-restrict \
+  /etc/apparmor.d/bwrap-userns-restrict
+sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+sudo -u coder bwrap --dev-bind / / --unshare-user -- true
+#+end_src
+This profile grants Bubblewrap the capabilities needed inside its user
+namespace and denies capabilities to its children.
+Ubuntu documents per-application namespace allowances in the
+[[https://documentation.ubuntu.com/release-notes/24.04/#unprivileged-user-namespace-restrictions][24.04 release notes]].
 
 * Mirror preparation flow (per project)
 - Prepare canonical repo permissions and optional =coder= remote:

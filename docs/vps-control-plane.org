@@ -221,7 +221,14 @@ Record the installed versions; =sucoder doctor= reports the tool floors.
 
 Done 2026-10-30: =ligon= created with passwordless sudo and the same authorized key, =ubuntu= kept as the break-glass account; Node 22.23.4 arm64 into =/usr/local= with its checksum verified, Codex 0.164.0 by =npm -g=, Claude Code 2.1.314 by the native installer for =ligon= and for =coder=; =make create-agent-user= and then the remaining =env-setup= targets as =ligon=.
 Ubuntu 24.04 refuses =pip install .= outside a virtual environment, so =sucoder= (2026.7.1.dev360+gc09d361) lives in a root-owned venv at =/opt/sucoder= linked from =/usr/local/bin/sucoder=, the laptop's shape (issue 52), and =coder='s =~/bin/sucoder= is the same thin wrapper as on the laptop.
+GitNexus 1.6.12 is installed systemwide under =/usr/local=; both =ligon= and =coder= passed version, repository-indexing and symbol-context checks using disposable repositories, and the human's upstream-impact check found the expected caller.
 =/home/ligon= is =2750 ligon:coder= as on the laptop, so the agent can traverse to the group-readable =~/.sucoder=.
+Local launch acceptance, 2026-10-30: =sucoder collaborate --agent codex= initially failed because =/home/coder/mirrors= was =coder:coder 0775=; the launcher adjusts the root as the human, so it now has the required =ligon:coder 2770= ownership and mode.
+The full launch then exposed two more new-host prerequisites: =coder='s authenticated Codex profile lacked =sessions/= and =installation_id=, and Ubuntu's AppArmor namespace policy denied Bubblewrap's UID mapping.
+Initialized Codex as =coder=, created its private =sessions/= directory, and loaded Ubuntu's =bwrap-userns-restrict= profile from =apparmor-profiles= version =4.0.1really4.0.1-0ubuntu0.24.04.9= at =/etc/apparmor.d/bwrap-userns-restrict=.
+The Bubblewrap probe passes, and the normal managed launch reaches the Codex terminal UI under =coder= in =/home/coder/mirrors/SuCoder=, with the app-server and terminal client running in the managed namespace.
+The mirror, tmux and startup pytest checks passed: 299 tests.
+The reproducible setup steps are in [[file:host-environment-setup.org][host environment setup]].
 Two scripting traps: =sudo -i= backslash-escapes its argument, so a multi-line command passed through it collapses into one line; and Ubuntu's =Defaults use_pty= means a command under =sudo= does not see the ssh session's stdin, so =cat > file= under =sudo= writes an empty file and a script fed on stdin never runs.
 Ship files with =scp= to a path the login user owns, =install= them from there, and run anything long inside a detached =tmux= session as the target user.
 
