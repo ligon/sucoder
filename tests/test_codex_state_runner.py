@@ -1753,7 +1753,8 @@ def test_a_thread_discovered_after_the_backup_waits_for_its_replica(home):
             return entry is not None and entry["replicated_bytes"] == entry["local_bytes"] == size2
         _wait(home, discovered, "the second thread's replica", timeout=30)
         status = _request(home)
-        assert status["checkpoint"]["last_outcome"] == "published"
+        checkpoint = status["checkpoint"]
+        assert checkpoint["last_outcome"] == "published", checkpoint
         thread = _manifest(status)["threads"][tid2]
         assert thread["replica_bytes"] == size2 and thread["next_rollout_byte_offset"] == 0
         assert (m.durable_run / "rollouts" / f"{tid2}.jsonl").read_bytes() == local2.read_bytes()
