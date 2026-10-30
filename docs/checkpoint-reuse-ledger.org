@@ -1,0 +1,41 @@
+#+title: Checkpoint status on managed-run reuse (issue 73)
+#+author: Sue
+#+date: 2026-10-29
+
+* 1. Task
+Prevent a reused managed run from advertising the previous launch's checkpoint count before its new checkpointer starts.
+Keep acknowledged generations, unsynced-generation recovery, and transition history.
+Base: =115e9a25f495231eaad4400964b9a2e2c06cd7e6=, GitHub main at inspection.
+
+* 2. Existing machinery
+- =sucoder/codex_state_runner.py:1277=, =Status.load= :: Loads reused status and drops launch-transient fields; called only by =run= at reuse startup.
+- =sucoder/codex_state_runner.py:2556=, =Checkpointer= :: Counts captures per launch from zero; its view is written by capture progress and acknowledgement.
+- =sucoder/codex_state_runner.py:2862=, =acknowledgement= :: Keeps a previous last_generation until a new one is acknowledged.
+- =sucoder/codex_state_runner.py:2873=, =adopt_unsynced= :: Takes over an earlier unsynced record independently of checkpoint counters.
+- =tests/test_codex_state_runner.py:244=, =_wait_idle= :: Requires count >= 1 and idle/failed state; an absent checkpoint is already unready.
+- =tests/test_codex_state_runner.py:1046= :: Existing same-allocation reuse, ownership and provenance regression.
+- =tests/test_codex_state_runner.py:2525= :: Existing unsynced-generation takeover regression.
+
+Search tier: ripgrep and direct source/caller inspection.
+GitNexus query, analyze --skip-agents-md, and upstream impact were attempted but its native library cannot load libssl.so.3 on this host.
+No native-library or shared-install repair is part of this change.
+
+* 3. Definitions
+=checkpoint.count= is the current Checkpointer instance's completed-capture count, not the run's durable generation sequence.
+=last_generation= is acknowledged durable history; =unsynced_generation= is a pending acknowledgement that reuse must retain.
+Readiness for the existing test client means a current-launch capture has completed, not merely that placement is verified.
+
+* 4. Invariants
+Reuse must retain the same stores, run identifier, immutable provenance, generation sequence, and transition history.
+Do not change ownership, placement, shutdown sealing, capture deadlines, or unsynced-generation adoption.
+A request made before scheduler startup must remain consumable after startup.
+
+* 5. Reuse decisions
+- Extend =Status.load='s existing transient-field removal to checkpoint.
+- Reuse =_wait_idle='s count predicate; clarify why absent checkpoint means unready.
+- Extend tests with preserved-history checks and a private gate on the second launch's Checkpointer.start.
+The gate belongs only in the test wrapper; no production delay hook or new configuration is needed.
+
+* 6. Open questions
+None for this bounded correction.
+Issues 70 (shutdown reader ordering), 76 (intermittent capture failure), and 79 (live-child inspection refusal) remain separate.
