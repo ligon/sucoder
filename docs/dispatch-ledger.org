@@ -1,5 +1,5 @@
 #+TITLE: Prior-art ledger - headless worker dispatch
-#+DATE: 2026-10-25
+#+DATE: 2026-10-30
 #+AUTHOR: Sue
 
 * 1. Task and evidence
@@ -12,8 +12,15 @@ Search uses git, ripgrep, AST inspection, installed Claude help, and existing te
 GitNexus upstream impact for =cli.main= was attempted before editing; its existing native dependency cannot load =libssl.so.3= on this host.
 Do not claim a successful graph analysis; review source callers and execution routes and run the command again before committing.
 
+Current batch: issue 82, based on main =d2556f0=. Ordinary transport cloning
+omits locally available commits that have no advertised source ref. Extend
+private snapshot preparation to fetch the already-resolved exact commit from
+the same local source; never anchor a ref in the source.
+
 * 2. Existing machinery and tests
 
+- =sucoder/dispatch.py:submit= :: Resolves the immutable commit before dry-run returns; ordinary snapshots use transport clone, pool snapshots copy local objects. Direct callers are =dispatch_cli.submit= and =dispatch_pool.submit=. Existing source-isolation test: =test_submit_pins_private_source_and_allowlisted_secrets=.
+- =sucoder/dispatch.py:_git= :: Reuse sanitized Git environment, disabled lazy fetching, explicit file-only transport and bounded subprocess timeout. New SHA-only source regression must verify the selected tree, private branch, source bytes and no scheduler call on staging failure.
 - =sucoder/local_tier.py:local_root_shell=, =work_path=, =work_path_shell=, =cache_exports_sh= :: Reuse receiving-allocation paths and cache environment. Covered by =tests/test_local_tier.py=.
 - =sucoder/local_tier.py:POST_COMMIT_HOOK= :: Reuse nonforced commit publication, with an absolute private publication target pinned independently of mutable origin configuration. Never install this against the source repository.
 - =sucoder/local_tier.py:build_prepare_script= :: Existing interactive preparation follows the shared branch, reconciles and restores WIP. A headless worker needs a separate pinned path; do not silently change interactive semantics.
@@ -52,6 +59,7 @@ Preserve current interactive launch, synchronization and recovery behavior.
 
 * 5. Reuse decisions
 
+- Extend :: Ordinary =submit= snapshot staging with an exact-SHA local fetch before its existing commit check/private ref update. Pool local-copy already includes unreferenced objects and keeps its ownership/connectivity checks.
 - Reuse :: Local path/cache helpers, nonforced commit hook, managed Codex runner and its standard-library descriptor helpers.
 - Extend :: Shared local-tier preparation with an exact-commit worker path, keeping the interactive path intact.
 - New :: Dispatch manifest, private job/result directory and bounded Slurm submission/status/wait interfaces, because interactive session records and tmux panes do not represent headless jobs.
@@ -60,6 +68,11 @@ Preserve current interactive launch, synchronization and recovery behavior.
 - Defer :: Automatic integration and automatic resubmission/recovery. Preserve explicit state lineage and existing managed-runner recovery artifacts rather than creating a second recovery protocol.
 
 * 6. Validation and decisions
+
+Issue 82 has no unresolved design choice. GitNexus impact was attempted again
+on 2026-10-30 and failed to load =libssl.so.3=; direct caller/search inspection
+shows a moderate staging risk shared by CLI and pool callers, with the new
+fetch restricted to ordinary dispatch. No scheduler or worker lifecycle changes.
 
 The first adapters are Codex and Claude, selected by the user.
 Unit tests must cover stale inherited bindings, source pinning, private results, refusal of shared state placement, bounded submission/wait failures and exact exit propagation.

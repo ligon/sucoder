@@ -4164,3 +4164,40 @@ def test_a_restore_moves_threads_from_the_predecessors_clone_into_this_one(home,
         assert b.quit() == 0
     finally:
         b.close()
+
+@pytest.mark.parametrize("candidate,held,expected", [("sealed", False, "sealed"), ("sealed", True, "crash"), ("crash", False, "crash")])
+def test_final_class_checks_holders_after_owned_capture_drains(runner, tmp_path, monkeypatch, candidate, held, expected):
+    h = InProcess(runner, tmp_path, timeout=2)
+    ready, release = threading.Event(), threading.Event()
+    def reader():
+        connection = sqlite3.connect(str(h.db_dir / "state_5.sqlite"))
+        connection.execute("SELECT name FROM sqlite_master").fetchall()
+        ready.set()
+        release.wait(5)
+        connection.close()
+        with h.cp.inflight_lock:
+            h.cp.inflight = None
+    h.cp.inflight = {"generation": "000001-reader"}
+    thread = threading.Thread(target=reader)
+    thread.start()
+    assert ready.wait(2)
+    assert os.getpid() in runner.holders_of(str(h.db_dir))
+    original = runner.holders_of
+    observed = []
+    def holders(directory):
+        assert h.cp.inflight is None
+        observed.append(original(directory))
+        return [999999] if held else observed[-1]
+    monkeypatch.setattr(runner, "holders_of", holders)
+    classes = []
+    h.cp.capture = lambda generation, trigger, cls, deadline, final_pass: classes.append(cls)
+    timer = threading.Timer(0.2, release.set)
+    timer.start()
+    try:
+        assert h.cp.final(candidate) is None
+        assert classes == [expected]
+        assert observed == ([[]] if candidate == "sealed" else [])
+    finally:
+        release.set()
+        thread.join(3)
+        timer.join()

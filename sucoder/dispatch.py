@@ -290,6 +290,11 @@ def submit(repo, ref, task_file, agent, executable, resources, *, model=None,
     project_files = stage_profile(project, directory) if project is not None else []
     # Private self-contained source snapshot. No source ref/config/index changes.
     _git(repo, *(["-c", "pack.threads=1"] if _execution is not None else []), "clone", "--bare", "--local" if _execution is not None else "--no-local", "--no-hardlinks", str(repo), str(directory / "results.git"), timeout=timeout, file_protocol=True)
+    if _execution is None:
+        # Transport clone copies advertised refs, not every locally held SHA.
+        # Reuse the exact pin and file-only transport (dispatch ledger, §§2–4).
+        _git(directory / "results.git", "fetch", "--no-tags", "--no-write-fetch-head",
+             "--no-recurse-submodules", str(repo), commit, timeout=timeout, file_protocol=True)
     _git(directory / "results.git", "cat-file", "-e", commit + "^{commit}")
     if _execution is not None:
         report["source_copy"] = verify_copy(str(common), str(directory / "results.git"))
