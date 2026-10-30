@@ -210,7 +210,7 @@ assert command=="EXIT"
 
 
 @pytest.mark.parametrize('when', ['before', 'after'])
-@pytest.mark.parametrize('change', ['uid', 'starttime'])
+@pytest.mark.parametrize('change', ['uid', 'starttime', 'partial_mismatch'])
 def test_observed_reused_identity_cannot_be_erased_by_later_absence(monkeypatch, when, change):
     """A known replacement disappearing later cannot prove the original PID safe.
 
@@ -220,7 +220,10 @@ def test_observed_reused_identity_cannot_be_erased_by_later_absence(monkeypatch,
     expected = {'uid': os.getuid(), 'starttime': 42}
     original = dict(expected, state='S')
     replacement = dict(original)
-    replacement[change] += 1
+    if change == "partial_mismatch":
+        replacement = {"identity_changed": True, "starttime": 43}
+    else:
+        replacement[change] += 1
     identities = iter([replacement, None] if when == 'before'
                       else [original, replacement])
     inspections, terminal_checks = [], []

@@ -22,7 +22,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, NamedTuple, NoReturn, Optional, Set, Tuple, cast
+from typing import Annotated, Any, Dict, List, NamedTuple, NoReturn, Optional, Set, Tuple, cast
 
 import click
 
@@ -2633,7 +2633,9 @@ def _tmux_launch_preamble(
         )
         logger.info("Attaching to existing local tmux session %s", session)
         os.execvp("tmux", tmux_env.attach_argv(session))
-    argv = tmux_env.new_session_argv(session, tmux_env.command_argv(), os.getcwd())
+    argv = tmux_env.new_session_argv(
+        session, tmux_env.command_argv(), os.getcwd(), window_name=mirror,
+    )
     if dry_run:
         # The dry run itself stays here: re-run inside tmux it would print
         # and exit, closing the session it had just opened.
@@ -6923,8 +6925,11 @@ def tunnel_up(
 def tunnel_status(
     ctx: typer.Context,
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+    deep: Annotated[bool, typer.Option(
+        "--deep", help="Probe remote connectivity too (can take about 90s per hop).",
+    )] = False,
 ) -> None:
-    """Report whether each warm tunnel is alive (no auth, no network cost)."""
+    """Check local SSH masters; use --deep to test remote connectivity."""
     from . import sshconfig
     from .session import RemoteSession
     from .tunnel import SshControl
@@ -6957,10 +6962,11 @@ def tunnel_status(
             ),
         ))
 
-    results = [
-        {"hop": name, "host": host, "active": ctrl.is_active()}
-        for name, host, ctrl in hops
-    ]
+    results = []
+    for name, host, ctrl in hops:
+        if deep:
+            typer.echo(f"Checking {name} {host} (remote liveness probe) ...", err=True)
+        results.append({"hop": name, "host": host, "active": ctrl.is_active(deep=deep)})
     cfg_present = sshconfig.block_present(target_name)
 
     if json_output:
@@ -6976,6 +6982,8 @@ def tunnel_status(
         mark = "✓ ACTIVE" if r["active"] else "✗ DEAD  "
         typer.echo(f"  {mark}  {r['hop']:<8} {r['host']}")
     typer.echo(f"  ssh_config block: {'present' if cfg_present else 'absent'}")
+    if not deep:
+        typer.echo("  Local master checks only; use --deep to test remote connectivity.")
 
 
 def _parse_cert_time(raw: str):

@@ -1664,6 +1664,18 @@ unreachable there until it is collected.
 
 *** Reconnecting
 
+Use =sucoder -T carleton-htc tunnel status= for a quick check of the local
+SSH master processes. =ACTIVE= here means the local process answers; its
+remote connection may still be dead after a suspend or network change.
+=tunnel status --deep= also probes remote connectivity, announcing each hop
+on stderr before checking it. A stalled hop can take about 90 seconds to
+exhaust its retries. Both modes support =--json= on stdout.
+
+If local masters answer but remote commands stall, recycle the connections
+with =tunnel down=, then =tunnel up=. For a BRC target with an expired
+certificate, run =sucoder -T carleton-htc cert= first; it prompts for the PIN
+and OTP in your terminal.
+
 If the SSH connection drops, the remote tmux session survives while its
 host or SLURM allocation remains available. Reconnect with:
 

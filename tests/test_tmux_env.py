@@ -134,6 +134,13 @@ def test_new_session_argv_quotes_the_command_and_keeps_the_cwd():
     ]
 
 
+def test_new_session_argv_names_the_window_for_the_mirror():
+    argv = tmux_env.new_session_argv("sucoder-Foo", ["sucoder"], "/work", window_name="Foo")
+    assert argv == [
+        "tmux", "new-session", "-s", "sucoder-Foo", "-c", "/work", "-n", "Foo", "sucoder",
+    ]
+
+
 def test_attach_and_switch_argv_use_exact_match():
     assert tmux_env.attach_argv("sucoder-Foo") == [
         "tmux", "attach-session", "-t", "=sucoder-Foo",
