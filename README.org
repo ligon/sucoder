@@ -268,6 +268,14 @@ Workers use a pinned source commit, a private branch and result repository,
 and their receiving node's local storage for writable agent state and caches.
 The source checkout stays untouched; the coordinator reviews returned work
 before integration.
+=sucoder dispatch pool= adds explicitly budgeted, step-owned workers inside an
+already held allocation. See [[file:docs/dispatch-pools.org][existing-allocation pools]] for isolation,
+immutable assets, conservative reservations and stop semantics.
+Both submit commands accept =--publication-timeout= (seconds, default 30,
+maximum 300) for each Git/WIP publication. Larger values extend the early
+shutdown window to at least that budget plus 60 seconds; managed-state
+checkpoint and process-cleanup timeouts remain separate.
+
 See [[file:docs/dispatch.org][headless dispatch]] for the complete submission,
 status, wait and result commands and the supported state guarantees.
 
@@ -1659,6 +1667,18 @@ unreachable there until it is collected.
 #+end_src
 
 *** Reconnecting
+
+Use =sucoder -T carleton-htc tunnel status= for a quick check of the local
+SSH master processes. =ACTIVE= here means the local process answers; its
+remote connection may still be dead after a suspend or network change.
+=tunnel status --deep= also probes remote connectivity, announcing each hop
+on stderr before checking it. A stalled hop can take about 90 seconds to
+exhaust its retries. Both modes support =--json= on stdout.
+
+If local masters answer but remote commands stall, recycle the connections
+with =tunnel down=, then =tunnel up=. For a BRC target with an expired
+certificate, run =sucoder -T carleton-htc cert= first; it prompts for the PIN
+and OTP in your terminal.
 
 If the SSH connection drops, the remote tmux session survives while its
 host or SLURM allocation remains available. Reconnect with:

@@ -1,0 +1,13 @@
+#+TITLE: Final checkpoint reader ordering (issue 70)
+* 1. Task
+On base c09d361, drain the runner-owned capture before deciding whether a clean exit can seal.
+* 2. Existing machinery
+Checkpointer.final stops scheduling and waits for inflight under one checkpoint timeout, then passes remaining budget to begin. run currently scans holders first. holders_of includes the current process, intentionally. Existing final deadline tests and InProcess fixture cover captures and stalls. Search: direct callers; GitNexus impact failed loading libssl.so.3.
+* 3. Definitions
+Sealed requires clean non-misplaced exit and no observed database holders. Crash remains distinct from sealed recovery. Final capture itself opens readers after the quiescence check.
+* 4. Invariants
+No holder exemption, extra timeout, remote stat, or relaxed restore gate. A stalled inflight capture skips final publication. Holder scanning spends the same remaining final budget.
+* 5. Reuse
+Move the existing holder check into Checkpointer.final after inflight drains, before remaining-budget calculation and begin. run supplies the clean-exit candidate class. Reuse holders_of unchanged.
+* 6. Questions
+None. Verify owned reader release, persistent external holder, crash candidate, exhausted deadline, real restore and reuse. Self-review only.

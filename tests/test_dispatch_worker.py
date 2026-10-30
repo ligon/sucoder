@@ -685,6 +685,33 @@ def test_durable_copy_exception_is_only_for_the_managed_supervisor(staged):
     assert report["misplaced"] == [path]
 
 
+@pytest.mark.parametrize('budget', [None, 120])
+def test_workspace_budget_reaches_periodic_and_final_publication(staged, monkeypatch, budget):
+    staged.manifest['snapshot_minutes'] = .001
+    if budget is not None:
+        staged.manifest['publication_timeout'] = budget
+    save(staged)
+    original = worker.run_script
+    calls = []
+    def observed(path, environment, timeout, *args, **kwargs):
+        if path == staged.manifest['snapshot_script']:
+            calls.append((timeout, bool(args)))
+        return original(path, environment, timeout, *args, **kwargs)
+    monkeypatch.setattr(worker, 'run_script', observed)
+    assert fake_run(staged, {'SLURM_JOB_ID': '234', 'PATH': os.environ['PATH']}) == 0
+    assert any(periodic for _, periodic in calls) and any(not periodic for _, periodic in calls)
+    assert all(value == (budget if budget is not None else 2) for value, _ in calls)
+    assert staged.manifest['checkpoint_timeout'] == 2
+
+
+@pytest.mark.parametrize('budget', [0, -1, True, float('nan'), float('inf'), 301])
+def test_receiving_manifest_refuses_invalid_publication_budget(staged, budget):
+    staged.manifest['publication_timeout'] = budget
+    save(staged)
+    with pytest.raises(worker.Refused, match='publication timeout'):
+        worker.load_manifest(str(staged.control / 'manifest.json'))
+
+
 def test_heartbeat_tracks_phases_without_fsync_every_descriptor_poll(staged, monkeypatch):
     writes = []
     original = worker.atomic_json

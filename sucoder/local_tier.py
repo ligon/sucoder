@@ -395,7 +395,7 @@ def build_post_commit_hook(remote: str = "origin") -> str:
 
 
 def build_worker_prepare_script(*, results_path: str, dispatch_id: str, commit: str,
-                                local_disk_root: str = DEFAULT_LOCAL_DISK) -> str:
+                                local_disk_root: str = DEFAULT_LOCAL_DISK, isolated: bool = False) -> str:
     """Prepare an independent pinned worker; never reconcile a shared checkout."""
     import re
     if not re.fullmatch(r"[0-9a-f]{32}", dispatch_id):
@@ -405,12 +405,16 @@ def build_worker_prepare_script(*, results_path: str, dispatch_id: str, commit: 
     return "\n".join([
         "#!/bin/bash", "set -eu", "umask 077",
         'case "${SLURM_JOB_ID:-}" in ""|*[!0-9]*) exit 1;; esac',
-        cache_exports_sh(local_disk_root),
+        (': "${SUCODER_LOCAL_ROOT:?}" "${SUCODER_POOL_SOURCE_REPOSITORY:?}"' if isolated else cache_exports_sh(local_disk_root)),
         'mkdir -p "$SUCODER_LOCAL_ROOT/mirrors" "$TMPDIR" "$UV_CACHE_DIR" "$PIP_CACHE_DIR" "$npm_config_cache"',
-        "WORK=" + work_path_shell(local_disk_root, "dispatch_" + dispatch_id),
+        ('WORK="$SUCODER_LOCAL_ROOT/mirrors/dispatch_' + dispatch_id + '"' if isolated else "WORK=" + work_path_shell(local_disk_root, "dispatch_" + dispatch_id)),
         'if [ -e "$WORK" ]; then echo "dispatch clone already exists" >&2; exit 1; fi',
-        "git -c protocol.file.allow=always clone --quiet --no-local --no-hardlinks --no-checkout " + shlex.quote(results_path) + ' "$WORK"',
+        "git " + ("-c pack.threads=1 " if isolated else "") + "-c protocol.file.allow=always clone --quiet " + ("--local" if isolated else "--no-local") + " --no-hardlinks --no-checkout " + ('"$SUCODER_POOL_SOURCE_REPOSITORY"' if isolated else shlex.quote(results_path)) + ' "$WORK"',
+        *(["python3 " + shlex.quote(results_path.rsplit("/", 1)[0] + "/dispatch_pool_assets.py") + ' --verify-copy "$SUCODER_POOL_SOURCE_REPOSITORY" "$WORK/.git" >' + shlex.quote(results_path.rsplit("/", 1)[0] + "/source-copy-receiving.json")] if isolated else []),
         'cd "$WORK"',
+        "git remote set-url origin " + shlex.quote(results_path),
+        *(["git -c pack.threads=1 -c protocol.file.allow=always fetch --quiet --no-tags --no-recurse-submodules origin " + commit] if isolated else []),
+        *(['git fsck --connectivity-only --no-reflogs >/dev/null'] if isolated else []),
         "git checkout --quiet -b " + shlex.quote("dispatch/" + dispatch_id) + " " + commit,
         "git config user.name 'Sue the Coder'", "git config user.email coder@sucoder.dev",
         "cat > .git/hooks/post-commit <<'SUCODER_HOOK'", build_post_commit_hook(results_path).rstrip(),
@@ -419,7 +423,7 @@ def build_worker_prepare_script(*, results_path: str, dispatch_id: str, commit: 
 
 
 def build_worker_snapshot_script(*, results_path: str, dispatch_id: str,
-                                 local_disk_root: str = DEFAULT_LOCAL_DISK) -> str:
+                                 local_disk_root: str = DEFAULT_LOCAL_DISK, isolated: bool = False) -> str:
     """Capture dirty files with a temporary index into a unique, nonforced ref."""
     if not results_path.startswith("/") or "\x00" in results_path:
         raise ValueError("worker publication target must be an absolute path")
@@ -429,7 +433,7 @@ def build_worker_snapshot_script(*, results_path: str, dispatch_id: str,
     return "\n".join([
         "#!/bin/bash", "set -eu", "umask 077",
         'case "${SLURM_JOB_ID:-}" in ""|*[!0-9]*) exit 1;; esac',
-        "WORK=" + work_path_shell(local_disk_root, "dispatch_" + dispatch_id),
+        ('WORK="$SUCODER_LOCAL_ROOT/mirrors/dispatch_' + dispatch_id + '"' if isolated else "WORK=" + work_path_shell(local_disk_root, "dispatch_" + dispatch_id)),
         # Tasks may reconfigure Git. Automatic publication must not follow a
         # new linked worktree, symlink or shared Git metadata redirection.
         'if [ "$(readlink -f "$WORK")" != "$WORK" ] || [ ! -O "$WORK" ] || [ ! -d "$WORK/.git" ] || [ -L "$WORK/.git" ] || [ ! -O "$WORK/.git" ]; then',

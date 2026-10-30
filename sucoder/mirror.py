@@ -884,6 +884,7 @@ class MirrorManager:
 
     def _remote_git_env(
         self, ctx: MirrorContext, *, use_scaffolding: bool = True,
+        use_gateway: bool = False,
     ) -> tuple:
         """Return ``(url, env)`` for git operations against the remote mirror.
 
@@ -897,6 +898,10 @@ class MirrorManager:
         Pass ``use_scaffolding=False`` to build transport against the
         executor's target (the login node, or the compute node of an
         salloc target) instead.
+
+        Pass ``use_gateway=True`` to ride the warm gateway ControlMaster
+        itself (no login-node socket); returns ``("", {})`` for a target
+        without a gateway.
         """
         remote = ctx.settings.remote
         assert remote is not None
@@ -939,6 +944,22 @@ class MirrorManager:
         proxy_hardening = (
             f"-o BatchMode=yes {proxy_quiet}-o ConnectTimeout={connect_timeout} "
         )
+
+        if use_gateway:
+            if not gateway:
+                return "", {}
+            from .tunnel import _control_socket_path as _gw_sock
+            ssh_cmd_parts = ["ssh"]
+            if debug_ssh:
+                ssh_cmd_parts.append("-vvv")
+            ssh_cmd_parts.extend(hardening)
+            ssh_cmd_parts.extend([
+                "-o", "ControlMaster=auto",
+                "-o", f"ControlPath={_gw_sock(gateway)}",
+            ])
+            env = dict(os.environ)
+            env["GIT_SSH_COMMAND"] = " ".join(shlex.quote(p) for p in ssh_cmd_parts)
+            return f"{gateway}:{remote_path}", env
 
         # The scaffolding node sees the same Lustre filesystem and avoids
         # the fragile compute-node chain.
@@ -1025,8 +1046,14 @@ class MirrorManager:
         distinct from the primary, is the fallback.  The data-transfer
         node is not used: it is for bulk data, commonly caps concurrent
         SSH sessions to ~1, and its view of the shared filesystem can
-        wedge on its own.  Without a distinct scaffolding node only one
-        transport is returned (no pointless retry).
+        wedge on its own.
+
+        Last resort for a gateway target is the warm gateway mux itself.
+        It may land on the same login node, but it is a separate SSH
+        connection, so it survives a wedged login-node socket — the one
+        case where a confined target (whose primary *is* the login node)
+        otherwise had no fallback at all (2026-10-28: a 2 MB publication
+        push hung 300s on ln001 and succeeded in 2s afterwards).
 
         Note: for a SLURM compute-node target the "primary" is the
         compute node (where the agent runs and the executor is pinned),
@@ -1050,6 +1077,9 @@ class MirrorManager:
             # (no distinct fallback).
             if scaffold_url != url:
                 transports.append(("login node", scaffold_url, scaffold_env))
+        gw_url, gw_env = self._remote_git_env(ctx, use_gateway=True)
+        if gw_url and gw_url not in {t[1] for t in transports}:
+            transports.append(("gateway", gw_url, gw_env))
         return transports
 
     @staticmethod
@@ -1621,6 +1651,9 @@ class MirrorManager:
     # mirror.  Generous because large repos over contended Lustre can
     # be slow, but not infinite so we surface hangs.
     _GIT_REMOTE_TIMEOUT: int = 300
+    # Ceiling on waiting, past the base budget, for a still-RUNNING confined
+    # job to finish its local-disk clone and start tmux.
+    _CONFINED_CLONE_WAIT: int = 45 * 60
 
     def _ensure_remote_worktree_clean(
         self,
@@ -3095,6 +3128,9 @@ class MirrorManager:
         attempts: int = 20,
         delay: int = 3,
         waiting_for: Optional[str] = None,
+        extend_seconds: int = 0,
+        extend_delay: int = 15,
+        progress_path: Optional[str] = None,
     ) -> bool:
         """Bounded poll that the confined tmux session has actually come up.
 
@@ -3112,6 +3148,15 @@ class MirrorManager:
         log, so ``-v`` still shows every round trip.  ``waiting_for`` names
         what the job is still doing, which is what makes a long wait
         legible rather than alarming.
+
+        ``extend_seconds`` keeps waiting past that budget, at the slower
+        ``extend_delay`` cadence, for as long as the job is still RUNNING:
+        a fat mirror on a contended filesystem can clone for far longer than
+        any fixed budget (2026-10-28: 18 min for an 866 MB mirror on BRC
+        $HOME), and giving up on a healthy job only strands the user.  A job
+        that leaves RUNNING ends the wait at once.  ``progress_path`` (the
+        local-tier clone) is sized with ``du`` on each heartbeat, so the
+        wait shows the clone growing rather than just time passing.
         """
         attempts = max(1, attempts)
         # Heartbeat about every 30s: silence for the whole budget would be
@@ -3140,10 +3185,69 @@ class MirrorManager:
             time.sleep(delay)
             if (attempt + 1) % heartbeat == 0 and attempt + 1 < attempts:
                 self.logger.info(
-                    "Still waiting for job %s's tmux session (%s elapsed).",
+                    "Still waiting for job %s's tmux session (%s elapsed%s).",
                     job_id, _format_wait((attempt + 1) * delay),
+                    self._clone_progress(job_id, progress_path),
+                )
+        if extend_seconds <= 0:
+            return False
+
+        base = attempts * step
+        if self._confined_job_state_quiet(job_id) != "RUNNING":
+            return False
+        self.logger.info(
+            "Job %s is still RUNNING with no tmux session after %s; it may "
+            "just be slow, so waiting up to %s more (Ctrl-C to stop waiting; "
+            "the job keeps running and `sucoder attach` reaches it later).",
+            job_id, _format_wait(base), _format_wait(extend_seconds),
+        )
+        step = max(1, extend_delay)
+        heartbeat = max(1, (60 + step - 1) // step)
+        rounds = max(1, extend_seconds // step)
+        for n in range(1, rounds + 1):
+            time.sleep(step)
+            result = self.executor.run_agent(
+                [
+                    "srun", f"--jobid={job_id}", "--overlap",
+                    "tmux", "-L", socket, "has-session", "-t", session_name,
+                ],
+                check=False, capture_output=True, show_progress=False,
+            )
+            if result.returncode == 0:
+                return True
+            if self._confined_job_state_quiet(job_id) != "RUNNING":
+                return False
+            if n % heartbeat == 0 and n < rounds:
+                self.logger.info(
+                    "Still waiting for job %s's tmux session (%s elapsed%s).",
+                    job_id, _format_wait(base + n * step),
+                    self._clone_progress(job_id, progress_path),
                 )
         return False
+
+    def _confined_job_state_quiet(self, job_id: int) -> Optional[str]:
+        """``_confined_job_state`` for a wait loop: an SSH blip or slurmctld
+        hiccup reads as "RUNNING" (keep waiting), never as an exception."""
+        try:
+            return self._confined_job_state(job_id)
+        except Exception:  # noqa: BLE001 -- a probe failure is not a verdict
+            return "RUNNING"
+
+    def _clone_progress(self, job_id: int, path: Optional[str]) -> str:
+        """``"; N MB on local disk"`` for a heartbeat, or '' (diagnostics only)."""
+        if not path:
+            return ""
+        try:
+            result = self.executor.run_agent(
+                ["srun", f"--jobid={job_id}", "--overlap", "du", "-sm", path],
+                check=False, capture_output=True, show_progress=False,
+            )
+        except Exception:  # noqa: BLE001 -- diagnostics only
+            return ""
+        size = (result.stdout or "").split()
+        if result.returncode != 0 or not size or not size[0].isdigit():
+            return ""
+        return f"; {size[0]} MB on local disk"
 
     def _confined_capture_pane(
         self, job_id: int, session_name: str, socket: str
@@ -3473,8 +3577,11 @@ class MirrorManager:
         # (the confined attach has no `|| new-session` fallback).  Under
         # local-disk tiering the batch body clones the mirror before
         # new-session (4.7s for a 4 MB .git on Lustre; a fat mirror can take
-        # minutes), so allow 5 minutes instead of the default 1.
+        # minutes), so allow 5 minutes instead of the default 1 -- and past
+        # that, keep waiting while the job is still RUNNING (an 866 MB
+        # mirror on a contended $HOME took 18 min on 2026-10-28).
         ready_attempts = 100 if local_disk_root else 20
+        job_log = f"{cache_dir}/job-{safe}-{job_id}.out"
         if not self._confined_session_ready(
             job_id, session_name, socket, attempts=ready_attempts,
             waiting_for=(
@@ -3482,12 +3589,20 @@ class MirrorManager:
                 if local_disk_root
                 else "the job is starting tmux"
             ),
+            extend_seconds=self._CONFINED_CLONE_WAIT if local_disk_root else 0,
+            progress_path=(
+                work_path(local_disk_root, safe, job_id) if local_disk_root else None
+            ),
         ):
+            if self._confined_job_state_quiet(job_id) is None:
+                raise MirrorError(self._confined_terminal_message(job_id))
             pane = self._confined_capture_pane(job_id, session_name, socket)
             raise MirrorError(
                 f"Confined SLURM job {job_id} is RUNNING on {node} but its "
-                f"tmux session '{session_name}' did not come up.  Inspect "
-                f"{cache_dir}/job-{safe}-{job_id}.out for a `SUCODER:` marker."
+                f"tmux session '{session_name}' has not come up.  The job is "
+                "still running and may yet start it: `sucoder attach` reaches "
+                "it once it does.  Inspect "
+                f"{job_log} for a `SUCODER:` marker."
                 + (f"\n--- agent pane ---\n{pane}" if pane else "")
             )
 

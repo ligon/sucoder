@@ -368,8 +368,16 @@ def process_running(pid):
         # Zombies have exited and cannot perform work; the init process owns
         # reaping after a parent is terminated.
         return Path(f"/proc/{pid}/stat").read_text().split()[2] != "Z"
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         return False
+
+
+@pytest.mark.parametrize('error', [FileNotFoundError, ProcessLookupError])
+def test_process_running_handles_disappearance_during_proc_read(monkeypatch, error):
+    def disappeared(path):
+        raise error()
+    monkeypatch.setattr(Path, 'read_text', disappeared)
+    assert not process_running(123)
 
 
 def test_capture_cleans_owned_descendants(tmp_path):

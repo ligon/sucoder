@@ -1,0 +1,77 @@
+#+title: Issue 79: exit-inspection correction and acceptance
+#+author: Sue
+#+date: 2026-10-29
+
+* Finding
+The three normal-priority failure snapshots in [[https://github.com/ligon/sucoder/issues/79#issuecomment-6508794033][issue 79]] show kernel exit in progress: stable owned UID/starttime, flags =0x400004=, state I, and vanished exe/cwd/root links.
+The flags include PF_EXITING, not PF_KTHREAD; I alone does not classify a process as a kernel worker.
+Linux tears down resources before its terminal process state is observable, so an immediate Z/X check can refuse a process in that interval.
+This explains the inspection failure mechanism; it does not establish how long the historical interval lasted or whether scheduler activity affected its duration.
+See the [[file:dispatch-exit-proof-ledger.org][ledger]] for primary kernel sources, ownership definitions, measured probes, and invariants.
+
+* Correction
+The standalone branch is based on GitHub main =115e9a25f495231eaad4400964b9a2e2c06cd7e6=.
+Code/test commit: =58c06dc5e27aad0faca148705065c638b35fc30f=.
+It reuses draft PR 78's process identity and terminal-proof machinery without importing pool support or its complete reinspection retry.
+
+After an inspection metadata error, an unflagged or unknown process has a shared 50 ms polling budget.
+Fresh same-incarnation PF_EXITING permits waiting up to one second from the first error in that inspection pass, with at most 201 observations.
+Neither flags nor elapsed time authorize skipping a live process: fresh Z/X or disappearance is still required.
+Any observed UID/starttime mismatch refuses immediately, including a mismatch within the stat/status/stat observation.
+Placement and final-preservation rules are unchanged.
+The supervisor retains the latest 16 successful-race records with an aggregate count, and preserves refusal context before cleanup.
+
+These limits bound deliberate polling, not every kernel/proc read.
+The one-second ceiling is a conservative finite trial, not a measured upper bound on arbitrary kernel exit cleanup.
+Persistent unreadability or a longer exit interval still refuses.
+
+* Deterministic and source verification
+- Main counterfactual :: Both new inspection regressions fail at the original refusal boundary, then pass with the correction.
+- PR 78 counterfactual :: Five meaningful failures: delayed I/R/D exit beyond 50 ms, and two identity-change observations erased by later missing metadata; all pass with the correction. One unchanged identity control passes on both.
+- Focused dispatch cohort :: 304 passed in 47.55 seconds in Slurm job 40621363, source 58c06dc, Python 3.11 and pytest 7.4.4.
+- Independent review :: 73 tests passed plus a separate real same-UID nondumpable child control; source approved for the bounded pilot, not as a substitute for native acceptance.
+- Compatibility :: Modified worker parses with Python 3.6 grammar.
+- Analysis tooling :: GitNexus query/impact/detect-changes were attempted; libssl.so.3 prevents its native database from loading. Direct caller/source inspection bounds the production changes to dispatch identity, terminal proof, inspection integration, and diagnostic persistence.
+
+Run from the branch root:
+#+begin_src sh
+python -m pytest -q tests/test_dispatch_terminal_grace.py tests/test_dispatch_exit_races.py
+python -m pytest -q tests/test_dispatch*.py
+python -m pytest -q
+#+end_src
+
+The full suite completed with 2386 passed and 4 failed in 575.57 seconds (Slurm job 40621363).
+Failures were test_a_restored_thread_works_in_the_successors_clone (rollout replication behind capture), test_restore_places_a_sealed_generation_in_another_allocation[py36] (crash rather than sealed), test_a_real_codex_thread_resumes_from_a_restored_generation (no sealed generation), and test_timer_survives_starter_and_reuses_owner[True] (reply_probe.ProbeTimeout from SIGALRM).
+The failing test files, codex_state_runner, and reply_probe are byte-identical to main; these tests do not invoke the modified dispatch worker.
+These are outside this correction's execution path, but the full suite is not green and this run does not independently reproduce each failure on a baseline checkout.
+The final three tests' failure families are consistent with the previously recorded sealing race and leaked reply-probe alarm; keep their investigation separate from issue 79.
+
+* Native acceptance protocol
+Two fresh ordinary one-job-per-worker submissions use normal co_carleton/savio4_htc/carleton_htc4_normal allocations, two CPUs/16 GiB each, a 20-minute cap, and distinct nodes.
+Their frozen synthetic LSMS project profile is exactly equal to the original failure's staged profile, including image digest =12c7eab8ae37da2fd0adee71d4f741ea81c4c1937fc53644ced43d282a21f86e= and bootstrap bytes.
+An initial dry-run refused because a staged-only bootstrap_sha256 field was supplied as profile input; removing that derived field produced the identical frozen profile.
+No failed or unknown submission was retried.
+
+Each task runs exactly 1200 reads of five committed source files and 240 Git status probes at LSMS source =d65e8b13683409ab0005f1a5590208cd7d94ae62=, with half-second pauses between cycles.
+It uses the prepared runtime, does not change source, and does not access survey data, reader credentials, or native-state contents.
+The required source-churn.json evidence records file hashes, counts, bytes, task start/end times, and job identity.
+Native exit, supervisor exit, observed local SQLite, sealed-generation preservation, source publication and evidence hashes must be checked separately.
+
+| Dispatch | Job | Node | Outcome |
+|----------+-----+------+---------|
+| 390f33fae2fc4ecf9c42254aff7f54c1 | 40621405 | n0034.savio4 | Succeeded, sealed |
+| 03eb902cc18743b28f34a2d681ce85ad | 40621415 | n0035.savio4 | Succeeded, sealed |
+
+Durable evidence: =/global/scratch/fsa/fc_jevons/ligon/burst/sucoder-issue79-20261029-5cJvtj=.
+The directory holds exact submission intents/receipts, frozen task/profile/bootstrap, baseline and PR 78 counterfactual logs, full-suite output, owned-process probes, and a bounded observer's status/race history.
+No installed CLI or peer worker was changed.
+Both native and supervisor exits were zero, local SQLite was observed, final preservation was sealed, and source/evidence publication was complete.
+Independent checks against the published Git objects verified all five source hashes and 11,621,280 bytes read per worker, unchanged source HEAD, and every published evidence hash/size.
+The two loops lasted 134.19 and 135.76 seconds and overlapped by 76.45 seconds.
+The selected checks are recorded in acceptance-check.json alongside the original receipts.
+
+Four actual EACCES inspection errors recovered with terminal proof: R/PF_EXITING to gone in 5.44 ms, matching Z immediately, unknown metadata to gone in 5.24 ms, and D/PF_EXITING to gone in 15.78 ms.
+The first and fourth exercised the extended-grace selection, but neither needed more than the original 50 ms.
+No native I-state or over-50-ms exit interval was observed; delayed I/R/D behavior is covered deterministically, and the historical I-state duration remains unknown.
+These results support the bounded correction for review, not a claim that every historical or future exit interval fits one second.
+Independent review accepted this bounded native pilot with the stated limitation; the four full-suite failures above remain unresolved outside this change.

@@ -1285,8 +1285,11 @@ class Status(object):
             return False
         if not isinstance(data.get("transitions"), list):
             data["transitions"] = []
+        # Checkpointer counts restart at zero; an old idle view must not look
+        # ready before this launch captures (checkpoint-reuse ledger, sections 3-4).
+        # Keep last_generation and unsynced_generation as recovery history.
         for key in ("exit", "outcome", "child_pid", "child_starttime", "placed", "misplaced", "note", "drain", "drain_ack", "hold",
-                    "released_by"):   # the previous launch's, not this one's
+                    "released_by", "checkpoint"):   # the previous launch's, not this one's
             data.pop(key, None)
         with self.lock:
             self.data = data
@@ -3179,6 +3182,13 @@ class Checkpointer(object):
             log("final %s capture skipped: the durable generations listing never completed, so nothing could be published; "
                 "last durable generation: %s%s" % (cls, self.describe_last(), self.describe_unsynced()))
             return "the final capture was skipped: the durable generations listing never completed"
+        # Quiesce owned readers before class selection (final-reader ledger, sections 3-5).
+        if cls == "sealed":
+            holders = holders_of(self.db_dir)
+            if holders:
+                cls = "crash"
+                log("pids %s still hold descriptors under %s after Codex exited; the final generation is a crash candidate, not sealed" % (
+                    ", ".join(str(pid) for pid in holders[:4]), self.db_dir))
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             log("final %s capture skipped: the %ds shutdown budget was spent waiting for the capture in flight; last durable "
@@ -3804,12 +3814,6 @@ def run(args):
         status.update("exited", exit=code, outcome=result.get("outcome"))
         log("Codex exited with %d (%s)" % (code, result.get("outcome", "unknown")))
     cls = "sealed" if code == 0 and not misplaced else "crash"
-    if cls == "sealed":
-        holders = holders_of(db_dir)
-        if holders:
-            cls = "crash"
-            log("pids %s still hold descriptors under %s after Codex exited; the final generation is a crash candidate, not sealed" % (
-                ", ".join(str(pid) for pid in holders[:4]), db_dir))
     skipped = checkpointer.final(cls)
     request = drain.settle(code, skipped)
     if request is not None and request["mode"] == "renew":

@@ -1,0 +1,165 @@
+#+TITLE: Dispatch backlog: reconciliation and SHA-only source fix
+#+DATE: 2026-10-30
+
+* Scope and coverage
+
+Repository: [[https://github.com/ligon/sucoder][ligon/sucoder]], default and merge target =main=.
+Inspected implementation base: =d2556f0dc84f40b239a8e014934d0af821087a6e=,
+including merged PRs 74, 75, 81 and 78. No development/release branch is targeted.
+This implementation batch follows the user's request to address dispatch issues
+using backlog-workflow. It selects issue 82; the other issues retain independent
+acceptance criteria and are reconciled below, not silently treated as fixed.
+
+Inventory retrieved 2026-10-30, approximately 13:10–13:20 UTC: 14 open issues,
+one open PR (80). REST returned 15 issue/PR entries with per_page=100: one
+complete page. All issues have no labels or assignees; no priority labels apply.
+Connector issue search returned issue records even for a PR-only query, so
+explicit-repository gh REST/list commands supplied completeness and PR checks.
+Bodies and all comments were read for dispatch issues 70, 72, 76, 77, 79 and 82;
+code, relevant merged PRs and acceptance records were compared. No sampling of
+those six. Seven unrelated issues (14, 54, 57, 58, 59, 65, 66) are metadata-only.
+Related issue 73 is tracked through PR 80 and the earlier
+[[file:backlog-20261029.org][backlog report]], rather than duplicated.
+Timeline cross-reference graphs were not exhaustively traversed; explicit
+links, merged dispatch PR search and the complete open-PR list were checked.
+
+The user subsequently authorized merging PR 80. Its exact head =58586ba3=
+had green CI run [[https://github.com/ligon/sucoder/actions/runs/40990436269][40990436269]],
+no review submissions or review threads, and a mergeable state. Source/tests and
+commit messages were inspected. Merge succeeded as =c09d36161b93162fc75d4534dfa1a2cbdf2b9ac9=.
+Issue 73 therefore becomes a resolved candidate; issue state was not changed.
+This update supersedes the initial open-PR inventory, not its retrieval record.
+
+* Dispositions and ordered work
+
+Counts for the six examined dispatch issues: two resolved candidates, one
+partially addressed, one needs diagnosis, one ready, one implemented pending PR.
+No shared root cause or blocking cycle is inferred from their common dispatch context.
+
+| Issue | Disposition | Impact / urgency | Effort / confidence | Next action and completion criterion |
+|-------+-------------+------------------+---------------------+--------------------------------------|
+| [[https://github.com/ligon/sucoder/issues/82][82]] | Implemented in this batch; pending merge | Medium: valid sources cannot launch; ref workaround exists | Small, high confidence | Review exact-SHA staging fix; loose/packed unreferenced commits must stage without source mutation, failures before Slurm. |
+| [[https://github.com/ligon/sucoder/issues/70][70]] | Ready | High: clean exit may prevent sealed recovery | Substantial lifecycle change, strong ordering evidence | Drain owned captures before class selection within the existing deadline; test other holders, unclean exit, stalls, real restore and reuse. |
+| [[https://github.com/ligon/sucoder/issues/76][76]] | Needs diagnosis | Medium: intermittent capture failure | Uncertain, hours to days | Retain sanitized checkpoint reason under controlled/full-suite scheduling; distinguish timeout from replica-proof defect before changing behavior. |
+| [[https://github.com/ligon/sucoder/issues/77][77]] | Partially addressed | Medium: pool creation and turnover convenience remain | Multi-part, high confidence on completed slice | Narrow to the residual below; verify explicit creation, named-node and maintenance-release behavior. |
+| [[https://github.com/ligon/sucoder/issues/72][72]] | Resolved candidate | Original launch gap covered | Small reconciliation, high confidence | Closure draft below; broader runner reliability remains separately tracked. |
+| [[https://github.com/ligon/sucoder/issues/79][79]] | Resolved candidate for bounded correction | Original refusal was high impact | Small reconciliation, bounded native evidence | Closure draft below retains historical timing uncertainty and separate publication failures. |
+
+Issue 70 has the highest residual correctness impact. Issue 82 was selected
+first because it is independently reproducible and has a narrow fix and complete
+verification available without changing checkpoint or placement policy. Then
+address 70, diagnose 76, and implement the remaining 77 capability. Neither
+70 nor 76 blocks source packaging. PR 80 fixes readiness, not final sealing.
+
+* Evidence and proposed tracker reconciliation
+
+These are drafts, not applied issue-body changes or comments. No issue was
+closed, relabeled, assigned or split in this batch.
+
+** Issue 72: proposed closure rationale
+
+PR 74 merged the supported compute-side dispatch CLI, private receiving roots,
+managed runner, credential isolation, descriptor/mount checks, documented
+invocation and honest result reporting. Its installed-wheel concurrent pair
+used jobs 40504297 (Codex, n0028) and 40504303 (Claude, n0033), with independent
+identities, a shared concurrency barrier and unchanged source metadata.
+Codex observed local SQLite and sealed; Claude preserved stopped text state.
+Fake-worker cross-node tests covered dirty snapshots, TERM and missing results.
+PR 81 additionally exercised two concurrent native Codex workers on distinct
+nodes through sealed preservation and verified publication. Deterministic tests
+cover stale bindings and shared-filesystem refusal. See
+[[https://github.com/ligon/sucoder/pull/74][PR 74]], [[file:dispatch.org][dispatch guidance]],
+and [[file:dispatch-exit-proof-validation.org][native pair and guard regressions]].
+The supported entry-point gap is covered on main. Issue 70's separate final-seal
+race remains open; no claim of universal workload reliability is made.
+
+** Issue 79: proposed closure rationale and distinct follow-ups
+
+PR 81 (=641d8fdb=, merged into main) fixes exit-phase inspection handling using
+fresh identity-bound terminal proof. Deterministic regressions cover delayed
+I/R/D exit, identity mismatch and live unreadability; no live-process exemption
+is introduced. Profile-matched jobs 40621405 and 40621415 on different nodes
+overlapped, completed source churn and sealed/published successfully, recovering
+four actual metadata errors with terminal proof. Historical I-state duration
+was not measured; native observed recoveries were below 50 ms. Longer-than-budget
+or persistent live unreadability still refuses. These limits are explicit in
+[[file:dispatch-exit-proof-validation.org][the acceptance record]].
+PR 78's longer pool campaign adds sibling/replacement acceptance, not a substitute
+for the separate-allocation pilot. Later issue comments explicitly identify
+DVC cache misplacement, evidence size/mode violations and non-fast-forward result
+publication as different failures. Do not fold these into process-exit diagnosis.
+Suggested distinct follow-up: document/preflight evidence privacy and size, and
+define clean-base branch publication/recovery. No new follow-up issue was filed;
+retain the original comment links and do not reclassify failed tasks as successes.
+
+** Issue 77: proposed residual title and body
+
+Title: Create named-node allocation pools and complete maintenance turnover.
+
+Body draft: PR 78 merged attachment to owned single-node allocations, private
+worker scopes, immutable source/image reuse, aggregate CPU/memory reservations,
+exact step receipts and cleanup, status reconciliation and submission cutoffs.
+The [[file:dispatch-pool-acceptance.org][bounded native acceptance]] ran two workers
+plus a later replacement in job 40631087: survivor 660 cycles, interrupted worker
+61, replacement 180. Shared image/source identity and private runtime/database
+scopes were verified; one step's termination did not stop the sibling. Stopped
+native-state hashes and evidence were independently checked. Intentional TERM
+preserved a crash generation, not an automatically restorable sealed state.
+The old October 26 all-worker failure checkpoint remains historical evidence;
+it is superseded for this bounded attach/replacement acceptance.
+
+Remaining: supported allocation creation with explicit requested-node selection;
+owner-controlled, bounded idle holds and maintenance turnover that stops new work,
+publishes commits/evidence/state/handoffs, then releases while storage is available;
+and explicit acceptance of approved immutable input-copy reuse when added beyond
+the currently measured source/image assets. Preserve original uid/cluster/node,
+expiry/stale-root, resource, state-isolation and ordinary-dispatch requirements.
+The source-only three-worker campaign does not demonstrate eight-country capacity,
+real-data reuse, automatic recovery or a long maintenance hold.
+
+** Issues 70 and 76: bounded next checks
+
+At the inspected base, =codex_state_runner.run= selects class and calls
+=holders_of(db_dir)= before =Checkpointer.final= drains in-flight capture.
+The owned-reader ordering defect remains; issue 73's readiness reset does not
+change it. Start with an event-held reader regression and retain the same shutdown
+budget and conservative treatment of other holders. A broader fix belongs in
+its own PR with real sealed restore/reuse acceptance.
+
+For 76, the final assertion in
+=test_a_thread_discovered_after_the_backup_waits_for_its_replica= still omits the
+checkpoint reason. The original reason is unavailable and six isolated controls
+passed. Record only checkpoint outcome/reason and retained fixture diagnostics;
+do not expose inherited environment through full pytest locals. Preserve both
+the first non-durable result and full immutable-prefix verification. There is
+no evidence that raising the timeout or accepting failure would be correct.
+
+* Issue 82 implementation and verification
+
+Reuse decision and invariants: [[file:dispatch-ledger.org][dispatch ledger]], sections 2–5.
+Ordinary transport clone only copies reachable source refs. After cloning,
+=submit= now fetches the already-resolved SHA from the explicit local source
+into the private repository using the existing sanitized, file-only Git helper,
+with tags/submodule recursion/FETCH_HEAD writes disabled and the existing timeout.
+The existing private branch update then anchors the commit. Pool local-copy
+staging already includes these objects and retains its independent checks.
+
+On unchanged =d2556f0= production code, both new loose/packed regressions failed
+at the reported missing-commit check. With the correction both pass, verify the
+selected tree and private branch, run connectivity checks, and compare every
+source file's bytes before/after. Error/timeout tests prove one staging attempt,
+no scheduler call, and no submission receipt. No native worker or production
+research repository is needed for this pre-scheduler failure.
+
+From the isolated worktree root:
+#+begin_src sh
+pytest -q -o showlocals=false --tb=short tests/test_dispatch*.py
+#+end_src
+Result: 387 passed in 66.78 seconds. The default =python= lacked pytest; the
+available pytest executable ran the suite successfully against this worktree.
+No new full-suite or native-allocation acceptance is claimed for this narrow fix.
+Self-review: OK anchored on ledger sections 2–5; reused Git sanitization and
+timeouts, preserved source immutability, and kept pool/worker lifecycle unchanged.
+No independent reviewer was used. GitNexus impact and detect-changes were attempted
+but failed to load =libssl.so.3=; manual callers and diff review substitute for
+unavailable graph results. Production change is confined to =dispatch.submit=.

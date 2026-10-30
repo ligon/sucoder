@@ -1562,7 +1562,7 @@ def test_git_transports_target_first_then_scaffolding(
 
     transports = manager._git_transports(ctx)
 
-    assert [t[0] for t in transports] == ["login node", "login node"]
+    assert [t[0] for t in transports] == ["login node", "login node", "gateway"]
     login_url, dtn_url = transports[0][1], transports[1][1]
     assert login_url.startswith("ln001:")
     assert dtn_url.startswith("dtn.example.com:")
@@ -1571,10 +1571,12 @@ def test_git_transports_target_first_then_scaffolding(
     assert "ControlPath=/tmp/dtn.sock" in transports[1][2]["GIT_SSH_COMMAND"]
 
 
-def test_git_transports_single_without_scaffolding(
+def test_git_transports_gateway_is_the_only_fallback_without_scaffolding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Without a DTN there is one transport — no pointless failover."""
+    """A confined target (no distinct scaffolding node) still fails over:
+    the warm gateway mux is a separate connection from the login-node socket."""
+    from sucoder.tunnel import _control_socket_path
     from sucoder.executor import RemoteExecutor
 
     manager = _build_remote_manager(tmp_path)
@@ -1595,8 +1597,50 @@ def test_git_transports_single_without_scaffolding(
     )
 
     transports = manager._git_transports(ctx)
-    assert len(transports) == 1
-    assert transports[0][0] == "login node"
+    assert [t[0] for t in transports] == ["login node", "gateway"]
+    gw_url, gw_env = transports[1][1], transports[1][2]
+    assert gw_url == "gw.example.com:/home/ligon/mirrors/rproj"
+    gw_ssh = gw_env["GIT_SSH_COMMAND"]
+    assert f"ControlPath={_control_socket_path('gw.example.com')}" in gw_ssh
+    assert "BatchMode=yes" in gw_ssh and "ProxyCommand" not in gw_ssh
+
+
+def test_sync_remote_timeout_on_login_node_retries_via_gateway(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A publication push that times out on the login node succeeds via the gateway mux."""
+    from sucoder.executor import CommandError, RemoteExecutor
+    import logging
+
+    manager = _build_remote_manager(tmp_path)
+    ctx = manager.context_for("rproj")
+    manager.executor = RemoteExecutor(
+        human_user="ligon", agent_user="ligon", agent_group="ligon",
+        logger=logging.getLogger("test.remote.gwfallback"),
+        dry_run=False, use_sudo_for_agent=False,
+        gateway="gw.example.com", login_node="ln001",
+        remote_mirror_root="~/mirrors",
+        local_mirror_root=str(tmp_path / "mirrors"),
+        control_socket_path="/tmp/test.sock",
+    )
+    monkeypatch.setattr(
+        manager, "_resolve_remote_path",
+        lambda ctx: "/home/ligon/mirrors/rproj",
+    )
+
+    pushes: list = []
+
+    def fake_run_human(args, **kwargs):
+        pushes.append(args[2])
+        if args[2].startswith("ln001"):
+            raise CommandError("timeout", _transport_result(args, -1, "timed out"))
+        return _transport_result(args, 0)
+
+    monkeypatch.setattr(manager.executor, "run_human", fake_run_human)
+
+    manager._sync_remote(ctx)
+
+    assert [u.split(":")[0] for u in pushes] == ["ln001", "gw.example.com"]
 
 
 def _transport_result(args, returncode, stderr=""):

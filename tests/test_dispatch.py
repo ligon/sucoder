@@ -71,6 +71,25 @@ def test_dry_run_has_no_mutation_or_scheduler(source, monkeypatch):
     assert "--comment=sucoder-dispatch:" + report["dispatch_id"] in report["command"]
 
 
+@pytest.mark.parametrize("value", [0, -1, True, float("inf"), float("nan"), 301])
+def test_publication_budget_refuses_before_staging(source, value):
+    with pytest.raises(ValueError, match="publication timeout"):
+        dispatch.submit(**source, publication_timeout=value)
+    assert not dispatch.DEFAULT_DIRECTORY_ROOT.exists()
+
+
+def test_publication_budget_is_frozen_and_extends_scheduler_notice(source, monkeypatch):
+    scheduler(monkeypatch)
+    report = dispatch.submit(**source, publication_timeout=120.5)
+    manifest = json.loads((Path(report['directory']) / 'manifest.json').read_text())
+    assert manifest['publication_timeout'] == 120.5
+    assert manifest['checkpoint_timeout'] == 30
+    assert '--signal=B:TERM@181' in report['command']
+    source['resources']['time'] = '00:02:00'
+    with pytest.raises(ValueError, match='181-second'):
+        dispatch.submit(**source, publication_timeout=120.5)
+
+
 @pytest.mark.parametrize("timeout", [float("nan"), float("inf"), -float("inf"), True, "5", None, 0, -1])
 def test_submit_rejects_invalid_timeout_before_source_or_scheduler(source, monkeypatch, timeout):
     def forbidden(*args, **kwargs):
@@ -144,6 +163,64 @@ def test_submit_pins_private_source_and_allowlisted_secrets(source, monkeypatch)
     assert directory.stat().st_mode & 0o077 == 0
     assert (directory / "evidence").is_dir() and (directory / "evidence").stat().st_mode & 0o077 == 0
     assert (git(source["repo"], "show-ref"), git(source["repo"], "status", "--porcelain"), (source["repo"] / ".git/index").read_bytes(), (source["repo"] / ".git/config").read_bytes()) == before
+
+
+@pytest.mark.parametrize("packed", [False, True])
+def test_submit_snapshots_commit_available_only_by_sha(source, monkeypatch, tmp_path, packed):
+    repo = source["repo"]
+    donor = tmp_path / "donor"
+    git(repo, "clone", "-q", str(repo), str(donor))
+    git(donor, "config", "user.name", "Test")
+    git(donor, "config", "user.email", "test@example.com")
+    (donor / "selected-only").write_text("selected tree\n")
+    git(donor, "add", ".")
+    git(donor, "commit", "-qm", "selected")
+    selected = git(donor, "rev-parse", "HEAD")
+    git(repo, "-c", "fetch.unpackLimit=" + ("1" if packed else "100"),
+        "fetch", "--no-write-fetch-head", "--no-tags", str(donor), selected)
+    assert git(repo, "cat-file", "-t", selected) == "commit"
+    assert not git(repo, "for-each-ref", "--contains=" + selected)
+    assert bool(list((repo / ".git/objects/pack").glob("*.pack"))) == packed
+    before = {str(p.relative_to(repo)): p.read_bytes()
+              for p in repo.rglob("*") if p.is_file()}
+    calls = scheduler(monkeypatch)
+    source["ref"] = selected
+    dry = dispatch.submit(**source, dry_run=True)
+    assert dry["commit"] == selected
+    assert not Path(dry["directory"]).exists() and not calls
+    report = dispatch.submit(**source)
+    results = Path(report["directory"]) / "results.git"
+    assert len(calls) == 1
+    assert git(results, "rev-parse", "dispatch/" + report["dispatch_id"]) == selected
+    assert git(results, "show", selected + ":selected-only") == "selected tree"
+    git(results, "fsck", "--connectivity-only")
+    assert not (results / "objects/info/alternates").exists()
+    assert before == {str(p.relative_to(repo)): p.read_bytes()
+                      for p in repo.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize("timed_out", [False, True])
+def test_source_fetch_failure_never_reaches_scheduler(source, monkeypatch, timed_out):
+    calls = scheduler(monkeypatch)
+    real_run = dispatch._run
+    fetches = []
+
+    def run(argv, **kwargs):
+        if argv[0] == "git" and "fetch" in argv:
+            fetches.append(argv)
+            assert kwargs["timeout"] == 17
+            assert kwargs["env"]["GIT_ALLOW_PROTOCOL"] == "file"
+            assert kwargs["env"]["GIT_NO_LAZY_FETCH"] == "1"
+            if timed_out:
+                raise subprocess.TimeoutExpired(argv, 17)
+            return SimpleNamespace(returncode=1, stdout="", stderr="selected commit unavailable")
+        return real_run(argv, **kwargs)
+
+    monkeypatch.setattr(dispatch, "_run", run)
+    with pytest.raises(subprocess.TimeoutExpired if timed_out else ValueError):
+        dispatch.submit(**source, timeout=17)
+    assert len(fetches) == 1 and not calls
+    assert not list(dispatch.DEFAULT_DIRECTORY_ROOT.glob("*/submission.json"))
 
 
 def test_submission_timeout_is_unknown_and_never_retries(source, monkeypatch):

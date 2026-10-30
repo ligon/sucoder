@@ -123,7 +123,7 @@ def _read_json(path: Path):
         return None, "unreadable"
 
 
-def _resources(values):
+def _resources(values, shutdown_seconds=120):
     required = {"account", "partition", "qos", "cpus", "mem", "time"}
     if not required.issubset(values) or set(values) - required - {"exclude"}:
         raise ValueError("resources require account, partition, qos, cpus, mem and time; optional exclude")
@@ -153,26 +153,31 @@ def _resources(values):
         seconds = fields[0] * 60 + fields[1]
     else:
         seconds = fields[0] * 3600 + fields[1] * 60 + fields[2]
-    if seconds < 120:
-        raise ValueError("dispatch time must allow the 120-second shutdown signal window")
+    if seconds < shutdown_seconds:
+        raise ValueError("dispatch time must allow the %s-second shutdown signal window" % shutdown_seconds)
     return values
 
 
 def submit(repo, ref, task_file, agent, executable, resources, *, model=None,
            directory_root=None, local_disk_root="/local", source_agent_home=None,
            source_claude_user_config=None, required_evidence=None, snapshot_minutes=10,
-           dry_run=False, timeout=30, project_profile=None):
+           dry_run=False, timeout=30, project_profile=None, _execution=None,
+           publication_timeout=30):
     """Pin an offline commit, stage a private worker and submit exactly once.
 
     Dry runs validate and report the planned command without writing artifacts
     or contacting Slurm. They do not reserve their reported random dispatch ID.
     """
     timeout = _finite_seconds(timeout, "timeout")
+    publication_timeout = _finite_seconds(publication_timeout, "publication timeout")
+    if publication_timeout > 300:
+        raise ValueError("publication timeout must not exceed 300 seconds")
+    shutdown_seconds = max(120, math.ceil(publication_timeout) + 60)
     if type(snapshot_minutes) not in (int, float) or not math.isfinite(snapshot_minutes) or snapshot_minutes <= 0:
         raise ValueError("snapshot_minutes must be finite and positive")
     if agent not in ("codex", "claude"):
         raise ValueError("headless agent must be codex or claude")
-    resources = _resources(resources)
+    resources = _resources(resources, shutdown_seconds)
     project = read_profile(project_profile, shared_path=_shared_path) if project_profile is not None else None
     if project is not None and any(value > resources["cpus"] for value in project["profile"]["thread_limits"].values()):
         raise ValueError("project thread limit exceeds requested CPU budget")
@@ -211,10 +216,15 @@ def submit(repo, ref, task_file, agent, executable, resources, *, model=None,
     # Git metadata can itself be redirected into node-local storage by a worktree.
     _shared_path(gitdir, "source Git metadata")
     _shared_path(common, "source common Git metadata")
+    if _execution is not None:
+        from .dispatch_pool_assets import validate_local_source, verify_copy
+        if any(path.stat().st_uid != os.getuid() for path in (repo, gitdir, common)):
+            raise ValueError("pool local-copy source and Git metadata must be owned by this uid")
+        validate_local_source(str(common))
     commit = _git(repo, "rev-parse", "--verify", ref + "^{commit}")
     if not re.fullmatch(r"[0-9a-f]{40,64}", commit):
         raise ValueError("source did not resolve to a commit")
-    dispatch_id = uuid.uuid4().hex
+    dispatch_id = _execution["dispatch_id"] if _execution is not None else uuid.uuid4().hex
     directory = root / dispatch_id
     cluster = os.environ.get("SLURM_CLUSTER_NAME") or None
     manifest = dict(schema_version=SCHEMA_VERSION, dispatcher_version=__version__, adapter_version=1,
@@ -227,7 +237,13 @@ def submit(repo, ref, task_file, agent, executable, resources, *, model=None,
                     worker_path=str(directory / "worker.py"), environment_file=str(directory / "environment.json"),
                     source_agent_home=None, source_claude_user_config=None, resources=resources,
                     scope=scope_id(cluster or "unknown", str(os.getuid()), str(repo), dispatch_id),
-                    checkpoint_minutes=10, checkpoint_timeout=30, snapshot_minutes=float(snapshot_minutes))
+                    checkpoint_minutes=10, checkpoint_timeout=30, snapshot_minutes=float(snapshot_minutes),
+                    publication_timeout=publication_timeout)
+    if _execution is not None:
+        from .dispatch_pool import validate_execution
+        validate_execution(_execution, resources, shutdown_seconds)
+        manifest["execution"] = _execution
+        manifest["cluster"] = cluster = _execution["cluster"]
     source_home = source_agent_home if source_agent_home is not None else Path.home() / (".codex" if agent == "codex" else ".claude")
     source_home_path = _shared_path(Path(source_home), "source agent home")
     if source_agent_home is not None and not source_home_path.is_dir():
@@ -239,7 +255,7 @@ def submit(repo, ref, task_file, agent, executable, resources, *, model=None,
         raise ValueError("Claude user config must be an existing file")
     if agent == "claude" and claude_config.exists():
         manifest["source_claude_user_config"] = str(_shared_path(claude_config, "Claude user config"))
-    argv = ["sbatch", "--parsable", "--no-requeue", "--signal=B:TERM@120", "--export=NONE", "--chdir=/tmp", "--nodes=1", "--ntasks=1",
+    argv = ["sbatch", "--parsable", "--no-requeue", "--signal=B:TERM@" + str(shutdown_seconds), "--export=NONE", "--chdir=/tmp", "--nodes=1", "--ntasks=1",
             "--account=" + resources["account"], "--partition=" + resources["partition"],
             "--cpus-per-task=" + str(resources["cpus"]),
             "--mem=" + resources["mem"], "--time=" + resources["time"],
@@ -250,6 +266,14 @@ def submit(repo, ref, task_file, agent, executable, resources, *, model=None,
         argv.insert(3, "--qos=" + resources["qos"])
     if resources["exclude"] is not None:
         argv.insert(3, "--exclude=" + resources["exclude"])
+    if _execution is not None:
+        argv = ["srun", "--jobid=" + str(_execution["job_id"]), "--nodelist=" + _execution["node"],
+                "--exclusive", "--exact", "--nodes=1", "--ntasks=1", "--cpu-bind=cores",
+                "--cpus-per-task=" + str(resources["cpus"]), "--mem=" + resources["mem"],
+                "--time=" + resources["time"], "--export=NONE", "--chdir=/tmp",
+                "--comment=sucoder-dispatch:" + dispatch_id,
+                "--output=" + str(directory / "slurm.log"), "--error=" + str(directory / "slurm.stderr.log"),
+                "/bin/bash", str(directory / "batch.sh")]
     report = dict(schema_version=SCHEMA_VERSION, dispatch_id=dispatch_id, uid=os.getuid(), cluster=cluster,
                   directory=str(directory), commit=commit, command=argv, state="dry_run" if dry_run else "preparing")
     if project is not None:
@@ -265,8 +289,16 @@ def submit(repo, ref, task_file, agent, executable, resources, *, model=None,
     (directory / "evidence").mkdir(mode=0o700)
     project_files = stage_profile(project, directory) if project is not None else []
     # Private self-contained source snapshot. No source ref/config/index changes.
-    _git(repo, "clone", "--bare", "--no-local", "--no-hardlinks", str(repo), str(directory / "results.git"), timeout=timeout, file_protocol=True)
+    _git(repo, *(["-c", "pack.threads=1"] if _execution is not None else []), "clone", "--bare", "--local" if _execution is not None else "--no-local", "--no-hardlinks", str(repo), str(directory / "results.git"), timeout=timeout, file_protocol=True)
+    if _execution is None:
+        # Transport clone copies advertised refs, not every locally held SHA.
+        # Reuse the exact pin and file-only transport (dispatch ledger, §§2–4).
+        _git(directory / "results.git", "fetch", "--no-tags", "--no-write-fetch-head",
+             "--no-recurse-submodules", str(repo), commit, timeout=timeout, file_protocol=True)
     _git(directory / "results.git", "cat-file", "-e", commit + "^{commit}")
+    if _execution is not None:
+        report["source_copy"] = verify_copy(str(common), str(directory / "results.git"))
+        _git(directory / "results.git", "fsck", "--connectivity-only", "--no-reflogs", timeout=timeout)
     # Make the private initial reference explicit; this never touches source.
     _git(directory / "results.git", "update-ref", "refs/heads/" + manifest["branch"], commit)
     _write_json(directory / "manifest.json", manifest)
@@ -276,21 +308,37 @@ def submit(repo, ref, task_file, agent, executable, resources, *, model=None,
     _private_write(directory / "MESSAGES_TO_AGENT.txt", "Coordinator steering messages appear here.\n")
     _private_write(directory / "QUESTIONS_FROM_AGENT.txt", "Record questions here; continue independent work.\n")
     _write_json(directory / "environment.json", {key: os.environ[key] for key in ENVIRONMENT_ALLOWLIST if key in os.environ})
-    _private_write(directory / "prepare.sh", build_worker_prepare_script(results_path=str(directory / "results.git"), dispatch_id=dispatch_id, commit=commit, local_disk_root=local_disk_root), True)
-    _private_write(directory / "snapshot.sh", build_worker_snapshot_script(results_path=str(directory / "results.git"), dispatch_id=dispatch_id, local_disk_root=local_disk_root), True)
+    _private_write(directory / "prepare.sh", build_worker_prepare_script(results_path=str(directory / "results.git"), dispatch_id=dispatch_id, commit=commit, local_disk_root=local_disk_root, isolated=_execution is not None), True)
+    _private_write(directory / "snapshot.sh", build_worker_snapshot_script(results_path=str(directory / "results.git"), dispatch_id=dispatch_id, local_disk_root=local_disk_root, isolated=_execution is not None), True)
     _private_write(directory / "runner.py", runner_source())
     _private_write(directory / "worker.py", Path(__file__).with_name("dispatch_worker.py").read_text())
     _private_write(directory / "dispatch_protocol.py", Path(__file__).with_name("dispatch_protocol.py").read_text())
     _private_write(directory / "dispatch_artifacts.py", Path(__file__).with_name("dispatch_artifacts.py").read_text())
+    if _execution is not None:
+        _private_write(directory / "dispatch_pool_assets.py", Path(__file__).with_name("dispatch_pool_assets.py").read_text())
+        project_files.append("dispatch_pool_assets.py")
     if project is not None:
         _private_write(directory / "dispatch_project.py", Path(__file__).with_name("dispatch_project.py").read_text())
         project_files.append("dispatch_project.py")
-    _private_write(directory / "batch.sh", "#!/bin/bash\nset -eu\numask 077\nexec python3 " + shlex.quote(str(directory / "worker.py")) + " " + shlex.quote(str(directory / "manifest.json")) + "\n", True)
+    interpreter = "exec python3 "
+    if _execution is not None:
+        # Resolve on the receiver, not the controller. With --export=NONE,
+        # Bash can have an unexported default PATH; CPython started as bare
+        # 'python3' may then report sys.executable == ''. The managed runner
+        # must receive an actual interpreter path for its own subprocess.
+        interpreter = ('SUCODER_RECEIVING_PYTHON=$(command -v python3)\n'
+                       'case "$SUCODER_RECEIVING_PYTHON" in /*) ;; *) exit 70;; esac\n'
+                       'test -x "$SUCODER_RECEIVING_PYTHON"\n'
+                       'exec "$SUCODER_RECEIVING_PYTHON" ')
+    _private_write(directory / "batch.sh", "#!/bin/bash\nset -eu\numask 077\n" + interpreter + shlex.quote(str(directory / "worker.py")) + " " + shlex.quote(str(directory / "manifest.json")) + "\n", True)
     _write_json(directory / "digests.json", {name: hashlib.sha256((directory / name).read_bytes()).hexdigest() for name in ["task.txt", "prepare.sh", "snapshot.sh", "runner.py", "worker.py", "dispatch_protocol.py", "dispatch_artifacts.py", "environment.json", "manifest.json"] + project_files})
     # Persist the token before contacting Slurm. A crash here is conservatively unknown.
     report["state"] = "submission_unknown"
     report["submission_started_at"] = time.time()
     _write_json(directory / "submission.json", report)
+    if _execution is not None:
+        from .dispatch_pool import launch_step
+        return launch_step(directory, manifest, argv, report, timeout)
     try:
         response = _run(argv, timeout=timeout)
     except (subprocess.TimeoutExpired, OSError) as exc:
@@ -360,6 +408,14 @@ def _receipt(path, manifest):
                 source.get("schema_version") != SCHEMA_VERSION or
                 any(source.get(key) != receipt.get(key) for key in ("dispatch_id", "uid", "job_id", "cluster"))):
             return None, "unreadable"
+        if manifest.get("execution") is not None:
+            execution = manifest["execution"]
+            if (job != execution["job_id"] or not re.fullmatch(r"[0-9]+", str(receipt.get("step_id", "")))
+                    or any(source.get(key) != receipt.get(key) for key in ("step_id",))
+                    or source.get("pool_id") != execution["pool_id"] or source.get("node") != execution["node"]):
+                return None, "unreadable"
+            receipt = dict(receipt, step_source=source, allocation_start=execution["allocation_start"],
+                           node=execution["node"])
     return receipt, state
 
 
@@ -367,6 +423,10 @@ def _matches_worker(value, manifest, receipt):
     if (value is None or receipt is None or not receipt.get("cluster") or
             type(receipt.get("job_id")) is not int or receipt["job_id"] <= 0):
         return False
+    if manifest.get("execution") is not None:
+        if (value.get("step_id") != receipt.get("step_id")
+                or value.get("pool_id") != manifest["execution"]["pool_id"]):
+            return False
     return (value.get("schema_version") == SCHEMA_VERSION and
             value.get("dispatch_id") == manifest["dispatch_id"] and
             value.get("uid") == manifest["uid"] and
@@ -390,6 +450,9 @@ def _scheduler(receipt, timeout):
     timeout = _finite_seconds(timeout, "scheduler timeout")
     if receipt is None or not isinstance(receipt.get("job_id"), int):
         return {"available": False, "state": "not_submitted"}
+    if receipt.get("step_id") is not None:
+        from .dispatch_pool import observe_step
+        return observe_step(receipt, timeout)
     job = str(receipt["job_id"])
     if not receipt.get("cluster"):
         return {"available": False, "state": "unknown_source", "reason": "receipt names no cluster; no current-cluster job lookup attempted"}

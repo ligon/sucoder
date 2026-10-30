@@ -1,0 +1,118 @@
+#+title: PR 78: bounded pool acceptance on Savio
+#+date: 2026-10-29
+
+* Result and scope
+
+The attach-only pool implementation passed a concurrent native trial with an
+intentional worker interruption and a later replacement in the same allocation.
+Native trial pin: =78f43ad1bceb1eb256a740d8f813a1fbd94184a0=.
+The subsequent controller-only correction =23f74ae3a00ffaed2de223db7d7f48fd1f248b10=
+preserves an already launched submission when its optional reservation-summary
+update encounters a busy lock. Receiving helpers, workspace scripts, manifest
+generation and CLI arguments are byte-identical between those pins. Its 40 pool
+tests and Python 3.9/3.11/docs CI pass; the preceding full dispatch cohort passed
+382 tests. GitNexus remains unavailable because its native library cannot load
+libssl.so.3; manual caller and source comparisons are recorded in the ledger.
+
+This accepts bounded pool lifecycle, synthetic scientific/API execution and
+durable interrupted partial state. It does not establish credentialed full-country
+or full-corpus scientific correctness, eight-worker capacity, automatic recovery,
+or arbitrary-duration reliability. Allocation creation/requested-node convenience
+remains outside the PR, and issue 77 remains open for broader follow-up.
+
+* Native experiment
+
+Fresh allocation =40631087= on =n0041.savio4= held four CPUs/32 GiB for at most
+one hour. The explicit pool reserved two CPUs/16 GiB; each worker received one
+CPU/8 GiB. Immutable source and the approved image were staged once in that
+allocation. Each worker had a private checkout, HOME, native scope, runtime,
+configuration/data/cache directories and actual local SQLite/WAL/SHM descriptors.
+
+Source pin: =d65e8b13683409ab0005f1a5590208cd7d94ae62=.
+Image SHA256: =12c7eab8ae37da2fd0adee71d4f741ea81c4c1937fc53644ced43d282a21f86e=.
+Each native worker ran the same 58 synthetic tests from
+=tests/test_grain_collapse_cluster_features.py= and
+=tests/test_gh871_most_complete_row.py=, with zero failures, errors or skips.
+No survey data or reader credentials were supplied. Each created one private
+documentation commit; verification proved that scientific source was unchanged.
+
+| Role | Dispatch | Step | Native/supervisor | Workload cycles | Generation |
+|------+----------+------+-------------------+-----------------+------------|
+| Survivor | 1afff5010f5041ff9f7ad0891412b1e7 | 0 | 0 / 0 | 660 completed | sealed |
+| Interrupted | d78622ebe2874d1ea73d11a50f7d3289 | 1 | 143 / 143 | 61 retained | crash |
+| Replacement | d16201f5e0dc479da13cd772256cd469 | 2 | 0 / 0 | 180 completed | sealed |
+
+Each cycle read five pinned source files through Git, checked tracked status,
+and paused one second. The survivor's complete program took 736 seconds.
+Once both initial workers had completed at least 61 cycles, the supported
+=pool stop-worker= command signalled only =40631087.1=. The survivor continued
+from cycle 61 to 660. Only exact terminal step evidence released the interrupted
+reservation; the replacement then ran concurrently with the survivor. Concurrent
+CPU affinities were disjoint, and the allocation keeper and coordinator remained
+alive. Three metadata races in the survivor recovered through terminal proof;
+no full-reinspection retry was observed in this trial.
+
+* Durable verification
+
+All three workers completed workspace and evidence publication. Separate
+post-exit verification steps required exact scheduler terminal evidence and
+absence of live members of the original worker cgroup before hashing native
+payloads. For each worker, six database files matched the generation's full
+SHA256/size records. Each recorded rollout prefix matched its authenticated
+hash, with zero trailing bytes. No SQLite API or rollout deserialization was used.
+Evidence inventory, file hashes, JUnit counts, source hashes, the single-document
+commit, runtime identities and frozen receiving helpers were checked separately.
+
+All workers reused the same image/source inode identities and asset-verification
+receipt, while runtime roots and native identities were distinct. All pool
+reservations were released from exact step/accounting proof. Both test allocations
+were released after verification; coordinator allocation =40618485= remained running.
+
+The deliberately interrupted native exited 143. The existing runner therefore
+produced a =crash= generation, not a =sealed= one. Its retained partial state is
+hash-verified, not a completed task or an unattended continuation authorization.
+The runner's existing refusal of unattended crash-generation restoration remains
+in force. Semantic resume of this partial conversation was not attempted.
+
+* Original failures and corrections
+
+Earlier allocation =40629482= is retained as a failed trial. One worker completed
+the same tests and 660 cycles and sealed native state, but its final workspace
+publication exceeded 30 seconds. A diagnostic run in the stopped private checkout
+measured one Git push at 31.92 seconds. The other worker stopped at the harness's
+30-second documentation-commit deadline. Neither original result was relabelled,
+retried or resumed. A follow-on request was refused before reservation/launch
+because that allocation no longer had enough lifetime; its empty reservation
+record is preserved.
+
+The new =--publication-timeout= gives each Git/WIP publication a bounded budget
+(default 30, maximum 300 seconds) and expands the shutdown window accordingly.
+The accepted trial used 120 seconds. The harness separately allowed 120 seconds
+for its documentation commit. Managed-state/cleanup timeouts and inspection
+policy were not weakened. A late reservation-summary lock conflict in the accepted
+trial was reconciled through the already durable receipt, without duplicate
+submission; the subsequent controller correction makes that successful launch
+explicit in the CLI result.
+
+Earlier country-worker inspection failures recorded in the PR and ledger remain
+historical failures. This acceptance does not retroactively establish their
+scientific output, native preservation, or exit-interval duration.
+
+* Evidence
+
+Durable root:
+=/global/scratch/fsa/fc_jevons/ligon/burst/sucoder-pr78-acceptance-dyb0orpw/=.
+
+The accepted trial is in =publication-v3/=, including =acceptance-summary.json=,
+the three =*-acceptance.json= files, =frozen-source-check.json=, =before-stop.json=,
+=stop-receipt.json=, =pool-status.json=, =observations.jsonl=, frozen workload/profile,
+all submission intents and receipts, and private =records/<dispatch-id>/= artifacts.
+The original failures, stopped-checkout trace and refused preparation remain in
+the parent and =publication-v2/= directories. These are ordinary evidence paths;
+native stores are retained privately within their original dispatch scopes.
+
+The earlier local full-suite run had 2443 passes, one skip and five failures.
+All five reproduced in a separate unchanged =main= checkout at =10c3c7f=:
+the in-process drain-state test and four observation tests. This local suite was
+not green. CI on the implemented publication and bookkeeping changes passed
+Python 3.9, Python 3.11 and docs (runs 41008166831 and 41011577741).

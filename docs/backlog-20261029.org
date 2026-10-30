@@ -1,0 +1,97 @@
+#+title: Recent outstanding issues: 2026-10-29 implementation batch
+#+author: Sue
+#+date: 2026-10-29
+
+* Scope and coverage
+Repository: [[https://github.com/ligon/sucoder][ligon/sucoder]], default branch =main=.
+The complete paginated open-issue inventory was retrieved on 2026-10-30 at approximately 00:24 UTC (2026-10-29 Pacific): 13 issues, no retrieval failure or pagination truncation.
+All 13 had no labels, assignees, or milestones; no repository priority convention was found.
+GitHub main was =115e9a25f495231eaad4400964b9a2e2c06cd7e6=; the original clean local main was =c9dafdb4884903d2e48c0d1adf4421694712ef5d=, three commits ahead.
+The implementation branch =fix/73-checkpoint-reuse= starts at GitHub main so those unrelated local commits are excluded.
+No development/release target was specified for these issues.
+
+Five candidates were examined: 79, 70, 73, 76, and 65.
+Their bodies, comments, paginated timeline cross-references, relevant source, and recent history were inspected; the other eight are metadata-only, except that PR 78's body was read for overlap with issue 79.
+Open PR inventory: 78 (allocation pools, draft, related to 77 and 79) and 64 (shadow-value design).
+No issue closure, label, assignment, or body change was made.
+The GitHub connector rejected inventory arguments; collection used =gh= with an explicit repository.
+
+* Examined queue
+This is an impact order, not a claim that the severe items have ready fixes.
+The bounded implementation selected for this batch is issue 73.
+
+| Issue | Disposition at inspection | Impact / urgency | Effort and confidence | Next action / completion criterion |
+|-------+---------------------------+------------------+-----------------------+------------------------------------|
+| [[https://github.com/ligon/sucoder/issues/79][79]] | Needs diagnosis | High; blocks sustained workers | Multi-day including native acceptance; cause uncertain | Classify the observed process transition, preserve strict placement refusal, then exercise concurrent profile-matched separate allocations through preservation/publication. |
+| [[https://github.com/ligon/sucoder/issues/70][70]] | Ready for bounded implementation | High; prevents sealed recovery after clean exit | About 1-2 days including deadline/holder regressions; ordering evidence strong | Drain the owned checkpoint reader within the existing shutdown budget before deciding the final class; retain other-holder and unclean-exit refusals. |
+| [[https://github.com/ligon/sucoder/issues/73][73]] | Ready; implemented in this batch | Medium; capture clients can wait indefinitely | Small patch plus deterministic integration test; cause high confidence | Clear only launch-transient checkpoint status; delayed startup and subsequent requests must publish while preserving generation history. |
+| [[https://github.com/ligon/sucoder/issues/76][76]] | Needs diagnosis | Medium; intermittent checkpoint failure | Hours to days depending on reproduction; cause uncertain | Capture the failed checkpoint reason under the full-suite schedule, then distinguish timeout from replication proof; preserve immutable-prefix acceptance. |
+| [[https://github.com/ligon/sucoder/issues/65][65]] | Partially addressed across branches | Low; misleading skill catalog entry | Local implementation exists; GitHub integration remains | Review/integrate c9dafdb, verify catalog tests on the target branch, then assess closure. |
+
+The scheduler policy is not an established cause of issue 79: its latest comment reports three failures among five normal-QOS workers.
+Observed state I and failed proc links do not justify skipping a live process.
+PR 78 contains related retry logic but explicitly reports unresolved long-running acceptance and persistent refusals; avoid duplicating that work or treating sequential canaries as full acceptance.
+Issue 70's current run() scans holders before Checkpointer.final() stops scheduling and waits for a capture; its acceptance remains separate from checkpoint readiness.
+Issue 76 lacks the original failure reason; passing isolated repeats are not resolution evidence.
+No dependency cycle was found among the five; 70 and 79 affect sustained dispatch/recovery acceptance but are not prerequisites for the bounded 73 correction.
+
+* Partial-work draft for issue 65
+Proposed residual title: Integrate and verify the skill-catalog candidate filter on GitHub main.
+Proposed residual body: Local commit c9dafdb filters nonexistent bare bullet candidates and self-catalog references, with regressions for the reported prose bullets.
+At inspection GitHub main remained 115e9a2 and did not contain that commit.
+Retain the original catalog reproduction and related issue 57; validate the parser tests after integration before closing the issue.
+This is a branch-delivery residual, not a new parser rewrite; no tracker edit was applied.
+
+* Unexamined remainder
+These eight remain unexamined technically; titles and related open PRs are inventory evidence only.
+- 77 :: Existing-allocation workers and reusable assets; active draft PR 78.
+- 72 :: Supported compute-side worker dispatcher with verified node-local SQLite.
+- 66 :: Collaborate sync authority and no-sync/dry-run mutation.
+- 59 :: Reattach/peek with a failed login node or separate tmp namespace.
+- 58 :: Happier remaining acceptance gates.
+- 57 :: Remote skill-path existence checks.
+- 54 :: State placement visibility and live mount verification.
+- 14 :: Unbounded WIP snapshot refs.
+
+* Implementation and verification
+See [[file:checkpoint-reuse-ledger.org][the checkpoint reuse ledger]] for existing machinery, definitions, and invariants.
+=Status.load= drops checkpoint alongside its existing launch-transient fields.
+The new tests preserve acknowledged/unsynced records and hold the second launch before Checkpointer.start, testing readiness and a request submitted during that gate.
+The unit regression failed on unchanged source and passed with the fix.
+Both the unit and gated-startup regressions then failed at the stale-checkpoint assertion on baseline and passed on patched source (2 passed in 5.82 seconds).
+Separate Slurm job 40619068 runs the two regressions against baseline and patched source, then the complete pytest suite on one CPU/8 GiB with Python 3.11 and pytest 7.4.4.
+Evidence directory: =/global/scratch/fsa/fc_jevons/ligon/burst/sucoder-backlog-20261029-pVa0iy=.
+The tested source pin is =df455286f3ecafaf4021eca1968eaaeb1c7e2c11=; the import-path receipt confirms the receiving-node checkout.
+Full suite: 2364 passed, 2 failed, no skips, in 551.09 seconds; Slurm job 40619068 ended FAILED with exit 1, as expected for a pytest failure.
+All 99 managed-runner tests passed, including real Codex sealed-generation restore, same-allocation reuse, unsynced takeover, and the new regressions.
+The completed test allocation was released by Slurm.
+
+The two suite failures are outside the changed methods:
+- =test_another_node_receipt_is_not_followed= hard-codes n0041.savio4 as "another node", which is the actual test node.
+  On unchanged baseline, substituting that hostname reproduces the identical DID NOT RAISE failure; on this coordinator's different hostname the unchanged test passes.
+- =test_remote_cli_dry_run_never_connects_allocates_or_saves[collaborate-unconfined]= received ProbeTimeout.
+  It passes in isolation on unchanged baseline.
+  A bounded baseline probe-error reproduction confirms reply_probe.main leaves its 60-second SIGALRM armed on error; the test suite calls this error path in-process.
+  That is the likely source of cross-test interference, not an independently reproduced dry-run defect.
+  The demonstration cancelled its alarm and restored its handler before exiting.
+These source/test files are byte-identical to baseline in this branch.
+Future test-hygiene work should use a guaranteed-distinct synthetic hostname and restore/cancel the probe alarm on every exit; no such changes are included here.
+Issue 65's existing local catalog fix also passed all three =tests/test_mirror.py -k skill_catalog= tests at c9dafdb.
+Baseline GitHub CI run [[https://github.com/ligon/sucoder/actions/runs/40875571500][40875571500]] has a Python 3.9 failure in =test_deep_status_announces_each_probe_and_bypasses_cache[True]= (JSONDecodeError); its Python 3.11 job and docs job passed.
+That failure predates this branch and is outside the checkpoint change.
+
+Reproduction commands, from the receiving clone root:
+#+begin_src sh
+.venv/bin/python -m pytest -q tests/test_codex_state_runner.py::test_reuse_status_drops_checkpoint_but_keeps_generation_history tests/test_codex_state_runner.py::test_reuse_request_before_checkpointer_start_uses_current_launch
+.venv/bin/python -m pytest -q
+#+end_src
+The retained =test.sh= in the evidence directory records environment setup, source selection, baseline counterfactual, and full-suite invocation.
+
+GitNexus query, impact, analyze --skip-agents-md, and detect-changes were attempted but all encounter the native library's missing libssl.so.3.
+Manual caller inspection bounds the production change to Status.load, called only by run's reuse path.
+An AST comparison against 115e9a2 confirms Status.load is the only changed production method; the test delta is two new tests and the _wait_idle docstring.
+The modified runner parses with Python 3.6 grammar.
+Self-review checked that acknowledged and pending generation records survive and no ownership, deadline, sealing or placement logic changes.
+The status renderer at =sucoder/codex_state.py:404= already handles an absent checkpoint with "checkpoint: not reported yet".
+Ledger verification: OK on sections 2-5; existing transient cleanup is extended, no duplicate implementation or definition contradiction found.
+No independent agent review was performed.

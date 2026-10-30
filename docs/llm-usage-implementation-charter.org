@@ -1,0 +1,121 @@
+#+TITLE: Workshop Charter: Working LLM Usage Collection
+#+AUTHOR: Sue
+#+DATE: 2026-10-17
+#+STATUS: APPROVED -- human sign-off received 2026-10-17
+#+DESCRIPTION: Scope and checkable acceptance criteria for implementing the reviewed model-aware collection design.
+
+* 0. Question, restated
+
+The human approved this charter in the session on 2026-10-17, including the Codex scope and existing-repository amendments.
+Implement the reviewed =llm-usage= design so we can collect account quota trajectories and distinguish native-reported use of Claude and Codex models within an explicitly instrumented population.
+Both harnesses and their selected models are required scope; the human explicitly added Codex on 2026-10-17.
+Implementation belongs in the existing =llm-accounting= repository and distribution, as the human specified on the same date.
+Keep the advertised price vector, supply terms, source evidence and coverage alongside those observations so later estimators and SuCoder can use them.
+The collector must work with declared prices and rate priors while shared quota weights remain unknown.
+
+For this charter, working means an installable command-line package and an end-to-end local pipeline exercised through its public interfaces, including the native telemetry wire protocol.
+Fixture arithmetic alone is insufficient.
+Live account rollout and confirmation of installed Claude/Codex builds' actual emissions are separate operational verification; synthetic acceptance must not be described as that verification.
+
+The framing follows the model-identification review: quota-ready storage alone does not complete this goal, model-tagged tokens do not identify shared allowance weights, and a clock-hour throughput series is not a measured working-agent-hour series.
+
+* 1. Scope and non-goals
+
+** In scope
+
+- Python 3.11+ usage-collection modules inside =/home/coder/mirrors/llm-accounting=, proposed namespace =llm_accounting.usage=, with the =llm-usage= CLI installed by the existing distribution.
+- Reuse and extension of the existing collectors, schemas, validation, account binding, configuration conventions, package tooling and test suite; the passive-Claude correction and history/telemetry work are part of the same implementation.
+- Durable immutable batches, receiving receipts, source-fact reconciliation, price/supply publications, sampling attempts and reproducible offline exports.
+- Required metadata-only Claude and Codex adapters, authenticated ingestion, explicit model/lineage/inclusion evidence and coverage, with model-tagged throughput per clock hour.
+- Versioned model/access registries and distinct price/tariff references for each selected Claude or Codex model, including known reasoning/speed context; available model IDs come from explicit configuration or verified native catalog evidence rather than a fixed model list.
+- A bounded subscription sampler, persistent backoff and an opt-in timer/setup example on one owning host; no distributed polling lease.
+- Manual declared prices and supply/rate assumptions, plus data interfaces usable by a later estimator or SuCoder consumer.
+- Meaningful automated acceptance tests, an end-to-end demonstration and independent reviews against section 2.
+
+** Out of scope
+
+- A fitted demand curve, optimized clearing prices, measured provider metering weights or an automatic shadow-price updater.
+- Native adapters beyond Claude and Codex, full task attribution, completed-task costs and measured model-specific working-agent-hours.
+- Changes to SuCoder's delegation policy, mandatory instrumentation of all sessions or account-wide activity reconstruction.
+- Transcript/content collection, active inference probes, credential renewal during sampling, automatic deletion or cross-host transfer/failover.
+- Creating another repository or distribution, publishing a release, installing persistent services or changing existing client/exporter configuration as part of implementation acceptance.
+
+* 2. Definition of done
+
+Every criterion below must have recorded evidence before the implementation goal is marked complete.
+Tests exercise implemented interfaces and failure behavior; they must not merely assert the fixture's declared expectations against themselves.
+
+- [ ] C1: Installation and CLI :: A fresh temporary environment can install the existing =llm-accounting= distribution and run the =llm-usage= operations =init=, =sample=, =ingest-report=, =publish-prices=, =publish-supply=, =record=, =export= and =status=; a documented foreground receiver command accepts the supported OTLP logs protocol.
+  Invalid configuration/input yields controlled errors, and importing the package or running offline commands makes no provider request.
+  The same installation retains the existing =llm-accounting= CLI and public library interfaces; wheel/install tests include both accounting contracts and new usage resources without a second distribution or self-dependency.
+- [ ] C2: Passive accounting integration :: The combined Claude collection path uses stored-only credentials under the passive policy, with tests proving expired credentials launch no inference subprocess and mutate no auth state.
+  Existing explicit interactive renewal behavior is preserved; reports pass accounting schema, binding and public-field checks, and overlapping targets do not create duplicate source readings.
+  Codex account-limit collection is also exercised through the accounting interface without starting a thread/turn or treating shared account capacity as separate per-model allowances.
+- [ ] C3: Durable history and replay :: Publication cannot overwrite an existing batch; only durable accepted receipts make batches visible.
+  Tests cover idempotent imports, conflicting native/source facts, report-local aliases, original timestamps, late imports, disk/storage failures and orphan recovery; a frozen input manifest reproduces the same export after later imports.
+- [ ] C4: Bounded sampling :: One polling owner admits one in-flight attempt; fake-clock/process tests verify cadence, busy/missed ticks, persisted Retry-After/fallback backoff, partial failures and source-group dispatch bounds.
+  Cancellation reaps children before lock release; unsupported descendant containment cannot claim a hard deadline.
+- [ ] C5: Historical prices and supply :: Complete price vectors and supply publications retain authority/version/assumption evidence and conflicts.
+  Tests preserve stale decision references and mixed-price intervals without time-proportional quantity allocation or reconstruction from the newest price.
+- [ ] C6: Authenticated native ingestion :: Integration tests send representative Claude and Codex OTLP wire payloads through the foreground receiver with independent source credentials, validate durable acceptance and reject unauthenticated local senders.
+  Canary content, provider credentials, headers, paths and arbitrary attributes are absent from batches, queues and captured diagnostics; receiver limits, overload and restart/shutdown loss remain explicit.
+  Codex completion quantities are captured from a verified supported transport; API attempts, SSE/WebSocket completion evidence and any App Server counters are reconciled rather than summed as extra work.
+- [ ] C7: Model identity and coverage :: Implemented ingestion/export distinguishes requested, configured, native-reported and served identities; unknown/mixed quantities are retained.
+  Tests exercise two reported models, reroutes/fallback uncertainty, differently modeled children, inclusive-parent exclusion, duplicate delivery, sequence resume, missing identities, metric corroboration and partial/external coverage.
+  Include at least two synthetic Codex model IDs and per-turn overrides; a configured-only App Server token update cannot claim native-reported or served model identity, and rerouted/ambiguous quantities remain mixed or unattributed.
+- [ ] C8: Honest rate/cost inputs :: Offline =quota-series=, =usage-intervals=, =model-rate-inputs=, =price-history= and =coverage= views preserve source windows, model evidence, time basis, binding and completeness.
+  Tests distinguish zero from missing, native cost from provider-rated/reference cost, and incompatible tariff categories; shared quota percentages cannot become model debits, an Opus residual or an inferred token allowance.
+  Declared priors remain separate from observations; absent or unidentified calibration cannot appear as an estimated coefficient.
+  Each selected Codex model has its own route quote/reference tariff or an explicit unavailable value; versioned model mappings preserve aliases and unknown/new models without assigning them another model's rates.
+- [ ] C9: End-to-end acceptance :: A reproducible command sequence initializes a temporary dataset, publishes prices/supply, ingests normalized reports, receives model-tagged wire events, restarts and exports a replayable result.
+  The original temporal replay and all 14 model-identification scenarios are mapped to implementation acceptance checks or explicit identification-contract tests; the demonstration distinguishes Fable/Opus quantities and preserves the expected gaps, unknowns and mixed boundaries.
+  Add Codex acceptance scenarios for two models, turn override/reroute, reconnect/compaction, inclusive token categories, transport overlap and shared account limits; both native adapters must participate in the end-to-end demonstration.
+- [ ] C10: Operator documentation :: Installation, configuration examples, supported source/build/protocol evidence, owning-host selection, native setup, timer setup and recovery commands are documented.
+  Update the existing repository's README, CLI/library documentation and configuration examples so one installation explains both accounting and usage-history operations.
+  Setup preserves existing exporters, separates emitter authentication from account binding, and labels source verification and account coverage; the live verification runbook explains what an operator must confirm before treating a deployment as pilot-ready.
+  Document supported Claude and Codex builds and transport coverage separately; an unavailable Codex capture path leaves this charter incomplete rather than silently making Codex optional.
+- [ ] C11: Regression checks :: New usage/telemetry tests and the full existing =llm-accounting= suite pass, or any pre-existing failures are independently reproduced and documented with no new unresolved regression.
+  Required static/package checks pass; the final report records exact commands, versions and material limitations.
+- [ ] C12: Independent acceptance :: Independent semantics/identification and operations/native-source reviewers assess the implementation against C1-C11 and the prior-art ledger.
+  No surviving material finding remains in their scopes; any unresolved criterion is reported as incomplete rather than waived by the implementer.
+
+* 3. Constraints and assumptions
+
+The active goal has no user-specified token or time budget.
+Use at most three implement/red-team convergence rounds before reporting unresolved criteria and reconsidering scope with the human.
+
+The design/charter remain in the SuCoder repository on =design/llm-shadow-values=, currently based on runtime commit =17a65ae= with design changes through =dc9980f=.
+Refresh any actual SuCoder integration anchors against current upstream before editing its runtime; this charter does not require such edits.
+Use an isolated branch/worktree of the existing =llm-accounting= repository for the full implementation, preserving its untracked =.coder-session/= and =poetry.lock= files.
+The implementation, operator documentation and tests belong there; these SuCoder design/charter documents remain the reference specification.
+Do not overwrite another session's work or initialize another repository.
+
+Use the reviewed design as the specification and refresh its prior-art ledger during grounding.
+Record the package revision and compatible accounting/source contracts; reuse internal interfaces without a self-dependency or copied accounting implementation.
+Run required GitNexus impact analysis before modifying existing indexed symbols and change detection before commits.
+Follow repository guidance, targeted behavior tests, ASCII source and normal Sue commit attribution.
+
+Implementation acceptance uses synthetic public data, provider stubs and temporary owner-private local state.
+Both native adapters must handle real OTLP encoding and recorded source semantics, but synthetic payloads do not prove a native build emits every field or exposes every fallback attempt.
+Codex OpenTelemetry is the prospective primary usage source; the owning client's App Server stream may supply supporting selection, reroute and lifecycle evidence after its join semantics are verified.
+Manual live sampling, enabling future-session telemetry and persistent timers require a separately selected account/host/population and operational authorization; none is needed to finish the stated local implementation acceptance.
+Unknown denominators, window release rules, background use and served-model identity remain explicit; none authorizes fabricated certainty.
+
+* 4. Links
+
+- Specification :: [[file:llm-usage-collection.org][Practical Design for LLM Usage Collection]].
+- Prior-art ledger :: [[file:llm-usage-collection-ledger.org][LLM Usage Collection Ledger]].
+- Review and response :: [[file:llm-usage-collection-review.org][Model Identification Review]].
+- Economic objective :: [[file:llm-shadow-values.org][Standing Shadow Values]].
+- Acceptance inputs :: [[file:examples/llm-usage-collection-v1.json][Original temporal replay]] and [[file:examples/llm-usage-collection-v2.json][14 model-identification scenarios]].
+- Method :: =workshop-problem= (installed locally at =~/.sucoder/skills/workshop-problem/SKILL.md=) and its charter template; phases 2-6 run by hand in this harness after approval.
+
+* 5. Open questions and risks
+
+The repository location is settled: extend =llm-accounting= in place, with isolated worktree/branch changes.
+The distinction between implementation acceptance and live deployment verification remains part of the charter submitted for approval.
+If a live account demonstration is required to count as done, add that criterion and select its account/host before starting that dependent work.
+
+Grounding must establish a usable native protocol/capture path and compatible accounting interface before implementation commitments are treated as settled.
+If an installed native build cannot support the required metadata contract, report the specific missing capability; do not silently downgrade the goal to quota-only or Claude-only collection.
+If other sessions change the accounting implementation or source contracts, reconcile the ledger and tests before continuing.
