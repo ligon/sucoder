@@ -71,6 +71,25 @@ def test_dry_run_has_no_mutation_or_scheduler(source, monkeypatch):
     assert "--comment=sucoder-dispatch:" + report["dispatch_id"] in report["command"]
 
 
+@pytest.mark.parametrize("value", [0, -1, True, float("inf"), float("nan"), 301])
+def test_publication_budget_refuses_before_staging(source, value):
+    with pytest.raises(ValueError, match="publication timeout"):
+        dispatch.submit(**source, publication_timeout=value)
+    assert not dispatch.DEFAULT_DIRECTORY_ROOT.exists()
+
+
+def test_publication_budget_is_frozen_and_extends_scheduler_notice(source, monkeypatch):
+    scheduler(monkeypatch)
+    report = dispatch.submit(**source, publication_timeout=120.5)
+    manifest = json.loads((Path(report['directory']) / 'manifest.json').read_text())
+    assert manifest['publication_timeout'] == 120.5
+    assert manifest['checkpoint_timeout'] == 30
+    assert '--signal=B:TERM@181' in report['command']
+    source['resources']['time'] = '00:02:00'
+    with pytest.raises(ValueError, match='181-second'):
+        dispatch.submit(**source, publication_timeout=120.5)
+
+
 @pytest.mark.parametrize("timeout", [float("nan"), float("inf"), -float("inf"), True, "5", None, 0, -1])
 def test_submit_rejects_invalid_timeout_before_source_or_scheduler(source, monkeypatch, timeout):
     def forbidden(*args, **kwargs):

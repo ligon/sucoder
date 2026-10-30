@@ -125,6 +125,34 @@ class JobOwnership:
         return {"job_id": self.job_id, "prefixes": sorted(set(self.prefixes.values()))}
 
 
+class StepOwnership(JobOwnership):
+    """A numeric Slurm step, never its parent allocation, owns this worker."""
+    def __init__(self, job_id, step_id, proc_root="/proc", uid=None, supervisor_pid=None):
+        if not re.fullmatch(r"[0-9]+", str(step_id)):
+            raise Refused("pool workers require a numeric Slurm step, not batch/extern")
+        super().__init__(job_id, proc_root, uid, supervisor_pid)
+        self.step_id = str(step_id)
+        prefixes = {}
+        for hierarchy, controllers, path in self._cgroups("self"):
+            key = (hierarchy, controllers)
+            if key not in self.prefixes:
+                continue
+            tail = path[len(self.prefixes[key]):].split("/")
+            steps = [part for part in tail if part.startswith("step_")]
+            if steps != ["step_" + self.step_id]:
+                raise Refused("receiving SLURM_STEP_ID differs from actual supervisor cgroup")
+            parts = path.split("/")
+            prefixes[key] = "/".join(parts[:parts.index(steps[0]) + 1])
+        if not prefixes or len(prefixes) != len(self.prefixes):
+            raise Refused("unable to prove numeric step ownership")
+        self.prefixes = prefixes
+
+    def describe(self):
+        result = super().describe()
+        result.update(scope="step", step_id=self.step_id)
+        return result
+
+
 def stop_allocation(ownership, timeout):
     """Stop only proven members, including daemons outside the leader group."""
     deadline = time.monotonic() + timeout
@@ -214,6 +242,10 @@ def load_manifest(path):
         if type(manifest.get(key)) is not int or manifest[key] <= 0:
             raise Refused("invalid " + key)
     cadence = manifest.get("snapshot_minutes", manifest["checkpoint_minutes"])
+    publication_timeout = manifest.get("publication_timeout", manifest["checkpoint_timeout"])
+    if (type(publication_timeout) not in (int, float) or not math.isfinite(publication_timeout)
+            or not 0 < publication_timeout <= 300):
+        raise Refused("invalid publication timeout")
     if type(cadence) not in (int, float) or not math.isfinite(cadence) or cadence <= 0:
         raise Refused("invalid workspace snapshot cadence")
     digest_path = os.path.join(directory, "digests.json")
@@ -222,6 +254,8 @@ def load_manifest(path):
     required = {os.path.basename(manifest[key]) for key in
                 ("task_file", "prepare_script", "snapshot_script", "runner_path", "worker_path", "environment_file")}
     required.update((os.path.basename(path), "dispatch_protocol.py", "dispatch_artifacts.py"))
+    if manifest.get("execution") is not None:
+        required.add("dispatch_pool_assets.py")
     if manifest.get("project") is not None:
         project = manifest["project"]
         if (not isinstance(project, dict) or project.get("profile") != "project.json"
@@ -243,6 +277,15 @@ def load_manifest(path):
     if manifest.get("project") is not None:
         if digests["project.json"] != manifest["project"]["sha256"]:
             raise Refused("project profile differs from immutable submission")
+    if manifest.get("execution") is not None:
+        execution = manifest["execution"]
+        if (not isinstance(execution, dict) or execution.get("scope") != "step"
+                or not re.fullmatch(r"[0-9a-f]{32}", str(execution.get("pool_id", "")))
+                or not re.fullmatch(r"[1-9][0-9]*", str(execution.get("job_id", "")))
+                or not isinstance(execution.get("node"), str)
+                or type(execution.get("deadline")) not in (int, float)
+                or not math.isfinite(execution["deadline"])):
+            raise Refused("invalid pool execution binding")
     return manifest
 
 
@@ -280,6 +323,25 @@ def receiving_root(manifest, environment, mountinfo_path="/proc/self/mountinfo")
     os.makedirs(root, mode=0o700, exist_ok=True)
     if os.stat(root).st_uid != os.getuid() or not os.path.isdir(root):
         raise Refused("receiving allocation root is not owned by this uid")
+    execution = manifest.get("execution")
+    if execution is not None:
+        if (str(execution["job_id"]) != job_id
+                or environment.get("SLURMD_NODENAME") != execution["node"]
+                or not re.fullmatch(r"[0-9]+", environment.get("SLURM_STEP_ID", ""))):
+            raise Refused("receiving pool job/node/numeric step differs from binding")
+        root = os.path.join(root, "workers", manifest["dispatch_id"])
+        if os.path.realpath(root) != root:
+            raise Refused("pool worker root must not redirect")
+        workers = os.path.dirname(root)
+        os.makedirs(workers, mode=0o700, exist_ok=True)
+        if os.path.islink(workers) or os.stat(workers).st_uid != os.getuid() or os.stat(workers).st_mode & 0o077:
+            raise Refused("pool workers parent must be private and owned")
+        os.mkdir(root, mode=0o700)
+        os.chmod(root, 0o700)
+        child_mount = mount_for(root, mountinfo_path)
+        if child_mount["filesystem"] not in LOCAL_FILESYSTEMS:
+            raise Refused("pool worker child root is not on supported local disk")
+        mount = child_mount
     return root, job_id, mount
 
 
@@ -783,6 +845,58 @@ def inspect_placement(child, runner, root, home, proc_root="/proc", expected_env
             "durable_checkpoint_copies": sorted(set(checkpoint_copies)), "inspection_races": races}
 
 
+def inspect_placement_rechecked(child, runner, root, home, proc_root="/proc", expected_environment=None,
+                                ownership=None, manifest=None):
+    """Retry one complete inspection after a recoverable same-incarnation error.
+
+    Readability can recover while a process remains alive. A second complete
+    pass must actually inspect it; elapsed time or a live identity never
+    authorizes skipping unreadable metadata. The original terminal proof and
+    every placement check remain in force on both passes.
+    """
+    arguments = dict(proc_root=proc_root, expected_environment=expected_environment,
+                     ownership=ownership, manifest=manifest)
+    try:
+        return inspect_placement(child, runner, root, home, **arguments)
+    except Refused as initial:
+        context = getattr(initial, "inspection_failure", None)
+        if not isinstance(context, dict) or context.get("proof", {}).get("reason") != "still_live":
+            raise
+        pid, expected = context["pid"], context["proof"]["expected"]
+
+        def verified_identity():
+            current = process_identity(pid, proc_root, expected)
+            if current is not None:
+                if current.get("identity_changed") or any(current[key] != expected[key] for key in ("uid", "starttime")):
+                    return None
+                return current
+            proof = terminal_proof_after_error(pid, proc_root, expected)
+            if proof["terminal"]:
+                return {"state": "terminal", "proof": proof}
+            return None
+
+        before = verified_identity()
+        if before is None:
+            raise
+        try:
+            result = inspect_placement(child, runner, root, home, **arguments)
+        except Refused as final:
+            previous = getattr(final, "inspection_failure", None)
+            final.inspection_failure = dict(context, reinspection={
+                "outcome": "refused", "failure": previous, "reason": str(final)})
+            raise
+        after = verified_identity()
+        if after is None or (after["state"] not in ("Z", "X", "terminal")
+                             and pid not in result["inspected_pids"]):
+            initial.inspection_failure = dict(context, reinspection={
+                "outcome": "identity_unknown_changed_or_not_inspected", "after": after})
+            raise initial
+        result["inspection_retries"] = [{"initial_failure": context,
+                                         "before": before, "after": after,
+                                         "outcome": "full_inspection_completed"}]
+        return result
+
+
 def stop_owned(child, timeout):
     # Popen(start_new_session=True) makes the child the owner of this group.
     # Signal the group even if its leader has exited but left descendants.
@@ -907,6 +1021,8 @@ def native_state_files(home):
 def run(manifest_path, inherited=None, mountinfo_path="/proc/self/mountinfo", ownership_factory=None):
     os.umask(0o077)
     manifest = load_manifest(manifest_path)
+    publication_timeout = manifest.get("publication_timeout", manifest["checkpoint_timeout"])
+    shutdown_seconds = max(120, math.ceil(publication_timeout) + 60)
     directory = manifest["directory"]
     record = {"schema_version": SCHEMA_VERSION, "dispatch_id": manifest["dispatch_id"], "uid": os.getuid(),
               "agent": manifest["agent"], "commit": manifest["commit"], "branch": manifest["branch"],
@@ -945,7 +1061,7 @@ def run(manifest_path, inherited=None, mountinfo_path="/proc/self/mountinfo", ow
         publish("final_publication", force=True)
         try:
             snapshot = json.loads(run_script(manifest["snapshot_script"], environment,
-                                             manifest["checkpoint_timeout"], heartbeat=publish))
+                                             publication_timeout, heartbeat=publish))
             record["workspace_snapshot"] = snapshot
             head = subprocess.check_output(["git", "-C", work, "rev-parse", "HEAD"], env=environment,
                                            stderr=subprocess.DEVNULL,
@@ -967,9 +1083,32 @@ def run(manifest_path, inherited=None, mountinfo_path="/proc/self/mountinfo", ow
         if manifest.get("cluster") is not None and cluster != manifest["cluster"]:
             raise Refused("receiving Slurm cluster differs from immutable submission source")
         record.update(local_root=root, job_id=job_id, cluster=cluster, mount=mount)
-        ownership = (ownership_factory or JobOwnership)(job_id)
+        if manifest.get("execution") is not None:
+            step_id = receiving_environment["SLURM_STEP_ID"]
+            ownership = (ownership_factory or StepOwnership)(job_id, step_id)
+            record.update(step_id=step_id, pool_id=manifest["execution"]["pool_id"])
+            atomic_json(os.path.join(directory, "step-source.json"),
+                        dict(schema_version=SCHEMA_VERSION, dispatch_id=manifest["dispatch_id"],
+                             uid=os.getuid(), job_id=int(job_id), cluster=cluster,
+                             step_id=step_id, pool_id=record["pool_id"], node=receiving_environment["SLURMD_NODENAME"],
+                             ownership=ownership.describe(), supervisor_pid=os.getpid(), started_at=time.time()))
+        else:
+            ownership = (ownership_factory or JobOwnership)(job_id)
         record["allocation_ownership"] = ownership.describe()
         environment = environment_for(manifest, receiving_environment, root)
+        if manifest.get("execution") is not None:
+            module_name = (__package__ + ".dispatch_pool_assets") if __package__ else "dispatch_pool_assets"
+            spec = importlib.util.spec_from_file_location(module_name, os.path.join(directory, "dispatch_pool_assets.py"))
+            asset_helper = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(asset_helper)
+            for asset_path in (manifest["execution"]["assets"]["source"], manifest["execution"]["assets"]["image"]):
+                if mount_for(asset_path, mountinfo_path)["filesystem"] not in LOCAL_FILESYSTEMS:
+                    raise Refused("pool immutable asset is not on supported receiving-local disk")
+            assets = asset_helper.verify(manifest["execution"], manifest["commit"], root, environment)
+            record["pool_assets"] = assets
+            environment["SUCODER_POOL_SOURCE_REPOSITORY"] = assets["source"]
+            environment["SUCODER_POOL_IMAGE"] = assets["image"]
+            environment["SUCODER_POOL_IMAGE_SHA256"] = assets["image_sha256"]
         home = seed_home(manifest, environment)
         if manifest["agent"] == "codex":
             record["canonical_home"] = environment["CODEX_HOME"]
@@ -1010,6 +1149,8 @@ def run(manifest_path, inherited=None, mountinfo_path="/proc/self/mountinfo", ow
                        "names that interpreter. Do not replace the runtime or mutate shared caches.\n" % directory).encode("utf-8")
         runner = load_runner(manifest["runner_path"])
         command = command_for(manifest, environment)
+        if manifest.get("execution") is not None and time.time() >= manifest["execution"]["deadline"] - shutdown_seconds:
+            raise Refused("pool worker reached its publication cutoff before native launch")
         if stop_signal[0] is not None:
             raise Refused("cancelled before native version inspection")
         record["versions"]["native"] = native_version(manifest, environment)
@@ -1029,8 +1170,10 @@ def run(manifest_path, inherited=None, mountinfo_path="/proc/self/mountinfo", ow
             observed, databases = set(), set()
             deadline = time.monotonic() + manifest.get("snapshot_minutes", manifest["checkpoint_minutes"]) * 60
             while child.poll() is None:
-                evidence = inspect_placement(child, runner, root, environment["HOME"], expected_environment=environment,
-                                             ownership=ownership, manifest=manifest)
+                if manifest.get("execution") is not None and time.time() >= manifest["execution"]["deadline"] - shutdown_seconds:
+                    stop_signal[0] = signal.SIGTERM
+                evidence = inspect_placement_rechecked(child, runner, root, environment["HOME"], expected_environment=environment,
+                                                       ownership=ownership, manifest=manifest)
                 races = evidence.get("inspection_races", [])
                 if races:
                     placement = record["placement"]
@@ -1041,6 +1184,8 @@ def run(manifest_path, inherited=None, mountinfo_path="/proc/self/mountinfo", ow
                 record["placement"].update(observed=sorted(observed), sqlite="observed_local" if databases else "not_observed",
                                            databases=sorted(databases), inspected_pids=evidence["inspected_pids"])
                 record["placement"]["durable_checkpoint_copies"] = evidence["durable_checkpoint_copies"]
+                if evidence.get("inspection_retries"):
+                    record["placement"].setdefault("inspection_retries", []).extend(evidence["inspection_retries"])
                 record["placement"]["environment_verified"] = (record["placement"].get("environment_verified", False)
                                                                   or evidence["environment_verified"])
                 if evidence["misplaced"]:
@@ -1057,7 +1202,7 @@ def run(manifest_path, inherited=None, mountinfo_path="/proc/self/mountinfo", ow
                 if time.monotonic() >= deadline:
                     try:
                         record["workspace_snapshot"] = json.loads(run_script(manifest["snapshot_script"], environment,
-                                                                             manifest["checkpoint_timeout"], stop_signal,
+                                                                             publication_timeout, stop_signal,
                                                                              heartbeat=publish))
                     except Exception as exc:
                         record["workspace_snapshot"] = {"state": "failed", "reason": str(exc)}

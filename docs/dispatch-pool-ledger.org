@@ -1,0 +1,293 @@
+#+title: Existing-allocation worker dispatch -- issue 77
+
+* Scope and existing machinery
+Based on aa79d455447f9b297e425a1ec874fbb5c284faad, including accepted
+34070a0. Extend dispatch submission, private publication, managed runner,
+project profiles and receiving-node placement checks. Do not launch raw Codex.
+No scientific LSMS changes, pool creation daemon, shared installation or runtime
+mount ownership change is included.
+
+* Ownership and invariants
+JobOwnership remains the default for independent jobs. A validated pool binding
+selects StepOwnership(job_id, step_id, proc_root, uid, supervisor_pid), matching
+numeric step components in every observed Slurm hierarchy and PID incarnation.
+All existing cleanup call sites use that owner; no pool action cancels a job.
+Each worker uses /local/job<ID>/workers/<dispatch-id> for managed state, SQLite,
+checkout, data, caches and temporary files. Shared immutable image bytes may be
+read from an explicitly pinned allocation asset cache; mounts remain private.
+
+* Reuse plan
+Reuse dispatch.submit staging and durable results.git publication. An internal
+execution binding changes only scheduling to srun in an already owned allocation.
+Pool attach validates scheduler uid, node, capacity and end time. Atomic mkdir
+locking serializes conservative CPU/memory reservations; unknown submissions
+retain budget until exact step terminal proof. No age-based lock stealing.
+Reuse project profiles without new generic scientific or credential policy.
+
+* Verification plan
+Fake /proc and scheduler tests cover step 4 versus 40, sibling/batch/extern,
+UID/incarnation changes, inconsistent hierarchies, resource overcommit,
+expiry, ambiguous submission, asset identity and cleanup. Existing job dispatch
+tests must retain behavior. Native/scheduler acceptance belongs to root release.
+
+* Impact map and tooling limitation
+Before edits, gitnexus impact JobOwnership --direction upstream failed because
+its native LadybugDB module cannot load libssl.so.3, the same limitation recorded
+in dispatch-ledger.org. No shared tool repair. Manual review covers every
+stop_allocation call in dispatch_worker.run, receiving_root/environment_for,
+local_tier prepare/snapshot builders, dispatch receipt/status matching and CLI.
+Step cleanup has high impact: accidentally selecting JobOwnership would signal
+coordinator and sibling workers. Explicit binding and negative tests are required.
+
+* Outcome
+Implementation and deterministic test results will be recorded additively.
+No actual worker or scheduler acceptance has run under this change.
+
+** Source implementation qualification
+Reuse now includes immutable base cloning followed by an exact-SHA fetch from
+the already staged private results.git. This supports a newly authored reviewer
+candidate without changing cache refs. Both source and worker-child actual
+mounts are checked before managed state/project writes.
+Slurm step state is queried through scontrol, not job-format %T on squeue -s.
+Blank accounting step UID is accepted only with exact parent UID/node/StartTime,
+receiving step proof, and exact step node/start-time bounds. A terminal parent
+alone is never a worker release proof.
+The requested duration and global cutoff both bound the publication deadline.
+New Git transfers pin pack.threads=1 only on the pool path.
+
+** Deterministic verification before scheduler release
+Fake-only suite v8: 282 passed, 480 pre-existing Typer deprecation warnings.
+Final targeted suite v9: 52 passed, including independently authored ownership
+and actual-Slurm-output fixtures. No real Slurm or native model was started.
+Logs/JUnit are under /local/job40498884/control/pool77-tests-v*. Earlier failed
+preparations remain: missing pytest in the old private interpreter; test-fixture
+import path; and a synthetic step date that was future in the local timezone.
+The latter was corrected in test data only, preserving start-time refusal.
+Final full exact-commit confirmation will be recorded separately.
+GitNexus detect-changes was attempted before commit and failed with the same
+libssl.so.3 native-module error; no tool installation was changed. Manual
+call-site review and independent source review cover the high-impact ownership
+boundary. Actual supervisor/sibling/daemon survival and native local-SQLite
+placement remain root-owned release gates.
+
+** Exact committed confirmation
+At production/test commit 0340f0b1fe3c319db9ed2e26ff9061d9afcdabba the complete
+finite fake-only selection passed: 290 passed, 0 failed/errors/skips,
+480 inherited Typer deprecation warnings, 59.44 seconds. This includes both
+independent fake-proc and actual-Slurm-output fixture modules plus existing
+dispatch, project, worker, CLI and local-tier tests. Full log and JUnit:
+/local/job40498884/control/pool77-tests-final.log and pool77-tests-final.xml.
+
+Root's actual step-survival-v2 test exercised two numeric steps on job 40513023,
+with detached own-child cleanup and sibling synthetic SQLite/WAL descriptors
+and keeper progress preserved. Candidate dispatch_worker.py is byte-identical
+to that proven helper: b09ef8620c4e4ab80c867044dafc9dc0c84e10d67c0eb68eea49767068d6f762.
+The requested ownership/cleanup/mount AST closure is identical too, recorded in
+/local/job40498884/control/pool77-actual-cleanup-closure.json. This is narrow
+cleanup acceptance, not complete dispatch.run/project/native placement proof.
+Root retains those native canary release and interpretation responsibilities.
+
+** Additive pool-only clone transport correction
+Root observed pool source staging spend several minutes in upload-pack/pack-objects
+before any worker was launched. This is a measured transport cost, not a filesystem
+failure diagnosis. The original transaction and its eventual result stay intact.
+Plan: use Git's local-copy path with --no-hardlinks only for explicitly owned,
+full, non-alternate/non-shallow pool sources, preserving the ordinary job path.
+Receiving immutable-cache cloning uses the same independent-copy transport.
+Verify copied object inode separation, self-contained closure and unchanged source
+bytes/refs with disposable repositories; do not accept alternates or symlinked
+objects. Existing exact-SHA private-results fetch remains unchanged.
+
+** Clone-transport amendment verification
+Production/test amendment cd40f6c3bfcf21b8f76d9a628752f7a5a9e7a863 passed the
+finite pool/control/local-tier selection (153 passed), then the final pool-only
+selection (34 passed, including FIFO/promisor refusal controls). Tests exercised
+actual disposable-Git local copying, inode/link-count separation, unchanged source
+bytes/refs, a newer private SHA absent the immutable cache, hardlink rejection,
+and the unchanged independent-job --no-local transport. No model, scheduler or
+real-project staging was performed by the author. The receiving worker module
+remains byte-identical to root's proven ownership/cleanup helper.
+GitNexus detect-changes again failed with the recorded libssl.so.3 limitation;
+static checks and Python 3.6 helper compilation passed. Real-repository latency
+and a new canary transaction remain root-owned release measurements. Preserve
+original Tanzania staging timeout and its explicit prelaunch reconciliation.
+
+** Additive receiving-Python batch binding
+Root reports the first local-copy canary completed project bootstrap, then
+refused before managed-child Popen with PermissionError naming an empty path.
+The code uses sys.executable to launch the managed runner; an unexported Bash
+PATH can leave CPython's executable unresolved when argv[0] is only python3.
+Root owns the exact empty-environment Slurm reproduction and original failures.
+Plan: change only pooled batch generation to resolve python3 on the receiving
+node with command -v, require an absolute executable path, and exec that path.
+No controller-local Python path, worker cleanup change or ordinary-job change.
+Test the generated batch with a disposable JSON-only worker in an empty local
+environment; no native model/managed runner or Slurm launch in author tests.
+
+** Receiving-Python correction verification
+Production/test pin 23dcf397fb51bbe8e2484dff724b413d0545b4c8 passes 123 finite
+pool/control cases. The added actual generated-batch control first failed on the
+old template because sys.executable was the empty string, then passed with an
+absolute receiving interpreter under the same empty environment. Only a
+JSON-emitting disposable worker ran; no native model/managed runner/Slurm actor.
+Root separately confirmed the same bare-versus-absolute Python distinction in an
+owned held-allocation step and retained step-python-executable-proof.json.
+The ordinary-job template and dispatch_worker.py remain unchanged. The latter's
+SHA256 is still b09ef8620c4e4ab80c867044dafc9dc0c84e10d67c0eb68eea49767068d6f762.
+Original canary failures remain preserved; new productive/native canaries are
+root-owned releases, not implied by this local test. GitNexus remains unavailable
+with the recorded native libssl.so.3 load error; static/compile checks passed.
+
+** Bounded terminal-proof continuation after metadata refusal
+Root retained four native-owner failures at descriptor directory/mount guards
+(errno13/22); current survivors must remain untouched. EINVAL/EACCES alone are
+not exit proof, and vanished PIDs after cleanup do not explain original cause.
+Extend the34070 terminal-proof precedent with a <=50ms total inspection-pass
+polling budget after metadata errors, max11 attempts at5ms intervals. Anchor
+proof to owned real UID and original starttime. Only that incarnation's fresh
+Z/X or a fully missing proc directory authorizes skipping it; changed UID/starttime,
+live or unreadable/unknown existing processes never pass. Do not stat descriptor
+targets. Keep failure category/errno/proc filename and incarnation/proof diagnostics.
+Use fake clock/proc controls before production commit; enrich old synthetic
+fixtures with actual UID/starttime fields where needed without weakening their
+assertions. Root owns actual lifecycle probes and new managed transactions.
+
+** Incarnation-bound terminal continuation verification
+Exact production/test pin a76c753e9358599ce410b8795a5681c06af37fc8 passes 206
+finite fake/core/pool cases in20.75s, including52 separately authored immutable
+fake-clock negative/positive controls. Both delayed fd-directory and mount cases
+fail meaningfully against the unchanged5ca baseline worker, before its one-shot
+proof can observe the later terminal transition. Baseline carrier differs only
+in importing that frozen module; original logs and carrier remain preserved.
+The34070 assertions are unchanged; their fake UID/stat fixture now supplies the
+original-incarnation metadata needed for stronger proof. Unknown original
+identity cannot use later absence, and reused/changed-UID zombies refuse.
+
+Independent source review at a76c found no remaining blocker. Worker SHA256:
+c53c405017a7b7a2f7022031061d4834f56a95347713394ad4dcd38be04a2702.
+GitNexus still fails on libssl.so.3; static and receiving-Python3.6 compilation
+passed. These synthetic controls establish the mechanism, not the cause of old
+actor failures. Root retains the real transition probe, partial-state recovery
+and any new productive managed transaction release. No author native/Slurm
+launch, state alteration, cancellation or retry occurred.
+
+** One complete reinspection after recoverable live metadata failure -- 2026-10-28
+
+Prior art is the105d08f terminal-proof mechanism above, process_identity and
+inspect_placement, plus the immutable managed runner FD/mount reader.
+A real owned-child counterfactual changed dumpability from0 to1 after20ms:
+FD access recovered while the same UID/starttime remained S; the original
+50ms identity-only proof still refused. A second complete placement inspection
+passed. A persistent nondumpable child remained refused. This demonstrates a
+mechanism limitation, not the cause of five native country-worker failures.
+
+Reuse the original full inspection unchanged as an inner pass. Allow exactly
+ONE new full pass only after an inspection_failure with still_live proof and
+fresh identical UID/starttime. Reinspect every process/environment/descriptor
+and placement rule. After successful retry require the original failed PID to
+be fully inspected at the same live incarnation, or fresh terminal/gone proof.
+Changed/unknown identities, persistent unreadability, misplaced stores and all
+other refusals must still stop. Never exempt a live unreadable process.
+Preserve initial failure and retry outcome in result/status/final failure.
+The two inner passes retain their existing <=50ms proof budgets; no recursive
+retry, age-based skip, target stat, deployment or worker restart is implied.
+
+Impact analysis was attempted with installed GitNexus CLI in the new isolated
+clone, but native LadybugDB cannot load libssl.so.3. The same missing-library
+limitation is recorded in the preceding accepted ledger. Static call analysis
+finds one production caller in dispatch_worker's run supervision loop,
+plus direct placement/exit/grace tests. The change affects the placement gate
+for both agent modes; this is security-sensitive. Frozen105d08f source and all
+running workers remain untouched. Independent review and real probes precede
+any new frozen release/native acceptance transaction.
+
+Independent source review found a reused-PID race in the first wrapper draft:
+a known changed UID/starttime fell through to a later gone-directory proof.
+Refuse a known changed identity immediately; disappearance cannot erase that
+observation. Separate before/after-success disappearing-reuse controls are
+required. Initial18cases passed after a fake-clock rounding assertion fix;
+first full targeted cohort256passed. Preserve those earlier results as draft
+mechanism checks, not acceptance of the review correction or deployment.
+
+Final corrected worker86f9f524 passes260 targeted tests in29.16seconds,
+including22 newcases (two actual Linux nondumpable-child controls) and four
+independent disappearing-reuse regressions. Those four fail meaningfully on
+the exact prior13ea draft, pass on corrected86f; eleven additional pure-policy
+controls retain their outcomes. The actual original inspect_placement AST is
+unchanged; only new inspect_placement_rechecked and the run caller/diagnostic
+persistence differ. Python3.6 grammar parses. GitNexus detect_changes was
+attempted and fails the same missing libssl3; manual AST scope check passes.
+These checks are not native lifecycle acceptance, deployment, scientific data
+verification or an explanation of the five original country failures.
+
+** Pool-status reconciliation review -- 2026-10-29
+
+Reviewed integration head 5166d258fdaba5465534791dffad6239954bc9ba, which includes
+main's bounded exit proof. Its 363 dispatch tests pass locally. A new accounting
+control reproduced an IndexError when an exact step row had an empty or
+whitespace-only State. This stopped reconciliation before a completed sibling
+could release its reservation. Require a nonempty state before testing terminal
+membership; incomplete observations retain their budget and evidence.
+
+Both new controls fail on the integration head and pass with the correction.
+The pool/reinspection selection passes 61 tests. Manual AST comparison finds
+only dispatch_pool.status changed in production; its caller is the pool-status
+CLI. Receiving worker/asset helpers still parse as Python 3.6. GitNexus analyze
+(with --skip-agents-md), query, upstream impact and compare detect-changes were
+attempted but cannot load libssl.so.3. No shared tool installation was changed.
+
+PR 78 remains draft. Its recorded sequential source-only native canaries do not
+establish long-running concurrent native-state preservation. Remaining release
+gates are current-head long-running concurrent workers, interrupted-state
+preservation, and scientific/source/API checks. The retained native failures
+remain evidence of an unresolved acceptance boundary; this accounting fix
+neither explains them nor changes live-process inspection policy. Allocation
+creation/requested-node convenience remains outside this attach-only PR.
+
+** Measured publication budget -- 2026-10-29
+
+At 606c40e, fresh allocation 40629482/n0043 ran source-only LSMS workers through
+the pool CLI. Step 0 completed 58 synthetic scientific/API tests and 660 source
+churn cycles, exited native zero and sealed state, but final Git/WIP publication
+exceeded its 30-second allowance (supervisor 74). A bounded trace in that stopped
+worker's private checkout measured one Git push at 31.92 seconds, including
+17.97 seconds in receive-side connectivity traversal. Its original failed result
+is retained; the later diagnostic publication does not repair that result.
+Step 1 sealed state too but its workload stopped at a separate 30-second Git
+commit deadline before scientific tests; that is a harness limit, not native
+acceptance. Both original transactions remain under
+=/global/scratch/fsa/fc_jevons/ligon/burst/sucoder-pr78-acceptance-dyb0orpw=.
+
+Add =--publication-timeout= to both submit CLIs: positive seconds, default 30,
+maximum 300, frozen in the manifest and validated on the receiver. Periodic
+and final Git/WIP publication use it; native checkpoints and cleanup do not.
+Early shutdown reserves =max(120, ceil(publication_timeout) + 60)= seconds,
+including the ordinary-job scheduler notice and pool deadline checks. Requests
+too short for that window refuse. Legacy manifests retain checkpoint_timeout
+as their publication budget. This is a finite budget, not a guarantee that all
+shared-storage operations complete. The follow-on harness separately allows
+120 seconds for its documentation commit and still performs no retry.
+
+382 dispatch tests pass, including invalid-budget refusal, immutable budget,
+extended scheduler/step window, and both periodic/final worker propagation.
+Python 3.6 worker grammar passes. GitNexus impact/detect-changes again failed
+on libssl.so.3; manual review covers submit/resource validation, both CLI callers,
+receiver validation and the worker's two publication calls and deadline checks.
+No original worker, result or native state was edited for this correction.
+
+** Late reservation-summary contention -- 2026-10-29
+
+The follow-on concurrent trial on allocation 40631087 exposed a distinct
+controller race: both workers launched with durable submission receipts, but
+one CLI reported a reservation-lock error while writing its duplicate summary.
+Its original reservation already bound the dispatch directory; pool status
+reconciled that receipt without resubmission. Preserve the successful submission
+report if only that final summary lock is busy, with an explicit deferred-update
+annotation. Initial reservation contention still refuses, no lock is stolen,
+and no budget is released. Other metadata errors still propagate.
+
+The 40 pool tests pass, including the new late-lock control and the existing
+prelaunch lock refusal. Production scope is the lock exception type and the
+post-submission summary update; receiving helpers are byte-identical to 78f43ad,
+the native-trial pin. GitNexus impact/detect-changes remain unavailable; manual
+callers are pool submit/status and their existing ValueError-handling CLIs.

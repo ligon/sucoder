@@ -108,6 +108,12 @@ Use repeatable =--require-evidence junit.xml= options to make missing proof file
 
 Git/WIP snapshots run every =--snapshot-minutes= (default ten minutes) and on orderly exit or TERM cleanup.
 Snapshot refs are append-only, and the result/status records the latest observed publication and time.
+=--publication-timeout= sets the budget for each Git/WIP publication (default
+30 seconds, positive, maximum 300). The scheduler's early TERM notice reserves
+=max(120, ceil(publication_timeout) + 60)= seconds; requests shorter than this
+window are refused. Managed-state checkpoint and process-cleanup budgets are
+unchanged. Use a larger publication budget when shared-storage Git operations
+take longer than 30 seconds; failure still reports incomplete publication.
 SIGKILL cannot trigger a final snapshot; only the already published refs and evidence are durable.
 Codex's own final checkpoint remains inside the existing runner lifecycle and can precede the supervisor's final Git snapshot.
 No result claims that an unpublished interval was preserved.
