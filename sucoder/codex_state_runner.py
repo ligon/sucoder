@@ -1285,8 +1285,11 @@ class Status(object):
             return False
         if not isinstance(data.get("transitions"), list):
             data["transitions"] = []
+        # Checkpointer counts restart at zero; an old idle view must not look
+        # ready before this launch captures (checkpoint-reuse ledger, sections 3-4).
+        # Keep last_generation and unsynced_generation as recovery history.
         for key in ("exit", "outcome", "child_pid", "child_starttime", "placed", "misplaced", "note", "drain", "drain_ack", "hold",
-                    "released_by"):   # the previous launch's, not this one's
+                    "released_by", "checkpoint"):   # the previous launch's, not this one's
             data.pop(key, None)
         with self.lock:
             self.data = data

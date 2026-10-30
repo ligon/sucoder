@@ -242,7 +242,10 @@ def _wait(home, predicate, what, timeout=20):
 
 
 def _wait_idle(home, timeout=20):
-    """The initial capture (after placement) has run and none is in flight."""
+    """A current-launch capture has run and none is in flight.
+
+    Reuse clears checkpoint until this launch captures; absence is unready.
+    """
     return _wait(home, lambda st: st.get("checkpoint", {}).get("count", 0) >= 1
                  and st["checkpoint"]["state"] in ("idle", "failed"), "an idle checkpointer", timeout)[0]
 
@@ -1040,6 +1043,87 @@ def test_restore_refusals_place_nothing_and_never_start_codex(home, tmp_path):
         assert s.quit() == 0
     finally:
         s.close()
+
+
+def test_reuse_status_drops_checkpoint_but_keeps_generation_history(runner, tmp_path):
+    path = tmp_path / "status.json"
+    history = {
+        "transitions": [{"state": "exited", "at": 1}],
+        "last_generation": {"name": "000002-12345678", "class": "sealed"},
+        "unsynced_generation": {"name": "000003-87654321", "class": "warm"},
+        "restored_from": {"run": "parent"},
+    }
+    path.write_text(json.dumps(dict(history, checkpoint={"state": "idle", "count": 2,
+                                                       "last_outcome": "published"})))
+    status = runner.Status(str(path))
+    assert status.load()
+    assert "checkpoint" not in status.data
+    for key, value in history.items():
+        assert status.data[key] == value
+    status.update("starting")
+    saved = json.loads(path.read_text())
+    assert "checkpoint" not in saved
+    assert saved["last_generation"] == history["last_generation"]
+    assert saved["unsynced_generation"] == history["unsynced_generation"]
+
+
+@needs_bwrap
+def test_reuse_request_before_checkpointer_start_uses_current_launch(home, tmp_path, monkeypatch):
+    """Hold startup after placement: old captures must not satisfy readiness."""
+    a = Managed(home)
+    try:
+        a.wait_synced()
+        _request(home)
+        assert a.quit() == 0
+    finally:
+        a.close()
+    previous = a.status()
+    assert previous["checkpoint"]["count"] >= 2
+    ready, release = tmp_path / "scheduler-ready", tmp_path / "scheduler-release"
+    wrapper = tmp_path / "gated_runner.py"
+    wrapper.write_text(
+        "import importlib.util, pathlib, time\n"
+        f"spec = importlib.util.spec_from_file_location('runner', {str(RUNNER)!r})\n"
+        "runner = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(runner)\n"
+        "original = runner.Checkpointer.start\n"
+        "def gated(self):\n"
+        f"    pathlib.Path({str(ready)!r}).touch()\n"
+        "    deadline = time.monotonic() + 30\n"
+        f"    while not pathlib.Path({str(release)!r}).exists():\n"
+        "        if time.monotonic() >= deadline:\n"
+        "            raise RuntimeError('test scheduler gate timed out')\n"
+        "        time.sleep(0.01)\n"
+        "    original(self)\n"
+        "runner.Checkpointer.start = gated\n"
+        "raise SystemExit(runner.main())\n"
+    )
+    monkeypatch.setattr(sys.modules[__name__], "RUNNER", wrapper)
+    b = None
+    try:
+        b = Managed(home)
+        _wait(home, lambda st: ready.exists(), "the scheduler gate")
+        assert b.run_dir == a.run_dir
+        status = b.status()
+        assert "checkpoint" not in status
+        assert status["last_generation"] == previous["last_generation"]
+        assert status["transitions"][:len(previous["transitions"])] == previous["transitions"]
+        with pytest.raises(AssertionError, match="an idle checkpointer"):
+            _wait_idle(home, timeout=0.2)
+        (b.run_dir / "checkpoint.request").touch()
+        release.touch()
+        captured, _ = _wait(home, lambda st: st.get("checkpoint", {}).get("count", 0) >= 1
+                            and st["checkpoint"]["last_outcome"] == "published", "the early request")
+        assert int(captured["last_generation"]["name"][:6]) > int(previous["last_generation"]["name"][:6])
+        assert not (b.run_dir / "checkpoint.request").exists()
+        assert _request(home)["checkpoint"]["last_outcome"] == "published"
+        assert b.quit() == 0
+    finally:
+        release.touch()
+        if b is not None:
+            if b.proc.poll() is None:
+                b.quit()
+            b.close()
 
 
 @needs_bwrap
