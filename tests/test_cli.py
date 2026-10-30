@@ -5304,3 +5304,41 @@ def test_attach_local_mirror_refuses_cluster_flags(tmp_path, monkeypatch):
     )
     assert result.exit_code == 1, _output(result)
     assert "this mirror is local" in _output(result)
+
+
+@pytest.mark.parametrize("command", [
+    ["message"], ["peek"], ["pull"], ["status"],
+    ["tunnel", "up"], ["list", "mirrors"], ["relay", "message"],
+])
+def test_subcommand_help_needs_no_config_or_startup(monkeypatch, command):
+    # Outside a repository with no config file, every --help used to fail
+    # with "Not inside a git repository" before Click reached the help.
+    from sucoder import tunnel
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("--help loaded configuration or ran startup checks")
+    for name in ("load_config", "build_default_config", "run_startup_checks"):
+        monkeypatch.setattr(cli, name, refuse)
+    # relay_main sets this module global; restore it for later tests.
+    monkeypatch.setattr(tunnel, "_NONINTERACTIVE", tunnel._NONINTERACTIVE)
+    result = CliRunner().invoke(cli.app, [*command, "--help"])
+    assert result.exit_code == 0, result.output
+    assert "Usage:" in _plain_output(result)
+
+
+@pytest.mark.parametrize("arguments", [
+    ["message", "sample", "hello"],
+    ["message", "sample", "--", "--help"],  # an operand after --, not the option
+])
+def test_commands_without_the_help_option_still_load_config(monkeypatch, tmp_path, arguments):
+    calls = []
+
+    def probe(*args, **kwargs):
+        calls.append(args)
+        raise cli.ConfigError("probe")
+    monkeypatch.setattr(cli, "_default_config_path", lambda: tmp_path / "absent.yaml")
+    monkeypatch.setattr(cli, "build_default_config", probe)
+    result = CliRunner().invoke(cli.app, arguments)
+    assert calls, result.output
+    assert result.exit_code == 2
+    assert "probe" in result.output
