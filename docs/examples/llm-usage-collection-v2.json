@@ -1,0 +1,623 @@
+{
+  "scenario_version": "0.2-design",
+  "data_mode": "synthetic",
+  "description": "Model-identification acceptance scenarios, not an adopted import schema or a live capture. Projections inherit the common contract; implementation tests must materialize complete batch envelopes.",
+  "common": {
+    "source_ref": "synthetic-native",
+    "binding_ref": "registry-1",
+    "account_binding_quality": "fixture_verified",
+    "source_verification": "fixture_only",
+    "model_attribution_basis": "native_reported",
+    "served_model": null,
+    "family_mapping_version": "synthetic-family/1",
+    "models": {
+      "synthetic-fable-model": "claude-fable",
+      "synthetic-opus-model": "claude-opus"
+    },
+    "unit": "tokens",
+    "category": "uncached_input",
+    "quantity_semantics": "request_flow",
+    "time_basis": "source_request_completion",
+    "request_interval": null,
+    "duration": null,
+    "analysis_interval": {
+      "start": "2026-10-17T12:05:00Z",
+      "end": "2026-10-17T12:10:00Z"
+    },
+    "price_ref": null,
+    "supply_ref": null,
+    "coverage": {
+      "instrumented_population": "selected-clients",
+      "population_completeness": "fixture_complete",
+      "account_coverage": "unknown"
+    },
+    "price_history_fixture": "llm-usage-collection-v1.json",
+    "request_identity_basis": "fixture_verified_server_id",
+    "emitter_provenance": "fixture_authenticated_selected_source"
+  },
+  "cases": {
+    "same_quota_fable_heavy": {
+      "quota_inputs": {
+        "fixture": "llm-usage-collection-v1.json",
+        "report_refs": [
+          "sha256:133851e205e08cca8c34f15bf932d8152b831fe47ff486bce77b4ae83ee71c82",
+          "sha256:0ec9c3222a017bbb1fdc5ddf48f11baa5f4a1a2841520b382cc68d0840b7f726"
+        ],
+        "metric_id": "claude-five-hour-used",
+        "use": "identical source observations across the paired scenarios; no per-model debit"
+      },
+      "events": [
+        {
+          "kind": "usage_event",
+          "request_ref": "request-f1",
+          "process_epoch": "process-1",
+          "event_sequence": "0",
+          "session_ref": "session-main",
+          "parent_session_ref": null,
+          "native_reported_model": "synthetic-fable-model",
+          "configured_model": "synthetic-fable-model",
+          "model_scope": "single_model",
+          "input_tokens": "900",
+          "quantity_scope": "request_only",
+          "observed_at": "2026-10-17T12:06:00Z",
+          "role": "main"
+        },
+        {
+          "kind": "usage_event",
+          "request_ref": "request-o1",
+          "process_epoch": "process-1",
+          "event_sequence": "1",
+          "session_ref": "session-main",
+          "parent_session_ref": null,
+          "native_reported_model": "synthetic-opus-model",
+          "configured_model": "synthetic-fable-model",
+          "model_scope": "single_model",
+          "input_tokens": "100",
+          "quantity_scope": "request_only",
+          "observed_at": "2026-10-17T12:08:00Z",
+          "role": "main"
+        }
+      ],
+      "expected": {
+        "observed_input_tokens": {
+          "synthetic-fable-model": "900",
+          "synthetic-opus-model": "100"
+        },
+        "clock_hours": "1/12",
+        "model_attribution_basis": "native_reported",
+        "shared_debit_by_model": null
+      }
+    },
+    "same_quota_opus_heavy": {
+      "quota_inputs": {
+        "fixture": "llm-usage-collection-v1.json",
+        "report_refs": [
+          "sha256:133851e205e08cca8c34f15bf932d8152b831fe47ff486bce77b4ae83ee71c82",
+          "sha256:0ec9c3222a017bbb1fdc5ddf48f11baa5f4a1a2841520b382cc68d0840b7f726"
+        ],
+        "metric_id": "claude-five-hour-used",
+        "use": "identical source observations across the paired scenarios; no per-model debit"
+      },
+      "events": [
+        {
+          "kind": "usage_event",
+          "request_ref": "request-f1",
+          "process_epoch": "process-1",
+          "event_sequence": "0",
+          "session_ref": "session-main",
+          "parent_session_ref": null,
+          "native_reported_model": "synthetic-fable-model",
+          "configured_model": "synthetic-fable-model",
+          "model_scope": "single_model",
+          "input_tokens": "100",
+          "quantity_scope": "request_only",
+          "observed_at": "2026-10-17T12:06:00Z",
+          "role": "main"
+        },
+        {
+          "kind": "usage_event",
+          "request_ref": "request-o1",
+          "process_epoch": "process-1",
+          "event_sequence": "1",
+          "session_ref": "session-main",
+          "parent_session_ref": null,
+          "native_reported_model": "synthetic-opus-model",
+          "configured_model": "synthetic-fable-model",
+          "model_scope": "single_model",
+          "input_tokens": "900",
+          "quantity_scope": "request_only",
+          "observed_at": "2026-10-17T12:08:00Z",
+          "role": "main"
+        }
+      ],
+      "expected": {
+        "observed_input_tokens": {
+          "synthetic-fable-model": "100",
+          "synthetic-opus-model": "900"
+        },
+        "clock_hours": "1/12",
+        "model_attribution_basis": "native_reported",
+        "shared_debit_by_model": null
+      }
+    },
+    "constant_mix": {
+      "calibration_inputs": {
+        "mode": "idealized_counterexample",
+        "predictor_unit": "thousand_uncached_input_tokens",
+        "draw_unit": "fraction_of_one_fixed_shared_allowance",
+        "rows": [
+          [
+            "1",
+            "1"
+          ],
+          [
+            "2",
+            "2"
+          ]
+        ],
+        "draw": [
+          "0.02",
+          "0.04"
+        ],
+        "alternative_coefficients": [
+          [
+            "0.015",
+            "0.005"
+          ],
+          [
+            "0.005",
+            "0.015"
+          ]
+        ],
+        "assumptions": [
+          "fixed denominator",
+          "no releases",
+          "no background use",
+          "compatible times and workload"
+        ]
+      },
+      "expected": {
+        "rank": 1,
+        "coefficient_status": "unidentified",
+        "declared_prior_still_usable": true
+      }
+    },
+    "independent_mix": {
+      "calibration_inputs": {
+        "mode": "idealized_counterexample",
+        "predictor_unit": "thousand_uncached_input_tokens",
+        "draw_unit": "fraction_of_one_fixed_shared_allowance",
+        "rows": [
+          [
+            "1",
+            "0"
+          ],
+          [
+            "0",
+            "1"
+          ]
+        ],
+        "draw": [
+          "0.015",
+          "0.005"
+        ],
+        "assumptions": [
+          "fixed denominator",
+          "no releases",
+          "known zero background use",
+          "compatible times and workload"
+        ]
+      },
+      "expected": {
+        "rank": 2,
+        "conditional_calibration_eligible": true,
+        "provider_debit_measured": false
+      }
+    },
+    "fable_limit_not_opus_residual": {
+      "inputs": {
+        "shared_allowance": "100",
+        "shared_fraction_change": "0.02",
+        "fable_fraction_change": "0.10",
+        "possible_fable_allowances": [
+          "10",
+          "20"
+        ]
+      },
+      "expected": {
+        "possible_fable_draw": [
+          "1",
+          "2"
+        ],
+        "possible_other_draw": [
+          "1",
+          "0"
+        ],
+        "other_model_identity": null
+      }
+    },
+    "opus_child_inclusive_parent": {
+      "events": [
+        {
+          "kind": "usage_event",
+          "request_ref": "parent-request",
+          "process_epoch": "process-1",
+          "event_sequence": "0",
+          "session_ref": "session-main",
+          "parent_session_ref": null,
+          "native_reported_model": "synthetic-fable-model",
+          "configured_model": "synthetic-fable-model",
+          "model_scope": "single_model",
+          "input_tokens": "100",
+          "quantity_scope": "request_only",
+          "observed_at": "2026-10-17T12:06:00Z",
+          "role": "main"
+        },
+        {
+          "kind": "usage_event",
+          "request_ref": "child-request",
+          "process_epoch": "process-1",
+          "event_sequence": "1",
+          "session_ref": "session-child",
+          "parent_session_ref": "session-main",
+          "native_reported_model": "synthetic-opus-model",
+          "configured_model": "synthetic-fable-model",
+          "model_scope": "single_model",
+          "input_tokens": "50",
+          "quantity_scope": "request_only",
+          "observed_at": "2026-10-17T12:06:00Z",
+          "role": "subagent"
+        },
+        {
+          "kind": "counter_sample",
+          "counter_ref": "inclusive-parent-input",
+          "value": "150",
+          "category": "input",
+          "quantity_scope": "includes_children",
+          "session_ref": "session-main",
+          "includes_request_refs": [
+            "parent-request",
+            "child-request"
+          ],
+          "aggregation_role": "corroborating"
+        }
+      ],
+      "expected": {
+        "observed_input_tokens": {
+          "synthetic-fable-model": "100",
+          "synthetic-opus-model": "50"
+        },
+        "combined_request_only_tokens": "150",
+        "incorrect_double_counted_tokens": "300"
+      }
+    },
+    "switch_fallback_and_configured_only": {
+      "events": [
+        {
+          "kind": "usage_event",
+          "request_ref": "switched-request",
+          "process_epoch": "process-1",
+          "event_sequence": "0",
+          "session_ref": "session-main",
+          "parent_session_ref": null,
+          "native_reported_model": "synthetic-opus-model",
+          "configured_model": "synthetic-fable-model",
+          "model_scope": "single_model",
+          "input_tokens": "70",
+          "quantity_scope": "request_only",
+          "observed_at": "2026-10-17T12:06:00Z",
+          "role": "main"
+        },
+        {
+          "kind": "usage_event",
+          "request_ref": "fallback-request",
+          "process_epoch": "process-1",
+          "event_sequence": "1",
+          "session_ref": "session-main",
+          "parent_session_ref": null,
+          "native_reported_model": null,
+          "configured_model": "synthetic-fable-model",
+          "model_scope": "mixed",
+          "input_tokens": "30",
+          "quantity_scope": "request_only",
+          "observed_at": "2026-10-17T12:06:00Z",
+          "role": "main",
+          "attempt_completeness": "unknown"
+        },
+        {
+          "kind": "counter_sample",
+          "counter_ref": "configured-only-input",
+          "value": "40",
+          "category": "input",
+          "configured_model": "synthetic-fable-model",
+          "native_reported_model": null,
+          "served_model": null,
+          "model_scope": "unknown",
+          "quantity_scope": "request_only",
+          "quantity_semantics": "interval_flow"
+        }
+      ],
+      "expected": {
+        "observed_input_tokens": {
+          "synthetic-opus-model": "70"
+        },
+        "mixed_input_tokens": "30",
+        "unattributed_input_tokens": "40",
+        "configured_fable_execution_tokens": null,
+        "served_identity": null
+      }
+    },
+    "duplicate_delivery_and_resumed_sequence": {
+      "deliveries": [
+        {
+          "receipt_ref": "receipt-1",
+          "event": {
+            "kind": "usage_event",
+            "request_ref": "stable-request",
+            "process_epoch": null,
+            "event_sequence": "0",
+            "session_ref": "session-main",
+            "parent_session_ref": null,
+            "native_reported_model": "synthetic-fable-model",
+            "configured_model": "synthetic-fable-model",
+            "model_scope": "single_model",
+            "input_tokens": "100",
+            "quantity_scope": "request_only",
+            "observed_at": "2026-10-17T12:06:00Z",
+            "role": "main"
+          }
+        },
+        {
+          "receipt_ref": "receipt-2",
+          "event": {
+            "kind": "usage_event",
+            "request_ref": "stable-request",
+            "process_epoch": null,
+            "event_sequence": "0",
+            "session_ref": "session-main",
+            "parent_session_ref": null,
+            "native_reported_model": "synthetic-fable-model",
+            "configured_model": "synthetic-fable-model",
+            "model_scope": "single_model",
+            "input_tokens": "100",
+            "quantity_scope": "request_only",
+            "observed_at": "2026-10-17T12:06:00Z",
+            "role": "main"
+          }
+        },
+        {
+          "receipt_ref": "receipt-3",
+          "event": {
+            "kind": "usage_event",
+            "request_ref": "new-request",
+            "process_epoch": "process-2",
+            "event_sequence": "0",
+            "session_ref": "session-main",
+            "parent_session_ref": null,
+            "native_reported_model": "synthetic-opus-model",
+            "configured_model": "synthetic-fable-model",
+            "model_scope": "single_model",
+            "input_tokens": "50",
+            "quantity_scope": "request_only",
+            "observed_at": "2026-10-17T12:06:00Z",
+            "role": "main"
+          }
+        }
+      ],
+      "expected": {
+        "accepted_native_requests": 2,
+        "combined_request_only_tokens": "150",
+        "same_session_and_sequence_is_not_identity": true,
+        "verified_request_identity_needs_process_epoch": false
+      }
+    },
+    "metric_temporality_and_corroboration": {
+      "primary_events": [
+        {
+          "kind": "usage_event",
+          "request_ref": "metric-request",
+          "process_epoch": "process-1",
+          "event_sequence": "0",
+          "session_ref": "session-main",
+          "parent_session_ref": null,
+          "native_reported_model": "synthetic-fable-model",
+          "configured_model": "synthetic-fable-model",
+          "model_scope": "single_model",
+          "input_tokens": "50",
+          "quantity_scope": "request_only",
+          "observed_at": "2026-10-17T12:06:00Z",
+          "role": "main"
+        }
+      ],
+      "metric_points": [
+        {
+          "stream_ref": "metric-cumulative",
+          "epoch": "metric-1",
+          "temporality": "cumulative",
+          "start": "2026-10-17T12:00:00Z",
+          "end": "2026-10-17T12:05:00Z",
+          "value": "100"
+        },
+        {
+          "stream_ref": "metric-cumulative",
+          "epoch": "metric-1",
+          "temporality": "cumulative",
+          "start": "2026-10-17T12:00:00Z",
+          "end": "2026-10-17T12:10:00Z",
+          "value": "150"
+        },
+        {
+          "stream_ref": "metric-cumulative",
+          "epoch": "metric-1",
+          "temporality": "cumulative",
+          "start": "2026-10-17T12:00:00Z",
+          "end": "2026-10-17T12:10:00Z",
+          "value": "150"
+        },
+        {
+          "stream_ref": "metric-delta",
+          "epoch": "metric-1",
+          "temporality": "delta",
+          "start": "2026-10-17T12:05:00Z",
+          "end": "2026-10-17T12:10:00Z",
+          "value": "50"
+        },
+        {
+          "stream_ref": "metric-delta",
+          "epoch": "metric-1",
+          "temporality": "delta",
+          "start": "2026-10-17T12:05:00Z",
+          "end": "2026-10-17T12:10:00Z",
+          "value": "50"
+        }
+      ],
+      "expected": {
+        "primary_input_tokens": "50",
+        "corroborating_cumulative_delta": "50",
+        "corroborating_unique_delta": "50",
+        "combined_input_tokens": "50",
+        "reconnect_first_total_allocated": false
+      }
+    },
+    "missing_native_identity": {
+      "events": [
+        {
+          "kind": "usage_event",
+          "request_ref": null,
+          "process_epoch": null,
+          "event_sequence": "0",
+          "session_ref": "session-main",
+          "parent_session_ref": null,
+          "native_reported_model": "synthetic-fable-model",
+          "configured_model": "synthetic-fable-model",
+          "model_scope": "single_model",
+          "input_tokens": "50",
+          "quantity_scope": "request_only",
+          "observed_at": "2026-10-17T12:06:00Z",
+          "role": "main",
+          "request_identity_basis": "unavailable"
+        }
+      ],
+      "receiver_epochs": [
+        "receiver-1",
+        "receiver-2"
+      ],
+      "expected": {
+        "model_label_observed": true,
+        "exact_aggregate_available": false,
+        "identity_status": "ambiguous",
+        "receiver_epoch_is_native_epoch": false
+      }
+    },
+    "external_use_and_export_loss": {
+      "events": [
+        {
+          "kind": "usage_event",
+          "request_ref": "partial-request",
+          "process_epoch": "process-1",
+          "event_sequence": "0",
+          "session_ref": "session-main",
+          "parent_session_ref": null,
+          "native_reported_model": "synthetic-fable-model",
+          "configured_model": "synthetic-fable-model",
+          "model_scope": "single_model",
+          "input_tokens": "100",
+          "quantity_scope": "request_only",
+          "observed_at": "2026-10-17T12:06:00Z",
+          "role": "main"
+        }
+      ],
+      "coverage": {
+        "instrumented_population": "selected-clients",
+        "population_completeness": "partial",
+        "account_coverage": "unknown",
+        "export_loss": "known_gap",
+        "background_quantity": null
+      },
+      "expected": {
+        "observed_input_tokens": {
+          "synthetic-fable-model": "100"
+        },
+        "rate_completeness": "partial",
+        "account_zero_proven": false,
+        "coefficient_status": "unavailable",
+        "unauthenticated_local_emitter_adds_usage": false
+      },
+      "untrusted_delivery": {
+        "installation_credential": "absent",
+        "transport": "loopback",
+        "claimed_binding_ref": "registry-1",
+        "claimed_input_tokens": "500",
+        "expected_action": "reject_before_metadata_acceptance"
+      }
+    },
+    "native_cost_and_reference_tariff": {
+      "events": [
+        {
+          "kind": "usage_event",
+          "request_ref": "priced-request",
+          "process_epoch": "process-1",
+          "event_sequence": "0",
+          "session_ref": "session-main",
+          "parent_session_ref": null,
+          "native_reported_model": "synthetic-fable-model",
+          "configured_model": "synthetic-fable-model",
+          "model_scope": "single_model",
+          "input_tokens": "100",
+          "quantity_scope": "request_only",
+          "observed_at": "2026-10-17T12:06:00Z",
+          "role": "main",
+          "native_cost_estimate": {
+            "currency": "USD",
+            "value": "0.009",
+            "pricing_basis": "managed_or_unknown"
+          }
+        }
+      ],
+      "reference_tariff": {
+        "currency": "USD",
+        "uncached_input_per_million": "10",
+        "version": "synthetic-tariff-1"
+      },
+      "expected": {
+        "native_cost_estimate": "0.009",
+        "local_api_equivalent_estimate": "0.001",
+        "provider_rated_cost": null
+      }
+    },
+    "missing_cache_ttl": {
+      "quantities": {
+        "cache_creation_tokens": "30",
+        "cache_creation_ttl": null
+      },
+      "reference_tariff": {
+        "cache_creation_5min_per_million": "10",
+        "cache_creation_1hour_per_million": "20"
+      },
+      "expected": {
+        "cache_quantity_available": true,
+        "exact_api_equivalent_estimate": null
+      }
+    },
+    "zero_observation_semantics": {
+      "complete_population": {
+        "request_count": "0",
+        "producer_exporter_health": "established",
+        "population_completeness": "complete",
+        "account_coverage": "partial"
+      },
+      "unknown_population": {
+        "request_count": null,
+        "receiver_health": "live",
+        "producer_exporter_health": "unknown",
+        "population_completeness": "unknown",
+        "account_coverage": "unknown"
+      },
+      "expected": {
+        "complete_population_observed_requests": "0",
+        "unknown_population_observed_requests": null,
+        "whole_account_observed_requests": null
+      }
+    }
+  }
+}
