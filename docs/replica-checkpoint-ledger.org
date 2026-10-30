@@ -1,0 +1,28 @@
+#+TITLE: Replica catch-up checkpoint investigation (issue 76)
+#+DATE: 2026-10-30
+
+* 1. Task
+Classify the failed second capture in test_a_thread_discovered_after_the_backup_waits_for_its_replica without weakening publication or replication proof. Base: GitHub main 52cc04f40f3858a5cf7d8063f009a4f10db6a07c. The historical failure reason was not retained.
+
+* 2. Existing machinery
+- =sucoder/codex_state_runner.py:2188=, Replicator.pass_once :: Discovers and follows rollouts, then publishes a replica view; tested by the replication, directory-sync and discovery regressions.
+- =sucoder/codex_state_runner.py:2744=, Checkpointer.capture :: Reports distinct failed/not_durable/published outcomes with reason; uses one deadline for backup, inspection, replica waiting and publication.
+- =sucoder/codex_state_runner.py:2957=, Checkpointer.bundle :: Copies stores and inspects required bytes; keeps a local manifest for a non-durable capture.
+- =sucoder/codex_state_runner.py:3059=, Checkpointer.wait_for_replicas :: Requires max(projection watermark, captured rollout length), hashes the immutable local prefix, and reports lagging threads.
+- =sucoder/codex_state_runner.py:3092=, Checkpointer.publish :: Enforces the remaining capture deadline before durable copy/rename; covered by publication-failure and deadline tests.
+- =tests/test_codex_state_runner.py:1727= :: The reported test uses a two-second capture budget and eight-second replication interval. First capture must be not_durable; second must publish after discovery.
+- =tests/test_codex_state_runner.py:254=, _request :: Waits for a completed current-launch capture, irrespective of outcome. Managed starts an isolated fake child through the real runner. InProcess supplies a separate disposable direct harness.
+
+Search tier: rg, direct source/caller inspection. GitNexus query, upstream impact on the reported test, analyze --skip-agents-md and detect-changes were attempted; all fail loading libssl.so.3. No shared install repair is in scope. The test has no production callers; pytest collects it. Initial diagnostic edit has low blast radius, confined to assertion output.
+
+* 3. Definitions and conventions
+=not_durable= means copied stores exist but replica proof is incomplete. =failed= may arise from backup/inspection, hashing, filesystem errors or publication deadline; replica catch-up alone is not a publication guarantee. =published= requires verified copies and durable directory acknowledgement. A single checkpoint timeout covers the complete capture, not only replica waiting.
+
+* 4. Invariants
+Retain the first non-durable outcome and local manifest, required captured rollout length even with projection offset zero, and full prefix/hash equality on successful publication. Preserve capture/shutdown budgets, ownership, placement and other-holder refusal. Do not infer the historical cause from a newly injected failure. Run nested managed/native tests in a separate test allocation, not beneath the coordinator's placement monitor. Retain only bounded checkpoint diagnostics in public reports; keep full logs private.
+
+* 5. Reuse decision
+Extend the existing assertion with its checkpoint dictionary so failures expose the already computed reason. Reuse runner and fixture machinery for baseline/full-suite and controlled-delay diagnosis. No production hook, new configuration or runtime correction is justified before evidence. Refine this ledger when the failure is classified.
+
+* 6. Open questions
+Did the original capture exhaust its two-second budget during backup/publication, or fail an independent proof/storage check? Can a bounded full-suite repeat retain the actual reason? Is the wall-clock fixture's discovery ordering reliable under load? These are investigative questions, not user-approval gates.
