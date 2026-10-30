@@ -15,7 +15,7 @@ Related draft [[https://github.com/ligon/sucoder/pull/78][PR 78]] is =b1ecf3d587
 - =sucoder/codex_state_runner.py:inspect_file_mounts= :: Uses mountinfo/fdinfo metadata without dereferencing descriptor targets; tested in test_dispatch_mounts.py.
 - =tests/test_dispatch_exit_races.py= :: Permission-boundary tests, live/unknown refusal, and real child exit during mount inspection.
 - PR 78 =process_identity= and =terminal_proof_after_error= :: Existing same-incarnation proof with a shared 50 ms grace, tested in test_dispatch_terminal_grace.py; reuse these rather than invent a second ownership mechanism.
-- PR 78 =reinspect_placement= :: Retries a complete inspection for a still-live process; later native country workers still failed both inspections, so this alone does not establish resolution of issue 79.
+- PR 78 =inspect_placement_rechecked= :: Retries a complete inspection for a still-live process; later native country workers still failed both inspections, so this alone does not establish resolution of issue 79.
 
 Search tier: direct source, ripgrep, git history/diffs, and Linux primary source.
 GitNexus query and upstream impact were attempted but the native library cannot load libssl.so.3.
@@ -33,8 +33,9 @@ The node runs vendor kernel 4.18.0-553.150.1.el8_10; upstream ordering explains 
 
 A bounded own-process probe on n0232 observed 23 FD/mount errors across 200 ordinary Git exits; nonterminal observations included PF_EXITING with state R, followed by the same PID/starttime reaching Z within 6.3 ms from launch.
 The first namespace probe failed its shell redirection because /dev was not device-bound; its receipts are retained as a setup failure, not Git acceptance.
-Corrected namespace and native-profile results are to be recorded after verification.
-Raw metadata and diagnostic scripts are under =/local/job40618485/issue79-kernel= until copied to the durable evidence directory.
+The corrected namespace probe device-bound /dev and ran 100 Git exits; all had an exiting-state metadata error, with state D or R and at most 22.3 ms from the first such error to terminal/gone proof.
+Neither local probe reproduced the historical state I interval or established its maximum duration.
+Raw metadata and diagnostic scripts, including the failed-redirection probe, were copied to =/global/scratch/fsa/fc_jevons/ligon/burst/sucoder-issue79-20261029-5cJvtj=.
 No environment, FD-target, database, transcript, or survey contents are inspected by these probes.
 
 * 4. Invariants
@@ -56,5 +57,19 @@ Do not change final sealing, checkpoint deadlines, cleanup ownership, or native-
 * 6. Open questions and acceptance
 The exact duration of the three historical I-state intervals was not captured; do not present a proposed wait bound as a measured maximum.
 Independent review must assess the wait policy and identity binding before native acceptance.
+That review found and reproduced a PR 78 mismatch-loss race: different first/last starttimes could become unknown and later pass on disappearance.
+The correction checks first starttime, UID, and last starttime as each is observed and preserves any mismatch as an immediate refusal.
+Independent review approved the corrected source for the bounded pilot: 73 focused tests passed, and a real nondumpable same-UID child remained refused without extended grace.
+All 304 dispatch tests passed in Slurm job 40621363 at source 58c06dc.
+Two new integration regressions fail on main; five delayed-exit/mismatch regressions fail on PR 78 and pass here.
+The chosen ceiling is one second from the first metadata error per inspection pass; unflagged/unknown processes retain the shared 50 ms bound.
+Only deliberate polling is bounded; these deadlines are not a guarantee on arbitrary kernel proc reads.
+Successful race diagnostics retain the latest 16 records and an aggregate count; refusal context is retained before cleanup.
 Run a finite same-profile concurrent separate-allocation pilot through final checkpoint/publication, preserving failed receipts and distinguishing task, native, supervisor, and preservation outcomes.
 Do not deploy to an installed CLI or replace peer workers as part of this branch.
+
+The two-worker native pilot completed on distinct nodes with 76.45 seconds of overlapping source churn.
+Both workers exited zero, observed local SQLite, sealed final state, and published unchanged source and verified evidence.
+Four EACCES metadata races reached fresh terminal proof; two observed PF_EXITING in R/D before disappearance.
+All four recovered within 15.78 ms, so the extra allowance beyond 50 ms and the historical I interval remain demonstrated only by deterministic regressions, not these native receipts.
+Independent review accepted the bounded pilot with that limitation.
