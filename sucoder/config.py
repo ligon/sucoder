@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import warnings
@@ -502,6 +503,21 @@ class SessionRelayConfig:
 
 
 @dataclass
+class AttentionConfig:
+    """Agent status records and their watcher (docs/attention.org).
+
+    ``hooks`` installs status hooks into SuCoder-launched Claude sessions
+    (``claude --settings``); each writes ``~/.sucoder/attention/<key>.rec``
+    where the agent runs.  ``notify_command`` is run by ``sucoder attention
+    --watch`` when a session starts waiting on the human, with the session
+    described in ``SUCODER_ATTENTION_*`` environment variables.
+    """
+
+    hooks: bool = False
+    notify_command: List[str] = field(default_factory=list)
+
+
+@dataclass
 class Config:
     human_user: str
     agent_user: str = "coder"
@@ -521,6 +537,7 @@ class Config:
     audit: AuditConfig = field(default_factory=AuditConfig)
     tool_preflight: ToolPreflightConfig = field(default_factory=ToolPreflightConfig)
     session_relay: Optional[SessionRelayConfig] = None
+    attention: AttentionConfig = field(default_factory=AttentionConfig)
 
     def resolve_target(self, target_name: Optional[str]) -> Optional[RemoteConfig]:
         """Look up a named target, returning ``None`` for local execution."""
@@ -764,6 +781,7 @@ def _build_config(data: Dict[str, Any], *, path: Path) -> Config:
     audit = _parse_audit_config(data.get("audit"), path=path)
     tool_preflight = _parse_tool_preflight(data.get("tool_preflight"), path=path)
     session_relay = _parse_session_relay(data.get("session_relay"))
+    attention = _parse_attention(data.get("attention"))
     mirrors = _parse_mirrors(
         data.get("mirrors"), global_skills=global_skills,
         global_mcp_servers=global_mcp_servers, path=path,
@@ -790,7 +808,32 @@ def _build_config(data: Dict[str, Any], *, path: Path) -> Config:
         audit=audit,
         tool_preflight=tool_preflight,
         session_relay=session_relay,
+        attention=attention,
     )
+
+
+def _parse_attention(raw: Any) -> AttentionConfig:
+    """``attention: {hooks: true, notify_command: [...]}``."""
+    if raw is None:
+        return AttentionConfig()
+    if not isinstance(raw, dict):
+        raise ConfigError("`attention` must be a mapping (keys: hooks, notify_command).")
+    unknown = sorted(set(raw) - {"hooks", "notify_command"})
+    if unknown:
+        raise ConfigError(
+            f"Unknown key(s) under `attention`: {', '.join(unknown)} (valid keys: hooks, notify_command)."
+        )
+    hooks = raw.get("hooks", False)
+    if not isinstance(hooks, bool):
+        raise ConfigError("`attention.hooks` must be true or false.")
+    command = raw.get("notify_command")
+    if command is None:
+        command = []
+    elif isinstance(command, str):
+        command = shlex.split(command)
+    if not isinstance(command, list) or not all(isinstance(part, str) and part for part in command):
+        raise ConfigError("`attention.notify_command` must be a command string or a list of strings.")
+    return AttentionConfig(hooks=hooks, notify_command=list(command))
 
 
 def _parse_session_relay(raw: Any) -> Optional[SessionRelayConfig]:

@@ -3719,6 +3719,7 @@ class MirrorManager:
             import uuid
             self._claude_session_id = str(uuid.uuid4())
             command = self._insert_after_executable(command, ["--session-id", self._claude_session_id])
+        command = self._with_attention_hooks(ctx, command)
         # Managed Codex state (docs/codex-local-state.org): decided here, applied
         # at two points below -- the sqlite_home placeholder at the argv stage,
         # before nvm/installer wrapping, and the staged runner outermost.
@@ -5399,6 +5400,28 @@ class MirrorManager:
         if not rendered.strip():
             return []
         return shlex.split(rendered)
+
+    def _with_attention_hooks(self, ctx: MirrorContext, command: List[str]) -> List[str]:
+        """Add status-record hooks to a Claude launch when ``attention.hooks``.
+
+        docs/attention.org: the hooks write ``~/.sucoder/attention/<key>.rec``
+        wherever the agent runs, for ``sucoder attention`` to read.  Skipped
+        when the operator's command already passes ``--settings`` (a second
+        one would compete with theirs) and for every other harness.
+        """
+        attention = getattr(self.config, "attention", None)
+        if getattr(attention, "hooks", False) is not True:
+            return command
+        if self._detected_agent_type != AgentType.CLAUDE:
+            return command
+        if any(token == "--settings" or token.startswith("--settings=") for token in command):
+            self.logger.info("Command already passes --settings; not adding attention hooks.")
+            return command
+        from .attention import attention_key, claude_settings_json
+
+        target = (self.target_name or "remote") if ctx.is_remote else None
+        key = attention_key(ctx.settings.name, target)
+        return self._insert_after_executable(command, ["--settings", claude_settings_json(key)])
 
     @staticmethod
     def _insert_after_executable(command: Sequence[str], tokens: Sequence[str]) -> List[str]:

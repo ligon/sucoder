@@ -24,6 +24,16 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #   user: <your-username>
 #   command: /usr/local/bin/sucoder
 
+# Attention (optional; off by default): SuCoder-launched Claude sessions write
+# a status record (~/.sucoder/attention/<mirror>--<target>.rec where the agent
+# runs) on every turn, permission request and idle prompt; `sucoder attention`
+# lists the sessions waiting on you first.  `notify_command` runs under
+# `sucoder attention --watch` when a session starts waiting, with the session in
+# SUCODER_ATTENTION_* environment variables.  README: Which sessions need you.
+# attention:
+#   hooks: true
+#   notify_command: ["sh", "-c", 'curl -fsS -d "$SUCODER_ATTENTION_MIRROR: $SUCODER_ATTENTION_MESSAGE" https://ntfy.sh/<private-topic>']
+
 # Codex remote control (optional; ordinary terminal launch by default).
 # Applies when Codex is selected, including --agent codex / --harness codex.
 # Per-mirror agent_launcher.codex_remote_control overrides this default.

@@ -1031,6 +1031,47 @@ default: it reads the pane's child process, not
 call every working agent dead.  =--fast= skips it and says so.
 Read-only throughout --- nothing submits, cancels or writes.
 
+*** Which sessions need you
+
+=sucoder sessions= says whether an agent process is running; it cannot
+say whether the agent is working or sitting at a permission prompt.
+With
+
+#+begin_src yaml
+attention:
+  hooks: true
+#+end_src
+
+each SuCoder-launched Claude session gets hooks (=claude --settings=,
+added to your own) that write a small status record to
+=~/.sucoder/attention/<mirror>--<target>.rec= wherever the agent runs, on
+every prompt, tool call, finished turn, permission request and idle
+prompt.  A launch whose command already passes =--settings= is left
+alone.  Other harnesses are not covered yet.
+
+#+begin_src sh
+sucoder attention               # list: waiting first, longest-waiting first
+sucoder attention --local-only  # this host's agent account only
+sucoder attention --watch 30    # dashboard; refreshes the cache, notifies
+sucoder attention --tmux        # one line from the cache, for status-right
+#+end_src
+
+=--watch= uses warm connections only and never prompts, so it can run
+unattended in a tmux window beside the tunnel keeper.  It writes
+=~/.sucoder/attention.json=, which =--tmux= reads without loading any
+configuration:
+
+#+begin_src conf
+set -g status-interval 10
+set -g status-right '#(sucoder attention --tmux)'
+#+end_src
+
+=attention.notify_command= (a command string or argv list) runs once
+for each session that starts waiting, with the session described in
+=SUCODER_ATTENTION_KEY=, =_MIRROR=, =_TARGET=, =_HOST=, =_STATE=, =_AGE=
+and =_MESSAGE=, for example to post to an ntfy topic on your phone.
+Design and open items: [[file:docs/attention.org][docs/attention.org]].
+
 *** Listing and retiring WIP snapshots
 
 =sucoder snapshots= lists every WIP snapshot ref on every configured

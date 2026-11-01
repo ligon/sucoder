@@ -1844,6 +1844,10 @@ def main(
         # from _get_config.
         ctx.obj = {"target_name": target, "config_path": config or _default_config_path()}
         return
+    if ctx.meta.get("attention_tmux"):
+        # Reads the attention cache only (docs/attention.org).
+        ctx.obj = {}
+        return
     config_explicitly_set = config is not None
     default_path = _default_config_path()
     is_default_config = False
@@ -4946,6 +4950,224 @@ def sessions(
             "not absent." + _unavailable_hint(config), err=True,
         )
         raise typer.Exit(code=EXIT_UNAVAILABLE)
+
+
+@app.command("attention")
+def attention(
+    ctx: typer.Context,
+    json_output: bool = typer.Option(False, "--json", help="Print the collected statuses as JSON."),
+    tmux_line: bool = typer.Option(
+        False, "--tmux",
+        help="Print one status-bar line from the cache that --watch keeps; never connects.",
+    ),
+    local_only: bool = typer.Option(
+        False, "--local-only", help="Read only this host's records; skip the clusters.",
+    ),
+    watch: int = typer.Option(
+        0, "--watch", min=0, metavar="SECONDS",
+        help="Collect every SECONDS, refresh the cache and run attention.notify_command "
+             "for sessions that start waiting. Uses warm connections only; never prompts.",
+    ),
+    cache: Optional[Path] = typer.Option(
+        None, "--cache", help="Cache file (default ~/.sucoder/attention.json).",
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
+) -> None:
+    """Which agent sessions need you: waiting, idle, working, ended.
+
+    Reads the status records that SuCoder-launched Claude sessions write
+    when ``attention.hooks`` is enabled (docs/attention.org): this host's
+    agent account's ``~/.sucoder/attention/`` and, unless --local-only,
+    the same directory on every configured cluster, one round trip each.
+    Sessions waiting on you sort first.  Read-only on every host.
+    """
+    import time as _time
+
+    from .attention import cache_payload, render_table, render_tmux, statuses_from_cache
+
+    cache_path = cache or Path.home() / ".sucoder" / "attention.json"
+    if tmux_line:
+        typer.echo(_attention_tmux_line(cache_path, render_tmux, statuses_from_cache))
+        return
+    config = _get_config(ctx)
+    logger = setup_logger("sucoder.attention", config.log_dir, verbose)
+    debug_ssh = _get_debug_ssh(ctx)
+    if not watch:
+        statuses, errors = _collect_attention(
+            config, local_only=local_only, warm_only=False, logger=logger, debug_ssh=debug_ssh,
+        )
+        now = _time.time()
+        _write_attention_cache(cache_path, cache_payload(statuses, errors=errors, now=now))
+        if json_output:
+            typer.echo(json.dumps(cache_payload(statuses, errors=errors, now=now), indent=2))
+        else:
+            typer.echo(render_table(statuses, now))
+        for line in errors:
+            typer.echo(f"! {line}", err=True)
+        if errors:
+            raise typer.Exit(code=EXIT_UNAVAILABLE)
+        return
+    _attention_watch(config, watch, cache_path, local_only=local_only, logger=logger,
+                     debug_ssh=debug_ssh, json_output=json_output)
+
+
+def _attention_local_dir(config) -> Path:
+    """The agent account's record directory on this host."""
+    from .attention import DIR_ENV, RECORD_DIR
+
+    override = os.environ.get(DIR_ENV)
+    if override:
+        return Path(override)
+    try:
+        home = Path(pwd.getpwnam(config.agent_user).pw_dir)
+    except KeyError:
+        home = Path.home()
+    return home / RECORD_DIR
+
+
+def _collect_attention(config, *, local_only: bool, warm_only: bool, logger, debug_ssh):
+    """``(statuses, errors)`` from this host and, unless *local_only*, each cluster.
+
+    One read per cluster: targets sharing a scheduler share ``$HOME`` and so
+    one record directory (``group_targets_by_cluster``).  *warm_only* uses
+    existing connections and never authenticates, for the unattended watcher.
+    """
+    from .attention import (
+        LIST_RECORDS_SH, RECORD_SUFFIX, merge_statuses, parse_listing, parse_record,
+    )
+    from .sessions_report import group_targets_by_cluster, login_hosts_for
+
+    statuses = []
+    errors: List[str] = []
+    local_dir = _attention_local_dir(config)
+    try:
+        for path in sorted(local_dir.glob(f"*{RECORD_SUFFIX}")):
+            try:
+                with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                    text = handle.read(70000)
+            except OSError as exc:
+                errors.append(f"local: could not read {path.name} ({exc.strerror})")
+                continue
+            statuses.append(parse_record(path.name[: -len(RECORD_SUFFIX)], text, source="local"))
+    except OSError as exc:
+        errors.append(f"local: could not list {local_dir} ({exc.strerror})")
+    if local_only or not config.targets:
+        return merge_statuses(statuses), errors
+
+    clusters, schedulerless = group_targets_by_cluster(config.targets)
+    plan: List[Tuple[str, Any, str]] = []
+    for cluster, names in clusters.items():
+        plan.append((cluster, config.targets[names[0]], _cluster_query_host(names) or ""))
+    for name in schedulerless:
+        remote = config.targets[name]
+        hosts = login_hosts_for(name, remote, {})
+        if hosts:
+            plan.append((name, remote, hosts[0]))
+    for label, remote, host in plan:
+        host = host or getattr(remote, "gateway", None) or ""
+        if not host:
+            continue
+        try:
+            control = _control_for_host(remote, host, debug_ssh)
+            if warm_only:
+                result = _run_remote_capture(control, host, LIST_RECORDS_SH, debug=debug_ssh)
+            else:
+                result = _capture_over_tunnel(control, host, LIST_RECORDS_SH,
+                                              logger=logger, config=config, debug=debug_ssh)
+        except Exception as exc:  # noqa: BLE001 -- one cluster must not sink the rest
+            errors.append(f"{label}: not inspected ({exc})")
+            continue
+        if result.returncode != 0:
+            detail = (result.stderr or "").strip().splitlines()[-1:] or ["(no output)"]
+            errors.append(f"{label}: not inspected (exit {result.returncode}: {detail[0]})")
+            continue
+        statuses.extend(parse_listing(result.stdout, source=label))
+    return merge_statuses(statuses), errors
+
+
+def _write_attention_cache(path: Path, payload) -> None:
+    """Atomic replace, so the tmux status line never reads a torn file."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f".{path.name}.{os.getpid()}")
+        tmp.write_text(json.dumps(payload), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        pass  # The cache is a convenience; the listing itself already printed.
+
+
+def _attention_tmux_line(path: Path, render_tmux, statuses_from_cache, *, stale_after: float = 300.0) -> str:
+    import time as _time
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "attn: no data"
+    now = _time.time()
+    line = render_tmux(statuses_from_cache(payload), now)
+    collected = payload.get("collected_at")
+    if not isinstance(collected, (int, float)) or now - collected > stale_after:
+        line = "attn STALE | " + line
+    if payload.get("errors"):
+        line += " | !" + str(len(payload["errors"]))
+    return line
+
+
+def _attention_notify(command: List[str], status, now: float, logger) -> None:
+    from .attention import format_age
+
+    env = dict(os.environ)
+    env.update({
+        "SUCODER_ATTENTION_KEY": status.key,
+        "SUCODER_ATTENTION_MIRROR": status.mirror,
+        "SUCODER_ATTENTION_TARGET": status.target,
+        "SUCODER_ATTENTION_HOST": status.host or "",
+        "SUCODER_ATTENTION_STATE": status.state,
+        "SUCODER_ATTENTION_AGE": format_age(status.age(now)),
+        "SUCODER_ATTENTION_MESSAGE": status.message or f"{status.mirror} is waiting",
+    })
+    try:
+        subprocess.run(command, env=env, timeout=30, check=False,
+                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.warning("attention notify_command failed for %s: %s", status.key, exc)
+
+
+def _attention_watch(config, interval: int, cache_path: Path, *, local_only: bool, logger,
+                     debug_ssh: bool, json_output: bool) -> None:
+    """Collect, cache, notify, redraw; until interrupted.
+
+    The first pass sets the baseline: sessions already waiting when the
+    watcher starts are shown but not notified.
+    """
+    import time as _time
+
+    from .attention import cache_payload, newly_waiting, render_table
+
+    previous = None
+    try:
+        while True:
+            statuses, errors = _collect_attention(
+                config, local_only=local_only, warm_only=True, logger=logger, debug_ssh=debug_ssh,
+            )
+            now = _time.time()
+            payload = cache_payload(statuses, errors=errors, now=now)
+            _write_attention_cache(cache_path, payload)
+            if previous is not None and config.attention.notify_command:
+                for status in newly_waiting(previous, statuses):
+                    _attention_notify(config.attention.notify_command, status, now, logger)
+            previous = {s.key: s for s in statuses}
+            if json_output:
+                typer.echo(json.dumps(payload))
+            else:
+                stamp = _time.strftime("%H:%M:%S", _time.localtime(now))
+                typer.echo("\033[H\033[2J" + f"sucoder attention  {stamp}  (every {interval}s)\n")
+                typer.echo(render_table(statuses, now))
+                for line in errors:
+                    typer.echo(f"! {line}")
+            _time.sleep(interval)
+    except KeyboardInterrupt:
+        raise typer.Exit(code=0)
 
 
 @app.command("message")
