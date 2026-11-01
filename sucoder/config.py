@@ -510,11 +510,15 @@ class AttentionConfig:
     (``claude --settings``); each writes ``~/.sucoder/attention/<key>.rec``
     where the agent runs.  ``notify_command`` is run by ``sucoder attention
     --watch`` when a session starts waiting on the human, with the session
-    described in ``SUCODER_ATTENTION_*`` environment variables.
+    described in ``SUCODER_ATTENTION_*`` environment variables, for the
+    request *kinds* in ``notify_kinds`` once it has waited
+    ``notify_after_minutes``.
     """
 
     hooks: bool = False
     notify_command: List[str] = field(default_factory=list)
+    notify_kinds: List[str] = field(default_factory=lambda: ["permission", "question", "idle", "other"])
+    notify_after_minutes: float = 0.0
 
 
 @dataclass
@@ -818,10 +822,11 @@ def _parse_attention(raw: Any) -> AttentionConfig:
         return AttentionConfig()
     if not isinstance(raw, dict):
         raise ConfigError("`attention` must be a mapping (keys: hooks, notify_command).")
-    unknown = sorted(set(raw) - {"hooks", "notify_command"})
+    valid = ("hooks", "notify_after_minutes", "notify_command", "notify_kinds")
+    unknown = sorted(set(raw) - set(valid))
     if unknown:
         raise ConfigError(
-            f"Unknown key(s) under `attention`: {', '.join(unknown)} (valid keys: hooks, notify_command)."
+            f"Unknown key(s) under `attention`: {', '.join(unknown)} (valid keys: {', '.join(valid)})."
         )
     hooks = raw.get("hooks", False)
     if not isinstance(hooks, bool):
@@ -833,7 +838,19 @@ def _parse_attention(raw: Any) -> AttentionConfig:
         command = shlex.split(command)
     if not isinstance(command, list) or not all(isinstance(part, str) and part for part in command):
         raise ConfigError("`attention.notify_command` must be a command string or a list of strings.")
-    return AttentionConfig(hooks=hooks, notify_command=list(command))
+    all_kinds = ["permission", "question", "idle", "other"]
+    kinds = raw.get("notify_kinds", all_kinds)
+    if isinstance(kinds, str):
+        kinds = [kinds]
+    if not isinstance(kinds, list) or not kinds or any(k not in all_kinds for k in kinds):
+        raise ConfigError(
+            "`attention.notify_kinds` must be a non-empty list drawn from: " + ", ".join(all_kinds) + "."
+        )
+    after = raw.get("notify_after_minutes", 0)
+    if isinstance(after, bool) or not isinstance(after, (int, float)) or after < 0:
+        raise ConfigError("`attention.notify_after_minutes` must be a number of minutes, 0 or more.")
+    return AttentionConfig(hooks=hooks, notify_command=list(command), notify_kinds=list(kinds),
+                           notify_after_minutes=float(after))
 
 
 def _parse_session_relay(raw: Any) -> Optional[SessionRelayConfig]:

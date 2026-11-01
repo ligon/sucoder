@@ -1,0 +1,71 @@
+#+TITLE: Coordinator mirror: setup
+#+DATE: 2026-11-01
+#+AUTHOR: Sue
+
+A coordinator is an ordinary local Claude session on vantage, in a small mirror of its own, whose brief ([[file:CLAUDE.md][CLAUDE.md]]) is to triage the other sessions and suggest replies.
+Its own repository gives every triage a git history the human can audit.
+Design and reasoning: [[file:../../docs/attention.org][docs/attention.org]], "Coordinator".
+
+* Prerequisites
+
+1. =sucoder= on vantage installed from a checkout that has =sucoder attention= and =relay attention=.
+2. The agent account can run =sucoder= at all.
+   Its startup check refuses a configuration the agent can write, and on vantage =~coder/.sucoder/config.yaml= is owned by =coder=, so every =coder=-side command (=sessions=, =peek=, =message=, =attention=) currently stops there.
+   One fix, as root: =chown ligon:coder ~coder/.sucoder/config.yaml && chmod 0640 ~coder/.sucoder/config.yaml=.
+3. =attention.hooks: true= in the human's config and a watcher running (below).
+
+* Steps
+
+1. Create the canonical repository, as the human:
+   #+begin_src sh
+   mkdir -p ~/Projects/Coordinator/digests && cd ~/Projects/Coordinator
+   git init -b main
+   cp /path/to/SuCoder/examples/coordinator/CLAUDE.md .
+   touch digests/.gitkeep && git add . && git commit -m "Coordinator brief v0"
+   #+end_src
+2. Add the mirror to =~/.sucoder/config.yaml=, beside the others:
+   #+begin_src yaml
+   mirrors:
+     Coordinator:
+       canonical_repo: /home/ligon/Projects/Coordinator
+       mirror_name: Coordinator
+       default_base_branch: main
+       branch_prefixes:
+         human: ligon
+         agent: coder
+   #+end_src
+3. Install the notifier and point the watcher at it:
+   #+begin_src sh
+   install -m 0755 /path/to/SuCoder/examples/coordinator/attention-notify ~/.sucoder/attention-notify
+   #+end_src
+   #+begin_src yaml
+   attention:
+     hooks: true
+     notify_kinds: [permission, question, idle]
+     notify_after_minutes: 0
+     notify_command:
+       - env
+       - NTFY_URL=https://ntfy.sh/<private-topic>
+       - COORDINATOR_PANE=coordinator
+       - /home/ligon/.sucoder/attention-notify
+   #+end_src
+   Leave out =COORDINATOR_PANE= for v0 (triage on request only); add it for v1.
+4. Start the coordinator in a tmux session of that name, and the watcher beside it:
+   #+begin_src sh
+   tmux new-session -d -s coordinator 'sucoder collaborate Coordinator'
+   tmux new-window -d -n attention 'sucoder attention --watch 30'
+   #+end_src
+
+* Using it
+
+- v0 :: switch to the =coordinator= session and type =triage=.
+  Read the suggested replies; say "send 1 and 3" or edit one.
+  Judge: would you have sent these?  Note misses and bad suggestions in the coordinator's =digests/=.
+- v1 :: with =COORDINATOR_PANE= set, the watcher types one line into the coordinator for each new waiting request, and it triages that session without being asked.
+  It still sends nothing without approval.
+
+* Known gaps
+
+- =message= and =peek= reach cluster sessions only; local sessions are read from their transcripts, and a reply to one is typed at its own pane.
+- The coordinator's own waiting state is excluded from its notifications by mirror name (=COORDINATOR_MIRROR=, default =Coordinator=), so it does not wake itself.
+- Text the watcher types in arrives as a prompt even mid-turn; Claude queues it.

@@ -4960,6 +4960,10 @@ def attention(
         False, "--tmux",
         help="Print one status-bar line from the cache that --watch keeps; never connects.",
     ),
+    cached: bool = typer.Option(
+        False, "--cached",
+        help="List from the cache that --watch keeps instead of collecting; never connects.",
+    ),
     local_only: bool = typer.Option(
         False, "--local-only", help="Read only this host's records; skip the clusters.",
     ),
@@ -4980,16 +4984,36 @@ def attention(
     agent account's ``~/.sucoder/attention/`` and, unless --local-only,
     the same directory on every configured cluster, one round trip each.
     Sessions waiting on you sort first.  Read-only on every host.
+
+    On an account with ``session_relay``, everything but --local-only and
+    --tmux runs as the relay's user, whose connections and cache it uses.
     """
     import time as _time
 
     from .attention import cache_payload, render_table, render_tmux, statuses_from_cache
 
+    if sum(bool(x) for x in (tmux_line, cached, watch)) > 1:
+        raise typer.BadParameter("choose one of --tmux, --cached and --watch")
     cache_path = cache or Path.home() / ".sucoder" / "attention.json"
     if tmux_line:
         typer.echo(_attention_tmux_line(cache_path, render_tmux, statuses_from_cache))
         return
     config = _get_config(ctx)
+    if _session_relay_applies(config) and not local_only:
+        if watch:
+            typer.echo(f"attention --watch runs as {config.session_relay.user}, who holds the "
+                       "cluster connections; use --local-only to watch this account's records.", err=True)
+            raise typer.Exit(code=2)
+        if cache is not None:
+            typer.echo("attention: --cache is not relayed; the relay reads its own cache.", err=True)
+            raise typer.Exit(code=2)
+        _delegate_to_session_relay(config, "attention", [
+            *(["--json"] if json_output else []), *(["--cached"] if cached else []),
+            *(["--verbose"] if verbose else []),
+        ])
+    if cached:
+        _attention_print_cached(cache_path, json_output=json_output)
+        return
     logger = setup_logger("sucoder.attention", config.log_dir, verbose)
     debug_ssh = _get_debug_ssh(ctx)
     if not watch:
@@ -5009,6 +5033,29 @@ def attention(
         return
     _attention_watch(config, watch, cache_path, local_only=local_only, logger=logger,
                      debug_ssh=debug_ssh, json_output=json_output)
+
+
+def _attention_print_cached(path: Path, *, json_output: bool) -> None:
+    """The watcher's last collection, as collected; says how old it is."""
+    import time as _time
+
+    from .attention import format_age, render_table, statuses_from_cache
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        typer.echo(f"No attention cache at {path}; is `sucoder attention --watch` running?", err=True)
+        raise typer.Exit(code=EXIT_UNAVAILABLE)
+    now = _time.time()
+    collected = payload.get("collected_at")
+    age = now - collected if isinstance(collected, (int, float)) else None
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        typer.echo(f"(cached {format_age(age)} ago)")
+        typer.echo(render_table(statuses_from_cache(payload), now))
+        for line in payload.get("errors") or []:
+            typer.echo(f"! {line}", err=True)
 
 
 def _attention_local_dir(config) -> Path:
@@ -5123,6 +5170,7 @@ def _attention_notify(command: List[str], status, now: float, logger) -> None:
         "SUCODER_ATTENTION_TARGET": status.target,
         "SUCODER_ATTENTION_HOST": status.host or "",
         "SUCODER_ATTENTION_STATE": status.state,
+        "SUCODER_ATTENTION_KIND": status.kind or "other",
         "SUCODER_ATTENTION_AGE": format_age(status.age(now)),
         "SUCODER_ATTENTION_MESSAGE": status.message or f"{status.mirror} is waiting",
     })
@@ -5137,14 +5185,16 @@ def _attention_watch(config, interval: int, cache_path: Path, *, local_only: boo
                      debug_ssh: bool, json_output: bool) -> None:
     """Collect, cache, notify, redraw; until interrupted.
 
-    The first pass sets the baseline: sessions already waiting when the
-    watcher starts are shown but not notified.
+    The first pass sets the baseline: requests already waiting when the
+    watcher starts are shown but not notified.  Later requests notify once,
+    filtered by ``attention.notify_kinds`` and ``notify_after_minutes``.
     """
     import time as _time
 
-    from .attention import cache_payload, newly_waiting, render_table
+    from .attention import cache_payload, due_notifications, render_table, waiting_requests
 
-    previous = None
+    settings = config.attention
+    notified = None
     try:
         while True:
             statuses, errors = _collect_attention(
@@ -5153,10 +5203,12 @@ def _attention_watch(config, interval: int, cache_path: Path, *, local_only: boo
             now = _time.time()
             payload = cache_payload(statuses, errors=errors, now=now)
             _write_attention_cache(cache_path, payload)
-            if previous is not None and config.attention.notify_command:
-                for status in newly_waiting(previous, statuses):
-                    _attention_notify(config.attention.notify_command, status, now, logger)
-            previous = {s.key: s for s in statuses}
+            if notified is None:
+                notified = waiting_requests(statuses)
+            elif settings.notify_command:
+                for status in due_notifications(statuses, notified, now, kinds=settings.notify_kinds,
+                                                after_seconds=settings.notify_after_minutes * 60):
+                    _attention_notify(settings.notify_command, status, now, logger)
             if json_output:
                 typer.echo(json.dumps(payload))
             else:
@@ -5746,7 +5798,7 @@ def _delegate_to_session_relay(config, command: str, args: List[str]) -> None:
 
 
 relay_app = typer.Typer(
-    help="sessions/message/peek on behalf of another local account, run as this one "
+    help="sessions/message/peek/attention on behalf of another local account, run as this one "
          "through sudo (session_relay; issue 52).",
 )
 app.add_typer(relay_app, name="relay")
@@ -5856,6 +5908,19 @@ def relay_peek(
     for messages that caller sent."""
     _relay_target(ctx, target)
     peek(ctx, mirror=mirror, lines=lines, reply=reply, verbose=verbose)
+
+
+@relay_app.command("attention")
+def relay_attention(
+    ctx: typer.Context,
+    json_output: bool = typer.Option(False, "--json"),
+    cached: bool = typer.Option(False, "--cached"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+) -> None:
+    """``sucoder attention`` for the relay's caller: a one-shot collection or
+    the cache, never --watch and never a caller-chosen file."""
+    attention(ctx, json_output=json_output, tmux_line=False, cached=cached, local_only=False,
+              watch=0, cache=None, verbose=verbose)
 
 
 # A pane read is one ssh session open (~10s on a BRC login node), so a poll

@@ -29,9 +29,13 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 # runs) on every turn, permission request and idle prompt; `sucoder attention`
 # lists the sessions waiting on you first.  `notify_command` runs under
 # `sucoder attention --watch` when a session starts waiting, with the session in
-# SUCODER_ATTENTION_* environment variables.  README: Which sessions need you.
+# SUCODER_ATTENTION_* environment variables.  notify_kinds (default all of
+# permission, question, idle, other) and notify_after_minutes (default 0) limit
+# which requests notify.  README: Which sessions need you.
 # attention:
 #   hooks: true
+#   notify_kinds: [permission, question]
+#   notify_after_minutes: 2
 #   notify_command: ["sh", "-c", 'curl -fsS -d "$SUCODER_ATTENTION_MIRROR: $SUCODER_ATTENTION_MESSAGE" https://ntfy.sh/<private-topic>']
 
 # Codex remote control (optional; ordinary terminal launch by default).

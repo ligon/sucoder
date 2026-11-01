@@ -12,8 +12,10 @@ atomically on every event, so the newest event is the session's state:
 - ``PostToolUse`` -- working again (clears a granted permission request);
   recorded without its payload, which carries the tool's output;
 - ``Stop`` -- the turn finished (idle);
-- ``Notification`` -- Claude asks for a permission, or has sat idle for a
-  minute waiting for input: the human is needed;
+- ``Notification`` -- Claude asks for a permission or an answer, or has sat
+  idle for a minute waiting for input: the human is needed.  Only those
+  notification types fire the hook (a matcher on ``notification_type``);
+  ``auth_success``, ``agent_completed`` and the like leave the state alone;
 - ``SessionStart`` / ``SessionEnd`` -- started (awaiting a first prompt) /
   ended.
 
@@ -31,7 +33,7 @@ import json
 import re
 import time
 from dataclasses import asdict, dataclass
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 RECORD_DIR = ".sucoder/attention"  # relative to the agent's $HOME
 RECORD_SUFFIX = ".rec"
@@ -49,6 +51,20 @@ EVENT_STATES: Dict[str, str] = {
     "Stop": "idle",
     "SessionEnd": "ended",
 }
+
+# Claude's ``notification_type`` values that mean the agent is blocked on the
+# human, each with the *kind* the push filter selects on.  Read from Claude
+# Code 2.1.316; other types (auth_success, agent_completed, computer_use_*,
+# push_notification, ...) are informational and are not hooked.
+WAITING_TYPES: Dict[str, str] = {
+    "permission_prompt": "permission",
+    "worker_permission_prompt": "permission",
+    "elicitation_dialog": "question",
+    "elicitation_url_dialog": "question",
+    "agent_needs_input": "question",
+    "idle_prompt": "idle",
+}
+NOTIFY_KINDS = ("permission", "question", "idle", "other")
 
 # Display/sort order: what most needs the human first.
 STATE_ORDER = ("waiting", "idle", "working", "ended", "unknown")
@@ -120,7 +136,10 @@ def claude_settings(key: str) -> Dict[str, object]:
     """
     def entry(event: str) -> List[Dict[str, object]]:
         command = {"type": "command", "command": hook_shell_command(key, event=event), "timeout": 10}
-        return [{"hooks": [command]}]
+        group: Dict[str, object] = {"hooks": [command]}
+        if event == "Notification":
+            group["matcher"] = "|".join(WAITING_TYPES)
+        return [group]
     return {"hooks": {event: entry(event) for event in EVENT_STATES}}
 
 
@@ -138,8 +157,10 @@ class Status:
     at: Optional[float] = None
     host: Optional[str] = None
     message: Optional[str] = None
+    kind: Optional[str] = None
     session_id: Optional[str] = None
     cwd: Optional[str] = None
+    transcript_path: Optional[str] = None
     source: str = "local"
 
     def age(self, now: float) -> Optional[float]:
@@ -171,11 +192,31 @@ def parse_record(key: str, text: str, *, source: str = "local") -> Status:
     event = payload.get("hook_event_name")
     status.event = event if isinstance(event, str) else None
     status.state = EVENT_STATES.get(status.event or "", "unknown")
-    for name in ("message", "session_id", "cwd"):
+    for name in ("message", "session_id", "cwd", "transcript_path"):
         value = payload.get(name)
         if isinstance(value, str):
             setattr(status, name, value)
+    if status.event == "Notification":
+        status.kind = notification_kind(payload.get("notification_type"), status.message)
+        if status.kind is None:  # an informational type the matcher let through
+            status.state = "unknown"
     return status
+
+
+def notification_kind(notification_type: object, message: Optional[str]) -> Optional[str]:
+    """``permission``/``question``/``idle``/``other`` for a blocking
+    notification, ``None`` for an informational one.
+
+    Without a ``notification_type`` (an older Claude) the message decides.
+    """
+    if isinstance(notification_type, str) and notification_type:
+        return WAITING_TYPES.get(notification_type)
+    text = (message or "").lower()
+    if "permission" in text:
+        return "permission"
+    if "waiting for your input" in text:
+        return "idle"
+    return "other"
 
 
 # Dump every record in the agent's attention directory on one host: each
@@ -248,8 +289,11 @@ def render_table(statuses: Sequence[Status], now: float) -> str:
         return "No attention records. Sessions report once launched with attention.hooks enabled."
     rows = [("STATE", "AGE", "MIRROR", "TARGET", "HOST", "DETAIL")]
     for s in sort_statuses(statuses, now):
+        detail = _one_line(s.message, 60) if s.state == "waiting" else ""
+        if s.state == "waiting" and s.kind:
+            detail = f"[{s.kind}] {detail}".rstrip()
         rows.append((s.state, format_age(s.age(now)), s.mirror, s.target,
-                     (s.host or "?").split(".")[0], _one_line(s.message, 60)))
+                     (s.host or "?").split(".")[0], detail))
     widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]) - 1)]
     lines = []
     for r in rows:
@@ -275,21 +319,31 @@ def render_tmux(statuses: Sequence[Status], now: float, *, max_names: int = 4) -
     return " | ".join(parts)
 
 
-def newly_waiting(previous: Dict[str, Status], current: Sequence[Status]) -> List[Status]:
-    """Statuses that became ``waiting`` since *previous* (a new event counts).
+def due_notifications(statuses: Sequence[Status], notified: Set[Tuple[str, Optional[float]]], now: float,
+                      *, kinds: Sequence[str] = NOTIFY_KINDS, after_seconds: float = 0.0) -> List[Status]:
+    """Waiting sessions to notify about now; adds them to *notified*.
 
-    A record whose event time changed while still waiting is a new request
-    (another permission prompt), so it notifies again; an unchanged record
-    does not.
+    A request is one record, ``(key, event time)``: it notifies once, when it
+    has waited *after_seconds* and its kind is in *kinds*.  A new event on a
+    session still waiting (a second permission prompt) is a new request.
     """
-    fresh = []
-    for s in current:
-        if s.state != "waiting":
+    due = []
+    for s in statuses:
+        if s.state != "waiting" or (s.key, s.at) in notified:
             continue
-        old = previous.get(s.key)
-        if old is None or old.state != "waiting" or old.at != s.at:
-            fresh.append(s)
-    return fresh
+        if (s.kind or "other") not in kinds:
+            continue
+        age = s.age(now)
+        if after_seconds > 0 and (age is None or age < after_seconds):
+            continue
+        notified.add((s.key, s.at))
+        due.append(s)
+    return due
+
+
+def waiting_requests(statuses: Iterable[Status]) -> Set[Tuple[str, Optional[float]]]:
+    """The requests already pending, for a watcher's baseline."""
+    return {(s.key, s.at) for s in statuses if s.state == "waiting"}
 
 
 def cache_payload(statuses: Sequence[Status], *, errors: Sequence[str], now: Optional[float] = None) -> Dict[str, object]:

@@ -28,7 +28,8 @@ def _hook(key, payload, directory, *, event=None):
 
 
 def _payload(event, **extra):
-    return json.dumps({"hook_event_name": event, "session_id": "s-1", "cwd": "/w", **extra})
+    return json.dumps({"hook_event_name": event, "session_id": "s-1", "cwd": "/w",
+                       "transcript_path": "/home/coder/.claude/projects/-w/s-1.jsonl", **extra})
 
 
 # -- the hook ---------------------------------------------------------------
@@ -44,6 +45,7 @@ def test_the_hook_writes_a_record_that_parses_to_the_event_state(tmp_path, event
     status = att.parse_record("Proj--savio", record.read_text())
     assert (status.state, status.event, status.mirror, status.target) == (state, event, "Proj", "savio")
     assert status.session_id == "s-1" and status.cwd == "/w" and status.host
+    assert status.transcript_path == "/home/coder/.claude/projects/-w/s-1.jsonl"
     assert abs(status.at - time.time()) < 30
     assert [p.name for p in tmp_path.iterdir()] == ["Proj--savio.rec"]  # no temp file left
 
@@ -136,6 +138,7 @@ def test_waiting_sorts_first_and_longest_waiting_leads():
     assert line == "WAIT W2(8m) W1(10s) | run 1 | idle 1"
     table = att.render_table(rows, now)
     assert table.splitlines()[1].startswith("waiting  8m")
+    assert "[permission]" not in table  # no kind recorded, none shown
 
 
 def test_the_newest_record_wins_for_a_key_seen_twice():
@@ -143,26 +146,73 @@ def test_the_newest_record_wins_for_a_key_seen_twice():
     assert [(s.key, s.state) for s in merged] == [("A--t", "waiting")]
 
 
-def test_newly_waiting_notifies_once_per_request():
-    before = {"A--t": _status("A--t", "working", 1), "B--t": _status("B--t", "waiting", 5)}
-    now = [_status("A--t", "waiting", 9), _status("B--t", "waiting", 5),
-           _status("C--t", "waiting", 3), _status("D--t", "idle", 4)]
-    assert [s.key for s in att.newly_waiting(before, now)] == ["A--t", "C--t"]
-    again = {s.key: s for s in now}
-    assert att.newly_waiting(again, now) == []
-    assert [s.key for s in att.newly_waiting(again, [_status("B--t", "waiting", 6)])] == ["B--t"]
+def _waiting(key, at, kind="permission"):
+    status = _status(key, "waiting", at)
+    status.kind = kind
+    return status
+
+
+def test_a_request_notifies_once_and_a_new_event_notifies_again():
+    notified = att.waiting_requests([_waiting("B--t", 5), _status("D--t", "idle", 4)])
+    assert notified == {("B--t", 5)}
+    now = [_waiting("A--t", 9), _waiting("B--t", 5), _waiting("C--t", 3), _status("D--t", "idle", 4)]
+    assert [s.key for s in att.due_notifications(now, notified, 10)] == ["A--t", "C--t"]
+    assert att.due_notifications(now, notified, 10) == []
+    assert [s.key for s in att.due_notifications([_waiting("B--t", 6)], notified, 10)] == ["B--t"]
+
+
+def test_notifications_filter_by_kind_and_wait_until_due():
+    notified = set()
+    rows = [_waiting("P--t", 100, "permission"), _waiting("I--t", 100, "idle"), _waiting("Q--t", 100, None)]
+    assert [s.key for s in att.due_notifications(rows, notified, 200, kinds=["permission", "other"],
+                                                  after_seconds=300)] == []
+    assert notified == set()  # not yet due is not notified
+    due = att.due_notifications(rows, notified, 400, kinds=["permission", "other"], after_seconds=300)
+    assert [s.key for s in due] == ["P--t", "Q--t"]
+
+
+@pytest.mark.parametrize("ntype, message, state, kind", [
+    ("permission_prompt", "Claude needs your permission to use Bash", "waiting", "permission"),
+    ("idle_prompt", "Claude is waiting for your input", "waiting", "idle"),
+    ("elicitation_dialog", "Pick one", "waiting", "question"),
+    ("auth_success", "Logged in", "unknown", None),
+    (None, "Claude needs your permission to use Edit", "waiting", "permission"),
+    (None, "Claude is waiting for your input", "waiting", "idle"),
+    (None, "Something new", "waiting", "other"),
+])
+def test_notification_kinds(tmp_path, ntype, message, state, kind):
+    extra = {"message": message, **({"notification_type": ntype} if ntype else {})}
+    _hook("K--t", _payload("Notification", **extra), tmp_path)
+    status = att.parse_record("K--t", (tmp_path / "K--t.rec").read_text())
+    assert (status.state, status.kind) == (state, kind)
+
+
+def test_only_blocking_notification_types_fire_the_hook():
+    settings = json.loads(att.claude_settings_json("P--t"))
+    matcher = settings["hooks"]["Notification"][0]["matcher"]
+    assert set(matcher.split("|")) == set(att.WAITING_TYPES)
+    assert "auth_success" not in matcher
+    assert all("matcher" not in groups[0] for event, groups in settings["hooks"].items() if event != "Notification")
 
 
 def test_the_cache_round_trips():
-    rows = [_status("A--t", "waiting", 9, message="m")]
+    rows = [_waiting("A--t", 9)]
     payload = json.loads(json.dumps(att.cache_payload(rows, errors=["x"], now=10)))
     assert att.statuses_from_cache(payload) == rows
 
 
 # -- configuration ---------------------------------------------------------
 
-def test_attention_config_defaults_off():
-    assert _parse_attention(None) == AttentionConfig(hooks=False, notify_command=[])
+def test_attention_config_defaults_off_and_notifies_every_kind_at_once():
+    parsed = _parse_attention(None)
+    assert parsed == AttentionConfig(hooks=False, notify_command=[])
+    assert parsed.notify_kinds == list(att.NOTIFY_KINDS) and parsed.notify_after_minutes == 0
+
+
+def test_attention_config_parses_the_push_filter():
+    parsed = _parse_attention({"notify_kinds": ["permission", "question"], "notify_after_minutes": 2.5})
+    assert parsed.notify_kinds == ["permission", "question"] and parsed.notify_after_minutes == 2.5
+    assert _parse_attention({"notify_kinds": "permission"}).notify_kinds == ["permission"]
 
 
 def test_attention_config_parses_and_splits_a_command_string():
@@ -172,6 +222,8 @@ def test_attention_config_parses_and_splits_a_command_string():
 
 @pytest.mark.parametrize("raw", [
     [], {"hooks": "yes"}, {"hook": True}, {"notify_command": [1]}, {"notify_command": ["", "x"]},
+    {"notify_kinds": []}, {"notify_kinds": ["urgent"]}, {"notify_after_minutes": -1},
+    {"notify_after_minutes": "5"}, {"notify_after_minutes": True},
 ])
 def test_attention_config_rejects_malformed_input(raw):
     with pytest.raises(ConfigError):
@@ -260,8 +312,138 @@ def test_notify_describes_the_session_in_the_environment(tmp_path):
     import logging
 
     out = tmp_path / "env.txt"
-    command = ["sh", "-c", f'printf "%s|%s|%s" "$SUCODER_ATTENTION_MIRROR" '
-                           f'"$SUCODER_ATTENTION_TARGET" "$SUCODER_ATTENTION_MESSAGE" > {out}']
-    cli._attention_notify(command, _status("Proj--savio", "waiting", 100, message="perm"), 160,
-                          logging.getLogger("t"))
-    assert out.read_text() == "Proj|savio|perm"
+    command = ["sh", "-c", f'printf "%s|%s|%s|%s" "$SUCODER_ATTENTION_MIRROR" '
+                           f'"$SUCODER_ATTENTION_TARGET" "$SUCODER_ATTENTION_KIND" "$SUCODER_ATTENTION_MESSAGE" > {out}']
+    status = _waiting("Proj--savio", 100)
+    status.message = "perm"
+    cli._attention_notify(command, status, 160, logging.getLogger("t"))
+    assert out.read_text() == "Proj|savio|permission|perm"
+
+
+def test_cached_lists_without_collecting(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_collect_attention", lambda *a, **k: pytest.fail("must not collect"))
+    cache = tmp_path / "cache.json"
+    args = ["--config", str(_cli_config(tmp_path)), "attention", "--cached", "--cache", str(cache)]
+    missing = CliRunner().invoke(cli.app, args)
+    assert missing.exit_code == cli.EXIT_UNAVAILABLE and "--watch" in missing.output
+    cache.write_text(json.dumps(att.cache_payload([_waiting("Proj--savio", time.time() - 90)], errors=[])))
+    result = CliRunner().invoke(cli.app, args)
+    assert result.exit_code == 0 and "(cached" in result.output and "[permission]" in result.output
+
+
+def test_choosing_two_modes_is_refused(tmp_path):
+    result = CliRunner().invoke(cli.app, ["attention", "--tmux", "--cached"])
+    assert result.exit_code == 2
+
+
+# -- through the session relay ---------------------------------------------
+
+_RELAY = "session_relay:\n  user: somebody-else\n  command: /opt/sucoder/bin/sucoder\n"
+
+
+def _relay_config(tmp_path):
+    path = tmp_path / "relay.yaml"
+    path.write_text(f"human_user: coder\nagent_user: coder\nmirror_root: {tmp_path}\n" + _RELAY)
+    return path
+
+
+def _sudo(monkeypatch):
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    return calls
+
+
+@pytest.mark.parametrize("flags, relayed", [
+    ([], []), (["--json", "--cached"], ["--json", "--cached"]), (["-v"], ["--verbose"]),
+])
+def test_the_agent_account_reads_through_the_relay(tmp_path, monkeypatch, flags, relayed):
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **k: None)
+    calls = _sudo(monkeypatch)
+    result = CliRunner().invoke(cli.app, ["--config", str(_relay_config(tmp_path)), "attention", *flags])
+    assert result.exit_code == 0, result.output
+    argv = ["/opt/sucoder/bin/sucoder", "relay", "attention", *relayed]
+    assert calls == [["sudo", "-n", "-u", "somebody-else", "-l", *argv], ["sudo", "-n", "-u", "somebody-else", *argv]]
+
+
+@pytest.mark.parametrize("flags", [["--watch", "30"], ["--cache", "/tmp/x.json"]])
+def test_watch_and_a_chosen_cache_are_not_relayed(tmp_path, monkeypatch, flags):
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **k: None)
+    calls = _sudo(monkeypatch)
+    result = CliRunner().invoke(cli.app, ["--config", str(_relay_config(tmp_path)), "attention", *flags])
+    assert result.exit_code == 2 and calls == []
+
+
+def test_local_only_reads_this_accounts_records_without_the_relay(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **k: None)
+    monkeypatch.setenv(att.DIR_ENV, str(tmp_path / "none"))
+    calls = _sudo(monkeypatch)
+    result = CliRunner().invoke(cli.app, ["--config", str(_relay_config(tmp_path)), "attention",
+                                          "--local-only", "--cache", str(tmp_path / "c.json")])
+    assert result.exit_code == 0 and calls == [] and "No attention records" in result.output
+
+
+def test_the_relay_side_runs_one_collection_and_never_watches(tmp_path, monkeypatch):
+    from sucoder import tunnel
+    monkeypatch.setattr(tunnel, "_NONINTERACTIVE", False)  # the relay sets it; restored after
+    path = tmp_path / "config.yaml"
+    path.write_text(f"human_user: coder\nagent_user: coder\nmirror_root: {tmp_path}\n")
+    monkeypatch.setattr(cli, "_default_config_path", lambda: path)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **k: None)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    seen = {}
+    monkeypatch.setattr(cli, "_collect_attention",
+                        lambda config, **kw: (seen.update(kw) or ([_waiting("A--t", time.time())], [])))
+    result = CliRunner().invoke(cli.app, ["relay", "attention", "--json"])
+    assert result.exit_code == 0, result.output
+    assert seen["warm_only"] is False and seen["local_only"] is False
+    assert json.loads(result.output)["sessions"][0]["key"] == "A--t"
+    assert (tmp_path / ".sucoder" / "attention.json").exists()
+
+
+# -- examples/coordinator/attention-notify -----------------------------------
+
+NOTIFIER = Path(__file__).resolve().parent.parent / "examples" / "coordinator" / "attention-notify"
+
+
+def _run_notifier(tmp_path, **env):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    log = tmp_path / "tmux.log"
+    fake = bin_dir / "tmux"
+    fake.write_text(f'#!/bin/sh\nfor a in "$@"; do printf "%s\\037" "$a"; done >> {log}\nprintf "\\n" >> {log}\n')
+    fake.chmod(0o755)
+    base = {"PATH": f"{bin_dir}:/usr/bin:/bin", "SUCODER_ATTENTION_KEY": "LSMS--savio",
+            "SUCODER_ATTENTION_MIRROR": "LSMS", "SUCODER_ATTENTION_KIND": "permission",
+            "SUCODER_ATTENTION_AGE": "3m"}
+    result = subprocess.run(["sh", str(NOTIFIER)], env={**base, **env}, capture_output=True, text=True)
+    calls = [line.split("\x1f")[:-1] for line in log.read_text().splitlines()] if log.exists() else []
+    return result, calls
+
+
+def test_the_notifier_types_one_clean_line_into_the_coordinator(tmp_path):
+    result, calls = _run_notifier(tmp_path, COORDINATOR_PANE="coordinator",
+                                  SUCODER_ATTENTION_MESSAGE="needs\nyour\x1b[31m permission")
+    assert result.returncode == 0
+    assert calls == [
+        ["send-keys", "-t", "coordinator", "-l",
+         "[attention] LSMS--savio is waiting (permission, 3m): needs your [31m permission"],
+        ["send-keys", "-t", "coordinator", "Enter"],
+    ]
+
+
+def test_the_notifier_never_reports_the_coordinator_to_itself(tmp_path):
+    result, calls = _run_notifier(tmp_path, COORDINATOR_PANE="coordinator",
+                                  SUCODER_ATTENTION_MIRROR="Coordinator", SUCODER_ATTENTION_MESSAGE="m")
+    assert result.returncode == 0 and calls == []
+
+
+def test_the_notifier_does_nothing_unconfigured_and_survives_a_failed_post(tmp_path):
+    result, calls = _run_notifier(tmp_path, SUCODER_ATTENTION_MESSAGE="m")
+    assert result.returncode == 0 and calls == []
+    result, _ = _run_notifier(tmp_path, NTFY_URL="http://127.0.0.1:9/x", SUCODER_ATTENTION_MESSAGE="m")
+    assert result.returncode == 0

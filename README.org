@@ -1051,6 +1051,7 @@ alone.  Other harnesses are not covered yet.
 
 #+begin_src sh
 sucoder attention               # list: waiting first, longest-waiting first
+sucoder attention --cached      # the watcher's last pass; never connects
 sucoder attention --local-only  # this host's agent account only
 sucoder attention --watch 30    # dashboard; refreshes the cache, notifies
 sucoder attention --tmux        # one line from the cache, for status-right
@@ -1067,9 +1068,19 @@ set -g status-right '#(sucoder attention --tmux)'
 #+end_src
 
 =attention.notify_command= (a command string or argv list) runs once
-for each session that starts waiting, with the session described in
-=SUCODER_ATTENTION_KEY=, =_MIRROR=, =_TARGET=, =_HOST=, =_STATE=, =_AGE=
-and =_MESSAGE=, for example to post to an ntfy topic on your phone.
+for each request a session starts waiting on, with the session described
+in =SUCODER_ATTENTION_KEY=, =_MIRROR=, =_TARGET=, =_HOST=, =_STATE=,
+=_KIND=, =_AGE= and =_MESSAGE=, for example to post to an ntfy topic on
+your phone.  A request's kind is =permission=, =question=, =idle= (the
+turn finished a minute ago) or =other=; =attention.notify_kinds= picks
+which notify (default all) and =attention.notify_after_minutes= how long
+one must wait first (default 0).  =examples/coordinator/attention-notify=
+is a ready notifier for ntfy and for a coordinator session.
+
+On the agent account, with =session_relay=, =attention= and =--cached=
+run as the relay's user (=sucoder relay attention=), like =sessions=;
+=--watch= and =--cache= are refused there.  A coordinator agent that
+triages waiting sessions and suggests replies: =examples/coordinator/=.
 Design and open items: [[file:docs/attention.org][docs/attention.org]].
 
 *** Listing and retiring WIP snapshots
