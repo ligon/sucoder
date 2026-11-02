@@ -61,6 +61,14 @@ For each waiting session:
        - Why :: <one sentence; cite the handoff line or transcript turn>
        - Risk :: low | medium | high, and what could go wrong
 
+An `untracked` session is running without status hooks, so nobody
+knows whether it is waiting. Look at it the same way (peek a cluster
+session; read a local one's `transcript_path`, which the listing gives
+when the launch named a session id) and triage it if it is blocked;
+otherwise give it one line saying what it is doing. Do not suggest
+restarting it unless the human asks: a cluster job may hold days of
+allocation.
+
 Keep a whole triage short enough to read in a minute. Sessions that are
 working or idle under a minute get one line in total, not a block each.
 

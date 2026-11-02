@@ -10,8 +10,8 @@ Design and reasoning: [[file:../../docs/attention.org][docs/attention.org]], "Co
 
 1. =sucoder= on vantage installed from a checkout that has =sucoder attention= and =relay attention=.
 2. The agent account can run =sucoder= at all.
-   Its startup check refuses a configuration the agent can write, and on vantage =~coder/.sucoder/config.yaml= is owned by =coder=, so every =coder=-side command (=sessions=, =peek=, =message=, =attention=) currently stops there.
-   One fix, as root: =chown ligon:coder ~coder/.sucoder/config.yaml && chmod 0640 ~coder/.sucoder/config.yaml=.
+   Its startup check refuses a configuration the agent can write, so =~coder/.sucoder/config.yaml= must not be owned by =coder=; as root: =chown ligon:coder ~coder/.sucoder/config.yaml && chmod 0640 ~coder/.sucoder/config.yaml=.
+   It also needs a SuCoder whose check does not =sudo= to the account already running it (this branch); before that, every =coder=-side command (=sessions=, =peek=, =message=, =attention=) failed with "cannot read configuration".
 3. =attention.hooks: true= in the human's config and a watcher running (below).
 
 * Steps

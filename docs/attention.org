@@ -94,6 +94,26 @@ ended    2h   GradApps        local         vantage
 It reads the agent account's directory on this host, then the same directory once per cluster (targets that share a scheduler share =$HOME=; =group_targets_by_cluster=), one round trip each with =LIST_RECORDS_SH=.
 When a key appears in two places the newest record wins.
 
+*** Untracked sessions
+
+Hooks are attached at launch, so a session started before =attention.hooks= was on, by an older SuCoder, or by a harness without hooks writes no record.
+Listing only records made such a session vanish from the screen, which is worse than showing it with an unknown state: on vantage on 2026-11-02 the coordinator could not see a Savio job or the SuCoder session, both launched before the install.
+
+So the listing also asks what is running, and shows a live session with no record, or with only an =ended= record, as =untracked=:
+
+- This host :: the process table.
+  A local launch is =sudo -u <agent> bash -c '... cd <mirror> || exit 1; umask 0007; <agent> ...'= (=CommandExecutor._wrap_agent_command=), and =/proc/<pid>/cmdline= is readable by every account, so the watcher, running as the human, can see it without reading the agent's =cwd=.
+  The directory maps to a configured mirror through =mirror_root= and =mirror_dirname=; a Claude launch's =--session-id= gives the transcript path, which the coordinator reads.
+  A bare =bash -c= with that shape counts only when the agent account owns it.
+- A cluster :: =squeue --me= in the same round trip as the records (=records_and_live_sh=; markers delimit the two halves and carry =squeue='s exit status), mapped to mirror and target exactly as =sessions= does (=token_to_mirror=, =match_target=).
+  Only =RUNNING= jobs count.
+  A job that no single target claims is filed under the cluster's name.
+- A host without a scheduler :: its SuCoder tmux sessions (=LOGIN_SESSION_SH=).
+
+An =untracked= session sorts after =idle=, shows =untracked N= on the tmux line, and never notifies: nothing says it is waiting.
+A live session whose =squeue= did not answer is reported as an error ("running sessions not inspected"), not as absent.
+The cluster check does not probe panes, so a job whose agent has exited (its pane back at a shell) still reads =untracked=; =sucoder sessions= says which.
+
 Four modes:
 
 - =sucoder attention= :: one listing; may authenticate like =sessions= does.
@@ -209,16 +229,18 @@ Built on branch =coder/attention-status=:
 
 Verified against real Claude Code 2.1.316 on vantage: a =--settings= hook fired, wrote a 0660 record, and parsed to the expected state.
 
-Added since (same branch): the =Notification= matcher and request kinds, =notify_kinds= and =notify_after_minutes=, =--cached=, =relay attention=, =transcript_path= in the record, and [[file:../examples/coordinator/README.org][examples/coordinator/]].
+Added since (same branch): the =Notification= matcher and request kinds, =notify_kinds= and =notify_after_minutes=, =--cached=, =relay attention=, =transcript_path= in the record, [[file:../examples/coordinator/README.org][examples/coordinator/]], and =untracked= sessions.
 
 Not yet done:
 
 1. A live interactive session on Savio with the hooks on; confirm =Notification= arrives for both permission and idle.
-2. On vantage, every =coder=-side =sucoder= command stops at the startup check, because =~coder/.sucoder/config.yaml= is owned by =coder= and the check refuses a configuration the agent can write.
-   The relay, and so the coordinator's =peek= and =message=, need that fixed first; see the coordinator README.
+2. On vantage, every =coder=-side =sucoder= command stopped at the startup check, for two reasons.
+   =~coder/.sucoder/config.yaml= was owned by =coder=, and the check refuses a configuration the agent can write (fixed on vantage, 2026-11-02: =ligon:coder 0640=).
+   And the check ran =sudo -u coder test -r= even when already running as =coder=, which needs a sudoers rule the account lacks, so it reported "cannot read configuration" for a readable file; fixed on this branch by checking directly when the current user is the agent (=sucoder/cli.py=, the =run_startup_checks= call).
 3. Codex.
    Its =notify= setting fires only on turn completion and would replace a user's own =notify=; Codex's newer hooks need checking first.
-4. A record left by a session whose tmux is gone stays as its last state; the listing could cross-check against =sessions= and mark it orphaned.
+4. A record left by a session whose tmux is gone stays as its last state.
+   The listing now knows what is running (=untracked=, above), so it could mark such a record orphaned; it does not yet, because the local scan sees only SuCoder's own launches and an absent process is weaker evidence than an absent job.
    An interrupted turn (Esc) sends no =Stop=, so it reads "working" until the idle =Notification= about a minute later.
 5. Allocation expiry and renewal failure as watcher events.
 6. =message= and =peek= for local sessions.

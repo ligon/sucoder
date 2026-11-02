@@ -1878,11 +1878,17 @@ def main(
             raise typer.Exit(code=2) from exc
         is_default_config = True
 
+    # Already the agent (a relay call, the coordinator): check access
+    # directly.  `sudo -u <self>` needs a sudoers rule the agent account
+    # does not have, so wrapping it failed every agent-side command with
+    # "cannot read configuration" even when the file was readable --- the
+    # same rule `_get_use_sudo_for_agent` applies to every later command.
+    running_as_agent = loaded_config.agent_user == pwd.getpwuid(os.getuid()).pw_name
     try:
         run_startup_checks(
             loaded_config,
             config_path,
-            use_sudo=use_sudo_for_agent,
+            use_sudo=use_sudo_for_agent and not running_as_agent,
         )
     except StartupError as exc:
         if is_default_config:
@@ -5080,12 +5086,13 @@ def _collect_attention(config, *, local_only: bool, warm_only: bool, logger, deb
     existing connections and never authenticates, for the unattended watcher.
     """
     from .attention import (
-        LIST_RECORDS_SH, RECORD_SUFFIX, merge_statuses, parse_listing, parse_record,
+        RECORD_SUFFIX, mark_untracked, merge_statuses, parse_listing, parse_record,
     )
     from .sessions_report import group_targets_by_cluster, login_hosts_for
 
     statuses = []
     errors: List[str] = []
+    live = _attention_local_live(config, logger)
     local_dir = _attention_local_dir(config)
     try:
         for path in sorted(local_dir.glob(f"*{RECORD_SUFFIX}")):
@@ -5099,27 +5106,36 @@ def _collect_attention(config, *, local_only: bool, warm_only: bool, logger, deb
     except OSError as exc:
         errors.append(f"local: could not list {local_dir} ({exc.strerror})")
     if local_only or not config.targets:
-        return merge_statuses(statuses), errors
+        return mark_untracked(merge_statuses(statuses), live), errors
 
+    from .attention import live_from_squeue, live_from_tmux, records_and_live_sh, split_records_and_live
+    from .sessions_report import LOGIN_SESSION_SH, SQUEUE_FORMAT
+
+    mirror_tokens = {name: _sanitize_session_token(name) for name in config.mirrors}
+    squeue = f"squeue --me --noheader -o {shlex.quote(SQUEUE_FORMAT)}"
     clusters, schedulerless = group_targets_by_cluster(config.targets)
-    plan: List[Tuple[str, Any, str]] = []
+    # (label, remote, host, candidate targets, scheduler?)
+    plan: List[Tuple[str, Any, str, List[str], bool]] = []
     for cluster, names in clusters.items():
-        plan.append((cluster, config.targets[names[0]], _cluster_query_host(names) or ""))
+        plan.append((cluster, config.targets[names[0]], _cluster_query_host(names) or "", names, True))
     for name in schedulerless:
         remote = config.targets[name]
         hosts = login_hosts_for(name, remote, {})
         if hosts:
-            plan.append((name, remote, hosts[0]))
-    for label, remote, host in plan:
+            plan.append((name, remote, hosts[0], [name], False))
+    for label, remote, host, names, scheduled in plan:
         host = host or getattr(remote, "gateway", None) or ""
         if not host:
             continue
+        # The records and what is running, in one round trip: running
+        # sessions with no record are shown as untracked.
+        script = records_and_live_sh(squeue if scheduled else LOGIN_SESSION_SH)
         try:
             control = _control_for_host(remote, host, debug_ssh)
             if warm_only:
-                result = _run_remote_capture(control, host, LIST_RECORDS_SH, debug=debug_ssh)
+                result = _run_remote_capture(control, host, script, debug=debug_ssh)
             else:
-                result = _capture_over_tunnel(control, host, LIST_RECORDS_SH,
+                result = _capture_over_tunnel(control, host, script,
                                               logger=logger, config=config, debug=debug_ssh)
         except Exception as exc:  # noqa: BLE001 -- one cluster must not sink the rest
             errors.append(f"{label}: not inspected ({exc})")
@@ -5128,8 +5144,51 @@ def _collect_attention(config, *, local_only: bool, warm_only: bool, logger, deb
             detail = (result.stderr or "").strip().splitlines()[-1:] or ["(no output)"]
             errors.append(f"{label}: not inspected (exit {result.returncode}: {detail[0]})")
             continue
-        statuses.extend(parse_listing(result.stdout, source=label))
-    return merge_statuses(statuses), errors
+        records, live_text, live_rc = split_records_and_live(result.stdout)
+        statuses.extend(parse_listing(records, source=label))
+        what = "squeue" if scheduled else "tmux"
+        if live_text is None:
+            errors.append(f"{label}: running sessions not inspected ({what} did not answer)")
+        elif live_rc != 0:
+            errors.append(f"{label}: running sessions not inspected ({what} exit {live_rc})")
+        elif scheduled:
+            found, bad = live_from_squeue(live_text, label=label, targets=config.targets,
+                                          candidates=names, mirror_tokens=mirror_tokens)
+            live.extend(found)
+            errors.extend(f"{label}: could not parse squeue row: {line}" for line in bad)
+        else:
+            live.extend(live_from_tmux(live_text, target=label, host=host, mirror_tokens=mirror_tokens))
+    return mark_untracked(merge_statuses(statuses), live), errors
+
+
+def _attention_local_live(config, logger) -> list:
+    """Agent sessions running on this host, from the process table."""
+    from .attention import AGENT_COMMANDS, local_live_sessions, scan_local_launches
+
+    try:
+        entry = pwd.getpwnam(config.agent_user)
+        agent_uid, agent_home = entry.pw_uid, entry.pw_dir
+    except KeyError:
+        agent_uid, agent_home = None, str(Path.home())
+    agents = set(AGENT_COMMANDS)
+    launchers = [getattr(config, "agent_launcher", None)]
+    launchers += [getattr(m, "agent_launcher", None) for m in config.mirrors.values()]
+    for launcher in launchers:
+        command = getattr(launcher, "command", None) or []
+        if command:
+            agents.add(os.path.basename(str(command[0])))
+    try:
+        launches = scan_local_launches(agent_user=config.agent_user, agent_uid=agent_uid, agents=agents)
+    except Exception as exc:  # noqa: BLE001 -- the records still stand on their own
+        logger.warning("attention: could not scan local processes: %s", exc)
+        return []
+    mirror_paths = {
+        str(Path(config.mirror_root) / settings.mirror_dirname).rstrip("/"): name
+        for name, settings in config.mirrors.items()
+    }
+    return local_live_sessions(launches, mirror_paths=mirror_paths,
+                               mirror_root=str(config.mirror_root), agent_home=agent_home,
+                               host=socket.gethostname())
 
 
 def _write_attention_cache(path: Path, payload) -> None:

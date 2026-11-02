@@ -1057,6 +1057,12 @@ sucoder attention --watch 30    # dashboard; refreshes the cache, notifies
 sucoder attention --tmux        # one line from the cache, for status-right
 #+end_src
 
+A session with no record (launched before =attention.hooks= was on, or
+by a harness without hooks) is still listed, as =untracked=: running,
+state unknown.  Local ones are found in the process table, cluster ones
+by =squeue= in the same round trip as the records.  Restart such a
+session through SuCoder to track it.
+
 =--watch= uses warm connections only and never prompts, so it can run
 unattended in a tmux window beside the tunnel keeper.  It writes
 =~/.sucoder/attention.json=, which =--tmux= reads without loading any

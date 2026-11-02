@@ -30,10 +30,12 @@ text in, and the caller (``sucoder attention``) does the reading and SSH.
 from __future__ import annotations
 
 import json
+import os
 import re
+import shlex
 import time
 from dataclasses import asdict, dataclass
-from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 RECORD_DIR = ".sucoder/attention"  # relative to the agent's $HOME
 RECORD_SUFFIX = ".rec"
@@ -66,8 +68,10 @@ WAITING_TYPES: Dict[str, str] = {
 }
 NOTIFY_KINDS = ("permission", "question", "idle", "other")
 
-# Display/sort order: what most needs the human first.
-STATE_ORDER = ("waiting", "idle", "working", "ended", "unknown")
+# Display/sort order: what most needs the human first.  ``untracked`` is a
+# live session with no record (launched without hooks), so it could be
+# waiting; it sorts just after the sessions known to need the human.
+STATE_ORDER = ("waiting", "idle", "untracked", "working", "ended", "unknown")
 
 _KEY_RE = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._-]*$")
 _UNSAFE_RE = re.compile(r"[^A-Za-z0-9._-]")
@@ -289,7 +293,7 @@ def render_table(statuses: Sequence[Status], now: float) -> str:
         return "No attention records. Sessions report once launched with attention.hooks enabled."
     rows = [("STATE", "AGE", "MIRROR", "TARGET", "HOST", "DETAIL")]
     for s in sort_statuses(statuses, now):
-        detail = _one_line(s.message, 60) if s.state == "waiting" else ""
+        detail = _one_line(s.message, 60) if s.state in ("waiting", "untracked") else ""
         if s.state == "waiting" and s.kind:
             detail = f"[{s.kind}] {detail}".rstrip()
         rows.append((s.state, format_age(s.age(now)), s.mirror, s.target,
@@ -307,6 +311,7 @@ def render_tmux(statuses: Sequence[Status], now: float, *, max_names: int = 4) -
     waiting = [s for s in ordered if s.state == "waiting"]
     working = sum(1 for s in ordered if s.state == "working")
     idle = sum(1 for s in ordered if s.state == "idle")
+    untracked = sum(1 for s in ordered if s.state == "untracked")
     parts = []
     if waiting:
         names = [f"{s.mirror}({format_age(s.age(now))})" for s in waiting[:max_names]]
@@ -316,6 +321,8 @@ def render_tmux(statuses: Sequence[Status], now: float, *, max_names: int = 4) -
     parts.append(f"run {working}")
     if idle:
         parts.append(f"idle {idle}")
+    if untracked:
+        parts.append(f"untracked {untracked}")
     return " | ".join(parts)
 
 
@@ -362,3 +369,246 @@ def statuses_from_cache(payload: Dict[str, object]) -> List[Status]:
             known = {k: row.get(k) for k in Status.__dataclass_fields__ if k in row}
             out.append(Status(**known))
     return out
+
+
+# ---------------------------------------------------------------------------
+# Live sessions without records ("untracked").
+#
+# Hooks are attached at launch, so a session started before attention.hooks
+# was enabled (or by an older SuCoder, or a harness without hooks) writes no
+# record and would otherwise be invisible.  The listing therefore also asks
+# what is running -- locally from the process table, on a cluster from
+# ``squeue`` (or tmux, on a host without a scheduler) in the same round trip
+# as the records -- and shows a live session with no record, or only an
+# ``ended`` one, as ``untracked``: alive, state unknown.  It never notifies.
+# ---------------------------------------------------------------------------
+
+UNTRACKED = "untracked"
+
+# Harness executables a launch can start (mirror the harness profiles).
+AGENT_COMMANDS = frozenset({"claude", "codex", "gemini", "aider", "opencode", "goose", "kimi"})
+
+
+@dataclass(frozen=True)
+class LiveSession:
+    """A running agent session, keyed like the records it may lack.
+
+    *targets* are the target names it could belong to: ``(None,)`` for this
+    host, one name when known, several when a cluster job matched no single
+    target.  *label* names its source (``local``, a cluster, a target).
+    """
+
+    mirror: str
+    targets: Tuple[Optional[str], ...]
+    label: str
+    host: Optional[str] = None
+    detail: str = ""
+    session_id: Optional[str] = None
+    cwd: Optional[str] = None
+    transcript_path: Optional[str] = None
+
+
+# The wrapped script of ``LocalExecutor.run_agent``:
+#   ... ; cd <quoted dir> || exit 1; umask 0007; <agent> <args>
+_LAUNCH_RE = re.compile(
+    r"cd ('(?:[^']|'\"'\"')*'|[^\s;']+) \|\| exit 1; umask [0-7]{3,4}; \s*(?:\S+=\S*\s+)*([^\s;'\"]+)"
+)
+_SESSION_ID_RE = re.compile(r"--session-id[ =]'?([0-9A-Fa-f-]{36})")
+
+
+def parse_launch_argv(argv: Sequence[str], *, agent_user: str,
+                      agents: Iterable[str] = AGENT_COMMANDS) -> Optional[Tuple[str, str, Optional[str]]]:
+    """``(cwd, agent, session_id)`` when *argv* is a local agent launch.
+
+    Matches ``sudo -u <agent_user> [env K=V ...] bash -c <script>`` (the
+    sudo process; with sudoers ``use_pty`` it stays as the parent) and the
+    bare ``bash -c <script>`` it runs, whose script ends in an agent
+    command.  Other ``run_agent`` commands (git in the mirror) are not
+    launches and return ``None``.
+    """
+    args = list(argv)
+    if args and os.path.basename(args[0]) == "sudo":
+        try:
+            i = args.index("-u")
+        except ValueError:
+            return None
+        if i + 1 >= len(args) or args[i + 1] != agent_user:
+            return None
+        args = args[i + 2:]
+        if args and args[0] == "env":
+            args = args[1:]
+            while args and "=" in args[0] and not args[0].startswith("-"):
+                args = args[1:]
+    if len(args) < 3 or os.path.basename(args[0]) != "bash" or args[1] != "-c":
+        return None
+    match = _LAUNCH_RE.search(args[2])
+    if not match:
+        return None
+    agent = os.path.basename(match.group(2))
+    if agent not in set(agents):
+        return None
+    try:
+        cwd = shlex.split(match.group(1))[0]
+    except (ValueError, IndexError):
+        return None
+    sid = _SESSION_ID_RE.search(args[2])
+    return cwd, agent, sid.group(1) if sid else None
+
+
+def claude_transcript_path(home: str, cwd: str, session_id: str) -> Optional[str]:
+    """Where Claude keeps a session's transcript: its project dir is the cwd
+    with every non-alphanumeric character replaced by ``-``.  ``None`` for a
+    path long enough that Claude would shorten it differently."""
+    slug = re.sub(r"[^A-Za-z0-9]", "-", cwd)
+    if len(slug) > 200:
+        return None
+    return f"{home.rstrip('/')}/.claude/projects/{slug}/{session_id}.jsonl"
+
+
+def scan_local_launches(*, agent_user: str, agent_uid: Optional[int], proc_root: str = "/proc",
+                        agents: Iterable[str] = AGENT_COMMANDS) -> List[Tuple[str, str, Optional[str]]]:
+    """Local agent launches visible in the process table, one per directory.
+
+    Reads only ``cmdline``, which every user may read.  A bare ``bash -c``
+    must belong to *agent_uid*, so another account's look-alike is ignored.
+    """
+    agents = frozenset(agents)
+    found: Dict[str, Tuple[str, str, Optional[str]]] = {}
+    try:
+        pids = [p for p in os.listdir(proc_root) if p.isdigit()]
+    except OSError:
+        return []
+    for pid in sorted(pids, key=int):
+        base = os.path.join(proc_root, pid)
+        try:
+            with open(os.path.join(base, "cmdline"), "rb") as handle:
+                raw = handle.read(1 << 20)
+            uid = os.stat(base).st_uid
+        except OSError:
+            continue
+        argv = [a.decode("utf-8", "replace") for a in raw.split(b"\0") if a]
+        if not argv:
+            continue
+        if os.path.basename(argv[0]) != "sudo" and agent_uid is not None and uid != agent_uid:
+            continue
+        launch = parse_launch_argv(argv, agent_user=agent_user, agents=agents)
+        if launch is None:
+            continue
+        cwd, agent, sid = launch
+        if cwd not in found or (sid and not found[cwd][2]):
+            found[cwd] = (cwd, agent, sid)
+    return list(found.values())
+
+
+def local_live_sessions(launches: Iterable[Tuple[str, str, Optional[str]]], *,
+                        mirror_paths: Mapping[str, str], mirror_root: str,
+                        agent_home: str, host: Optional[str] = None) -> List[LiveSession]:
+    """Map scanned launches to mirrors (``mirror_paths``: dir -> name)."""
+    out = []
+    root = mirror_root.rstrip("/") + "/"
+    for cwd, agent, sid in launches:
+        mirror = mirror_paths.get(cwd.rstrip("/"))
+        if mirror is None:
+            mirror = cwd[len(root):] if cwd.startswith(root) else os.path.basename(cwd.rstrip("/"))
+        transcript = claude_transcript_path(agent_home, cwd, sid) if (agent == "claude" and sid) else None
+        out.append(LiveSession(
+            mirror=mirror, targets=(None,), label=LOCAL_TARGET, host=host,
+            detail=f"{agent} launched without status hooks", session_id=sid, cwd=cwd,
+            transcript_path=transcript,
+        ))
+    return out
+
+
+LIVE_MARKER = "\x1fsucoder-live"
+LIVE_RC_MARKER = "\x1fsucoder-live-rc "
+
+
+def records_and_live_sh(live_command: str) -> str:
+    """:data:`LIST_RECORDS_SH`, then *live_command*, in one round trip.
+
+    The records half runs in a subshell so its ``exit 0`` returns to the
+    script.  Unit-separator markers (0x1f, never raw in a record, whose
+    payload is JSON) delimit the live half and carry its exit status.
+    """
+    return (
+        f"( {LIST_RECORDS_SH} ); "
+        "printf '\\037sucoder-live\\n'; "
+        f"{live_command}; "
+        "printf '\\n\\037sucoder-live-rc %s\\n' \"$?\"; exit 0"
+    )
+
+
+def split_records_and_live(text: str) -> Tuple[str, Optional[str], Optional[int]]:
+    """``(records text, live text, live exit status)``; the live parts are
+    ``None`` when the script never reached them (unanswered, not empty)."""
+    records, sep, rest = text.partition(LIVE_MARKER + "\n")
+    if not sep:
+        return text, None, None
+    live, sep, tail = rest.rpartition(LIVE_RC_MARKER)
+    if not sep:
+        return records, None, None
+    try:
+        rc = int(tail.strip().split()[0])
+    except (ValueError, IndexError):
+        rc = None
+    return records, live, rc
+
+
+def live_from_squeue(text: str, *, label: str, targets: Mapping[str, object],
+                     candidates: Sequence[str], mirror_tokens: Mapping[str, str]) -> Tuple[List[LiveSession], List[str]]:
+    """Running SuCoder jobs on one cluster, as live sessions."""
+    from .sessions_report import match_target, parse_squeue, token_to_mirror
+
+    jobs, bad = parse_squeue(text)
+    out = []
+    for job in jobs:
+        if job.state != "RUNNING":
+            continue
+        mirror = token_to_mirror(job.token, mirror_tokens) or job.token
+        target = match_target(job, targets, candidates)
+        names: Tuple[Optional[str], ...] = (target,) if target else tuple(candidates)
+        out.append(LiveSession(
+            mirror=mirror, targets=names, label=label, host=job.node or None,
+            detail=f"no status hooks; job {job.job_id}, {job.time_left} left",
+        ))
+    return out, bad
+
+
+def live_from_tmux(text: str, *, target: str, host: str,
+                   mirror_tokens: Mapping[str, str]) -> List[LiveSession]:
+    """SuCoder tmux sessions on a host without a scheduler."""
+    from .sessions_report import JOB_NAME_PREFIX, parse_tmux_sessions, token_to_mirror
+
+    out = []
+    for name in parse_tmux_sessions(text):
+        token = name[len(JOB_NAME_PREFIX):]
+        out.append(LiveSession(
+            mirror=token_to_mirror(token, mirror_tokens) or token, targets=(target,),
+            label=target, host=host, detail=f"no status hooks; tmux {name}",
+        ))
+    return out
+
+
+def mark_untracked(statuses: Sequence[Status], live: Iterable[LiveSession]) -> List[Status]:
+    """*statuses* plus an ``untracked`` status for each live session that
+    has no record, or only an ``ended`` one (which it then replaces)."""
+    by_key = {s.key: s for s in statuses}
+    drop: Set[str] = set()
+    added: Dict[str, Status] = {}
+    for ls in live:
+        keys = [attention_key(ls.mirror, t) for t in ls.targets] or [attention_key(ls.mirror, ls.label)]
+        if any(k in by_key and by_key[k].state != "ended" for k in keys):
+            continue
+        drop.update(k for k in keys if k in by_key)
+        if len(ls.targets) == 1:
+            key, target = keys[0], ls.targets[0] or LOCAL_TARGET
+        else:  # a job no single target claims: file it under its cluster
+            key, target = attention_key(ls.mirror, ls.label), ls.label
+        if key in added:
+            continue
+        added[key] = Status(
+            key=key, mirror=ls.mirror, target=target, state=UNTRACKED, host=ls.host,
+            message=ls.detail, session_id=ls.session_id, cwd=ls.cwd,
+            transcript_path=ls.transcript_path, source=ls.label,
+        )
+    return [s for s in statuses if s.key not in drop] + list(added.values())
