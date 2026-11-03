@@ -38,6 +38,9 @@ class ObservationGroup(TyperGroup):
         # Tokens after "--" are operands, never the help option.
         options = route[:route.index("--")] if "--" in route else route
         ctx.meta["help_only"] = bool(command) and "--help" in options
+        # ``attention --tmux`` runs from a tmux status line every few seconds
+        # and reads only its cache file: no configuration, no startup checks.
+        ctx.meta["attention_tmux"] = route[:1] == ["attention"] and "--tmux" in options
         return remaining
 
 
