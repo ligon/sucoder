@@ -3917,6 +3917,16 @@ class MirrorManager:
                 publish_run=state.remote_control,
             )
 
+        # The Codex attention hooks' record key (not a secret): an argv
+        # prefix, outermost but for the environment file, so every wrapper
+        # above passes it down to Codex and its hooks without the extra
+        # round trip that staging an environment file costs on a cluster.
+        attention_key_env = getattr(self, "_attention_env_key", None)
+        if attention_key_env:
+            from .attention import KEY_ENV
+
+            command = ["env", f"{KEY_ENV}={attention_key_env}", *command]
+
         # Environment values may include API keys resolved from pass. Stage
         # them over stdin in an agent-owned 0600 file, then source and unlink
         # that file immediately before exec. Passing env=None below avoids the
@@ -5402,26 +5412,42 @@ class MirrorManager:
         return shlex.split(rendered)
 
     def _with_attention_hooks(self, ctx: MirrorContext, command: List[str]) -> List[str]:
-        """Add status-record hooks to a Claude launch when ``attention.hooks``.
+        """Add status-record hooks to a Claude or Codex launch when ``attention.hooks``.
 
         docs/attention.org: the hooks write ``~/.sucoder/attention/<key>.rec``
-        wherever the agent runs, for ``sucoder attention`` to read.  Skipped
-        when the operator's command already passes ``--settings`` (a second
-        one would compete with theirs) and for every other harness.
+        wherever the agent runs, for ``sucoder attention`` to read.
+
+        - Claude: ``--settings`` with the key in the hook command.  Skipped
+          when the operator's command already passes ``--settings`` (a
+          second one would compete with theirs).
+        - Codex: ``-c hooks.<Event>=...``, identical for every launch because
+          Codex trusts a ``-c`` hook by a hash of its definition; the key
+          rides in ``$SUCODER_ATTENTION_KEY``, which ``launch_agent`` puts in
+          front of the final command (``_attention_env_key``).  Skipped when
+          the operator's command already sets a ``hooks.`` override.
+        - Every other harness: unchanged.
         """
+        self._attention_env_key: Optional[str] = None
         attention = getattr(self.config, "attention", None)
         if getattr(attention, "hooks", False) is not True:
             return command
-        if self._detected_agent_type != AgentType.CLAUDE:
+        agent = self._detected_agent_type
+        if agent not in (AgentType.CLAUDE, AgentType.CODEX):
             return command
-        if any(token == "--settings" or token.startswith("--settings=") for token in command):
-            self.logger.info("Command already passes --settings; not adding attention hooks.")
-            return command
-        from .attention import attention_key, claude_settings_json
+        from .attention import attention_key, claude_settings_json, codex_overrides
 
         target = (self.target_name or "remote") if ctx.is_remote else None
         key = attention_key(ctx.settings.name, target)
-        return self._insert_after_executable(command, ["--settings", claude_settings_json(key)])
+        if agent == AgentType.CLAUDE:
+            if any(token == "--settings" or token.startswith("--settings=") for token in command):
+                self.logger.info("Command already passes --settings; not adding attention hooks.")
+                return command
+            return self._insert_after_executable(command, ["--settings", claude_settings_json(key)])
+        if _codex_sets_hooks(command):
+            self.logger.info("Command already sets a Codex hooks override; not adding attention hooks.")
+            return command
+        self._attention_env_key = key
+        return self._insert_after_executable(command, codex_overrides())
 
     @staticmethod
     def _insert_after_executable(command: Sequence[str], tokens: Sequence[str]) -> List[str]:
@@ -8108,6 +8134,22 @@ def _parse_version(text: Optional[str]) -> Optional[Tuple[int, ...]]:
 
 
 _CLAUDE_SESSION_FLAGS = ("--session-id", "--resume", "-r", "--continue", "-c")
+
+
+def _codex_sets_hooks(command: Sequence[str]) -> bool:
+    """Whether a Codex argv already overrides ``hooks.*`` with ``-c``."""
+    tokens = list(command)
+    for i, token in enumerate(tokens):
+        value = None
+        if token in ("-c", "--config") and i + 1 < len(tokens):
+            value = tokens[i + 1]
+        elif token.startswith("--config="):
+            value = token[len("--config="):]
+        elif token.startswith("-c") and len(token) > 2:
+            value = token[2:]
+        if value is not None and value.lstrip().startswith("hooks"):
+            return True
+    return False
 
 
 def _claude_session_chosen(command: Sequence[str]) -> bool:

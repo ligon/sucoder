@@ -96,7 +96,7 @@ def test_keys_are_sanitized_and_pair_mirror_with_target():
 
 def test_settings_install_one_hook_per_event():
     settings = json.loads(att.claude_settings_json("P--t"))
-    assert set(settings["hooks"]) == set(att.EVENT_STATES)
+    assert set(settings["hooks"]) == set(att.CLAUDE_EVENTS)
     for event, groups in settings["hooks"].items():
         (hook,) = groups[0]["hooks"]
         assert hook["type"] == "command" and "P--t.rec" in hook["command"]
@@ -256,7 +256,8 @@ def test_a_claude_launch_gets_hook_settings_keyed_by_mirror_and_target(tmp_path,
     _, argv = _hooked_launch(tmp_path, monkeypatch, ["claude"])
     assert argv.count("--settings") == 1
     settings = json.loads(argv[argv.index("--settings") + 1])
-    assert set(settings["hooks"]) == set(att.EVENT_STATES)
+    assert set(settings["hooks"]) == set(att.CLAUDE_EVENTS)
+    assert argv[0] == "claude"  # no environment prefix: the key is in the command
     assert "sample--savio.rec" in settings["hooks"]["Stop"][0]["hooks"][0]["command"]
 
 
@@ -678,3 +679,171 @@ def test_a_cluster_job_without_a_record_is_collected_as_untracked(tmp_path, monk
     assert len(hosts) == 1  # both targets share one scheduler: one round trip
     assert [(s.key, s.state) for s in statuses] == ([("CerealDemand--carleton-htc", expect_state)] if expect_state else [])
     assert errors == ([f"hpc.example: {expect_error}"] if expect_error else [])
+
+
+# -- Codex ----------------------------------------------------------------------
+
+import tomllib
+
+
+def _codex_hooks():
+    """``{event: (matcher, command, timeout)}`` from the -c overrides, parsed as Codex parses TOML."""
+    args = att.codex_overrides()
+    assert args[::2] == ["-c"] * len(att.CODEX_EVENTS)
+    out = {}
+    for value in args[1::2]:
+        path, _, toml_value = value.partition("=")
+        (group,) = tomllib.loads(f"v={toml_value}")["v"]
+        (hook,) = group["hooks"]
+        assert path.startswith("hooks.") and hook["type"] == "command"
+        out[path[len("hooks."):]] = (group.get("matcher"), hook["command"], hook["timeout"])
+    return out
+
+
+def _codex_hook(event, payload, directory, key="Proj--savio"):
+    """Run a Codex hook as Codex would: the command from the override, key in the environment."""
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(directory), att.DIR_ENV: str(directory)}
+    if key is not None:
+        env[att.KEY_ENV] = key
+    return subprocess.run(["sh", "-c", _codex_hooks()[event][1]], input=payload, text=True,
+                          capture_output=True, env=env, timeout=10)
+
+
+def test_codex_overrides_are_toml_and_cover_every_codex_event():
+    hooks = _codex_hooks()
+    assert list(hooks) == list(att.CODEX_EVENTS)
+    assert hooks["SessionStart"][0] == "^(startup|resume|clear|fork)$"   # not after a compaction
+    assert hooks["PreToolUse"][0] == "^request_user_input"              # only the question tool
+    assert hooks["SessionEnd"][2] == hooks["Interrupt"][2] == 3          # Codex's cap for these
+
+
+def test_codex_overrides_are_the_same_for_every_launch():
+    """Codex trusts a -c hook by its hash: anything per-launch would ask for review again."""
+    assert att.codex_overrides() == att.codex_overrides()
+    assert not any("--" in value and ".rec" in value and "$k" not in value for value in att.codex_overrides())
+
+
+@pytest.mark.parametrize("event, payload, state, kind", [
+    ("SessionStart", _payload("SessionStart", source="startup", model="gpt"), "idle", None),
+    ("UserPromptSubmit", _payload("UserPromptSubmit", prompt="hi"), "working", None),
+    ("PermissionRequest", _payload("PermissionRequest", tool_name="Bash",
+                                   tool_input={"command": "rm -rf build", "description": None}), "waiting", "permission"),
+    ("PreToolUse", _payload("PreToolUse", tool_name="request_user_input", tool_input={"q": "x" * 10}), "waiting", "question"),
+    ("PostToolUse", _payload("PostToolUse", tool_response="secret output"), "working", None),
+    ("Stop", _payload("Stop", last_assistant_message="done"), "idle", None),
+    ("Interrupt", _payload("Interrupt"), "idle", None),
+    ("SessionEnd", _payload("SessionEnd", reason="other"), "ended", None),
+])
+def test_a_codex_hook_writes_a_record_keyed_from_the_environment(tmp_path, event, payload, state, kind):
+    result = _codex_hook(event, payload, tmp_path)
+    # Silent on stdout: a PermissionRequest or PreToolUse hook's stdout can
+    # decide the request, and these hooks only observe.
+    assert result.returncode == 0 and result.stdout == ""
+    text = (tmp_path / "Proj--savio.rec").read_text()
+    assert text.split("\n", 1)[0].split("\t")[3] == "codex"
+    assert "secret output" not in text
+    status = att.parse_record("Proj--savio", text)
+    assert (status.state, status.kind, status.harness) == (state, kind, "codex")
+    if event == "PermissionRequest":
+        assert status.message == "Codex needs your approval for Bash: rm -rf build"
+
+
+@pytest.mark.parametrize("key", [None, "", "../evil", ".hidden", "a b", "x;rm -rf ~"])
+def test_a_codex_hook_with_no_usable_key_writes_nothing_and_succeeds(tmp_path, key):
+    result = _codex_hook("Stop", _payload("Stop"), tmp_path, key=key)
+    assert result.returncode == 0 and not list(tmp_path.glob("*.rec")) and not (tmp_path.parent / "evil.rec").exists()
+
+
+def test_a_truncated_permission_request_still_reads_as_waiting(tmp_path):
+    huge = _payload("PermissionRequest", tool_name="apply_patch", tool_input={"patch": "x" * 200000})
+    _codex_hook("PermissionRequest", huge, tmp_path)
+    text = (tmp_path / "Proj--savio.rec").read_text()
+    assert len(text) < 70000
+    status = att.parse_record("Proj--savio", text)
+    assert (status.state, status.kind, status.session_id) == ("waiting", "permission", "s-1")
+    assert status.message == "Codex needs your approval for apply_patch"
+
+
+def test_a_record_without_a_harness_field_is_claudes():
+    status = att.parse_record("P--l", "sucoder-attention-v1\t1\th\n" + _payload("Stop"))
+    assert status.harness == "claude"
+
+
+def _codex_status(key, event, at, harness="codex"):
+    state = att.EVENT_STATES[event]
+    return att.Status(key=key, mirror=key.split("--")[0], target="t", state=state, event=event, at=at, harness=harness)
+
+
+def test_a_codex_turn_idle_for_a_minute_is_waiting_like_claudes_idle_prompt():
+    now = 10_000.0
+    statuses = [_codex_status("Old--t", "Stop", now - 90), _codex_status("New--t", "Stop", now - 30),
+                _codex_status("Esc--t", "Interrupt", now - 61), _codex_status("Start--t", "SessionStart", now - 900),
+                _codex_status("Claude--t", "Stop", now - 900, harness="claude")]
+    out = {s.key: s for s in att.synthesize_idle_waits(statuses, now)}
+    assert (out["Old--t"].state, out["Old--t"].kind, out["Old--t"].at) == ("waiting", "idle", now - 30)
+    assert out["Esc--t"].state == "waiting"
+    assert {out[k].state for k in ("New--t", "Start--t", "Claude--t")} == {"idle"}
+    assert statuses[0].state == "idle"  # the input is not modified
+
+
+def test_a_synthesized_idle_wait_notifies_once_and_obeys_the_filters():
+    notified = set()
+    record = [_codex_status("P--t", "Stop", 1000.0)]
+    first = att.due_notifications(att.synthesize_idle_waits(record, 1061.0), notified, 1061.0)
+    again = att.due_notifications(att.synthesize_idle_waits(record, 1091.0), notified, 1091.0)
+    assert [s.key for s in first] == ["P--t"] and again == []
+    late = att.due_notifications(att.synthesize_idle_waits(record, 1100.0), set(), 1100.0, after_seconds=120)
+    assert late == []  # waiting 40 s, not yet the 2 minutes asked for
+    muted = att.due_notifications(att.synthesize_idle_waits(record, 1100.0), set(), 1100.0, kinds=["permission"])
+    assert muted == []
+
+
+def test_the_listing_shows_an_idle_codex_session_as_waiting(tmp_path, monkeypatch):
+    records = tmp_path / "records"
+    records.mkdir()
+    _codex_hook("Stop", _payload("Stop"), records, key="Proj--local")
+    path = records / "Proj--local.rec"
+    header, body = path.read_text().split("\n", 1)
+    fields = header.split("\t")
+    fields[1] = str(int(time.time()) - 120)
+    path.write_text("\t".join(fields) + "\n" + body)
+    monkeypatch.setenv(att.DIR_ENV, str(records))
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **k: None)
+    result = CliRunner().invoke(cli.app, ["--config", str(_cli_config(tmp_path)), "attention",
+                                          "--local-only", "--cache", str(tmp_path / "c.json")])
+    assert result.exit_code == 0, result.output
+    assert "[idle] Codex is waiting for your input" in result.output
+
+
+# -- Codex launches -------------------------------------------------------------------
+
+def test_a_codex_launch_gets_the_overrides_and_its_key_in_the_environment(tmp_path, monkeypatch):
+    _, argv = _hooked_launch(tmp_path, monkeypatch, ["codex"])
+    assert argv[:3] == ["env", "SUCODER_ATTENTION_KEY=sample--savio", "codex"]
+    overrides = att.codex_overrides()
+    start = argv.index(overrides[1]) - 1
+    assert argv[start:start + len(overrides)] == overrides
+
+
+@pytest.mark.parametrize("flags", [["-c", "hooks.Stop=[]"], ["--config", "hooks={}"], ["--config=hooks.Stop=[]"]])
+def test_a_codex_launch_that_sets_its_own_hooks_is_left_alone(tmp_path, monkeypatch, flags):
+    _, argv = _hooked_launch(tmp_path, monkeypatch, ["codex", *flags])
+    assert argv[0] == "codex" and not any(a.startswith("hooks.SessionStart") for a in argv)
+
+
+def test_a_codex_launch_without_attention_hooks_is_unchanged(tmp_path, monkeypatch):
+    _, argv = _hooked_launch(tmp_path, monkeypatch, ["codex"], hooks=False)
+    assert argv[0] == "codex" and not any(a.startswith("hooks.") for a in argv)
+
+
+def test_remote_control_passes_the_overrides_to_the_app_server():
+    from sucoder.codex_remote import build_remote_command
+
+    overrides = att.codex_overrides()
+    server = build_remote_command(["codex", *overrides], "terminal")
+    assert all(value in server for value in overrides[1::2])
+
+
+def test_an_env_prefixed_local_codex_launch_is_still_recognised():
+    argv = _launch_argv("/m/P", ["env", "SUCODER_ATTENTION_KEY=P--local", "codex", "-c", "x=1"])
+    assert att.parse_launch_argv(argv, agent_user="coder") == ("/m/P", "codex", None)

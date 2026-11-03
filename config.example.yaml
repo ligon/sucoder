@@ -24,10 +24,11 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #   user: <your-username>
 #   command: /usr/local/bin/sucoder
 
-# Attention (optional; off by default): SuCoder-launched Claude sessions write
-# a status record (~/.sucoder/attention/<mirror>--<target>.rec where the agent
-# runs) on every turn, permission request and idle prompt; `sucoder attention`
-# lists the sessions waiting on you first.  `notify_command` runs under
+# Attention (optional; off by default): SuCoder-launched Claude and Codex
+# sessions write a status record (~/.sucoder/attention/<mirror>--<target>.rec
+# where the agent runs) on every turn, permission request and idle prompt;
+# `sucoder attention` lists the sessions waiting on you first.  Codex asks once per account to
+# trust the hooks ("Hooks need review": trust all).  `notify_command` runs under
 # `sucoder attention --watch` when a session starts waiting, with the session in
 # SUCODER_ATTENTION_* environment variables.  notify_kinds (default all of
 # permission, question, idle, other) and notify_after_minutes (default 0) limit

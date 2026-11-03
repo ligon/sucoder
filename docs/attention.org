@@ -59,7 +59,7 @@ Each hook runs a short POSIX shell command (=attention.hook_shell_command=) that
 #+begin_example
 $HOME/.sucoder/attention/<mirror>--<target>.rec
 
-sucoder-attention-v1<TAB><epoch seconds><TAB><hostname>
+sucoder-attention-v1<TAB><epoch seconds><TAB><hostname><TAB><claude|codex>
 {...the hook's JSON payload, at most 64 KiB...}
 #+end_example
 
@@ -78,6 +78,59 @@ Design choices, each for a stated reason:
   On vantage it is =~coder=, mode 2770 and group =coder=, which =ligon= belongs to; the agent's =umask 0007= makes the record group-readable.
 
 The hooks are opt-in: =attention.hooks: true= in the launcher's config.
+The same switch covers Codex (next section); a record written before the harness field existed reads as Claude's.
+
+*** Codex
+
+Codex (=codex-cli= 0.164.0, read 2026-11-03 from the [[https://learn.chatgpt.com/docs/hooks][hooks reference]] and tried against the installed binary in a throwaway =CODEX_HOME=) has hooks with the same shape as Claude's: a JSON payload on stdin with =hook_event_name=, =session_id=, =transcript_path= and =cwd=.
+SuCoder passes them per launch as =-c hooks.<Event>=[...]= overrides (=attention.codex_overrides=), so nothing is written to =~/.codex/config.toml= by SuCoder; Codex shows their source as "Session flags".
+
+| Codex event          | State                     | Notes                                                                 |
+|----------------------+---------------------------+-----------------------------------------------------------------------|
+| =SessionStart=       | idle                      | not after a compaction (matcher, below)                               |
+| =UserPromptSubmit=   | working                   |                                                                       |
+| =PreToolUse=         | waiting, kind question    | matcher =^request_user_input=, the tool through which Codex asks a question; recorded by name only |
+| =PostToolUse=        | working                   | recorded by name only (its payload carries the tool's output)        |
+| =PermissionRequest=  | waiting, kind permission  | detail: "Codex needs your approval for <tool>: <description or command>" |
+| =Stop=               | idle                      | waiting, kind idle, a minute later (below)                            |
+| =Interrupt=          | idle                      | Esc during a turn; waiting, kind idle, a minute later                 |
+| =SessionEnd=         | ended                     | =/quit=, or 30 minutes idle with no client attached                   |
+
+=SessionStart= also fires after a compaction, mid-turn, which is not idle; its matcher (a regex on =source=) admits only =startup=, =resume=, =clear= and =fork=.
+
+What Codex cannot signal, and what SuCoder does about it:
+
+1. No idle notification.
+   Claude raises =idle_prompt= a minute after its turn ends; Codex has nothing like it.
+   =attention.synthesize_idle_waits= turns a Codex =Stop= or =Interrupt= record a minute old into a waiting request of kind =idle=, dated when the minute ran out, so =notify_kinds= and =notify_after_minutes= treat both harnesses alike and the request notifies once.
+2. Questions only through =request_user_input=.
+   MCP elicitations raise no hook event, and whether =PreToolUse= covers =request_user_input= is documented ("local function tools") but not yet seen live.
+3. A turn that fails raises no =Stop=.
+   A turn that ended in an API error (a 401, in the test) left the record at =working= until the next event; Claude has the same gap for an interrupted turn.
+
+**** Trust
+
+Codex runs a =-c= hook only after it has been reviewed and trusted.
+Until then it is skipped without a message, though the TUI opens a "Hooks need review" screen at startup.
+Trusting writes, into =$CODEX_HOME/config.toml= and by Codex itself,
+
+#+begin_example
+[hooks.state."/<session-flags>/config.toml:stop:0:0"]
+trusted_hash = "sha256:..."
+#+end_example
+
+one entry per event, keyed by event and position and hashing the hook's definition.
+Hence the one design difference from Claude: the Codex hook command is identical for every launch, and the record key reaches it in =$SUCODER_ATTENTION_KEY= (put in front of the launch as =env SUCODER_ATTENTION_KEY=<key>=, outermost but for the environment file, so no extra cluster round trip).
+The command checks the key at run time and writes nothing for an empty or unsafe one.
+Measured: after one "trust all", a launch with a different key ran every hook without a new review.
+
+So review happens once per account and Codex home: =coder= on vantage, and the human's account on Savio (one home across nodes); and again whenever a SuCoder release changes =codex_overrides= (the command, a matcher, a timeout).
+Press =2= ("Trust all and continue") on the first hooked launch.
+A launch with no TUI (=codex_remote_control: server=) cannot show the review, so its hooks stay off until an interactive launch on that account has trusted them.
+SuCoder does not pass =--dangerously-bypass-hook-trust=.
+
+Two consequences of =-c= that were checked: Codex runs embedded rather than on its shared background daemon when given =-c= overrides, and SuCoder's remote-control modes pass =-c= to the launch-owned app-server (=codex_remote.build_remote_command=), so each session's hooks see its own environment.
+A launch whose command already sets a =hooks.= override is left alone.
 
 ** Layer 2: one screen, sorted by need
 
@@ -229,7 +282,7 @@ Built on branch =coder/attention-status=:
 
 Verified against real Claude Code 2.1.316 on vantage: a =--settings= hook fired, wrote a 0660 record, and parsed to the expected state.
 
-Added since (same branch): the =Notification= matcher and request kinds, =notify_kinds= and =notify_after_minutes=, =--cached=, =relay attention=, =transcript_path= in the record, [[file:../examples/coordinator/README.org][examples/coordinator/]], and =untracked= sessions.
+Added since (same branch): the =Notification= matcher and request kinds, =notify_kinds= and =notify_after_minutes=, =--cached=, =relay attention=, =transcript_path= in the record, [[file:../examples/coordinator/README.org][examples/coordinator/]], =untracked= sessions, and Codex hooks.
 
 Not yet done:
 
@@ -237,8 +290,8 @@ Not yet done:
 2. On vantage, every =coder=-side =sucoder= command stopped at the startup check, for two reasons.
    =~coder/.sucoder/config.yaml= was owned by =coder=, and the check refuses a configuration the agent can write (fixed on vantage, 2026-11-02: =ligon:coder 0640=).
    And the check ran =sudo -u coder test -r= even when already running as =coder=, which needs a sudoers rule the account lacks, so it reported "cannot read configuration" for a readable file; fixed on this branch by checking directly when the current user is the agent (=sucoder/cli.py=, the =run_startup_checks= call).
-3. Codex.
-   Its =notify= setting fires only on turn completion and would replace a user's own =notify=; Codex's newer hooks need checking first.
+3. Codex hooks (above) on a real launch: =PermissionRequest=, =Stop=, =Interrupt= and the =request_user_input= question have been read from the documentation and exercised as shell, but not yet seen fire from a live model turn; the throwaway-home test reached =SessionStart=, =UserPromptSubmit= and =SessionEnd= only.
+   Verify on the first real launch.
 4. A record left by a session whose tmux is gone stays as its last state.
    The listing now knows what is running (=untracked=, above), so it could mark such a record orphaned; it does not yet, because the local scan sees only SuCoder's own launches and an absent process is weaker evidence than an absent job.
    An interrupted turn (Esc) sends no =Stop=, so it reads "working" until the idle =Notification= about a minute later.

@@ -5087,7 +5087,13 @@ def _collect_attention(config, *, local_only: bool, warm_only: bool, logger, deb
     """
     from .attention import (
         RECORD_SUFFIX, mark_untracked, merge_statuses, parse_listing, parse_record,
+        synthesize_idle_waits,
     )
+
+    def finish(found):
+        # Newest record per key; a Codex turn idle a minute is waiting (as
+        # Claude's own idle_prompt says); then live sessions with no record.
+        return mark_untracked(synthesize_idle_waits(merge_statuses(found), time.time()), live)
     from .sessions_report import group_targets_by_cluster, login_hosts_for
 
     statuses = []
@@ -5106,7 +5112,7 @@ def _collect_attention(config, *, local_only: bool, warm_only: bool, logger, deb
     except OSError as exc:
         errors.append(f"local: could not list {local_dir} ({exc.strerror})")
     if local_only or not config.targets:
-        return mark_untracked(merge_statuses(statuses), live), errors
+        return finish(statuses), errors
 
     from .attention import live_from_squeue, live_from_tmux, records_and_live_sh, split_records_and_live
     from .sessions_report import LOGIN_SESSION_SH, SQUEUE_FORMAT
@@ -5158,7 +5164,7 @@ def _collect_attention(config, *, local_only: bool, warm_only: bool, logger, deb
             errors.extend(f"{label}: could not parse squeue row: {line}" for line in bad)
         else:
             live.extend(live_from_tmux(live_text, target=label, host=host, mirror_tokens=mirror_tokens))
-    return mark_untracked(merge_statuses(statuses), live), errors
+    return finish(statuses), errors
 
 
 def _attention_local_live(config, logger) -> list:

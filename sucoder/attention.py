@@ -19,6 +19,18 @@ atomically on every event, so the newest event is the session's state:
 - ``SessionStart`` / ``SessionEnd`` -- started (awaiting a first prompt) /
   ended.
 
+A Codex session gets the equivalent hooks as ``-c hooks.<Event>=...``
+overrides (:func:`codex_overrides`).  Codex runs a ``-c`` hook only once it
+has been reviewed and trusted, and records that trust against the hook's
+exact definition, so the Codex hook command is the same for every launch:
+the record's key arrives in ``$SUCODER_ATTENTION_KEY`` instead.  Codex
+events: ``PermissionRequest`` (waiting, permission), ``PreToolUse`` for its
+``request_user_input`` tool (waiting, question), ``Stop`` and ``Interrupt``
+(idle), and the four shared with Claude.  Codex has no idle notification;
+:func:`synthesize_idle_waits` turns a Codex turn idle for
+:data:`IDLE_WAIT_SECONDS` into a waiting request of kind ``idle``, as
+Claude's own ``idle_prompt`` does.
+
 The hook is plain POSIX shell with no dependency on SuCoder being installed
 where the agent runs, so it works on a compute node as well as locally, and
 it always exits 0: a status write must never block or fail the agent.
@@ -41,18 +53,43 @@ RECORD_DIR = ".sucoder/attention"  # relative to the agent's $HOME
 RECORD_SUFFIX = ".rec"
 RECORD_HEADER = "sucoder-attention-v1"
 DIR_ENV = "SUCODER_ATTENTION_DIR"
+KEY_ENV = "SUCODER_ATTENTION_KEY"   # the record key, for a hook whose command cannot carry it
 MAX_RECORD_BYTES = 65536
 LOCAL_TARGET = "local"
+CLAUDE = "claude"
+CODEX = "codex"
 
-# The hook events SuCoder installs, and the state each one leaves behind.
+# The hook events SuCoder installs (either harness), and the state each one
+# leaves behind.  A Codex ``PreToolUse`` is hooked only for its question tool.
 EVENT_STATES: Dict[str, str] = {
     "SessionStart": "idle",
     "UserPromptSubmit": "working",
+    "PreToolUse": "working",
     "PostToolUse": "working",
     "Notification": "waiting",
+    "PermissionRequest": "waiting",
     "Stop": "idle",
+    "Interrupt": "idle",
     "SessionEnd": "ended",
 }
+CLAUDE_EVENTS = ("SessionStart", "UserPromptSubmit", "PostToolUse", "Notification", "Stop", "SessionEnd")
+CODEX_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest",
+                "Stop", "Interrupt", "SessionEnd")
+
+# Codex matchers (regexes).  ``SessionStart`` also fires after a compaction,
+# mid-turn, and that must not read as idle.  ``request_user_input`` is the
+# tool through which Codex asks the human a question (``_async`` variant
+# included): the one ``PreToolUse`` that means waiting.
+CODEX_MATCHERS: Dict[str, str] = {
+    "SessionStart": "^(startup|resume|clear|fork)$",
+    "PreToolUse": "^request_user_input",
+}
+CODEX_QUESTION_TOOL = "request_user_input"
+# Codex caps SessionEnd and Interrupt hooks at 3 s; the rest get SuCoder's 10.
+CODEX_SHORT_TIMEOUT_EVENTS = frozenset({"SessionEnd", "Interrupt"})
+# Claude's idle_prompt fires after a minute; a Codex turn idle that long is
+# treated the same way.
+IDLE_WAIT_SECONDS = 60
 
 # Claude's ``notification_type`` values that mean the agent is blocked on the
 # human, each with the *kind* the push filter selects on.  Read from Claude
@@ -98,36 +135,51 @@ def split_key(key: str) -> Tuple[str, str]:
     return (mirror, target) if sep else (key, "")
 
 
-# Events recorded without their stdin payload (only the event name).
-NAME_ONLY_EVENTS = frozenset({"PostToolUse"})
+# Events recorded without their stdin payload, which carries tool input or
+# output: only the event name (and, for Codex's question tool, its name).
+NAME_ONLY_EVENTS = frozenset({"PostToolUse", "PreToolUse"})
 
 
-def hook_shell_command(key: str, *, event: Optional[str] = None) -> str:
-    """The shell command a Claude hook runs: payload on stdin -> record.
+def hook_shell_command(key: Optional[str], *, event: Optional[str] = None,
+                       harness: str = CLAUDE) -> str:
+    """The shell command a hook runs: payload on stdin -> record.
 
-    Writes a header line (format, epoch seconds, host) and then the payload
-    to a temporary file beside the record and renames it into place, so a
-    reader never sees a torn record.  ``$SUCODER_ATTENTION_DIR`` overrides
-    the directory (tests; unusual homes).
+    Writes a header line (format, epoch seconds, host, harness) and then the
+    payload to a temporary file beside the record and renames it into place,
+    so a reader never sees a torn record.  ``$SUCODER_ATTENTION_DIR``
+    overrides the directory (tests; unusual homes).
 
-    For an *event* in :data:`NAME_ONLY_EVENTS` the payload is drained and
-    replaced by ``{"hook_event_name": event}``.
+    With *key* ``None`` the key is read from ``$SUCODER_ATTENTION_KEY`` at
+    run time and checked there, so one command serves every launch (Codex's
+    trust is per command).  For an *event* in :data:`NAME_ONLY_EVENTS` the
+    payload is drained and replaced by ``{"hook_event_name": event}``.
     """
-    if not _KEY_RE.match(key):
+    if harness not in (CLAUDE, CODEX):
+        raise ValueError(f"unknown harness {harness!r}")
+    if key is None:
+        guard = (f'k="${{{KEY_ENV}:-}}"; '
+                 'case "$k" in ""|.*|*[!A-Za-z0-9._-]*) cat >/dev/null; exit 0;; esac; ')
+        name = "$k"
+    elif _KEY_RE.match(key):
+        guard, name = "", key
+    else:
         raise ValueError(f"attention key {key!r} is not shell- and path-safe")
     if event in NAME_ONLY_EVENTS:
         if not re.match(r"^[A-Za-z]+$", event):
             raise ValueError(f"unsafe hook event name {event!r}")
-        body = f"cat >/dev/null; printf '{{\"hook_event_name\":\"{event}\"}}'"
+        extra = f',\"tool_name\":\"{CODEX_QUESTION_TOOL}\"' if event == "PreToolUse" else ""
+        body = f"cat >/dev/null; printf '{{\"hook_event_name\":\"{event}\"{extra}}}'"
     else:
         body = f"head -c {MAX_RECORD_BYTES}"
+    stamp = f'"%s\\t%s\\t%s\\t%s\\n" {RECORD_HEADER} "$(date +%s)" "$(hostname)" {harness}'
     return (
-        f'd="${{{DIR_ENV}:-$HOME/{RECORD_DIR}}}"; '
+        guard
+        + f'd="${{{DIR_ENV}:-$HOME/{RECORD_DIR}}}"; '
         'mkdir -p "$d" 2>/dev/null || exit 0; '
-        f't="$d/.{key}.$$"; '
-        f'{{ printf "%s\\t%s\\t%s\\n" {RECORD_HEADER} "$(date +%s)" "$(hostname)"; '
+        f't="$d/.{name}.$$"; '
+        f'{{ printf {stamp}; '
         f'{body}; }} > "$t" 2>/dev/null '
-        f'&& mv -f "$t" "$d/{key}{RECORD_SUFFIX}" 2>/dev/null; '
+        f'&& mv -f "$t" "$d/{name}{RECORD_SUFFIX}" 2>/dev/null; '
         'rm -f "$t" 2>/dev/null; exit 0'
     )
 
@@ -144,7 +196,33 @@ def claude_settings(key: str) -> Dict[str, object]:
         if event == "Notification":
             group["matcher"] = "|".join(WAITING_TYPES)
         return [group]
-    return {"hooks": {event: entry(event) for event in EVENT_STATES}}
+    return {"hooks": {event: entry(event) for event in CLAUDE_EVENTS}}
+
+
+def _toml_string(value: str) -> str:
+    """A TOML basic string (JSON's escapes are TOML's, for this ASCII text)."""
+    if not value.isascii():
+        raise ValueError("Codex hook text must be ASCII")
+    return json.dumps(value)
+
+
+def codex_overrides() -> List[str]:
+    """``-c hooks.<Event>=[...]`` arguments for a Codex launch.
+
+    Identical for every launch -- the key comes from ``$SUCODER_ATTENTION_KEY``
+    -- because Codex trusts a ``-c`` hook by a hash of its definition: one
+    review per account, not one per mirror.  Changing anything here (the
+    command, a matcher, a timeout) asks every account to review again.
+    """
+    args: List[str] = []
+    for event in CODEX_EVENTS:
+        timeout = 3 if event in CODEX_SHORT_TIMEOUT_EVENTS else 10
+        command = hook_shell_command(None, event=event, harness=CODEX)
+        handler = f"{{type={_toml_string('command')},command={_toml_string(command)},timeout={timeout}}}"
+        matcher = CODEX_MATCHERS.get(event)
+        group = (f"matcher={_toml_string(matcher)}," if matcher else "") + f"hooks=[{handler}]"
+        args.extend(["-c", f"hooks.{event}=[{{{group}}}]"])
+    return args
 
 
 def claude_settings_json(key: str) -> str:
@@ -166,6 +244,7 @@ class Status:
     cwd: Optional[str] = None
     transcript_path: Optional[str] = None
     source: str = "local"
+    harness: Optional[str] = None
 
     def age(self, now: float) -> Optional[float]:
         return None if self.at is None else max(0.0, now - self.at)
@@ -187,10 +266,14 @@ def parse_record(key: str, text: str, *, source: str = "local") -> Status:
     except ValueError:
         pass
     status.host = fields[2].strip() or None
+    harness = fields[3].strip() if len(fields) > 3 else ""
+    status.harness = harness if harness in (CLAUDE, CODEX) else CLAUDE
     try:
         payload = json.loads(body) if body.strip() else {}
     except ValueError:
-        return status
+        # Cut off at MAX_RECORD_BYTES (a Codex permission request carries the
+        # tool's whole input): the leading fields still say what happened.
+        payload = _salvage_payload(body)
     if not isinstance(payload, dict):
         return status
     event = payload.get("hook_event_name")
@@ -204,7 +287,47 @@ def parse_record(key: str, text: str, *, source: str = "local") -> Status:
         status.kind = notification_kind(payload.get("notification_type"), status.message)
         if status.kind is None:  # an informational type the matcher let through
             status.state = "unknown"
+    elif status.event == "PermissionRequest":
+        status.kind = "permission"
+        status.message = permission_message(payload)
+    elif status.event == "PreToolUse":
+        tool = payload.get("tool_name")
+        if isinstance(tool, str) and tool.startswith(CODEX_QUESTION_TOOL):
+            status.state, status.kind = "waiting", "question"
+            status.message = "Codex is asking you a question"
     return status
+
+
+_STRING_FIELD_RE = r'"{name}"\s*:\s*"((?:[^"\\]|\\.)*)"'
+
+
+def _salvage_payload(body: str) -> Dict[str, object]:
+    """Top-level string fields recoverable from a truncated JSON payload."""
+    out: Dict[str, object] = {}
+    for name in ("hook_event_name", "session_id", "cwd", "transcript_path", "tool_name", "message"):
+        match = re.search(_STRING_FIELD_RE.format(name=name), body)
+        if match:
+            try:
+                out[name] = json.loads(f'"{match.group(1)}"')
+            except ValueError:
+                continue
+    return out if isinstance(out.get("hook_event_name"), str) else {}
+
+
+def permission_message(payload: Dict[str, object]) -> str:
+    """One line for a Codex permission request: the tool and what it wants."""
+    tool = payload.get("tool_name") if isinstance(payload.get("tool_name"), str) else "a tool"
+    what = None
+    tool_input = payload.get("tool_input")
+    if isinstance(tool_input, dict):
+        for field in ("description", "command", "cmd"):
+            value = tool_input.get(field)
+            if isinstance(value, list):
+                value = " ".join(str(v) for v in value)
+            if isinstance(value, str) and value.strip():
+                what = value.strip()
+                break
+    return f"Codex needs your approval for {tool}" + (f": {what}" if what else "")
 
 
 def notification_kind(notification_type: object, message: Optional[str]) -> Optional[str]:
@@ -326,6 +449,28 @@ def render_tmux(statuses: Sequence[Status], now: float, *, max_names: int = 4) -
     return " | ".join(parts)
 
 
+def synthesize_idle_waits(statuses: Iterable[Status], now: float,
+                          *, after: float = IDLE_WAIT_SECONDS) -> List[Status]:
+    """A Codex session idle for *after* seconds is waiting on the human.
+
+    Claude says so itself (``idle_prompt``, a ``Notification`` a minute
+    after its turn ends); Codex has no such event, so its ``Stop`` or
+    ``Interrupt`` record is promoted here to a waiting request of kind
+    ``idle``, dated when the minute ran out -- the same request a Claude
+    session would have raised, so ``notify_kinds`` and
+    ``notify_after_minutes`` treat both alike.  Its ``(key, at)`` is stable
+    across passes, so it notifies once.
+    """
+    out = []
+    for s in statuses:
+        if (s.harness == CODEX and s.state == "idle" and s.event in ("Stop", "Interrupt")
+                and s.at is not None and now - s.at >= after):
+            s = Status(**{**s.as_dict(), "state": "waiting", "kind": "idle",
+                          "at": s.at + after, "message": "Codex is waiting for your input"})
+        out.append(s)
+    return out
+
+
 def due_notifications(statuses: Sequence[Status], notified: Set[Tuple[str, Optional[float]]], now: float,
                       *, kinds: Sequence[str] = NOTIFY_KINDS, after_seconds: float = 0.0) -> List[Status]:
     """Waiting sessions to notify about now; adds them to *notified*.
@@ -411,7 +556,7 @@ class LiveSession:
 # The wrapped script of ``LocalExecutor.run_agent``:
 #   ... ; cd <quoted dir> || exit 1; umask 0007; <agent> <args>
 _LAUNCH_RE = re.compile(
-    r"cd ('(?:[^']|'\"'\"')*'|[^\s;']+) \|\| exit 1; umask [0-7]{3,4}; \s*(?:\S+=\S*\s+)*([^\s;'\"]+)"
+    r"cd ('(?:[^']|'\"'\"')*'|[^\s;']+) \|\| exit 1; umask [0-7]{3,4}; \s*(?:env\s+)?(?:\S+=\S*\s+)*([^\s;'\"]+)"
 )
 _SESSION_ID_RE = re.compile(r"--session-id[ =]'?([0-9A-Fa-f-]{36})")
 

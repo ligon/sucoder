@@ -1047,7 +1047,17 @@ added to your own) that write a small status record to
 =~/.sucoder/attention/<mirror>--<target>.rec= wherever the agent runs, on
 every prompt, tool call, finished turn, permission request and idle
 prompt.  A launch whose command already passes =--settings= is left
-alone.  Other harnesses are not covered yet.
+alone.
+
+Codex launches get the same records from Codex's own hooks, passed as
+=-c hooks.<Event>=...= overrides; the key travels in
+=SUCODER_ATTENTION_KEY=.  Codex runs such hooks only once trusted: the
+first hooked Codex launch on each account (vantage's agent account, your
+Savio account) opens a "Hooks need review" screen; choose "Trust all and
+continue".  The trust lasts until a SuCoder release changes the hooks.
+Codex has no idle notification, so a Codex turn idle for a minute is
+reported as waiting (kind =idle=), as Claude reports itself.  Other
+harnesses are not covered.
 
 #+begin_src sh
 sucoder attention               # list: waiting first, longest-waiting first
