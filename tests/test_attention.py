@@ -683,11 +683,10 @@ def test_a_cluster_job_without_a_record_is_collected_as_untracked(tmp_path, monk
 
 # -- Codex ----------------------------------------------------------------------
 
-import tomllib
-
 
 def _codex_hooks():
     """``{event: (matcher, command, timeout)}`` from the -c overrides, parsed as Codex parses TOML."""
+    tomllib = pytest.importorskip("tomllib")  # 3.11+; the package supports 3.9
     args = att.codex_overrides()
     assert args[::2] == ["-c"] * len(att.CODEX_EVENTS)
     out = {}
