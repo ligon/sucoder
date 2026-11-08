@@ -1,0 +1,92 @@
+#+title: Prior-art ledger: dream implementation
+#+author: Sue
+#+date: 2026-11-08
+#+options: toc:2 num:nil
+
+* 1. Task and baseline
+
+Begin the implementation of [[file:dream.org][dream]] at =944b0f2= with a complete, inference-free planning slice.
+Implement =sucoder dream plan= for explicitly admitted local git files and passages, private manifests, exact byte coverage, bounded work estimates, and binding checks.
+Transcript normalization, accepted-receipt reconciliation, snapshots, model roles, Org validation, candidate publication, and retrieval remain subsequent slices.
+The user requested agent-independent dreaming on 2026-11-08; the coordinator must support Codex and generic agents as well as Claude.
+The design's Claude-first adapter proposal does not constrain that architecture or establish an implemented capability.
+
+* 2. Existing machinery and coverage
+
+Search tier: refreshed GitNexus CLI query/context/impact, git history, source and test inspection.
+The [[file:dream-ledger.org][design ledger]] remains the source inventory for evidence and editorial semantics.
+
+- =sucoder/observations.py:162=, =WorkspaceBinding= :: Reuse repeated local identity checks and the distinction between observed git facts and reported placement.
+  Existing =tests/test_observations.py= covers changed binding and ambiguous identity.
+- =sucoder/observation_process.py:26=, =Budget= :: Reuse bounded time for binding probes.
+  Its =capture= replaces invalid UTF-8, so it cannot read evidence whose exact bytes must survive; use byte-preserving bounded git reads for this new path.
+- =sucoder/dispatch.py:48=, =_git= :: Reuse the offline environment policy, stripping inherited git redirection and forbidding transports/lazy fetch.
+  The helper strips decoded stdout and is coupled to dispatch; do not use it for byte-exact source selection.
+  Existing =tests/test_dispatch.py= and =tests/test_sync_policy.py= exercise offline and source-preservation behavior.
+- =sucoder/cli.py:1735=, =main= :: Add a local planning route before interactive startup, analogous to the existing dispatch/observation routes.
+  =tests/test_dispatch_cli.py= and =tests/test_observations.py= cover startup bypass and help behavior.
+  GitNexus reports zero resolved callers and UNKNOWN risk because Typer registers this callback dynamically; every CLI command passes through it.
+- =sucoder/config.py:407= and =:525= :: Reuse configured mirror paths and =log_dir=, without creating mirrors, synchronizing, resolving remote targets, or adding YAML settings.
+
+* 3. Definitions and conventions
+
+- Source admission :: A strict version-1 JSON request names a configured repository, a full integration ref, and nonempty explicitly shareable-or-private git units.
+- Git passage :: Inclusive one-based lines map to half-open byte offsets in the committed blob; working files and their mtimes are irrelevant.
+- Identity :: A repository UUID plus kind and logical path identifies a source; commit, blob, selected range, and SHA-256 identify its revision.
+  A provisional UUID is only a proposal until integrated, as specified in the design's source registry contract.
+- Coverage :: Planning records selected/chunked bytes, not extraction, comprehension, verification, or accepted progress.
+- Plan :: A private, content-addressed manifest; changing any frozen input or limit changes its identity.
+  A successful plan does not imply an executable backend or a prepared candidate.
+- Backend :: Evidence kind and execution harness are independent.
+  A future role adapter must accept frozen assignments and return schema-bound results, delivered ranges, trace evidence, usage and capability limitations.
+  The coordinator owns budgets, validation, receipts, and git publication for every backend.
+
+* 4. Invariants
+
+Never fetch, invoke inference, run hooks/filters, call a scheduler, initialize a repository, change its refs/worktree/index, or reinterpret admitted text as instructions during planning.
+Reject unsupported kinds/versions, duplicate IDs/JSON fields, path traversal, symlink/gitlink sources, ambiguous binding, missing objects, invalid text/ranges, and predictable budget overflow.
+Read only explicit git objects, with byte and time limits; do not crawl homes or discover transcripts.
+Keep plans outside every inspected repository with private directory/file modes without changing the process umask or existing directory permissions.
+Freeze prior wiki object identities and mark progress as unevaluated until receipt/output validation exists.
+No backend fallback, provider dependency, permission bypass, or claim of source containment follows from a plan.
+
+* 5. Reuse decisions
+
+- Reuse :: Configuration types, local binding observations, git object identities, and the CLI's startup-bypass pattern.
+- Extend :: CLI registration with an isolated dream group and documentation of the implemented subset.
+- New :: Strict request validation, byte-exact bounded object admission, chunk manifests, private plan storage, and planning tests.
+  Neither the reply probe, audit helper, dispatcher, nor observation envelope provides this evidence contract.
+- Defer :: Native transcript adapters, output-bound receipts, deterministic fixture publication, native Org checks, backend capability probes and role execution.
+  A generic role contract must precede any Claude/Codex-specific execution implementation.
+
+* 6. Open questions and next checks
+
+No user decision blocks this bounded planning slice.
+The first backend remains undecided; implement against the shared role contract and verify each native adapter's actual capabilities before inference.
+Plans explicitly report that accepted progress has not yet been evaluated and cannot yet be run.
+The next data-plane slice must revalidate frozen plans, snapshot admitted bytes, and exercise receipts/publication with deterministic fixture proposals before adding model execution.
+
+* Verification against this ledger
+
+- OK (sections 2 and 5) :: Source search reconfirmed that reply classification, dispatch assignments, and audit reports do not provide byte-exact git passage admission or private dream manifests.
+  The implementation reuses configuration and WorkspaceBinding without changing those existing APIs.
+- OK (sections 3 and 4) :: Public-interface tests preserve staged/unstaged work and refs, retain UTF-8/CRLF byte ranges, reject invalid/unsupported evidence and predictable work overflow, and keep plans private without changing umask or existing directory modes.
+  Interrupted atomic plan publication is retryable; a conflicting existing plan is preserved and rejected.
+- OK (sections 3 and 5) :: The planning modules have no native agent dependency; planned coverage, unknown cost, unavailable execution and unevaluated accepted progress remain explicit.
+- Test evidence :: =poetry run pytest -q tests/test_dream.py tests/test_dispatch_cli.py tests/test_observations.py tests/test_config.py tests/test_cli.py= passed 402 tests, including 58 dream tests.
+  =poetry run mypy --follow-imports=silent sucoder/dream.py sucoder/dream_cli.py= passed.
+  =emacs --batch -Q -l docs/dream/validate.el= passed native Org link/export and archive checks.
+- Full-suite limitation :: The full run passed 2616 tests, skipped eight and failed 41.
+  All 41 failing node IDs failed again at the unchanged =944b0f2= baseline in an isolated checkout; the failure sets match exactly.
+  Failures are in =test_codex_app_server.py=, =test_codex_state.py=, =test_codex_state_runner.py= and =test_timer_lifecycle.py=.
+  The full run preceded the final bounded-chunk/publication/error-handling refinements; the final focused run covers those refinements.
+- Impact limitation :: GitNexus rates the new production helpers LOW and the dynamic Typer callback UNKNOWN.
+  New test nodes have blank IDs in the index; a common fixture-name lookup returned a spurious CRITICAL cross-module result.
+  Direct source/pytest fixture scope checks establish that the affected fixture is local to =tests/test_dream.py=; no runtime code imports it.
+- Change detection :: The staged check reports eight files, 43 production symbols and CRITICAL aggregate risk across 345 flows through the shared CLI callback.
+  Direct diff inspection confirms that =sucoder.cli.main= is the only modified existing function; its added route is guarded by the =dream= subcommand.
+  All other production symbols are in the new planning modules, with CLI regression coverage and the matched upstream failure set above.
+
+These checks establish the planning slice only, not backend containment, semantic claim fidelity, receipt reuse, publication concurrency, or pilot benefit.
+
+Prepared by Sue.
