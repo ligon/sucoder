@@ -1,0 +1,139 @@
+#+title: Dream implementation status and backend boundary
+#+author: Sue
+#+date: 2026-11-08
+#+setupfile: settings.org
+
+* Implemented slice: git evidence planning
+
+=sucoder dream plan= implements the first part of the [[file:../dream.org::#implementation][data-plane sequence]].
+It freezes explicitly admitted local git selections and budgets in a private JSON manifest without inference, source synchronization, or repository writes.
+It does not yet implement snapshots, transcript ingestion, receipt/output reconciliation, Org validation, role execution, candidate publication, status, or reading.
+The manifest reports =execution.available: false= and =prior_wiki.progress: not_evaluated=.
+No plan is evidence of an examined source, accepted claim, or integrated wiki generation.
+
+Use an existing SuCoder configuration and a locally accessible configured mirror:
+
+#+begin_example
+sucoder --config ~/.sucoder/config.yaml dream plan SuCoder \
+  --sources sources.json --base refs/heads/main
+#+end_example
+
+The required =--base= must exactly match the catalog's full =integration_ref= under =refs/heads/= or =refs/remotes/=.
+Symbolic integration refs and =refs/heads/dream/*= are rejected.
+The command never fetches; update the local integration ref through the normal workflow before planning if necessary.
+Global execution-target, sudo, and interactive-launch flags are rejected.
+Help works without a configuration file.
+
+The initial source request format is a strict JSON object:
+
+#+begin_example
+{
+  "schema_version": 1,
+  "repository": "SuCoder",
+  "integration_ref": "refs/heads/main",
+  "units": [
+    {
+      "unit_id": "reply-semantics",
+      "kind": "git",
+      "shareable": true,
+      "locator": {
+        "repository": "SuCoder",
+        "commit": "refs/heads/main",
+        "path": "docs/reply-from-transcript.org",
+        "lines": [93, 110]
+      }
+    }
+  ]
+}
+#+end_example
+
+The locator repository is another explicitly named configured mirror, or the target itself.
+The commit may be a locally resolvable revision; the plan stores its full object ID.
+Omit =lines= to select the entire file; otherwise it is an inclusive one-based LF line range, retaining original CRLF and UTF-8 bytes.
+Only nonempty UTF-8 regular git blobs up to 16 MiB are inspected in this slice; directories, symlinks, gitlinks, binary NUL bytes, missing objects, traversal, and unknown fields are rejected.
+A catalog is limited to 256 KiB, as are individual git tree listings.
+=shareable= is mandatory and boolean: it records whether explanatory extracts may later be proposed for publication.
+It does not grant permission to transmit private sources to a provider.
+
+An optional =limits= object overrides positive integer defaults:
+
+#+begin_example
+"limits": {
+  "max_units": 6,
+  "max_source_bytes": 1048576,
+  "chunk_bytes": 65536,
+  "max_role_invocations": 40,
+  "max_prior_bytes": 65536,
+  "max_proposal_bytes": 131072,
+  "max_consolidation_bytes": 229376,
+  "max_elapsed_seconds": 900,
+  "max_repairs": 1
+}
+#+end_example
+
+At most one repair is permitted, and =max_repairs= may be zero.
+Chunks cover every selected byte contiguously, preferring complete lines and preserving UTF-8 boundaries for long lines.
+Each chunk reserves extraction and verification, plus one consolidation and the declared repair allowance.
+All active Org wiki files, including Talk and LOGBOOK content, count toward prior context; archive bodies and metadata are listed as omitted.
+This conservative slice rejects a prior-context overflow instead of attempting topic-based context selection.
+Consolidation planning checks that prior bytes and the proposal allowance leave space for briefs and metadata; exact staged-payload validation belongs to the later execution slice.
+Planning itself has a separate 30-second inspection deadline and five-second git probe limits.
+
+=--maintenance REASON --topic TOPIC= records an explicit maintenance intention and still requires nonempty sources.
+Both options must be supplied together; this slice does not perform the maintenance.
+
+Plans are stored in =<log_dir>/dream/<plan-id>/plan.json=, falling back to =~/.sucoder/logs/dream/= when =log_dir= is unset.
+Runtime directories and plan files are created with modes 0700 and 0600, without changing the process umask or repairing existing directory permissions.
+Storage inside any inspected repository is rejected.
+The stored manifest is private: it contains absolute local mirror paths, frozen source/chunk digests, prior-wiki object identities, allowances, and coverage marked planned rather than examined.
+Its SHA-256 identity excludes the identity field itself and the returned local plan pathname.
+Existing identical private plans are reusable; a mismatching existing file is rejected.
+
+An accepted =.sucoder/wiki/sources.json= registry must have integer =schema_version: 1= and a UUID-valued =repository_uuid=.
+When absent, the plan proposes a new provisional UUID without writing a registry into the repository.
+Separate initial plans may therefore propose different UUIDs; integration and later re-planning must establish the shared identity.
+The planner never uses a receipt to skip extraction until output-binding validation is implemented.
+
+Exit 0 means a valid stored plan, 2 means invalid or unsupported input, and 3 means unavailable evidence/storage or an inspection allowance exhausted.
+No installed launcher deployment follows from a source-tree change.
+Run source-tree checks with =poetry run pytest -q tests/test_dream.py= from the mirror root.
+
+* Agent-independent dreaming
+
+On 2026-11-08 the user requested that implementation prioritize Codex and generic agents alongside Claude.
+The [[file:../dream.org::#pipeline][design's initial Claude adapter]] remains a capability hypothesis; it is not a coordinator dependency or a required first backend.
+The planning implementation imports no native agent client, chooses no provider/model, and has no fallback harness.
+
+Keep these interfaces separate:
+
+- Evidence adapter :: Resolve and normalize immutable source selections, preserving native events, tool outcomes, lineage, unknown ranges, and exact provenance.
+  Claude/Codex JSONL are input formats, independently of who performs a dream.
+- Role adapter :: Execute a frozen extractor, verifier, or consolidator assignment for a specified harness and model.
+  Every adapter must return the same versioned result contract: assignment/input identities, proposed artifacts, trace-supported delivered ranges, explicit unread/failed coverage, native usage, and capability limitations.
+- Coordinator :: Own complete selected coverage, shared allowances, independent validation, source/output receipts, and atomic candidate publication.
+  Native exit success and an agent's final summary cannot substitute for these checks.
+
+Before either native adapter runs, feature-probe the installed version and verify its ability to restrict the input/output file view, expose usable traces, enforce deadlines/retries, and produce schema-bound role results.
+A generic headless agent must satisfy the same contract through an explicit adapter; an arbitrary shell command returning prose does not establish those capabilities.
+Unsupported capabilities fail before inference with no provider/model fallback.
+Money or token limits are enforceable only when the adapter demonstrates run-wide accounting and enforcement; missing usage remains unknown.
+This contract must be exercised with deterministic role fixtures before adding Claude or Codex invocation.
+
+* Next implementation slices
+
+1. Revalidate a stored plan and snapshot its immutable selected bytes; add full Claude/Codex evidence normalization without changing the reply classifiers.
+2. Define role-result schemas and deterministic fixtures, validate complete coverage and native Org structure, and bind receipts to output artifacts.
+3. Assemble candidates with a private git index, integration-ref checks, and create-if-absent publication, exercising concurrent edits and interrupted publication in disposable repositories.
+4. Add capability-checked Claude and Codex adapters against the shared contract, then bounded reader retrieval and previews.
+5. Review the separate pilot authorization and gates before any real corpus/provider experiment.
+
+The [[file:../dream-implementation-ledger.org][implementation ledger]] records reuse decisions and invariants.
+
+* Validation record, 2026-11-08
+
+The final focused Python run passed 402 tests, including 58 dream tests; mypy and native Org export/link/archive checks passed.
+The full suite had 2616 passes, eight skips and 41 failures; all 41 failing cases also failed at the unchanged =944b0f2= upstream baseline.
+The full run preceded the final planner refinements, which the focused run covers.
+This is source-tree validation, with no model invocation or deployment.
+
+Prepared by Sue.

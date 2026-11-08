@@ -14,6 +14,7 @@ The first implementation publishes a candidate git commit on a separate branch; 
 There is no automatic merge, instruction-file rewrite, scheduler job, or hosted service.
 
 This is a proposed implementation design under the [[file:dream-charter.org][approved workshop charter]], not an implemented command or a measured memory improvement.
+The [[file:dream/implementation.org][implementation status]] now records the initial git-planning slice and the user's subsequent request to prioritize agent-independent execution, including Codex and generic adapters.
 The [[file:dream-ledger.org][prior-art ledger]] supplies the reuse decisions and source limitations.
 Read the [[file:dream/prompts.org][role briefs]], [[file:dream/scenarios.org][scenario checks]], [[file:dream/pilot.org][pilot protocol]], and the [[file:dream/examples/sucoder.org][SuCoder]] and [[file:dream/examples/lsms.org][LSMS]] examples for operational detail.
 

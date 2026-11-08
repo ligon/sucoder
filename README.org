@@ -2545,6 +2545,22 @@ subsequent launches).  If =CLAUDE.md= or =.claude/skills= already
 exist independently, =sucoder= leaves them in place and does not
 overwrite.
 
+* Dream companion planning
+
+=sucoder dream plan= starts an agent-independent, checked-in companion wiki workflow by freezing explicitly selected local git files or passages into a private plan.
+It makes no model calls and preserves the mirror's worktree, index, and refs.
+This first slice implements planning only; transcript ingestion, execution, receipts, and candidate publication remain future work.
+
+#+begin_example
+sucoder --config ~/.sucoder/config.yaml dream plan SuCoder \
+  --sources sources.json --base refs/heads/main
+#+end_example
+
+See [[file:docs/dream/implementation.org][the implemented request format, limits, and backend boundary]] and [[file:docs/dream.org][the complete design]].
+Plans use the existing =log_dir= setting (or =~/.sucoder/logs/= when unset) and must live outside inspected repositories.
+There are no new YAML configuration keys.
+Claude, Codex, and generic role adapters will share coordinator-owned coverage, validation, and publication contracts.
+
 * Agent Skills Tracking
 
 Agents may write skill files to =~coder/.claude/skills/= during sessions.
