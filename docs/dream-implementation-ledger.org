@@ -5,9 +5,10 @@
 
 * 1. Task and baseline
 
-Begin the implementation of [[file:dream.org][dream]] at =944b0f2= with a complete, inference-free planning slice.
-Implement =sucoder dream plan= for explicitly admitted local git files and passages, private manifests, exact byte coverage, bounded work estimates, and binding checks.
-Transcript normalization, accepted-receipt reconciliation, snapshots, model roles, Org validation, candidate publication, and retrieval remain subsequent slices.
+The implementation of [[file:dream.org][dream]] began at =944b0f2= with an inference-free planning slice, committed at =f452f0b=.
+It implements =sucoder dream plan= for explicitly admitted local git files and passages, private manifests, exact byte coverage, bounded work estimates, and binding checks.
+The resumed data plane, committed at =07d4c4f=, adds frozen-plan validation, private snapshots, quotation-fixture coverage, native Org subtree checks, output-bound receipts, atomic candidate publication and local integration status.
+Transcript normalization, semantic model roles, general editorial validation, automatic accepted-receipt reuse in planning, and retrieval remain subsequent slices.
 The user requested agent-independent dreaming on 2026-11-08; the coordinator must support Codex and generic agents as well as Claude.
 The design's Claude-first adapter proposal does not constrain that architecture or establish an implemented capability.
 
@@ -56,7 +57,9 @@ No backend fallback, provider dependency, permission bypass, or claim of source 
 - Extend :: CLI registration with an isolated dream group and documentation of the implemented subset.
 - New :: Strict request validation, byte-exact bounded object admission, chunk manifests, private plan storage, and planning tests.
   Neither the reply probe, audit helper, dispatcher, nor observation envelope provides this evidence contract.
-- Defer :: Native transcript adapters, output-bound receipts, deterministic fixture publication, native Org checks, backend capability probes and role execution.
+- Extend :: Frozen-plan reconstruction with an optional shared inspection deadline, private snapshots and deterministic fixture publication in =sucoder/dream_run.py=, and native Org subtree parsing in =sucoder/dream_validate.el=.
+  =tests/test_dream_run.py= supplies 38 disposable-repository regressions for the new data plane.
+- Defer :: Native transcript adapters, general semantic/editorial validation, automatic receipt reuse in planning, backend capability probes and native role execution.
   A generic role contract must precede any Claude/Codex-specific execution implementation.
 
 * 6. Open questions and next checks
@@ -64,7 +67,8 @@ No backend fallback, provider dependency, permission bypass, or claim of source 
 No user decision blocks this bounded planning slice.
 The first backend remains undecided; implement against the shared role contract and verify each native adapter's actual capabilities before inference.
 Plans explicitly report that accepted progress has not yet been evaluated and cannot yet be run.
-The next data-plane slice must revalidate frozen plans, snapshot admitted bytes, and exercise receipts/publication with deterministic fixture proposals before adding model execution.
+The data plane now revalidates frozen plans, snapshots admitted bytes, and exercises receipts/publication with deterministic fixture proposals.
+These checks do not authorize a native model run or establish backend containment.
 
 ** Resumed data-plane scope, 2026-11-08
 
@@ -87,9 +91,12 @@ It uses a distinct versioned fidelity contract so future semantic adapters canno
 No unresolved user decision blocks this bounded stage.
 GitNexus's current index returns unrelated symbols for dream queries and CRITICAL unrelated flows for name-based impact; exact dream symbol UIDs are absent.
 Direct source search finds =create_plan= called only by the dream CLI and dream tests.
-Leave existing planner functions unchanged and use direct source/call-site inspection alongside recorded impact attempts for this slice.
+Refreshing the index restored accurate symbol identities.
+The only existing function changed is =build_plan=: an optional inspection deadline lets revalidation share the run allowance while ordinary planning retains its default behavior.
+Its refreshed impact is HIGH, with two direct callers and three affected dream flows; this risk was reported before editing, and the final focused regressions cover the extension.
+The new validation and snapshot helpers have LOW impact.
 
-* Verification against this ledger
+* Planning-slice verification against this ledger
 
 - OK (sections 2 and 5) :: Source search reconfirmed that reply classification, dispatch assignments, and audit reports do not provide byte-exact git passage admission or private dream manifests.
   The implementation reuses configuration and WorkspaceBinding without changing those existing APIs.
@@ -111,5 +118,35 @@ Leave existing planner functions unchanged and use direct source/call-site inspe
   All other production symbols are in the new planning modules, with CLI regression coverage and the matched upstream failure set above.
 
 These checks establish the planning slice only, not backend containment, semantic claim fidelity, receipt reuse, publication concurrency, or pilot benefit.
+
+* Resumed data-plane verification against this ledger
+
+- OK (sections 2 and 5) :: Reuse search reconfirmed the existing planner, byte-preserving git reader, binding observer and private storage policy.
+  Dispatch private writers lack the required atomic/idempotent/no-follow contract; the new storage helper supplies that contract without coupling dream to HPC dispatch.
+- OK (sections 3 and 4) :: Full planning reconstruction rejects altered manifests, changed refs/registries/bindings and invalid budgets before fixture work.
+  Provisional UUID rebinding preserves the proposed identity without treating it as accepted.
+  The optional planner deadline is bounded by the run deadline in its targeted regression.
+- OK (sections 3, 4 and 6) :: Snapshots preserve selected UTF-8/CRLF bytes and remain private without changing umask.
+  Fixture coverage records every planned chunk and exact-byte comparison under a separate quotation-only fidelity contract.
+  Native parsing preserves generated subtree bindings and suppresses SETUPFILE reads; a FIFO canary verifies that suppression.
+- OK (sections 4 and 6) :: Disposable-repository tests preserve staged/unstaged work, user indexes, branch identity, existing wiki pages/settings/archives and human index text.
+  Hooks and filters do not run; conflicting refs and artifacts survive rejection; concurrent integration-ref movement leaves no published candidate.
+  Atomic snapshot writes and interruptions before/after ref publication are recoverable.
+- OK (sections 3 and 6) :: Integration checks require both quotation and index bindings, support squash integration, and report reconciliation after edits, deletion, missing targets, binary replacement or symlink replacement.
+  A retained receipt alone is insufficient; local status still requires the saved plan and snapshots.
+- Test evidence :: =poetry run pytest -q tests/test_dream.py tests/test_dream_run.py tests/test_dispatch_cli.py tests/test_observations.py tests/test_config.py tests/test_cli.py= passed 440 tests, including 58 planning tests and 38 data-plane tests.
+  =poetry run mypy --follow-imports=silent sucoder/dream.py sucoder/dream_cli.py sucoder/dream_run.py= passed.
+  =emacs --batch -Q -l docs/dream/validate.el= passed native design export/link/archive checks.
+  Wheel construction passed, and inspection confirmed inclusion of =sucoder/dream_validate.el= alongside the Python runtime modules.
+- Full-suite evidence :: The final full run passed 2661 tests, skipped eight and failed 41.
+  All 41 failing node IDs exactly match failures reproduced at unchanged =f452f0b= in an isolated archive checkout.
+  The full run preceded the last optional inspection-deadline refinement and its new test; the final 440-test focused run covers that final change.
+- Change detection :: Refreshed staged detection reports ten expected files, seven coarse symbol/file entries, zero affected processes and LOW aggregate risk.
+  The mapper omits the planner's changed signature despite accurate symbol-specific impact; direct diff inspection establishes the production scope: one optional planner parameter, appended dream CLI routes, and the new isolated data-plane/native-validator modules.
+  The other files are targeted tests, implementation docs and a replacement handoff with its predecessor archived.
+
+No CONTRADICTION or REINVENTION remained in the anchored check.
+The general defect pass found and corrected SETUPFILE reads, missing navigation bindings, interruption recovery and the shared-deadline gap.
+These results establish deterministic candidate publication only, not semantic claim fidelity, native adapter confinement, automatic progress reuse, general editorial revision safety or measured pilot benefit.
 
 Prepared by Sue.
