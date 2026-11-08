@@ -3,13 +3,15 @@
 #+date: 2026-11-08
 #+setupfile: settings.org
 
-* Implemented slices: git evidence planning and fixture publication
+* Implemented slices: explicit evidence and native role publication
 
 =sucoder dream plan= implements the first part of the [[file:../dream.org::#implementation][data-plane sequence]].
-It freezes explicitly admitted local git selections and budgets in a private JSON manifest without inference, source synchronization, or repository writes.
-The next slice adds frozen-plan validation, private snapshots, deterministic quotation fixtures, native Org subtree checks, output-bound receipts, atomic candidate publication, and local run status.
-Transcript ingestion, semantic role execution, automatic receipt reuse in planning, general editorial validation, and reader retrieval remain subsequent work.
-The planning manifest retains =execution.available: false= and =prior_wiki.progress: not_evaluated= for compatibility with the original planning contract; native model execution remains unavailable.
+It freezes explicitly admitted local git selections or native Claude/Codex transcript prefixes and budgets in a private JSON manifest without inference, source synchronization, or repository writes.
+Frozen-plan validation, private snapshots, deterministic quotation fixtures, native Org subtree checks, output-bound receipts, atomic candidate publication, and local run status are implemented.
+Native Claude and Codex adapters execute a shared schema-bound extractor/verifier/consolidator contract with an explicit model and conservative append-only publication.
+Automatic receipt reuse in planning, general editorial validation, generic native adapters and reader retrieval remain subsequent work.
+The planning manifest retains =execution.available: false= and =prior_wiki.progress: not_evaluated=: planning itself does not execute roles or establish accepted progress.
+Original git-only frozen plans remain compatible, including their legacy execution-reason text.
 No plan is evidence of an examined source, accepted claim, or integrated wiki generation.
 
 Use an existing SuCoder configuration and a locally accessible configured mirror:
@@ -25,7 +27,7 @@ The command never fetches; update the local integration ref through the normal w
 Global execution-target, sudo, and interactive-launch flags are rejected.
 Help works without a configuration file.
 
-The initial source request format is a strict JSON object:
+The source request format is a strict JSON object:
 
 #+begin_example
 {
@@ -93,7 +95,7 @@ Existing identical private plans are reusable; a mismatching existing file is re
 An accepted =.sucoder/wiki/sources.json= registry must have integer =schema_version: 1= and a UUID-valued =repository_uuid=.
 When absent, the plan proposes a new provisional UUID without writing a registry into the repository.
 Separate initial plans may therefore propose different UUIDs; integration and later re-planning must establish the shared identity.
-The planner never uses a receipt to skip extraction until output-binding validation is implemented.
+The planner does not yet discover shared receipts to skip extraction.
 
 Exit 0 means a valid stored plan, 2 means invalid or unsupported input, and 3 means unavailable evidence/storage or an inspection allowance exhausted.
 No installed launcher deployment follows from a source-tree change.
@@ -123,7 +125,8 @@ Coverage is =snapshotted= with zero examined bytes: copying evidence does not es
 =run --harness fixture= revalidates and snapshots first, then executes a deterministic quotation fixture over every planned chunk.
 All selected units must be explicitly shareable; an external repository also needs an accepted UUID.
 Private units may be snapshotted but cannot enter a fixture candidate.
-Unsupported harnesses fail before snapshotting or inference, without fallback.
+The fixture accepts git evidence only.
+Native =codex= and =claude= harnesses are described below; other harnesses fail without fallback.
 The fixture records each delivered range and exact-byte comparison, retaining git commit, blob, selected lines, byte offsets, digest, and repository UUID in its receipt.
 These checks prove delivery and literal-text preservation under a fixed rendering rule; they do not perform semantic extraction, model verification, synthesis, or a pilot evaluation.
 Published quotations normalize CRLF to LF and use Org comma escapes to keep source headings and block terminators literal.
@@ -155,10 +158,101 @@ All fixture stages spend the declared elapsed allowance, and proposal/staged-out
 The role-invocation count represents deterministic fixture stages, with token and currency usage unknown; no native model is invoked.
 Exit 0 means completed snapshot, prepared candidate, or completed status inspection; 2 rejects invalid/private/unsupported input, 3 reports unavailable evidence/storage, exhausted allowance or a ref conflict, and 1 reports failed fixture/Org validation.
 
+* Claude/Codex transcript evidence
+
+Add an explicitly selected local JSONL unit to the same source catalog:
+
+#+begin_example
+{
+  "unit_id": "session",
+  "kind": "codex-jsonl",
+  "shareable": true,
+  "locator": {
+    "path": "/PRIVATE/EXPLICIT/session.jsonl",
+    "thread_id": "NATIVE_THREAD_ID",
+    "byte_end": 12345
+  }
+}
+#+end_example
+
+Use =claude-jsonl= for Claude Code evidence.
+The absolute canonical path must name a regular file without symlinks; no transcript discovery or home crawl occurs.
+The required thread ID is checked against native identities, rather than inferred from the filename.
+Omit =byte_end= to freeze the current complete-line prefix, excluding a partial final line.
+An explicit cut must end at LF and fit =max_source_bytes=; it permits bounded selection from a larger transcript.
+Snapshots reread and compare the selected prefix; append-only growth beyond the frozen cut is allowed, while rewrites and shrinkage require a new plan.
+
+The independent =native-jsonl-evidence-v1= normalizer retains native records, exact line digests/ranges, roles, calls, results, error payloads, summary/fork/sidechain provenance and unknown events in file order.
+It reports unmatched calls and orphan results and never infers session completion or independent corroboration.
+Compaction and replay records remain evidence of their own recorded claims, not new independent observations.
+The planner binds the normalization digest; snapshots privately store both exact JSONL bytes and normalized records.
+Neither the existing reply classifiers nor their delivery rules change.
+Transcript source identity uses the target repository UUID, harness kind and native thread ID; copying a transcript path creates no independent source identity.
+
+* Native semantic candidates
+
+#+begin_example
+poetry run sucoder --config ~/.sucoder/config.yaml dream run SuCoder \
+  --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json --harness codex --model MODEL
+poetry run sucoder --config ~/.sucoder/config.yaml dream run SuCoder \
+  --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json --harness claude --model MODEL
+#+end_example
+
+The model is required; no harness or model fallback is attempted.
+The native run transmits the explicitly admitted evidence and selected prior wiki context to that harness's authenticated provider.
+Every selected unit must be marked shareable before preparing a native publication candidate.
+The existing YAML settings suffice; source-tree commands use =poetry run sucoder= until the launcher is deployed.
+
+The =inline-semantic-roles-v1= coordinator freezes its maintained role briefs, strict result schemas, plan, requested harness/model, observed native build and attempt number into the run identity.
+Each chunk receives a separate extractor and verifier assignment, including its exact source bytes/range/digest, transcript provenance when applicable, and frozen prior wiki context.
+The result must match its assignment/input identities and schema, report no unread failures, and cite literal UTF-8 bytes within the delivered chunk.
+The verifier must return exactly one verdict for each proposed claim.
+Contradicted claims are excluded; unresolved claims retain their qualification and explicit verification note.
+One consolidator organizes eligible claim IDs into titled sections, including each claim exactly once.
+The coordinator renders checked claims and source references rather than accepting arbitrary model-authored Org files.
+This conservative mode appends a fresh topic and navigation entry while preserving all previous wiki content.
+
+Native role processes have a private temporary home/cwd and receive immutable JSON on stdin.
+Linux Landlock ABI 3 or newer restricts the entire process tree to runtime executables/libraries, certificate/resolver files and that temporary directory; the real repository, git metadata, private run store, unrelated home files and process environments are outside the allowed filesystem view.
+Only the appropriate native authentication seed or provider API-key environment is staged; user/project settings, hooks, plugins, parent thread IDs and relay/socket locations are not copied.
+The authenticated provider connection remains network-enabled; this is filesystem confinement plus disabled model-facing external tools, not operating-system network isolation.
+Codex uses read-only sandbox mode with command, image, app, plugin, hook, browser and agent tools disabled and user configuration/rules ignored.
+Claude uses restricted/safe modes, no external tools or MCP servers, disabled hooks/commands, and noninteractive denial of permission prompts.
+Claude's internal =StructuredOutput= tool is allowed only as its schema response mechanism.
+Required CLI flags, native version and kernel restriction support are checked before a role's provider request; unknown execution trace events/tools fail validation.
+Unsupported platforms/builds preserve inference-free planning and snapshot functionality but reject native execution.
+
+Private assignments, results and complete bounded native traces bind each delivered payload, result and reported usage.
+Status reconstructs expected outputs from those bound records without invoking a model, and validates receipt/output subtrees after ordinary or squash integration.
+The public receipt identifies the requested harness/model, native build, checked source revisions, all chunk assignments and output bindings; private transcript paths and full transcripts are excluded.
+Delivery records show input provision, not comprehension; model verification remains fallible and candidates require ordinary review.
+
+The shared role count and elapsed deadline apply to the whole run; each role is bounded to 180 seconds within the remaining allowance.
+Cumulative result bytes, per-assignment bytes, trace bytes, proposals and staged output are bounded separately.
+Native usage is retained without inventing missing token/currency totals; no token or money ceiling is claimed.
+An advisory per-run lock prevents concurrent coordinators from repeating the same provider work.
+Validated completed results are reused on retry.
+A started/failed request with no validated result is never automatically repeated because its provider outcome and cost may be unknown.
+After inspecting its private trace, use an explicit new =--attempt 2= to start an independent run with a fresh allowance.
+If a plan has multiple native runs, pass =dream status --plan PLAN --run RUN_ID=; an unfinished native run reports =incomplete=.
+The planner's repair allowance remains reserved; this slice does not automatically repair a rejected semantic role result.
+
+For an opt-in live acceptance check using only synthetic evidence in a fresh disposable repository:
+
+#+begin_example
+poetry run python scripts/dream_acceptance.py \
+  --harness codex --model MODEL --kind codex-jsonl
+poetry run python scripts/dream_acceptance.py \
+  --harness claude --model MODEL --kind claude-jsonl
+#+end_example
+
+The script retains its private artifacts, checks a critical command flag, preserves the original index/worktree/branch and verifies output bindings after synthetic squash integration.
+It sends synthetic content to the requested provider and never discovers real transcripts.
+
 * Agent-independent dreaming
 
 On 2026-11-08 the user requested that implementation prioritize Codex and generic agents alongside Claude.
-The [[file:../dream.org::#pipeline][design's initial Claude adapter]] remains a capability hypothesis; it is not a coordinator dependency or a required first backend.
+The [[file:../dream.org::#pipeline][design's initial file-tool Claude adapter]] was a capability hypothesis; the implemented inline mode uses the same independent coordinator for both harnesses.
 The planning implementation imports no native agent client, chooses no provider/model, and has no fallback harness.
 
 Keep these interfaces separate:
@@ -174,15 +268,14 @@ Before either native adapter runs, feature-probe the installed version and verif
 A generic headless agent must satisfy the same contract through an explicit adapter; an arbitrary shell command returning prose does not establish those capabilities.
 Unsupported capabilities fail before inference with no provider/model fallback.
 Money or token limits are enforceable only when the adapter demonstrates run-wide accounting and enforcement; missing usage remains unknown.
-This contract must be exercised with deterministic role fixtures before adding Claude or Codex invocation.
+This contract is exercised with deterministic role fixtures and isolated native executable fixtures, independently of live account availability.
 
 * Next implementation slices
 
-1. Add full Claude/Codex evidence normalization without changing the reply classifiers.
-2. Generalize the quotation fixture into shared semantic role-result contracts, validators for editorial preservation, and compatible receipt discovery/reuse during planning.
-3. Add capability-checked Claude and Codex adapters against the shared contract, then bounded reader retrieval and previews.
-4. Extend the conservative append-only fixture publisher to independently validated topic revisions and archival moves.
-5. Review the separate pilot authorization and gates before any real corpus/provider experiment.
+1. Add compatible shared-receipt discovery/reuse during planning and bounded reader retrieval/previews.
+2. Extend append-only publication to independently validated topic revisions, editorial transitions, human decisions and archival moves.
+3. Add explicit generic execution adapters against the same capability/result contract.
+4. Review the separate pilot authorization and gates before any real corpus/provider experiment.
 
 The [[file:../dream-implementation-ledger.org][implementation ledger]] records reuse decisions and invariants.
 
@@ -203,5 +296,25 @@ The final full suite passed 2661 tests, skipped eight and failed 41; all 41 fail
 The full suite preceded the last optional planning-deadline refinement and its new regression test; the 440-test focused run covers that final change.
 The failing suites concern Codex app-server/state/runner and timer lifecycle, independently of dream.
 No model invocation, real-corpus publication, deployment or merge was performed.
+
+** Native roles and transcripts
+
+The final focused run passed 497 tests across dream, CLI, configuration, dispatch CLI and binding observations, including 153 dream cases.
+Mypy passed for all six dream modules; native Org design export/link/archive validation passed.
+Wheel construction and inspection confirmed inclusion of the new runtime modules and native Org validator.
+The full suite passed 2701 tests, skipped eight and failed 55; all 55 failing node IDs reproduced exactly at unchanged recovered =b7d9014= in an isolated archive checkout under the current installed CLI/environment.
+Those failures concern Codex app-server/state/runner, direct-remote and timer lifecycle, not dream.
+The final focused run includes source traversal, call-ID ambiguity, explicit-attempt and significant-whitespace refinements made after full-suite collection.
+
+On this host, actual Landlock ABI 8 denied unrelated reads/writes and process-environment access while allowing private role output and native CLI startup.
+Codex CLI 0.167.0 with explicit =gpt-6.1-sol= completed live synthetic git-evidence publication and a native-Codex-JSONL acceptance run, including exact source coverage and synthetic squash integration.
+The private reproducible JSONL acceptance artifacts are at =/tmp/sucoder-dream-acceptance-ha5ohs1g/=; no real-corpus publication occurred.
+Claude Code 2.1.317 started inside the same boundary and exposed only its internal =StructuredOutput= tool, then reported =usage_limit_reached= for its seven-day account allowance.
+Its reported reset is 2026-11-11 16:00 UTC; live Claude semantic acceptance remains unverified until account availability changes.
+The user explicitly chose to leave that live verification pending.
+Both native protocols and CLI pipelines pass deterministic isolated-executable tests, including each execution harness crossed with git, Codex and Claude evidence.
+No launcher deployment, upstream push, ordinary integration or real-corpus pilot was performed.
+Staged GitNexus detection reports CRITICAL aggregate risk across broad CLI flows, including unnamed-symbol mappings into unrelated flows.
+Direct diff inspection confines production changes to dream modules, with passing CLI/configuration/binding regressions and the exact matched baseline failure set above.
 
 Prepared by Sue.

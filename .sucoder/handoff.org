@@ -1,60 +1,95 @@
-#+TITLE: sucoder dream: deterministic data plane implemented
+#+TITLE: sucoder dream: native Codex and Claude implementation
 #+DATE: 2026-11-08
 #+STATUS: READY
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
-* Recovered work and authorized scope
+* Authorized goal and recovered baseline
 
-The user resumed dream implementation after a crash on 2026-11-08.
-The clean branch =coder/dream-data-plane= held the planning slice at =f452f0b=.
-The user explicitly selected "Continue through deterministic candidate publication" for this session.
-The earlier attention-hook handoff is preserved at [[file:handoffs/2026-11-03-attention.org][the November 3 handoff]]; those live-launch checks remain separate work.
+The user requested a working dream implementation for Codex and Claude after recovery of two crashed sessions.
+The recovered clean branch was =coder/dream-data-plane= at =b7d9014=.
+The preceding deterministic data-plane handoff is preserved at [[file:handoffs/2026-11-08-dream-data-plane.org][the earlier November 8 handoff]].
+The older attention-hook work remains separate.
 
-* Implemented behavior
+* Implemented native workflow
 
-See [[file:../docs/dream/implementation.org][the implementation interface and limitations]] and [[file:../docs/dream-implementation-ledger.org][the reuse ledger]].
-The CLI has local =dream plan=, =dream snapshot --plan=, =dream run --plan --harness fixture=, and =dream status --plan= routes.
-The new data plane is =sucoder/dream_run.py=; native parsing is =sucoder/dream_validate.el=; regressions are =tests/test_dream_run.py=.
+See [[file:../docs/dream/implementation.org][implemented interfaces and limitations]] and [[file:../docs/dream-implementation-ledger.org][the reuse and verification ledger]].
+The planner now admits explicit =git=, =codex-jsonl= and =claude-jsonl= units.
+The separate =sucoder/dream_transcript.py= normalizer retains complete-prefix bytes, native identity, exact ranges, calls/results, pending/ambiguous call IDs, summary/sidechain provenance and unknown records.
+Existing reply classification is unchanged.
+Snapshots accept append-only growth beyond the frozen cut and reject changed/shrunk bytes.
 
-Snapshots revalidate frozen planning semantics and store exact private source/prior bytes.
-The fixture delivers and byte-checks every selected chunk, writes attributed quotations, and binds each generated topic subtree and index entry in a distinct =git-quotation-fixture-v1= receipt.
-It preserves existing wiki contributions and publishes through a private index plus an atomic integration-ref verification/candidate-ref transaction.
-Status validates receipt/output bindings after ordinary or squash integration, and reports =needs_reconciliation= when required outputs change or disappear.
-Interrupted snapshot publication and interruptions before or after ref publication are recoverable.
-Native Org parsing uses read-only buffers so =SETUPFILE= cannot introduce file/network reads.
-No provider call, transcript crawl, deployment, merge, or real-corpus fixture run was performed.
-All publication tests use disposable repositories.
+=dream run --harness codex --model MODEL= and =--harness claude --model MODEL= use the same =inline-semantic-roles-v1= contract in =sucoder/dream_roles.py=.
+Every chunk receives extractor/verifier assignments; one consolidator selects all eligible claim IDs into fresh sections.
+The coordinator validates schemas, exact source quotes/ranges, exhaustive verdicts/claim selection, native result/trace bindings and Org output subtrees.
+It renders a fresh topic and index entry and reuses the existing private-index/atomic-ref publisher, preserving user work and prior wiki contributions.
+Contradicted claims are omitted, unresolved claims retain explicit qualifications, and semantic verification remains fallible.
 
-The original planning functions are reused; =build_plan= gains only an optional inspection deadline so revalidation shares the run allowance.
-Planning manifests retain their original unavailable-execution/unevaluated-progress fields; native role execution is still unavailable.
-Fixture candidates prove literal-text quotation fidelity under the documented LF/comma-escape rendering rule, never semantic verification or measured memory benefit.
-Private units can be snapshotted but cannot enter a quotation candidate.
-External sources need an accepted UUID for fixture publication.
+=sucoder/dream_native.py= supplies bounded byte-preserving native transport with Linux Landlock ABI 3 or newer.
+Native processes receive immutable inline JSON in a private temporary home/cwd, minimal authentication staging and disabled external tools/settings/hooks/plugins.
+The actual repository, private artifact store, unrelated homes and process environments are outside the filesystem view.
+The authenticated provider connection remains network-enabled; no operating-system network isolation is claimed.
+Native build, requested model, briefs, schemas, plan and attempt number bind the run identity.
+No native permission bypass or provider/model fallback is used.
 
-* Next implementation work
+Native runs have advisory locks and durable started/result/trace records.
+Completed results are reusable; a started/failed request with no validated result is never silently repeated.
+Use an explicit new =--attempt 2= after inspecting a failed attempt.
+When a plan has multiple native runs, =dream status --plan PLAN --run RUN_ID= selects one.
+Status reconstructs expected results without inference and distinguishes incomplete attempts, candidate preparation, validated squash/ordinary integration and edited-output reconciliation.
 
-Keep dreaming independent of the native evidence producer and execution harness, including Codex and generic agents.
-Generalize the fixture into schema-bound semantic role assignments/results, coordinator-owned traces/coverage and capability checks before adding any native inference.
-Add full Claude/Codex transcript normalization without changing reply classification.
-Add compatible shared-receipt discovery and planning reuse; current local status requires its saved plan and snapshots.
-Extend validation for editorial transitions, human decisions, links outside the generated set, topic revisions and archival moves before enabling general consolidation.
-The bounded reader and pilot remain subsequent work; no pilot benefit or native backend confinement has been established.
+* Verification and remaining live check
 
-* Validation and local environment
+The final focused command passed 497 tests, including 153 dream cases:
 
-Run Python checks from the mirror root with =poetry run pytest=; type checking uses =poetry run mypy --follow-imports=silent sucoder/dream.py sucoder/dream_cli.py sucoder/dream_run.py=.
-Native design export/link/archive checks use =emacs --batch -Q -l docs/dream/validate.el=.
-The installed launcher still reports =2026.7.1.dev383+g3a68deb=; use =poetry run sucoder= for source-tree dream commands.
-The first full suite run had 2646 passes, eight skips and 41 failures; all 41 reproduced at the unchanged recovered =f452f0b= baseline in an isolated archive checkout.
-Those failures are in Codex app-server/state/runner and timer-lifecycle tests.
-Final verification results are recorded in the implementation ledger.
-The final full run had 2661 passes, eight skips and the same 41 baseline failures; the final focused run passed 440 tests including the last planning-deadline refinement.
-Mypy, native Org design checks, and wheel construction/runtime-asset inclusion passed.
+#+begin_example
+poetry run pytest -q tests/test_dream.py tests/test_dream_run.py \
+  tests/test_dream_transcript.py tests/test_dream_roles.py tests/test_dream_native.py \
+  tests/test_cli.py tests/test_config.py tests/test_dispatch_cli.py tests/test_observations.py
+poetry run mypy --follow-imports=silent sucoder/dream.py sucoder/dream_cli.py \
+  sucoder/dream_run.py sucoder/dream_roles.py sucoder/dream_native.py sucoder/dream_transcript.py
+emacs --batch -Q -l docs/dream/validate.el
+#+end_example
 
-GitNexus initially returned corrupt unrelated symbol matches.
-=node .gitnexus/run.cjs analyze --skip-agents-md= restored accurate dream symbols.
-After refresh, =build_plan= impact is HIGH with two direct callers and three dream flows; validation/snapshot helpers are LOW.
-Use the refreshed graph, and continue passing =--skip-agents-md= to avoid generated guidance diffs.
+Mypy, native Org design checks, wheel construction and runtime-asset inclusion passed.
+The full suite passed 2701 tests, skipped eight and failed 55.
+All 55 failing node IDs reproduced exactly at unchanged =b7d9014= in an isolated archive checkout under the current native CLI/environment.
+The comparison is retained at =/tmp/sucoder-dream-baseline-qml5svmx/comparison.json=.
+Failures concern Codex app-server/state/runner, direct-remote and timer lifecycle.
+The final focused run covers changes made after full-suite collection.
+
+Actual Landlock ABI 8 canaries denied unrelated reads/writes and process-environment reads while allowing native startup and private role output.
+Both harnesses pass isolated executable/protocol tests with git, Claude and Codex evidence.
+Live Codex CLI 0.167.0 with explicit =gpt-6.1-sol= passed synthetic git-evidence publication and synthetic Codex-JSONL acceptance through squash integration.
+The latter's private artifacts are at =/tmp/sucoder-dream-acceptance-ha5ohs1g/=.
+
+Live Claude Code 2.1.317 started inside the boundary and exposed only its internal =StructuredOutput= tool, then reported =usage_limit_reached= for its seven-day account quota.
+Its reported reset is 2026-11-11 16:00 UTC.
+Live Claude semantic acceptance remains unverified until account availability changes; do not repeat provider requests merely to rediscover that quota state.
+The user explicitly chose to leave live Claude verification pending; no alternative account/provider was selected.
+
+Reproducible opt-in synthetic acceptance, without real transcript discovery:
+
+#+begin_example
+poetry run python scripts/dream_acceptance.py --harness codex --model MODEL --kind codex-jsonl
+poetry run python scripts/dream_acceptance.py --harness claude --model MODEL --kind claude-jsonl
+#+end_example
+
+The script retains private artifacts, checks the critical =--dry-run= qualification, verifies preservation of user index/worktree/branch and tests output-bound squash integration.
+No real corpus, deployment, upstream push, ordinary integration or pilot was performed.
+Use =poetry run sucoder= for source-tree commands; the installed launcher is separate.
+
+* Subsequent work
+
+Automatic shared-receipt discovery/reuse, generic role adapters, semantic repair, bounded reader retrieval and general topic revision/editorial/archive transitions remain subsequent slices.
+The publisher is deliberately append-only until those editorial invariants are independently validated.
+The separate pilot authorization and benefit gates remain in force.
+
+GitNexus required a forced refresh to restore accurate dream symbol queries; use =node .gitnexus/run.cjs analyze --skip-agents-md=.
+The planner and frozen-plan schema check have HIGH upstream impact across planning/snapshot/run/status; new role/native helpers and shared publication have LOW symbol-specific impact, with documented graph receiver-resolution omissions.
+Always run =detect-changes= before committing and inspect the actual diff alongside graph results.
+Staged detection mapped 71 coarse symbols and reported CRITICAL aggregate risk across many flows, including unrelated flows with unnamed changed nodes.
+The actual production diff is confined to dream modules; CLI/configuration/binding regressions pass, and every full-suite failure reproduces at the unchanged baseline.
+Use symbol-specific impact plus direct file/call-site inspection to interpret those aggregate mappings.
 
 Prepared by Sue (GPT-6 Codex).

@@ -2545,23 +2545,34 @@ subsequent launches).  If =CLAUDE.md= or =.claude/skills= already
 exist independently, =sucoder= leaves them in place and does not
 overwrite.
 
-* Dream companion planning and fixture publication
+* Dream companion candidates with Codex and Claude
 
-=sucoder dream plan= starts an agent-independent, checked-in companion wiki workflow by freezing explicitly selected local git files or passages into a private plan.
+=sucoder dream plan= starts an agent-independent, checked-in companion wiki workflow by freezing explicitly selected local git files, passages, or Claude/Codex transcript prefixes into a private plan.
 Planning preserves the mirror's worktree, index, and refs.
 =sucoder dream snapshot= validates a stored plan and copies exact admitted bytes into private storage.
 =sucoder dream run --harness fixture= exercises complete chunk delivery and prepares an attributed-quotation candidate with output-bound receipts; =sucoder dream status --plan= checks its candidate ref and integration bindings.
-The fixture invokes no model and establishes quotation fidelity only; native Claude/Codex execution remains future work.
+The fixture invokes no model and establishes quotation fidelity only.
+Native =--harness codex --model MODEL= and =--harness claude --model MODEL= run the same structured extractor, verifier and consolidator contract.
+These commands transmit admitted evidence and prior wiki context to the selected provider; there is no provider/model fallback.
 
 #+begin_example
 sucoder --config ~/.sucoder/config.yaml dream plan SuCoder \
   --sources sources.json --base refs/heads/main
+sucoder --config ~/.sucoder/config.yaml dream run SuCoder \
+  --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json --harness codex --model MODEL
+sucoder --config ~/.sucoder/config.yaml dream status SuCoder \
+  --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json
 #+end_example
 
 See [[file:docs/dream/implementation.org][the implemented request format, limits, and backend boundary]] and [[file:docs/dream.org][the complete design]].
 Plans use the existing =log_dir= setting (or =~/.sucoder/logs/= when unset) and must live outside inspected repositories.
 There are no new YAML configuration keys.
-Claude, Codex, and generic role adapters will share coordinator-owned coverage, validation, and publication contracts.
+Native execution currently requires Linux Landlock ABI 3 or newer and the CLI isolation/schema flags checked at runtime.
+Models receive immutable inline input in a private temporary environment, with external tools disabled; the coordinator alone publishes git objects and refs.
+Candidate topics are append-only, retain exact source references and explicit verification caveats, and preserve existing wiki files.
+Use =--attempt 2= to explicitly start a new native run after inspecting a failed attempt; completed role results are otherwise reused without another provider call.
+When a plan has multiple native runs, status requires =--run RUN_ID=.
+Planning and snapshots remain inference-free; generic adapters, automatic shared receipt reuse, topic revisions, archival moves and bounded reader retrieval remain subsequent work.
 
 * Agent Skills Tracking
 

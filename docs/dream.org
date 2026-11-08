@@ -14,7 +14,7 @@ The first implementation publishes a candidate git commit on a separate branch; 
 There is no automatic merge, instruction-file rewrite, scheduler job, or hosted service.
 
 This is the full implementation design under the [[file:dream-charter.org][approved workshop charter]]; it does not establish a measured memory improvement.
-The [[file:dream/implementation.org][implementation status]] records git planning, private snapshots, deterministic fixture publication, and the user's request to prioritize agent-independent execution, including Codex and generic adapters.
+The [[file:dream/implementation.org][implementation status]] records git and Claude/Codex transcript planning, private snapshots, deterministic fixtures, and shared native Claude/Codex role execution with append-only candidate publication.
 The [[file:dream-ledger.org][prior-art ledger]] supplies the reuse decisions and source limitations.
 Read the [[file:dream/prompts.org][role briefs]], [[file:dream/scenarios.org][scenario checks]], [[file:dream/pilot.org][pilot protocol]], and the [[file:dream/examples/sucoder.org][SuCoder]] and [[file:dream/examples/lsms.org][LSMS]] examples for operational detail.
 

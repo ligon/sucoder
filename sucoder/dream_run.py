@@ -18,6 +18,7 @@ import uuid
 from urllib.parse import quote
 
 from . import dream
+from . import dream_transcript
 from .dream import DreamError, canonical, digest
 
 
@@ -112,6 +113,19 @@ def _plan_shape(plan):
         if not isinstance(plan["units"], list) or not 1 <= len(plan["units"]) <= limits.max_units:
             raise DreamError("Invalid frozen unit selection")
         for unit in plan["units"]:
+            if unit.get("kind") in dream_transcript.KINDS:
+                dream._object(unit, ("unit_id", "kind", "shareable", "source_id", "repository", "repository_uuid",
+                    "path", "thread_id", "byte_start", "byte_end", "bytes", "sha256", "chunks", "normalization"))
+                dream._text(unit["path"], "transcript path")
+                dream._text(unit["thread_id"], "thread_id")
+                if (type(unit["shareable"]) is not bool or type(unit["byte_end"]) is not int or
+                        type(unit["byte_start"]) is not int or unit["byte_start"] != 0 or
+                        type(unit["bytes"]) is not int or not 0 < unit["byte_end"] == unit["bytes"] <= limits.max_source_bytes):
+                    raise DreamError("Invalid frozen transcript selection")
+                dream._object(unit["normalization"], ("contract", "sha256", "records", "unknown_events"))
+                if not isinstance(unit["chunks"], list) or not unit["chunks"]:
+                    raise DreamError("Invalid frozen transcript chunks")
+                continue  # Full semantic reconstruction below validates all digests and ranges.
             dream._object(unit, ("unit_id", "kind", "shareable", "source_id", "repository", "repository_uuid",
                 "commit", "path", "blob", "lines", "byte_start", "byte_end", "bytes", "sha256", "chunks"))
             for field in ("unit_id", "source_id", "repository", "repository_uuid", "commit", "blob", "sha256"):
@@ -147,7 +161,7 @@ def _validate(config, mirror, plan, deadline):
     """Reconstruct the planner's full contract, reusing admission (ledger 2, 6)."""
     try:
         request = dict(schema_version=1, repository=mirror, integration_ref=plan["integration_ref"],
-                       limits=plan["limits"], units=[dict(unit_id=u["unit_id"], kind=u["kind"],
+                       limits=plan["limits"], units=[dream_transcript.request_unit(u) if u["kind"] in dream_transcript.KINDS else dict(unit_id=u["unit_id"], kind=u["kind"],
                            shareable=u["shareable"], locator=dict(repository=u["repository"],
                                commit=u["commit"], path=u["path"], lines=u["lines"])) for u in plan["units"]])
         current = dream.build_plan(config, mirror, request, plan["integration_ref"],
@@ -164,8 +178,11 @@ def _validate(config, mirror, plan, deadline):
                 for unit in current["units"]:
                     if unit["repository"] == name:
                         unit["repository_uuid"] = identity
-                        unit["source_id"] = digest(canonical([identity, "git", unit["path"]]))
+                        logical = unit["path"] if unit["kind"] == "git" else unit["thread_id"]
+                        unit["source_id"] = digest(canonical([identity, unit["kind"], logical]))
         expected = {k: v for k, v in plan.items() if k != "plan_id"}
+        if expected["execution"] == dict(available=False, reason="Snapshot, receipt and role execution slices are not implemented"):
+            current["execution"] = expected["execution"]  # Preserve original git-only frozen plans.
         if canonical(current) != canonical(expected):
             raise DreamError("Frozen plan no longer matches source binding, integration ref, registry or wiki; re-plan", 3)
     except (KeyError, TypeError, AttributeError, ValueError) as exc:
@@ -191,13 +208,22 @@ def _snapshot(config, mirror, plan, fd, deadline):
     records = []
     for unit in plan["units"]:
         source = sources[unit["repository"]]
-        if source.entry(unit["commit"], unit["path"]) != unit["blob"]:
-            raise DreamError("Frozen git source object changed or disappeared", 3)
-        raw = source.blob(unit["blob"])[unit["byte_start"]:unit["byte_end"]]
+        if unit["kind"] == "git":
+            if source.entry(unit["commit"], unit["path"]) != unit["blob"]:
+                raise DreamError("Frozen git source object changed or disappeared", 3)
+            raw = source.blob(unit["blob"])[unit["byte_start"]:unit["byte_end"]]
+        else:
+            raw = dream_transcript.read_prefix(dream_transcript.request_unit(unit)["locator"],
+                                               plan["limits"]["max_source_bytes"], deadline)
         if len(raw) != unit["bytes"] or digest(raw) != unit["sha256"]:
             raise DreamError("Snapshot bytes differ from the frozen selection", 3)
         name = "evidence-" + unit["sha256"] + ".txt"
         _store(fd, name, raw)
+        if unit["kind"] != "git":
+            normalized = canonical(dream_transcript.normalize(raw, unit["kind"], unit["thread_id"]))
+            if digest(normalized) != unit["normalization"]["sha256"]:
+                raise DreamError("Transcript normalization differs from frozen plan", 3)
+            _store(fd, "normalized-" + unit["sha256"] + ".json", normalized + b"\n")
         records.append(dict(unit_id=unit["unit_id"], file=name, sha256=digest(raw),
                             bytes=len(raw), state="snapshotted", examined_bytes=0))
     for item in plan["prior_wiki"]["selected"]:
@@ -323,105 +349,130 @@ def run_fixture(config, mirror, plan_path, harness):
         raise DreamError("Only the deterministic fixture harness is implemented; no native agent is invoked")
     with _directory(config, plan_path) as (fd, directory):
         plan = _load(fd, directory.name, mirror)
+        if any(unit["kind"] != "git" for unit in plan["units"]):
+            raise DreamError("The quotation fixture supports git evidence only; select a native role harness for transcripts")
         deadline = time.monotonic() + dream.Limits.parse(plan["limits"]).max_elapsed_seconds
         if any(not unit["shareable"] for unit in plan["units"]):
             raise DreamError("Fixture publication requires every selected unit to be explicitly shareable")
         if any(name != mirror and item["provisional"] for name, item in plan["repositories"].items()):
             raise DreamError("External source repositories need an accepted UUID before fixture publication")
         _, sources = _snapshot(config, mirror, plan, fd, deadline)
-        source = sources[mirror]
         path, content, receipt = _fixture(plan, fd)
-        if len(canonical(receipt)) + len(content.encode()) > plan["limits"]["max_proposal_bytes"]:
-            raise DreamError("Fixture proposals exceed max_proposal_bytes", 3)
-        run_id = receipt["run_id"]
-        ref = "refs/heads/dream/" + run_id
-        previous = {item["path"]: item["blob"] for item in plan["prior_wiki"]["files"]}
-        receipt_path = ".sucoder/wiki/receipts/" + run_id + ".json"
-        if path in previous or receipt_path in previous:
-            raise DreamError("Fixture output already exists in the integration tree; re-plan")
-        index_path = ".sucoder/wiki/index.org"
-        index = source.blob(previous[index_path]).decode("utf-8") if index_path in previous else "#+title: Companion wiki\n"
-        index += "\n" + _index_entry(run_id)
-        files = {path: content, index_path: index}
-        parsed = _validate_org(files, deadline)
-        for binding in receipt["outputs"]:
-            if parsed[binding["path"]].get(binding["target"]) != binding["sha256"]:
-                raise DreamError("Native Org subtree differs from output binding", 1)
-        files[receipt_path] = canonical(receipt).decode() + "\n"
-        registry = ".sucoder/wiki/sources.json"
-        if registry not in previous:
-            files[registry] = canonical(dict(schema_version=1, repository_uuid=plan["repository_uuid"])).decode() + "\n"
-        if sum(len(value.encode()) for value in files.values()) > plan["limits"]["max_consolidation_bytes"]:
-            raise DreamError("Fixture staged output exceeds max_consolidation_bytes", 3)
-        _store(fd, "fixture-receipt.json", canonical(receipt) + b"\n")
-        # Storing objects may leave harmless unreachable objects on interruption.
-        # Only the final compare-and-swap transaction publishes a candidate ref.
-        with tempfile.TemporaryDirectory(prefix=".index-", dir=directory) as scratch:
-            private_index = Path(scratch) / "index"
-            _git_write(source, private_index, ["read-tree", plan["base_commit"]], deadline)
-            for name, text in files.items():
-                oid = _git_write(source, private_index, ["hash-object", "-w", "--no-filters", "--stdin"], deadline, text.encode())
-                _git_write(source, private_index, ["update-index", "--add", "--cacheinfo", "100644", oid, name], deadline)
-            tree = _git_write(source, private_index, ["write-tree"], deadline)
-            commit_name = "candidate-" + run_id + ".txt"
-            try:
-                commit = _read(fd, commit_name, 128).decode().strip()
-            except FileNotFoundError:
-                message = ("Dream quotation fixture " + run_id +
-                           "\n\nExact quotations only; requires ordinary review and integration.\n")
-                commit = _git_write(source, private_index, ["commit-tree", tree, "-p", plan["base_commit"], "-F", "-"], deadline, message.encode())
-                _store(fd, commit_name, (commit + "\n").encode())
-            if (not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit) or
-                    source.git("show", "-s", "--format=%T %P", commit).decode().strip() != tree + " " + plan["base_commit"]):
-                raise DreamError("Retained candidate object does not match the frozen output tree", 1)
-            for item in sources.values():
-                item.check_binding()
-            if (source.git("symbolic-ref", "--quiet", ref, missing=True) is not None or
-                    source.git("symbolic-ref", "--quiet", plan["integration_ref"], missing=True) is not None):
-                raise DreamError("Candidate and integration refs must not be symbolic", 3)
-            existing = source.git("rev-parse", "--verify", ref, missing=True)
-            if existing is not None and existing.decode().strip() != commit:
-                raise DreamError("Candidate ref already exists with different content", 3)
-            action = "create" if existing is None else "verify"
-            transaction = ("start\nverify " + plan["integration_ref"] + " " + plan["base_commit"] +
-                           "\n" + action + " " + ref + " " + commit + "\nprepare\ncommit\n")
-            _git_write(source, private_index, ["update-ref", "--no-deref", "--stdin"], deadline, transaction.encode())
-        result = _run_result(plan, receipt, commit)
-        _store(fd, "run.json", canonical(result) + b"\n")
-        return result
+        return publish(plan, fd, directory, sources, deadline, path, content, receipt, _index_entry(receipt["run_id"]))
+
+
+def publish(plan, fd, directory, sources, deadline, path, content, receipt, index_entry,
+            *, receipt_name="fixture-receipt.json", result_name="run.json"):
+    """Shared atomic append-only publication, independent of role transport."""
+    source = sources[plan["repository"]]
+    if len(canonical(receipt)) + len(content.encode()) > plan["limits"]["max_proposal_bytes"]:
+        raise DreamError("Fixture proposals exceed max_proposal_bytes", 3)
+    run_id = receipt["run_id"]
+    ref = "refs/heads/dream/" + run_id
+    previous = {item["path"]: item["blob"] for item in plan["prior_wiki"]["files"]}
+    receipt_path = ".sucoder/wiki/receipts/" + run_id + ".json"
+    if path in previous or receipt_path in previous:
+        raise DreamError("Fixture output already exists in the integration tree; re-plan")
+    index_path = ".sucoder/wiki/index.org"
+    index = source.blob(previous[index_path]).decode("utf-8") if index_path in previous else "#+title: Companion wiki\n"
+    index += "\n" + index_entry
+    files = {path: content, index_path: index}
+    parsed = _validate_org(files, deadline)
+    for binding in receipt["outputs"]:
+        if parsed[binding["path"]].get(binding["target"]) != binding["sha256"]:
+            raise DreamError("Native Org subtree differs from output binding", 1)
+    files[receipt_path] = canonical(receipt).decode() + "\n"
+    registry = ".sucoder/wiki/sources.json"
+    if registry not in previous:
+        files[registry] = canonical(dict(schema_version=1, repository_uuid=plan["repository_uuid"])).decode() + "\n"
+    if sum(len(value.encode()) for value in files.values()) > plan["limits"]["max_consolidation_bytes"]:
+        raise DreamError("Fixture staged output exceeds max_consolidation_bytes", 3)
+    _store(fd, receipt_name, canonical(receipt) + b"\n")
+    # Storing objects may leave harmless unreachable objects on interruption.
+    # Only the final compare-and-swap transaction publishes a candidate ref.
+    with tempfile.TemporaryDirectory(prefix=".index-", dir=directory) as scratch:
+        private_index = Path(scratch) / "index"
+        _git_write(source, private_index, ["read-tree", plan["base_commit"]], deadline)
+        for name, text in files.items():
+            oid = _git_write(source, private_index, ["hash-object", "-w", "--no-filters", "--stdin"], deadline, text.encode())
+            _git_write(source, private_index, ["update-index", "--add", "--cacheinfo", "100644", oid, name], deadline)
+        tree = _git_write(source, private_index, ["write-tree"], deadline)
+        commit_name = "candidate-" + run_id + ".txt"
+        try:
+            commit = _read(fd, commit_name, 128).decode().strip()
+        except FileNotFoundError:
+            message = ("Dream candidate " + run_id +
+                       "\n\nRequires ordinary review and integration.\n")
+            commit = _git_write(source, private_index, ["commit-tree", tree, "-p", plan["base_commit"], "-F", "-"], deadline, message.encode())
+            _store(fd, commit_name, (commit + "\n").encode())
+        if (not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit) or
+                source.git("show", "-s", "--format=%T %P", commit).decode().strip() != tree + " " + plan["base_commit"]):
+            raise DreamError("Retained candidate object does not match the frozen output tree", 1)
+        for item in sources.values():
+            item.check_binding()
+        if (source.git("symbolic-ref", "--quiet", ref, missing=True) is not None or
+                source.git("symbolic-ref", "--quiet", plan["integration_ref"], missing=True) is not None):
+            raise DreamError("Candidate and integration refs must not be symbolic", 3)
+        existing = source.git("rev-parse", "--verify", ref, missing=True)
+        if existing is not None and existing.decode().strip() != commit:
+            raise DreamError("Candidate ref already exists with different content", 3)
+        action = "create" if existing is None else "verify"
+        transaction = ("start\nverify " + plan["integration_ref"] + " " + plan["base_commit"] +
+                       "\n" + action + " " + ref + " " + commit + "\nprepare\ncommit\n")
+        _git_write(source, private_index, ["update-ref", "--no-deref", "--stdin"], deadline, transaction.encode())
+    result = _run_result(plan, receipt, commit)
+    _store(fd, result_name, canonical(result) + b"\n")
+    return result
 
 
 def _run_result(plan, receipt, commit):
     return dict(schema_version=1, operation="dream_run", run_id=receipt["run_id"], plan_id=plan["plan_id"],
-        state="candidate_ready", harness="fixture", fidelity=CONTRACT,
+        state="candidate_ready", harness=receipt.get("harness", "fixture"), fidelity=receipt["contract"],
         base_commit=plan["base_commit"], candidate_commit=commit,
         candidate_ref="refs/heads/dream/" + receipt["run_id"],
         coverage=receipt["coverage"], usage=receipt["usage"],
-        integration=dict(state="not_integrated", evidence=None))
+        integration=dict(state="not_integrated", evidence=None),
+        **({key: receipt[key] for key in ("model", "native_version")} if "harness" in receipt else {}))
 
 
-def status(config, mirror, plan_path):
+def status(config, mirror, plan_path, run_id=None):
     """Check the designated integration tree; candidate ancestry is irrelevant."""
     with _directory(config, plan_path) as (fd, directory):
         plan = _load(fd, directory.name, mirror)
         deadline = time.monotonic() + 30
-        run_id = digest(canonical([CONTRACT, plan["plan_id"]]))
+        fixture_id = digest(canonical([CONTRACT, plan["plan_id"]]))
+        native_specs = [name[len("native-"):-len("-spec.json")] for name in os.listdir(fd)
+                        if re.fullmatch(r"native-[0-9a-f]{64}-spec\.json", name)]
+        if run_id is None:
+            if len(native_specs) > 1:
+                raise DreamError("Multiple native runs exist; select one with --run RUN_ID")
+            run_id = native_specs[0] if native_specs else fixture_id
+        if not isinstance(run_id, str) or not re.fullmatch(r"[0-9a-f]{64}", run_id):
+            raise DreamError("Invalid --run identity")
+        native = run_id != fixture_id
+        if native and run_id not in native_specs:
+            raise DreamError("Requested native run does not exist")
         try:
             commit = _read(fd, "candidate-" + run_id + ".txt", 128).decode().strip()
         except FileNotFoundError:
             return dict(schema_version=1, operation="dream_status", plan_id=plan["plan_id"],
-                        state="not_run", integration=dict(state="not_integrated", evidence=None))
+                        state="incomplete" if native else "not_run", run_id=run_id,
+                        integration=dict(state="not_integrated", evidence=None))
         # Recompute fixture identities and expected receipt, rather than trust a
         # mutable local run record as evidence of shared accepted progress.
-        _, _, expected = _fixture(plan, fd)
+        if native:
+            from . import dream_roles
+            expected = dream_roles.restore(plan, fd, run_id, deadline)
+        else:
+            _, _, expected = _fixture(plan, fd)
         run = _run_result(plan, expected, commit)
         try:
-            recorded = dream._json(_read(fd, "run.json", MAX_PLAN_BYTES))
+            recorded = dream._json(_read(fd, "native-" + run_id + "-run.json" if native else "run.json", MAX_PLAN_BYTES))
         except FileNotFoundError:
             pass  # Interruption between atomic ref publication and local record.
         else:
             if canonical(recorded) != canonical(run):
-                raise DreamError("Stored run record does not match its fixture plan")
+                raise DreamError("Stored run record does not match its frozen role plan")
         source = _sources(config, plan, deadline)[mirror]
         base = source.commit(plan["integration_ref"])
         receipt_path = ".sucoder/wiki/receipts/" + expected["run_id"] + ".json"
@@ -430,7 +481,7 @@ def status(config, mirror, plan_path):
         evidence = None
         if oid is not None:
             state = "needs_reconciliation"
-            evidence = dict(integration_commit=base, receipt_blob=oid, contract=CONTRACT)
+            evidence = dict(integration_commit=base, receipt_blob=oid, contract=expected["contract"])
             if source.blob(oid, MAX_PLAN_BYTES) == canonical(expected) + b"\n":
                 files = {}
                 try:
@@ -444,7 +495,7 @@ def status(config, mirror, plan_path):
                     else:
                         parsed = _validate_org(files, deadline)
                         if all(parsed.get(b["path"], {}).get(b["target"]) == b["sha256"] for b in expected["outputs"]):
-                            state = "integrated_fixture"
+                            state = "integrated_candidate" if native else "integrated_fixture"
                 except UnicodeError:
                     pass  # A human replacement no longer matches the Org contract.
                 except DreamError as exc:

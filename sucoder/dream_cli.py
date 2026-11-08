@@ -9,17 +9,18 @@ import typer
 
 from . import dream
 from . import dream_run
+from . import dream_roles
 from .config import ConfigError, load_config
 
 
-app = typer.Typer(help="Plan, snapshot and exercise companion-wiki publication. Git evidence and deterministic fixtures; no model calls.")
+app = typer.Typer(help="Plan, snapshot and publish companion-wiki candidates from explicit git or transcript evidence.")
 
 
 @app.command("plan")
 def plan(
     ctx: typer.Context,
     mirror: str = typer.Argument(..., help="Configured mirror available on this host."),
-    sources: Path = typer.Option(..., "--sources", help="Explicit version-1 JSON source catalog; git units only."),
+    sources: Path = typer.Option(..., "--sources", help="Explicit version-1 JSON source catalog; git, claude-jsonl or codex-jsonl units."),
     base: str = typer.Option(..., "--base", help="Full integration ref matching the catalog, e.g. refs/heads/main."),
     maintenance: Optional[str] = typer.Option(None, "--maintenance", help="Explicit maintenance reason; requires --topic."),
     topic: Optional[str] = typer.Option(None, "--topic", help="Topic name for an explicit maintenance pass."),
@@ -50,10 +51,15 @@ def run(
     ctx: typer.Context,
     mirror: str = typer.Argument(..., help="Configured local mirror."),
     plan_path: Path = typer.Option(..., "--plan", help="Stored private plan.json."),
-    harness: str = typer.Option(..., "--harness", help="Only 'fixture' is implemented; publishes exact quotations without inference."),
+    harness: str = typer.Option(..., "--harness", help="fixture (exact quotations), codex or claude (native structured roles)."),
+    model: Optional[str] = typer.Option(None, "--model", help="Required for native roles; sends admitted evidence and prior wiki to this model's provider."),
+    attempt: int = typer.Option(1, "--attempt", min=1, help="Explicit native attempt number; a new number starts a new run and allowance."),
 ):
-    """Prepare a deterministic quotation-fixture candidate on a new dream branch."""
-    _data_command(ctx, "dream_run", dream_run.run_fixture, mirror, plan_path, harness)
+    """Prepare a candidate on a new dream branch, preserving worktree and index."""
+    if harness == "fixture" and model is None and attempt == 1:
+        _data_command(ctx, "dream_run", dream_run.run_fixture, mirror, plan_path, harness)
+    else:
+        _data_command(ctx, "dream_run", dream_roles.run, mirror, plan_path, harness, model, attempt)
 
 
 @app.command("status")
@@ -61,9 +67,10 @@ def status(
     ctx: typer.Context,
     mirror: str = typer.Argument(..., help="Configured local mirror."),
     plan_path: Path = typer.Option(..., "--plan", help="Stored private plan.json for this run."),
+    run_id: Optional[str] = typer.Option(None, "--run", help="Select a run ID when this plan has multiple native runs."),
 ):
     """Print JSON separating candidate preparation from validated integration."""
-    _data_command(ctx, "dream_status", dream_run.status, mirror, plan_path)
+    _data_command(ctx, "dream_status", dream_run.status, mirror, plan_path, run_id)
 
 
 def _data_command(ctx, operation, function, *args):

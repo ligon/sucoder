@@ -287,6 +287,7 @@ def _prior_wiki(source, base, limits):
 
 def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, inspection_deadline=None):
     """Freeze selections, never imply inference or shared completion."""
+    from . import dream_transcript
     _object(request, ("schema_version", "repository", "integration_ref", "units"), ("limits",))
     if type(request["schema_version"]) is not int or request["schema_version"] != SCHEMA_VERSION:
         raise DreamError("Unsupported source request schema_version")
@@ -312,12 +313,15 @@ def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, i
         if uid in seen:
             raise DreamError("Duplicate unit_id: " + uid)
         seen.add(uid)
-        if unit["kind"] != "git":
-            raise DreamError("This planning slice supports git units; transcript adapters are not implemented")
+        if unit["kind"] not in ("git", *dream_transcript.KINDS):
+            raise DreamError("Unsupported evidence kind; use git, claude-jsonl or codex-jsonl")
         if type(unit["shareable"]) is not bool:
             raise DreamError("shareable must explicitly be true or false")
-        _object(unit["locator"], ("repository", "commit", "path"), ("lines",))
-        _text(unit["locator"]["repository"], "locator repository")
+        if unit["kind"] == "git":
+            _object(unit["locator"], ("repository", "commit", "path"), ("lines",))
+            _text(unit["locator"]["repository"], "locator repository")
+        else:
+            _object(unit["locator"], ("path", "thread_id"), ("byte_end",))
     deadline = time.monotonic() + 30
     if inspection_deadline is not None:
         deadline = min(deadline, inspection_deadline)
@@ -331,11 +335,12 @@ def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, i
     identities = {mirror: identity}
     admitted, total = [], 0
     for unit in units:
-        alias = unit["locator"]["repository"]
+        alias = unit["locator"]["repository"] if unit["kind"] == "git" else mirror
         if alias not in sources:
             sources[alias] = GitSource(config, alias, deadline)
             identities[alias] = _repository_uuid(sources[alias], sources[alias].commit("HEAD"))
-        item = _admit(unit, sources[alias], identities[alias], limits)
+        item = (_admit(unit, sources[alias], identities[alias], limits) if unit["kind"] == "git" else
+                dream_transcript.admit(unit, alias, identities[alias], limits, deadline))
         total += item["bytes"]
         if total > limits.max_source_bytes:
             raise DreamError("Selected evidence exceeds max_source_bytes")
@@ -362,7 +367,7 @@ def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, i
                 coverage=[dict(unit_id=item["unit_id"], state="planned", bytes=item["bytes"],
                                examined_bytes=0) for item in admitted],
                 usage=dict(role_invocations=0, tokens=None, currency=None),
-                execution=dict(available=False, reason="Snapshot, receipt and role execution slices are not implemented"),
+                execution=dict(available=False, reason="Planning performs no inference; dream run checks native execution capabilities"),
                 candidate_commit=None, candidate_ref=None,
                 integration=dict(state="not_integrated", evidence=None))
 

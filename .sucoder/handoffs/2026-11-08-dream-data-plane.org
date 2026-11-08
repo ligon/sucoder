@@ -1,0 +1,60 @@
+#+TITLE: sucoder dream: deterministic data plane implemented
+#+DATE: 2026-11-08
+#+STATUS: READY
+#+AUTHOR: Sue
+#+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Recovered work and authorized scope
+
+The user resumed dream implementation after a crash on 2026-11-08.
+The clean branch =coder/dream-data-plane= held the planning slice at =f452f0b=.
+The user explicitly selected "Continue through deterministic candidate publication" for this session.
+The earlier attention-hook handoff is preserved at [[file:handoffs/2026-11-03-attention.org][the November 3 handoff]]; those live-launch checks remain separate work.
+
+* Implemented behavior
+
+See [[file:../docs/dream/implementation.org][the implementation interface and limitations]] and [[file:../docs/dream-implementation-ledger.org][the reuse ledger]].
+The CLI has local =dream plan=, =dream snapshot --plan=, =dream run --plan --harness fixture=, and =dream status --plan= routes.
+The new data plane is =sucoder/dream_run.py=; native parsing is =sucoder/dream_validate.el=; regressions are =tests/test_dream_run.py=.
+
+Snapshots revalidate frozen planning semantics and store exact private source/prior bytes.
+The fixture delivers and byte-checks every selected chunk, writes attributed quotations, and binds each generated topic subtree and index entry in a distinct =git-quotation-fixture-v1= receipt.
+It preserves existing wiki contributions and publishes through a private index plus an atomic integration-ref verification/candidate-ref transaction.
+Status validates receipt/output bindings after ordinary or squash integration, and reports =needs_reconciliation= when required outputs change or disappear.
+Interrupted snapshot publication and interruptions before or after ref publication are recoverable.
+Native Org parsing uses read-only buffers so =SETUPFILE= cannot introduce file/network reads.
+No provider call, transcript crawl, deployment, merge, or real-corpus fixture run was performed.
+All publication tests use disposable repositories.
+
+The original planning functions are reused; =build_plan= gains only an optional inspection deadline so revalidation shares the run allowance.
+Planning manifests retain their original unavailable-execution/unevaluated-progress fields; native role execution is still unavailable.
+Fixture candidates prove literal-text quotation fidelity under the documented LF/comma-escape rendering rule, never semantic verification or measured memory benefit.
+Private units can be snapshotted but cannot enter a quotation candidate.
+External sources need an accepted UUID for fixture publication.
+
+* Next implementation work
+
+Keep dreaming independent of the native evidence producer and execution harness, including Codex and generic agents.
+Generalize the fixture into schema-bound semantic role assignments/results, coordinator-owned traces/coverage and capability checks before adding any native inference.
+Add full Claude/Codex transcript normalization without changing reply classification.
+Add compatible shared-receipt discovery and planning reuse; current local status requires its saved plan and snapshots.
+Extend validation for editorial transitions, human decisions, links outside the generated set, topic revisions and archival moves before enabling general consolidation.
+The bounded reader and pilot remain subsequent work; no pilot benefit or native backend confinement has been established.
+
+* Validation and local environment
+
+Run Python checks from the mirror root with =poetry run pytest=; type checking uses =poetry run mypy --follow-imports=silent sucoder/dream.py sucoder/dream_cli.py sucoder/dream_run.py=.
+Native design export/link/archive checks use =emacs --batch -Q -l docs/dream/validate.el=.
+The installed launcher still reports =2026.7.1.dev383+g3a68deb=; use =poetry run sucoder= for source-tree dream commands.
+The first full suite run had 2646 passes, eight skips and 41 failures; all 41 reproduced at the unchanged recovered =f452f0b= baseline in an isolated archive checkout.
+Those failures are in Codex app-server/state/runner and timer-lifecycle tests.
+Final verification results are recorded in the implementation ledger.
+The final full run had 2661 passes, eight skips and the same 41 baseline failures; the final focused run passed 440 tests including the last planning-deadline refinement.
+Mypy, native Org design checks, and wheel construction/runtime-asset inclusion passed.
+
+GitNexus initially returned corrupt unrelated symbol matches.
+=node .gitnexus/run.cjs analyze --skip-agents-md= restored accurate dream symbols.
+After refresh, =build_plan= impact is HIGH with two direct callers and three dream flows; validation/snapshot helpers are LOW.
+Use the refreshed graph, and continue passing =--skip-agents-md= to avoid generated guidance diffs.
+
+Prepared by Sue (GPT-6 Codex).

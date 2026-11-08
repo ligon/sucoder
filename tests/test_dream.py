@@ -92,13 +92,13 @@ def test_plan_freezes_committed_passage_and_preserves_all_git_state(workspace):
     assert stat.S_IMODE(plan_path.parent.parent.stat().st_mode) == 0o700
 
 
-@pytest.mark.parametrize("kind", ["claude-jsonl", "codex-jsonl", "generic", "unknown"])
+@pytest.mark.parametrize("kind", ["generic", "unknown"])
 def test_unimplemented_evidence_adapters_reject_without_a_backend(workspace, kind):
     request = copy.deepcopy(workspace[3])
     request["units"][0]["kind"] = kind
     result = invoke(workspace, request)
     assert result.exit_code == 2
-    assert "transcript adapters are not implemented" in result.output
+    assert "Unsupported evidence kind" in result.output
     assert not (workspace[2].log_dir / "dream").exists()
 
 
