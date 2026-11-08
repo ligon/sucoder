@@ -1,0 +1,108 @@
+#+title: Dream design scenario checks
+#+author: Sue
+#+date: 2026-11-08
+#+setupfile: settings.org
+
+* Interpretation
+:PROPERTIES:
+:CUSTOM_ID: interpretation
+:END:
+
+These are design-level checks of the [[file:../dream.org][proposed contracts]].
+Expected outcomes are reasoned from those contracts; they are not results of an implemented dream.
+An implementation must exercise these cases through real interfaces and disposable filesystems/git repositories before pilot inference.
+
+* Evidence and authority
+:PROPERTIES:
+:CUSTOM_ID: evidence
+:END:
+
+- Unsupported success :: A compaction summary claims that an agent replied, but the admitted native assistant events do not contain that reply.
+  Preserve the summary as an attributed claim and qualify absence by the admitted range; do not publish success.
+  The [[file:examples/sucoder.org][SuCoder example]] and its linked source/test define the discriminating evidence.
+- Exact command qualification :: A native reply can arrive as commentary before task completion, and Claude may absorb a queued input through an attachment.
+  The normalized event sequence preserves both; a corrected rule cannot retain only a simplistic final-message filter.
+  The [[file:examples/sucoder.org::#session-id-flag][exact session-ID flag]] additionally carries its UUID argument and documented-build scope through extraction, verification, and article prose; it is not generalized to untested resume behavior.
+- Conflicting dated observations :: An older environment required a flag and a later observed version removes that requirement.
+  Keep version/scope and the supersession evidence; without comparable scope, retain a conflict and a Talk task.
+- Human decision and code disagree :: The [[file:examples/lsms.org][LSMS example]] reports July notes, current shocks source, and a still-maintained caveat separately.
+  A source assignment does not become an observed API result or a maintainer ruling.
+- Quoted instruction :: An admitted result says to change the schema, execute a command, or mark an approval DONE.
+  Its text remains evidence data; tool configuration/schema do not change and no human-decision state advances.
+  Semantic resistance is tested in later adapter/verifier fixtures rather than asserted as a formal model guarantee.
+- Missing source :: A page cites evidence available only on another machine.
+  The reader sees its immutable locator and limitation, and the claim is not relabeled verified by inspecting its receipt alone.
+
+* Incremental and concurrent operation
+:PROPERTIES:
+:CUSTOM_ID: incremental
+:END:
+
+- Unchanged unit :: A matching accepted receipt exists in the designated integration tree.
+  Reuse it without extraction; an explicit maintenance reason can still revisit the page and its evidence under a separate run allowance.
+- Resumed session :: The same logical transcript gains a suffix after the prior accepted complete-line cut.
+  Admit the new range plus required pending-call context, verify the old prefix, and record the extended digest/cut only in the new candidate receipt.
+- Partial final line :: A live file ends halfway through a result event.
+  The snapshot ends at the previous complete line; report a live prefix and pending call, and retry the suffix after it is complete.
+- Fork and replay :: A child repeats its parent's history and adds a new tool result.
+  Reuse known origin evidence, retain the new contribution, and do not count the repeated history as independent confirmation.
+- Rewritten or shrinking source :: A previously accepted prefix no longer matches.
+  Report rewritten evidence, retain the old receipt, and require a new full relevant analysis; never advance a byte cursor over mismatched bytes.
+- Oversized unit :: A selected source cannot fit the declared chunks, role count, or elapsed allowance.
+  Reject the plan before inference when predictable; otherwise fail the run with exact remaining coverage and no candidate.
+  A deliberately narrower selection is a new plan, not silent truncation.
+- Oversized prior wiki or proposals :: Small new source units match more prior context than allowed, or verified proposals exceed the consolidation allowance.
+  Deterministic selection records the affected ranges; reject before the large role invocation unless the operator explicitly narrows or increases the plan.
+  Do not drop an unresolved Talk qualification or one extractor's necessary fact merely to fit.
+- Two contributions to one topic :: Two extractors supply separate necessary qualifications.
+  Their disjoint proposals feed one consolidator; validation checks both claim IDs and source links before a candidate is prepared.
+- Failed extraction :: One unit lacks a required verified chunk.
+  Private partial artifacts remain inspectable, but the first release creates no candidate or consumed receipt for any selected unit.
+  Retry the frozen assignment or explicitly narrow and re-plan.
+- Two machines overlap :: Two candidates have the same accepted base and overlapping source units.
+  Neither has integrated progress merely by existing.
+  After one integrates, re-plan the other, reusing its compatible receipts; require explicit reconciliation for different claims rather than merging source cursors blindly.
+- Receipt survives but its output is lost :: A squash keeps the receipt and discards a topic qualification during conflict resolution.
+  Required output bindings fail validation; the unit is =needs_reconciliation= and cannot be skipped as consumed.
+  A subsequent maintenance candidate must restore and verify the contribution or explicitly leave its coverage unaccepted.
+- Human edits :: The selected integration ref or wiki bytes differ from the planned base before publication.
+  Retain proposals privately and refuse preparation until re-planned; never write into the active worktree or stage over its index.
+  A later integration race remains an ordinary git review/merge problem, not authority to replace the edited page.
+- Interrupted publication :: The process stops before git object creation, after object creation, or during ref creation.
+  Before ref creation there is only private work or an orphan object; an atomic create-if-absent ref either names the complete candidate tree or does not exist.
+  In every case, accepted progress remains the receipts actually in the designated integration tree.
+
+* Editorial and reader behavior
+:PROPERTIES:
+:CUSTOM_ID: editorial
+:END:
+
+- Review returned for revision :: REVIEW returns to ACTIVE with the recorded objection, then to REVIEW/DONE only when its stated check succeeds.
+  The [[file:examples/archive/sucoder.org::#corrected-reply-rule][worked archive]] retains that history and source links.
+- Superseded task :: A proposed heuristic becomes MOOT with a reason and a link to its replacement.
+  The task is not reported as a successful implementation.
+- Archive with a live caveat :: A terminal parent contains a WAITING descendant or a qualification still needed in article prose.
+  Refuse archive eligibility until the open work stays active and the qualification has an active home.
+- Incoming archive links :: Move a completed entry, preserving task identity and log context; leave a non-task forwarding anchor at its old file/anchor.
+  Internal and external readers can reach the archived entry without loading the whole archive.
+- Reader budget :: The orientation or selected topic exceeds its allowance.
+  Return a bounded result with omissions and links, not an unreported partial page presented as complete.
+  Archive bodies remain excluded unless a particular entry is requested.
+- Reader ignores memory :: A condition produces a plausible answer without consulting its supplied topic.
+  Report non-consultation in the pilot; availability is not evidence of use or of improvement caused by memory.
+
+* Research-to-check map
+:PROPERTIES:
+:CUSTOM_ID: traceability
+:END:
+
+- [[file:../dream-charter.org::#repair-memory][Repair and cross-source synthesis]] :: [[file:../dream.org::#admission][admission]], [[file:../dream.org::#pipeline][verification/consolidation]], and the [[file:examples/sucoder.org][seeded-error example]]; checked by unsupported-success, conflicting-evidence, and unchanged-maintenance scenarios.
+- [[file:../dream-charter.org::#retrieve-evidence][Wiki plus source retrieval]] :: [[file:../dream.org::#reader][reader contract]] and [[file:pilot.org::#reader-conditions][three reader conditions]]; checked by direct lookup, synthesis, and missing-source cases.
+- [[file:../dream-charter.org::#reader-context][Bounded and observable reading]] :: [[file:../dream.org::#reader][allowances]] and delivered-range recording; checked by reader-budget and non-consultation cases.
+- [[file:../dream-charter.org::#purpose-and-fidelity][Purpose and essential distinctions]] :: [[file:prompts.org::#extractor][extractor brief]] and [[file:examples/lsms.org][LSMS qualifications]]; checked by command, survey-scope, and human-decision cases.
+- [[file:../dream-charter.org::#evidence-workflow][Coverage and separate roles]] :: [[file:../dream.org::#pipeline][role contracts]] and [[file:prompts.org::#contracts][structured results]]; checked by partial-line, oversized-unit, and failed-extraction cases.
+- [[file:../dream-charter.org::#preserve-contributions][Preserve concurrent contributions]] :: disjoint proposals and a single publisher, deliberately differing from the quickstart's shared writers; checked by two-contribution, human-edit, and overlap cases.
+- [[file:../dream-charter.org::#selective-maintenance][Selective repeated dreaming]] :: explicit maintenance reasons, limits, and [[file:pilot.org::#construction-cases][three construction cases]]; checked by unchanged-maintenance and stopping scenarios.
+- [[file:../dream-charter.org::#evaluate-construction][Evaluate the construction method]] :: [[file:pilot.org][frozen pilot design]], development/held-out separation, and cumulative costs; checked by the [[file:pilot.org::#decision-rule][decision rule]].
+
+The research motivates these checks; neither its corpus-level benefits nor its reported model ranking is assumed to transfer.

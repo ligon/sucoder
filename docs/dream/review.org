@@ -1,0 +1,177 @@
+#+title: Dream workshop review and acceptance record
+#+author: Sue
+#+date: 2026-11-08
+#+setupfile: settings.org
+
+* Scope and reviewers
+:PROPERTIES:
+:CUSTOM_ID: scope
+:END:
+
+The human approved the [[file:../dream-charter.org][charter]] on 2026-11-08.
+The workshop produced a design and pilot plan; runtime implementation and measured pilot results remain outside this acceptance.
+One independent reviewer checked the full design against the charter; another independently grounded and checked LSMS source fidelity and pilot inputs.
+Both worked read-only; neither ran repository tests, inference experiments, survey imports, or data access.
+
+The first technical pass accepted grounding, examples, pilot planning at design level, and research traceability.
+It rejected the contract, evidence/lifecycle trace, and receipt-based incremental validity until the findings below were resolved.
+Cycle 2 rechecked the revised artifacts and found no surviving material design defects.
+All five technical findings below were accepted as resolved, and every charter criterion passed at design level after this record was completed.
+The independent LSMS revision check likewise confirmed the four domain/evaluation refinements and current manifest.
+
+* Technical findings and dispositions
+:PROPERTIES:
+:CUSTOM_ID: findings
+:END:
+
+** DONE Bind accepted progress to integrated outputs
+CLOSED: [2026-11-08 Sun 08:35]
+:PROPERTIES:
+:CUSTOM_ID: receipt-output-bindings
+:REVIEWER: Independent design reviewer
+:END:
+:LOGBOOK:
+- State "DONE"       from "REVIEW"     [2026-11-08 Sun 08:35]
+:END:
+
+High severity: a squash could retain a receipt while dropping its required page qualification, causing future runs to skip the source.
+The [[file:../dream.org::#admission][revised receipt contract]] binds source coverage to required output targets/digests, defines compatibility, and requires reconciliation or explicit replacement dispositions after changed integration.
+Ordinary unrelated human edits leave unchanged bindings reusable.
+The [[file:scenarios.org::#incremental][receipt-loss scenario]] exercises this distinction at design level.
+
+** DONE Trace an exact command qualification
+CLOSED: [2026-11-08 Sun 08:35]
+:PROPERTIES:
+:CUSTOM_ID: command-qualification
+:REVIEWER: Independent design reviewer
+:END:
+:LOGBOOK:
+- State "DONE"       from "REVIEW"     [2026-11-08 Sun 08:35]
+:END:
+
+Medium severity: the first scenario concerned message semantics but preserved no actual command flag.
+The [[file:examples/sucoder.org::#session-id-flag][worked flag trace]] now retains =--session-id <uuid>=, its documented-build scope, the UUID argument, and the absence of new launch/resume verification.
+The admitted source passage supplies the capability claim; the example does not invent a successful experiment.
+
+** DONE Retain the returned review's delivery qualification
+CLOSED: [2026-11-08 Sun 08:35]
+:PROPERTIES:
+:CUSTOM_ID: delivery-qualification
+:REVIEWER: Independent design reviewer
+:END:
+:LOGBOOK:
+- State "DONE"       from "REVIEW"     [2026-11-08 Sun 08:35]
+:END:
+
+Medium severity: archived completion claimed the queued-command distinction was restored while the active article only said it distinguished queued input.
+The [[file:examples/sucoder.org::#reply-evidence][active rule]] now says enqueueing alone is insufficient and a documented =queued_command= attachment establishes absorbed delivery.
+
+** DONE Bound prior and consolidation context
+CLOSED: [2026-11-08 Sun 08:35]
+:PROPERTIES:
+:CUSTOM_ID: consolidation-budget
+:REVIEWER: Independent design reviewer
+:END:
+:LOGBOOK:
+- State "DONE"       from "REVIEW"     [2026-11-08 Sun 08:35]
+:END:
+
+Medium severity: a small update could send an unbounded prior wiki or proposal set to a single consolidation call.
+The [[file:../dream.org::#reader][revised limits]] separately cap selected prior context, verified proposals, and the total staged consolidation payload, with deterministic selection and pre-invocation refusal.
+They distinguish staged bytes from unobservable native repeated-history billing.
+
+** DONE Preserve inherited archive context
+CLOSED: [2026-11-08 Sun 08:35]
+:PROPERTIES:
+:CUSTOM_ID: archive-context
+:REVIEWER: Independent design reviewer
+:END:
+:LOGBOOK:
+- State "DONE"       from "REVIEW"     [2026-11-08 Sun 08:35]
+:END:
+
+Low severity: the worked root-level archived tasks omitted the editorial tag inherited at their old Talk location.
+The example now records =ARCHIVE_ITAGS: editorial=, and [[file:../dream.org::#editorial][the design]] requires inherited context and repository-relative original-file metadata.
+
+* Domain review and evaluation refinements
+:PROPERTIES:
+:CUSTOM_ID: domain
+:END:
+
+The independent LSMS reviewer found no blocking domain error and reproduced all six original corpus entries, including object IDs, byte ranges, SHA-256 and the then-22,460-byte total.
+The issue-114 range was subsequently extended through its closing Org block delimiter; the current manifest total is 22,472 bytes and is rechecked by the workshop validation.
+
+- Grain precision :: The [[file:examples/lsms.org::#household-grain][example]] now distinguishes UPHI uniqueness from =r_hhid= repetitions that become unique only after guarded de-replication.
+- Evaluation isolation :: [[file:pilot.org::#reader-conditions][Reader tools]] explicitly exclude protocol/rubrics/examples/reviews and other answers, as well as excluding these from construction.
+- Measurement denominator :: The comparison includes all delivered orientation/topic/archive/source bytes, repeats, and common instructions, while reporting unique corpus bytes and native token quantities separately.
+- Evidence boundary :: The selected corpus supports household/four-round scope, not a detailed inventory of individual-level modules; no such inventory is required for credit.
+- Source structure :: The source selection now includes the complete October quote block rather than cutting just before its closing delimiter.
+
+* Artifact validation and final assessment
+:PROPERTIES:
+:CUSTOM_ID: validation
+:END:
+
+The manual [[file:validate.el][Org validation entry point]] successfully parsed and exported all eleven Org artifacts, checked unique internal targets and anchored file links, and exercised native file-based archiving in a newly created temporary directory.
+The archive exercise retained the task state, CLOSED timestamp, LOGBOOK, source link, custom target, original source/outline/time metadata and inherited editorial tag.
+All twelve corpus passages reproduced their object identity, selected byte offsets, lengths and SHA-256: SuCoder 23,236 bytes and LSMS_Library 22,472 bytes.
+Authored Org files are ASCII, and source files have collaborator-readable/writable permissions.
+Git whitespace checks pass.
+
+Rerun the native document and archival checks from the SuCoder root:
+
+#+begin_example
+emacs --batch -Q -l docs/dream/validate.el
+#+end_example
+
+Reproduce the corpus checks with local checkout aliases adjusted if necessary:
+
+#+begin_example
+python3 - <<'PY'
+import hashlib, json, subprocess
+from pathlib import Path
+roots = {"SuCoder": Path.cwd(),
+         "LSMS_Library": Path("/home/ligon/Projects/LSMS_Library")}
+data = json.loads(Path("docs/dream/corpus.json").read_text())
+for corpus in data["corpora"]:
+    total = 0
+    for unit in corpus["sources"]:
+        obj = corpus["commit"] + ":" + unit["path"]
+        root = str(roots[corpus["repository"]])
+        raw = subprocess.check_output(["git", "-C", root, "show", obj])
+        blob = subprocess.check_output(["git", "-C", root, "rev-parse", obj],
+                                       text=True).strip()
+        lines = raw.splitlines(keepends=True)
+        first, last = unit["lines"]
+        selected = b"".join(lines[first - 1:last])
+        assert blob == unit["git_blob"]
+        assert hashlib.sha256(selected).hexdigest() == unit["sha256"]
+        assert len(selected) == unit["bytes"]
+        assert len(b"".join(lines[:first - 1])) == unit["byte_start"]
+        assert len(b"".join(lines[:last])) == unit["byte_end"]
+        total += len(selected)
+    assert total == corpus["selected_bytes"]
+    print(corpus["repository"], len(corpus["sources"]), total)
+PY
+#+end_example
+
+These are documentation/source checks, not an executed dream or a repository Python test suite.
+
+* Handoff and residual decisions
+:PROPERTIES:
+:CUSTOM_ID: handoff
+:END:
+
+The [[file:../dream.org::#implementation][implementation sequence]] begins with deterministic data-plane fixtures, then source adapters, the capability-checked backend, and reader/pilot integration.
+The [[file:../dream-charter.org::#definition-of-done][charter criteria]] link their completed design evidence directly.
+The corpus question sets and source conflicts are grounded; human usefulness and runtime behavior are not measured.
+
+The [[file:../dream.org::#backend-and-limits-review][initial backend and numeric allowances]] remain explicit proposal choices for an implementation decision.
+No human domain decision was invented for Tanzania, and no country source was changed.
+Actual confinement, read-trace completeness, resume/lineage normalization, git race behavior, receipt reconciliation, held-out isolation and pilot cost/quality are required implementation/pilot checks.
+The small pilot cannot establish general model rankings or statistical certainty.
+
+This workshop changes design/validation artifacts only.
+The earlier launcher umask correction remains separate uncommitted source/test work and is not part of the design commits or a claim about the installed distribution.
+
+Prepared by Sue.

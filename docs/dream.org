@@ -1,0 +1,279 @@
+#+title: sucoder dream: a checked-in companion wiki
+#+author: Sue
+#+date: 2026-11-08
+#+setupfile: dream/settings.org
+
+* Decision and reading map
+:PROPERTIES:
+:CUSTOM_ID: decision
+:END:
+
+Introduce a manually invoked dream that prepares a reviewable wiki revision from explicitly admitted evidence.
+The wiki explains a project's accumulated understanding for humans and agents, while its Talk tasks expose unresolved editorial work.
+The first implementation publishes a candidate git commit on a separate branch; acceptance uses the repository's ordinary integration workflow.
+There is no automatic merge, instruction-file rewrite, scheduler job, or hosted service.
+
+This is a proposed implementation design under the [[file:dream-charter.org][approved workshop charter]], not an implemented command or a measured memory improvement.
+The [[file:dream-ledger.org][prior-art ledger]] supplies the reuse decisions and source limitations.
+Read the [[file:dream/prompts.org][role briefs]], [[file:dream/scenarios.org][scenario checks]], [[file:dream/pilot.org][pilot protocol]], and the [[file:dream/examples/sucoder.org][SuCoder]] and [[file:dream/examples/lsms.org][LSMS]] examples for operational detail.
+
+* Public interface
+:PROPERTIES:
+:CUSTOM_ID: interface
+:END:
+
+Proposed commands, not currently available:
+
+#+begin_example
+sucoder dream plan MIRROR --sources SOURCES.json --base REF
+sucoder dream plan MIRROR --sources SOURCES.json --base REF --maintenance REASON --topic TOPIC
+sucoder dream run MIRROR --plan PLAN.json --harness claude --model MODEL
+sucoder dream status MIRROR --run RUN_ID --json
+sucoder dream read MIRROR --topic TOPIC [--archives] --max-bytes BYTES
+#+end_example
+
+=plan= resolves the configured mirror, inspects its binding, and freezes an explicit base commit and source selection.
+It makes no inference request, fetch, checkout update, scheduler call, or source modification.
+It writes a private local plan containing a reproducible manifest and the proposed work and budgets.
+=run= validates that plan again, snapshots admitted bytes, invokes supported roles, and prepares a candidate commit or an explicit failure report.
+The plan includes all limits; changing a limit or source produces a new plan identity.
+=status= separates execution, validation, candidate preparation, and integration evidence.
+=read= is deterministic file/Org retrieval, with no model call, and reports omitted content when its limit is reached.
+
+The initial source request is an explicitly supplied JSON catalog of git files or passages and supported local Claude/Codex transcript files.
+The proposed version-1 request has =repository= (configured mirror), =integration_ref= (full non-dream ref name), and =units= (a nonempty list).
+Each unit names =unit_id=, =kind= (=git=, =claude-jsonl=, or =codex-jsonl=), and an explicit locator.
+A git locator contains repository alias, commit, relative path, and optional inclusive line range; a transcript locator is a private local path with expected harness/thread identity and an optional complete-line cut.
+The planner resolves locators into immutable digests/ranges, records which explanatory material is admitted as shareable, and rejects unknown fields, duplicate unit IDs, traversal, symlink escapes, incompatible identities, and unsupported versions.
+The [[file:dream/corpus.json][pilot source map]] is a versioned example of resolved git units, not the public request or an executable run plan.
+Future discovery may suggest candidates using the [[file:dream-ledger.org::#transcript-discovery][existing identity machinery]], but admission never silently becomes a home-directory crawl.
+Source paths are resolved on the host running the command.
+The mandatory =--base= names the designated integration ref and must agree with =integration_ref= in the source request; the plan records its resolved object ID.
+An unmerged =refs/heads/dream/*= candidate cannot be designated as the integration ref in the first release.
+First-release collection and execution are local to an already accessible mirror; remote operators first supply an explicit local export through their established transfer workflow.
+This avoids turning a design for memory into a new allocation or credential lifecycle.
+
+Exit 0 means a valid plan, a prepared candidate, or a complete read/status operation, according to the reported operation.
+Exit 2 rejects arguments, an unsupported backend, or invalid input before inference.
+Exit 3 reports incomplete evidence or exhausted work allowance without a publishable candidate; exit 1 reports an execution or validation failure; interruption may use 130.
+The proposed JSON envelope is version 1 and contains operation, run ID, base commit, state, coverage, limits, usage, candidate commit/ref, and integration evidence.
+Its =candidate_ready= state never means accepted or integrated.
+
+* Files, claims, and links
+:PROPERTIES:
+:CUSTOM_ID: representation
+:END:
+
+Proposed repository layout:
+
+#+begin_example
+.sucoder/wiki/
+  index.org
+  settings.org
+  topics/<topic>.org
+  archive/<topic>.org
+  sources.json
+  receipts/<run-id>.json
+#+end_example
+
+The private run directory lives outside the repository under the configured local log area, with mode 0700 and private evidence/credential files.
+It holds the plan, immutable admitted copies, normalized event records, role traces, proposals, validation diagnostics, and a candidate checkout without a git control directory.
+Shared source pages and directories use the ordinary collaborator defaults, normally 0660 and 0770, subject to existing setgid placement.
+The [[file:dream-ledger.org::#execution][launcher umask incident]] is evidence that private runtime modes must not leak into published source-file creation.
+
+Each topic is normal explanatory prose with stable =CUSTOM_ID= anchors at meaningful sections.
+Claims carry nearby source links, scope, evidence kind, and an observed/reported date or version when material; do not add a metadata record to every sentence.
+Distinguish inspected code, a recorded runtime observation, an attributed decision, and an inference.
+Keep canonical project definitions in their maintained source and link to them.
+
+Use standard Org links: internal =[[#target][description]]= and project-relative =[[file:other.org::#target][description]]=.
+Use revision-pinned source locators for code/documents whose exact content matters, with a human-readable file link as a convenience.
+A shared source receipt records repository UUID, git object ID, relative path, selected range, digest, and scope; private local catalogs map transcript locators to paths.
+Raw transcripts, usernames, absolute private paths, credentials, and complete tool chatter do not enter receipts or pages by default.
+Users must explicitly admit explanatory extracts as shareable before publication; validation cannot certify arbitrary prose free of confidential information.
+
+Initialize one repository UUID in =sources.json= and carry it through clones.
+A source ID hashes that UUID with source kind and logical identity, not an origin URL containing credentials or an absolute working path.
+On first initialization that UUID is provisional until integration; another machine re-plans against the accepted UUID rather than merging two initial registries.
+Git sources use the repository/path as logical identity and blob/range/digest as the selected revision; commit provenance remains attached.
+The admitted =unit_id= identifies a selection within a source and is distinct from the logical =source_id=.
+Identical blobs copied through commits or paths are not additional independent corroboration.
+Transcript identities use harness/native thread identity and available lineage; copied paths do not create new evidence.
+The shared receipt includes enough immutable identity for another machine to compare a locally supplied source, without requiring that machine to have the original private transcript.
+When evidence is unavailable to a collaborator, say so and keep the explanation intelligible; do not pretend the receipt alone verifies its claim.
+
+* Evidence admission and incremental progress
+:PROPERTIES:
+:CUSTOM_ID: admission
+:END:
+
+Reuse [[file:dream-ledger.org::#binding][workspace binding]] and the observed transcript shapes; implement a [[file:dream-ledger.org::#evidence-parser][separate full evidence parser]].
+Normalize roles, calls and results in native file order, preserving call IDs, exit/error status, source byte ranges, thread lineage, and explicit unknown records.
+Tool output is evidence of that tool's returned observation, not a general assertion of truth.
+Treat compaction text as a summary claim and fork/replay copies as references to their origin, not independent confirmations.
+Analyze new child-thread contributions with their provenance.
+When origin IDs are absent, mark possible duplication and avoid claiming independent corroboration.
+
+For a growing JSONL file, admit a copied prefix ending at a complete newline and record the exact cut and digest.
+Verify the copied prefix against the source before accepting the snapshot; an append beyond the cut is allowed.
+An unmatched call at the cut remains pending, and a growing prefix never establishes a finished session or successful task.
+An unreadable, rewritten, shrunk, or unrecognized source is an explicit coverage outcome, not an empty input.
+For rewritten bytes under an existing identity, start a revision requiring full relevant re-analysis; retain the previous accepted evidence reference.
+
+An admitted unit is a complete selected file/passage/prefix, not a whole repository or an entire conversation by implication.
+The coordinator partitions it into bounded chunks with contiguous byte coverage and event-boundary overlap for open calls.
+An event larger than a chunk is segmented at safe decoded-text boundaries with its original event ID and byte-span map; no segment can stand alone as a complete result.
+Overlapping bytes are identified and counted once in coverage.
+All chunks of a unit must complete extraction and verification for that unit to enter an accepted receipt.
+If any selected unit fails, the first release produces no candidate; narrow the plan explicitly to accept a smaller selection.
+This all-selected-units rule is deliberately simpler than silently publishing partial learning.
+
+Processed progress comes only from compatible receipts in the designated integration tree whose output bindings still validate.
+Each receipt binds its source coverage to required output artifacts: a relative file and stable Org target, an exact subtree/content digest under a versioned extraction rule, and the preserved qualifications and source links.
+Compatibility requires the same repository UUID, source identity/range/digest, lineage interpretation, normalization version, claim schema, and essential-fidelity contract.
+A changed parsing or fidelity contract requires explicit migration or re-analysis; a model-version change alone is recorded, not treated as proof that accepted knowledge is invalid or improved.
+Exclude the receipt itself from those output digests to avoid a self-reference; index/link completeness is a separate generation-wide check.
+If a squash or conflict resolution keeps a receipt but drops or changes a required output, that receipt cannot suppress future analysis.
+Report =needs_reconciliation= and revalidate/rebind the affected claims against their admitted evidence in a new maintenance candidate; unavailable evidence remains explicitly unverified.
+Later generations may carry forward prior progress only with validated unchanged bindings or an explicit replacement receipt naming the old receipt and new verified output bindings.
+The replacement records retained, revised, archived, or deliberately omitted claim dispositions, their reasons, and any required attributed decision.
+Thus an ordinary human edit can supersede only the affected claims; unrelated unchanged bindings remain reusable.
+Archive moves bind the relocated canonical entry and forwarding anchor together.
+Never use a machine-local cursor, an unmerged candidate, session creation time, or newest mtime as shared completion evidence.
+An unchanged unit with a compatible accepted receipt requires no new extraction; a resumed session with an extended prefix requires the new range plus relevant prior context.
+Maintenance may revisit existing pages and their explicitly supplied admitted evidence with no new transcript, identifying the reason and topic through =--maintenance= and =--topic= and spending its own allowance.
+The first release still requires a nonempty source selection for such a pass; it does not silently fetch a private transcript named by an old receipt.
+
+* Roles, capabilities, and publication
+:PROPERTIES:
+:CUSTOM_ID: pipeline
+:END:
+
+The coordinator freezes inputs and previous wiki bytes before any model call.
+Select prior context deterministically from the explicit topic and existing anchors/source bindings, including unresolved Talk entries for the selected sections; record selected and omitted ranges.
+If necessary context cannot fit the declared prior-context allowance, reject the plan or require an explicit narrower selection or larger allowance.
+Extractors each receive one immutable chunk, relevant prior claims, the approved brief, and their own empty output directory.
+They emit structured proposed claims, supporting ranges, qualifications, conflicts, and possible Talk tasks; they do not edit shared pages.
+Verifiers check proposals against the admitted bytes and mark supported, contradicted, or unresolved claims, without inventing successful experiments.
+One consolidator assembles explanatory pages and editorial changes from verified proposals and prior wiki content.
+The coordinator validates the result independently and is the only writer of shared receipts and git objects.
+The exact [[file:dream/prompts.org][briefs and result contracts]] are versioned inputs to the run.
+
+Initial execution adapter: a feature-probed Claude Code print-mode backend with file tools only, an isolated working directory, explicitly supplied settings, and no inherited project instructions or MCP tools.
+Local help for Claude Code 2.1.318 advertises =--restricted=, =--tools=, =--strict-mcp-config=, structured output and API-budget options; that inspection is not an enforcement test.
+At implementation acceptance, verify actual read/write confinement, stream events, unknown-tool refusal, disabled command/network tools, and absence of settings-derived tools with canary fixtures before enabling a build.
+Restrict the tool list to Read, Glob, Grep, Write, and Edit; the input copy is read-only and only the role's output area is writable.
+Do not inherit the [[file:dream-ledger.org::#execution][dispatch worker's permission bypass]] or expose the real repository, git metadata, sockets, or arbitrary home files to these tools.
+The authenticated model connection still transmits admitted source content to the configured provider.
+
+This is a provider-neutral coordinator with one proposed initial execution adapter, not a claim that all SuCoder harnesses already support these capabilities.
+The evidence producers may be Claude or Codex independently of the dream backend.
+A future Codex or other execution adapter must satisfy the same contracts; unsupported capabilities fail before inference while =plan= remains usable.
+There is no automatic provider/model fallback.
+Use [[file:dream-ledger.org::#execution][existing account/cwd/argv primitives]] for invocation and validated native-version-specific settings, without reusing the whole HPC dispatcher.
+
+Validate every selected unit's delivered ranges from structured tool traces and manifests, not the final prose report.
+Delivery shows context provision, not comprehension.
+Also check schema, source references, existing claim/anchor retention, TODO state legality, required review/blocked notes, preserved human edits, complete internal links, allowed file paths, and explicit qualification of unresolved claims.
+A semantic verifier can still miss an error; ordinary review remains necessary.
+Source text cannot introduce new execution instructions, tools, schema, or role permissions.
+
+Build the candidate tree from the frozen base plus validated wiki changes using a private index and git plumbing with hooks and external filters disabled.
+Do not check out a branch, touch the invoking worktree/index, execute project hooks, or update the default branch.
+Write pages, archives, source progress and the run receipt into one candidate commit.
+Create =refs/heads/dream/<run-id>= only with a create-if-absent compare-and-swap; a mismatching existing ref is a conflict.
+The ref transaction also verifies that the designated integration ref still names the planned base object.
+Before preparing a candidate, verify source binding, selected base ref, settings/brief hashes, and expected current wiki tree.
+On a mismatch, retain private results and require re-planning; do not overwrite or auto-rebase human changes.
+The transaction protects refs, not a concurrently edited working file; never touching the user's worktree preserves those edits, and normal integration still must reconcile them.
+An orphan git object after interruption is not accepted progress.
+Ref publication is atomic; the operator's subsequent normal merge/commit is the integration boundary.
+
+If another machine has already integrated compatible receipts for the same units, re-plan and reuse that progress.
+If two candidates overlap, integrate one, then regenerate the other against the new base; do not concatenate processing records or declare independent observations merely because two machines ran.
+After a squash, do not require the candidate commit to remain an ancestor, but require the receipt's required output bindings to validate in the resulting tree.
+Receipt presence alone is never sufficient progress evidence.
+
+* Editorial workflow and archival links
+:PROPERTIES:
+:CUSTOM_ID: editorial
+:END:
+
+Use the [[file:dream-charter.org::#wiki-task-workflow][approved seven-state workflow]] through the shared Org settings.
+A Talk subheading belongs beneath the article section it qualifies and carries =:editorial:=.
+Task state is work status, not a confidence score: DONE requires the task's stated check and any required review; MOOT retains its reason and replacement link.
+A proposal awaiting a human domain decision remains REVIEW or WAITING until that decision is recorded.
+A dream may resolve a broken-link repair on checked evidence; it may not manufacture a maintainer's scientific decision.
+
+For archive-eligible DONE/MOOT entries, require no open descendant tasks and no still-needed qualification disappearing from the active page.
+Move the full subtree, properties, LOGBOOK and source links to =archive/<topic>.org= using native Org archiving or an implementation verified against its behavior.
+Preserve the original file/outline/time context.
+Preserve inherited editorial tags in =ARCHIVE_ITAGS= and normalize =ARCHIVE_FILE= to the original repository-relative source path before publication; a private staging path must not leak into the archive.
+Keep a small non-task anchor at the original active location linking to the archived target whenever an incoming link exists or the decision still matters.
+These forwarding anchors are followed without loading the whole archive and contain no duplicated task ID.
+Update tracked incoming links where appropriate in the same candidate commit; external links can keep using the forwarding anchor.
+An archive receipt identifies the move, and =read --archives= may retrieve the specific entry; normal reads exclude archive bodies and LOGBOOK drawers.
+The [[file:dream/examples/sucoder.org][worked lifecycle]] illustrates a corrected article, a returned review, a superseded task, and a file-based archive.
+
+* Reader contract and proposed limits
+:PROPERTIES:
+:CUSTOM_ID: reader
+:END:
+
+Provide a human-browsable index, short topic introductions, descriptive links, and optional local HTML preview with editorial content included.
+An article-only view may omit editorial bodies while retaining their existence and links to an editorial view; it must not silently erase an unresolved caveat from article prose.
+Reader instructions never make memory outrank project instructions or sources.
+Start with a bounded orientation, choose a topic, then retrieve original evidence when scope, date, or correctness matters.
+Source absence yields qualified uncertainty rather than an invented verification.
+
+Proposed first-pilot defaults, chosen for bounded manual runs rather than inferred from Anthropic benchmarks:
+
+- Source work :: At most six admitted units and 1 MiB of selected source bytes; chunks at most 64 KiB, split at complete event boundaries.
+  Oversized single events use the annotated segmentation rule in [[#admission][admission]].
+- Role work :: At most forty role invocations, one consolidation, one repair iteration, and fifteen minutes total elapsed time, with per-role deadlines within the remaining total.
+- Prior and consolidation context :: At most 64 KiB of selected prior-wiki text, 128 KiB of verified proposal payloads, and 224 KiB total staged consolidation input including briefs and metadata.
+  Validate proposal size before consolidation; reject overflow rather than submit a larger input or silently drop a contribution.
+  These are staged-payload limits, not a claim to bound hidden provider history or repeated native-context billing; report those separately when observable.
+- Reader work :: Up to 2 KiB orientation, 12 KiB active topic text, and 32 KiB original evidence in an ordinary answer attempt.
+  A task needing more must request or record an explicit allowance change and mark the incomplete earlier read.
+- Money and tokens :: Record native-reported usage and the pricing reference used for an estimate.
+  An API-dollar cap is offered only when the selected adapter can enforce it across the whole run; unknown subscription cost is not zero.
+  Otherwise rely on source, invocation, and time ceilings and explicitly report that currency/token accounting is incomplete.
+
+The planner calculates the required extraction/verification count before inference and rejects a plan that cannot fit its declared role cap.
+All phases and implicit retries spend from one shared allowance; a native retry that the coordinator cannot bound makes a hard-cap claim unavailable.
+Allow at most one consolidation repair attempt; if checks remain unsatisfied, fail without a candidate.
+Never call repeated passes improvement merely because more pages or links exist.
+
+* Implementation sequence and acceptance
+:PROPERTIES:
+:CUSTOM_ID: implementation
+:END:
+
+First implement the data plane without model calls: manifests, immutable snapshots, complete coverage, Org validation, receipts, and candidate commit publication using deterministic fixture proposals.
+Add source adapters with the [[file:dream-ledger.org::#evidence-parser][existing reply fixtures]] as regressions and new tool-result/lineage coverage.
+Then add the capability-checked initial headless backend and versioned briefs, preserving the same result interface.
+Finally add bounded reader orientation and local previews, then run the separately authorized [[file:dream/pilot.org][pilot]].
+
+Implementation checks must exercise the [[file:dream/scenarios.org][failure and editorial scenarios]] through public interfaces, including real filesystem permission and git-publication races in disposable repositories.
+Changing symbols then requires the repository's impact analysis and Python tests; adding configuration requires README and example-config updates.
+There is no such runtime/configuration change in this design workshop.
+
+Proceed to a limited pilot only after source-fidelity, link/state, coverage, concurrency, and backend-capability checks pass.
+The pilot must compare answer quality, missed caveats, memory consultation, active bytes and cumulative build/read cost against source search.
+The initial go/no-go thresholds and limitations are specified in the [[file:dream/pilot.org::#decision-rule][pilot decision rule]].
+Human readability and the eventual decision to implement remain judgments for the user; the workshop supplies a reviewed proposal and records its residual risks.
+
+** Talk :editorial:
+
+*** REVIEW Accept the proposed initial backend and limits
+:PROPERTIES:
+:CUSTOM_ID: backend-and-limits-review
+:REVIEWER: User
+:END:
+
+The coordinator is extensible, but the first proposed execution adapter is capability-checked Claude Code; Codex/Claude evidence ingestion is separate from execution support.
+The numeric limits above are starting hypotheses for the two pilots, not measured optima.
+Review this tradeoff with the implementation sequence; no provider request or installation occurred to validate it here.
+
+Prepared by Sue.
