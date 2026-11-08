@@ -66,6 +66,29 @@ The first backend remains undecided; implement against the shared role contract 
 Plans explicitly report that accepted progress has not yet been evaluated and cannot yet be run.
 The next data-plane slice must revalidate frozen plans, snapshot admitted bytes, and exercise receipts/publication with deterministic fixture proposals before adding model execution.
 
+** Resumed data-plane scope, 2026-11-08
+
+The crash recovery found the planning slice committed at =f452f0b= with a clean worktree.
+Continue with frozen-plan validation, private immutable evidence snapshots, and deterministic fixture candidate publication; native model adapters remain deferred.
+The fixture copies explicitly shareable git passages as attributed quotations, exercising complete chunk delivery and output bindings without claiming semantic synthesis or model verification.
+It uses a distinct versioned fidelity contract so future semantic adapters cannot treat fixture receipts as completed semantic work.
+
+- Reuse :: =build_plan=, =_admit= and =_prior_wiki= to reconstruct and compare frozen planning semantics, including every limit and prior object identity.
+  Rebind only freshly generated provisional UUIDs to the frozen proposal; accepted registry changes require re-planning.
+- Reuse :: =GitSource= for bounded offline reads and =_open_private_directory= for account-owned private storage.
+  Existing dispatch private writers lack atomic idempotent publication and no-follow checks, so extend the dream storage contract in an isolated module.
+- New :: Native Org parsing of generated pages, exact output-subtree bindings, fixture role/delivery records, private-index git plumbing, and atomic integration-ref verification plus candidate-ref creation.
+  =docs/dream/validate.el= is a design-artifact validator with hard-coded paths, not a runtime validator; reuse its native parser approach without evaluating admitted Org content.
+- Invariant :: Preserve every existing wiki artifact, appending only a generated index entry and adding a fresh fixture topic/receipt plus an initial source registry if absent.
+  Reject fixture publication of private units and provisional external repository identities; snapshots remain available for those plans.
+- Invariant :: A successful fixture candidate is unintegrated and establishes exact quotation fidelity only.
+  Receipt validation checks output bytes in the designated integration tree, including after squash or human edits; receipt presence alone never establishes reusable progress.
+
+No unresolved user decision blocks this bounded stage.
+GitNexus's current index returns unrelated symbols for dream queries and CRITICAL unrelated flows for name-based impact; exact dream symbol UIDs are absent.
+Direct source search finds =create_plan= called only by the dream CLI and dream tests.
+Leave existing planner functions unchanged and use direct source/call-site inspection alongside recorded impact attempts for this slice.
+
 * Verification against this ledger
 
 - OK (sections 2 and 5) :: Source search reconfirmed that reply classification, dispatch assignments, and audit reports do not provide byte-exact git passage admission or private dream manifests.
