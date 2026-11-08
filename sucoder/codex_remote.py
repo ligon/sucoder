@@ -17,6 +17,7 @@ _SUPERVISOR = r'''set -u
 mode=$1; count=$2; shift 2
 server=("${@:1:count}"); shift "$count"
 client=("$@")
+launch_umask=$(umask)
 umask 077
 runtime=$(mktemp -d /tmp/sucoder-codex-XXXXXXXX) || exit 1
 socket="unix://$runtime/server.sock"
@@ -64,6 +65,10 @@ trap cleanup EXIT
 if [ "$mode" = terminal ]; then trap '' INT; else trap stop_server INT; fi
 trap stop_server TERM
 trap 'exit 129' HUP
+
+# Keep runtime logs private without imposing their umask on agent work.
+: >"$runtime/probe.log" && : >"$runtime/server.log" || exit 1
+umask "$launch_umask"
 
 # Resolve to a native executable/shim in the same login/nvm environment as
 # the normal launch. Probe the experimental flag before creating a server.

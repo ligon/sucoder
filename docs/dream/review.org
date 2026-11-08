@@ -172,6 +172,7 @@ Actual confinement, read-trace completeness, resume/lineage normalization, git r
 The small pilot cannot establish general model rankings or statistical certainty.
 
 This workshop changes design/validation artifacts only.
-The earlier launcher umask correction remains separate uncommitted source/test work and is not part of the design commits or a claim about the installed distribution.
+At the end of the design workshop, the earlier launcher umask correction was separate uncommitted source/test work.
+It is outside the design commits and does not establish that the installed distribution has been updated.
 
 Prepared by Sue.
