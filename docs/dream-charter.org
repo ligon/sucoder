@@ -1,0 +1,475 @@
+#+title: Workshop charter: sucoder dream
+#+author: Sue
+#+date: 2026-11-08
+#+status: COMPLETE -- reviewed design and pilot plan; implementation not started
+#+options: toc:2 num:nil
+#+todo: TODO(t!) NEXT(n!) ACTIVE(a!) WAITING(w@/!) REVIEW(r@/!) | DONE(d!) MOOT(m@)
+#+startup: logdone logdrawer
+
+* 0. Question, restated
+
+Design =sucoder dream= to turn accumulated project evidence into a useful, checked-in Org companion wiki for human readers and future agent sessions.
+Dreaming should revise understanding across sessions: explain relationships and decisions, correct mistakes, preserve uncertainty, and keep relevant knowledge easy to find.
+The companion supplements the project's maintained documentation and explicit human decisions.
+
+This workshop delivers a design and a bounded pilot plan.
+Runtime implementation and operational rollout require later work.
+The candidate projects are SuCoder and LSMS_Library; their different documentation practices should test whether the design generalizes.
+
+** Decisions already agreed in conversation
+
+- Keep the companion wiki in the project's git repository, provisionally under =.sucoder/wiki/=.
+- Write readable topic pages and an index in Org, with evidence and useful cross-links.
+- Attach editorial discussion beneath the relevant article heading as a =Talk= subheading tagged =editorial=.
+- Express editorial work with real Org TODO headings and the applicable workflow, including completion records.
+- Archive completed editorial subtrees that have lost immediate relevance into another checked-in file.
+  Preserve a concise active rationale and a link when a decision still constrains editing.
+- Keep archives available for retrieval while excluding them from the ordinary context reading set.
+- Keep raw transcripts and temporary extraction products outside the tracked wiki.
+- Preserve human contributions and distinguish proposals, observations, inferences, and adopted decisions.
+
+The [[#wiki-task-workflow][wiki task workflow]] is declared and exercised in this charter.
+The human approved the charter and this initial workflow on 2026-11-08; design review may propose subsequent changes with reasons.
+
+** Premises to challenge
+
+A wiki earns its maintenance cost only if it helps readers answer questions or avoid mistakes that existing documentation and source search already address.
+Page counts, link counts, and apparent completeness are inadequate success measures.
+
+Existing notes may already perform much of the proposed function.
+LSMS_Library deliberately keeps country-specific reasoning beside country code in =_/CONTENTS.org=; a second inventory of those facts would risk disagreement and drift.
+The design must explain when the companion links to existing knowledge, when it synthesizes across sources, and when it proposes a correction to maintained documentation.
+
+A transcript is evidence of recorded statements and actions, with limitations.
+Repeated summaries, fork histories, or assistant assertions cannot independently establish that an action succeeded or a scientific question was resolved.
+
+** Operational conclusions from the research
+:PROPERTIES:
+:CUSTOM_ID: research-conclusions
+:END:
+
+The conclusions below constrain the design and its [[#definition-of-done][acceptance criteria]].
+The cited findings motivate them; the SuCoder adaptations are proposals for this workshop, not results established by Anthropic's evaluations.
+
+*** Correct existing memory and synthesize across sources
+:PROPERTIES:
+:CUSTOM_ID: repair-memory
+:END:
+
+The [[https://www.anthropic.com/research/components-of-agent-memory][essay's correction example]] checks a mistaken note against its transcript; another section reports cross-session gap repair.
+Require a dream to inspect relevant existing pages alongside new evidence, revise unsupported claims, and seek relationships that individual sessions missed.
+Turn supported explanations into reusable rules; leave competing hypotheses and missing verification as explicit Talk tasks.
+Support a bounded maintenance pass over existing material even when no new transcript has arrived.
+The worked lifecycle must begin with a plausible wrong note and show its correction, evidence trail, and expected effect on a subsequent reader's answer.
+
+*** Make the wiki a route to evidence
+:PROPERTIES:
+:CUSTOM_ID: retrieve-evidence
+:END:
+
+The [[https://www.anthropic.com/research/components-of-agent-memory][essay's retrieval experiments]] found a benefit from combining wiki and source search; synthesis tasks benefited more than some direct lookups.
+Retain source retrieval as part of the reader contract, with links that identify what can be checked and where.
+For LSMS, explain connections among country notes while directing country-specific questions back to the relevant =CONTENTS.org= sections.
+The pilot must compare documentation plus source search, wiki plus the same source search, and a wiki-only diagnostic condition.
+
+*** Budget what readers load and test that they use it
+:PROPERTIES:
+:CUSTOM_ID: reader-context
+:END:
+
+The [[https://www.anthropic.com/research/components-of-agent-memory][essay's injected-context discussion]] favors a small top layer; its steering discussion shows model-dependent memory use.
+Specify an explicit startup reading allowance, a short orientation, topic selection, and archive access rather than loading the entire index or wiki without a bound.
+Supply an example reader instruction that locates memory, requests relevant evidence, and makes reading behavior observable in a later pilot.
+Treat relocation into an archive as a context saving only when the normal reader actually excludes that file.
+
+*** Set the purpose of memory and preserve essential distinctions
+:PROPERTIES:
+:CUSTOM_ID: purpose-and-fidelity
+:END:
+
+The [[https://www.anthropic.com/research/components-of-agent-memory][essay's salience experiments]] caution against restrictive rules such as recording only failures; another experiment improves results by tailoring instructions to the task.
+Write a concrete dream brief for the intended human and agent uses, allowing useful plans, successful procedures, explanations, and tested rules as well as mistakes.
+Name the details whose loss would change an answer, such as a command flag, survey grain, wave scope, or unresolved maintainer decision.
+When evaluation reveals a recurring omission, propose a revision to that brief and re-evaluate it; automatic changes to project instructions remain out of scope.
+
+*** Separate analysis from consolidation and account for coverage
+:PROPERTIES:
+:CUSTOM_ID: evidence-workflow
+:END:
+
+The [[https://platform.claude.com/cookbook/managed-agents-cma-dreaming-with-a-dynamic-workflow][dreaming cookbook]] analyzes inputs before a final organizer and checks completed work against execution records.
+Specify concrete extraction, verification, consolidation, and publication phases, their inputs and outputs, and which role may write each artifact.
+Preserve the ordering and distinction of user statements, assistant claims, tool calls, and results when preparing transcript evidence.
+For an input too large to process in one read, define complete chunk coverage or an explicit incomplete outcome.
+The run report must reconcile admitted, examined, skipped, and failed evidence independently of the dreamer's prose summary.
+Coverage records establish what evidence was supplied to a role, not whether the model understood it correctly.
+
+*** Prevent consolidation from erasing another contribution
+:PROPERTIES:
+:CUSTOM_ID: preserve-contributions
+:END:
+
+The [[https://github.com/anthropics/claude-quickstarts/blob/main/managed-agents/knowledge-wiki/README.md#cost-and-tier-expectations][wiki quickstart reports lost lines]] from concurrent writes to shared pages.
+Use disjoint extraction artifacts followed by one publisher as the proposed default; justify any alternative that permits shared writers.
+Carry source references, temporal qualifications, disagreements, and human edits through consolidation and verify their survival before accepting the result.
+Create a scenario where two inputs contribute different necessary facts to one topic and check that both remain available after consolidation and indexing.
+
+*** Make repeated dreaming selective and bounded
+:PROPERTIES:
+:CUSTOM_ID: selective-maintenance
+:END:
+
+The [[https://www.anthropic.com/research/components-of-agent-memory][essay's closing discussion]] identifies staleness and repeated checking costs as open problems; its examples include wiki growth beyond the source corpus.
+Define triggers for revisiting a topic: changed evidence, a reader failure, an unresolved Talk task, a broken reference, or a fact likely to have changed.
+Require a stopping rule and separate allowances for evidence reading, consolidation, and reader context.
+The pilot plan must distinguish a first build, an ordinary incremental update, and a targeted repair pass, accounting for cumulative maintenance and reading costs.
+No assumption that nightly rebuilding or another pass always improves the result is part of the charter.
+
+*** Evaluate the construction method as well as its prose
+:PROPERTIES:
+:CUSTOM_ID: evaluate-construction
+:END:
+
+The [[https://github.com/anthropics/claude-quickstarts/blob/main/managed-agents/knowledge-wiki/README.md][wiki quickstart]] measures construction and answering costs; its prompts retain sources, conflicts, and superseded claims.
+Freeze the evidence subset, dream and reader instructions, model and harness identities, and output revision for each later comparison.
+Include direct-lookup controls, cross-source synthesis questions, a seeded wrong-memory case, and a time- or scope-sensitive caveat.
+Revise the construction brief using a separate development set; retain held-out questions for comparison so the dream is not supplied its evaluation answers.
+Do not transfer published model rankings, prices, or break-even claims to these repositories without measurement.
+
+** Talk :editorial:
+
+*** DONE Agree the workshop charter
+CLOSED: [2026-11-08 Sun 08:14]
+:PROPERTIES:
+:CUSTOM_ID: charter-agreement
+:REVIEWER: User
+:END:
+:LOGBOOK:
+- State "DONE"       from "REVIEW"     [2026-11-08 Sun 08:14]
+- State "REVIEW"     from "TODO"       [2026-11-08 Sun 08:02] \\
+  Sue: The proposed scope and acceptance criteria are ready for the user's decision. Record agreement or the specific revisions required; this entry does not grant approval.
+:END:
+
+Review the question, scope, [[#definition-of-done][acceptance criteria]], and proposed [[#wiki-task-workflow][task workflow]].
+The user approved the charter on 2026-11-08: "Okay, my own review of charter complete; let's go".
+This authorizes the design and pilot-plan workshop within the recorded scope.
+
+*** DONE Define and apply the wiki task workflow
+CLOSED: [2026-11-08 Sun 08:02]
+:PROPERTIES:
+:CUSTOM_ID: task-workflow-definition
+:OWNER: Sue
+:END:
+:LOGBOOK:
+- State "DONE"       from "ACTIVE"     [2026-11-08 Sun 08:02]
+:END:
+
+Define [[#wiki-task-workflow][useful task states]], declare them in this file, and apply them to the charter's actual work and dependencies.
+Check recognition of open and terminal states, transition logging, internal links, and export using Org itself.
+This task covers the workflow revision; the [[#charter-agreement][charter agreement]] remains a separate decision.
+Verified with Emacs: all seven states are recognized, DONE and MOOT are terminal, state changes are recorded in LOGBOOK, and internal links resolve during HTML export.
+
+* 1. Scope and non-goals
+
+** In scope
+
+- A design document, a task-specific prior-art ledger, source-grounded worked examples, and a recorded adversarial review.
+- Concrete dream and reader briefs, with the operational roles, evidence coverage, budgets, and evaluation loop required by the [[#research-conclusions][research conclusions]].
+- Repository-local knowledge shared across harnesses and machines, with explicit source identity, version, time, and coverage.
+- The relationship between transcripts, code, maintained documentation, existing notes and ledgers, companion pages, editorial tasks, and archives.
+- The Org representation: article structure, =Talk :editorial:=, configured TODO states, completion notes, links, and archive destinations and context.
+- A manually invoked command's proposed inputs, outputs, limits, run states, and failure behavior, using existing SuCoder execution and harness machinery where appropriate.
+- Incremental evidence selection for new and resumed sessions, duplicated or restored transcripts, unavailable sources, and runs on different machines.
+- Preservation of human edits and editorial decisions, safe consolidation, concurrent git work, interrupted publication, and the point at which evidence is recorded as processed.
+- Small startup context, topic-directed retrieval, archive access, and human browsing, with a clear distinction between source files and article exports.
+- A pilot plan for each candidate project and an evaluation against existing documentation plus source search.
+- An implementation sequence identifying the smallest useful release and later optional extensions.
+
+** Out of scope for this workshop
+
+- Implementing the runtime command or adding production configuration, dependencies, hooks, scheduled jobs, or services.
+- Running repository test suites, fetching survey data, building tables, changing caches, or operating cluster allocations to prepare the design.
+- Editing LSMS_Library, changing scientific definitions, or resolving its open survey-domain decisions.
+- Automatically rewriting maintained documentation, skills, agent instructions, or project policy.
+- Publishing a website, committing or pushing wiki changes to another repository, or opening pull requests.
+- A global cross-project memory store, vector database, or commitment to a particular provider's managed-agent service.
+- A full-corpus dreaming campaign or transferring private transcripts to an external service.
+
+* 2. Definition of done
+:PROPERTIES:
+:CUSTOM_ID: definition-of-done
+:END:
+
+The design workshop is complete when the following criteria have recorded evidence.
+Scenario checks below assess the proposed design; they are not claims that a runtime implementation passed tests.
+
+** DONE Ground the design in existing machinery
+CLOSED: [2026-11-08 Sun 08:32]
+:PROPERTIES:
+:CUSTOM_ID: acceptance-grounding
+:OWNER:    Sue
+:END:
+:LOGBOOK:
+- State "DONE"       from "ACTIVE"     [2026-11-08 Sun 08:32]
+- State "ACTIVE"     from "WAITING"    [2026-11-08 Sun 08:14]
+- State "WAITING"    from "TODO"       [2026-11-08 Sun 08:02] \\
+  Sue: Grounding waits for explicit [[#charter-agreement][charter agreement]]. Resume when the user accepts the scope; otherwise revise the charter.
+:END:
+
+A task-specific ledger identifies reusable SuCoder machinery, existing coverage and limitations, relevant Org facilities, and the two projects' existing documentation conventions.
+Every reuse, extension, or new-component recommendation cites the ledger, with source paths and the inspected revisions.
+The [[#charter-agreement][charter agreement]] is recorded, and grounding is underway.
+Return a blocking scope problem to the human if grounding reveals one.
+Evidence: [[file:dream-ledger.org][the task-specific ledger]] records the inspected revisions, reuse decisions, existing test definitions, source conflicts, and unresolved runtime checks.
+
+** DONE Specify the operational contract
+CLOSED: [2026-11-08 Sun 08:35]
+:PROPERTIES:
+:CUSTOM_ID: acceptance-contract
+:OWNER:    Sue
+:REVIEWER: Independent workshop reviewers
+:END:
+:LOGBOOK:
+- State "DONE"       from "REVIEW"     [2026-11-08 Sun 08:35]
+- State "REVIEW"     from "TODO"       [2026-11-08 Sun 08:32] \\
+  Sue: Draft design and briefs are ready for independent review; resolve findings before completion.
+:END:
+
+The design specifies the proposed command interface, source admission and identity, knowledge and editorial representation, archive behavior, active reading set, output artifacts, processing records, and publication boundary.
+It distinguishes agreed requirements from proposed defaults and deferred choices.
+Include sample dream and reader instructions that state [[#purpose-and-fidelity][the purpose and essential distinctions]], together with [[#evidence-workflow][phase contracts and coverage accounting]], [[#preserve-contributions][write ownership]], [[#reader-context][bounded reader context]], and [[#repair-memory][maintenance of existing memory]].
+Evidence: [[file:dream.org][the design]] and [[file:dream/prompts.org][role briefs]].
+
+** DONE Work through the editorial lifecycle
+CLOSED: [2026-11-08 Sun 08:35]
+:PROPERTIES:
+:CUSTOM_ID: acceptance-editorial-lifecycle
+:OWNER:    Sue
+:REVIEWER: Independent workshop reviewers
+:END:
+:LOGBOOK:
+- State "DONE"       from "REVIEW"     [2026-11-08 Sun 08:35]
+- State "REVIEW"     from "TODO"       [2026-11-08 Sun 08:32] \\
+  Sue: Active and archived worked examples are ready for the lifecycle and link checks.
+:END:
+
+A concrete Org example shows a question entering Talk as a task, an attributed resolution with supporting evidence, the corresponding article update, and subsequent file-based archiving.
+Human edits, existing task states, completion records, links, and archive provenance are preserved.
+A still-relevant constraint remains discoverable from the active page.
+Start with an incorrect existing note and show its [[#repair-memory][evidence-based correction]] and the expected change to a reader's answer.
+Exercise [[#wiki-task-workflow][the task workflow]], including a review returned for revision and a superseded task resolved as MOOT.
+Evidence: [[file:dream/examples/sucoder.org][the active correction]] and its [[file:dream/examples/archive/sucoder.org][worked archive]].
+
+** DONE Preserve evidence and authority
+CLOSED: [2026-11-08 Sun 08:35]
+:PROPERTIES:
+:CUSTOM_ID: acceptance-evidence
+:OWNER:    Sue
+:REVIEWER: Independent workshop reviewers
+:END:
+:LOGBOOK:
+- State "DONE"       from "REVIEW"     [2026-11-08 Sun 08:35]
+- State "REVIEW"     from "TODO"       [2026-11-08 Sun 08:32] \\
+  Sue: Source-grounded command and survey qualification checks are ready for independent review.
+:END:
+
+Scenario checks cover an unsupported assistant success claim, conflicting dated observations, a human decision contradicted by an agent inference, and a quoted instruction inside a source.
+The design preserves the distinctions and routes unresolved conflicts into editorial work without promoting source text into operating authority.
+Trace at least one exact command qualification and one survey-domain qualification through the [[#evidence-workflow][evidence workflow]], preserving [[#purpose-and-fidelity][essential distinctions]] and [[#preserve-contributions][independent contributions]].
+Evidence: [[file:dream/scenarios.org::#evidence][authority scenarios]], [[file:dream/examples/sucoder.org::#session-id-flag][the command qualification]], and [[file:dream/examples/lsms.org][the survey example]].
+
+** DONE Define incremental and concurrent operation
+CLOSED: [2026-11-08 Sun 08:35]
+:PROPERTIES:
+:CUSTOM_ID: acceptance-incremental-operation
+:OWNER:    Sue
+:REVIEWER: Independent workshop reviewers
+:END:
+:LOGBOOK:
+- State "DONE"       from "REVIEW"     [2026-11-08 Sun 08:35]
+- State "REVIEW"     from "TODO"       [2026-11-08 Sun 08:32] \\
+  Sue: Receipt, coverage and publication scenarios are ready for independent review.
+:END:
+
+Scenario checks cover unchanged inputs, a resumed session, duplicated or forked history, two machines processing overlapping evidence, a concurrent human edit, a failed extraction, and interruption during publication.
+Each scenario names the expected visible state, processing-record behavior, retry path, and remaining limits.
+Verify [[#preserve-contributions][retention of two independent contributions]] to one topic and [[#evidence-workflow][explicit coverage]] of oversized or partly unread inputs.
+Evidence: [[file:dream/scenarios.org::#incremental][incremental/publication checks]] and [[file:dream.org::#admission][receipt compatibility and output binding]].
+
+** DONE Develop two grounded examples
+CLOSED: [2026-11-08 Sun 08:35]
+:PROPERTIES:
+:CUSTOM_ID: acceptance-examples
+:OWNER:    Sue
+:REVIEWER: Independent workshop reviewers
+:END:
+:LOGBOOK:
+- State "DONE"       from "REVIEW"     [2026-11-08 Sun 08:35]
+- State "REVIEW"     from "TODO"       [2026-11-08 Sun 08:32] \\
+  Sue: Two examples are written; independent source-fidelity checks are requested.
+:END:
+
+A small companion example for each candidate project explains a real topic using inspected source material.
+The LSMS example preserves and links the relevant =CONTENTS.org= decisions and live caveats; it neither adjudicates survey semantics nor duplicates a country inventory.
+Examples remain design artifacts in SuCoder, with no changes to the candidate repositories' runtime behavior.
+Each example answers a question requiring [[#retrieve-evidence][connections across sources]] and shows a case where a link to maintained documentation is sufficient.
+Evidence: the [[file:dream/examples/sucoder.org][SuCoder]] and [[file:dream/examples/lsms.org][LSMS]] examples and their [[file:dream/corpus.json][frozen source map]].
+
+** DONE Specify a measurable pilot
+CLOSED: [2026-11-08 Sun 08:35]
+:PROPERTIES:
+:CUSTOM_ID: acceptance-pilot
+:OWNER:    Sue
+:REVIEWER: Independent workshop reviewers
+:END:
+:LOGBOOK:
+- State "DONE"       from "REVIEW"     [2026-11-08 Sun 08:35]
+- State "REVIEW"     from "TODO"       [2026-11-08 Sun 08:32] \\
+  Sue: Frozen passages and paired evaluation protocol are ready for review; no model pilot was run.
+:END:
+
+For each repository, the plan fixes an evidence subset and revision, a set of checkable reader questions, a documentation-plus-search baseline, and a way to assess unsupported claims and missed caveats.
+It records active-context size separately from total archive size and specifies how provider use and elapsed work would be bounded and reported.
+Specify the [[#retrieve-evidence][three reader conditions]], the [[#evaluate-construction][question classes and held-out protocol]], a check that readers actually [[#reader-context][consult relevant memory]], and the [[#selective-maintenance][three construction/update cases]].
+Record construction and cumulative maintenance costs alongside per-answer cost, answer quality, and preservation of essential qualifications.
+The human judges readability and usefulness; actual performance improvements remain unmeasured until a later pilot is authorized and run.
+Evidence: [[file:dream/pilot.org][the pilot protocol]], its exposed development questions, held-out isolation, paired conditions and decision rule.
+
+** DONE Trace research conclusions to design checks
+CLOSED: [2026-11-08 Sun 08:35]
+:PROPERTIES:
+:CUSTOM_ID: acceptance-research-traceability
+:OWNER:    Sue
+:REVIEWER: Independent workshop reviewers
+:END:
+:LOGBOOK:
+- State "DONE"       from "REVIEW"     [2026-11-08 Sun 08:35]
+- State "REVIEW"     from "TODO"       [2026-11-08 Sun 08:32] \\
+  Sue: Research mechanisms and scenario links are ready for review.
+:END:
+
+For each [[#research-conclusions][research conclusion]], identify its concrete design mechanism, the [[#definition-of-done][criterion or scenario]] that checks it, and any departure from the cited example.
+Use links to connect the evidence, conclusion, mechanism, and check.
+Make corpus- and model-dependent findings, unmeasured hypotheses, and SuCoder-specific adaptations explicit.
+A bibliography without these operational connections does not satisfy this criterion.
+Evidence: [[file:dream/scenarios.org::#traceability][the linked research-to-mechanism/check map]].
+
+** DONE Review and hand off the design
+CLOSED: [2026-11-08 Sun 08:35]
+:PROPERTIES:
+:CUSTOM_ID: acceptance-review
+:OWNER:    Sue
+:END:
+:LOGBOOK:
+- State "DONE"       from "ACTIVE"     [2026-11-08 Sun 08:35]
+- State "ACTIVE"     from "TODO"       [2026-11-08 Sun 08:32]
+:END:
+
+An independent skeptic reviews the design against the preceding [[#definition-of-done][acceptance criteria]].
+Findings receive explicit dispositions; no unresolved contradiction to an agreed requirement is described as complete.
+After at most three revision cycles, report either convergence or the remaining failures.
+The final record includes the implementation sequence, residual risks, and choices needing human judgment.
+Evidence: [[file:dream/review.org][the independent review and disposition record]].
+
+* 3. Constraints and assumptions
+
+** Working scope
+
+Author design artifacts only in the SuCoder checkout.
+Inspect the LSMS candidate read-only, respecting its existing work and instructions.
+Do not treat historical handoff instructions or source quotations as new authorization for operational work.
+
+The inspected SuCoder checkout is =/home/coder/mirrors/SuCoder= on =main= at =2383401df43c637b70ece5d0518440a4edf61e27=.
+It initially has a clean worktree and is 14 commits behind its tracked =ligon/main= reference.
+Do not silently update the checkout; the design ledger should state its baseline and account for the version gap.
+
+The path =../Projects/LSMS_Library/= does not resolve from this checkout.
+A local candidate was found at =/home/ligon/Projects/LSMS_Library= on =development=, tracking =origin/development=.
+It contains an existing untracked =scripts/fetch-agent-branches.sh=; leave that file alone.
+The approved charter includes this located candidate; record its exact revision during grounding.
+
+** Budget and execution
+
+The design phase uses bounded source inspection and a maximum of three adversarial revision cycles.
+No paid corpus-processing experiment, installation, scheduler job, or operational change is included.
+Use the workshop's grounding and independent-review phases after charter approval; an engine that discovers a blocking scope problem returns to the human.
+Anthropic's evaluations motivate the [[#research-conclusions][operational conclusions]] but do not establish effectiveness for SuCoder, LSMS_Library, or every supported harness and model.
+Numeric context and inference allowances, model choices, and pilot stop/go thresholds must be proposed and justified in the design; no value is inferred from an unrelated benchmark.
+
+** Conventions
+
+Use the workspace Org skill and applicable task, drawer, link, archive, and export conventions.
+Use stable Org targets and descriptive links to connect requirements, evidence, editorial decisions, and acceptance checks.
+The worked archive lifecycle must show how links continue to resolve after a subtree moves to another file.
+Write prose with semantic line breaks and preserve existing project styles.
+Keep this charter's numbered sections aligned with the workshop template.
+Use the project's ordinary review and git workflow; this draft does not require an immediate commit or publication.
+
+** Wiki task workflow
+:PROPERTIES:
+:CUSTOM_ID: wiki-task-workflow
+:END:
+
+Use the file-local keyword declaration at the top of this charter as the initial workflow for wiki editorial tasks.
+Each wiki source must declare the settings directly or include them from a checked-in Org setup file, so interpretation does not depend on a contributor's personal Emacs configuration.
+Task states describe work on knowledge; claim confidence and decision authority still belong in the article's evidence and attribution.
+Preserve the native task states of existing source documents when reading them.
+
+- =TODO= :: Captured work that is not yet selected and ready to start.
+- =NEXT= :: Scoped, actionable work with no unresolved prerequisite; an owner can take it next.
+- =ACTIVE= :: Work currently underway, with its responsible contributor named in the entry.
+- =WAITING= :: Work held on a specific dependency, missing evidence, or external decision.
+  Record the blocker, link it where possible, and state what permits work to resume.
+- =REVIEW= :: A proposed result is ready for a named review or decision.
+  Record the reviewer, what is being reviewed, and what acceptance requires.
+- =DONE= :: The task's outcome is checked and incorporated, including any explicitly required review.
+  Preserve the evidence or decision and a completion timestamp.
+- =MOOT= :: Work intentionally dropped, rejected, or superseded.
+  Record why; link a replacement when one exists.
+  This is a terminal disposition, not a claim of successful completion.
+
+The bar in the keyword declaration separates open work from the two terminal states, DONE and MOOT.
+Use REVIEW for the proposed result awaiting a decision and WAITING for work that depends on that decision.
+Tasks may take the transitions their work requires; they need not visit every state in sequence.
+For example, ACTIVE may move to WAITING and return to NEXT, or move to REVIEW and return to ACTIVE when revision is requested.
+A completed item may be reopened when evidence changes; record the reason and preserve its earlier resolution.
+Assignment is metadata rather than an additional state: delegation changes the responsible contributor, while the work still has one of these states.
+
+Record state changes in LOGBOOK drawers, using timestamped notes for entry to WAITING, REVIEW, and MOOT.
+The declaration requests timestamps for the other states and on exit from WAITING or REVIEW; =logdone= records completion timestamps and =logdrawer= keeps state records out of the main prose.
+An agent performing a transition must record the same note and timestamp information that Org would request interactively.
+
+Terminal state makes an item eligible for archive review when it has lost immediate relevance.
+An archive candidate must have no open descendant tasks, and any decision still needed by active readers must retain a concise rationale and working link on the active page.
+The [[#acceptance-editorial-lifecycle][worked editorial lifecycle]] must demonstrate these checks.
+
+* 4. Links and grounding inputs
+
+- Workshop method :: [[file:/home/ligon/.sucoder/skills/workshop-problem/SKILL.md][workshop-problem]], especially the charter gate and the ground, red-team, and review phases.
+- Prior-art ledger :: Planned artifact =docs/dream-ledger.org=, to be built after charter approval.
+- Design :: Planned artifact =docs/dream.org=; worked examples and review records may use a focused =docs/dream/= directory.
+- Org conventions :: [[file:/home/ligon/.sucoder/skills/orgmode/SKILL.md][orgmode]] and its specialized sub-skills.
+- Agent-memory research :: [[https://www.anthropic.com/research/components-of-agent-memory][The components of agent memory]].
+- Session dreaming :: [[https://platform.claude.com/cookbook/managed-agents-cma-dreaming-with-a-dynamic-workflow][Dreaming with a dynamic workflow]].
+- Document wiki :: [[https://github.com/anthropics/claude-quickstarts/tree/main/managed-agents/knowledge-wiki][Knowledge wiki quickstart]].
+- Consolidation method :: The quickstart's [[https://github.com/anthropics/claude-quickstarts/blob/main/managed-agents/knowledge-wiki/prompts/analyzer_system.md][analyzer]] and [[https://github.com/anthropics/claude-quickstarts/blob/main/managed-agents/knowledge-wiki/prompts/organizer_system.md][organizer]] prompts are implementation references, including evidence checking, temporal conflicts, and link maintenance.
+  Their all-facts preservation instructions are task-specific; the design must reconcile fidelity of essential facts with the companion's bounded active context and selective retention.
+- Archive semantics :: [[https://orgmode.org/manual/Moving-subtrees.html][Moving a tree to an archive file]].
+- Existing transcript work :: [[file:reply-from-transcript.org][Reply design]], [[file:reply-transcripts-evidence.org][version-specific evidence]], =sucoder/replies.py= and =sucoder/reply_probe.py=.
+- Existing execution and publication :: SuCoder's harness profiles, audit and dispatch interfaces, and [[file:publish.el][Org publication configuration]] are grounding candidates, not predetermined implementation dependencies.
+- LSMS conventions :: The candidate's =AGENTS.md=, =.coder/ledger/README.md= and =STANDING.md=, and relevant country =_/CONTENTS.org= files.
+
+* 5. Open questions and risks
+
+- Source availability :: Which historical transcripts can be associated with the candidate revisions, and which are accessible without extra operational work?
+  Missing evidence must narrow an example or become an explicit pilot prerequisite.
+- Representation :: The [[file:dream.org::#representation][proposed layout and claim/source bindings]] define the initial metadata; implementation and pilot feedback may justify changes.
+- Authority :: The [[file:dream/examples/lsms.org::#source-conflict][worked source conflict]] retains dated prose, inspected code, and human decision authority separately.
+- Scope of automation :: The [[file:dream.org::#editorial][editorial contract]] distinguishes evidence-based repairs from tasks requiring a recorded human decision.
+- Publication :: The [[file:dream.org::#pipeline][candidate publication contract]] and [[file:dream.org::#admission][receipt output bindings]] specify integration, concurrent edits, and reconciliation.
+- Evaluation :: Human reading and agent retrieval may favor different structures.
+  The pilot must assess both and allow a conclusion that a topic is better served by links to existing documentation.
+- Operational choices :: The [[file:dream.org::#reader][initial allowances]] and [[file:dream.org::#backend-and-limits-review][backend tradeoff]] are explicit proposals awaiting an implementation decision and later measurement.
+  The [[file:dream/pilot.org::#decision-rule][decision rule]] separates hard source-fidelity checks from judgments about future usefulness.
+
+Prepared by Sue.

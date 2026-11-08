@@ -1,0 +1,76 @@
+#+title: Worked companion: locating a message reply
+#+author: Sue
+#+date: 2026-11-08
+#+setupfile: ../settings.org
+
+* Scope of this example
+:PROPERTIES:
+:CUSTOM_ID: example-scope
+:END:
+
+This is a source-grounded design example, not an installed wiki page or a model-generated experimental result.
+Its editorial dialogue and task history are illustrative; no operational project task was closed by this example.
+The [[file:../pilot.org::#sucoder-corpus][source map]] pins SuCoder at =2383401df43c637b70ece5d0518440a4edf61e27=.
+
+* A transcript copy is not a reply
+:PROPERTIES:
+:CUSTOM_ID: reply-evidence
+:END:
+
+To establish a reply, identify the native delivered input and a subsequent native assistant text block containing the tagged reply, with the protocol's ordering and attribution rules.
+A compaction summary saying that a reply occurred is a separate assertion.
+The [[https://github.com/ligon/SuCoder/blob/2383401df43c637b70ece5d0518440a4edf61e27/docs/reply-transcripts-evidence.org#L12][October 23 investigation]] found a summary claiming a reply that the observed assistant events did not contain.
+The [[https://github.com/ligon/SuCoder/blob/2383401df43c637b70ece5d0518440a4edf61e27/tests/test_reply_probe.py#L220][compaction regression fixture]] expects =seen= rather than =replied= for that case.
+These sources establish how the protocol treats that admitted evidence, not an assurance about every future harness version.
+
+The [[https://github.com/ligon/SuCoder/blob/2383401df43c637b70ece5d0518440a4edf61e27/sucoder/reply_probe.py#L114][Claude adapter]] distinguishes queued input, native assistant text, and copied/summary material.
+An enqueue record alone establishes queueing, not native delivery; in the documented absorbed-input case, the =queued_command= attachment establishes delivery.
+The [[https://github.com/ligon/SuCoder/blob/2383401df43c637b70ece5d0518440a4edf61e27/sucoder/reply_probe.py#L173][Codex adapter]] similarly distinguishes native message items from replay and fork material.
+A real reply may be commentary before task completion; treating only a final message as evidence would lose valid replies.
+The [[https://github.com/ligon/SuCoder/blob/2383401df43c637b70ece5d0518440a4edf61e27/docs/reply-from-transcript.org#L93][version-specific protocol notes]] describe native ordering and harness context.
+
+** An exact launch flag and its scope
+:PROPERTIES:
+:CUSTOM_ID: session-id-flag
+:END:
+
+The admitted protocol notes report that Claude Code =--session-id <uuid>= lets SuCoder choose an identity at launch for the documented build.
+Extraction must retain the flag and its UUID argument; verification must retain that it is a version-specific reported capability, and the article must not turn it into a guarantee about every resumed or future session.
+This workshop did not invoke a launch or test resumption to verify that capability again.
+This is a traceable command qualification from source through proposed extraction and verification to article prose, rather than a new operational instruction to change a live session.
+
+** What changed in the worked correction
+:PROPERTIES:
+:CUSTOM_ID: correction
+:END:
+
+The deliberately seeded wrong note was: "Any occurrence of the reply tag in a session summary proves the message was answered."
+Checking the investigation, classifier, and named fixture replaces it with the native-event rule above.
+For the development question "Does this summary establish a reply?", the expected corrected answer is "No; this evidence establishes a seen message without an observed reply in the inspected sequence."
+This is a worked expected answer, not a measured fresh-agent result.
+
+** Talk :editorial:
+
+*** Earlier correction and review
+:PROPERTIES:
+:CUSTOM_ID: corrected-reply-rule
+:END:
+
+The [[file:archive/sucoder.org::#corrected-reply-rule][archived correction task]] records why summary matches were excluded, including a review returned for missing queued-input context.
+Its conclusion remains in [[#reply-evidence][the article rule]], so ordinary reading need not load the discussion.
+
+*** Superseded heuristic
+:PROPERTIES:
+:CUSTOM_ID: infer-from-summary
+:END:
+
+The [[file:archive/sucoder.org::#infer-from-summary][MOOT heuristic proposal]] is retained as editorial history.
+Do not revive it merely because a later summary repeats the claim.
+
+* When a maintained-source link is enough
+:PROPERTIES:
+:CUSTOM_ID: lookup
+:END:
+
+For the precise adapter predicates, use the [[https://github.com/ligon/SuCoder/blob/2383401df43c637b70ece5d0518440a4edf61e27/sucoder/reply_probe.py#L114][maintained adapter source]] and [[https://github.com/ligon/SuCoder/blob/2383401df43c637b70ece5d0518440a4edf61e27/tests/test_reply_probe.py#L220][named regression]].
+Duplicating their implementation into another table would add maintenance without answering a new question.

@@ -1,0 +1,13 @@
+#+title: Dream workshop Org settings
+#+todo: TODO(t!) NEXT(n!) ACTIVE(a!) WAITING(w@/!) REVIEW(r@/!) | DONE(d!) MOOT(m@)
+#+startup: logdone logdrawer
+#+options: toc:2 num:nil
+
+* Scope
+:PROPERTIES:
+:CUSTOM_ID: scope
+:END:
+
+These settings support the design artifacts and demonstrate a repository-local setup file.
+The eventual wiki would keep its own reviewed settings at =.sucoder/wiki/settings.org=.
+The [[file:../dream-charter.org::#wiki-task-workflow][charter]] defines state meanings, attribution, logging, and archive eligibility.

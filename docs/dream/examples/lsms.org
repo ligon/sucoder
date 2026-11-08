@@ -1,0 +1,72 @@
+#+title: Worked companion: Tanzania household grain and dated evidence
+#+author: Sue
+#+date: 2026-11-08
+#+setupfile: ../settings.org
+
+* Scope and sources
+:PROPERTIES:
+:CUSTOM_ID: example-scope
+:END:
+
+This example connects existing sources at LSMS_Library =06710190305e0057d9e19d42059753d4cc0db012=.
+It is a static source inspection, not a fresh survey build, measured API result, or maintainer decision.
+The [[file:../pilot.org::#lsms-corpus][frozen source map]] supplies exact paths, selected ranges, digests, and local review links.
+Actual installation in that repository would use project-relative links to country notes and code; this workshop leaves LSMS unchanged.
+
+* Uniqueness does not identify the household
+:PROPERTIES:
+:CUSTOM_ID: household-grain
+:END:
+
+The canonical schema calls =i= the household, =t= the wave, and =j= the item; the shocks index is =(t, i, Shock)=.
+Those names alone do not choose a raw household identifier.
+The [[file:../pilot.org::#tz-notes-july][Tanzania survey-design note]] explains how the =2008-15/= four-round construction back-casts descendant panel lines into earlier waves.
+=UPHI= and =r_hhid= therefore describe different entities: a descendant panel household constituted at Round 4 and the household in a particular round.
+UPHI can make the index unique while counting descendant lines.
+With =r_hhid=, repeated household-round records become unique only after guarded de-replication.
+The round scope matters, and household-level replication should not be generalized to every individual-level module.
+
+** Current source and dated notes disagree
+:PROPERTIES:
+:CUSTOM_ID: source-conflict
+:END:
+
+The July 21 note says the food/shocks keys differ and describes that inconsistency as unresolved and maintainer-owned.
+At the inspected revision, the [[file:../pilot.org::#tz-shocks-source][shocks script]] explicitly constructs =i= from =r_hhid= and asserts payload agreement before collapsing replicated rows.
+That is evidence about the checked-in script; it is not a new observation of served data or a fresh scientific ruling.
+The companion must expose this dated disagreement and direct reconciliation back to the country documentation and maintainers.
+It must neither repeat the July shocks assignment as current behavior nor erase the unresolved authority question.
+
+** Talk :editorial:
+
+*** WAITING Reconcile the July note with the current shocks source
+:PROPERTIES:
+:CUSTOM_ID: reconcile-shocks-grain
+:OWNER: Future project editor
+:END:
+:LOGBOOK:
+- Note taken on [2026-11-08 Sun 08:12] \\
+  Worked-example task: obtain a maintainer/editor reconciliation of the [[#source-conflict][dated note and current source]], with the intended scope and any runtime evidence. This workshop does not supply that decision.
+:END:
+
+Resume when the project records the reconciliation or authorizes the specific investigation it needs.
+Keep the article's conflict visible while waiting.
+
+* Read the current meaning of a WAITING entry
+:PROPERTIES:
+:CUSTOM_ID: residual
+:END:
+
+The [[file:../pilot.org::#tz-issue-114][October 17 update to issue 114's country entry]] says the country-level food script is retired and the old mapping strategy has been implemented.
+Its WAITING residual is the silent wave-level exact-duplicate removal and its dependence on the equality check.
+Preserve the native WAITING state and that updated meaning; issue closure or a unique index does not remove the caveat.
+Counts quoted in those notes remain recorded measurements, not measurements repeated by this workshop.
+
+* A direct link can answer a simpler question
+:PROPERTIES:
+:CUSTOM_ID: panel-lookup
+:END:
+
+The [[file:../pilot.org::#tz-panel-design][panel-design note]] explains why zero 2019-20/2020-21 household overlap is expected for the documented Extended/Refresh split and its booster qualification.
+That later sub-panel distinction is separate from the =2008-15/= back-casting issue.
+For a direct overlap question, a link to the maintained section and its qualifications is enough; the companion need not repeat a country inventory.

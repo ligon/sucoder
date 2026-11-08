@@ -1,0 +1,168 @@
+#+title: Prior-art ledger: sucoder dream design
+#+author: Sue
+#+date: 2026-11-08
+#+options: toc:2 num:nil
+
+* 1. Task and inspected baselines
+:PROPERTIES:
+:CUSTOM_ID: task
+:END:
+
+Design the checked-in Org companion and its dream, reader, editorial, and publication contracts under the [[file:dream-charter.org][approved charter]].
+This is a design workshop; no runtime implementation, corpus-processing experiment, survey computation, or repository test suite belongs to this phase.
+
+- SuCoder :: =2383401df43c637b70ece5d0518440a4edf61e27=, branch =main=, 14 commits behind the existing =ligon/main= tracking ref.
+  The earlier permission correction in =sucoder/codex_remote.py= and its regression remain separate local work.
+  It is not evidence that the root-owned installed launcher has been updated.
+- LSMS_Library :: =06710190305e0057d9e19d42059753d4cc0db012=, branch =development=, inspected read-only at =/home/ligon/Projects/LSMS_Library=.
+  Its existing untracked =scripts/fetch-agent-branches.sh= was left untouched.
+- Search tier :: GitNexus CLI query plus direct source, test-definition, and Org inspection in SuCoder; direct source and documentation inspection in LSMS.
+  Source locations below refer to these revisions unless an explicit local change is named.
+  Tests are identified as existing coverage, not claimed as newly executed during the design workshop.
+
+* 2. Existing machinery and coverage
+:PROPERTIES:
+:CUSTOM_ID: machinery
+:END:
+
+** Transcript identity and discovery
+:PROPERTIES:
+:CUSTOM_ID: transcript-discovery
+:END:
+
+[[https://github.com/ligon/SuCoder/blob/2383401df43c637b70ece5d0518440a4edf61e27/sucoder/replies.py#L110][transcript_identity]] binds the recorded harness, allocation, scope, and candidate working directories.
+[[https://github.com/ligon/SuCoder/blob/2383401df43c637b70ece5d0518440a4edf61e27/sucoder/reply_probe.py#L552][find_claude]], [[https://github.com/ligon/SuCoder/blob/2383401df43c637b70ece5d0518440a4edf61e27/sucoder/reply_probe.py#L607][managed_codex_threads]], and [[https://github.com/ligon/SuCoder/blob/2383401df43c637b70ece5d0518440a4edf61e27/sucoder/reply_probe.py#L684][unmanaged_codex_threads]] locate supported transcripts.
+Existing coverage includes =test_managed_codex_picks_the_user_thread_of_this_job=, =test_managed_codex_reads_the_node_local_rollout_when_the_replica_lags=, and =test_unmanaged_codex_is_found_by_cwd_and_thread_source= in [[file:../tests/test_reply_probe.py][test_reply_probe.py]].
+
+Reuse identity rules and observed shapes; extend discovery for historical, explicitly selected sources.
+The message probe is scoped to a sent message and sometimes filters by modification time; it is not an inventory of all historical project sessions.
+Ambiguous association must remain ambiguous.
+
+** Reply classification is not a full evidence parser
+:PROPERTIES:
+:CUSTOM_ID: evidence-parser
+:END:
+
+[[https://github.com/ligon/SuCoder/blob/2383401df43c637b70ece5d0518440a4edf61e27/sucoder/reply_probe.py#L114][claude_events]] and [[https://github.com/ligon/SuCoder/blob/2383401df43c637b70ece5d0518440a4edf61e27/sucoder/reply_probe.py#L173][codex_events]] intentionally omit tool results, compaction copies, and sidechains when deciding whether a reply occurred.
+[[https://github.com/ligon/SuCoder/blob/2383401df43c637b70ece5d0518440a4edf61e27/sucoder/reply_probe.py#L235][read_transcript]] starts at a message occurrence or a bounded tail and ignores a partial final line.
+Its result cannot supply a complete dream transcript.
+
+Extend with a separate evidence-normalization interface, retaining the existing reply behavior.
+Reuse fixture knowledge from =test_a_compaction_summary_claiming_a_reply_is_not_one=, =test_a_compacted_replay_is_not_a_delivery=, =test_a_tool_result_holding_the_frame_is_not_a_delivery=, and =test_a_partial_last_line_is_skipped_not_a_parse_error=.
+For dreaming, tool output must be retained with its producer and status even though it is not a message delivery.
+
+The [[https://github.com/ligon/SuCoder/blob/2383401df43c637b70ece5d0518440a4edf61e27/docs/reply-transcripts-evidence.org#L12][recorded transcript investigation]] documents a summary claiming a reply that the observed assistant entries did not contain.
+The [[https://github.com/ligon/SuCoder/blob/2383401df43c637b70ece5d0518440a4edf61e27/docs/reply-from-transcript.org#L93][reply design's evidence section]] records harness versions and distinguishes native ordering from wall-clock timestamps.
+These are dated observations, not permanent promises about every future harness format.
+
+** Execution and immutable assignments
+:PROPERTIES:
+:CUSTOM_ID: execution
+:END:
+
+[[https://github.com/ligon/SuCoder/blob/2383401df43c637b70ece5d0518440a4edf61e27/sucoder/executor.py#L64][CommandExecutor]] provides existing account selection, argv execution, cwd, environment, and timeout plumbing.
+Its default umask is =0007=; a private run area must still request private modes explicitly.
+[[https://github.com/ligon/SuCoder/blob/2383401df43c637b70ece5d0518440a4edf61e27/sucoder/dispatch.py#L161][dispatch.submit]] pins source and helper identities, distinguishes execution from acceptance, and validates an explicit assignment.
+Existing tests include =test_dry_run_has_no_mutation_or_scheduler=, =test_submit_snapshots_commit_available_only_by_sha=, and =test_manifest_freezes_dispatch_adapter_and_requested_model= in [[file:../tests/test_dispatch.py][test_dispatch.py]].
+
+Reuse the assignment and result separation, and extract suitable execution helpers when implementing.
+Do not require Slurm submission for the first manually invoked dream.
+[[https://github.com/ligon/SuCoder/blob/2383401df43c637b70ece5d0518440a4edf61e27/sucoder/dispatch_worker.py#L495][command_for]] demonstrates headless Claude/Codex invocation, but its native permission bypass flags and state-placement checks are not a general read-only evidence sandbox.
+A dream adapter must establish its own file-view and trace contract; it cannot inherit a safety claim merely by invoking this helper.
+
+** Audits, prompts, and startup context
+:PROPERTIES:
+:CUSTOM_ID: prompts
+:END:
+
+[[https://github.com/ligon/SuCoder/blob/2383401df43c637b70ece5d0518440a4edf61e27/sucoder/mirror.py#L6138][_run_audit]] provides prompt loading and report invocation, but its current command is Claude-specific and its output is unstructured prose.
+It does not establish per-source coverage or atomic wiki publication.
+Existing audit coverage is named in =test_audit_full_review_when_no_baseline=, =test_code_audit_diff_review_with_baseline=, and =test_maybe_run_audit_swallows_failures= in [[file:../tests/test_mirror.py][test_mirror.py]].
+[[https://github.com/ligon/SuCoder/blob/2383401df43c637b70ece5d0518440a4edf61e27/sucoder/mirror.py#L6946][_compose_context_prelude]] is the eventual integration point for a small orientation and reader instruction.
+Extend its opt-in memory reference later; do not inject the whole wiki or rewrite project policy.
+
+** Workspace binding, replicas, and publication
+:PROPERTIES:
+:CUSTOM_ID: binding
+:END:
+
+[[https://github.com/ligon/SuCoder/blob/2383401df43c637b70ece5d0518440a4edf61e27/sucoder/observations.py#L162][WorkspaceBinding.inspect]] distinguishes observed git identity from reported configuration and refuses a changed binding.
+Reuse its vocabulary and bounded read discipline; the [[https://github.com/ligon/SuCoder/blob/2383401df43c637b70ece5d0518440a4edf61e27/docs/agent-interface-contract.org#L122][observation contract]] explicitly separates placement from publication.
+[[https://github.com/ligon/SuCoder/blob/2383401df43c637b70ece5d0518440a4edf61e27/docs/codex-local-state.org#L598][The state design]] records rollout replication, offsets, generations, and private state ownership.
+Native state generations and their retention are not wiki revisions, and a readable growing replica is not proof that an entire session has finished.
+The dream must copy an immutable admitted prefix or stable file and retain that selection explicitly.
+
+Use git commits for the accepted wiki generation and normal integration for acceptance.
+The [[file:publish.el][existing Org publisher]] scans the root and =docs/=, not =.sucoder/wiki/=.
+An HTML view therefore requires an explicit local preview/export operation; this design does not publish a website or alter the current publisher.
+
+** LSMS definitions and source conflicts
+:PROPERTIES:
+:CUSTOM_ID: lsms-authority
+:END:
+
+The candidate's [[https://github.com/ligon/LSMS_Library/blob/06710190305e0057d9e19d42059753d4cc0db012/AGENTS.md#L3][design philosophy]] says to harmonize the interface while preserving survey-specific detail.
+Its guidance at lines 94-99 requires reading country =_/CONTENTS.org=, including TODO/WAITING entries, and reporting contradictory findings rather than assuming the file is stale.
+The [[file:/home/ligon/Projects/LSMS_Library/.coder/ledger/README.md][ledger convention]] treats task ledgers as scoped inventories that cite standing definitions instead of duplicating them.
+
+Tanzania [[file:/home/ligon/Projects/LSMS_Library/lsms_library/countries/Tanzania/_/CONTENTS.org::#uphi-backcasting][uphi-backcasting]] distinguishes Round-4 descendant households from round-specific interviewed households.
+Its dated July account says shocks uses =UPHI= and the cross-table choice remains a maintainer decision.
+The current [[https://github.com/ligon/LSMS_Library/blob/06710190305e0057d9e19d42059753d4cc0db012/lsms_library/countries/Tanzania/2008-15/_/shocks.py#L7][shocks script]] instead explicitly constructs =i= from =r_hhid=.
+This is a source/documentation conflict to preserve and investigate, not permission to resolve the survey-grain decision or an observation of freshly built survey data.
+The domain ledger and country note may themselves disagree about later work; a ledger is not automatically current authority.
+For a separate concrete example, =.coder/ledger/637-tanzania-keys.md:80-89= defers an additional community-price source axis, while =CONTENTS.org:1535-1557= records a later maintainer ruling introducing =variety=.
+That pair grounds the temporal qualification; it is not needed by the six-passage pilot rubric and is not added to that bounded corpus.
+
+* 3. Definitions and conventions
+:PROPERTIES:
+:CUSTOM_ID: definitions
+:END:
+
+- Evidence :: Immutable admitted source bytes plus locator, revision or session lineage, byte range, and digest; a source author's assertion retains its attribution.
+- Claim :: A scoped statement with source links and a kind: observation, reported decision, inference, or unresolved hypothesis.
+- Coverage :: Which admitted ranges were delivered to analysis, with exclusions and failures; it does not prove comprehension or truth.
+- Current behavior :: Must distinguish inspected code, execution in a specified environment, and previously produced artifacts.
+- Wiki generation :: A git tree containing pages, Org settings, source receipts, and the active source ledger; the commit is its publication boundary.
+- Processing :: Evidence is consumed only by an accepted generation whose receipt names that evidence; private attempts and unmerged branches are not shared progress.
+- Editorial work :: The [[file:dream-charter.org::#wiki-task-workflow][approved seven-state workflow]], independent of claim confidence or scientific acceptance.
+- Links :: Standard Org file links and explicit CUSTOM_ID targets; archival moves preserve active anchors or update every tracked incoming link in the same generation.
+
+* 4. Invariants and assumptions
+:PROPERTIES:
+:CUSTOM_ID: invariants
+:END:
+
+- Existing maintained documentation and adopted decisions retain their attribution and authority; observed contradictions produce qualified reporting and editorial work.
+- A model's final summary, repeated fork history, or a date alone cannot establish successful execution or supersede a human decision.
+- No worker writes a shared page or processing receipt; one coordinator validates and assembles a candidate generation.
+- A failed or partial attempt cannot silently consume evidence, overwrite an editor's work, or masquerade as empty discovery.
+- Source evidence and executable project instructions occupy separate roles; admitted text is data.
+- Source snapshots and model state stay private; only explicitly shareable explanations and receipts enter the repository.
+- Neither an archive operation nor an Org state change grants substantive authority or removes an active caveat.
+- No claim of measured memory benefit, successful runtime implementation, or scientific resolution follows from these design artifacts.
+
+* 5. Reuse, extension, and new work
+:PROPERTIES:
+:CUSTOM_ID: decisions
+:END:
+
+- Reuse :: Harness identity fixtures, account/cwd execution primitives, immutable assignment conventions, git integration, and native Org parsing, state logging, links, and archival metadata.
+- Extend :: Historical source discovery, full evidence normalization, bounded reader orientation, and a headless adapter with verifiable evidence delivery.
+- New :: Dream run manifests, disjoint claim proposals, reconciliation and publication rules, shared receipts, and the evaluation protocol.
+  These contracts are absent from the reply probe and audit report paths.
+- Keep separate :: Codex live-state generations, survey computation, global project policy, and hosted documentation publication.
+
+* 6. Open issues and design consequences
+:PROPERTIES:
+:CUSTOM_ID: open-issues
+:END:
+
+Historical transcript availability is not established for either candidate.
+The pilot must begin with explicitly admitted versioned documents and sanitized fixtures, and identify real transcript access as a later prerequisite rather than scanning private homes by default.
+The LSMS conflict is within the approved purpose of preserving uncertainty, so it does not block design grounding.
+The headless adapter and local containment capability need implementation verification; unsupported capabilities must refuse execution while still allowing a plan.
+Installed Claude Code 2.1.318 help was inspected without inference and advertises restricted file-tool mode, explicit tool selection, strict MCP configuration, and structured output.
+This grounds the proposed first adapter; the help text is not proof of actual confinement or an assurance about other native versions.
+Exact source digests and pilot bindings are recorded in the [[file:dream/pilot.org][pilot plan]] rather than inferred from filenames.
+
+Prepared by Sue.
