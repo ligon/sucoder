@@ -208,4 +208,9 @@ The general review corrected ambiguous reused call IDs, symlink traversal races,
 No anchored CONTRADICTION or REINVENTION remains.
 No generic backend, automatic shared receipt reuse, general editorial revision, reader retrieval, real-corpus pilot benefit or operating-system network confinement is claimed.
 
+Native implementation is committed at =da1495a=.
+Staged change detection covered sixteen expected files and 71 coarse symbols and reported CRITICAL aggregate risk across broad CLI flows, including unrelated flows with unnamed changed nodes.
+Direct diff inspection confines production changes to the six dream modules; symbol-specific helper/publication impacts are LOW, while planner/schema impact is HIGH and covered by the focused regression suite.
+Graph receiver-resolution omissions and unnamed mappings remain analysis limits, not evidence of edits to the unrelated flows.
+
 Prepared by Sue.
