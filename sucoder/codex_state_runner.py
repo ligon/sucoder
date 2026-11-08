@@ -22,8 +22,9 @@ What it does, per ``docs/codex-local-state.org`` ("Revision after Slice 0"):
 - runs Codex as a child in the same process group, ignores SIGINT (the TTY
   delivers it to Codex), forwards SIGTERM and SIGHUP, and exits with the
   child's code;
-- verifies placement through ``/proc``: every ``.sqlite`` descriptor must
-  be under ``db``, and every rollout descriptor must be on local disk;
+- verifies placement through ``/proc`` for the native Codex processes and
+  their launch wrappers, excluding tool subtrees: every ``.sqlite`` descriptor
+  must be under ``db``, and every rollout descriptor must be on local disk;
   anything else stops the child and fails with a specific error.  Nothing
   ever falls back to shared placement;
 - replicates every rollout under ``home/sessions`` by file growth to
@@ -2075,6 +2076,44 @@ def kill_command(child):
         pass
 
 
+def placement_pids(root_pid):
+    """Launch wrappers and native Codex processes, excluding tool subtrees.
+
+    Codex can start another native Codex process for its app server. Those
+    processes still own managed state. A non-Codex child of a native Codex
+    process starts a tool subtree: its databases (including a test's nested
+    Codex) belong to that tool, not to this launch's managed history.
+    Identify native processes by /proc/exe rather than argv or comm, which
+    also name the npm shim. Unreadable metadata keeps the old conservative
+    inspection; it never authorizes excluding a process.
+    """
+    pids = [root_pid] + descendants(root_pid)
+    parents = dict((pid, parent_of(pid)) for pid in pids)
+    executables = {}
+    for pid in pids:
+        try:
+            executable = os.readlink("/proc/%d/exe" % pid)
+        except OSError:
+            continue
+        if executable.endswith(" (deleted)"):
+            executable = executable[:-10]
+        executables[pid] = os.path.basename(executable)
+    native = set(pid for pid, name in executables.items() if name == "codex")
+    kept = []
+    for pid in pids:
+        current = pid
+        seen = set()
+        while current in parents and current not in seen:
+            seen.add(current)
+            parent = parents[current]
+            if parent in native and current in executables and current not in native:
+                break
+            current = parent
+        else:
+            kept.append(pid)
+    return kept
+
+
 def monitor(child, db_dir, local_root, status, timeout, result, placed_event=None, exit_event=None):
     db_dev = os.stat(db_dir).st_dev
     local_dev = os.stat(local_root).st_dev
@@ -2084,7 +2123,7 @@ def monitor(child, db_dir, local_root, status, timeout, result, placed_event=Non
     # 5-second cadence of the placed state must not delay the exit by 5 s.
     pause = exit_event.wait if exit_event is not None else time.sleep
     while child.poll() is None:
-        pids = [child.pid] + descendants(child.pid)
+        pids = placement_pids(child.pid)
         placed, misplaced = classify(open_files(pids), db_dir, db_dev, local_dev)
         if misplaced:
             result["outcome"] = "misplaced"
