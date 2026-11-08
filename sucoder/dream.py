@@ -285,7 +285,7 @@ def _prior_wiki(source, base, limits):
                 omitted=omitted, selected_bytes=total, progress="not_evaluated")
 
 
-def build_plan(config, mirror, request, base, *, maintenance=None, topic=None):
+def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, inspection_deadline=None):
     """Freeze selections, never imply inference or shared completion."""
     _object(request, ("schema_version", "repository", "integration_ref", "units"), ("limits",))
     if type(request["schema_version"]) is not int or request["schema_version"] != SCHEMA_VERSION:
@@ -319,6 +319,8 @@ def build_plan(config, mirror, request, base, *, maintenance=None, topic=None):
         _object(unit["locator"], ("repository", "commit", "path"), ("lines",))
         _text(unit["locator"]["repository"], "locator repository")
     deadline = time.monotonic() + 30
+    if inspection_deadline is not None:
+        deadline = min(deadline, inspection_deadline)
     target = GitSource(config, mirror, deadline)
     target.git("check-ref-format", base)
     if target.git("symbolic-ref", "--quiet", base, missing=True) is not None:

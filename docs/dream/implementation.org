@@ -3,12 +3,13 @@
 #+date: 2026-11-08
 #+setupfile: settings.org
 
-* Implemented slice: git evidence planning
+* Implemented slices: git evidence planning and fixture publication
 
 =sucoder dream plan= implements the first part of the [[file:../dream.org::#implementation][data-plane sequence]].
 It freezes explicitly admitted local git selections and budgets in a private JSON manifest without inference, source synchronization, or repository writes.
-It does not yet implement snapshots, transcript ingestion, receipt/output reconciliation, Org validation, role execution, candidate publication, status, or reading.
-The manifest reports =execution.available: false= and =prior_wiki.progress: not_evaluated=.
+The next slice adds frozen-plan validation, private snapshots, deterministic quotation fixtures, native Org subtree checks, output-bound receipts, atomic candidate publication, and local run status.
+Transcript ingestion, semantic role execution, automatic receipt reuse in planning, general editorial validation, and reader retrieval remain subsequent work.
+The planning manifest retains =execution.available: false= and =prior_wiki.progress: not_evaluated= for compatibility with the original planning contract; native model execution remains unavailable.
 No plan is evidence of an examined source, accepted claim, or integrated wiki generation.
 
 Use an existing SuCoder configuration and a locally accessible configured mirror:
@@ -98,6 +99,62 @@ Exit 0 means a valid stored plan, 2 means invalid or unsupported input, and 3 me
 No installed launcher deployment follows from a source-tree change.
 Run source-tree checks with =poetry run pytest -q tests/test_dream.py= from the mirror root.
 
+* Frozen plans, snapshots, and deterministic candidates
+
+The local data-plane commands use the stored plan pathname returned by =plan=:
+
+#+begin_example
+sucoder dream snapshot SuCoder --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json
+sucoder dream run SuCoder --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json --harness fixture
+sucoder dream status SuCoder --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json
+#+end_example
+
+All three commands print JSON and bypass interactive agent startup.
+The installed launcher need not yet contain these source-tree commands; =poetry run sucoder= runs them from this checkout.
+Native Org validation requires a locally available =emacs= executable with Org; no new configuration key or provider dependency is introduced.
+
+=snapshot= verifies the plan's content-addressed identity and reconstructs its complete planning contract against current configuration, committed source objects, the designated integration ref, source registries, and prior wiki objects.
+Only a still-provisional UUID is carried forward from the frozen proposal; a newly accepted or changed registry requires re-planning.
+It then stores exact selected bytes and active prior-wiki bytes in private content-addressed files beside the plan, verifying digests before accepting them.
+Stored paths must stay outside all inspected repositories.
+Snapshot publication is atomic and retryable; an existing differing artifact is preserved and rejected.
+Coverage is =snapshotted= with zero examined bytes: copying evidence does not establish extraction or comprehension.
+
+=run --harness fixture= revalidates and snapshots first, then executes a deterministic quotation fixture over every planned chunk.
+All selected units must be explicitly shareable; an external repository also needs an accepted UUID.
+Private units may be snapshotted but cannot enter a fixture candidate.
+Unsupported harnesses fail before snapshotting or inference, without fallback.
+The fixture records each delivered range and exact-byte comparison, retaining git commit, blob, selected lines, byte offsets, digest, and repository UUID in its receipt.
+These checks prove delivery and literal-text preservation under a fixed rendering rule; they do not perform semantic extraction, model verification, synthesis, or a pilot evaluation.
+Published quotations normalize CRLF to LF and use Org comma escapes to keep source headings and block terminators literal.
+The exact original bytes remain in the private snapshot.
+
+Fixture output adds a fresh topic page and receipt, initializes the target source registry only when absent, and appends a generation link to the existing index.
+Existing pages, settings, archives, and human index content are preserved.
+Native Org parsing checks generated targets and links within the changed files, without following setup files, evaluating Babel, exporting, loading user init files, or opening source links.
+The receipt binds each quotation subtree and the generated index entry under =org-subtree-utf8-v1=: SHA-256 over UTF-8 bytes from the headline's native Org =:begin= through =:end=, including child content and trailing whitespace.
+The fixture has a separate =git-quotation-fixture-v1= fidelity contract; its receipt must never suppress future semantic work.
+General claim fidelity, TODO transition legality, archival moves, human-decision attribution, and links outside the generated set require later validators.
+
+The coordinator assembles a tree from the frozen base through a private index and git plumbing, disabling hooks, external filters, signing, network transports, and inherited git redirection.
+It leaves the invoking worktree, staged index, current branch, and integration ref untouched.
+One ref transaction verifies the designated integration ref and creates =refs/heads/dream/<run-id>= only if absent; retry verifies an identical existing ref in the same transaction.
+A changed integration ref or conflicting candidate requires re-planning.
+Interrupted preparation may leave unreachable git objects; those objects do not establish progress.
+The run record reports =candidate_ready= and =not_integrated= after publication.
+The human reviews and integrates through the ordinary repository workflow.
+
+=status --plan= checks the saved fixture against the current designated integration tree.
+It reports candidate-ref availability separately from =not_integrated=, =integrated_fixture=, or =needs_reconciliation=.
+It can recover a candidate published immediately before an interrupted local run-record write.
+Integration validation requires the expected receipt and every required subtree binding; a retained receipt with an edited, missing, non-Org, or unlinked output requires reconciliation.
+Squash integration is supported without requiring candidate ancestry.
+This local status interface requires the saved plan and private snapshots; cross-machine receipt discovery and planning reuse remain unimplemented.
+
+All fixture stages spend the declared elapsed allowance, and proposal/staged-output bytes are bounded before publication.
+The role-invocation count represents deterministic fixture stages, with token and currency usage unknown; no native model is invoked.
+Exit 0 means completed snapshot, prepared candidate, or completed status inspection; 2 rejects invalid/private/unsupported input, 3 reports unavailable evidence/storage, exhausted allowance or a ref conflict, and 1 reports failed fixture/Org validation.
+
 * Agent-independent dreaming
 
 On 2026-11-08 the user requested that implementation prioritize Codex and generic agents alongside Claude.
@@ -121,19 +178,30 @@ This contract must be exercised with deterministic role fixtures before adding C
 
 * Next implementation slices
 
-1. Revalidate a stored plan and snapshot its immutable selected bytes; add full Claude/Codex evidence normalization without changing the reply classifiers.
-2. Define role-result schemas and deterministic fixtures, validate complete coverage and native Org structure, and bind receipts to output artifacts.
-3. Assemble candidates with a private git index, integration-ref checks, and create-if-absent publication, exercising concurrent edits and interrupted publication in disposable repositories.
-4. Add capability-checked Claude and Codex adapters against the shared contract, then bounded reader retrieval and previews.
+1. Add full Claude/Codex evidence normalization without changing the reply classifiers.
+2. Generalize the quotation fixture into shared semantic role-result contracts, validators for editorial preservation, and compatible receipt discovery/reuse during planning.
+3. Add capability-checked Claude and Codex adapters against the shared contract, then bounded reader retrieval and previews.
+4. Extend the conservative append-only fixture publisher to independently validated topic revisions and archival moves.
 5. Review the separate pilot authorization and gates before any real corpus/provider experiment.
 
 The [[file:../dream-implementation-ledger.org][implementation ledger]] records reuse decisions and invariants.
 
 * Validation record, 2026-11-08
 
+** Planning slice
+
 The final focused Python run passed 402 tests, including 58 dream tests; mypy and native Org export/link/archive checks passed.
 The full suite had 2616 passes, eight skips and 41 failures; all 41 failing cases also failed at the unchanged =944b0f2= upstream baseline.
 The full run preceded the final planner refinements, which the focused run covers.
 This is source-tree validation, with no model invocation or deployment.
+
+** Resumed data plane
+
+The final focused run passed 440 tests, including 58 planning tests and 38 new data-plane tests; mypy, native design Org export/link/archive checks and wheel construction passed.
+The wheel includes the runtime =dream_validate.el= asset.
+The final full suite passed 2661 tests, skipped eight and failed 41; all 41 failing node IDs exactly match failures reproduced at the unchanged recovered =f452f0b= baseline.
+The full suite preceded the last optional planning-deadline refinement and its new regression test; the 440-test focused run covers that final change.
+The failing suites concern Codex app-server/state/runner and timer lifecycle, independently of dream.
+No model invocation, real-corpus publication, deployment or merge was performed.
 
 Prepared by Sue.
