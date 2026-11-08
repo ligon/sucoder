@@ -8,7 +8,8 @@
 The implementation of [[file:dream.org][dream]] began at =944b0f2= with an inference-free planning slice, committed at =f452f0b=.
 It implements =sucoder dream plan= for explicitly admitted local git files and passages, private manifests, exact byte coverage, bounded work estimates, and binding checks.
 The resumed data plane, committed at =07d4c4f=, adds frozen-plan validation, private snapshots, quotation-fixture coverage, native Org subtree checks, output-bound receipts, atomic candidate publication and local integration status.
-Transcript normalization, semantic model roles, general editorial validation, automatic accepted-receipt reuse in planning, and retrieval remain subsequent slices.
+The native slice now adds explicit Claude/Codex transcript normalization and shared schema-bound extractor/verifier/consolidator roles for both native CLIs.
+General editorial validation, automatic accepted-receipt reuse in planning, generic adapters and retrieval remain subsequent slices.
 The user requested agent-independent dreaming on 2026-11-08; the coordinator must support Codex and generic agents as well as Claude.
 The design's Claude-first adapter proposal does not constrain that architecture or establish an implemented capability.
 
@@ -28,10 +29,19 @@ The [[file:dream-ledger.org][design ledger]] remains the source inventory for ev
   =tests/test_dispatch_cli.py= and =tests/test_observations.py= cover startup bypass and help behavior.
   GitNexus reports zero resolved callers and UNKNOWN risk because Typer registers this callback dynamically; every CLI command passes through it.
 - =sucoder/config.py:407= and =:525= :: Reuse configured mirror paths and =log_dir=, without creating mirrors, synchronizing, resolving remote targets, or adding YAML settings.
+- =sucoder/dream_transcript.py:34=, =read_prefix= and =:127=, =normalize= :: New complete-prefix evidence interface; =tests/test_dream_transcript.py= covers both native formats, exact ranges, unknown records, calls/results, summary/sidechain provenance, rewritten prefixes and copied identities.
+  =reply_probe.claude_events= and =codex_events= deliberately omit tool results and replay records and remain unchanged.
+- =sucoder/dream_native.py:38=, =FilesystemBoundary= and =:84=, =capture= :: Extend the observation selector/process-group pattern with byte-exact stdin, native traces and an enforced filesystem boundary.
+  =tests/test_dream_native.py= checks actual kernel denial of unrelated reads/writes/process environments, bounded children, minimal authentication staging, strict trace interpretation and installed native versions.
+  The observation helper has no stdin payload interface and decodes invalid UTF-8; the dispatcher deliberately bypasses permissions and cannot supply this contract.
+- =sucoder/dream_roles.py:105=, =Coordinator= :: New provider-neutral role schema, assignment, citation, coverage and result/trace bindings.
+  =tests/test_dream_roles.py= covers both execution harnesses crossed with all three evidence kinds, complete chunk delivery, semantic rejection, unknown outcomes, explicit attempts, concurrency and integration checks.
+- =sucoder/dream_run.py:364=, =publish= :: Reuse the existing private-index/atomic-ref publisher for fixture and semantic candidates; the generated topic/index subtrees remain bound by native Org parsing.
+  Existing =tests/test_dream_run.py= still covers worktree/index/hook/filter preservation, output reconciliation, concurrent ref movement and publication interruption.
 
 * 3. Definitions and conventions
 
-- Source admission :: A strict version-1 JSON request names a configured repository, a full integration ref, and nonempty explicitly shareable-or-private git units.
+- Source admission :: A strict version-1 JSON request names a configured repository, a full integration ref, and nonempty explicitly shareable-or-private git or native-JSONL units.
 - Git passage :: Inclusive one-based lines map to half-open byte offsets in the committed blob; working files and their mtimes are irrelevant.
 - Identity :: A repository UUID plus kind and logical path identifies a source; commit, blob, selected range, and SHA-256 identify its revision.
   A provisional UUID is only a proposal until integrated, as specified in the design's source registry contract.
@@ -39,17 +49,28 @@ The [[file:dream-ledger.org][design ledger]] remains the source inventory for ev
 - Plan :: A private, content-addressed manifest; changing any frozen input or limit changes its identity.
   A successful plan does not imply an executable backend or a prepared candidate.
 - Backend :: Evidence kind and execution harness are independent.
-  A future role adapter must accept frozen assignments and return schema-bound results, delivered ranges, trace evidence, usage and capability limitations.
+  A role adapter accepts frozen assignments and returns schema-bound results, delivered ranges, trace evidence, usage and capability limitations.
   The coordinator owns budgets, validation, receipts, and git publication for every backend.
+- Transcript :: An explicitly named canonical local regular file, expected native thread identity and complete-line prefix.
+  Its digest binds exact bytes; normalization preserves native order, provenance and unknown records, and marks session completion/independence unestablished.
+- Semantic candidate :: A fresh topic and navigation entry rendered from cited model-checked claims, under =inline-semantic-roles-v1=.
+  It is distinct from quotation fidelity and from integrated progress; unresolved claims retain explicit caveats, and contradicted claims are omitted.
+- Attempt :: An explicit independent native run identity with its own allowance.
+  A per-run advisory lock prevents duplicate provider work; validated results are reusable, while a started request with no validated result requires a new explicit attempt.
 
 * 4. Invariants
 
 Never fetch, invoke inference, run hooks/filters, call a scheduler, initialize a repository, change its refs/worktree/index, or reinterpret admitted text as instructions during planning.
 Reject unsupported kinds/versions, duplicate IDs/JSON fields, path traversal, symlink/gitlink sources, ambiguous binding, missing objects, invalid text/ranges, and predictable budget overflow.
-Read only explicit git objects, with byte and time limits; do not crawl homes or discover transcripts.
+Read only explicit git objects or selected transcript prefixes, with byte and time limits; do not crawl homes or discover transcripts.
 Keep plans outside every inspected repository with private directory/file modes without changing the process umask or existing directory permissions.
 Freeze prior wiki object identities and mark progress as unevaluated until receipt/output validation exists.
 No backend fallback, provider dependency, permission bypass, or claim of source containment follows from a plan.
+Native runs require an explicit model and shareable selections, and transmit only the frozen assignments and prior context to the authenticated provider.
+Linux Landlock confines the native process tree; unsupported kernels/builds fail before inference.
+External model tools, inherited settings/plugins/hooks and parent session/relay context are disabled or excluded; authentication is staged separately in a private temporary home.
+The provider connection retains network access; do not describe filesystem confinement as operating-system network isolation.
+Only the coordinator renders shared Org and writes receipts/git objects; native success prose cannot establish delivery or semantic truth.
 
 * 5. Reuse decisions
 
@@ -59,16 +80,29 @@ No backend fallback, provider dependency, permission bypass, or claim of source 
   Neither the reply probe, audit helper, dispatcher, nor observation envelope provides this evidence contract.
 - Extend :: Frozen-plan reconstruction with an optional shared inspection deadline, private snapshots and deterministic fixture publication in =sucoder/dream_run.py=, and native Org subtree parsing in =sucoder/dream_validate.el=.
   =tests/test_dream_run.py= supplies 38 disposable-repository regressions for the new data plane.
-- Defer :: Native transcript adapters, general semantic/editorial validation, automatic receipt reuse in planning, backend capability probes and native role execution.
-  A generic role contract must precede any Claude/Codex-specific execution implementation.
+- Extend :: The planner and snapshots with explicit Claude/Codex JSONL units, retaining old git-only plans and existing reply classifiers.
+- New :: Shared inline semantic role contracts, strict native traces and Landlock-confined Claude/Codex transport.
+  Existing headless dispatch does not isolate source access or provide this structured result contract; observation capture cannot deliver role input.
+- Extend :: The existing private-index publisher and local status checks for native output-bound receipts, including squash integration and human edits.
+- Defer :: General topic revisions/editorial validation, automatic shared receipt discovery/reuse, generic execution adapters, automatic semantic repair and reader retrieval.
 
 * 6. Open questions and next checks
 
-No user decision blocks this bounded planning slice.
-The first backend remains undecided; implement against the shared role contract and verify each native adapter's actual capabilities before inference.
-Plans explicitly report that accepted progress has not yet been evaluated and cannot yet be run.
-The data plane now revalidates frozen plans, snapshots admitted bytes, and exercises receipts/publication with deterministic fixture proposals.
-These checks do not authorize a native model run or establish backend containment.
+The user authorized a working Codex and Claude implementation on 2026-11-08 after recovery of the two interrupted sessions.
+Continue through transcript admission, shared schema-bound roles, native capability checks, and candidate publication.
+Reuse the existing snapshot store, git publisher, native Org parser and integration checks; keep evidence harness and execution harness independent.
+The separate full transcript normalizer must retain tool results, unknown records, compaction and fork provenance omitted by =reply_probe=; its reply classifiers remain unchanged.
+Transcript locators explicitly name a native thread and local path, and freeze a complete-line prefix and digest; appends beyond that prefix are allowed, rewrites require re-planning.
+Use sanitized fixtures for native acceptance checks before any real-corpus run.
+Native role delivery may use immutable inline JSON instead of file tools if every selected range is bound to the coordinator's exact submitted payload and the adapter disables external tools.
+That narrower execution mode must be capability-checked; a success summary alone cannot establish delivery, confinement or semantic fidelity.
+No new configuration or fallback provider is required.
+
+No implementation decision blocks the native slice.
+Both native transports are implemented and probed; live Codex publication passed with synthetic evidence, while live Claude verification is pending account quota availability.
+Plans report accepted progress as unevaluated, and execution requires a separate explicit run with a harness/model.
+The data plane revalidates frozen plans, snapshots admitted bytes, and publishes fixture or semantic candidates without changing existing wiki contributions.
+These checks do not establish a real-corpus pilot benefit or authorize the separate pilot.
 
 ** Resumed data-plane scope, 2026-11-08
 
@@ -148,5 +182,30 @@ These checks establish the planning slice only, not backend containment, semanti
 No CONTRADICTION or REINVENTION remained in the anchored check.
 The general defect pass found and corrected SETUPFILE reads, missing navigation bindings, interruption recovery and the shared-deadline gap.
 These results establish deterministic candidate publication only, not semantic claim fidelity, native adapter confinement, automatic progress reuse, general editorial revision safety or measured pilot benefit.
+
+* Native-role verification against this ledger
+
+- OK (sections 2 and 5) :: Source/call-site review confirmed that reply classifiers cannot provide full evidence and that dispatch bypass modes cannot provide native-role confinement.
+  The new normalizer and inline transport have separate contracts; snapshot storage, native Org bindings and atomic publication are reused.
+- OK (sections 3 and 4) :: Transcript admission pins canonical directory components, checks native identity and frozen complete-prefix digests, and preserves calls/results, unknown records, compaction/sidechain provenance and ambiguous reused call IDs.
+  Appends beyond a frozen cut are allowed; shrinkage, rewrites and absent evidence fail explicitly.
+- OK (sections 3 and 4) :: Every planned chunk has extractor/verifier assignments with exact payload digests; literal citations, exhaustive verdict coverage and consolidator claim-ID coverage are independently checked.
+  Contradicted claims are excluded, unresolved claims remain qualified, and significant internal command/string whitespace survives rendering.
+- OK (sections 4 and 6) :: Kernel canaries established filesystem denial outside the native runtime/private temporary view.
+  Both installed CLIs start in that boundary; deterministic native executable fixtures exercise all launch flags, inline payloads, schema output, native traces, publication and inference-free status.
+  Native requests are bounded and locked; failed/unknown outcomes require an explicit new attempt, while validated results are reusable.
+- OK (sections 2 and 5) :: The shared publisher preserves user worktree/index/branch and existing wiki contributions.
+  Native status binds private results back to their completed traces and validates receipt/output subtrees after squash integration and human edits.
+- Test evidence :: The final focused run passed 497 tests, including 153 dream cases; mypy, native Org design checks and wheel/runtime-asset checks passed.
+  The full run passed 2701 tests, skipped eight and failed 55; every failing node reproduced at unchanged =b7d9014= with no differing failure IDs.
+  The final focused run covers refinements after full-suite collection.
+- Live evidence :: Explicit =gpt-6.1-sol= on Codex CLI 0.167.0 published synthetic git evidence and passed =scripts/dream_acceptance.py --harness codex --model gpt-6.1-sol --kind codex-jsonl= through synthetic squash integration.
+  Claude Code 2.1.317 reached its authenticated provider with only =StructuredOutput= exposed, but the account reported its seven-day quota exhausted until 2026-11-11 16:00 UTC.
+  Live Claude semantic acceptance remains unverified; deterministic protocol coverage is not a substitute for that live check.
+  The user explicitly chose to leave the live Claude check pending.
+
+The general review corrected ambiguous reused call IDs, symlink traversal races, concurrent provider duplication, native-build changes, trace/result substitution, lost failure diagnostics and significant-whitespace rewriting.
+No anchored CONTRADICTION or REINVENTION remains.
+No generic backend, automatic shared receipt reuse, general editorial revision, reader retrieval, real-corpus pilot benefit or operating-system network confinement is claimed.
 
 Prepared by Sue.
