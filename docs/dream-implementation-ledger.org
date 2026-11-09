@@ -498,4 +498,15 @@ No anchored CONTRADICTION or REINVENTION remains in this mechanics slice.
 P5 remains ACTIVE: v5 authority/policy validation, review of materialized changes, public lifecycle acceptance and fresh archived-decision retrieval are still required.
 P6 usefulness and the user's live Claude deferral remain in force.
 
+* P5 public coordinator grounding
+
+Extend v4 with a distinct v5 task-action schema and explicit independent per-action checks.
+Retain prior task state/properties/history during authored prose changes; compile checked transition/archive actions through the verified native primitive using a frozen private execution timestamp.
+Declared human requirements cannot be weakened; closing such work requires recorded source evidence and independent verification, with native assistant/tool/summary text excluded as human authority.
+Legacy prose authority conditions remain part of the independent review of both prior and final text.
+Load frozen archive destinations and necessary incoming-link pages within the existing context budgets, and review the materialized final texts and derived change/move manifest.
+Add narrow optional validator permissions only for coordinator-validated tasks, derived navigation and archive paths; older contracts retain their strict defaults.
+Reuse native role tracing, call-order checks, citation windows, no-op replay, accepted progress and atomic publication; preserve v1-v4 schemas, briefs and saved identities.
+Exercise the public seven-state lifecycle, returned review, human-authority rejection, supersession/archive preservation, fresh specific-history retrieval, replay, and both protocols before completing P5.
+
 Prepared by Sue.
