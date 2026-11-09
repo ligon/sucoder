@@ -428,4 +428,18 @@ Accepted transcript prefix selection remains the next extension; this context se
 No anchored CONTRADICTION or REINVENTION remains in this context slice.
 P4 remains ACTIVE pending accepted transcript prefixes/appends; P5/P6 and the explicit live Claude deferral remain in force.
 
+* Accepted transcript-prefix grounding
+
+Extend the existing shared-receipt compatibility checks to normalized transcript evidence, preserving original Git reuse identities.
+Factor the existing accepted-review/output envelope rather than introducing an independent acceptance rule.
+Require every parent dependency to be admitted unchanged or as an exact complete-line normalized prefix, with complete recorded coverage and valid required outputs at the frozen integration tree.
+Select the longest compatible accepted prefix per logical transcript source; paths and local unit aliases do not establish independent evidence.
+Cache canonical parent receipts and frozen required-output blobs, binding a compact optional manifest into native specs and run identity.
+Empty-prefix v4 runs retain their original payloads and identities.
+Deliver only suffix windows plus bounded prior wiki and explicit pending/ambiguous boundary provenance; earlier raw text remains available solely through bounded frozen requests.
+Reuse the existing citation-window validator and source normalizer, and partition receipt coverage into validated accepted-prefix reuse and actual suffix delivery.
+Successor receipts bind their own complete normalized source revision/current outputs; private no-ops never establish shared coverage.
+Test both transcript kinds crossed with both harness protocols, alias changes, rewritten prefixes, edited outputs, boundary calls, frozen replay, interruptions and unchanged zero-call reruns.
+Use sanitized opt-in Codex evidence for a live append check; live Claude and the separate usefulness pilot remain deferred.
+
 Prepared by Sue.
