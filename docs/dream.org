@@ -14,7 +14,7 @@ The first implementation publishes a candidate git commit on a separate branch; 
 There is no automatic merge, instruction-file rewrite, scheduler job, or hosted service.
 
 This is the full implementation design under the [[file:dream-charter.org][approved workshop charter]]; it does not establish a measured memory improvement.
-The [[file:dream/implementation.org][implementation status]] records git and Claude/Codex transcript planning, private snapshots, deterministic fixtures, and shared native Claude/Codex role execution with append-only candidate publication.
+The [[file:dream/implementation.org][implementation status]] records explicit Git/Claude/Codex evidence, native source-grounded authorship/review, correction, accepted progress, task/archive editing and bounded fresh readers.
 The [[file:dream/workplan.org][runtime workplan]] tracks the remaining charter requirements and their behavioral acceptance gates; the native pipeline milestone did not complete the full runtime objective.
 The [[file:dream-ledger.org][prior-art ledger]] supplies the reuse decisions and source limitations.
 Read the [[file:dream/prompts.org][role briefs]], [[file:dream/scenarios.org][scenario checks]], [[file:dream/pilot.org][pilot protocol]], and the [[file:dream/examples/sucoder.org][SuCoder]] and [[file:dream/examples/lsms.org][LSMS]] examples for operational detail.
@@ -24,14 +24,17 @@ Read the [[file:dream/prompts.org][role briefs]], [[file:dream/scenarios.org][sc
 :CUSTOM_ID: interface
 :END:
 
-Proposed full interface; the [[file:dream/implementation.org][implemented subset]] currently supports git/transcript planning, snapshots, native roles, append-only candidates and local status using a stored plan:
+The implemented core interface uses explicit stored plans; [[file:dream/implementation.org][implementation status]] records versioned contracts and limits:
 
 #+begin_example
 sucoder dream plan MIRROR --sources SOURCES.json --base REF
 sucoder dream plan MIRROR --sources SOURCES.json --base REF --maintenance REASON --topic TOPIC
+sucoder dream snapshot MIRROR --plan PLAN.json
 sucoder dream run MIRROR --plan PLAN.json --harness claude --model MODEL
-sucoder dream status MIRROR --run RUN_ID --json
+sucoder dream status MIRROR --plan PLAN.json [--run RUN_ID]
 sucoder dream read MIRROR --topic TOPIC [--archives] --max-bytes BYTES
+sucoder dream source MIRROR --plan PLAN.json --search TEXT
+sucoder dream ask MIRROR "QUESTION" --plan PLAN.json --harness codex --model MODEL
 #+end_example
 
 =plan= resolves the configured mirror, inspects its binding, and freezes an explicit base commit and source selection.
@@ -41,6 +44,8 @@ It writes a private local plan containing a reproducible manifest and the propos
 The plan includes all limits; changing a limit or source produces a new plan identity.
 =status= separates execution, validation, candidate preparation, and integration evidence.
 =read= is deterministic file/Org retrieval, with no model call, and reports omitted content when its limit is reached.
+=status= always returns its JSON envelope; select =--run= when the plan contains multiple native attempts.
+=ask= starts a fresh bounded reader; =--source-only= and =--wiki-only= select explicit evidence-access restrictions.
 
 The initial source request is an explicitly supplied JSON catalog of git files or passages and supported local Claude/Codex transcript files.
 The proposed version-1 request has =repository= (configured mirror), =integration_ref= (full non-dream ref name), and =units= (a nonempty list).

@@ -1,0 +1,64 @@
+#+title: Dream runtime charter audit
+#+author: Sue
+#+date: 2026-11-09
+
+* Completion finding
+
+The full goal is not complete.
+P1-P5 have runtime engineering evidence; P6's real comparison and the user's usefulness assessment remain unproven.
+Live Claude is an explicit user deferral, not a passed live check.
+This audit maps the [[file:workplan.org][runtime workplan]] and [[file:../dream-charter.org::#research-conclusions][charter conclusions]] to inspectable artifacts, rather than treating the design workshop's DONE entries as runtime results.
+
+* Behavior and evidence
+
+- Real SuCoder wiki :: The accepted [[file:../../.sucoder/wiki/topics/transcript-replies.org][topic]] and [[file:../../.sucoder/wiki/receipts/ba7ba3aa22adabd09f0b9534803a26bbfc0690df69201c8ce83498c538d1c2c1.json][receipt]] are present in the current feature branch.
+  The receipt records six units, an accepted independent review, pinned Codex/model identity and exact required outputs.
+  [[file:runs/sucoder-p2.org][P2]] records its source objects, candidate, ordinary feature-branch integration and qualification repair.
+- Correction and synthesis :: P2's separate disposable real-source correction retained the stable wrong-note target and unresolved human constraint while combining documentation, adapter and fixture evidence.
+  [[file:../../tests/test_dream_wiki.py::test_corrects_existing_topic_and_combines_sources_preserving_human_task][The public protocol case]] runs the same behavior for both harnesses.
+  Semantic acceptance remains fallible; exact quotations alone do not prove a synthesized relationship.
+- Subsequent use :: [[file:runs/sucoder-p3.org][P3]] records three fresh native readers, their actual topic/source retrievals and correction/synthesis/lookup answers.
+  A current public CLI read on =7aec2cc= delivered 1,156 orientation bytes and 8,312 topic bytes, retained =--session-id= and =queued_command= and excluded LOGBOOK history.
+  The captured outputs are =/tmp/sucoder-dream-charter-audit-orientation.json= and =/tmp/sucoder-dream-charter-audit-topic.json=.
+- Bounded retrieval :: [[file:../../sucoder/dream_reader.py][The deterministic reader]], [[file:../../sucoder/dream_context.py][frozen context service]] and [[file:../../tests/test_dream_reader_eval.py][comparison-access cases]] enforce bounded orientation/topics/sources, explicit unavailable/truncated results and specific archive targets.
+  The same source interface serves source-only and wiki-plus-search readers; wiki-only denies source access before retrieval.
+- Selective maintenance :: [[file:runs/sucoder-p4-git-reuse.org][Real accepted Git reuse]], [[file:runs/sucoder-p4-noop.org][reviewed no-op]] and [[file:runs/sucoder-p4-append.org][live sanitized append]] establish unchanged zero-call convergence, a same-topic suffix update and bounded context requests.
+  [[file:../../tests/test_dream_prefix.py][Prefix cases]] cross both evidence formats and both harness protocols, including changed outputs, pending/ambiguous calls, aliases, interruption and squash acceptance.
+  Output bindings are deliberately conservative at file level; this evidence does not establish reuse of individual unaffected claims within an edited bound page.
+- Editorial lifecycle :: [[file:runs/sucoder-p5.org][P5]] records both public protocol lifecycles and a live Codex archive/fresh-reader check over labeled synthetic history.
+  [[file:../../tests/test_dream_editor.py][Public editorial cases]] exercise all seven states, returned review, reopening, human-authority rejection and preserved history.
+  [[file:../../tests/test_dream_editorial.py][Native mechanics cases]] compare archival behavior against Org and preserve inherited tags, IDs, source/outline/time context and forwarding links.
+  The live archive history is illustrative, not a real maintainer ruling.
+- Admission and provenance :: [[file:../../sucoder/dream.py][Planning]] and [[file:../../tests/test_dream_transcript.py][native transcript cases]] preserve explicit admission, complete-line cuts, native ordering, calls/results, summary/sidechain/unknown provenance and append validation.
+  [[file:../../tests/test_dream_roles.py::test_every_chunk_has_separate_extraction_and_verification][Notes-mode coverage]] verifies every chunk separately; the default author can receive a complete bounded bundle and rejects oversized assignments rather than silently accepting partial learning.
+- Publication and privacy :: [[file:../../tests/test_dream_run.py][Publication cases]] check private snapshots/indexes, allowed paths, hook/filter suppression, user-work preservation, binding/ref races, interruptions, squash output validation and private-source refusal.
+  [[file:../../tests/test_dream_native.py][Actual boundary cases]] enforce filesystem canaries and disabled external tools; authenticated provider networking remains enabled.
+- Stable replay :: [[file:../../tests/test_dream_roles.py::test_failed_native_request_is_not_automatically_repeated][Unknown-outcome rejection]], [[file:../../tests/test_dream_context.py][frozen-context cases]] and [[file:../../tests/test_dream_editor.py::test_changed_private_execution_time_cannot_start_a_new_paid_assignment][timestamp drift rejection]] prevent silent new paid assignments after changed or incomplete caches.
+  Actual saved v2-v4 candidate/progress/no-op statuses were also replayed without inference, as recorded in the implementation ledger.
+- Harness parity :: Shared protocol fixtures cover both execution harnesses independently of Git/Claude/Codex evidence formats.
+  Live Codex has real-source construction and fresh-reader evidence plus synthetic append/archive evidence.
+  Live Claude remains unverified under the user's quota-related deferral; no new Claude probe was made for this audit.
+- Packaging and entry :: The extracted wheel from =0a5e84d= executed the packaged native Org helper and exposed =--wiki-only=, with zero provider requests.
+  Explicit =dream read/source/ask= provide session entry without rewriting instructions or installing automatic background work.
+  [[file:p6-next.org][The P6 continuation]] retains the checksum, commands and artifact paths.
+
+* Independent review and current verification
+
+The workshop skill's independent skeptic found two concrete P6 defects missed by completed-replay fixtures: partial resume could mix reader contracts, and a crash after seed mutation/commit could duplicate the reserved anchor.
+The fixes freeze source/role/retrieval contracts before inference, guard transport against drift, replay completed readers against their original case binding, and record a seed intent before exact atomic replacement or commit.
+The reviewer re-inspected both fixes and found no surviving instance of either defect or a new concrete defect in those changes.
+Four runtime/seed guard cases, two partial-reader drift cases and two complete/critical-stop cases passed separately; the broader integration run is recorded after completion in the ledger/handoff.
+These tests use protocol fixtures and simulated grades, not new real pilot model calls.
+
+* Limits that still matter
+
+The prepared twelve source passages reproduce exact Git blob IDs and selected digests, but no held-out native questions, real comparison answers or scientific conclusions have been generated for the scoped experiment.
+The user was asked to approve that experiment or leave it pending; there is no reply in the current continuation.
+Do not interpret the automatic goal continuation or elapsed time as that approval.
+
+The 180-call ceiling counts native role invocations, not unobserved internal HTTP retries.
+Native-reported token fields and controlled submitted-byte counts are recorded separately; currency and unobservable provider accounting remain unknown.
+A positive exploratory comparison requires the frozen experiment and its criteria; human assessment of readability/usefulness still remains necessary.
+Page counts, fixture grades, a verified wheel or a protocol-green Claude adapter cannot substitute for that evidence.
+
+Prepared by Sue.

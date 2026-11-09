@@ -1,7 +1,7 @@
 #+title: Dream runtime: workplan for charter completion
 #+author: Sue
 #+date: 2026-11-09
-#+status: ACTIVE -- P1-P3 engineering gates passed; full runtime acceptance remains outstanding
+#+status: ACTIVE -- P1-P5 engineering gates passed; P6 acceptance remains outstanding
 #+setupfile: settings.org
 #+todo: TODO(t!) NEXT(n!) ACTIVE(a!) WAITING(w@/!) REVIEW(r@/!) | DONE(d!) MOOT(m@)
 #+startup: logdone logdrawer
@@ -230,6 +230,7 @@ Measure critical errors, missing qualifications, answer quality, reader bytes, l
 :END:
 
 P1-P5 have passed their engineering gates; P6 is active.
+The [[file:runtime-audit.org][runtime requirement/evidence audit]] records proven behavior, independent review corrections and the still-unmeasured acceptance requirements.
 P2-P3 establish the first functional dreaming loop, and P4 establishes selective repeated maintenance.
 Live native parity can be checked throughout, with the user's explicit Claude deferral retained.
 Do not add a generic backend framework, a global vector store, nightly automation or more transport machinery ahead of a demonstrated need in this sequence.

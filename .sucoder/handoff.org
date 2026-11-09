@@ -8,6 +8,13 @@
 
 This section is authoritative; the later milestone sections retain chronological recovery history.
 
+An independent audit is now correcting two pilot-resume defects in the working tree: execution-contract drift and unjournaled seed commits.
+The reviewer accepted both fixes after reinspection; focused runtime/seed, partial-reader and full/critical-stop protocol cases pass.
+The current integration suite began on =7aec2cc= and explicitly deselects the exact 55 known baseline failures; its live handle is exec session =57516= and log =/tmp/sucoder-dream-p6-final-integration.txt=.
+Poll that same process; do not restart it because a read times out.
+See [[file:../docs/dream/runtime-audit.org][the requirement/evidence audit]].
+The real pilot approval remains unanswered; no pilot inference or Claude probe is authorized by this automatic continuation.
+
 The full runtime charter remains incomplete.
 The user's November 9 review established that earlier successful native runs used synthetic evidence in disposable repositories.
 P1 has now completed a real SuCoder run: unintegrated candidate =635f040183f8ed0770fa1f96157e2b6cac3dc143= on =refs/heads/dream/228cde57cac21c9adb2ef29c3e76cd7f069ba0f80f5e45a95b49a7e9fb57b99b=.

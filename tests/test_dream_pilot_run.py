@@ -229,3 +229,93 @@ def test_graded_critical_error_stops_and_cannot_be_skipped_on_resume(tmp_path, m
     with pytest.raises(dream.DreamError, match="stopped on a graded critical error"):
         pilot.run(proposal, blobs, execute=True, attempt=2, native=transport)
     assert len(transport.calls) == count
+
+
+@pytest.mark.parametrize("defect", ["brief", "answer"])
+def test_partial_reader_resume_rejects_contract_or_result_drift_before_transport(tmp_path, monkeypatch, defect):
+    proposal, blobs = fixture_proposal(tmp_path, monkeypatch)
+    transport = Transport()
+    original = pilot.store
+    class Interrupted(Exception):
+        pass
+    def interrupt(path, value):
+        original(path, value)
+        if path.parent.name == "answers" and path.name == "0.json":
+            raise Interrupted()
+    monkeypatch.setattr(pilot, "store", interrupt)
+    with pytest.raises(Interrupted):
+        pilot.run(proposal, blobs, execute=True, native=transport)
+    root = proposal.parent / "execution"
+    assert (root / "answers/0.json").exists()
+    assert not (root / "paired-00.json").exists()
+    count = len(transport.calls)
+    monkeypatch.setattr(pilot, "store", original)
+    if defect == "brief":
+        monkeypatch.setattr(pilot.dream_reader_eval, "BRIEF", pilot.dream_reader_eval.BRIEF + " Changed reader behavior.")
+        message = "runtime/role contract changed"
+    else:
+        answer_path = root / "answers/0.json"
+        changed = pilot.read(answer_path)
+        changed["answer"] = "Corrupted copied answer"
+        answer_path.write_bytes(dream.canonical(changed))
+        message = "Frozen reader case/result changed"
+    with pytest.raises(dream.DreamError, match=message):
+        pilot.run(proposal, blobs, execute=True, attempt=2, native=transport)
+    assert len(transport.calls) == count
+
+
+def test_runtime_drift_during_execution_blocks_the_next_native_reservation(tmp_path, monkeypatch):
+    budget = pilot.Budget(tmp_path, dict(limits=limits()))
+    transport = Transport()
+    frozen = pilot.freeze_execution(tmp_path, budget, transport, "model")
+    monkeypatch.setattr(pilot.dream_reader_eval, "BRIEF", "different instructions")
+    with pytest.raises(dream.DreamError, match="changed before transport"):
+        budget.transport(transport, "reader")("codex", "model", dict(assignment_id="new", role="reader"), {}, 999999999)
+    assert transport.calls == [] and budget.state["calls"] == []
+    assert pilot.read(tmp_path / "execution-contract.json") == frozen
+
+
+@pytest.mark.parametrize("window", ["before_replace", "before_commit", "after_commit"])
+def test_seed_intent_recovers_each_interruption_without_duplicate_anchor(tmp_path, monkeypatch, window):
+    root, repo = tmp_path / "state", tmp_path / "repo"
+    root.mkdir(mode=0o700)
+    repo.mkdir()
+    pilot.git(repo, "init", "-q", "-b", "main")
+    pilot.git(repo, "config", "user.name", "Sue the Coder")
+    pilot.git(repo, "config", "user.email", "coder@sucoder.dev")
+    topic = repo / ".sucoder/wiki/topics/companion.org"
+    topic.parent.mkdir(parents=True)
+    topic.write_text("* Knowledge\n:PROPERTIES:\n:CUSTOM_ID: knowledge\n:END:\nOriginal prose.\n")
+    pilot.git(repo, "add", ".")
+    pilot.git(repo, "commit", "-qm", "Seed fixture source")
+    parent = pilot.git(repo, "rev-parse", "HEAD")
+    original_store, original_git, original_replace = pilot.store, pilot.git, pilot.os.replace
+    class Interrupted(Exception):
+        pass
+    def store(path, value):
+        if path.name == "SuCoder-seed.json":
+            raise Interrupted()
+        return original_store(path, value)
+    def git(repository, *args):
+        if args[0] == "commit":
+            raise Interrupted()
+        return original_git(repository, *args)
+    def replace(source, destination):
+        raise Interrupted()
+    if window == "before_replace":
+        monkeypatch.setattr(pilot.os, "replace", replace)
+    elif window == "before_commit":
+        monkeypatch.setattr(pilot, "git", git)
+    else:
+        monkeypatch.setattr(pilot, "store", store)
+    with pytest.raises(Interrupted):
+        pilot.seed_error(root, repo, "SuCoder")
+    assert (root / "SuCoder-seed-intent.json").exists()
+    assert not (root / "SuCoder-seed.json").exists()
+    monkeypatch.setattr(pilot, "store", original_store)
+    monkeypatch.setattr(pilot, "git", original_git)
+    monkeypatch.setattr(pilot.os, "replace", original_replace)
+    result = pilot.seed_error(root, repo, "SuCoder")
+    assert topic.read_text().count(":CUSTOM_ID: seeded-evaluation-error") == 1
+    assert pilot.git(repo, "rev-parse", result["commit"] + "^") == parent
+    assert pilot.seed_error(root, repo, "SuCoder") == result

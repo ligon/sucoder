@@ -6,6 +6,7 @@ Requires a reviewed proposal from dream_pilot_prepare.py and an explicit
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from dataclasses import asdict
 import json
 import os
@@ -13,10 +14,12 @@ from pathlib import Path
 import pwd
 import statistics
 import subprocess
+import sys
+import tempfile
 import time
 
 from scripts.dream_pilot_prepare import verify
-from sucoder import dream, dream_native, dream_reader_eval, dream_roles, dream_run, dream_wiki
+from sucoder import dream, dream_editor, dream_native, dream_reader, dream_reader_agent, dream_reader_eval, dream_roles, dream_run, dream_wiki
 from sucoder.config import load_config
 
 
@@ -75,6 +78,7 @@ def store(path, value):
 class Budget:
     def __init__(self, root, proposal):
         self.path = root / "budget.json"
+        self.guard: Callable[[], None] | None = None
         binding = dream.digest(dream.canonical(proposal))
         if self.path.exists():
             self.state = read(self.path)
@@ -102,6 +106,8 @@ class Budget:
         self.remaining()
 
     def remaining(self):
+        if self.guard is not None:
+            self.guard()
         now = time.time()
         if now < self.state["last_observed"] or now >= self.state["deadline"]:
             raise dream.DreamError("Pilot aggregate time allowance exhausted or clock moved backwards", 3)
@@ -213,6 +219,124 @@ def git(repo, *arguments):
         "-c", "core.autocrlf=false", *arguments], stderr=subprocess.PIPE).decode().strip()
 
 
+def runtime_contract():
+    """Freeze code and live role constants, not just a model/build label."""
+    package = Path(dream.__file__).resolve().parent
+    files = {"package/" + path.relative_to(package).as_posix(): dream.digest(path.read_bytes())
+        for path in sorted(package.rglob("*")) if path.is_file() and path.suffix in (".py", ".el")}
+    for name in ("dream_pilot_run.py", "dream_pilot_prepare.py"):
+        files["scripts/" + name] = dream.digest(Path(__file__).with_name(name).read_bytes())
+    contracts = dict(purpose=PURPOSE, questions=[QUESTION_BRIEF, schema("questions")], grade=[GRADE_BRIEF, schema("grade")],
+        writer=[dream_editor.CONTRACT, dream_editor.BRIEFS, {role: dream_editor.schema(role) for role in dream_editor.BRIEFS}],
+        reader=[dream_reader_eval.CONTRACT, dream_reader_eval.BRIEF, dream_reader_agent.schema(), dream_reader_eval.CONDITIONS,
+            dream_reader.INSTRUCTIONS, dream_reader.ORIENTATION_BYTES, dream_reader.TOPIC_BYTES, dream_reader.SOURCE_BYTES])
+    return dict(contract=CONTRACT, files=files, roles_sha256=dream.digest(dream.canonical(contracts)), python=sys.version)
+
+
+def freeze_execution(root, budget, native, model):
+    path = root / "execution-contract.json"
+    current = dict(runtime=runtime_contract(), native_version=native.version, model=model)
+    if path.exists():
+        frozen = read(path)
+        if any(frozen[key] != value for key, value in current.items()):
+            raise dream.DreamError("Pilot runtime/role contract changed; do not mix comparison conditions", 3)
+    else:
+        if budget.state["calls"]:
+            raise dream.DreamError("Existing pilot lacks a frozen execution contract; do not migrate a partial comparison", 3)
+        frozen = dict(current, engine_commit=git(Path(__file__).resolve().parent.parent, "rev-parse", "HEAD"))
+        store(path, frozen)
+    def check():
+        if runtime_contract() != frozen["runtime"]:
+            raise dream.DreamError("Pilot runtime/role contract changed before transport", 3)
+    budget.guard = check
+    return frozen
+
+
+def seed_error(root, repo, name):
+    """Recover exact intended edits before/after a commit, without re-appending."""
+    intent_path, result_path = root / (name + "-seed-intent.json"), root / (name + "-seed.json")
+    if not intent_path.exists():
+        topics = git(repo, "ls-tree", "-r", "--name-only", "HEAD", "--", ".sucoder/wiki/topics/").splitlines()
+        if not topics:
+            raise dream.DreamError("Cannot seed a correction without a built topic", 3)
+        parent, path = git(repo, "rev-parse", "HEAD"), topics[0]
+        before = subprocess.check_output(["git", "-C", str(repo), "cat-file", "blob", parent + ":" + path])
+        if b":CUSTOM_ID: seeded-evaluation-error" in before:
+            raise dream.DreamError("Pilot topic already contains the reserved seeded target", 3)
+        claim = ("A compaction summary's reply tag alone proves that a native assistant reply occurred." if name == "SuCoder" else
+            "A unique shocks index alone proves that it describes the original survey household entity.")
+        after = before + ("\n* Working rule\n:PROPERTIES:\n:CUSTOM_ID: seeded-evaluation-error\n:END:\n" + claim + "\n").encode()
+        store(intent_path, dict(parent=parent, path=path, claim=claim, before_sha256=dream.digest(before),
+            after_sha256=dream.digest(after), after=after.decode()))
+    intent = read(intent_path)
+    expected = intent["after"].encode()
+    if dream.digest(expected) != intent["after_sha256"]:
+        raise dream.DreamError("Seed intent bytes changed", 3)
+    if result_path.exists():
+        result = read(result_path)
+        committed = subprocess.check_output(["git", "-C", str(repo), "cat-file", "blob", result["commit"] + ":" + intent["path"]])
+        if (result["path"] != intent["path"] or result["claim"] != intent["claim"] or committed != expected or
+                git(repo, "rev-parse", result["commit"] + "^") != intent["parent"]):
+            raise dream.DreamError("Seed result differs from its frozen intent", 3)
+        return result
+    head = git(repo, "rev-parse", "HEAD")
+    if head == intent["parent"]:
+        if set(git(repo, "diff", "--name-only", "HEAD").splitlines()) - {intent["path"]}:
+            raise dream.DreamError("Unrelated changes prevent seed recovery", 3)
+        destination = repo / intent["path"]
+        current = destination.read_bytes()
+        if dream.digest(current) not in (intent["before_sha256"], intent["after_sha256"]):
+            raise dream.DreamError("Seed topic differs from its frozen before/after bytes", 3)
+        if current != expected:
+            pending = None
+            try:
+                with tempfile.NamedTemporaryFile(dir=destination.parent, prefix=".seed-", delete=False) as stream:
+                    pending = Path(stream.name)
+                    stream.write(expected)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                    os.fchmod(stream.fileno(), destination.stat().st_mode & 0o777)
+                if destination.read_bytes() != current:
+                    raise dream.DreamError("Seed topic changed during replacement", 3)
+                os.replace(pending, destination)
+            finally:
+                if pending is not None:
+                    pending.unlink(missing_ok=True)
+        git(repo, "add", intent["path"])
+        git(repo, "commit", "-qm", "Seed labeled disposable evaluation error\n\nCo-Authored-By: GPT-6 Codex <noreply@openai.com>")
+        head = git(repo, "rev-parse", "HEAD")
+    committed = subprocess.check_output(["git", "-C", str(repo), "cat-file", "blob", head + ":" + intent["path"]])
+    if (git(repo, "rev-parse", head + "^") != intent["parent"] or committed != expected or
+            git(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", head) != intent["path"]):
+        raise dream.DreamError("Interrupted seed commit differs from its frozen intent", 3)
+    result = dict(commit=head, deliberately_seeded=True, path=intent["path"], claim=intent["claim"])
+    store(result_path, result)
+    return result
+
+
+def reader_case(root, index, config, name, final, question, condition, model, native, budget, execution, attempt, elapsed):
+    answer_path, record_path = root / "answers" / (str(index) + ".json"), root / ("reader-case-" + str(index) + ".json")
+    binding = dict(question=question, condition=condition, wiki_commit=final["commit"], plan_path=final["plan_path"],
+        model=model, native_version=native.version, execution_sha256=dream.digest(dream.canonical(execution)))
+    saved = read(record_path) if record_path.exists() else None
+    if saved is not None:
+        if saved["binding"] != binding or (answer_path.exists() and dream.digest(dream.canonical(read(answer_path))) != saved["result_sha256"]):
+            raise dream.DreamError("Frozen reader case/result changed", 3)
+        attempt = saved["attempt"]
+    elif answer_path.exists():
+        raise dream.DreamError("Completed reader lacks its frozen case binding", 3)
+    answer = dream_reader_eval.ask(config, name, Path(final["plan_path"]), question, "codex", model,
+        base=final["commit"], condition=condition, attempt=attempt, transport=budget.transport(native, "reader:" + str(index)),
+        max_elapsed_seconds=elapsed)
+    budget.remaining()
+    result_sha256 = dream.digest(dream.canonical(answer))
+    if saved is not None and saved["result_sha256"] != result_sha256:
+        raise dream.DreamError("Frozen reader result differs from replayed assignments", 3)
+    store(record_path, dict(binding=binding, attempt=attempt, result_sha256=result_sha256))
+    store(answer_path, answer)
+    return answer
+
+
 def report(proposal, answers, budget):
     submitted = [sum(call["assignment_bytes"] for call in budget.state["calls"] if call["phase"] == "reader:" + str(index)) or
         row["answer"]["accounting"]["assignment_bytes"] for index, row in enumerate(answers)]
@@ -295,6 +419,7 @@ def run(proposal_path, blobs, *, execute=False, attempt=1, native=None):
                 raise dream.DreamError("Pilot native model/build changed; do not mix reader conditions", 3)
             store(binding_path, binding)
             model = proposal["model"]
+            execution = freeze_execution(root, budget, native, model)
             config_path = root / "config.json"
             store(config_path, dict(human_user=pwd.getpwuid(os.geteuid()).pw_name, mirror_root=str(root / "repos"),
                 log_dir=str(root / "logs"), mirrors={c["repository"]: dict(canonical_repo=str(root / "unused-canonical" / c["repository"])) for c in verified}))
@@ -341,17 +466,7 @@ def run(proposal_path, blobs, *, execute=False, attempt=1, native=None):
                 for stage, count in (("initial", 3), ("incremental", 6), ("repair", 6)):
                     budget.remaining()
                     if stage == "repair":
-                        seed_path = root / (name + "-seed.json")
-                        if not seed_path.exists():
-                            topics = git(repo, "ls-tree", "-r", "--name-only", "HEAD", "--", ".sucoder/wiki/topics/").splitlines()
-                            if not topics:
-                                raise dream.DreamError("Cannot seed a correction without a built topic", 3)
-                            claim = ("A compaction summary's reply tag alone proves that a native assistant reply occurred." if name == "SuCoder" else
-                                "A unique shocks index alone proves that it describes the original survey household entity.")
-                            with (repo / topics[0]).open("a") as stream:
-                                stream.write("\n* Working rule\n:PROPERTIES:\n:CUSTOM_ID: seeded-evaluation-error\n:END:\n" + claim + "\n")
-                            git(repo, "add", topics[0]); git(repo, "commit", "-qm", "Seed labeled disposable evaluation error\n\nCo-Authored-By: GPT-6 Codex <noreply@openai.com>")
-                            store(seed_path, dict(commit=git(repo, "rev-parse", "HEAD"), deliberately_seeded=True, path=topics[0], claim=claim))
+                        seed_error(root, repo, name)
                     key = name + "-" + stage
                     plan_record, result_record = root / (key + "-plan.json"), root / (key + "-result.json")
                     if not plan_record.exists():
@@ -381,13 +496,8 @@ def run(proposal_path, blobs, *, execute=False, attempt=1, native=None):
                 budget.remaining()
                 name, qid, condition = (scheduled_row[key] for key in ("repository", "question_id", "condition"))
                 question = questions[name][qid]
-                answer_path = root / "answers" / (str(index) + ".json")
-                if not answer_path.exists():
-                    answer = dream_reader_eval.ask(config, name, Path(final[name]["plan_path"]), question["question"], "codex", model,
-                        base=final[name]["commit"], condition=condition, attempt=attempt, transport=budget.transport(native, "reader:" + str(index)),
-                        max_elapsed_seconds=proposal["limits"]["reader_elapsed_seconds"])
-                    store(answer_path, answer)
-                answer = read(answer_path)
+                answer = reader_case(root, index, config, name, final[name], question["question"], condition, model,
+                    native, budget, execution, attempt, proposal["limits"]["reader_elapsed_seconds"])
                 grade = evaluate(root / "evaluator-only" / name / ("grade-" + str(index)), model,
                     budget.transport(native, "grade:" + str(index)), budget, "grade",
                     dict(sources=sources[name], question=question, answer=answer["answer"]), attempt)
@@ -399,7 +509,7 @@ def run(proposal_path, blobs, *, execute=False, attempt=1, native=None):
                     raise dream.DreamError("Pilot stopped on a graded critical error; inspect paired case records", 3)
             result = report(proposal, answers, budget)
             result.update(origins=origins, final=final, proposal_sha256=dream.digest(dream.canonical(proposal)),
-                engine_commit=git(Path(__file__).resolve().parent.parent, "rev-parse", "HEAD"))
+                engine_commit=execution["engine_commit"], execution_sha256=dream.digest(dream.canonical(execution)))
             store(root / "report.json", result)
             return result
     finally:
