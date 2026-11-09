@@ -1,7 +1,7 @@
 #+title: Dream runtime: workplan for charter completion
 #+author: Sue
 #+date: 2026-11-09
-#+status: ACTIVE -- P1/P2 engineering gates passed; full runtime acceptance remains outstanding
+#+status: ACTIVE -- P1-P3 engineering gates passed; full runtime acceptance remains outstanding
 #+setupfile: settings.org
 #+todo: TODO(t!) NEXT(n!) ACTIVE(a!) WAITING(w@/!) REVIEW(r@/!) | DONE(d!) MOOT(m@)
 #+startup: logdone logdrawer
@@ -111,11 +111,16 @@ Unresolved disagreements become attributed Talk tasks beneath the relevant artic
 - Evidence :: [[file:runs/sucoder-p2.org][Actual wiki, exact run identities and seeded real-source correction]].
 - Charter :: [[file:../dream-charter.org::#repair-memory][Correct and synthesize]], [[file:../dream-charter.org::#purpose-and-fidelity][purpose and fidelity]] and [[file:../dream-charter.org::#preserve-contributions][preserve contributions]].
 
-** ACTIVE P3. Close the loop with a fresh reader
+** DONE P3. Close the loop with a fresh reader
+CLOSED: [2026-11-09 Mon 04:26]
 :PROPERTIES:
 :CUSTOM_ID: fresh-reader
 :OWNER: Sue
 :DEPENDS_ON: correction-synthesis
+:END:
+:LOGBOOK:
+- State "DONE" from "ACTIVE" [2026-11-09 Mon 04:26] \\
+  Sue: Three fresh native Codex readers selected the corrected real-source topic and original evidence, answered correction/synthesis/lookup cases correctly, and stayed within cumulative byte allowances. See the P3 run report.
 :END:
 
 Implement a short maintained orientation, topic-directed =dream read=, source lookup/search and specific archive-entry retrieval.
@@ -131,9 +136,10 @@ Use the same original-source search interface for the baseline and wiki-assisted
 - Acceptance :: A fresh reader finds and uses the corrected rule from P2, answers the relevant question with evidence and avoids the seeded mistake.
   It also answers a cross-source synthesis question and a direct-lookup control, with a trace showing what it consulted.
   A correct answer alone does not prove memory use.
+- Evidence :: [[file:runs/sucoder-p3.org][Fresh questions, source-bound retrieval traces, answers and limits]].
 - Charter :: [[file:../dream-charter.org::#retrieve-evidence][Wiki plus source retrieval]] and [[file:../dream-charter.org::#reader-context][bounded reader context]].
 
-** TODO P4. Make repeated dreaming selective and convergent
+** ACTIVE P4. Make repeated dreaming selective and convergent
 :PROPERTIES:
 :CUSTOM_ID: incremental
 :OWNER: Sue
