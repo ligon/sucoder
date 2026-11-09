@@ -6,7 +6,7 @@
 
 P1-P5 passed engineering gates; [[file:runs/sucoder-p5.org][P5's report]] retains the exact live/protocol evidence and limitations.
 P6's paid two-repository experiment has not run.
-The user has been asked to authorize the concrete scope below; do not interpret elapsed time as approval.
+The user explicitly approved the concrete scope below on 2026-11-09: "Pilot approved".
 Live Claude remains explicitly deferred regardless of that decision.
 
 =sucoder.dream_reader_eval.ask= implements all three conditions under =bounded-wiki-reader-v2= with one common brief/schema.
@@ -73,7 +73,7 @@ These simulated grades establish orchestration behavior, not usefulness.
 All nine driver cases passed at =/tmp/sucoder-dream-p6-driver-verified.txt=; twelve focused guard/preparation cases and four-module mypy also passed.
 Implementation commit =0a5e84d= has a verified extracted wheel at =/tmp/sucoder-dream-p6-preparation-NjfocZ97/final-wheel/=, with its exact checksum/native-helper/CLI record in =final-wheel-verification.json= beside that directory.
 
-After the pending scope is approved, the exact invocation is:
+The scope is approved; the exact invocation is:
 
 #+begin_example
 poetry run python scripts/dream_pilot_run.py \

@@ -8,11 +8,11 @@
 
 This section is authoritative; the later milestone sections retain chronological recovery history.
 
-The pilot scope question remains unanswered after three consecutive goal turns.
-The independent implementation/audit work is complete, both verification processes are terminal, the worktree is clean and the reviewed pilot's execution directory does not exist.
-The remaining work is blocked by that required scope decision and subsequent usefulness assessment; do not start another review/test loop or infer approval from an automatic goal continuation.
-The reviewed scope remains 36 answers over the twelve frozen passages, Codex =gpt-6.1-sol=, at most two hours/180 native invocations, with currency unknown.
-Resume dependent pilot work only after the user's scope decision; keep the explicit live-Claude deferral.
+The user approved the pilot on 2026-11-09 at approximately 19:03 UTC: "Pilot approved".
+The approved scope is 36 answers over the twelve frozen passages, Codex =gpt-6.1-sol=, at most two hours/180 native invocations, with currency unknown.
+Independent implementation/audit work is complete and the approved proposal is intact; its execution directory did not exist at the pre-run check.
+Run the committed driver against =/tmp/sucoder-dream-p6-preparation-NjfocZ97/review-final/pilot-proposal.json= and the sibling =blobs/= directory, retaining its aggregate journal across any inspected explicit retry.
+The previous scope blocker is resolved; keep the explicit live-Claude deferral and do not change runtime code once the comparison begins.
 
 Independent review identified two pilot-resume defects: execution-contract drift and unjournaled seed commits.
 Both are corrected at =c753aed= and accepted after independent reinspection.
@@ -23,9 +23,8 @@ Session =57516= is terminal and closed; do not restart it.
 The pilot-only review fixes followed that collection and have separate passing checks at =/tmp/sucoder-dream-p6-review-*.txt=.
 The final retry-inclusive logs are =/tmp/sucoder-dream-p6-final-retry-guards.txt= (nineteen fast cases) and =/tmp/sucoder-dream-p6-final-retry-workflows.txt= (four workflow cases).
 See [[file:../docs/dream/runtime-audit.org][the requirement/evidence audit]].
-The real pilot approval remains unanswered; no pilot inference or Claude probe is authorized by this automatic continuation.
-This follow-up completed the independent audit and fixes; once these are recorded, no further implementation work is known apart from the scoped experiment and user assessment.
-The scope question first arose in the preceding goal turn and remains unanswered in this follow-up; retain that blocking history for the next goal audit rather than asking the same question again.
+Real pilot inference is now explicitly authorized within that scope; no Claude probe is authorized.
+The independent audit and fixes are complete; proceed to the scoped experiment and then the user's usefulness assessment.
 
 The full runtime charter remains incomplete.
 The user's November 9 review established that earlier successful native runs used synthetic evidence in disposable repositories.
