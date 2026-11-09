@@ -1406,7 +1406,7 @@ def _confined_manager(tmp_path, monkeypatch, *, target_name=None):
 
 def _confined_responder(calls, *, sbatch_out="12345", live_state="",
                         poll_states=None, ready_rc=0, attach_rc=0,
-                        sacct_state="FAILED", by_name=""):
+                        sacct_state="FAILED", by_name="", job_log=""):
     """run_agent stub dispatching on the confined command shapes.
 
     ``by_name`` is what ``squeue --me --name=<job>`` returns: the
@@ -1469,6 +1469,8 @@ def _confined_responder(calls, *, sbatch_out="12345", live_state="",
                 return res("", rc=attach_rc)
             if "capture-pane" in a:
                 return res("agent pane output")
+        if a[0] == "tail":
+            return res(job_log)
         if a[0] == "sacct":
             return res(sacct_state)
         return res("")
@@ -1969,8 +1971,11 @@ def _ready_stub(rcs, seen):
     it = iter(rcs)
 
     def run_agent(args, **kwargs):
-        seen.append(kwargs.get("show_progress", True))
         a = list(args)
+        if a[0] == "squeue":
+            return CommandResult(requested_args=a, executed_args=a,
+                                 stdout="RUNNING", stderr="", returncode=0)
+        seen.append(kwargs.get("show_progress", True))
         return CommandResult(requested_args=a, executed_args=a,
                              stdout="", stderr="", returncode=next(it))
     return run_agent
@@ -2097,16 +2102,13 @@ def test_launch_confined_wraps_agent_in_bash_lc(tmp_path, monkeypatch):
     )
     writes = [c for c in calls if c["args"][0] == "sh" and c["input"]]
     assert writes, "batch script must be staged to NFS via the executor"
-    script = writes[0]["input"]
+    script = writes[-1]["input"]
     assert "bash -lc " in script
     assert "claude --foo" in script
-    # env=env is actually threaded into _build_batch_script (a dropped
-    # `env=env` would silently regress env-carry to nothing).  The export is
-    # inside the shlex-quoted window command, so assert the threaded var name
-    # + value text appear (execution is covered by test_batch_script.py).
+    # Configured exports precede the login shell in the pane script.
     assert "export SUCODER_TOK=" in script and "abc 123" in script
     # Dedicated socket + sanitized session name in the staged script.
-    assert "tmux -L sucoder-sample new-session -A -d -s sucoder-sample" in script
+    assert "tmux -L sucoder-sample new-session -A -d -s sucoder-sample" in writes[0]["input"]
 
 
 def test_launch_confined_stages_and_starts_deadline_timer(tmp_path, monkeypatch):
@@ -2123,7 +2125,7 @@ def test_launch_confined_stages_and_starts_deadline_timer(tmp_path, monkeypatch)
         prelude_sentinel="__X__", env=None, detached=True,
     )
     writes = [c for c in calls if c["args"][0] == "sh" and c["input"]]
-    assert len(writes) == 2, "batch script then timer script must both be staged"
+    assert len(writes) == 3, "batch, timer and pane scripts must be staged"
     batch, timer = writes[0], writes[1]
     # The destination is passed as an argv positional, and the staging
     # script writes a temp file and renames it into place.  ``cat >``
@@ -2191,8 +2193,8 @@ def test_launch_confined_local_tier_stages_prepare_script(tmp_path, monkeypatch)
         prelude_sentinel="__X__", env=None, detached=True,
     )
     writes = [c for c in calls if c["args"][0] == "sh" and c["input"]]
-    assert len(writes) == 3, "batch, timer, then prepare script"
-    batch, timer, prepare = writes
+    assert len(writes) == 4, "batch, timer, prepare and pane scripts"
+    batch, timer, prepare = writes[:3]
     assert "/.cache/sucoder/local-tier-sample.sh" in prepare["args"][2]
     assert "MIRROR=/global/home/users/coder/mirrors/sample\n" in prepare["input"]
     assert 'LOCAL_ROOT=/local/job"${SLURM_JOB_ID}"\n' in prepare["input"]
@@ -2212,7 +2214,7 @@ def test_launch_confined_without_local_tier_snapshots_shared_mirror(tmp_path, mo
         prelude_sentinel="__X__", env=None, detached=True,
     )
     writes = [c for c in calls if c["args"][0] == "sh" and c["input"]]
-    assert len(writes) == 2
+    assert len(writes) == 3
     assert "SNAPSHOT_DIR=/global/home/users/coder/mirrors/sample\n" in writes[1]["input"]
     assert "local-tier" not in writes[0]["input"]
 
@@ -2249,12 +2251,17 @@ def test_launch_confined_session_not_ready_and_job_gone_says_it_ended(tmp_path, 
     calls = []
     manager.executor.run_agent = _confined_responder(
         calls, sbatch_out="13", ready_rc=1, live_state="", sacct_state="FAILED",
+        job_log="command too long\nSUCODER: tmux new-session failed (rc=1)\n",
     )
-    with pytest.raises(MirrorError, match="ended before its tmux session came up"):
+    with pytest.raises(MirrorError, match="ended before its tmux session came up") as exc:
         manager._launch_confined(
             ctx, ["claude"], remote_prelude_text=None,
             prelude_sentinel="__X__", env=None, detached=True,
         )
+    assert "job-sample-13.out" in str(exc.value)
+    assert "command too long" in str(exc.value)
+    assert "SUCODER: tmux new-session failed (rc=1)" in str(exc.value)
+    assert sum("has-session" in c["args"] for c in calls) == 1
 
 
 def _extend_stub(probe_rcs, states, du="412\t/local/job77/mirrors/sample\n"):
@@ -2312,9 +2319,9 @@ def test_session_ready_stops_waiting_when_the_job_leaves_running(tmp_path, monke
     assert manager._confined_session_ready(
         77, "s", "s", attempts=2, delay=3, extend_seconds=3600, extend_delay=15,
     ) is False
-    # 2 base probes, then 2 extended ones: it gave up as soon as squeue
+    # 2 base probes: it gave up as soon as squeue
     # stopped listing the job, not after an hour.
-    assert sum("has-session" in c for c in calls) == 4
+    assert sum("has-session" in c for c in calls) == 2
 
 
 def test_session_ready_extension_is_bounded(tmp_path, monkeypatch):
@@ -6854,3 +6861,103 @@ def test_real_skip_leaves_the_tree_exactly_as_found(tmp_path, monkeypatch):
     assert "hand edit" in (mirror / "README").read_text()
     assert _real_git(mirror, "stash", "list") == ""
     assert not _push_accepted(tmp_path, mirror)          # which is the point of the menu
+
+
+def test_confined_large_command_runs_through_real_tmux(tmp_path, monkeypatch):
+    import json
+    import shlex
+    import shutil
+    import subprocess
+    import sys
+    import time
+
+    if shutil.which("tmux") is None:
+        pytest.skip("tmux unavailable")
+    manager, ctx = _confined_manager(tmp_path, monkeypatch)
+    home = tmp_path / "home with 'quotes"
+    cache = home / ".cache/sucoder"
+    cache.mkdir(parents=True)
+    monkeypatch.setattr(manager, "_resolve_remote_home", lambda ctx: str(home))
+    calls = []
+    respond = _confined_responder(calls, sbatch_out="19")
+    staged = []
+
+    def run(args, **kwargs):
+        if "sucoder-pane-script" in args:
+            completed = subprocess.run(args, input=kwargs["input"], text=True,
+                                       capture_output=True, check=True)
+            staged.append((args, kwargs["input"]))
+            assert completed.returncode == 0
+        return respond(args, **kwargs)
+
+    manager.executor.run_agent = run
+    output = tmp_path / "result.json"
+    payload = ["x" * 24000, "a b\n'\"$HOME `false` $(false)", "", "last\n"]
+    code = ("import json,os,sys; from pathlib import Path; "
+            "Path(sys.argv[1]).write_text(json.dumps([sys.argv[2:], "
+            "os.environ['SUCODER_TEST_VALUE'], os.getcwd()]))")
+    value = "line one\n'\"$HOME $(false)"
+    manager._launch_confined(
+        ctx, [sys.executable, "-c", code, str(output), *payload],
+        remote_prelude_text=None, prelude_sentinel="__X__",
+        env={"SUCODER_TEST_VALUE": value}, detached=True,
+    )
+    stage_args, script = staged[0]
+    path = Path(stage_args[-1])
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert len(script.encode()) > 16384
+    # Exclusive creation must reject a collision without truncating its file.
+    collision = subprocess.run(stage_args, input="replacement", text=True,
+                               capture_output=True)
+    assert collision.returncode != 0
+    assert path.read_text() == script
+    batch = next(c["input"] for c in calls if c["input"] and "new-session" in c["input"])
+    tmux_line = next(line for line in batch.splitlines() if line.startswith("tmux "))
+    argv = shlex.split(tmux_line)
+    assert sum(len(a.encode()) + 1 for a in argv) < 16384
+    socket = str(tmp_path / "tmux.sock")
+    argv[1:3] = ["-S", socket]
+    try:
+        subprocess.run(argv, cwd=tmp_path, capture_output=True, check=True)
+        # Use real sleep: the fixture replaces mirror.time.sleep globally.
+        deadline = time.monotonic() + 10
+        while not output.exists() and time.monotonic() < deadline:
+            subprocess.run(["sleep", "0.05"], check=True)
+        assert json.loads(output.read_text()) == [payload, value, str(tmp_path)]
+    finally:
+        subprocess.run(["tmux", "-S", socket, "kill-server"], capture_output=True)
+
+
+def test_session_ready_detects_failure_during_initial_budget(tmp_path, monkeypatch):
+    manager, _ctx = _confined_manager(tmp_path, monkeypatch)
+    manager.executor.run_agent, calls = _extend_stub([1], ["RUNNING", ""])
+    assert manager._confined_session_ready(77, "s", "s", attempts=100) is False
+    assert sum("has-session" in c for c in calls) == 2
+
+
+def test_session_ready_initial_probe_error_keeps_waiting(tmp_path, monkeypatch):
+    manager, _ctx = _confined_manager(tmp_path, monkeypatch)
+    seen = []
+    manager.executor.run_agent = _ready_stub([1, 0], seen)
+    def unavailable(job_id):
+        raise OSError("transport unavailable")
+    monkeypatch.setattr(manager, "_confined_job_state", unavailable)
+    assert manager._confined_session_ready(77, "s", "s", attempts=100) is True
+    assert len(seen) == 2
+
+
+def test_confined_pane_staging_failure_never_submits(tmp_path, monkeypatch):
+    manager, ctx = _confined_manager(tmp_path, monkeypatch)
+    calls = []
+    respond = _confined_responder(calls)
+    def run(args, **kwargs):
+        if "sucoder-pane-script" in args:
+            raise OSError("script staging failed")
+        return respond(args, **kwargs)
+    manager.executor.run_agent = run
+    with pytest.raises(OSError, match="script staging failed"):
+        manager._launch_confined(
+            ctx, ["codex"], remote_prelude_text=None,
+            prelude_sentinel="__X__", env=None, detached=True,
+        )
+    assert not any(c["args"][0] == "sbatch" for c in calls)

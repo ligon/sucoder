@@ -3174,6 +3174,10 @@ class MirrorManager:
             )
             if result.returncode == 0:
                 return True
+            # Reuse the quiet scheduler probe (confined-launch ledger 2/4):
+            # a failed transport is uncertainty, not evidence of a dead job.
+            if self._confined_job_state_quiet(job_id) is None:
+                return False
             if attempt == 0:
                 # Only now is there a wait to explain: on the reuse path the
                 # session is usually already up and the first probe answers.
@@ -3426,6 +3430,14 @@ class MirrorManager:
         script_path = f"{cache_dir}/job-{safe}.sh"
         log_path = f"{cache_dir}/job-{safe}-%j.out"
 
+        # Exclusive creation prevents concurrent launches from overwriting a
+        # queued job's command (confined-launch ledger 3/4).
+        pane_path = f"{cache_dir}/pane-{safe}-{secrets.token_hex(16)}.sh"
+        pane_script = "#!/bin/bash\n" + "".join(
+            f"export {shlex.quote(k)}={shlex.quote(str(v))}\n"
+            for k, v in (env or {}).items()
+        ) + f"exec {windowed_cmd}\n"
+
         mirror_path = self._resolve_remote_path(ctx)
         timer_path = f"{cache_dir}/slurm-timer-{safe}-{secrets.token_hex(8)}.sh"
         # Local-disk tiering (docs/local-disk-tiering.org): the executor
@@ -3435,7 +3447,7 @@ class MirrorManager:
         prepare_path = f"{cache_dir}/local-tier-{safe}.sh" if local_disk_root else None
         script = self._build_batch_script(
             tmux_session=session_name, socket=socket,
-            mirror_path=mirror_path, agent_cmd_str=windowed_cmd, env=env,
+            mirror_path=mirror_path, agent_cmd_str=f"bash {shlex.quote(pane_path)}",
             timer_path=timer_path, prepare_path=prepare_path,
             local_disk_root=local_disk_root, mirror_token=safe,
             window_name=ctx.settings.name,
@@ -3507,6 +3519,14 @@ class MirrorManager:
                 "Local-disk tiering: agent will work in a clone under %s/job<id>/mirrors/%s",
                 local_disk_root, safe,
             )
+
+        # Keep the full wrapped command off tmux's bounded message, while
+        # retaining the existing login shell and inherited cwd/environment.
+        self.executor.run_agent(
+            ["sh", "-c", 'umask 077 && set -C && cat > "$1"',
+             "sucoder-pane-script", pane_path],
+            input=pane_script, check=True, capture_output=True,
+        )
 
         # Submit.  check=False so a transport drop AFTER the remote sbatch
         # created the job (rc 255) is reported as a MirrorError with a
@@ -3595,7 +3615,19 @@ class MirrorManager:
             ),
         ):
             if self._confined_job_state_quiet(job_id) is None:
-                raise MirrorError(self._confined_terminal_message(job_id))
+                try:
+                    log = self.executor.run_agent(
+                        ["tail", "-n", "40", job_log], check=False,
+                        capture_output=True, show_progress=False,
+                    )
+                    detail = log.stdout.strip() if log.returncode == 0 else ""
+                except Exception:  # noqa: BLE001 -- diagnostics must not mask failure
+                    detail = ""
+                raise MirrorError(
+                    self._confined_terminal_message(job_id)
+                    + f"\nJob log: {job_log}"
+                    + (f"\n--- job log ---\n{detail}" if detail else "")
+                )
             pane = self._confined_capture_pane(job_id, session_name, socket)
             raise MirrorError(
                 f"Confined SLURM job {job_id} is RUNNING on {node} but its "
