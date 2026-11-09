@@ -282,7 +282,34 @@ Mypy passed both changed runtime files.
 
 P2 actual-source authorship and seeded-correction acceptance passed; [[file:dream/runs/sucoder-p2.org][the run report]] records both exact candidates, independent review, retained human constraint and remaining gates.
 P3 reuses snapshot/native/parser machinery with deterministic retrieval and a fresh-reader coordinator; all fifteen reader tests and mypy passed.
-Fresh-reader live use, selective maintenance and editorial/archive transitions remain outstanding.
+Fresh-reader live use passed three real-source correction/synthesis/lookup questions; [[file:dream/runs/sucoder-p3.org][the report]] records actual topic/source requests, citations, byte counts and inspected answers.
+Selective maintenance and editorial/archive transitions remain outstanding.
 The synthetic editor acceptance does not establish those gates or real-corpus pilot benefit.
+
+* P3 verification against this ledger
+
+- OK (sections 2 and 5) :: Deterministic retrieval reuses byte-preserving GitSource, private plan/snapshot validation and the native Org parser; fresh readers reuse native transport, schema/trace caches and locks.
+  No source crawler, shell-enabled native tool or new configuration system was introduced.
+- OK (sections 3 and 4) :: Per-read and cumulative allowances, exact source hashes/ranges, explicit truncation/unavailability, preserved article caveats, specific archive targets and LOGBOOK omission are tested.
+  Construction-only canaries are absent from fresh-reader assignments; the source-only condition invokes the identical evidence interface.
+- Test evidence :: Fifteen deterministic/protocol reader tests and mypy passed; native Org design/link/archive checks passed.
+  The final full suite passed 2743 tests, skipped eight and failed 55; all 55 failing node IDs exactly match the existing baseline, with no additions or removals.
+- Live evidence :: Three fresh Codex readers selected and cited the corrected real-source topic and then original evidence, answering correction/synthesis/direct-lookup cases correctly on inspection.
+  They used 1156 orientation bytes, 9556 topic bytes and 7572-17160 source bytes each, without exhausting allowances.
+  This is engineering consultation/use evidence, not a measured benefit estimate.
+- Scope check :: Staged detection covered eleven expected files and 47 symbols, reporting 20 affected processes and CRITICAL aggregate risk through unnamed shared CLI mappings.
+  Direct diff confines runtime edits to new dream reader modules, new dream CLI callbacks and an opt-in parser projection; original parser/inventory shapes remain unchanged.
+
+Wheel construction includes both reader modules and the native parser asset.
+No anchored CONTRADICTION or REINVENTION remains in this reader slice.
+
+P4 starts with a narrow extension: discover compatible wiki-v2 receipts in the frozen integration tree and reuse unchanged git evidence only after validating complete source coverage and every required output binding.
+Reuse =output_bindings_match= and native parsing; factor the existing status binding-read loop into a shared helper rather than duplicate that test.
+The new shared-progress layer is necessary because current status reconstructs one locally saved run and cannot discover accepted work from another machine.
+Require matching repository/source identities, evidence bytes/ranges, role/brief/model/build/purpose contracts and accepted final review.
+Receipt presence or an unintegrated candidate never establishes accepted progress.
+A reused run must create no candidate/model calls, retain an independently replayable private proof, and report reconciliation after an output/receipt change.
+Maintenance bypasses this shortcut to re-evaluate explicit existing evidence.
+Appended transcript deltas, bounded prior selection, agent no-op decisions and task/archive transitions remain additional work; do not mark P4 complete from this first extension.
 
 Prepared by Sue.
