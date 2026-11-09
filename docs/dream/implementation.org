@@ -151,7 +151,7 @@ Existing pages, settings, archives, and human index content are preserved.
 Native Org parsing checks generated targets and links within the changed files, without following setup files, evaluating Babel, exporting, loading user init files, or opening source links.
 The receipt binds each quotation subtree and the generated index entry under =org-subtree-utf8-v1=: SHA-256 over UTF-8 bytes from the headline's native Org =:begin= through =:end=, including child content and trailing whitespace.
 The fixture has a separate =git-quotation-fixture-v1= fidelity contract; its receipt must never suppress future semantic work.
-General claim fidelity, TODO transition legality, archival moves, human-decision attribution, and links outside the generated set require later validators.
+The quotation fixture does not validate semantic claims, task transitions, archival moves or human-decision attribution; native wiki mode supplies the separate reviewed editorial contract below.
 
 The coordinator assembles a tree from the frozen base through a private index and git plumbing, disabling hooks, external filters, signing, network transports, and inherited git redirection.
 It leaves the invoking worktree, staged index, current branch, and integration ref untouched.
@@ -354,6 +354,15 @@ Private assignments, native traces and the final result record its chosen eviden
 The source-only condition uses the identical original-evidence interface with wiki access disabled.
 Native failures retain traces and require an explicit new attempt; successful reader replay makes no inference calls.
 
+The opt-in =bounded-wiki-reader-v2= comparison API, =sucoder.dream_reader_eval.ask=, supplies source-only, wiki-plus-search and wiki-only conditions with one common brief/schema and enforced tool availability.
+The CLI's =--wiki-only= uses that contract; existing default and =--source-only= v1 calls retain their saved identities.
+Pilot comparisons use the v2 API for all three conditions, rather than mixing contracts.
+V2 records archive bytes separately, repeated retrieval/common-instruction delivery across turns, complete serialized assignment bytes, native token usage and explicitly scoped invocation latency.
+Provider-added instructions are unmeasured and currency remains unknown; a requested dollar ceiling is rejected before transport because this backend cannot enforce it.
+The comparison reader has a maximum two-minute invocation deadline; cached replay preserves its recorded result and first recorded invocation latency.
+=scripts/dream_pilot_prepare.py= verifies every pinned corpus blob, selected line range and digest, prepares the randomized 36-answer schedule and exercises the actual kernel isolation boundary against an evaluator-only canary without provider calls.
+Experiment execution remains separately scoped by [[file:pilot.org][the pilot protocol]].
+
 * Native notes mode (legacy)
 
 #+begin_example
@@ -437,10 +446,9 @@ This contract is exercised with deterministic role fixtures and isolated native 
 
 * Next implementation slices
 
-1. Complete [[file:workplan.org][P4]] transcript updates and bounded prior selection; P1-P3 and unchanged-git reuse have passed engineering acceptance.
-2. Complete P5 editorial transitions and archival moves, preserving the existing correction/reader invariants.
-3. Verify both native harnesses and review the separate pilot authorization and gates in P6.
-4. Add generic execution adapters only after those charter priorities.
+1. Complete [[file:workplan.org][P6]] package/operator verification and the separately scoped usefulness experiment; P1-P5 have passed engineering acceptance.
+2. Retain the user's explicit live-Claude deferral and report it as unverified.
+3. Add generic execution adapters only after those charter priorities.
 
 The [[file:../dream-implementation-ledger.org][implementation ledger]] records reuse decisions and invariants.
 

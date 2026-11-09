@@ -170,13 +170,16 @@ Require a stopping rule and account for analysis, verification, repair and impli
   Bounded prior selection and agent-requested frozen context are implemented and tested; [[file:runs/sucoder-p4-append.org][the accepted append report]] records the live same-topic update and zero-call rerun, eighteen prefix cases and full-suite baseline comparison.
 - Charter :: [[file:../dream-charter.org::#selective-maintenance][Selective maintenance]] and [[file:../dream.org::#admission][receipt compatibility/replacement]].
 
-** ACTIVE P5. Complete editorial lifecycle and archives
+** DONE P5. Complete editorial lifecycle and archives
+CLOSED: [2026-11-09 Mon 09:21]
 :PROPERTIES:
 :CUSTOM_ID: editorial
 :OWNER: Sue
 :DEPENDS_ON: correction-synthesis fresh-reader
 :END:
 :LOGBOOK:
+- State "DONE" from "ACTIVE" [2026-11-09 Mon 09:21] \\
+  Sue: Both protocol lifecycles and the sanitized live Codex archive/fresh-reader check passed; the full suite has exactly the existing 55 baseline failures. See the P5 report for exact artifacts and limitations.
 - State "ACTIVE" from "TODO" [2026-11-09 Mon 07:15] \\
   Sue: P4 passed its engineering gate; next implement recorded task transitions and native archival moves through the public runtime, then verify a fresh reader's archive retrieval.
 :END:
@@ -191,13 +194,18 @@ Retain active forwarding anchors and repair tracked incoming links in the same c
 
 - Acceptance :: The [[file:examples/sucoder.org][worked lifecycle]] and [[file:examples/archive/sucoder.org][archive]] run through the public implementation, not just the document validator.
   A fresh reader follows the active rationale to the specific archived decision; ordinary reads omit archive bodies and historical drawers.
+- Current evidence :: [[file:runs/sucoder-p5.org][The public editorial/archive report]] records both protocol lifecycles, live Codex, exact retained attempts/usage and the root-suite baseline comparison.
 - Charter :: [[file:../dream-charter.org::#wiki-task-workflow][Editorial task workflow]] and [[file:../dream.org::#editorial][archive contract]].
 
-** TODO P6. Verify both harnesses and measure usefulness before rollout
+** ACTIVE P6. Verify both harnesses and measure usefulness before rollout
 :PROPERTIES:
 :CUSTOM_ID: acceptance
 :OWNER: Sue
 :DEPENDS_ON: fresh-reader incremental editorial
+:END:
+:LOGBOOK:
+- State "ACTIVE" from "TODO" [2026-11-09 Mon 09:21] \\
+  Sue: P1-P5 passed engineering gates. Prepare isolated comparison readers, exact two-corpus admission/budgets and package/operator checks; retain the separate experiment authorization and live-Claude deferral.
 :END:
 
 Exercise the same construction, update, correction, editorial and fresh-reader cases with explicit Codex and Claude models.
@@ -221,7 +229,7 @@ Measure critical errors, missing qualifications, answer quality, reader bytes, l
 :CUSTOM_ID: completion
 :END:
 
-P1-P4 have passed their engineering gates; P5 is active and P6 remains outstanding.
+P1-P5 have passed their engineering gates; P6 is active.
 P2-P3 establish the first functional dreaming loop, and P4 establishes selective repeated maintenance.
 Live native parity can be checked throughout, with the user's explicit Claude deferral retained.
 Do not add a generic backend framework, a global vector store, nightly automation or more transport machinery ahead of a demonstrated need in this sequence.

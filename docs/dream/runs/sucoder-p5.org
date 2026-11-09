@@ -1,0 +1,69 @@
+#+title: P5 public editorial/archive acceptance
+#+author: Sue
+#+date: 2026-11-09
+
+* Result and scope
+
+P5 passes its engineering gate.
+Both Codex and Claude protocol fixtures exercise the public seven-state lifecycle, returned review, repaired qualifications, reopening, supersession, terminal archival and fresh specific-history retrieval.
+The live Codex archive/reader check also passed, using explicitly synthetic history in a disposable repository, not real human decisions or private transcripts.
+Live Claude remains deferred at the user's request; measured usefulness remains P6 work.
+
+The coordinator is =source-grounded-wiki-v5= with =recorded-editorial-actions-v1= and the separate native Org engine.
+Authored prose cannot directly replace existing task state, properties, CLOSED stamps or LOGBOOKs.
+Explicit actions bind frozen tasks, preserve declared human requirements and receive separate independent authority/acceptance checks against the materialized candidate.
+Semantic attribution and decision meaning still require review; a maintained Git quotation does not mechanically authenticate human approval.
+
+* Exact live run
+
+Private artifacts are at =/tmp/sucoder-dream-editorial-acceptance-e7terwht/=, including =acceptance.json= and =verified-summary.json=.
+The archive candidate was built on =5fdcd6d=; the resume/status-selection script correction and completed reader check are recorded at =fe5567081325df8380080a188bd8d7ce290eacd7=.
+
+- Plan :: =6663644e42fbb42d36a8610a255b1cdebdbebc9244074bcbc91495ab721eebe5=.
+- Accepted run :: =d827225c05b25e764b72c01dabaa1b631601a2b0e5c4ce49a0a892f13d370edd=, explicit attempt 2.
+- Candidate :: =cbcc8819dc59ebd2e37e49cd1446a17cc267ff49=, ordinarily integrated only in the disposable fixture.
+- Fresh reader :: =ec259b5be55d37f9cbd5716a1d4fec733d9835b3fb2579417a30d3bcd091bfe3=.
+- Native identity :: Codex CLI 0.167.0, explicit =gpt-6.1-sol=.
+
+The first attempt on =1c51aff= published no candidate: one copied task hash was wrong, and an omission used a wiki path instead of an admitted source ID.
+Its repair fixed the hash but retained the invalid omission.
+The v5 brief was clarified and the script gained explicit same-fixture resume; the failed attempt remains in usage and private traces.
+Attempt 2 used three builder roles; resuming the saved candidate after the script's missing-run-ID status error reused those results.
+The three-call fresh reader received 640 orientation bytes, 1,156 active topic/navigation bytes, 300 source bytes and one 744-byte archive entry.
+Its answer identified the missing =queued_command= attachment qualification, the REVIEW-to-ACTIVE return and the subsequent DONE verification, while retaining native assistant-text and documented/static-scope qualifications.
+These are illustrative fixture events, not observations of an actual launch or maintainer review.
+
+The archive retains both DONE and MOOT trees, owners/reviewer, prior CLOSED/LOGBOOK entries, inherited =editorial= tag and repository-relative file/outline/time context.
+The active page retains forwarding anchors, the native-event qualification and the untouched human-required WAITING task.
+The separate navigation page links directly to the archived correction; its superseded-heuristic history link points back to the active rule.
+Ordinary reads omit historical drawers/archive bodies.
+Post-integration status reports =integrated_candidate=, and fresh-reader replay succeeds with provider invocation forbidden.
+Re-running construction against an already changed integration ref correctly requires a new plan; status is the inference-free integration check.
+
+Across both construction attempts and the fresh reader, eight provider calls used 99,891 input and 3,742 output tokens; currency is unknown.
+This includes the failed attempt and establishes no cost saving or usefulness gain.
+
+#+begin_example
+poetry run python scripts/dream_editorial_acceptance.py \
+  --harness codex --model gpt-6.1-sol
+# After inspecting a failed retained attempt:
+poetry run python scripts/dream_editorial_acceptance.py \
+  --harness codex --model gpt-6.1-sol \
+  --resume /PRIVATE/RETAINED/FIXTURE --attempt 2
+#+end_example
+
+* Verification
+
+The two complete public lifecycle cases pass for both harness protocols; authority, malformed action, interruption, reopen, immutable timestamp and duplicate-reference cases also pass.
+The final context/progress/curation/native-editorial regression passed 44 cases.
+Mypy passed nine runtime/script files and native Org design validation passed.
+Saved actual v2 candidate, v3 no-op, v4 append/update and accepted-progress statuses replay without inference.
+
+The root suite passed 2,829 tests, skipped eight and failed the exact 55 baseline nodes, with no additions or removals.
+The log is =/tmp/sucoder-dream-p5-full-suite.txt=; exact comparison is =/tmp/sucoder-dream-p5-baseline-comparison.json= against =/tmp/sucoder-dream-baseline-qml5svmx/failed-nodeids.json=.
+Three guard cases added after root-suite collection passed separately; subsequent changes clarified the brief and repaired acceptance-script resume selection.
+Staged detection covered the expected seventeen files and 78 symbols across 55 flows, reporting CRITICAL aggregate impact through shared dream paths.
+Symbol-specific HIGH/CRITICAL validator, compatibility and run/status impact was reported before edits; compatibility checks and the baseline comparison bound the practical risk.
+
+P1-P5 are DONE as engineering gates.
+P6 usefulness, packaging/operator acceptance and the explicit live-Claude deferral remain visible; the full goal is not complete.

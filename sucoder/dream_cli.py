@@ -116,9 +116,16 @@ def ask(
     model: str = typer.Option(..., "--model", help="Explicit model; transmits admitted reader context to its provider."),
     base: str = typer.Option("HEAD", "--base", help="Pinned wiki revision or integration ref."),
     source_only: bool = typer.Option(False, "--source-only", help="Use the identical evidence interface without wiki access."),
+    wiki_only: bool = typer.Option(False, "--wiki-only", help="Read only the companion and specific archives; disable original-source tools."),
     attempt: int = typer.Option(1, "--attempt", min=1, help="Explicit attempt; uncertain native outcomes are never silently retried."),
 ):
     """Answer through bounded, traced retrieval without construction context."""
+    if source_only and wiki_only:
+        raise typer.BadParameter("--source-only and --wiki-only cannot be combined")
+    if wiki_only:
+        from . import dream_reader_eval
+        _data_command(ctx, "dream_ask", dream_reader_eval.ask, mirror, plan_path, question, harness, model, base, "wiki-only", attempt)
+        return
     _data_command(ctx, "dream_ask", dream_reader_agent.ask, mirror, plan_path, question, harness, model, base, not source_only, attempt)
 
 

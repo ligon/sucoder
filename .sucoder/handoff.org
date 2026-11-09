@@ -13,11 +13,14 @@ See [[file:../docs/dream/runs/sucoder-p1.org][the exact run and inspection repor
 Treat the native implementation below as an engineering milestone, not completion of the original dreaming objective.
 
 The canonical next-work queue is [[file:../docs/dream/workplan.org][the charter-completion workplan]].
-P1-P4 are DONE as engineering gates; P5 is ACTIVE and P6 remains outstanding.
+P1-P5 are DONE as engineering gates; P6 is ACTIVE.
 Current P5 code adds the v5 public editorial coordinator, materialized independent review, authority checks and native transitions/archive moves; both harness protocols pass the complete lifecycle and fresh archive-reader checks.
-The P4 full suite passed 2,796 tests, skipped eight and failed exactly the same 55 pre-existing baseline nodes.
-The P5 full suite is running at =/tmp/sucoder-dream-p5-full-suite.txt=; do not substitute P4 results for it.
-Next run the opt-in sanitized live Codex archive/reader script on committed code, inspect its exact artifacts, finish the baseline comparison and then prepare P6 usefulness; the full goal remains incomplete.
+The P5 full suite passed 2,829 tests, skipped eight and failed exactly the same 55 pre-existing baseline nodes; =/tmp/sucoder-dream-p5-baseline-comparison.json= has no added or removed failures.
+Live sanitized Codex archive/fresh-reader acceptance passed on the retained fixture, including the failed first attempt in usage; see [[file:../docs/dream/runs/sucoder-p5.org][the P5 report]].
+P6 now has isolated v2 comparison readers, a verified 45,708-byte two-corpus scope, a no-provider preparation/canary and 102 passing focused regressions.
+The user was asked to authorize the concrete two-hour/180-call experiment or leave it pending; no answer has yet arrived in this continuation.
+Continue independent package/operator verification and retain that required decision; do not start dependent pilot inference without approval.
+See [[file:../docs/dream/p6-next.org][the exact P6 continuation and private artifacts]]; the full goal remains incomplete.
 P2 passed real-source authorship/correction; P3 passed fresh-reader use of that correction, synthesis and direct lookup.
 P5 completes the editorial/archive lifecycle; P6 verifies both native harnesses and the separately scoped usefulness pilot.
 The user emphasized delegating knowledge/editorial judgment to a capable agent; let it write and revise explanations while the coordinator enforces evidence, authority, budgets, validation and publication boundaries.
