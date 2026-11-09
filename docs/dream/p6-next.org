@@ -70,6 +70,8 @@ The report retains paired item scores and links to full answer/evidence/grade re
 Unknown native accounting prevents a positive pilot criterion result; currency remains unknown.
 Its complete protocol simulation covers both repositories, all three construction cases and all 36 reader answers, including zero-call resume and critical-stop persistence.
 These simulated grades establish orchestration behavior, not usefulness.
+All nine driver cases passed at =/tmp/sucoder-dream-p6-driver-verified.txt=; twelve focused guard/preparation cases and four-module mypy also passed.
+Implementation commit =0a5e84d= has a verified extracted wheel at =/tmp/sucoder-dream-p6-preparation-NjfocZ97/final-wheel/=, with its exact checksum/native-helper/CLI record in =final-wheel-verification.json= beside that directory.
 
 After the pending scope is approved, the exact invocation is:
 

@@ -6,6 +6,8 @@
 
 * Current objective and immediate next step
 
+This section is authoritative; the later milestone sections retain chronological recovery history.
+
 The full runtime charter remains incomplete.
 The user's November 9 review established that earlier successful native runs used synthetic evidence in disposable repositories.
 P1 has now completed a real SuCoder run: unintegrated candidate =635f040183f8ed0770fa1f96157e2b6cac3dc143= on =refs/heads/dream/228cde57cac21c9adb2ef29c3e76cd7f069ba0f80f5e45a95b49a7e9fb57b99b=.
@@ -28,6 +30,10 @@ Guard/preparation tests passed twelve cases and mypy with explicit package bases
 The final proposal is =/tmp/sucoder-dream-p6-preparation-NjfocZ97/review-final/pilot-proposal.json=; its builder cap is fourteen, within the unchanged aggregate two-hour/180-call scope.
 Do not use the superseded twelve-role =review/= proposal.
 No real pilot question, builder, reader or grader call has been made; retain the pending scope decision and the explicit live-Claude deferral.
+The driver is committed at =0a5e84d=; all nine driver tests passed at =/tmp/sucoder-dream-p6-driver-verified.txt=.
+Final wheel/runtime-asset and CLI verification passed on that exact implementation commit, with zero provider calls, at =/tmp/sucoder-dream-p6-preparation-NjfocZ97/final-wheel-verification.json=.
+The final source-tree checks are 102 related regression cases, nine driver cases, twelve focused guard/preparation cases, four-module mypy and native Org design validation.
+The 2,829-pass/55-baseline-failure root result belongs to P5 before the additive P6 code; do not claim a later full-suite run.
 P2 passed real-source authorship/correction; P3 passed fresh-reader use of that correction, synthesis and direct lookup.
 P5 completes the editorial/archive lifecycle; P6 verifies both native harnesses and the separately scoped usefulness pilot.
 The user emphasized delegating knowledge/editorial judgment to a capable agent; let it write and revise explanations while the coordinator enforces evidence, authority, budgets, validation and publication boundaries.

@@ -535,3 +535,38 @@ The planner reserves fourteen roles for six-source plans, so a twelve-role const
 Implement/test the driver independently of experiment authorization; require an explicit execution opt-in and the pending human scope decision before any real pilot request.
 
 Prepared by Sue.
+
+* P5 public workflow and P6 preparation verification
+
+- Reuse :: V5 extends the existing author/context/reviewer loop with narrow materialization/validation hooks and the verified inline native Org primitive.
+  V2 comparison readers reuse the frozen retrieval/role machinery; the opt-in experiment driver reuses public plan/run/read APIs, native transport and immutable private artifacts.
+  No second provider protocol or shared knowledge store was introduced.
+- Authority/history :: Existing task metadata/history is preserved in authored prose; coordinator-validated actions retain earlier decisions, owners, review outcomes and archive context.
+  Declared human requirements and failed independent authority checks prevent terminal completion; semantic attribution remains review work rather than authenticated human identity.
+- Live P5 :: [[file:dream/runs/sucoder-p5.org][The exact report]] records the failed first attempt, corrected same-fixture attempt and fresh Codex archive reader.
+  Eight provider calls across both attempts and the reader used 99,891 input and 3,742 output tokens; currency is unknown.
+  Archived history, active qualifications, pending human work and incoming links were preserved; post-integration status/reader replay forbade provider invocation and passed.
+- Compatibility/full suite :: Actual saved v2-v4 statuses/progress/no-op runs replay without inference.
+  The P5 root suite passed 2,829 tests, skipped eight and reproduced the exact 55 baseline failure IDs with no additions/removals.
+  The final related planner/reader/CLI/native/preparation regression passed 102 cases after the additive v2 changes.
+- Experiment guards :: All nine driver cases passed, including both disposable corpora, three construction stages, 36 paired readers, frozen rubric isolation, persistent critical stopping and zero-call resume with a later requested attempt.
+  These are protocol fixtures with simulated grades, not native usefulness evidence.
+  Twelve focused guard/preparation cases also passed; four runtime/script modules pass mypy with explicit package bases and untyped bodies checked.
+  Logs are =/tmp/sucoder-dream-p6-driver-verified.txt=, =/tmp/sucoder-dream-p6-driver-guards-final.txt= and =/tmp/sucoder-dream-p6-reader-regression.txt=.
+- Scope/accounting :: The prepared twelve passages reproduce exact full Git blob IDs and selected digests, 45,708 bytes total.
+  The actual evaluator-only boundary canary denied reads/writes, with zero provider calls.
+  Fourteen builder roles satisfy the six-source planner reservation; aggregate limits remain two hours/180 native invocations and are reconstructed from immutable reservations/returns on resume.
+  Submitted reader bytes and cumulative native usage include unsuccessful attempts; unknown native accounting prevents a positive pilot criterion result and currency stays unknown.
+- Packaging :: The wheel built from implementation commit =0a5e84debaa786c6887e4b5b4a2f89db517e717d= matches the committed runtime helpers/assets.
+  An extracted-wheel import executed the packaged Org helper and exposed =--wiki-only= in CLI help with zero provider calls.
+  SHA-256 is =1741f87d0c78c675a01c889f103baacc3fd03db667b1b66bdb918f25ae4088ab=; =final-wheel-verification.json= and the wheel are retained under =/tmp/sucoder-dream-p6-preparation-NjfocZ97/=.
+- Review scope :: Driver staged detection covered six expected files and 42 symbols over five flows, MEDIUM aggregate risk; its entry/report helpers have LOW impact.
+  The full feature/main comparison reports CRITICAL aggregate impact through shared CLI/dream paths, bounded by direct diff review, compatibility checks and the root baseline comparison.
+  Native Org design export/link/archive validation passed after the current documentation updates.
+
+No anchored CONTRADICTION or REINVENTION remains in the implemented slices.
+P1-P5 are DONE engineering gates; P6 remains ACTIVE pending the separately scoped real experiment and the user's assessment.
+The user was asked to approve the prepared scope or leave the pilot pending; no answer has arrived in this continuation.
+Live Claude remains explicitly deferred and is not counted as a passed native acceptance test.
+
+Prepared by Sue.
