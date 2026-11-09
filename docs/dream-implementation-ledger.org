@@ -101,6 +101,17 @@ Native success prose cannot establish delivery or semantic truth.
 
 * 6. Open questions and next checks
 
+P3 extends the existing parser with an opt-in reader projection, leaving original validation/inventory outputs unchanged for saved run replay.
+Reuse =GitSource= for revision-pinned wiki reads and =dream_run._directory/_load/_read= for explicitly selected frozen-source lookup/search; verify snapshot hashes before delivery.
+No source crawler, shell-enabled native tool, configuration system or implicit source admission is needed.
+New deterministic reader APIs must expose orientation/topic/source allowances, exact delivered bytes/ranges, truncation and unavailable sources.
+Use native Org structure to omit LOGBOOK drawers while retaining unresolved article caveats; require an explicit target for archive entry reads.
+A new bounded fresh-reader coordinator reuses native transport, role trace caches and locks, but receives no construction conversation, candidate answers or grading rubrics.
+Record its chosen retrievals so a correct answer alone cannot stand in for memory use.
+The same source search/read API must serve a source-only baseline.
+
+
+
 The user authorized starting the [[file:dream/workplan.org][full runtime workplan]] on 2026-11-09.
 P1 now has a [[file:dream/runs/sucoder-p1.org][real SuCoder candidate and inspection report]]; the omissions are acceptance evidence for the next slice, not a memory-benefit claim.
 P2 extends the existing bounded role runner with a separate author/editor contract, preserving legacy notes assignments and receipt replay.
@@ -269,7 +280,9 @@ All 23 editor cases pass across the full focused run and the corrected standalon
 The actual saved v1 synthetic smoke still reconstructs its integrated output bindings without inference.
 Mypy passed both changed runtime files.
 
-P2 real-source correction acceptance, fresh-reader use, selective maintenance and editorial/archive transitions remain outstanding.
+P2 actual-source authorship and seeded-correction acceptance passed; [[file:dream/runs/sucoder-p2.org][the run report]] records both exact candidates, independent review, retained human constraint and remaining gates.
+P3 reuses snapshot/native/parser machinery with deterministic retrieval and a fresh-reader coordinator; all fifteen reader tests and mypy passed.
+Fresh-reader live use, selective maintenance and editorial/archive transitions remain outstanding.
 The synthetic editor acceptance does not establish those gates or real-corpus pilot benefit.
 
 Prepared by Sue.
