@@ -529,8 +529,12 @@ Use the existing semantic Coordinator, schema validator, private atomic storage 
 Wrap the native transport with one persisted aggregate deadline and a pre-invocation reservation ledger, accounting for unsuccessful/uncertain calls and rejecting repeated reservations.
 Resume must not reset time/call allowances or automatically repeat an uncertain native assignment.
 Freeze source origins, independent held-out questions/rubrics and accepted final wiki revisions before randomized fresh-reader calls.
+Freeze the actual runtime source/role/retrieval contract before inference, retain its initial implementation revision and reject drift before a resumed/new transport request.
+Use the existing Coordinator replay and private v2 result bindings to validate completed reader cases rather than trusting a copied answer file.
 Keep questions/rubrics, the protocol and other answers outside builder/reader payloads and filesystem views; score one answer at a time with condition labels omitted.
 Retain per-case plans/results before ordinary integration in disposable repositories, so interrupted integration resumes without a new provider call.
+Apply the same write-ahead rule to seeded errors: bind the parent, exact before/after bytes and intended target before changing it, then recover an interrupted write/commit without appending twice.
+Existing atomic context-file replacement in =sucoder/codex_context.py= supplies the temporary-file/fsync/compare/replace pattern; JSON-only atomic writers do not fit Org body bytes.
 The planner reserves fourteen roles for six-source plans, so a twelve-role construction proposal must be raised to fourteen while retaining the aggregate 180-call ceiling.
 Implement/test the driver independently of experiment authorization; require an explicit execution opt-in and the pending human scope decision before any real pilot request.
 
@@ -564,7 +568,8 @@ Prepared by Sue.
   The full feature/main comparison reports CRITICAL aggregate impact through shared CLI/dream paths, bounded by direct diff review, compatibility checks and the root baseline comparison.
   Native Org design export/link/archive validation passed after the current documentation updates.
 
-No anchored CONTRADICTION or REINVENTION remains in the implemented slices.
+The independent runtime audit found two P6 CONTRADICTIONs to the frozen-comparison and interruption invariants: partial resume could mix runtime instructions, and a seed commit could precede its durable marker.
+Those defects are being corrected against the grounding above; the earlier completed-replay fixtures did not exercise these windows.
 P1-P5 are DONE engineering gates; P6 remains ACTIVE pending the separately scoped real experiment and the user's assessment.
 The user was asked to approve the prepared scope or leave the pilot pending; no answer has arrived in this continuation.
 Live Claude remains explicitly deferred and is not counted as a passed native acceptance test.
