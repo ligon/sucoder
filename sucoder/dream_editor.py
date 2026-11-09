@@ -25,6 +25,7 @@ BRIEFS = {role: brief + (
     "Review the materialized candidate, including generated pages and history, and return one task_check for every action. "
     "Check authority_verified and acceptance_satisfied separately from the verdict; requires_human must reflect the prior task too. "
     "Lookup replies have no task actions/checks. Unchanged has no task actions. "
+    "omissions entries must name an admitted source unit_id, never a wiki path. Explain unchanged wiki material in rationale instead. "
     "Private transcript evidence has no public source-file link: cite it in references and plain prose, never invent a file path. "
     "CUSTOM_ID links use [[#target]] or [[file:relative.org::#target][label]]; id: links are unsupported."
     ) for role, brief in dream_author.BRIEFS.items()}

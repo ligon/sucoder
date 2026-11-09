@@ -19,14 +19,14 @@ from sucoder import dream, dream_reader, dream_reader_agent, dream_run, dream_wi
 from sucoder.config import load_config
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--harness", required=True, choices=("codex", "claude"))
-    parser.add_argument("--model", required=True)
-    args = parser.parse_args()
-    root = Path(tempfile.mkdtemp(prefix="sucoder-dream-editorial-acceptance-"))
-    print(json.dumps(dict(state="started", private_artifacts=str(root))), flush=True)
+def fixture(root):
     repo = root / "mirrors/canary"
+    configuration = root / "config.json"
+    if configuration.exists():
+        plans = list((root / "logs/dream").glob("*/plan.json"))
+        if len(plans) != 1:
+            raise RuntimeError("Resume requires exactly one retained fixture plan")
+        return load_config(configuration), repo, json.loads(plans[0].read_bytes()) | {"plan_path": str(plans[0])}
     repo.mkdir(parents=True)
     def git(*arguments):
         return subprocess.check_output(["git", "-C", str(repo), *arguments]).decode().strip()
@@ -59,7 +59,6 @@ def main():
     (repo / dream_wiki.SETTINGS_PATH).write_text(dream_wiki.SETTINGS)
     git("add", ".")
     git("commit", "-qm", "Seed explicit synthetic editorial history and evidence")
-    configuration = root / "config.json"
     configuration.write_bytes(dream.canonical(dict(human_user=pwd.getpwuid(os.geteuid()).pw_name,
         mirror_root=str(repo.parent), log_dir=str(root / "logs"), mirrors={"canary": {"canonical_repo": str(root / "canonical")}})))
     config = load_config(configuration)
@@ -68,8 +67,28 @@ def main():
         units=[dict(unit_id="evidence", kind="git", shareable=True, locator=dict(repository="canary", commit="HEAD", path="evidence.org"))])))
     plan = dream.create_plan(config, "canary", catalog, "refs/heads/main", maintenance=
         "Archive the eligible terminal correction and superseded heuristic, preserving active qualifications, history, incoming links and the unresolved human decision.", topic="replies")
+    return config, repo, plan
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--harness", required=True, choices=("codex", "claude"))
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--resume", type=Path, help="Retained private fixture directory; inspect failed traces first.")
+    parser.add_argument("--attempt", type=int, default=1)
+    args = parser.parse_args()
+    if args.resume is not None and not (args.resume / "config.json").is_file():
+        parser.error("--resume must name a retained editorial acceptance directory")
+    root = args.resume or Path(tempfile.mkdtemp(prefix="sucoder-dream-editorial-acceptance-"))
+    print(json.dumps(dict(state="started", private_artifacts=str(root), attempt=args.attempt)), flush=True)
+    config, repo, plan = fixture(root)
+    def git(*arguments):
+        return subprocess.check_output(["git", "-C", str(repo), *arguments]).decode().strip()
+    topic = ".sucoder/wiki/topics/replies.org"
+    archive = ".sucoder/wiki/archive/replies.org"
+    incoming = ".sucoder/wiki/topics/navigation.org"
     before = (git("status", "--porcelain"), (repo / ".git/index").read_bytes(), git("symbolic-ref", "HEAD"))
-    result = dream_wiki.run(config, "canary", Path(plan["plan_path"]), args.harness, args.model)
+    result = dream_wiki.run(config, "canary", Path(plan["plan_path"]), args.harness, args.model, attempt=args.attempt)
     if before != (git("status", "--porcelain"), (repo / ".git/index").read_bytes(), git("symbolic-ref", "HEAD")):
         raise RuntimeError("Editorial candidate changed the invoking worktree/index/branch")
     if result["state"] != "candidate_ready":
@@ -92,7 +111,7 @@ def main():
     if 'State "ACTIVE" from "REVIEW"' in ordinary["text"]:
         raise RuntimeError("Ordinary reading included archived history")
     question = "Why did the correction return for review, what qualification was restored, and where is that decision recorded?"
-    answer = dream_reader_agent.ask(config, "canary", Path(plan["plan_path"]), question, args.harness, args.model)
+    answer = dream_reader_agent.ask(config, "canary", Path(plan["plan_path"]), question, args.harness, args.model, attempt=args.attempt)
     if not answer["topic_delivered"] or not any(entry["request"]["kind"] == "archive" and entry["request"]["target"] == "corrected-reply-rule"
             and entry["response"]["delivered_bytes"] for entry in answer["retrievals"]):
         raise RuntimeError("Fresh reader did not follow the active page to the specific archived correction")

@@ -297,4 +297,11 @@ After committing the implementation, run it with =--harness codex --model gpt-6.
 Do not probe Claude: the user's live-Claude deferral remains in force.
 Do not mark P5 DONE until live Codex and full baseline checks are inspected; P6 remains outstanding and the full goal remains ACTIVE.
 
+The first live Codex attempt on =1c51aff= retained artifacts at =/tmp/sucoder-dream-editorial-acceptance-e7terwht/= and published no candidate.
+Its author copied one hash incorrectly and used a wiki path as an omission unit ID; its one repair fixed the hash but retained the invalid omission.
+The two calls used 26,877 input and 1,695 output tokens; currency is unknown.
+The v5 brief now states that omissions name admitted source IDs, and the acceptance script supports =--resume DIRECTORY --attempt N= for a deliberate inspected continuation on that same plan.
+The fixture-resume check made zero provider calls and preserved its frozen plan; mypy and the focused duplicate-reference guard passed.
+Use explicit attempt 2 after committing this clarification; retain both attempts in the final accounting.
+
 Prepared by Sue.
