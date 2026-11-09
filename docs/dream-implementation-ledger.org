@@ -264,6 +264,11 @@ Symbol-specific impacts were reviewed before editing, and CLI/config regressions
 Native Org design validation also passed.
 
 No anchored CONTRADICTION or REINVENTION remains in this engine slice.
+The follow-up =source-grounded-wiki-v2= contract resolves unique exact quotations to UTF-8 byte ranges in the coordinator; original notes and wiki-v1 inputs/identities remain replayable.
+All 23 editor cases pass across the full focused run and the corrected standalone legacy fixture check; the initial fixture failure passed a CLI display envelope rather than the stored plan into the snapshot helper.
+The actual saved v1 synthetic smoke still reconstructs its integrated output bindings without inference.
+Mypy passed both changed runtime files.
+
 P2 real-source correction acceptance, fresh-reader use, selective maintenance and editorial/archive transitions remain outstanding.
 The synthetic editor acceptance does not establish those gates or real-corpus pilot benefit.
 
