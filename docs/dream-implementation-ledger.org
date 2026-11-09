@@ -609,9 +609,28 @@ The final retry-inclusive logs are =/tmp/sucoder-dream-p6-final-retry-guards.txt
 A forced index refresh removed malformed symbol IDs from incremental graph results; the pilot budget now resolves to three indexed direct callers, five impacted nodes, LOW risk and no outside processes.
 Staged detection after refresh reports seventeen changed symbols across seven flows with HIGH aggregate risk; actual code changes stay in the opt-in driver and tests.
 Native Org validation includes the new runtime audit, and packaged runtime helpers remain byte-identical to the verified wheel after the pilot-only fixes.
-No anchored contradiction from this independent review remains; the real pilot and human usefulness assessment still have no completion evidence.
-P1-P5 are DONE engineering gates; P6 remains ACTIVE pending the separately scoped real experiment and the user's assessment.
-The user was asked to approve the prepared scope or leave the pilot pending; no answer has arrived in this continuation.
+No anchored contradiction from that independent review remains.
+The user subsequently approved the scope, and the real pilot completed all 36 attempts; [[file:dream/runs/sucoder-p6.org][the P6 report]] records its exact evidence and limits.
+P1-P5 are DONE engineering gates; P6 is REVIEW pending the user's usefulness assessment, with live Claude explicitly deferred.
+
+* Completed pilot verification against this ledger
+
+- Reuse check (sections 2 and 5) :: The grading amendment and failed-outcome collector reuse the original native Coordinator, frozen runtime, bounded reader/retrieval interfaces, source verifier, journal and report calculation.
+  Separate files/contracts preserve replay of the actual stopped parent rather than changing its sealed source or replacing its native traces.
+- Definition check (sections 3 and 4) :: Negative grading is distinct from inability to grade; a terminal reader failure remains =reader_failed= and is never regenerated merely for quality.
+  Held-out decks, reader prompts/schema, source identities, model, final wiki revisions, all 137 calls and the original deadline remain bound.
+  Failed read-ID/hash copies were rejected before acceptance and retained in costs; no actual LSMS file or human ruling changed.
+- Test check :: Five grader-amendment and two outcome-collector cases pass, including negative/failure continuation, complete 36-case fixtures, zero-call replay, preserved budgets, critical-grade retention and trace-tampering rejection.
+  Mypy passes both added scripts; actual failure collection made zero calls and actual completed-run replay matched exactly with inference forbidden.
+- Measured evidence :: The 71.2-minute pilot reports zero graded critical errors and two retained wiki-only failures.
+  Wiki plus search scores 23/24 versus 22/24 for SuCoder and 25/26 versus 23/26 for LSMS, with a three-item synthesis/caveat gain meeting the original exploratory quality alternative.
+  The amended collector conservatively classifies the full run inconclusive; context savings are unsupported and human assessment remains necessary.
+  Reported usage is 2,003,683 input and 87,760 output tokens, with currency/internal-retry accounting unknown.
+- Retention :: The report hash is =7ca6c5e91f5475e483fb9314bf3fd465a20b580c8bb10edcaa24431b2de9c35d=.
+  Exact sources, runtime, traces and test/operator logs are retained privately at =/home/coder/.sucoder/logs/dream-pilots/2026-11-09-p6-7ca6c5e9/=, with a per-file checksum manifest.
+
+The full-suite result above predates these additive pilot scripts; seven focused cases cover the new scripts and no new whole-suite claim is made.
+OK against sections 2-5; remaining acceptance is human usefulness review and the user's explicit live-Claude deferral.
 Live Claude remains explicitly deferred and is not counted as a passed native acceptance test.
 
 Prepared by Sue.
