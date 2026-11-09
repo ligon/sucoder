@@ -104,7 +104,7 @@ def main():
         raise RuntimeError("Archival acceptance lost a task, qualification, human constraint or incoming link")
     if 'State "ACTIVE" from "REVIEW"' in active or 'State "ACTIVE" from "REVIEW"' not in historical:
         raise RuntimeError("Returned-review history was not moved completely")
-    if dream_run.status(config, "canary", Path(plan["plan_path"]))["integration"]["state"] != "not_integrated":
+    if dream_run.status(config, "canary", Path(plan["plan_path"]), result["run_id"])["integration"]["state"] != "not_integrated":
         raise RuntimeError("Unintegrated editorial output was treated as accepted")
     git("merge", "--ff-only", candidate)
     ordinary = dream_reader.read(config, "canary", "replies")
