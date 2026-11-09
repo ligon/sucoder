@@ -521,3 +521,17 @@ The separately scoped pilot requires six independently authored held-out questio
 Prepare these operator artifacts before seeking the separate experiment authorization; do not infer permission to transmit private history or adjudicate an LSMS decision.
 
 Prepared by Sue.
+
+* P6 bounded experiment-driver grounding
+
+Reuse public plan/snapshot/wiki-run and v2 reader APIs in disposable imported-source repositories; the existing wiki API already accepts an injected native transport.
+Use the existing semantic Coordinator, schema validator, private atomic storage and run locks for independent question/scoring roles rather than another provider runner.
+Wrap the native transport with one persisted aggregate deadline and a pre-invocation reservation ledger, accounting for unsuccessful/uncertain calls and rejecting repeated reservations.
+Resume must not reset time/call allowances or automatically repeat an uncertain native assignment.
+Freeze source origins, independent held-out questions/rubrics and accepted final wiki revisions before randomized fresh-reader calls.
+Keep questions/rubrics, the protocol and other answers outside builder/reader payloads and filesystem views; score one answer at a time with condition labels omitted.
+Retain per-case plans/results before ordinary integration in disposable repositories, so interrupted integration resumes without a new provider call.
+The planner reserves fourteen roles for six-source plans, so a twelve-role construction proposal must be raised to fourteen while retaining the aggregate 180-call ceiling.
+Implement/test the driver independently of experiment authorization; require an explicit execution opt-in and the pending human scope decision before any real pilot request.
+
+Prepared by Sue.
