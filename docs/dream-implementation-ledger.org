@@ -509,4 +509,15 @@ Add narrow optional validator permissions only for coordinator-validated tasks, 
 Reuse native role tracing, call-order checks, citation windows, no-op replay, accepted progress and atomic publication; preserve v1-v4 schemas, briefs and saved identities.
 Exercise the public seven-state lifecycle, returned review, human-authority rejection, supersession/archive preservation, fresh specific-history retrieval, replay, and both protocols before completing P5.
 
+* P6 reader-comparison grounding
+
+Reuse the existing fresh reader, exact frozen-source retrieval, native transport/cache/trace/lock machinery and byte limits.
+Keep the v1 reader's briefs, payloads, identities and cached replays unchanged.
+Add a separate opt-in v2 reader contract for the pilot's source-only, wiki-plus-search and wiki-only conditions, using one common brief/schema and enforced source/wiki availability.
+Wiki-only must reject original-source reads/searches before invoking the source interface; source-only must retain its existing wiki denial.
+Record actual archive delivery separately, repeated retrieval payload delivery across native turns, complete assignment/common-brief bytes, native usage and explicitly scoped elapsed time.
+Do not replace native token billing with byte estimates or report unknown currency as zero.
+The separately scoped pilot requires six independently authored held-out questions/rubrics per corpus, isolated from construction/readers, randomized condition order, exact corpus reproduction and an enforced-boundary canary before scoring.
+Prepare these operator artifacts before seeking the separate experiment authorization; do not infer permission to transmit private history or adjudicate an LSMS decision.
+
 Prepared by Sue.
