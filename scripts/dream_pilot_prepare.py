@@ -82,7 +82,7 @@ def prepare(blobs, output, *, model, seed=20261109):
         evaluator="Independent six held-out questions/rubrics per repository before construction; evaluator-only scoring after fresh answers.",
         isolation=boundary, seed=seed, reader_schedule=schedule,
         limits=dict(aggregate_elapsed_seconds=7200, aggregate_native_calls=180, reader_elapsed_seconds=120,
-            reader_role_calls=8, construction_role_calls=12, construction_elapsed_seconds=900,
+            reader_role_calls=8, construction_role_calls=14, construction_elapsed_seconds=900,
             currency_ceiling=None, currency_accounting="unknown; reject requests for an unenforceable dollar ceiling"),
         publication="Disposable candidates only; no changes to source repositories, private transcript admission or scientific decisions.",
         prerequisite="Separate scoped experiment authorization; this preparation performs no inference.")

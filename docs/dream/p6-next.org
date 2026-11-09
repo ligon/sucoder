@@ -38,7 +38,8 @@ No LSMS script was imported/executed and neither source repository was changed.
 
 Private preparation is =/tmp/sucoder-dream-p6-preparation-NjfocZ97/=.
 =corpus-verification.json= records the exact verified sources.
-=review/pilot-proposal.json= records the randomized 36-answer schedule, seed =20261109=, source identities, model, cases and proposed limits.
+=review-final/pilot-proposal.json= records the randomized 36-answer schedule, seed =20261109=, source identities, model, cases and proposed limits.
+The earlier =review/= proposal is superseded because its twelve-role builder allowance was below the six-source planner reservation; the final allowance is fourteen.
 The preparation's actual Landlock canary denied both read and write access to evaluator-only material using the same boundary class as native construction/readers.
 Preparation made zero provider requests.
 
@@ -51,14 +52,34 @@ poetry run python scripts/dream_pilot_prepare.py \
 
 The requested experiment uses only those twelve versioned passages, Codex =gpt-6.1-sol=, six independent held-out questions/rubrics per repository and three fresh-reader conditions, for 36 answers.
 It includes initial first-three-passage construction, six-passage incremental maintenance and a labeled seeded-error repair in each disposable repository.
-The proposed aggregate ceiling is two hours and 180 native calls; individual readers have two minutes/eight calls and builders fifteen minutes/twelve calls.
+The proposed aggregate ceiling is two hours and 180 native calls; individual readers have two minutes/eight calls and builders fifteen minutes/fourteen calls.
 The aggregate cap takes precedence over per-case allowances; exhausted allowances produce an inconclusive result.
 There is no enforceable dollar ceiling and currency is reported unknown.
 Do not add models/repetitions, admit private history, modify actual LSMS documents or adjudicate scientific decisions.
 
-* Execution work after the scope decision
+* Driver implementation and subsequent authorized execution
 
-If approved, implement the bounded experiment driver around the existing public planner/run/reader APIs.
+Implement and test the bounded experiment driver around the existing public planner/run/reader APIs while awaiting the scope decision; real inference requires approval.
+The implemented =scripts/dream_pilot_run.py= uses those existing APIs and rejects execution without =--execute=.
+It imports verified full blobs into disposable Git envelopes and verifies their resulting Git object IDs before any question role.
+Separate question/scoring roles reuse the original native Coordinator, schema checking, traces and private caches.
+The aggregate journal writes immutable reservations before transport and separate return/uncertain records afterward; resume reconstructs the original deadline/call allowance and cannot repeat a reservation.
+Completed question/grade artifacts retain their original attempt even when a later explicit attempt is requested for unfinished work.
+The final wiki revisions are frozen before any reader, and critical grading stops immediately with an immutable paired record.
+The report retains paired item scores and links to full answer/evidence/grade records, per-phase and cumulative construction usage, native accounting gaps, latency and controlled submitted bytes including unsuccessful attempts.
+Unknown native accounting prevents a positive pilot criterion result; currency remains unknown.
+Its complete protocol simulation covers both repositories, all three construction cases and all 36 reader answers, including zero-call resume and critical-stop persistence.
+These simulated grades establish orchestration behavior, not usefulness.
+
+After the pending scope is approved, the exact invocation is:
+
+#+begin_example
+poetry run python scripts/dream_pilot_run.py \
+  --proposal /tmp/sucoder-dream-p6-preparation-NjfocZ97/review-final/pilot-proposal.json \
+  --blobs /tmp/sucoder-dream-p6-preparation-NjfocZ97/blobs --execute
+#+end_example
+
+No real pilot role has been called.
 Preserve original source provenance when importing verified snapshots into disposable Git envelopes; an import commit is not the original source commit.
 Create independent question/rubric roles from only each selected source corpus before construction; freeze evaluator-only artifacts outside every native readable directory.
 Keep construction briefs free of questions, rubrics, worked examples, development answers and review reports.

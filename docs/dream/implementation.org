@@ -6,10 +6,10 @@
 * Full runtime charter status
 
 The full runtime objective remains incomplete.
-The native pipeline below is an implemented subset.
-On 2026-11-09, [[file:runs/sucoder-p1.org][the first real SuCoder run]] produced unintegrated candidate =635f040= from six real git passages; inspection found important selection and synthesis limitations.
-The [[file:workplan.org][charter-completion workplan]] now has substantive correction/synthesis active, followed by fresh-reader use, incremental maintenance, editorial/archive behavior and measured acceptance.
-Those capabilities are required work toward the original objective.
+P1-P5 have passed their engineering gates, including real SuCoder correction/synthesis, fresh-reader use, selective maintenance and editorial/archive behavior.
+The [[file:workplan.org][charter-completion workplan]] has P6 active for the scoped usefulness comparison and operator acceptance.
+See [[file:runs/sucoder-p5.org][the P5 acceptance report]] and [[file:p6-next.org][the concrete P6 scope and continuation]].
+Live Claude verification remains explicitly deferred; usefulness has not yet been measured.
 
 * Implemented slices: explicit evidence and native role publication
 
@@ -18,7 +18,7 @@ It freezes explicitly admitted local git selections or native Claude/Codex trans
 Frozen-plan validation, private snapshots, deterministic quotation fixtures, native Org subtree checks, output-bound receipts, atomic candidate publication, and local run status are implemented.
 Native Claude and Codex adapters now default to a source-grounded wiki author/editor with independent whole-candidate review; legacy =--mode notes= preserves the earlier extractor/verifier/grouping contract.
 Wiki mode can revise existing topics while preserving their anchors and current editorial task subtrees.
-Automatic receipt reuse in planning, general editorial validation and generic native adapters remain subsequent work.
+Accepted receipt reuse is evaluated at execution, while planning remains inference-free; generic native adapters remain subsequent work.
 Bounded deterministic wiki/source retrieval and fresh native readers are implemented; real-reader engineering acceptance is tracked in P3.
 The planning manifest retains =execution.available: false= and =prior_wiki.progress: not_evaluated=: planning itself does not execute roles or establish accepted progress.
 Original git-only frozen plans remain compatible, including their legacy execution-reason text.

@@ -21,6 +21,13 @@ P6 now has isolated v2 comparison readers, a verified 45,708-byte two-corpus sco
 The user was asked to authorize the concrete two-hour/180-call experiment or leave it pending; no answer has yet arrived in this continuation.
 Continue independent package/operator verification and retain that required decision; do not start dependent pilot inference without approval.
 See [[file:../docs/dream/p6-next.org][the exact P6 continuation and private artifacts]]; the full goal remains incomplete.
+
+The bounded experiment driver is now implemented at =scripts/dream_pilot_run.py=, with explicit execution opt-in, immutable aggregate call/deadline journals, isolated frozen question/grade roles, source-import verification, all three construction stages and all 36 fresh-reader conditions.
+The full protocol experiment and zero-call explicit-attempt resume pass; a critical-error test stops after the first grade and cannot be skipped by resuming.
+Guard/preparation tests passed twelve cases and mypy with explicit package bases passed four runtime/script modules.
+The final proposal is =/tmp/sucoder-dream-p6-preparation-NjfocZ97/review-final/pilot-proposal.json=; its builder cap is fourteen, within the unchanged aggregate two-hour/180-call scope.
+Do not use the superseded twelve-role =review/= proposal.
+No real pilot question, builder, reader or grader call has been made; retain the pending scope decision and the explicit live-Claude deferral.
 P2 passed real-source authorship/correction; P3 passed fresh-reader use of that correction, synthesis and direct lookup.
 P5 completes the editorial/archive lifecycle; P6 verifies both native harnesses and the separately scoped usefulness pilot.
 The user emphasized delegating knowledge/editorial judgment to a capable agent; let it write and revise explanations while the coordinator enforces evidence, authority, budgets, validation and publication boundaries.
