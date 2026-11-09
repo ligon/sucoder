@@ -126,12 +126,14 @@ def test_confined_remote_launch_stages_toml_context_inside_batch(tmp_path, monke
     staged = next(c["input"] for c in calls if c["args"][0] == "sh" and "prelude-" in c["args"][2])
     assert staged == "developer_instructions=" + json.dumps(prelude)
     batch = next(c["input"] for c in calls if c["args"][0] == "sh" and "job-sample.sh" in c["args"][2])
-    assert "sucoder-codex-remote" in batch
-    assert "--remote-control" in batch
-    assert "__SUCODER_PRELUDE_FROM_FILE__" not in batch
-    assert "$(not-a-command)" not in batch
-    assert "prelude-sample.txt" in batch
+    pane = next(c["input"] for c in calls if "sucoder-pane-script" in c["args"])
+    assert "sucoder-codex-remote" in pane
+    assert "--remote-control" in pane
+    assert "__SUCODER_PRELUDE_FROM_FILE__" not in pane
+    assert "$(not-a-command)" not in pane
+    assert "prelude-sample.txt" in pane
     assert "tmux -L" in batch
+    assert "sucoder-codex-remote" not in batch
 
 
 @pytest.fixture
