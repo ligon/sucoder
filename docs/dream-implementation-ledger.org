@@ -442,4 +442,27 @@ Successor receipts bind their own complete normalized source revision/current ou
 Test both transcript kinds crossed with both harness protocols, alias changes, rewritten prefixes, edited outputs, boundary calls, frozen replay, interruptions and unchanged zero-call reruns.
 Use sanitized opt-in Codex evidence for a live append check; live Claude and the separate usefulness pilot remain deferred.
 
+* Accepted transcript-prefix verification
+
+- OK (sections 2 and 5) :: Prefix matching reuses the shared accepted-review/output envelope, exact source snapshots, native normalizer, cached Git-object checker and publisher.
+  Required unchanged output context is validated from the frozen tree while the private-index write set remains limited to actual changes.
+- OK (sections 3 and 4) :: All parent dependencies, complete-line raw/normalization identity, full coverage and required outputs must validate before reuse.
+  Successors bind the complete normalized revision and delivered prior decisions/navigation; private no-ops do not establish new shared coverage.
+  Missing/corrupt cached proofs fail status, changed required context requests reconciliation and atomic ref transactions reject peer advances.
+- Compatibility :: Empty-prefix v4 payloads/identities and v1/v2/v3 briefs/schemas remain unchanged.
+  Actual saved SuCoder v2 candidate, accepted-Git proof and v3 no-op statuses replayed without inference.
+- Tests :: The final seven-module dream regression passed 114 cases, including eighteen prefix cases crossing both formats and both harness protocols.
+  Mypy passed seven runtime/script modules and native Org design checks passed.
+  The completed full suite passed 2,796 cases, skipped eight and failed exactly the same 55 baseline nodes, with no added/removed failures.
+  Its authoritative log and exact node comparison are recorded in [[file:dream/runs/sucoder-p4-append.org][the append report]]; an earlier interrupted suite is excluded.
+- Live evidence :: Codex on code =2b93784= updated the same sanitized procedure topic from a 431-byte suffix after a validated 505-byte prefix, requested no older raw context and preserved both command flags and unverified-execution qualifications.
+  Initial/update each needed author, one mechanical link repair and independent review: six calls, 72,475 input and 3,782 output tokens, currency unknown.
+  The fresh accepted rerun forbade provider invocation and passed with zero calls; source-byte savings do not establish a cumulative cost/usefulness gain.
+- Scope :: Staged detection covered eleven expected files and 44 symbols across 49 flows, with CRITICAL aggregate risk through shared dream paths.
+  Compatibility/discovery impact was HIGH and reported before edits; publication was LOW with three resolved direct callers.
+
+No anchored CONTRADICTION or REINVENTION remains in this prefix slice.
+P4's engineering gate is DONE; P5 is ACTIVE and P6 scoped usefulness remains outstanding.
+Live Claude remains explicitly deferred.
+
 Prepared by Sue.
