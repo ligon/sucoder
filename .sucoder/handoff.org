@@ -8,6 +8,12 @@
 
 This section is authoritative; the later milestone sections retain chronological recovery history.
 
+The pilot scope question remains unanswered after three consecutive goal turns.
+The independent implementation/audit work is complete, both verification processes are terminal, the worktree is clean and the reviewed pilot's execution directory does not exist.
+The remaining work is blocked by that required scope decision and subsequent usefulness assessment; do not start another review/test loop or infer approval from an automatic goal continuation.
+The reviewed scope remains 36 answers over the twelve frozen passages, Codex =gpt-6.1-sol=, at most two hours/180 native invocations, with currency unknown.
+Resume dependent pilot work only after the user's scope decision; keep the explicit live-Claude deferral.
+
 Independent review identified two pilot-resume defects: execution-contract drift and unjournaled seed commits.
 Both are corrected at =c753aed= and accepted after independent reinspection.
 A final confirmed retry-order defect is corrected at =6117288=: unusable schema-valid question decks/grades no longer become frozen before semantic checks; valid critical grades remain immutable.
