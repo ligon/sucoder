@@ -367,6 +367,8 @@ Transcript deltas and bounded prior selection remain subsequent P4 work.
   Symbol-specific shared preparation and compatibility changes were HIGH and reported before edits; direct diff inspection confines production changes to dream modules.
 
 No anchored CONTRADICTION or REINVENTION remains in this curation slice.
-A live explicit SuCoder maintenance pass is next; transcript deltas, bounded prior selection, P5 and P6 remain outstanding.
+The live explicit SuCoder maintenance pass returned unchanged after full-source author/reviewer inspection, without candidate/ref/index/worktree changes.
+Its inference-forbidden replay passed with zero new provider calls; [[file:dream/runs/sucoder-p4-noop.org][the exact report]] records identity, rationale, usage and private artifacts.
+Transcript deltas, bounded prior selection, P5 and P6 remain outstanding; [[file:dream/p4-next.org][continuation constraints]] preserve the original scope.
 
 Prepared by Sue.
