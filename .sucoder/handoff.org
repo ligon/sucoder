@@ -8,10 +8,21 @@
 
 This section is authoritative; the later milestone sections retain chronological recovery history.
 
+Current live process: grading-only v2 continuation in exec session =78908=, log =/tmp/sucoder-dream-p6-live-grading-v2.txt=, implementation =1f1b17e=.
+All six construction stages passed and =final-wiki.json= freezes both disposable wikis.
+The original comparison stopped after 27 completed calls because two complete negative grades used =failures= for missing answer details, which the Coordinator correctly treats as incomplete role execution.
+Both retained grades give two of four rubric items and no critical errors for the same frozen answer.
+Do not restart the original =dream_pilot_run.py= process; its sessions =81805=, =21480=, =92044= and =38055= are terminal.
+=scripts/dream_pilot_grade_continue.py= clarifies only grader execution failures in a separate frozen contract, retains all original grades/answers and regrades every case under that contract.
+It preserves the unchanged parent runtime, question decks, final wiki revisions, original native-call journal and original two-hour deadline; any previously frozen critical grade prevents continuation.
+Five targeted tests and mypy passed before live continuation; =/tmp/sucoder-dream-p6-grading-v2-tests-final.txt= records the 107.95-second full fixture/replay check.
+Poll =78908= and the journal below; final comparison output will be =execution/report-grading-v2.json=, with =paired-v2-NN.json= case records.
+No runtime/script edits are permitted during this continued comparison.
+
 The user approved the pilot on 2026-11-09 at approximately 19:03 UTC: "Pilot approved".
 The approved scope is 36 answers over the twelve frozen passages, Codex =gpt-6.1-sol=, at most two hours/180 native invocations, with currency unknown.
 Independent implementation/audit work is complete and the approved proposal is intact; its execution directory did not exist at the pre-run check.
-Run the committed driver against =/tmp/sucoder-dream-p6-preparation-NjfocZ97/review-final/pilot-proposal.json= and the sibling =blobs/= directory, retaining its aggregate journal across any inspected explicit retry.
+The approved proposal is =/tmp/sucoder-dream-p6-preparation-NjfocZ97/review-final/pilot-proposal.json= with the sibling =blobs/= directory; retain its aggregate journal across any inspected explicit retry.
 The previous scope blocker is resolved; keep the explicit live-Claude deferral and do not change runtime code once the comparison begins.
 The approved pilot started on commit =7e8487b= at approximately 19:03 UTC, exec session =81805=, with log =/tmp/sucoder-dream-p6-live-pilot.txt=.
 That first process exited 3 after five completed calls: the SuCoder repair emitted three references for =delivery-and-text= and failed the duplicate-reference guard; no candidate was published.
