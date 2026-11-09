@@ -611,7 +611,7 @@ Staged detection after refresh reports seventeen changed symbols across seven fl
 Native Org validation includes the new runtime audit, and packaged runtime helpers remain byte-identical to the verified wheel after the pilot-only fixes.
 No anchored contradiction from that independent review remains.
 The user subsequently approved the scope, and the real pilot completed all 36 attempts; [[file:dream/runs/sucoder-p6.org][the P6 report]] records its exact evidence and limits.
-P1-P5 are DONE engineering gates; P6 is REVIEW pending the user's usefulness assessment, with live Claude explicitly deferred.
+P1-P6 are complete under the user's recorded acceptance of explanatory synthesis and explicit live-Claude deferral.
 
 * Completed pilot verification against this ledger
 
@@ -624,13 +624,20 @@ P1-P5 are DONE engineering gates; P6 is REVIEW pending the user's usefulness ass
   Mypy passes both added scripts; actual failure collection made zero calls and actual completed-run replay matched exactly with inference forbidden.
 - Measured evidence :: The 71.2-minute pilot reports zero graded critical errors and two retained wiki-only failures.
   Wiki plus search scores 23/24 versus 22/24 for SuCoder and 25/26 versus 23/26 for LSMS, with a three-item synthesis/caveat gain meeting the original exploratory quality alternative.
-  The amended collector conservatively classifies the full run inconclusive; context savings are unsupported and human assessment remains necessary.
+  The amended collector conservatively classifies the full run inconclusive; context savings are unsupported and the user's later operating-mode selection is recorded separately.
   Reported usage is 2,003,683 input and 87,760 output tokens, with currency/internal-retry accounting unknown.
 - Retention :: The report hash is =7ca6c5e91f5475e483fb9314bf3fd465a20b580c8bb10edcaa24431b2de9c35d=.
   Exact sources, runtime, traces and test/operator logs are retained privately at =/home/coder/.sucoder/logs/dream-pilots/2026-11-09-p6-7ca6c5e9/=, with a per-file checksum manifest.
 
 The full-suite result above predates these additive pilot scripts; seven focused cases cover the new scripts and no new whole-suite claim is made.
-OK against sections 2-5; remaining acceptance is human usefulness review and the user's explicit live-Claude deferral.
+OK against sections 2-5; the user selected explanatory synthesis alongside source search, completing the requested human disposition.
 Live Claude remains explicitly deferred and is not counted as a passed native acceptance test.
+
+The user explicitly permits dreaming to synthesize new explanations.
+Reuse the implemented default v5 author/editor and its =inference= references rather than changing frozen briefs or adding a new backend/configuration switch.
+Explanations may combine sources and choose new abstractions without a verbatim source sentence; exact citations bind the evidence, while independent review assesses the inference and its qualifications.
+The README, workplan, implementation status and handoff now record this accepted mode; frozen pilot results and costs remain intact.
+After the selection, the existing public cross-source correction/synthesis regression passed for both harness protocols (two cases), and native Org export/link/archive validation passed.
+These are documentation/disposition changes; no runtime contract, configuration or model call was added.
 
 Prepared by Sue.
