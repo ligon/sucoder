@@ -17,6 +17,8 @@ The approved pilot started on commit =7e8487b= at approximately 19:03 UTC, exec 
 That first process exited 3 after five completed calls: the SuCoder repair emitted three references for =delivery-and-text= and failed the duplicate-reference guard; no candidate was published.
 After inspecting the completed trace, an explicit =--attempt 2= resumed the same approved journal in exec session =21480=, log =/tmp/sucoder-dream-p6-live-pilot-attempt2.txt=.
 The two accepted question/rubric sets are reused; all five original calls and the original deadline remain counted.
+Attempt 2 exited 3 after eighteen calls: five construction stages passed, but the final LSMS reviewer mistyped its frozen input hash and was rejected before publication.
+The exact completed trace was inspected; explicit attempt 3 now runs in exec session =92044=, log =/tmp/sucoder-dream-p6-live-pilot-attempt3.txt=, with the same accepted question sets, prior completed stages, all eighteen original calls and original deadline.
 Its authoritative journal is =/tmp/sucoder-dream-p6-preparation-NjfocZ97/review-final/execution/=.
 Poll that confirmed handle and journal before any restart; an observation timeout is not a stopped run.
 
