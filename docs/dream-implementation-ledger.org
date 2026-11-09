@@ -108,6 +108,11 @@ The new contract must allow multi-source prose, edits to stable topic pages, rea
 Reuse private artifacts, native transport, source/citation checks, Org parsing and atomic publication; extend staged change validation instead of adding a separate execution/publication framework.
 Complete selected-evidence delivery does not require publishing every extracted statement, and mechanical source bindings do not certify salience or completeness.
 No user decision blocks P2; live Claude verification remains explicitly deferred.
+The first real-source editor run selected 24 unique exact quotations but copied unit-wide offsets for each, then timed out during its one repair; no candidate was published.
+Extend the wiki citation interface to accept unit IDs and exact quotations, resolving only unique literal UTF-8 matches to receipt offsets in the coordinator.
+Never use fuzzy matching or silently accept ambiguous quotes.
+Version this contract and preserve v1 run/status reconstruction; the original notes citation contract remains unchanged.
+An explicitly recorded attempt 2 will use the new contract, rather than repeating the uncertain repair request.
 
 The user authorized a working Codex and Claude implementation on 2026-11-08 after recovery of the two interrupted sessions.
 Continue through transcript admission, shared schema-bound roles, native capability checks, and candidate publication.
