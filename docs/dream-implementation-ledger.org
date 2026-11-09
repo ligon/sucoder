@@ -371,4 +371,16 @@ The live explicit SuCoder maintenance pass returned unchanged after full-source 
 Its inference-forbidden replay passed with zero new provider calls; [[file:dream/runs/sucoder-p4-noop.org][the exact report]] records identity, rationale, usage and private artifacts.
 Transcript deltas, bounded prior selection, P5 and P6 remain outstanding; [[file:dream/p4-next.org][continuation constraints]] preserve the original scope.
 
+* Bounded prior-selection grounding
+
+Extend the existing tree inventory/snapshot path with a versioned bounded-prior-v1 selection policy in new plans.
+Preserve old plans by explicitly reconstructing their original all-active-v1 policy when the new optional metadata is absent.
+A new helper selects index/settings and an explicit topic or source-associated current pages, then direct related topic links, within max_prior_bytes.
+Source associations are relevance hints only; accepted progress still requires the separate binding checks.
+Use native Org inventory for related links, and record omitted active-file ranges/catalog entries without loading their bodies into the model.
+When no relevant association exists, use the full wiki only if it fits; otherwise retain bounded orientation and let the next role contract request relevant context.
+Reject edits to existing unselected pages; preserve unchanged existing links to frozen unselected pages without inventing new targets.
+Add selected/omitted context metadata only for new-policy plans, preserving older role payloads exactly.
+No new global configuration or source admission is required.
+
 Prepared by Sue.
