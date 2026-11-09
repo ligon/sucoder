@@ -18,7 +18,8 @@ def identity(unit):
     return tuple(unit[key] for key in ("source_id", "repository_uuid", "kind", "byte_start", "byte_end", "sha256"))
 
 
-def compatible(plan, receipt, fd, harness, model, version, purpose):
+def envelope(plan, receipt, harness, model, version, purpose):
+    """The shared accepted-review/output contract, independent of a revision."""
     from . import dream_curate, dream_author
     contract = receipt.get("contract")
     briefs = {dream_wiki.CONTRACT: dream_wiki.BRIEFS, dream_curate.CONTRACT: dream_curate.BRIEFS,
@@ -27,54 +28,37 @@ def compatible(plan, receipt, fd, harness, model, version, purpose):
             receipt.get("repository_uuid") != plan["repository_uuid"] or receipt.get("harness") != harness or
             receipt.get("model") != model or receipt.get("native_version") != version or receipt.get("purpose") != purpose or
             receipt.get("brief_sha256") != digest(canonical(briefs))):
-        return set()
+        return False
     if contract in (dream_curate.CONTRACT, dream_author.CONTRACT) and receipt.get("decision") != "change":
-        return set()
+        return False
     dream_roles.validate_schema(receipt["review"], dream_author.schema("reviewer") if contract == dream_author.CONTRACT else dream_wiki.schema("reviewer"))
     if contract == dream_author.CONTRACT and receipt["review"]["requests"]:
-        return set()
+        return False
     if (receipt["review"]["verdict"] != "accept" or receipt["review"]["failures"] or
             any(f["severity"] == "blocking" for f in receipt["review"]["findings"])):
-        return set()
+        return False
     if not receipt.get("units") or not receipt.get("outputs") or not receipt.get("assignments"):
-        return set()
+        return False
     if receipt["assignments"][-1]["role"] != "reviewer" or not any(t["role"] == "author" for t in receipt["assignments"]):
-        return set()
+        return False
     for output in receipt["outputs"]:
         dream._object(output, ("path", "target", "sha256", "rule"))
         dream._path(output["path"])
         if not output["path"].startswith(".sucoder/wiki/") or not output["path"].endswith(".org"):
-            return set()
+            return False
         if output["rule"] != "file-utf8-v1" or not re.fullmatch(r"[0-9a-f]{64}", output["sha256"]):
-            return set()
-    admitted = {identity(unit): unit for unit in plan["units"]}
-    covered, old_ids = set(), set()
-    for old in receipt["units"]:
-        unit = admitted.get(identity(old))
-        if unit is None or old["kind"] != "git" or old["unit_id"] in old_ids:
-            return set()  # Every dependency must still be admitted unchanged.
-        old_ids.add(old["unit_id"])
-        raw = dream_run._read(fd, "evidence-" + unit["sha256"] + ".txt", unit["bytes"])
-        if len(raw) != unit["bytes"] or digest(raw) != unit["sha256"]:
-            raise DreamError("Reuse source snapshot differs from its frozen digest", 3)
-        cursor = unit["byte_start"]
-        chunks = sorted((c for c in receipt["coverage"] if c["unit_id"] == old["unit_id"]), key=lambda c: c["byte_start"])
-        for chunk in chunks:
-            lo, hi = chunk["byte_start"], chunk["byte_end"]
-            if (lo != cursor or not lo < hi <= unit["byte_end"] or
-                    chunk["extraction"] != "author_inline_delivered" or chunk["verification"] != "whole_candidate_review" or
-                    digest(raw[lo - unit["byte_start"]:hi - unit["byte_start"]]) != chunk["sha256"]):
-                return set()
-            cursor = hi
-        if cursor != unit["byte_end"]:
-            return set()
-        covered.add(unit["unit_id"])
-    return covered
+            return False
+    return True
+
+
+def compatible(plan, receipt, fd, harness, model, version, purpose):
+    if not envelope(plan, receipt, harness, model, version, purpose):
+        return set()
+    from . import dream_prefix
+    return set(dream_prefix.matches(plan, receipt, fd, allow_prefix=False) or {})
 
 
 def discover(plan, fd, source, harness, model, version, purpose, deadline):
-    if any(unit["kind"] != "git" for unit in plan["units"]):
-        return None  # Transcript deltas need their own normalization contract.
     valid, coverage, broken = [], set(), set()
     required = {unit["unit_id"] for unit in plan["units"]}
     inspected = 0

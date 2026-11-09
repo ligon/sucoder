@@ -14,6 +14,8 @@ Treat the native implementation below as an engineering milestone, not completio
 
 The canonical next-work queue is [[file:../docs/dream/workplan.org][the charter-completion workplan]].
 P1-P3 are DONE as engineering gates; P4 is ACTIVE.
+Current P4 code includes accepted transcript prefixes/appends and passes 114 focused dream tests; the final full-suite comparison and live sanitized append acceptance are the immediate verification steps.
+After those checks, continue to P5 editorial transitions/archives and P6 usefulness; the full goal remains incomplete.
 P2 passed real-source authorship/correction; P3 passed fresh-reader use of that correction, synthesis and direct lookup.
 P4-P5 complete selective incremental maintenance and the editorial/archive lifecycle; P6 verifies both native harnesses and the separately scoped usefulness pilot.
 The user emphasized delegating knowledge/editorial judgment to a capable agent; let it write and revise explanations while the coordinator enforces evidence, authority, budgets, validation and publication boundaries.
@@ -123,6 +125,25 @@ Broad dream regression results are recorded in the implementation ledger after c
 Next: implement accepted transcript prefixes and appended-range updates using this window/context contract.
 Preserve the new empty-prefix v4 identities when adding optional prefix manifests; do not edit frozen v1/v2/v3/v4 briefs or schemas.
 P4 remains ACTIVE and P5/P6 remain outstanding; live Claude remains explicitly deferred.
+
+* P4 accepted transcript prefixes and appends
+
+=dream_prefix.py= extends shared accepted progress to normalized transcripts and supplies optional prefix manifests to v4 authors.
+All parent dependencies, complete-line raw/normalization identity, accepted review and frozen required outputs must validate.
+Manifests bind canonical parent receipts and cached Git output objects; inference-free status validates those proofs without fetching context.
+The agent initially receives suffix text and bounded prior wiki, with pending/ambiguous boundary provenance and exact older-range requests when needed.
+The receipt accounts for the complete normalized current revision as accepted prefix plus delivered suffix and extra requested bytes.
+Successor bindings include delivered prior decisions/navigation; publication validates required unchanged pages from the frozen base while writing only the changed pages.
+Original empty-prefix v4 and v1/v2/v3 identities remain unchanged, including saved actual SuCoder status/progress/no-op replay.
+
+The final seven-module dream regression passed 114 tests, including eighteen prefix cases crossing both transcript kinds and both execution protocols.
+Cases include same-topic updates, alias changes, unchanged zero-call reuse, required-output and prefix/normalization reconciliation, pending/ambiguous calls, interruption, squash integration, peer races, targeted repair and private no-op non-acceptance.
+Mypy passed seven runtime/script modules; native Org design checks passed.
+The first expanded footprint test exposed a publisher assumption that all bound pages were changed; validation now includes frozen required pages, and the final regression passes.
+The first full-suite attempt was interrupted before completion; =/tmp/sucoder-dream-p4-full-suite-final.txt= is the authoritative final run currently being observed.
+Live sanitized acceptance is prepared in =scripts/dream_append_acceptance.py=; use explicit Codex =gpt-6.1-sol=, never probe the deferred Claude quota.
+The script integrates only its private fixture candidates and retains exact source/usage/proof records.
+P4 stays ACTIVE until those verification results are recorded; P5/P6 remain outstanding.
 
 * Implemented native workflow
 

@@ -2555,7 +2555,9 @@ Planning preserves the mirror's worktree, index, and refs.
 =sucoder dream ask MIRROR "QUESTION" --plan PLAN --base REVISION --harness codex --model MODEL= starts a fresh native reader that chooses bounded topic/source lookups and records its actual retrievals; Claude uses the same interface.
 =--source-only= provides the same source lookup interface without wiki access.
 These are explicit session entry commands; project instructions are not rewritten.
-A run with unchanged git evidence can return =already_integrated= without model calls or a new candidate when compatible accepted receipts and every required output binding validate.
+A run with unchanged admitted evidence can return =already_integrated= without model calls or a new candidate when compatible accepted receipts and every required output binding validate.
+For appended Claude/Codex transcripts, a compatible accepted complete-line prefix can be reused while the author/reviewer receive the new bytes and relevant existing wiki.
+Pending and ambiguous tool-call provenance crosses the cut; older source text remains available through bounded requests.
 Explicit maintenance bypasses that shortcut; changed required outputs request reconciliation.
 The author may also conclude that no useful edit is supported; independent review must accept that no-op before =unchanged= is recorded privately, with no candidate commit.
 New plans bound prior context to orientation, the named or source-associated topics and their direct neighbors.
@@ -2587,7 +2589,7 @@ Existing editorial task subtrees remain unchanged until explicit transition vali
 The quotation fixture and legacy notes mode remain append-only.
 Use =--attempt 2= to explicitly start a new native run after inspecting a failed attempt; completed role results are otherwise reused without another provider call.
 When a plan has multiple native runs, status requires =--run RUN_ID=.
-Planning and snapshots remain inference-free; transcript prefix reuse, editorial transitions/archival moves and generic adapters remain subsequent work.
+Planning and snapshots remain inference-free; editorial transitions/archival moves and generic adapters remain subsequent work.
 
 * Agent Skills Tracking
 

@@ -435,8 +435,23 @@ def publish(plan, fd, directory, sources, deadline, path, content, receipt, inde
                 raise DreamError("Wiki edits must be nonempty Org files within the companion")
         if sum(len(text.encode()) for text in files.values()) + len(canonical(receipt)) > plan["limits"]["max_proposal_bytes"]:
             raise DreamError("Wiki proposal exceeds max_proposal_bytes", 3)
-    parsed = _validate_org(files, deadline)
-    if not output_bindings_match(files, parsed, receipt["outputs"]):
+    required = dict(files)
+    for binding in receipt["outputs"]:
+        name = binding["path"]
+        if name not in required:
+            if wiki_files is None or name not in previous or not name.endswith(".org"):
+                raise DreamError("Required output is absent from the proposed and frozen wiki")
+            remaining = plan["limits"]["max_consolidation_bytes"] - sum(len(text.encode()) for text in required.values())
+            if remaining <= 0:
+                raise DreamError("Required wiki validation context exceeds max_consolidation_bytes", 3)
+            try:
+                required[name] = source.blob(previous[name], remaining).decode("utf-8")
+            except UnicodeError:
+                raise DreamError("Required frozen wiki output is not UTF-8") from None
+    if sum(len(text.encode()) for text in required.values()) > plan["limits"]["max_consolidation_bytes"]:
+        raise DreamError("Required wiki validation context exceeds max_consolidation_bytes", 3)
+    parsed = _validate_org(required, deadline)
+    if not output_bindings_match(required, parsed, receipt["outputs"]):
         raise DreamError("Native Org output differs from its receipt binding", 1)
     files[receipt_path] = canonical(receipt).decode() + "\n"
     registry = ".sucoder/wiki/sources.json"

@@ -5,7 +5,7 @@ Older writer/curator contracts remain unchanged and replayable.
 """
 from __future__ import annotations
 
-from . import dream_context, dream_curate, dream_roles, dream_run, dream_wiki as wiki
+from . import dream_context, dream_curate, dream_prefix, dream_roles, dream_run, dream_wiki as wiki
 from .dream import DreamError, canonical, digest
 
 
@@ -38,12 +38,15 @@ def schema(role):
 
 
 class Author(dream_curate.Curator):
-    def __init__(self, *args, source=None, **kwargs) -> None:
+    def __init__(self, *args, source=None, prefixes=None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.contract, self.editing, self.source = CONTRACT, EDITING, source
         self.run_id = digest(canonical([CONTRACT, self.run_id, BRIEFS, EDITING,
             {role: schema(role) for role in BRIEFS}, dream_context.CONTRACT,
             dream_context.MAX_REQUESTS, dream_context.SOURCE_BYTES, dream_context.SEARCH_BYTES]))
+        self.prefixes = [] if prefixes is None else prefixes
+        if self.prefixes:
+            self.run_id = digest(canonical([dream_prefix.CONTRACT, self.run_id, self.prefixes]))
         self.context: dream_context.Session
 
     def briefs(self):
@@ -54,8 +57,19 @@ class Author(dream_curate.Curator):
 
     def bundles(self):
         sources, prior = super().bundles()
+        if self.prefixes:
+            dream_prefix.validate(self.plan, self.fd, self.prefixes, self.harness, self.model,
+                self.expected_version, self.purpose, self.deadline)
         self.context = dream_context.Session(self.plan, self.fd, self.run_id, sources, prior, self.deadline, self.source)
         return sources, prior
+
+    def input_sources(self, sources):
+        return dream_prefix.views(sources, self.prefixes, self.context) if self.prefixes else sources
+
+    def bindings(self, pages, prior):
+        # Prefix-based conclusions depend on the delivered existing decisions
+        # and navigation too. Keep those frozen pages in the successor proof.
+        return super().bindings(dict(prior, **pages) if self.prefixes else pages, prior)
 
     def call(self, role, inputs):
         key = "verdict" if role == "reviewer" else "decision"
@@ -117,4 +131,10 @@ class Author(dream_curate.Curator):
     def prepare(self):
         pages, receipt = super().prepare()
         receipt["context"] = self.context.payload()
+        if self.prefixes:
+            receipt["reused_prefixes"] = self.prefixes
+            receipt["coverage"] = dream_prefix.coverage(self.plan, self.fd, self.prefixes)
+            reused = sum(entry["byte_end"] for entry in self.prefixes)
+            receipt["source_delivery"] = dict(initial_bytes=sum(unit["bytes"] for unit in self.plan["units"]) - reused,
+                accepted_prefix_bytes=reused, requested_bytes=self.context.used["source"])
         return pages, receipt

@@ -23,6 +23,12 @@ def request_schema():
         start=dict(type="integer", minimum=0), end=dict(type="integer", minimum=0)))
 
 
+def verify_blob(raw, oid):
+    algorithm = "sha1" if len(oid) == 40 else "sha256"
+    if hashlib.new(algorithm, b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest() != oid:
+        raise DreamError("Cached wiki context differs from its frozen Git object", 3)
+
+
 class Session:
     def __init__(self, plan, fd, run_id, sources, prior, deadline, source=None):
         self.plan, self.fd, self.run_id = plan, fd, run_id
@@ -44,9 +50,7 @@ class Session:
                 raise DreamError("Status cannot fetch missing frozen context", 3) from None
             raw = self.source.blob(oid, dream_run.MAX_PLAN_BYTES)
             dream_run._store(self.fd, name, raw)
-        algorithm = "sha1" if len(oid) == 40 else "sha256"
-        if hashlib.new(algorithm, b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest() != oid:
-            raise DreamError("Cached wiki context differs from its frozen Git object", 3)
+        verify_blob(raw, oid)
         try:
             raw.decode()
         except UnicodeError:

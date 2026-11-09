@@ -221,7 +221,7 @@ The author, reviewer and repair roles may request frozen source ranges/literal s
 Requests cannot admit new sources or read current worktree files.
 At most twelve requests share the run's role/time/output limits, the prior-context allowance and an extra 32 KiB source-delivery allowance; active-topic search also has a cumulative 2 MiB scan allowance.
 Only a full active-topic response authorizes editing that page; search snippets and archive sections remain read-only.
-Both author and independent reviewer receive the admitted evidence and accumulated context; final-page review checks material omissions, unsupported relationships, human authority and essential operational qualifications.
+Both author and independent reviewer receive the newly delivered evidence, validated accepted-prefix provenance when applicable and accumulated context; final-page review checks material omissions, unsupported relationships, human authority and essential operational qualifications.
 Exact request/response traces and byte accounting enter the receipt; frozen wiki blobs are cached privately by Git identity for inference-free status.
 Call-order bindings prevent changed cached context from silently starting a different paid assignment during resume.
 Saved v1/v2/v3 writer and no-op runs retain their original briefs, schemas and replay identities.
@@ -257,23 +257,46 @@ Inference-free status replays the saved contract and validates outputs after ord
 This conservative binding will be refined for selective claim-level reuse in P4.
 Legacy notes/fixture receipts continue using their original contract and subtree rules.
 
-* Accepted shared progress: first incremental slice
+* Accepted shared progress and transcript appends
 
 Before wiki inference, execution inspects compatible changed wiki-v2/v3/v4 receipts in the frozen designated integration tree.
-The current shortcut supports complete unchanged git selections; it does not yet reuse transcript prefixes or partially changed dependencies.
-Every receipt dependency must still be admitted with the same repository/source identity, selected range and exact bytes.
+The unchanged shortcut supports complete unchanged Git selections and normalized Claude/Codex transcripts.
+Every receipt dependency must still be admitted with the same repository/source identity, selected range, exact bytes and normalized interpretation when applicable.
 It verifies complete chunk coverage, the accepted final review, native harness/model/build, brief and purpose, and every required output binding.
 Source commit IDs may advance while the exact selected source bytes remain unchanged; reused coverage retains the original receipt's provenance.
 A candidate ref or a receipt without valid outputs cannot establish accepted progress.
-Receipt inspection is bounded to 2 MiB within the run deadline, and selected proof records are bounded by newly covered units.
+Each receipt-discovery scan is bounded to 2 MiB within the run deadline, and selected proof records are bounded by newly covered units.
 
 Successful reuse returns =already_integrated=, zero model invocations and no new candidate/topic.
 It records a private =accepted-wiki-progress-v1= proof referencing the accepted receipt digests; inference-free status reconstructs that proof and checks the current integration tree.
 Changing a required output, receipt or repository UUID reports reconciliation, including changes outside Org subtrees.
 Missing original evidence is not inferred from shared metadata.
 =--maintenance= with =--topic= bypasses the shortcut for an explicit checked repair using existing evidence.
-Transcript delta reuse remains P4 work; reviewed no-op decisions, deterministic bounded prior selection and agent-requested context are implemented.
-These slices do not complete that gate.
+For appended transcripts, =accepted-transcript-prefix-v1= selects the longest compatible accepted prefix per logical source, independent of local path/unit aliases.
+Every parent dependency must still match, its selected raw prefix must end at a complete JSONL line and have the same SHA-256 and normalized interpretation, and all required outputs must validate at the frozen integration tree.
+Rewritten/shrunk prefixes, changed normalization and required-output edits request explicit maintenance; unknown or incomplete metadata never establishes progress.
+Canonical parent receipts and required output blobs are cached privately and checked against the frozen Git inventory during inference-free replay.
+An optional compact manifest binds those proofs into the v4 native spec/run identity; empty-prefix v4 runs keep their original payloads and identities.
+
+The author/reviewer initially receive only the appended source window plus relevant prior wiki.
+The coordinator retains complete admitted snapshots for validation and bounded older-source requests.
+Native record ranges, pending calls at the cut and current ambiguous/orphan/pending metadata retain provenance without exposing omitted raw arguments or treating tool reports as successful execution.
+Exact quotes must occur uniquely among actually delivered windows; receipts partition all selected bytes into accepted-prefix reuse and actual new delivery and report extra requested bytes separately.
+Successor receipts bind the complete current normalized source revision and the changed pages plus delivered prior decisions/navigation they depend on.
+Publication validates required unchanged pages against the frozen base without adding them to the write set; atomic integration-ref verification protects peer contributions.
+After ordinary or squash integration, a new plan can reuse the complete accepted appended revision without loading earlier role caches or invoking a provider.
+A private append no-op remains private and cannot establish shared coverage of its newly examined suffix.
+
+Sanitized live append acceptance uses an explicit provider and a disposable private repository:
+
+#+begin_example
+poetry run python scripts/dream_append_acceptance.py \
+  --harness codex --model MODEL --kind codex-jsonl
+#+end_example
+
+The script ordinarily integrates only its fixture candidates, checks stable topic update and suffix-only initial delivery, retains the evidence/usage privately and forbids provider calls during the unchanged accepted rerun.
+It does not discover real transcripts or run the documented sample procedure.
+Live Claude verification remains explicitly deferred.
 
 * Bounded readers and explicit session entry
 
