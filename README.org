@@ -2555,6 +2555,8 @@ Planning preserves the mirror's worktree, index, and refs.
 =sucoder dream ask MIRROR "QUESTION" --plan PLAN --base REVISION --harness codex --model MODEL= starts a fresh native reader that chooses bounded topic/source lookups and records its actual retrievals; Claude uses the same interface.
 =--source-only= provides the same source lookup interface without wiki access.
 These are explicit session entry commands; project instructions are not rewritten.
+A run with unchanged git evidence can return =already_integrated= without model calls or a new candidate when compatible accepted receipts and every required output binding validate.
+Explicit maintenance bypasses that shortcut; changed required outputs request reconciliation.
 
 =sucoder dream run --harness fixture= exercises complete chunk delivery and prepares an attributed-quotation candidate with output-bound receipts; =sucoder dream status --plan= checks its candidate ref and integration bindings.
 The fixture invokes no model and establishes quotation fidelity only.

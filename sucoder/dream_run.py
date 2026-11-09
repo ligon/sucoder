@@ -378,6 +378,26 @@ def output_bindings_match(files, parsed, bindings):
     return True
 
 
+def bound_outputs(source, base, bindings, deadline):
+    """Read and validate required outputs in one pinned integration tree."""
+    files = {}
+    try:
+        for binding in bindings:
+            if binding["path"] in files:
+                continue
+            blob = source.entry(base, binding["path"])
+            if blob is None:
+                return False
+            files[binding["path"]] = source.blob(blob).decode("utf-8")
+        return output_bindings_match(files, _validate_org(files, deadline), bindings)
+    except UnicodeError:
+        return False
+    except DreamError as exc:
+        if exc.exit_code not in (1, 2):
+            raise
+        return False
+
+
 def publish(plan, fd, directory, sources, deadline, path, content, receipt, index_entry,
             *, receipt_name="fixture-receipt.json", result_name="run.json", wiki_files=None):
     """Shared atomic publication; wiki edits are validated before this call."""
@@ -480,6 +500,13 @@ def status(config, mirror, plan_path, run_id=None):
         native = run_id != fixture_id
         if native and run_id not in native_specs:
             raise DreamError("Requested native run does not exist")
+        if native:
+            spec = dream._json(_read(fd, "native-" + run_id + "-spec.json", 16384))
+            if spec.get("contract") == "accepted-wiki-progress-v1":
+                if spec.get("run_id") != run_id:
+                    raise DreamError("Shared-progress specification differs from its storage identity")
+                from . import dream_progress
+                return dream_progress.restore(config, mirror, plan, fd, spec, deadline)
         try:
             commit = _read(fd, "candidate-" + run_id + ".txt", 128).decode().strip()
         except FileNotFoundError:
@@ -516,24 +543,8 @@ def status(config, mirror, plan_path, run_id=None):
             state = "needs_reconciliation"
             evidence = dict(integration_commit=base, receipt_blob=oid, contract=expected["contract"])
             if source.blob(oid, MAX_PLAN_BYTES) == canonical(expected) + b"\n":
-                files = {}
-                try:
-                    for binding in expected["outputs"]:
-                        if binding["path"] in files:
-                            continue
-                        blob = source.entry(base, binding["path"])
-                        if blob is None:
-                            break
-                        files[binding["path"]] = source.blob(blob).decode("utf-8")
-                    else:
-                        parsed = _validate_org(files, deadline)
-                        if output_bindings_match(files, parsed, expected["outputs"]):
-                            state = "integrated_candidate" if native else "integrated_fixture"
-                except UnicodeError:
-                    pass  # A human replacement no longer matches the Org contract.
-                except DreamError as exc:
-                    if exc.exit_code not in (1, 2):
-                        raise
+                if bound_outputs(source, base, expected["outputs"], deadline):
+                    state = "integrated_candidate" if native else "integrated_fixture"
         candidate = source.git("rev-parse", "--verify", run["candidate_ref"], missing=True)
         candidate_state = ("missing" if candidate is None else
                            "available" if candidate.decode().strip() == run["candidate_commit"] else "changed")

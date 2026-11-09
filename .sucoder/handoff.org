@@ -49,12 +49,23 @@ P3 is committed at =73a0e7a=: =sucoder/dream_reader.py= provides =dream read= an
 The CLI includes =dream ask= and =--source-only= for the identical source retrieval interface without wiki access.
 All fifteen reader and fresh-reader protocol cases pass, including both harnesses, cumulative budgets and inference-free resume; mypy passes all three reader/CLI files.
 The final P3 full suite passed 2743 tests, skipped eight and failed 55, logged at =/tmp/sucoder-dream-p3-full-suite.txt=.
-Compare its failing node IDs to the existing 55-case baseline before claiming no regressions; native Org validation passed.
+The failing node IDs exactly match the existing 55-case baseline (no additions or removals); native Org validation and wheel/runtime-asset inclusion passed.
 All three live fresh-reader questions passed inspection; see [[file:../docs/dream/runs/sucoder-p3.org][the exact reader report]] and =reader-correction.json=, =reader-synthesis.json= and =reader-lookup.json= in the disposable copy.
 Each requested/cited the corrected topic and original sources, using 1,156 orientation bytes, 9,556 topic bytes and 7,572-17,160 source bytes.
-Immediate next step: finish the full-suite/baseline comparison, commit the P3 acceptance record, then P4 shared receipt reuse, append/targeted maintenance, no-op convergence and bounded prior selection.
+Immediate next step: complete and verify the P4 first shared-reuse slice below, then appended-range processing, no-op convergence and bounded prior selection.
+P3 acceptance is committed at =edd57ea=; the exact baseline failure comparison and wheel checks passed.
 P5 task/archive transitions remain subsequent work; do not mark the full charter complete.
-P4 selective accepted-receipt reuse and P5 editorial/archive transitions remain unimplemented, and live Claude remains explicitly deferred.
+P4 is now in progress: uncommitted =sucoder/dream_progress.py= discovers compatible accepted wiki-v2 receipts for unchanged git selections, checks all source dependencies/coverage and output bindings, and returns =already_integrated= with zero model calls and no candidate.
+=dream_run.bound_outputs= factors the existing status output check; run/status have narrow shared-progress hooks, retaining older contracts.
+Reuse has private replayable proofs and reports reconciliation after a required output, receipt or repository identity changes.
+The final combined regression run passed 111 tests, including nine reuse cases; mypy passed all five changed/runtime reader files.
+Its log is =/tmp/sucoder-dream-p4-focused.txt=.
+The identity-change test and 2 MiB metadata inspection cap are included in that final run.
+Final checks also passed the purpose/accepted-reuse cases and a new private-spec filename-substitution regression, plus mypy and native Org validation.
+The filename check prevents a valid reuse proof from being presented under another run ID.
+Next: finish checks/review, update implementation docs, commit this first P4 slice, then ordinarily integrate the reviewed actual SuCoder candidate b6c59f1 into this feature branch (not the disposable seeded wiki) and verify real accepted reuse with no provider calls.
+Remaining P4: transcript prefix/appended-range reuse, bounded deterministic prior selection, targeted repairs and no-op decisions; P5 task/archive transitions and P6 scoped usefulness also remain.
+Live Claude remains explicitly deferred.
 
 * Implemented native workflow
 

@@ -237,6 +237,23 @@ Inference-free status replays the saved contract and validates outputs after ord
 This conservative binding will be refined for selective claim-level reuse in P4.
 Legacy notes/fixture receipts continue using their original contract and subtree rules.
 
+* Accepted shared progress: first incremental slice
+
+Before wiki inference, execution inspects compatible =source-grounded-wiki-v2= receipts in the frozen designated integration tree.
+The current shortcut supports complete unchanged git selections; it does not yet reuse transcript prefixes or partially changed dependencies.
+Every receipt dependency must still be admitted with the same repository/source identity, selected range and exact bytes.
+It verifies complete chunk coverage, the accepted final review, native harness/model/build, brief and purpose, and every required output binding.
+Source commit IDs may advance while the exact selected source bytes remain unchanged; reused coverage retains the original receipt's provenance.
+A candidate ref or a receipt without valid outputs cannot establish accepted progress.
+Receipt inspection is bounded to 2 MiB within the run deadline, and selected proof records are bounded by newly covered units.
+
+Successful reuse returns =already_integrated=, zero model invocations and no new candidate/topic.
+It records a private =accepted-wiki-progress-v1= proof referencing the accepted receipt digests; inference-free status reconstructs that proof and checks the current integration tree.
+Changing a required output, receipt or repository UUID reports reconciliation, including changes outside Org subtrees.
+Missing original evidence is not inferred from shared metadata.
+=--maintenance= with =--topic= bypasses the shortcut for an explicit checked repair using existing evidence.
+General transcript delta reuse, deterministic bounded prior selection and agent no-op decisions remain P4 work; this first slice does not complete that gate.
+
 * Bounded readers and explicit session entry
 
 #+begin_example

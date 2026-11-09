@@ -293,6 +293,7 @@ def run(config, mirror, plan_path, harness, model, attempt=1, mode="wiki", purpo
     if mode != "wiki" or harness not in ("codex", "claude"):
         raise DreamError("Use native codex/claude with mode wiki or notes")
     dream._text(model, "Explicit --model")
+    dream._text(purpose, "dream purpose")
     if type(attempt) is not int or not 1 <= attempt <= 1000000:
         raise DreamError("Invalid native attempt number")
     with dream_run._directory(config, plan_path) as (fd, directory):
@@ -304,6 +305,11 @@ def run(config, mirror, plan_path, harness, model, attempt=1, mode="wiki", purpo
         deadline = time.monotonic() + plan["limits"]["max_elapsed_seconds"]
         _, source_readers = dream_run._snapshot(config, mirror, plan, fd, deadline)
         transport = transport or dream_native.Transport(harness, deadline)
+        from . import dream_progress
+        reused = dream_progress.try_reuse(plan, fd, source_readers[mirror], harness, model,
+                                         transport.version, purpose, deadline)
+        if reused is not None:
+            return reused
         coordinator = WikiCoordinator(plan, fd, harness, model, deadline, transport, attempt=attempt, purpose=purpose)
         prefix = "native-" + coordinator.run_id
         dream_run._store(fd, prefix + "-spec.json", canonical(dict(contract=CONTRACT, run_id=coordinator.run_id,
