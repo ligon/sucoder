@@ -409,4 +409,23 @@ The independent reviewer receives the complete accumulated delivery trace, and r
 Retain the old no-op footprint and accepted-progress requirements, with contract-aware replay and compatibility.
 Accepted transcript prefix selection remains the next extension; this context service must support exact delivered windows without equating private no-ops to shared progress.
 
+* Frozen author-context verification
+
+- OK (sections 2 and 5) :: V4 extends the existing curation/role/publication paths through two small bundle hooks.
+  Source searches reuse the reader's exact literal search and UTF-8 bounding, while topic/archive reads reuse frozen Git objects and native Org parsing.
+- OK (sections 3 and 4) :: Full active-topic delivery is required before editing an omitted existing page.
+  Snippets and archive entries remain read-only, every request/response enters independent review and the receipt, and cumulative allowances bound delivery.
+  Git-object checks and immutable call-order records reject altered context before status or automatic resume can invent a different paid assignment.
+- Compatibility :: An explicit original-v3 no-op fixture passes, and actual saved v2 candidate, accepted-git reuse and v3 no-op statuses replayed without inference.
+  Original v1/v2/v3 briefs, schemas, default Org inventories and empty legacy payloads remain unchanged.
+- Tests :: The six-module dream regression passed 94 cases; the final eight context cases also passed after the call-order guard and UTF-8 replay check.
+  Both harness protocols cover omitted-topic correction, independent archived-history review and cached replay; this is fixture evidence, not live Claude verification.
+  Mypy passed six runtime modules and final native Org design checks passed.
+  The latest full-suite/baseline comparison preceded these P4 slices; no current full-suite-green claim is made.
+- Scope :: Staged detection covered 14 expected files and 58 symbols across 47 flows, with CRITICAL aggregate risk through shared dream paths.
+  Shared no-op value/receipt compatibility impacts were HIGH and reported before edits; the production diff is confined to dream modules.
+
+No anchored CONTRADICTION or REINVENTION remains in this context slice.
+P4 remains ACTIVE pending accepted transcript prefixes/appends; P5/P6 and the explicit live Claude deferral remain in force.
+
 Prepared by Sue.
