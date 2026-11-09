@@ -465,4 +465,16 @@ No anchored CONTRADICTION or REINVENTION remains in this prefix slice.
 P4's engineering gate is DONE; P5 is ACTIVE and P6 scoped usefulness remains outstanding.
 Live Claude remains explicitly deferred.
 
+* P5 editorial/native-Org grounding
+
+The approved charter permits all seven states as work requires, including returned review and reopening, and requires owners, review/acceptance metadata, recorded blockers/decisions and timestamped LOGBOOK history.
+Reuse the existing author/reviewer loop, exact citation windows, bounded frozen context and atomic publisher; retain v1-v4 payloads and inventories.
+Add a separate native Org inspection/edit interface for task properties, subtree/link spans, transitions and archive materialization rather than replacing the existing frozen inventory shape.
+Native Org tree handling and subtree/property operations must preserve source text, LOGBOOKs, IDs, inherited tags and repository-relative archive context; compare behavior with the existing native archive check.
+The agent chooses the desired work/knowledge disposition while the coordinator validates recorded authority, preserves history, materializes moves/forwarders and adjusts incoming links within frozen context limits.
+Independent review must see the materialized candidate and its complete derived change manifest.
+New transitions use a frozen execution timestamp; status must replay it and all materialized edits without fresh inference.
+V5 should clarify supported private-transcript citations and CUSTOM_ID link forms exposed by the two P4 live mechanical repairs.
+P5 acceptance still requires the public runtime lifecycle, archive/history preservation and a fresh reader following a specific archived decision; design-only native checks do not satisfy it.
+
 Prepared by Sue.
