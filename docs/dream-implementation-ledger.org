@@ -574,11 +574,14 @@ Both are corrected at =c753aed= and passed independent re-review against the gro
 Execution now binds the actual runtime sources and live role/retrieval contract before inference and every transport reservation, retains the initial engine revision, and replays completed reader cases against their original bound results.
 Seed intent precedes atomic replacement/commit; exact before/after and parent/single-path checks recover interrupted operations without appending twice.
 The earlier completed-replay fixtures did not exercise those windows; new partial-reader and three seed-interruption regressions do.
-The final partitions passed sixteen fast guard/preparation cases, two partial-reader cases and two complete/critical-stop cases: fifteen driver and five preparation cases in total.
+The final partitions passed nineteen fast guard/preparation cases and four full/critical-stop/partial-reader workflows: eighteen driver and five preparation cases in total.
 Four-module mypy also passed.
 Their logs are =/tmp/sucoder-dream-p6-review-small-tests.txt=, =/tmp/sucoder-dream-p6-review-partial-tests.txt=, =/tmp/sucoder-dream-p6-review-e2e-tests.txt= and =/tmp/sucoder-dream-p6-review-guards.txt=.
 The post-P6 integration run on =7aec2cc= passed 2,855 cases, skipped eight and explicitly deselected the exact 55 recorded baseline failures; its log is =/tmp/sucoder-dream-p6-final-integration.txt=.
 The pilot-only review fixes followed that collection and have the separate passing coverage above; no unfiltered post-fix whole-suite claim is made.
+The final retry audit confirmed a third recovery defect: schema-valid rejected evaluator results were frozen before semantic acceptance.
+At =6117288= those checks precede the validated pointer; three new regressions retain rejected traces, reject same-attempt replay without another call, permit an explicit usable replacement, and keep a valid critical grade frozen.
+The final retry-inclusive logs are =/tmp/sucoder-dream-p6-final-retry-guards.txt= and =/tmp/sucoder-dream-p6-final-retry-workflows.txt=.
 A forced index refresh removed malformed symbol IDs from incremental graph results; the pilot budget now resolves to three indexed direct callers, five impacted nodes, LOW risk and no outside processes.
 Staged detection after refresh reports seventeen changed symbols across seven flows with HIGH aggregate risk; actual code changes stay in the opt-in driver and tests.
 Native Org validation includes the new runtime audit, and packaged runtime helpers remain byte-identical to the verified wheel after the pilot-only fixes.
