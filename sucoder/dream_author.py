@@ -123,10 +123,13 @@ class Author(dream_curate.Curator):
                 start = positions.pop()
                 citations.append(dict(citation, byte_start=start, byte_end=start + len(quote)))
             references.append(dict(reference, citations=citations))
-        pages, parsed, resolved = wiki.validate_proposal(self.plan, dict(proposal, references=references),
-            dict(prior, **self.context.archives), sources, self.deadline, wiki.LEGACY_CONTRACT)
+        pages, parsed, resolved = self.validate(dict(proposal, references=references),
+            dict(prior, **self.context.archives), sources)
         self.accepted_proposal = proposal
         return pages, parsed, resolved
+
+    def validate(self, proposal, prior, sources):
+        return wiki.validate_proposal(self.plan, proposal, prior, sources, self.deadline, wiki.LEGACY_CONTRACT)
 
     def prepare(self):
         pages, receipt = super().prepare()

@@ -20,20 +20,29 @@ def identity(unit):
 
 def envelope(plan, receipt, harness, model, version, purpose):
     """The shared accepted-review/output contract, independent of a revision."""
-    from . import dream_curate, dream_author
+    from . import dream_curate, dream_author, dream_editor
     contract = receipt.get("contract")
     briefs = {dream_wiki.CONTRACT: dream_wiki.BRIEFS, dream_curate.CONTRACT: dream_curate.BRIEFS,
-              dream_author.CONTRACT: dream_author.BRIEFS}.get(contract)
+              dream_author.CONTRACT: dream_author.BRIEFS, dream_editor.CONTRACT: dream_editor.BRIEFS}.get(contract)
     if (type(receipt.get("schema_version")) is not int or receipt["schema_version"] != 1 or briefs is None or
             receipt.get("repository_uuid") != plan["repository_uuid"] or receipt.get("harness") != harness or
             receipt.get("model") != model or receipt.get("native_version") != version or receipt.get("purpose") != purpose or
             receipt.get("brief_sha256") != digest(canonical(briefs))):
         return False
-    if contract in (dream_curate.CONTRACT, dream_author.CONTRACT) and receipt.get("decision") != "change":
+    if contract in (dream_curate.CONTRACT, dream_author.CONTRACT, dream_editor.CONTRACT) and receipt.get("decision") != "change":
         return False
-    dream_roles.validate_schema(receipt["review"], dream_author.schema("reviewer") if contract == dream_author.CONTRACT else dream_wiki.schema("reviewer"))
-    if contract == dream_author.CONTRACT and receipt["review"]["requests"]:
+    reviewer_schema = (dream_editor.schema("reviewer") if contract == dream_editor.CONTRACT else
+        dream_author.schema("reviewer") if contract == dream_author.CONTRACT else dream_wiki.schema("reviewer"))
+    dream_roles.validate_schema(receipt["review"], reviewer_schema)
+    if contract in (dream_author.CONTRACT, dream_editor.CONTRACT) and receipt["review"]["requests"]:
         return False
+    if contract == dream_editor.CONTRACT:
+        editorial = receipt["editorial"]
+        if editorial["contract"] != dream_editor.POLICY:
+            return False
+        dream_editor.org.timestamp(editorial["proposed_at"])
+        dream_roles.validate_schema(editorial["task_actions"], dream_editor.schema("author")["properties"]["task_actions"])
+        dream_editor.check_actions(editorial["task_actions"], receipt["review"]["task_checks"], {tuple(key) for key in editorial["required_human"]})
     if (receipt["review"]["verdict"] != "accept" or receipt["review"]["failures"] or
             any(f["severity"] == "blocking" for f in receipt["review"]["findings"])):
         return False

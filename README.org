@@ -2585,11 +2585,13 @@ There are no new YAML configuration keys.
 Native execution currently requires Linux Landlock ABI 3 or newer and the CLI isolation/schema flags checked at runtime.
 Models receive immutable inline input in a private temporary environment, with external tools disabled; the coordinator alone publishes git objects and refs.
 Wiki mode writes explanatory Org and can revise existing topics against their frozen base, with exact source references, retained anchors and one bounded repair after actionable findings.
-Existing editorial task subtrees remain unchanged until explicit transition validation is implemented.
+Editorial work uses the TODO/NEXT/ACTIVE/WAITING/REVIEW/DONE/MOOT workflow through explicit reviewed actions.
+The coordinator preserves task history, records transitions and required ownership/review metadata, and archives eligible terminal trees with forwarding anchors and repaired incoming wiki links.
+Tasks requiring a human decision need recorded source evidence; independent review checks attribution and satisfaction of the acceptance criteria.
 The quotation fixture and legacy notes mode remain append-only.
 Use =--attempt 2= to explicitly start a new native run after inspecting a failed attempt; completed role results are otherwise reused without another provider call.
 When a plan has multiple native runs, status requires =--run RUN_ID=.
-Planning and snapshots remain inference-free; editorial transitions/archival moves and generic adapters remain subsequent work.
+Planning and snapshots remain inference-free; generic harness adapters remain subsequent work.
 
 * Agent Skills Tracking
 

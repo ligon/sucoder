@@ -34,7 +34,7 @@ def timestamp(value):
 
 
 def action_shape(action):
-    dream._object(action, ("kind", "path", "target", "before_sha256"), ("state", "note", "properties", "destination"))
+    dream._object(action, ("kind", "path", "target", "before_sha256"), ("state", "note", "properties", "destination", "clear_properties"))
     dream_wiki.editable_path(action["path"])
     dream._text(action["target"], "editorial target")
     if not isinstance(action["before_sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", action["before_sha256"]):
@@ -51,6 +51,9 @@ def action_shape(action):
                     key in ("ID", "CUSTOM_ID", "TODO", "CLOSED", "PRIORITY", "SCHEDULED", "DEADLINE") or key.startswith("ARCHIVE_")):
                 raise DreamError("Editorial actions cannot replace identity/state/archive properties")
             dream._text(value, "editorial property")
+        cleared = action.get("clear_properties", [])
+        if not isinstance(cleared, list) or any(key not in ("BLOCKER", "RESUME_WHEN") for key in cleared) or len(set(cleared)) != len(cleared):
+            raise DreamError("Only resolved waiting metadata may be cleared")
     elif action["kind"] == "archive":
         if set(action) - {"kind", "path", "target", "before_sha256", "destination"}:
             raise DreamError("Archive actions only select a frozen task and destination")

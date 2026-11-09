@@ -37,7 +37,7 @@ def coverage_matches(receipt, old, raw):
                 digest(raw[lo - origin:hi - origin]) != chunk["sha256"]):
             return False
         normal = chunk["extraction"] == "author_inline_delivered" and chunk["verification"] == "whole_candidate_review"
-        reused = (receipt["contract"] == "source-grounded-wiki-v4" and old["kind"] in dream_transcript.KINDS and
+        reused = (receipt["contract"] in ("source-grounded-wiki-v4", "source-grounded-wiki-v5") and old["kind"] in dream_transcript.KINDS and
             chunk["extraction"] == "accepted_receipt_reused" and chunk["verification"] == "validated_output_bindings" and
             any(proof["contract"] == CONTRACT and proof["unit_id"] == old["unit_id"] and
                 proof["byte_start"] == lo == 0 and proof["byte_end"] == hi and proof["sha256"] == chunk["sha256"] and
@@ -77,7 +77,7 @@ def matches(plan, receipt, fd, *, allow_prefix, incompatible=None):
         valid = digest(prefix) == old["sha256"]
         if old["kind"] in dream_transcript.KINDS:
             valid = (valid and origin == 0 and prefix.endswith(b"\n") and
-                receipt["contract"] in ("source-grounded-wiki-v3", "source-grounded-wiki-v4") and
+                receipt["contract"] in ("source-grounded-wiki-v3", "source-grounded-wiki-v4", "source-grounded-wiki-v5") and
                 old["thread_id"] == unit["thread_id"] and
                 unit.get("normalization") == normalization(raw, unit) and
                 old.get("normalization") == normalization(prefix, unit))

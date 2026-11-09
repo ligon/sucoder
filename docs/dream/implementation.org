@@ -211,7 +211,7 @@ poetry run sucoder --config ~/.sucoder/config.yaml dream run SuCoder \
   --purpose "Explain reply evidence and transcript identity for future maintainers."
 #+end_example
 
-The default =source-grounded-wiki-v4= contract lets the agent select salient knowledge, write natural explanatory Org, combine source contributions and correct existing topic prose.
+The default =source-grounded-wiki-v5= contract lets the agent select salient knowledge, write natural explanatory Org, combine source contributions and correct existing topic prose.
 The assignment explicitly supplies the permitted =.sucoder/wiki/index.org= and =.sucoder/wiki/topics/TOPIC.org= paths, change/reference format, existing page hashes, prior anchors/tasks and source-link examples.
 Those interface rules bind the run identity; the agent decides the content and organization.
 The coordinator owns initial settings, receipts, source registry and git publication.
@@ -224,7 +224,7 @@ Only a full active-topic response authorizes editing that page; search snippets 
 Both author and independent reviewer receive the newly delivered evidence, validated accepted-prefix provenance when applicable and accumulated context; final-page review checks material omissions, unsupported relationships, human authority and essential operational qualifications.
 Exact request/response traces and byte accounting enter the receipt; frozen wiki blobs are cached privately by Git identity for inference-free status.
 Call-order bindings prevent changed cached context from silently starting a different paid assignment during resume.
-Saved v1/v2/v3 writer and no-op runs retain their original briefs, schemas and replay identities.
+Saved v1/v2/v3/v4 writer and no-op runs retain their original briefs, schemas and replay identities.
 Assignments that cannot fit =max_consolidation_bytes= stop as incomplete.
 The planner's conservative role reservation is not a promise that this mode needs a separate invocation per chunk.
 
@@ -236,7 +236,7 @@ The older =source-grounded-wiki-v1= offset-bearing and =source-grounded-wiki-v2=
 V3 adds a reasoned =change= or =unchanged= disposition to author/repair results while preserving both older briefs and identities.
 V3 transcript receipt units also retain the frozen normalization contract/digest, so later prefix reuse can verify the interpretation as well as literal bytes.
 Native Org inventories distinguish active directives from inert examples; arbitrary inclusion/configuration directives and links outside the admitted source/wiki view are rejected.
-The model can reorganize prose and replace mistaken factual explanations, while old task subtrees remain byte-preserved until their transition/authority checks are implemented.
+The model can reorganize prose and replace mistaken factual explanations; existing task states, properties, completion stamps and LOGBOOKs change only through explicit v5 editorial actions.
 
 A reviewer accepts or returns concrete blocking findings.
 At most one editorial repair is allowed, followed by another whole-candidate review; a nonactionable revision request or persistent failure produces no candidate.
@@ -257,9 +257,32 @@ Inference-free status replays the saved contract and validates outputs after ord
 This conservative binding will be refined for selective claim-level reuse in P4.
 Legacy notes/fixture receipts continue using their original contract and subtree rules.
 
+* Editorial transitions and archives
+
+V5 adds =task_actions= to author/repair results and one independent =task_check= per action to reviewer results.
+The agent proposes transitions or archive moves bound to the frozen task subtree SHA-256; the coordinator materializes the complete candidate before review.
+Each transition records an owner, reason and frozen UTC proposal time, preserving earlier decisions and returned reviews in LOGBOOK.
+WAITING requires a blocker and resumption condition, REVIEW requires a named reviewer and acceptance criteria, and DONE requires a checked acceptance criterion.
+Leaving WAITING clears its current blocker/resumption properties while retaining their values in history.
+Reopening retains the earlier resolution; the proposal timestamp is distinct from later candidate integration.
+
+Declared human requirements cannot be removed or downgraded by the author or independent reviewer.
+Terminal decisions requiring human authority need an exact admitted quotation from maintained decision records or a native non-summary user message, followed by independent attribution and acceptance checks.
+Assistant/tool/summary transcript claims cannot supply that human authority.
+Attribution and whether a decision actually authorizes the action remain semantic review judgments, including for maintained Git records; the mechanical checks do not authenticate a human or prove a quotation's meaning.
+Prose-only authority requirements are also checked by the independent reviewer.
+
+The separate =native-editorial-org-v1= inline Org engine preserves properties, IDs, earlier history, inherited tags and repository-relative archive context without executing source-directed setup files, hooks or Babel.
+Only terminal trees without open descendants can move to =.sucoder/wiki/archive/TOPIC.org=.
+Existing archive destinations and necessary incoming-link pages are loaded from the frozen Git view within shared context/request limits.
+The coordinator creates forwarding anchors for moved targets, rebases outgoing/history links and updates tracked incoming links in the same candidate.
+Archive bodies and LOGBOOKs remain excluded from ordinary topic reads; fresh readers can follow a forwarding link to a specific archived entry.
+Immutable timestamps, actions, checks, moves, source references and actual context delivery are retained for inference-free replay.
+Older v1-v4 contracts retain their original task-preservation behavior and run identities.
+
 * Accepted shared progress and transcript appends
 
-Before wiki inference, execution inspects compatible changed wiki-v2/v3/v4 receipts in the frozen designated integration tree.
+Before wiki inference, execution inspects compatible changed wiki-v2/v3/v4/v5 receipts in the frozen designated integration tree.
 The unchanged shortcut supports complete unchanged Git selections and normalized Claude/Codex transcripts.
 Every receipt dependency must still be admitted with the same repository/source identity, selected range, exact bytes and normalized interpretation when applicable.
 It verifies complete chunk coverage, the accepted final review, native harness/model/build, brief and purpose, and every required output binding.

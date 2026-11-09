@@ -131,6 +131,11 @@
         (unless (equal old (cdr property))
           (push (concat key ": " (or old "none") " -> " (cdr property)) property-notes)))
       (org-entry-put nil (symbol-name (car property)) (cdr property)))
+    (dolist (property (alist-get 'clear_properties action))
+      (let ((old (org-entry-get nil property)))
+        (when old
+          (push (concat property ": " old " -> cleared") property-notes)
+          (org-entry-delete nil property))))
     (if (member state '("DONE" "MOOT"))
         (org-add-planning-info 'closed (date-to-time stamp))
       (org-add-planning-info nil nil 'closed))

@@ -79,8 +79,8 @@ def unchanged_value(plan, receipt):
 
 
 def record_unchanged(plan, fd, sources, receipt, deadline):
-    from . import dream_author
-    if receipt["contract"] not in (CONTRACT, dream_author.CONTRACT) or receipt["decision"] != "unchanged":
+    from . import dream_author, dream_editor
+    if receipt["contract"] not in (CONTRACT, dream_author.CONTRACT, dream_editor.CONTRACT) or receipt["decision"] != "unchanged":
         raise DreamError("Expected a checked unchanged curation result")
     source = sources[plan["repository"]]
     if receipt["outputs"] and not dream_run.bound_outputs(source, plan["base_commit"], receipt["outputs"], deadline):

@@ -107,7 +107,7 @@ def prior_bundle(plan, fd):
     return files
 
 
-def validate_proposal(plan, proposal, prior, sources, deadline, contract=CONTRACT):
+def validate_proposal(plan, proposal, prior, sources, deadline, contract=CONTRACT, *, approved_tasks=None, archive_paths=(), derived_targets=()):
     """Check edit scope, source ranges, retained anchors/tasks and wiki links.
 
     Human meaning and salience are reviewed separately against this full input.
@@ -116,7 +116,12 @@ def validate_proposal(plan, proposal, prior, sources, deadline, contract=CONTRAC
     pages = {}
     existing = {item["path"] for item in plan.get("prior_wiki", {}).get("files", [])}
     for page in proposal["pages"]:
-        path = editable_path(page["path"])
+        if page["path"] in archive_paths:
+            path = dream._path(page["path"])
+            if not path.startswith(".sucoder/wiki/archive/") or not path.endswith(".org"):
+                raise DreamError("Invalid coordinator archive path")
+        else:
+            path = editable_path(page["path"])
         if path in existing and path not in prior:
             raise DreamError("Existing page is outside the delivered prior context; include it before editing")
         if path in pages or not page["content"].strip():
@@ -156,7 +161,8 @@ def validate_proposal(plan, proposal, prior, sources, deadline, contract=CONTRAC
                 raise DreamError("An existing anchor disappeared; retain a forwarding anchor")
             old_tasks = Counter(h["sha256"] for h in old[path]["headings"] if h["state"])
             new_tasks = Counter(h["sha256"] for h in parsed[path]["headings"] if h["state"])
-            if old_tasks - new_tasks:
+            approved = Counter((approved_tasks or {}).get(path, []))
+            if old_tasks - new_tasks - approved:
                 raise DreamError("Existing editorial tasks must be preserved until explicit transition validation")
     for path, details in parsed.items():
         retained_links = Counter((link["type"], link["raw_path"], link["path"], link["search"])
@@ -221,7 +227,7 @@ def validate_proposal(plan, proposal, prior, sources, deadline, contract=CONTRAC
     for path in pages:
         for target, sha in parsed[path]["targets"].items():
             unchanged = old.get(path, {}).get("targets", {}).get(target) == sha
-            if path != INDEX and not unchanged and (path, target) not in references:
+            if path != INDEX and not unchanged and (path, target) not in references and (path, target) not in derived_targets:
                 raise DreamError("Each new or revised anchored section needs source references")
         if path not in (INDEX, SETTINGS_PATH) and not parsed[path]["targets"]:
             raise DreamError("Topic pages need stable custom anchors")
@@ -266,6 +272,15 @@ class WikiCoordinator(dream_roles.Coordinator):
     def input_sources(self, sources):
         return sources
 
+    def review_candidate(self, proposal, pages):
+        return proposal
+
+    def review_findings(self, review, proposal):
+        return review["findings"]
+
+    def receipt_proposal(self, proposal):
+        return proposal
+
     def prepare(self):
         sources, prior = self.bundles()
         prior_details = inventory(prior, self.deadline) if prior else {}
@@ -286,8 +301,8 @@ class WikiCoordinator(dream_roles.Coordinator):
                     raise
                 findings = [dict(severity="blocking", path="", message=str(exc))]
             else:
-                review = self.call("reviewer", dict(inputs, candidate=proposal))
-                findings = review["findings"]
+                review = self.call("reviewer", dict(inputs, candidate=self.review_candidate(proposal, pages)))
+                findings = self.review_findings(review, proposal)
                 if review["verdict"] == "accept" and not any(f["severity"] == "blocking" for f in findings):
                     break
                 if not any(f["severity"] == "blocking" for f in findings):
@@ -297,6 +312,7 @@ class WikiCoordinator(dream_roles.Coordinator):
                                  "; ".join(f["message"] for f in findings), 3)
             proposal = self.call("repair", dict(inputs, candidate=proposal, findings=findings))
         outputs = self.bindings(pages, prior)
+        manifest = self.receipt_proposal(proposal)
         coverage = [dict(unit_id=s["unit_id"], **chunk, extraction="author_inline_delivered",
                          verification="whole_candidate_review") for s in sources for chunk in s["chunks"]]
         receipt = dict(schema_version=1, contract=self.contract, run_id=self.run_id, plan_id=self.plan["plan_id"],
@@ -304,7 +320,7 @@ class WikiCoordinator(dream_roles.Coordinator):
             harness=self.harness, model=self.model, native_version=self.version,
             purpose=self.purpose, brief_sha256=digest(canonical(self.briefs())),
             outputs=outputs, coverage=coverage, fidelity="source_grounded_editorial_review",
-            references=references, changes=proposal["changes"], omissions=proposal["omissions"],
+            references=references, changes=manifest["changes"], omissions=manifest["omissions"],
             review=review, assignments=self.traces,
             units=[{k: s[k] for k in s if k not in ("text", "provenance")} for s in sources],
             usage=dict(role_invocations=self.invocations, native=self.usage, tokens=None, currency=None))
@@ -336,9 +352,9 @@ def run(config, mirror, plan_path, harness, model, attempt=1, mode="wiki", purpo
                                          transport.version, purpose, deadline)
         if reused is not None:
             return reused
-        from . import dream_curate, dream_author, dream_prefix
+        from . import dream_curate, dream_editor, dream_prefix
         prefixes = dream_prefix.discover(plan, fd, source_readers[mirror], harness, model, transport.version, purpose, deadline)
-        coordinator = dream_author.Author(plan, fd, harness, model, deadline, transport,
+        coordinator = dream_editor.Editor(plan, fd, harness, model, deadline, transport,
             attempt=attempt, purpose=purpose, source=source_readers[mirror], prefixes=prefixes)
         prefix = "native-" + coordinator.run_id
         spec = dict(contract=coordinator.contract, run_id=coordinator.run_id, harness=harness, model=model,
@@ -357,17 +373,19 @@ def run(config, mirror, plan_path, harness, model, attempt=1, mode="wiki", purpo
 def restore(plan, fd, run_id, deadline):
     spec = dream._json(dream_run._read(fd, "native-" + run_id + "-spec.json", 16384))
     dream._object(spec, ("contract", "run_id", "harness", "model", "native_version", "attempt", "purpose"), ("prefixes",))
-    from . import dream_curate, dream_author
-    if spec["contract"] not in (CONTRACT, LEGACY_CONTRACT, dream_curate.CONTRACT, dream_author.CONTRACT) or spec["run_id"] != run_id or spec["harness"] not in ("codex", "claude"):
+    from . import dream_curate, dream_author, dream_editor
+    if spec["contract"] not in (CONTRACT, LEGACY_CONTRACT, dream_curate.CONTRACT, dream_author.CONTRACT, dream_editor.CONTRACT) or spec["run_id"] != run_id or spec["harness"] not in ("codex", "claude"):
         raise DreamError("Invalid wiki run specification")
     def no_inference(*args):
         raise DreamError("Wiki run is incomplete; status never invokes inference", 3)
     parameters = dict(native_version=spec["native_version"], attempt=spec["attempt"], purpose=spec["purpose"])
     if "prefixes" in spec:
-        if spec["contract"] != dream_author.CONTRACT or not spec["prefixes"]:
-            raise DreamError("Prefix manifests require a nonempty v4 run")
+        if spec["contract"] not in (dream_author.CONTRACT, dream_editor.CONTRACT) or not spec["prefixes"]:
+            raise DreamError("Prefix manifests require a nonempty v4/v5 run")
         parameters["prefixes"] = spec["prefixes"]
-    coordinator = (dream_author.Author(plan, fd, spec["harness"], spec["model"], deadline, no_inference, **parameters)
+    coordinator = (dream_editor.Editor(plan, fd, spec["harness"], spec["model"], deadline, no_inference, **parameters)
+        if spec["contract"] == dream_editor.CONTRACT else
+        dream_author.Author(plan, fd, spec["harness"], spec["model"], deadline, no_inference, **parameters)
         if spec["contract"] == dream_author.CONTRACT else
         dream_curate.Curator(plan, fd, spec["harness"], spec["model"], deadline, no_inference, **parameters)
         if spec["contract"] == dream_curate.CONTRACT else
