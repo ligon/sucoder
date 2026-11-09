@@ -351,4 +351,22 @@ Keep earlier schemas/briefs and native saved runs replayable; new default runs u
 Explicit maintenance bypasses shared reuse and may now finish without creating a redundant candidate.
 Transcript deltas and bounded prior selection remain subsequent P4 work.
 
+* No-op curation verification against this ledger
+
+- OK (sections 2 and 5) :: V3 extends the existing writer through small brief/proposal/binding hooks, with the same role caches, native transport, independent review and publication path.
+  No new provider or execution framework was introduced.
+- OK (sections 3 and 4) :: Accepted no-ops have no edits/references and a recorded reason, full selected delivery, independent review and a private checked footprint.
+  They create no candidate/ref and do not establish shared accepted progress; current wiki changes invalidate their private status.
+  The reviewer can reject a mistaken no-op and obtain a real correction within the one-repair allowance.
+- Compatibility :: All 33 existing writer/reuse cases pass, and actual saved v2 SuCoder candidate/progress status still reconstructs without inference.
+  Original v1/v2 briefs, schemas and run identity inputs remain unchanged.
+- Test evidence :: The combined seven-module dream run passed 120 tests.
+  Final ten curation cases additionally pin both transcript formats' normalized interpretation; mypy passed four runtime modules and native Org checks passed.
+  Recovery after an interrupted no-op result write is tested without further inference.
+- Scope check :: Staged detection covered nine expected files and 39 symbols with 31 affected processes and CRITICAL aggregate risk through shared dream flows.
+  Symbol-specific shared preparation and compatibility changes were HIGH and reported before edits; direct diff inspection confines production changes to dream modules.
+
+No anchored CONTRADICTION or REINVENTION remains in this curation slice.
+A live explicit SuCoder maintenance pass is next; transcript deltas, bounded prior selection, P5 and P6 remain outstanding.
+
 Prepared by Sue.
