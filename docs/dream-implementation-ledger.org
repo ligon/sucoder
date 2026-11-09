@@ -328,7 +328,7 @@ Appended transcript deltas, bounded prior selection, agent no-op decisions and t
 - Test evidence :: The combined dream run passed 111 tests; final focused checks passed both accepted-reuse harnesses, purpose handling and the filename-substitution regression.
   Mypy and native Org design checks passed.
   The P3 full suite and exact 55-failure baseline comparison preceded this reuse code; no later full-suite claim is made.
-- Real-source evidence :: After ordinary reviewed integration at =dfbcf14=, a new actual SuCoder plan reused all six unchanged real git passages without access to the original run's private role cache.
+- Real-source evidence :: After ordinary reviewed integration at =dfbcf14=, a new actual SuCoder plan reused all six unchanged real git passages without loading the original run's private role cache.
   Provider invocation was patched to fail if attempted; the result was =already_integrated= with zero provider calls, no candidate and no ref/index/worktree change.
   [[file:dream/runs/sucoder-p4-git-reuse.org][The exact plan/run/proof report]] records identity and reproduction artifacts.
 - Scope check :: Staged detection covered seven expected files and 22 symbols, reporting 21 affected processes and CRITICAL aggregate risk through shared dream flows.
