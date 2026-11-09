@@ -1,0 +1,204 @@
+#+title: Dream runtime: workplan for charter completion
+#+author: Sue
+#+date: 2026-11-09
+#+status: PLANNED -- full runtime acceptance remains outstanding
+#+setupfile: settings.org
+#+todo: TODO(t!) NEXT(n!) ACTIVE(a!) WAITING(w@/!) REVIEW(r@/!) | DONE(d!) MOOT(m@)
+#+startup: logdone logdrawer
+
+* Objective and starting evidence
+:PROPERTIES:
+:CUSTOM_ID: objective
+:END:
+
+Implement the behavior in the [[file:../dream-charter.org::#research-conclusions][approved charter]] and [[file:../dream.org][runtime design]]: improve project understanding across sessions by constructing, correcting and maintaining a source-grounded wiki that future readers actually use.
+The earlier charter's DONE entries certify the design workshop, not implemented runtime behavior.
+The native pipeline milestone did not complete this broader objective.
+
+Baseline =78e5193= implements explicit git/Claude/Codex evidence, private snapshots, bounded native roles, exact citations, append-only candidate publication and local output-binding checks.
+Its [[file:implementation.org][engineering verification]] includes synthetic Codex runs and isolated protocol tests for both harnesses.
+As checked on 2026-11-09, SuCoder has no generated wiki, dream candidate branch or configured dream run records.
+No real SuCoder wiki build or fresh-reader benefit has been demonstrated.
+The user explicitly left live Claude verification pending because its configured account quota is exhausted.
+
+This workplan records implementation work and acceptance gates.
+Preparing it does not run inference, admit private transcripts, integrate a candidate or authorize the separate two-repository pilot.
+
+* Delegate the knowledge work to the agent
+:PROPERTIES:
+:CUSTOM_ID: delegation
+:END:
+
+Give the dreaming agent a purpose, admitted evidence, relevant prior wiki, bounded read/search access and an isolated candidate workspace.
+Let it decide what matters, investigate relationships, write explanations, revise wrong notes, merge duplicates, propose removal of obsolete material and organize topics and links.
+It may ask for more evidence or identify uncertainty instead of manufacturing an answer.
+Useful plans, successful procedures, failures and tested rules are all eligible; no fixed rule such as recording only failures determines salience.
+
+The coordinator retains source admission, privacy, filesystem authority, accounting, complete selected-evidence coverage, mechanical validation, receipts and the sole right to publish git objects/refs.
+An independent checking pass assesses support, missing qualifications and unresolved conflicts; successful schema validation cannot prove semantic correctness.
+Human decisions and contributions remain attributed, and an agent inference cannot silently supersede a recorded human decision.
+Source text cannot grant tools or change the task's authority.
+
+Replace the current titles-and-claim-IDs consolidator with an author/editor that can produce explanatory Org pages and a source-bound change manifest.
+Schemas should constrain source identities, edits and dispositions while allowing the agent to compose prose and select what deserves publication.
+Do not require every extracted claim to appear verbatim or survive forever; record material omissions, merges and replacements with their reasons.
+Complete evidence delivery and selective publication are different requirements.
+
+For the first correction/synthesis slice, a small complete evidence bundle can be delivered inline through the existing transports.
+As context grows, add bounded coordinator-served read/search requests over frozen sources and prior pages, or native file tools only after their capabilities are verified.
+This gives the agent useful investigative choices without unrestricted access to the real repository, home, network tools or git metadata.
+Use disjoint analyst outputs when delegation helps, then one editorial owner and publisher; a fixed number of agents is not a success criterion.
+
+* Dependency-ordered implementation
+:PROPERTIES:
+:CUSTOM_ID: sequence
+:END:
+
+** NEXT P1. Build and inspect a real SuCoder wiki candidate
+:PROPERTIES:
+:CUSTOM_ID: real-sucoder
+:OWNER: Sue
+:END:
+
+Use the current implementation on a small explicit selection of real SuCoder documentation, implementation and tests concerning reply/transcript evidence.
+The existing [[file:pilot.org::#sucoder-corpus][source inventory]] is a starting map; freeze the chosen revision and exact bytes rather than assuming historical examples describe the current installation.
+Use bounded git evidence first, excluding this workplan, construction examples and evaluation questions/rubrics from construction inputs.
+Historical/private transcripts require explicit admission and provider/publication scope before use.
+
+Prepare the source catalog, native model selection, limits, plan and candidate; review the generated prose and source links in the actual SuCoder context.
+Keep the candidate unintegrated until ordinary review and integration.
+Record the configured repository binding, source objects, run ID, candidate commit/ref, output paths and inspection findings.
+Distinguish a candidate produced for the actual configured SuCoder repository from synthetic or disposable-repository acceptance.
+
+- Acceptance :: A reproducible real-source candidate exists for SuCoder, its qualifications and references can be checked, and its usefulness/limitations are recorded.
+  A successful build is an early diagnostic, not proof that the full charter is implemented.
+- Reuse :: [[file:../../sucoder/dream.py][planning]], [[file:../../sucoder/dream_run.py][snapshots/publication]], [[file:../../sucoder/dream_native.py][native transport]] and the [[file:../dream-implementation-ledger.org][reuse ledger]].
+
+** TODO P2. Deliver real correction and cross-source synthesis
+:PROPERTIES:
+:CUSTOM_ID: correction-synthesis
+:OWNER: Sue
+:DEPENDS_ON: real-sucoder
+:END:
+
+Extend the role contract to support multi-source evidence, meaningful topic paths and stable anchors, full explanatory page text and proposed edits to established pages.
+The author/editor must be able to read related source passages and prior decisions, explain a relationship, revise an unsupported note and choose a useful abstraction.
+Check final prose against all cited evidence, including facts originating in different sessions/chunks; checking each original chunk independently is insufficient for a new synthesized claim.
+Allow one bounded editorial repair after actionable findings, then stop explicitly if checks still fail.
+Keep unknown provider outcomes distinct from editorial repair; do not silently repeat an uncertain native request.
+
+Generalize publication to validate an explicit staged wiki change set against the frozen base.
+Check permitted paths, source bindings, anchor/link integrity, preservation or explicit dispositions of existing contributions, task-state legality and recorded human authority before publishing.
+Preserve the current private-index publication and integration-ref race checks.
+Allow substantive factual correction with an evidence trail; preserving a human contribution does not require leaving its mistaken factual claim authoritative forever.
+Unresolved disagreements become attributed Talk tasks beneath the relevant article section, with the caveat retained in article prose.
+
+- Acceptance :: In a disposable copy of the real-source wiki, seed a plausible wrong note, supply contrary evidence and obtain a corrected established topic with its stable anchor and evidence trail intact.
+  Another case must combine two necessary source contributions into a new explanation, preserve a command/version qualification and leave an unsupported human-decision conflict unresolved.
+  An independent checker sees the candidate and evidence; hidden grading rubrics remain outside the construction context.
+- Charter :: [[file:../dream-charter.org::#repair-memory][Correct and synthesize]], [[file:../dream-charter.org::#purpose-and-fidelity][purpose and fidelity]] and [[file:../dream-charter.org::#preserve-contributions][preserve contributions]].
+
+** TODO P3. Close the loop with a fresh reader
+:PROPERTIES:
+:CUSTOM_ID: fresh-reader
+:OWNER: Sue
+:DEPENDS_ON: correction-synthesis
+:END:
+
+Implement a short maintained orientation, topic-directed =dream read=, source lookup/search and specific archive-entry retrieval.
+Give the reader freedom to select relevant topics and follow evidence, within the design's proposed 2 KiB orientation, 12 KiB active-topic and 32 KiB source allowances.
+Record actual delivered bytes and omissions; exclude archive bodies and LOGBOOK drawers from ordinary reads, while retaining substantive unresolved caveats.
+Sources unavailable on another machine remain unavailable, even when a shared receipt exists.
+
+Provide an explicit Codex/Claude session entry path that presents the bounded orientation and explains how to retrieve more.
+Do not automatically rewrite AGENTS.md, skills, maintained documentation or project policy.
+The reader starts in a fresh session with no inherited construction conversation, earlier answer or grading rubric.
+Use the same original-source search interface for the baseline and wiki-assisted reader.
+
+- Acceptance :: A fresh reader finds and uses the corrected rule from P2, answers the relevant question with evidence and avoids the seeded mistake.
+  It also answers a cross-source synthesis question and a direct-lookup control, with a trace showing what it consulted.
+  A correct answer alone does not prove memory use.
+- Charter :: [[file:../dream-charter.org::#retrieve-evidence][Wiki plus source retrieval]] and [[file:../dream-charter.org::#reader-context][bounded reader context]].
+
+** TODO P4. Make repeated dreaming selective and convergent
+:PROPERTIES:
+:CUSTOM_ID: incremental
+:OWNER: Sue
+:DEPENDS_ON: correction-synthesis fresh-reader
+:END:
+
+Discover compatible shared receipts in the designated integration tree and validate their required output bindings before reusing progress.
+Reuse unchanged accepted work, analyze appended transcript ranges with relevant prior context, and reconcile affected claims after changed evidence or human edits.
+Do not treat a candidate, receipt presence, latest mtime or unchanged model name as accepted progress.
+Select prior topic context deterministically within its allowance instead of rereading the entire growing wiki for every chunk.
+Let the agent propose relevant additional context and record an explicit incomplete outcome if necessary context cannot fit.
+
+Support a targeted maintenance pass using explicitly supplied existing evidence without requiring a new transcript.
+Triggers include changed evidence, reader failure, an unresolved Talk question, a broken reference or likely staleness.
+Allow the agent to conclude that no editorial change is useful.
+Require a stopping rule and account for analysis, verification, repair and implicit retries within one run allowance.
+
+- Acceptance :: Replanning unchanged accepted inputs needs no new extraction/model calls and creates no duplicate topic.
+  An appended session updates the appropriate established topic; an altered required output reports reconciliation; a targeted repair works without a new session.
+  Overlapping runs, different machines, squash integration and interrupted publication cannot create false accepted coverage or erase another contribution.
+- Charter :: [[file:../dream-charter.org::#selective-maintenance][Selective maintenance]] and [[file:../dream.org::#admission][receipt compatibility/replacement]].
+
+** TODO P5. Complete editorial lifecycle and archives
+:PROPERTIES:
+:CUSTOM_ID: editorial
+:OWNER: Sue
+:DEPENDS_ON: correction-synthesis fresh-reader
+:END:
+
+Implement the charter's TODO, NEXT, ACTIVE, WAITING, REVIEW, DONE and MOOT workflow in generated wiki settings and actual editorial tasks.
+Record required owners, reviewers, decisions and LOGBOOK transitions, including a returned review and a superseded task.
+Do not complete tasks that require an unrecorded human decision.
+
+Archive eligible terminal subtrees only when they have no open descendants and their necessary qualifications remain discoverable.
+Preserve properties, LOGBOOK, inherited tags, source links and repository-relative archive provenance using behavior checked against native Org.
+Retain active forwarding anchors and repair tracked incoming links in the same change set.
+
+- Acceptance :: The [[file:examples/sucoder.org][worked lifecycle]] and [[file:examples/archive/sucoder.org][archive]] run through the public implementation, not just the document validator.
+  A fresh reader follows the active rationale to the specific archived decision; ordinary reads omit archive bodies and historical drawers.
+- Charter :: [[file:../dream-charter.org::#wiki-task-workflow][Editorial task workflow]] and [[file:../dream.org::#editorial][archive contract]].
+
+** TODO P6. Verify both harnesses and measure usefulness before rollout
+:PROPERTIES:
+:CUSTOM_ID: acceptance
+:OWNER: Sue
+:DEPENDS_ON: fresh-reader incremental editorial
+:END:
+
+Exercise the same construction, update, correction, editorial and fresh-reader cases with explicit Codex and Claude models.
+Keep evidence format independent of execution harness.
+Resume live Claude checks when account availability permits; the user-approved deferral remains a visible unverified item, not a passed test.
+Native parity work can proceed alongside P2-P5 and need not hold unrelated implementation work.
+
+Prepare the bounded [[file:pilot.org][two-repository pilot]] and its source/model/usage/time accounting for the separately scoped experiment.
+Start with SuCoder, then test the LSMS distinctions from explicitly admitted sources in an isolated evaluation workspace; do not change LSMS source documents or adjudicate scientific decisions.
+Generate independent held-out questions/rubrics before construction and enforce their isolation from builder and reader contexts.
+Compare documentation plus source search, wiki plus the same search, and wiki-only diagnostic answers, using fresh sessions and actual read traces.
+Measure critical errors, missing qualifications, answer quality, reader bytes, latency and cumulative build/maintenance usage.
+
+- Acceptance :: Apply the existing [[file:pilot.org::#decision-rule][pilot decision rule]]: no critical errors or lower total rubric score on either repository, plus a synthesis/caveat gain or a measured reduction in reader context at unchanged quality.
+  If results are inconclusive or the wiki adds no value, report that result and simplify; do not claim success from page counts or fluent prose.
+  Release/package verification and operator ergonomics follow the behavior checks, with exact reproducible evidence attached.
+- Charter :: [[file:../dream-charter.org::#evaluate-construction][Evaluate construction and use]], [[file:../dream-charter.org::#acceptance-review][independent review]] and [[file:../dream-charter.org::#acceptance-examples][both grounded examples]].
+
+* Progress and completion rules
+:PROPERTIES:
+:CUSTOM_ID: completion
+:END:
+
+P1 is the immediate next action; P2-P3 are the first functional dreaming loop.
+P4 and P5 can proceed in parallel once that loop works; live native parity can be checked throughout.
+Do not add a generic backend framework, a global vector store, nightly automation or more transport machinery ahead of a demonstrated need in this sequence.
+Optional previews and convenience interfaces do not substitute for correction or reader use.
+
+Record each milestone's code revision, exact evidence selection, run ID/candidate artifact, check result and remaining uncertainty here when it is exercised.
+Keep fixture execution, real-source candidate creation, normal integration and reader-benefit evidence distinct.
+Use the declared task states and preserve transition notes; no milestone becomes DONE solely because its code or design exists.
+Full runtime charter completion requires evidence for the behavioral gates above and explicit dispositions for any deferred requirement.
+Measured usefulness remains a separate claim supported only by the pilot results and the user's assessment of the resulting explanations.
+
+Prepared by Sue.

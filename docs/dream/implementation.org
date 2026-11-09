@@ -3,6 +3,14 @@
 #+date: 2026-11-08
 #+setupfile: settings.org
 
+* Full runtime charter status
+
+The full runtime objective remains incomplete.
+The native pipeline below is an implemented subset; its successful live acceptance runs used synthetic evidence in disposable repositories.
+As checked on 2026-11-09, no wiki has been generated for the actual SuCoder repository.
+The [[file:workplan.org][charter-completion workplan]] makes a real SuCoder run the next action, followed by substantive correction/synthesis, fresh-reader use, incremental maintenance, editorial/archive behavior and measured acceptance.
+Those capabilities are required work toward the original objective.
+
 * Implemented slices: explicit evidence and native role publication
 
 =sucoder dream plan= implements the first part of the [[file:../dream.org::#implementation][data-plane sequence]].

@@ -15,6 +15,7 @@ There is no automatic merge, instruction-file rewrite, scheduler job, or hosted 
 
 This is the full implementation design under the [[file:dream-charter.org][approved workshop charter]]; it does not establish a measured memory improvement.
 The [[file:dream/implementation.org][implementation status]] records git and Claude/Codex transcript planning, private snapshots, deterministic fixtures, and shared native Claude/Codex role execution with append-only candidate publication.
+The [[file:dream/workplan.org][runtime workplan]] tracks the remaining charter requirements and their behavioral acceptance gates; the native pipeline milestone did not complete the full runtime objective.
 The [[file:dream-ledger.org][prior-art ledger]] supplies the reuse decisions and source limitations.
 Read the [[file:dream/prompts.org][role briefs]], [[file:dream/scenarios.org][scenario checks]], [[file:dream/pilot.org][pilot protocol]], and the [[file:dream/examples/sucoder.org][SuCoder]] and [[file:dream/examples/lsms.org][LSMS]] examples for operational detail.
 
@@ -23,7 +24,7 @@ Read the [[file:dream/prompts.org][role briefs]], [[file:dream/scenarios.org][sc
 :CUSTOM_ID: interface
 :END:
 
-Proposed full interface; the [[file:dream/implementation.org][implemented subset]] currently supports git planning, snapshots, quotation-fixture candidates, and local status using a stored plan:
+Proposed full interface; the [[file:dream/implementation.org][implemented subset]] currently supports git/transcript planning, snapshots, native roles, append-only candidates and local status using a stored plan:
 
 #+begin_example
 sucoder dream plan MIRROR --sources SOURCES.json --base REF

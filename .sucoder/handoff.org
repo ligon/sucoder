@@ -1,8 +1,24 @@
-#+TITLE: sucoder dream: native Codex and Claude implementation
-#+DATE: 2026-11-08
+#+TITLE: sucoder dream: complete the runtime charter
+#+DATE: 2026-11-09
 #+STATUS: READY
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Current objective and immediate next step
+
+The full runtime charter remains incomplete.
+The user's November 9 review established that successful native runs so far used synthetic evidence in disposable repositories, and no wiki has been generated for the actual SuCoder repository.
+Treat the native implementation below as an engineering milestone, not completion of the original dreaming objective.
+
+The canonical next-work queue is [[file:../docs/dream/workplan.org][the charter-completion workplan]].
+P1 is a bounded real SuCoder wiki candidate and inspection.
+P2-P3 implement substantive correction/cross-source synthesis and a fresh reader that demonstrably uses the result.
+P4-P5 complete selective incremental maintenance and the editorial/archive lifecycle; P6 verifies both native harnesses and the separately scoped usefulness pilot.
+The user emphasized delegating knowledge/editorial judgment to a capable agent; let it write and revise explanations while the coordinator enforces evidence, authority, budgets, validation and publication boundaries.
+Do not retain the titles/claim-ID-only consolidator as the long-term definition of synthesis.
+
+The November 9 planning session changed documentation only; it did not run a real wiki build, admit private transcripts, run a pilot or integrate a candidate.
+The user's explicit deferral of live Claude verification remains in force.
 
 * Authorized goal and recovered baseline
 
@@ -81,7 +97,8 @@ Use =poetry run sucoder= for source-tree commands; the installed launcher is sep
 
 * Subsequent work
 
-Automatic shared-receipt discovery/reuse, generic role adapters, semantic repair, bounded reader retrieval and general topic revision/editorial/archive transitions remain subsequent slices.
+Automatic shared-receipt discovery/reuse, semantic repair, bounded reader retrieval and general topic revision/editorial/archive transitions are required outstanding charter capabilities, tracked in the workplan.
+Generic role adapters are a later extension and must not displace those priorities.
 The publisher is deliberately append-only until those editorial invariants are independently validated.
 The separate pilot authorization and benefit gates remain in force.
 
