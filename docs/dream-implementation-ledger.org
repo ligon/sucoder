@@ -383,4 +383,19 @@ Reject edits to existing unselected pages; preserve unchanged existing links to 
 Add selected/omitted context metadata only for new-policy plans, preserving older role payloads exactly.
 No new global configuration or source admission is required.
 
+* Bounded prior-selection verification
+
+- OK (sections 2 and 5) :: Selection reuses the frozen Git tree, snapshot path and native Org inventory.
+  Old plans explicitly reconstruct the original all-active policy; existing v2 candidate, accepted-reuse and v3 no-op statuses replayed without inference.
+- OK (sections 3 and 4) :: Omitted existing pages cannot be overwritten as new; unchanged original links survive and new unverified targets fail.
+  Receipt associations select current human-edited pages as context without claiming accepted coverage.
+  Unusable optional receipt metadata does not block planning; selected bodies and catalogs remain bounded.
+- Tests :: Planner/prior checks passed 62 cases before the final oversized-metadata guard; seven final prior cases passed afterward.
+  Run/writer/no-op/reuse regressions passed 81 cases, and mypy passed the four changed runtime modules.
+- Scope :: GitNexus detects the expected planner, validator and writer flows and reports CRITICAL aggregate risk across 22 processes.
+  Symbol-specific planner/schema impact was HIGH and reported before editing; direct inspection confines production changes to dream modules.
+
+No anchored CONTRADICTION or REINVENTION remains in this selection slice.
+Agent context requests, accepted-prefix transcript updates, P5 and P6 remain outstanding; live Claude remains deferred.
+
 Prepared by Sue.
