@@ -1,7 +1,7 @@
 #+title: Dream runtime: workplan for charter completion
 #+author: Sue
 #+date: 2026-11-09
-#+status: PLANNED -- full runtime acceptance remains outstanding
+#+status: ACTIVE -- P1/P2 engineering gates passed; full runtime acceptance remains outstanding
 #+setupfile: settings.org
 #+todo: TODO(t!) NEXT(n!) ACTIVE(a!) WAITING(w@/!) REVIEW(r@/!) | DONE(d!) MOOT(m@)
 #+startup: logdone logdrawer
@@ -80,13 +80,16 @@ Distinguish a candidate produced for the actual configured SuCoder repository fr
 - Reuse :: [[file:../../sucoder/dream.py][planning]], [[file:../../sucoder/dream_run.py][snapshots/publication]], [[file:../../sucoder/dream_native.py][native transport]] and the [[file:../dream-implementation-ledger.org][reuse ledger]].
 - Evidence :: [[file:runs/sucoder-p1.org][Actual run identity, coverage, usage and inspection findings]].
 
-** ACTIVE P2. Deliver real correction and cross-source synthesis
+** DONE P2. Deliver real correction and cross-source synthesis
+CLOSED: [2026-11-09 Mon 04:18]
 :PROPERTIES:
 :CUSTOM_ID: correction-synthesis
 :OWNER: Sue
 :DEPENDS_ON: real-sucoder
 :END:
 :LOGBOOK:
+- State "DONE" from "ACTIVE" [2026-11-09 Mon 04:18] \\
+  Sue: Actual SuCoder source-grounded candidate b6c59f1 and disposable real-wiki correction e9ea73a passed independent review and inspection; see the P2 run report.
 - State "ACTIVE" from "TODO" [2026-11-09 Mon 03:03]
 :END:
 
@@ -105,9 +108,10 @@ Unresolved disagreements become attributed Talk tasks beneath the relevant artic
 - Acceptance :: In a disposable copy of the real-source wiki, seed a plausible wrong note, supply contrary evidence and obtain a corrected established topic with its stable anchor and evidence trail intact.
   Another case must combine two necessary source contributions into a new explanation, preserve a command/version qualification and leave an unsupported human-decision conflict unresolved.
   An independent checker sees the candidate and evidence; hidden grading rubrics remain outside the construction context.
+- Evidence :: [[file:runs/sucoder-p2.org][Actual wiki, exact run identities and seeded real-source correction]].
 - Charter :: [[file:../dream-charter.org::#repair-memory][Correct and synthesize]], [[file:../dream-charter.org::#purpose-and-fidelity][purpose and fidelity]] and [[file:../dream-charter.org::#preserve-contributions][preserve contributions]].
 
-** TODO P3. Close the loop with a fresh reader
+** ACTIVE P3. Close the loop with a fresh reader
 :PROPERTIES:
 :CUSTOM_ID: fresh-reader
 :OWNER: Sue

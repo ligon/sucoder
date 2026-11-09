@@ -16,14 +16,18 @@
                          (file-name-directory (expand-file-name source "/"))) "/"))))
 
 (let* ((inventory (member "--inventory" command-line-args-left))
+       (reader (member "--reader" command-line-args-left))
+       (history (member "--history" command-line-args-left))
        (inputs (json-read-from-string
                 (with-temp-buffer
                   (insert-file-contents "/dev/stdin")
                   (buffer-string))))
        (result (make-hash-table :test 'equal))
        (details (make-hash-table :test 'equal))
+       (read-details (make-hash-table :test 'equal))
        (links nil))
-  (setq command-line-args-left (delete "--inventory" command-line-args-left))
+  (dolist (flag '("--inventory" "--reader" "--history"))
+    (setq command-line-args-left (delete flag command-line-args-left)))
   (dolist (entry inputs)
     (let ((path (symbol-name (car entry)))
           (ids (make-hash-table :test 'equal))
@@ -85,15 +89,36 @@
                   (push (list path
                               (sucoder-dream-link-path path destination)
                               (substring search 1)) links)))))))
+        (when reader
+          (let ((regions nil) (removed 0) (sections nil))
+            (unless history
+              (org-element-map (org-element-parse-buffer) 'drawer
+                (lambda (drawer)
+                  (when (equal (org-element-property :drawer-name drawer) "LOGBOOK")
+                    (push (cons (org-element-property :begin drawer)
+                                (org-element-property :end drawer)) regions))))
+              (let ((inhibit-read-only t))
+                (dolist (region (sort regions (lambda (a b) (> (car a) (car b)))))
+                  (setq removed (+ removed (string-bytes (buffer-substring-no-properties (car region) (cdr region)))))
+                  (delete-region (car region) (cdr region)))))
+            (org-element-map (org-element-parse-buffer) 'headline
+              (lambda (heading)
+                (let ((target (org-element-property :CUSTOM_ID heading)))
+                  (when target
+                    (push `((target . ,target)
+                            (begin . ,(string-bytes (buffer-substring-no-properties (point-min) (org-element-property :begin heading))))
+                            (end . ,(string-bytes (buffer-substring-no-properties (point-min) (org-element-property :end heading))))) sections)))))
+            (puthash path `((text . ,(buffer-string)) (logbook_bytes_omitted . ,removed)
+                            (sections . ,(vconcat (nreverse sections)))) read-details)))
         (puthash path ids result)
         (puthash path `((targets . ,ids)
                         (headings . ,(vconcat (nreverse headings)))
                         (keywords . ,(vconcat (nreverse keywords)))
                         (links . ,(vconcat (nreverse all-links)))) details))))
-  (dolist (link links)
+  (dolist (link (unless reader links))
     ;; Existing links outside the changed set retain their original semantics;
     ;; the fixture's new links all resolve inside the supplied generated files.
     (let ((ids (gethash (nth 1 link) result)))
       (when (and ids (not (gethash (nth 2 link) ids)))
         (error "Missing custom target in %s" (car link)))))
-  (princ (json-encode (if inventory details result))))
+  (princ (json-encode (cond (reader read-details) (inventory details) (t result)))))

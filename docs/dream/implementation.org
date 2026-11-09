@@ -18,7 +18,8 @@ It freezes explicitly admitted local git selections or native Claude/Codex trans
 Frozen-plan validation, private snapshots, deterministic quotation fixtures, native Org subtree checks, output-bound receipts, atomic candidate publication, and local run status are implemented.
 Native Claude and Codex adapters now default to a source-grounded wiki author/editor with independent whole-candidate review; legacy =--mode notes= preserves the earlier extractor/verifier/grouping contract.
 Wiki mode can revise existing topics while preserving their anchors and current editorial task subtrees.
-Automatic receipt reuse in planning, general editorial validation, generic native adapters and reader retrieval remain subsequent work.
+Automatic receipt reuse in planning, general editorial validation and generic native adapters remain subsequent work.
+Bounded deterministic wiki/source retrieval and fresh native readers are implemented; real-reader engineering acceptance is tracked in P3.
 The planning manifest retains =execution.available: false= and =prior_wiki.progress: not_evaluated=: planning itself does not execute roles or establish accepted progress.
 Original git-only frozen plans remain compatible, including their legacy execution-reason text.
 No plan is evidence of an examined source, accepted claim, or integrated wiki generation.
@@ -236,6 +237,39 @@ Inference-free status replays the saved contract and validates outputs after ord
 This conservative binding will be refined for selective claim-level reuse in P4.
 Legacy notes/fixture receipts continue using their original contract and subtree rules.
 
+* Bounded readers and explicit session entry
+
+#+begin_example
+poetry run sucoder --config ~/.sucoder/config.yaml dream read SuCoder --base refs/heads/main
+poetry run sucoder --config ~/.sucoder/config.yaml dream read SuCoder \
+  --topic transcript-replies --target reader-results --base REVISION
+poetry run sucoder --config ~/.sucoder/config.yaml dream source SuCoder \
+  --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json --search "compaction summary"
+poetry run sucoder --config ~/.sucoder/config.yaml dream ask SuCoder "QUESTION" \
+  --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json --base REVISION \
+  --harness codex --model MODEL
+#+end_example
+
+Both Claude and Codex sessions can begin with =dream read= and use its explicit lookup instructions; no AGENTS.md, skill or project policy is rewritten.
+=read= pins a git commit without checkout, reports the original page/blob digest and projected delivery, and uses native Org structure to omit LOGBOOK drawers from ordinary active reads.
+It retains substantive article caveats and editorial text.
+Orientation includes instructions within 2 KiB; active topic delivery defaults to 12 KiB.
+An explicit =--max-bytes= records a changed per-command allowance and truncation remains explicit.
+Archive access requires a topic and specific custom target, retrieving that entry and its historical decision/provenance without the rest of the archive.
+
+=source= reads only the selected local plan's frozen source snapshots, verifies exact hashes, and returns original source identities and absolute UTF-8 ranges.
+It supports unit/range lookup or literal search with neighboring lines, with a default 32 KiB evidence allowance and explicit searched/checked/delivered/omitted byte counts.
+Missing snapshots remain unavailable; a shared receipt alone neither discovers nor grants access to original transcript bytes.
+Use the explicit snapshot command when admitted sources have not yet been frozen.
+
+=ask= starts a separate =bounded-wiki-reader-v1= native role with only its question, bounded orientation, admitted source metadata and chosen retrieval responses.
+It inherits no construction conversation, earlier answer or grading rubric.
+The coordinator serves requested topic/archive/source/search reads, enforces cumulative 12 KiB topic and 32 KiB source delivery, twelve retrievals and at most eight native calls within the plan's time/output allowances.
+Every delivered response has a content-bound read ID; the final answer can cite only IDs actually delivered.
+Private assignments, native traces and the final result record its chosen evidence, actual byte counts and native usage; topic delivery is observable but does not certify comprehension or answer correctness.
+The source-only condition uses the identical original-evidence interface with wiki access disabled.
+Native failures retain traces and require an explicit new attempt; successful reader replay makes no inference calls.
+
 * Native notes mode (legacy)
 
 #+begin_example
@@ -319,7 +353,7 @@ This contract is exercised with deterministic role fixtures and isolated native 
 
 * Next implementation slices
 
-1. Complete the real-source correction/synthesis acceptance in [[file:workplan.org][P2]], then bounded reader retrieval and fresh-reader use in P3.
+1. Complete the fresh-reader engineering acceptance in [[file:workplan.org][P3]]; P2 actual-source authorship/correction passed.
 2. Add compatible shared-receipt discovery/reuse, selective maintenance, editorial transitions and archival moves in P4-P5.
 3. Verify both native harnesses and review the separate pilot authorization and gates in P6.
 4. Add generic execution adapters only after those charter priorities.

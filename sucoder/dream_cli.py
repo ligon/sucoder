@@ -10,6 +10,8 @@ import typer
 from . import dream
 from . import dream_run
 from . import dream_wiki
+from . import dream_reader
+from . import dream_reader_agent
 from .config import ConfigError, load_config
 
 
@@ -73,6 +75,51 @@ def status(
 ):
     """Print JSON separating candidate preparation from validated integration."""
     _data_command(ctx, "dream_status", dream_run.status, mirror, plan_path, run_id)
+
+
+@app.command("read")
+def read(
+    ctx: typer.Context,
+    mirror: str = typer.Argument(..., help="Configured local mirror."),
+    topic: Optional[str] = typer.Option(None, "--topic", help="Semantic topic name; omit for bounded session orientation."),
+    archives: bool = typer.Option(False, "--archives", help="Read one archive entry; requires topic and target."),
+    target: Optional[str] = typer.Option(None, "--target", help="Specific CUSTOM_ID to retrieve."),
+    max_bytes: Optional[int] = typer.Option(None, "--max-bytes", min=1, help="Explicit UTF-8 allowance; defaults to 2 KiB orientation or 12 KiB topic."),
+    base: str = typer.Option("HEAD", "--base", help="Revision/ref to read without checkout."),
+):
+    """Read a pinned wiki view; ordinary reads omit LOGBOOK and archives."""
+    _data_command(ctx, "dream_read", dream_reader.read, mirror, topic, archives, target, max_bytes, base)
+
+
+@app.command("source")
+def source(
+    ctx: typer.Context,
+    mirror: str = typer.Argument(..., help="Configured local mirror."),
+    plan_path: Path = typer.Option(..., "--plan", help="Explicit admitted plan with local frozen snapshots."),
+    unit: Optional[str] = typer.Option(None, "--unit", help="Admitted unit ID; omit to search/read all selected units."),
+    search: Optional[str] = typer.Option(None, "--search", help="Literal search with neighboring lines."),
+    start: Optional[int] = typer.Option(None, "--start", min=0, help="Absolute UTF-8 byte start in the admitted unit."),
+    end: Optional[int] = typer.Option(None, "--end", min=1, help="Exclusive absolute UTF-8 byte end."),
+    max_bytes: Optional[int] = typer.Option(None, "--max-bytes", min=1, help="Explicit evidence allowance; default 32 KiB."),
+):
+    """Retrieve exact source snapshots; never discover additional evidence."""
+    _data_command(ctx, "dream_source", dream_reader.source, mirror, plan_path, unit, search, start, end, max_bytes)
+
+
+@app.command("ask")
+def ask(
+    ctx: typer.Context,
+    mirror: str = typer.Argument(..., help="Configured local mirror."),
+    question: str = typer.Argument(..., help="Question for a fresh native reader."),
+    plan_path: Path = typer.Option(..., "--plan", help="Explicit admitted plan with frozen source snapshots."),
+    harness: str = typer.Option(..., "--harness", help="Native codex or claude."),
+    model: str = typer.Option(..., "--model", help="Explicit model; transmits admitted reader context to its provider."),
+    base: str = typer.Option("HEAD", "--base", help="Pinned wiki revision or integration ref."),
+    source_only: bool = typer.Option(False, "--source-only", help="Use the identical evidence interface without wiki access."),
+    attempt: int = typer.Option(1, "--attempt", min=1, help="Explicit attempt; uncertain native outcomes are never silently retried."),
+):
+    """Answer through bounded, traced retrieval without construction context."""
+    _data_command(ctx, "dream_ask", dream_reader_agent.ask, mirror, plan_path, question, harness, model, base, not source_only, attempt)
 
 
 def _data_command(ctx, operation, function, *args):

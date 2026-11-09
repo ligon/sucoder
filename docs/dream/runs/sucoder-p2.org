@@ -1,0 +1,67 @@
+#+title: P2: source-grounded SuCoder authorship and correction
+#+author: Sue
+#+date: 2026-11-09
+#+status: PASSED engineering correction/synthesis gate; candidates unintegrated
+#+setupfile: ../settings.org
+
+* Actual SuCoder candidate
+:PROPERTIES:
+:CUSTOM_ID: real-wiki
+:END:
+
+The author/editor ran on the same six real source objects and 23,236 selected bytes as [[file:sucoder-p1.org][P1]], excluding construction examples, private transcripts and grading rubrics.
+The =source-grounded-wiki-v2= contract lets the agent compose and revise explanations while the coordinator resolves unique literal quotations to exact UTF-8 ranges.
+The source revision remains =1db3566b29e34312f1c36b61b8cc4eef65d2cf86=; the execution base is =a673b7f2862268434e3cdbc3c8dd61fc7bf0340e=.
+
+- Plan :: =7955f8c9a9bf74902889496d5736fdd0746e7dee2180f83957582a54e98172b4=.
+- Run :: =ba7ba3aa22adabd09f0b9534803a26bbfc0690df69201c8ce83498c538d1c2c1=, explicit attempt 2.
+- Candidate :: =b6c59f15d666763df1c0987429d12b417ae099ea=.
+- Ref :: =refs/heads/dream/ba7ba3aa22adabd09f0b9534803a26bbfc0690df69201c8ce83498c538d1c2c1=.
+- Model/build :: Explicit =gpt-6.1-sol=, Codex CLI 0.167.0; no fallback.
+- Topic :: =.sucoder/wiki/topics/transcript-replies.org=, 8,312 UTF-8 bytes.
+
+The four calls were author, reviewer, repair and reviewer.
+The independent reviewer identified a missing paste-wrapper qualification that the author had omitted: leading newlines and reused paste IDs defeat a start-anchored delivery match.
+The repair supplied that explanation and its source references; the second review accepted it.
+Native usage totals 85,046 input tokens and 11,123 output tokens; currency remains unknown.
+All selected chunks were delivered to whole-source authoring and final-candidate review.
+
+Inspection confirms coherent connections among historical observations, adapters, the parser's delivery window/status meanings, fixture expectations and launch identity.
+The topic preserves =--session-id <uuid>=, software/date qualifications, the distinction between test source and executed tests, and unresolved differences between a recommended tagged reply and the implementation's bare-reply fallback.
+It uses semantic paths, stable anchors and readable maintained-source links.
+This is a substantial improvement over the P1 diagnostic, not a measured reader-benefit estimate.
+No user worktree, index or active branch was changed by candidate publication, and the candidate remains unintegrated.
+
+The first P2 attempt under wiki-v1 used plan =a08c285fb6ef1de353e96c9bcdcf32e60e26a38b75f1a21ecd00773cd4ed38b5= and run =8000587fd2086feb76b627230dfeedf70676c36930056878b565f4833f2c5160=.
+Its 24 exact quotations were present but its model-computed offsets named entire units; mechanical checks rejected them and the bounded repair timed out.
+No candidate was published.
+The retained trace is not treated as accepted work or silently retried; v2 moves byte arithmetic to deterministic unique-match checks while retaining v1 replay.
+
+* Seeded correction in a disposable copy of the real wiki
+:PROPERTIES:
+:CUSTOM_ID: correction
+:END:
+
+A local copy of the actual candidate was given an established =summary-shortcut= section asserting that any compaction summary containing =REPLY <id>:= proves delivery without native assistant output.
+It also contained a clearly labeled acceptance-fixture maintainer constraint and a WAITING task: retain a ten-second timeout until a human decision is recorded.
+These seeded claims were confined to the disposable copy; they are not actual project policy and were not added to the SuCoder worktree.
+Construction received the real sources and this prior wiki, with no hidden grading rubric.
+
+- Private copy/artifacts :: =/tmp/sucoder-dream-p2-correction-vm7eoby5/=.
+- Base with seeded note :: =aef5d898a8fde60970e745c41625bbcd04cb6260=.
+- Plan :: =0cb0c168d8447c972d36684de2c7ca9e7ee938829ffacae2ba4669b2555ce42d=.
+- Run :: =8ea84b50de1a6fb66b68ad556846095711492d33739912076febe2621a138d1b=.
+- Candidate :: =e9ea73ac18639f57c8e892cfbf22baac55966174=, in that copy only.
+- Driver :: Retained at =/tmp/sucoder-dream-p2-correction.py=; it records the plan, result, status and corrected Org.
+
+The author corrected the established section, retained its target and all prior anchors, and joined three necessary contributions: the reported missing reply, the adapter's exclusion of summaries, and the fixture's expected =seen= rather than =replied= result.
+It explicitly called the fixture an intended-behavior definition rather than an executed result.
+It preserved the WAITING subtree and unresolved maintainer constraint byte for byte, retained the command qualification elsewhere, and linked the correction to the reader window and Talk caveat.
+Independent review accepted the correction without repair; source/output bindings and user-work preservation passed.
+The two native calls reported 45,812 input tokens and 3,006 output tokens, with unknown currency cost.
+
+This passes [[file:../workplan.org::#correction-synthesis][P2's engineering gate]].
+Fresh-reader use, selective maintenance, task/archive transitions and the separately scoped usefulness pilot remain later gates.
+Live Claude verification remains explicitly deferred by the user.
+
+Prepared by Sue.

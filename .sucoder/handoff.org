@@ -13,9 +13,8 @@ See [[file:../docs/dream/runs/sucoder-p1.org][the exact run and inspection repor
 Treat the native implementation below as an engineering milestone, not completion of the original dreaming objective.
 
 The canonical next-work queue is [[file:../docs/dream/workplan.org][the charter-completion workplan]].
-P1 is DONE as a diagnostic gate; P2 is ACTIVE.
-P2 has a committed source-grounded author/editor implementation at =51c599d=; its real-source correction acceptance remains next.
-P3 implements a fresh reader that demonstrably uses the result.
+P1 and P2 are DONE as engineering gates; P3 is ACTIVE.
+P2 has passed the real-source authorship/correction gate; P3 implements a fresh reader that demonstrably uses the result.
 P4-P5 complete selective incremental maintenance and the editorial/archive lifecycle; P6 verifies both native harnesses and the separately scoped usefulness pilot.
 The user emphasized delegating knowledge/editorial judgment to a capable agent; let it write and revise explanations while the coordinator enforces evidence, authority, budgets, validation and publication boundaries.
 Do not retain the titles/claim-ID-only consolidator as the long-term definition of synthesis.
@@ -33,32 +32,26 @@ The recovered clean branch was =coder/dream-data-plane= at =b7d9014=.
 The preceding deterministic data-plane handoff is preserved at [[file:handoffs/2026-11-08-dream-data-plane.org][the earlier November 8 handoff]].
 The older attention-hook work remains separate.
 
-* P2 work in progress, 2026-11-09
+* P2 completed; P3 active, 2026-11-09
 
-=sucoder/dream_wiki.py= adds the default =source-grounded-wiki-v2= native author/reviewer contract.
-It accepts coherent page edits, stable topics/anchors, exact multi-source citations, frozen base hashes, material omissions and one bounded mechanical/semantic repair.
-The reviewer sees full sources and prior pages, including omissions.
-Native Org inventory checks preserve anchors/tasks, scope links and reject active includes/configuration; inventory does not expand home or remote link paths.
-Whole-file receipt bindings cover titles and introduction text as well as subtrees.
-Original =--mode notes= remains replayable; default CLI =--mode wiki= selects the new editor.
-Native transports, trace caches, private-index publication and inference-free status are reused.
+See [[file:../docs/dream/runs/sucoder-p2.org][the complete real-source and correction report]].
+Actual SuCoder candidate =b6c59f15d666763df1c0987429d12b417ae099ea= exists on =refs/heads/dream/ba7ba3aa22adabd09f0b9534803a26bbfc0690df69201c8ce83498c538d1c2c1=.
+It uses plan =7955f8c9a9bf74902889496d5736fdd0746e7dee2180f83957582a54e98172b4=, source commit =1db3566= and execution base =a673b7f=, explicit attempt 2.
+The four calls caught and repaired an omitted paste-wrapper caveat; the coherent topic is 8,312 bytes and retains the exact launch flag and parser-window/status distinctions.
+The first v1 P2 run failed its quote offsets and timed out on repair without publication; v2 resolves unique literal quotations deterministically and retains v1 replay.
 
-The full suite passed 2721 tests, skipped eight and failed the same 55 baseline node IDs (no additions or removals).
-Its log is =/tmp/sucoder-dream-p2-full-suite.txt=.
-A live synthetic Codex wiki smoke passed at =/tmp/sucoder-dream-acceptance-4vezwj4t/=, including the critical flag and synthetic squash integration.
-The first smoke exposed missing output-path instructions and stopped without publication; the contract now states the editing namespace explicitly.
-Mypy, wheel inclusion and the broad 512-test dream/CLI check passed.
-The final focused run passed all 18 editor tests, including home/remote-link normalization; mypy passed all five changed runtime/script files.
+The disposable correction at =/tmp/sucoder-dream-p2-correction-vm7eoby5/= produced candidate =e9ea73ac18639f57c8e892cfbf22baac55966174= under plan =0cb0c168d8447c972d36684de2c7ca9e7ee938829ffacae2ba4669b2555ce42d=.
+It corrected the deliberately wrong summary-proof rule at stable target =summary-shortcut= using documentation, adapter and fixture evidence, preserving the WAITING maintainer constraint byte for byte.
+This passes P2's engineering gate; neither candidate was integrated and no usefulness pilot was run.
 
-Immediate next step: verify/commit the v2 quote-resolution refinement, then replan =/home/coder/.sucoder/logs/dream-inputs/2026-11-09-sucoder-p2.json= with the new engine commit as base and make an explicitly recorded =--attempt 2= on the same six real-source objects as P1.
-Inspect the actual candidate, then exercise seeded correction in a disposable copy of that real-source wiki.
-The first actual P2 author/editor run used plan =a08c285fb6ef1de353e96c9bcdcf32e60e26a38b75f1a21ecd00773cd4ed38b5= and run =8000587fd2086feb76b627230dfeedf70676c36930056878b565f4833f2c5160=.
-It wrote a useful 6,947-byte topic but its 24 valid exact quotations had unit-wide offsets; mechanical checks requested repair, which timed out after 180 seconds, so nothing was published.
-The private trace and unvalidated partial repair are retained.
-V2 asks for exact quotations and computes only unique literal matches deterministically, retaining original notes and v1 replay.
-The retained opt-in correction driver is =/tmp/sucoder-dream-p2-correction.py=; it creates a disposable copy from the successful actual candidate, seeds an incorrect established note and unresolved maintainer constraint, runs native correction and retains all artifacts.
-The driver reads the actual candidate result from =/tmp/sucoder-dream-p2-live-result.json=, so replace that result only after the new run finishes successfully.
-Do not mark P2 DONE based on deterministic or synthetic cases alone.
+P3 code is in progress and uncommitted: =sucoder/dream_reader.py= provides =dream read= and =dream source= over pinned git/wiki views and exact private snapshots, native LOGBOOK projection, specific archive targets and byte/omission accounting.
+=sucoder/dream_reader_agent.py= adds fresh bounded reader selection through the same native role cache/trace/lock machinery, without construction context.
+The CLI includes =dream ask= and =--source-only= for the identical source retrieval interface without wiki access.
+All fifteen reader and fresh-reader protocol cases pass, including both harnesses, cumulative budgets and inference-free resume; mypy passes all three reader/CLI files.
+The full suite is running as exec session =81525=, logged at =/tmp/sucoder-dream-p3-full-suite.txt=.
+Immediate next step: finish/review P3, validate old parser/status behavior, commit the reader slice, then run three fresh native questions against corrected candidate e9ea73a in the disposable copy using its explicit config/plan.
+Record actual retrieved topics/sources, answers, budgets and traces; do not infer memory use from a correct answer alone.
+P4 selective accepted-receipt reuse and P5 editorial/archive transitions remain unimplemented, and live Claude remains explicitly deferred.
 
 * Implemented native workflow
 
@@ -131,7 +124,7 @@ Use =poetry run sucoder= for source-tree commands; the installed launcher is sep
 * Subsequent work
 
 Automatic shared-receipt discovery/reuse, bounded reader retrieval and general editorial/archive transitions remain outstanding charter capabilities, tracked in the workplan.
-P2 topic revision and semantic repair are implemented but await real-source acceptance.
+P2 topic revision and semantic repair passed actual-source and seeded-correction acceptance; P3 fresh-reader live checks remain next.
 Generic role adapters are a later extension and must not displace those priorities.
 The legacy notes publisher remains append-only; the new wiki mode validates explicit changed pages before shared atomic publication.
 The separate pilot authorization and benefit gates remain in force.

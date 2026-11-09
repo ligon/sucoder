@@ -2550,6 +2550,12 @@ overwrite.
 =sucoder dream plan= starts an agent-independent, checked-in companion wiki workflow by freezing explicitly selected local git files, passages, or Claude/Codex transcript prefixes into a private plan.
 Planning preserves the mirror's worktree, index, and refs.
 =sucoder dream snapshot= validates a stored plan and copies exact admitted bytes into private storage.
+=sucoder dream read MIRROR= supplies bounded session orientation; =--topic NAME= retrieves active prose without LOGBOOK history, and =--archives --target ID= reads one specific archived entry.
+=sucoder dream source MIRROR --plan PLAN --search TEXT= searches the exact locally frozen evidence, with explicit byte accounting and no transcript discovery.
+=sucoder dream ask MIRROR "QUESTION" --plan PLAN --base REVISION --harness codex --model MODEL= starts a fresh native reader that chooses bounded topic/source lookups and records its actual retrievals; Claude uses the same interface.
+=--source-only= provides the same source lookup interface without wiki access.
+These are explicit session entry commands; project instructions are not rewritten.
+
 =sucoder dream run --harness fixture= exercises complete chunk delivery and prepares an attributed-quotation candidate with output-bound receipts; =sucoder dream status --plan= checks its candidate ref and integration bindings.
 The fixture invokes no model and establishes quotation fidelity only.
 Native =--harness codex --model MODEL= and =--harness claude --model MODEL= default to a shared wiki author/editor and independent whole-candidate review.
