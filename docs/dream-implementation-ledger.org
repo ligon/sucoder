@@ -531,6 +531,7 @@ Resume must not reset time/call allowances or automatically repeat an uncertain 
 Freeze source origins, independent held-out questions/rubrics and accepted final wiki revisions before randomized fresh-reader calls.
 Freeze the actual runtime source/role/retrieval contract before inference, retain its initial implementation revision and reject drift before a resumed/new transport request.
 Use the existing Coordinator replay and private v2 result bindings to validate completed reader cases rather than trusting a copied answer file.
+Only freeze a usable question deck or complete rubric-bound grade: semantic role checks must run before publishing the evaluator's validated pointer, so explicit retries can replace schema-valid rejected results while valid critical grades remain immutable.
 Keep questions/rubrics, the protocol and other answers outside builder/reader payloads and filesystem views; score one answer at a time with condition labels omitted.
 Retain per-case plans/results before ordinary integration in disposable repositories, so interrupted integration resumes without a new provider call.
 Apply the same write-ahead rule to seeded errors: bind the parent, exact before/after bytes and intended target before changing it, then recover an interrupted write/commit without appending twice.
