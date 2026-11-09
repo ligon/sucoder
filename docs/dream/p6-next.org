@@ -82,6 +82,10 @@ poetry run python scripts/dream_pilot_run.py \
 #+end_example
 
 No real pilot role has been called.
+Independent re-review found and resolved partial-runtime mixing and duplicate seed recovery defects at =c753aed=; [[file:runtime-audit.org][the runtime audit]] records the cases and limits.
+Execution now freezes source/role/retrieval contracts before transport and replays completed readers, while a write-ahead seed intent recovers atomic replacement and commit interruptions.
+Semantic question/grade checks precede the immutable validated pointer, allowing explicit retries of rejected results while preserving a valid critical-error stop.
+The current partitions pass eighteen driver and five preparation cases; the retry-inclusive logs are recorded in the runtime audit/handoff.
 Preserve original source provenance when importing verified snapshots into disposable Git envelopes; an import commit is not the original source commit.
 Create independent question/rubric roles from only each selected source corpus before construction; freeze evaluator-only artifacts outside every native readable directory.
 Keep construction briefs free of questions, rubrics, worked examples, development answers and review reports.

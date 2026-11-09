@@ -178,6 +178,10 @@ def evaluate(directory, model, transport, budget, role, inputs, attempt):
             dream.digest(str(directory.resolve()).encode()))
         with dream_roles.run_lock(fd, "evaluation-" + engine.run_id):
             result = engine.call(role, inputs)
+            if role == "questions":
+                check_questions(result, inputs["sources"])
+            else:
+                check_grade(result, inputs["question"])
             if saved is not None and result != saved["result"]:
                 raise dream.DreamError("Frozen evaluation result differs from its trace", 3)
             store(record_path, dict(attempt=attempt, input_sha256=binding, result_sha256=dream.digest(dream.canonical(result)), result=result))

@@ -47,7 +47,12 @@ This audit maps the [[file:workplan.org][runtime workplan]] and [[file:../dream-
 The workshop skill's independent skeptic found two concrete P6 defects missed by completed-replay fixtures: partial resume could mix reader contracts, and a crash after seed mutation/commit could duplicate the reserved anchor.
 The fixes freeze source/role/retrieval contracts before inference, guard transport against drift, replay completed readers against their original case binding, and record a seed intent before exact atomic replacement or commit.
 The reviewer re-inspected both fixes and found no surviving instance of either defect or a new concrete defect in those changes.
-Four runtime/seed guard cases, two partial-reader drift cases and two complete/critical-stop cases passed separately; the broader integration run is recorded after completion in the ledger/handoff.
+The final retry audit also confirmed that schema-valid rejected decks/grades were frozen before their semantic checks, preventing a usable explicit retry.
+Those checks now precede the validated pointer; rejected native traces remain retained, same-attempt replay makes no new call, explicit attempt 2 can recover, and a valid critical grade remains frozen.
+The final partitions passed nineteen fast guard/preparation cases and four full/critical-stop/partial-reader workflows: eighteen driver and five preparation cases in total.
+Four-module mypy also passed.
+The broader integration run on =7aec2cc= passed 2,855 cases, skipped eight and explicitly deselected the exact 55 known baseline failures; =/tmp/sucoder-dream-p6-final-integration.txt= records it.
+The pilot-only review fixes are committed at =c753aed= and followed that integration collection; their separate tests above cover the changes.
 These tests use protocol fixtures and simulated grades, not new real pilot model calls.
 
 * Limits that still matter

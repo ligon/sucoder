@@ -8,12 +8,18 @@
 
 This section is authoritative; the later milestone sections retain chronological recovery history.
 
-An independent audit is now correcting two pilot-resume defects in the working tree: execution-contract drift and unjournaled seed commits.
-The reviewer accepted both fixes after reinspection; focused runtime/seed, partial-reader and full/critical-stop protocol cases pass.
-The current integration suite began on =7aec2cc= and explicitly deselects the exact 55 known baseline failures; its live handle is exec session =57516= and log =/tmp/sucoder-dream-p6-final-integration.txt=.
-Poll that same process; do not restart it because a read times out.
+Independent review identified two pilot-resume defects: execution-contract drift and unjournaled seed commits.
+Both are corrected at =c753aed= and accepted after independent reinspection.
+A final confirmed retry-order defect is also corrected: unusable schema-valid question decks/grades no longer become frozen before semantic checks; valid critical grades remain immutable.
+All eighteen driver cases and five preparation cases have passing partitioned checks, plus four-module mypy.
+The integration suite on =7aec2cc= completed: 2,855 passed, eight skipped and the exact 55 known baseline failures explicitly deselected; its log is =/tmp/sucoder-dream-p6-final-integration.txt=.
+Session =57516= is terminal and closed; do not restart it.
+The pilot-only review fixes followed that collection and have separate passing checks at =/tmp/sucoder-dream-p6-review-*.txt=.
+The final retry-inclusive logs are =/tmp/sucoder-dream-p6-final-retry-guards.txt= (nineteen fast cases) and =/tmp/sucoder-dream-p6-final-retry-workflows.txt= (four workflow cases).
 See [[file:../docs/dream/runtime-audit.org][the requirement/evidence audit]].
 The real pilot approval remains unanswered; no pilot inference or Claude probe is authorized by this automatic continuation.
+This follow-up completed the independent audit and fixes; once these are recorded, no further implementation work is known apart from the scoped experiment and user assessment.
+The scope question first arose in the preceding goal turn and remains unanswered in this follow-up; retain that blocking history for the next goal audit rather than asking the same question again.
 
 The full runtime charter remains incomplete.
 The user's November 9 review established that earlier successful native runs used synthetic evidence in disposable repositories.

@@ -144,6 +144,45 @@ def test_evaluator_replays_frozen_attempt_and_rejects_corrupt_context(tmp_path):
     assert len(transport.calls) == 1
 
 
+@pytest.mark.parametrize("defect", ["quote", "categories", "grade_items"])
+def test_rejected_semantic_result_can_be_explicitly_retried_before_freezing(tmp_path, defect):
+    class InitiallyInvalid(Transport):
+        def __call__(self, *args):
+            result, usage, trace = super().__call__(*args)
+            if len(self.calls) == 1:
+                if defect == "quote":
+                    result["questions"][0]["support"][0]["quote"] = "Absent from the selected corpus"
+                elif defect == "categories":
+                    result["questions"][2]["category"] = "lookup"
+                else:
+                    result["items"].pop()
+                events = [json.loads(line) for line in trace["stdout"].splitlines()]
+                events[0]["item"]["text"] = json.dumps(result)
+                trace["stdout"] = "\n".join(json.dumps(event) for event in events) + "\n"
+            return result, usage, trace
+    budget = pilot.Budget(tmp_path, dict(limits=limits()))
+    transport = InitiallyInvalid(critical=defect == "grade_items")
+    directory = tmp_path / "evaluator"
+    sources = [dict(unit_id="unit-" + str(index), text="Fixture source " + str(index)) for index in range(2)]
+    role = "grade" if defect == "grade_items" else "questions"
+    inputs = dict(sources=sources)
+    if role == "grade":
+        inputs.update(question=questions(sources)[0], answer="Static fixture qualification")
+    scoped = budget.transport(transport, role)
+    for _ in range(2):
+        with pytest.raises(dream.DreamError):
+            pilot.evaluate(directory, "model", scoped, budget, role, inputs, 1)
+        assert not (directory / "validated.json").exists()
+        assert len(transport.calls) == 1
+    valid = pilot.evaluate(directory, "model", scoped, budget, role, inputs, 2)
+    assert pilot.read(directory / "validated.json")["attempt"] == 2
+    assert len(transport.calls) == 2
+    assert pilot.evaluate(directory, "model", scoped, budget, role, inputs, 3) == valid
+    assert len(transport.calls) == 2
+    if role == "grade":
+        assert valid["critical_errors"][0]["occurred"] == "yes"
+
+
 def test_pilot_decision_requires_quality_before_byte_savings():
     proposal = dict(sources=[dict(repository=name) for name in ("SuCoder", "LSMS_Library")])
     answers = [dict(repository=corpus["repository"], question_id="q" + str(index), condition=condition, category="synthesis",
