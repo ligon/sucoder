@@ -569,7 +569,19 @@ Prepared by Sue.
   Native Org design export/link/archive validation passed after the current documentation updates.
 
 The independent runtime audit found two P6 CONTRADICTIONs to the frozen-comparison and interruption invariants: partial resume could mix runtime instructions, and a seed commit could precede its durable marker.
-Those defects are being corrected against the grounding above; the earlier completed-replay fixtures did not exercise these windows.
+Both are corrected at =c753aed= and passed independent re-review against the grounding above.
+Execution now binds the actual runtime sources and live role/retrieval contract before inference and every transport reservation, retains the initial engine revision, and replays completed reader cases against their original bound results.
+Seed intent precedes atomic replacement/commit; exact before/after and parent/single-path checks recover interrupted operations without appending twice.
+The earlier completed-replay fixtures did not exercise those windows; new partial-reader and three seed-interruption regressions do.
+The final partitions passed sixteen fast guard/preparation cases, two partial-reader cases and two complete/critical-stop cases: fifteen driver and five preparation cases in total.
+Four-module mypy also passed.
+Their logs are =/tmp/sucoder-dream-p6-review-small-tests.txt=, =/tmp/sucoder-dream-p6-review-partial-tests.txt=, =/tmp/sucoder-dream-p6-review-e2e-tests.txt= and =/tmp/sucoder-dream-p6-review-guards.txt=.
+The post-P6 integration run on =7aec2cc= passed 2,855 cases, skipped eight and explicitly deselected the exact 55 recorded baseline failures; its log is =/tmp/sucoder-dream-p6-final-integration.txt=.
+The pilot-only review fixes followed that collection and have the separate passing coverage above; no unfiltered post-fix whole-suite claim is made.
+A forced index refresh removed malformed symbol IDs from incremental graph results; the pilot budget now resolves to three indexed direct callers, five impacted nodes, LOW risk and no outside processes.
+Staged detection after refresh reports seventeen changed symbols across seven flows with HIGH aggregate risk; actual code changes stay in the opt-in driver and tests.
+Native Org validation includes the new runtime audit, and packaged runtime helpers remain byte-identical to the verified wheel after the pilot-only fixes.
+No anchored contradiction from this independent review remains; the real pilot and human usefulness assessment still have no completion evidence.
 P1-P5 are DONE engineering gates; P6 remains ACTIVE pending the separately scoped real experiment and the user's assessment.
 The user was asked to approve the prepared scope or leave the pilot pending; no answer has arrived in this continuation.
 Live Claude remains explicitly deferred and is not counted as a passed native acceptance test.
