@@ -553,6 +553,18 @@ Exercise complete negative grading, genuine execution failure, immutable replay,
 
 Prepared by Sue.
 
+* Failed-reader outcome grounding
+
+The live comparison completed all eighteen SuCoder answers, then the first LSMS wiki-only reader explicitly reported unavailable schema evidence in =failures=.
+This is a substantive failed attempt, not permission to regenerate the answer until it improves.
+Reuse the unchanged reader session, lookup/answer validation, native trace parser, schema checks and accounting formulas to reconstruct that exact completed failure without inference.
+Keep the original runtime and clarified grader sealed; add a separately frozen outcome collector that retains role failures as a typed failed outcome and continues the remaining scheduled conditions.
+Require exact saved assignments, journal/trace/result bindings, delivered evidence IDs and replayed lookups; never turn a malformed or uncertain response into an accepted answer.
+Grade the failed reader's retained text independently, preserve its failure state and make any final comparison with failed attempts explicitly inconclusive.
+Retain all calls and the original deadline, and prove zero-call failure replay and rejection of corrupted traces before further live work.
+
+Prepared by Sue.
+
 * P5 public workflow and P6 preparation verification
 
 - Reuse :: V5 extends the existing author/context/reviewer loop with narrow materialization/validation hooks and the verified inline native Org primitive.
