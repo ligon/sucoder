@@ -18,7 +18,8 @@ The native pipeline milestone did not complete this broader objective.
 Baseline =78e5193= implements explicit git/Claude/Codex evidence, private snapshots, bounded native roles, exact citations, append-only candidate publication and local output-binding checks.
 Its [[file:implementation.org][engineering verification]] includes synthetic Codex runs and isolated protocol tests for both harnesses.
 The [[file:runs/sucoder-p1.org][first real SuCoder run]] has now produced an unintegrated candidate and exposed concrete selection/navigation failures.
-There is still no accepted maintained wiki or demonstrated fresh-reader benefit.
+The actual wiki is now accepted on =coder/dream-data-plane= at =dfbcf14=, and P3 demonstrated fresh-reader consultation/use.
+Comparative reader benefit remains unmeasured.
 The user explicitly left live Claude verification pending because its configured account quota is exhausted.
 
 This workplan records implementation work and acceptance gates.

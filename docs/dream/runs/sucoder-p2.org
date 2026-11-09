@@ -1,7 +1,7 @@
 #+title: P2: source-grounded SuCoder authorship and correction
 #+author: Sue
 #+date: 2026-11-09
-#+status: PASSED engineering correction/synthesis gate; candidates unintegrated
+#+status: PASSED engineering correction/synthesis gate; actual wiki accepted on feature branch
 #+setupfile: ../settings.org
 
 * Actual SuCoder candidate
@@ -30,7 +30,9 @@ Inspection confirms coherent connections among historical observations, adapters
 The topic preserves =--session-id <uuid>=, software/date qualifications, the distinction between test source and executed tests, and unresolved differences between a recommended tagged reply and the implementation's bare-reply fallback.
 It uses semantic paths, stable anchors and readable maintained-source links.
 This is a substantial improvement over the P1 diagnostic, not a measured reader-benefit estimate.
-No user worktree, index or active branch was changed by candidate publication, and the candidate remains unintegrated.
+No user worktree, index or active branch was changed by candidate publication.
+Following ordinary source/Org/output-binding review, the actual candidate was integrated into =coder/dream-data-plane= at =dfbcf148259484ea674cba5f4379809a93cc173c=.
+This ordinary integration makes the reviewed wiki available in the feature-branch worktree; it imports no seeded correction constraints.
 
 The first P2 attempt under wiki-v1 used plan =a08c285fb6ef1de353e96c9bcdcf32e60e26a38b75f1a21ecd00773cd4ed38b5= and run =8000587fd2086feb76b627230dfeedf70676c36930056878b565f4833f2c5160=.
 Its 24 exact quotations were present but its model-computed offsets named entire units; mechanical checks rejected them and the bounded repair timed out.

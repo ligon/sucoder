@@ -42,7 +42,9 @@ The first v1 P2 run failed its quote offsets and timed out on repair without pub
 
 The disposable correction at =/tmp/sucoder-dream-p2-correction-vm7eoby5/= produced candidate =e9ea73ac18639f57c8e892cfbf22baac55966174= under plan =0cb0c168d8447c972d36684de2c7ca9e7ee938829ffacae2ba4669b2555ce42d=.
 It corrected the deliberately wrong summary-proof rule at stable target =summary-shortcut= using documentation, adapter and fixture evidence, preserving the WAITING maintainer constraint byte for byte.
-This passes P2's engineering gate; neither candidate was integrated and no usefulness pilot was run.
+This passes P2's engineering gate.
+The actual, unseeded candidate was ordinarily integrated into this feature branch at =dfbcf148259484ea674cba5f4379809a93cc173c= after review; the disposable seeded candidate remains separate.
+No usefulness pilot was run.
 
 P3 is committed at =73a0e7a=: =sucoder/dream_reader.py= provides =dream read= and =dream source= over pinned git/wiki views and exact private snapshots, native LOGBOOK projection, specific archive targets and byte/omission accounting.
 =sucoder/dream_reader_agent.py= adds fresh bounded reader selection through the same native role cache/trace/lock machinery, without construction context.
@@ -55,7 +57,7 @@ Each requested/cited the corrected topic and original sources, using 1,156 orien
 Immediate next step: complete and verify the P4 first shared-reuse slice below, then appended-range processing, no-op convergence and bounded prior selection.
 P3 acceptance is committed at =edd57ea=; the exact baseline failure comparison and wheel checks passed.
 P5 task/archive transitions remain subsequent work; do not mark the full charter complete.
-P4 is now in progress: uncommitted =sucoder/dream_progress.py= discovers compatible accepted wiki-v2 receipts for unchanged git selections, checks all source dependencies/coverage and output bindings, and returns =already_integrated= with zero model calls and no candidate.
+P4 is in progress: =sucoder/dream_progress.py=, committed at =64baa20=, discovers compatible accepted wiki-v2 receipts for unchanged git selections, checks all source dependencies/coverage and output bindings, and returns =already_integrated= with zero model calls and no candidate.
 =dream_run.bound_outputs= factors the existing status output check; run/status have narrow shared-progress hooks, retaining older contracts.
 Reuse has private replayable proofs and reports reconciliation after a required output, receipt or repository identity changes.
 The final combined regression run passed 111 tests, including nine reuse cases; mypy passed all five changed/runtime reader files.
@@ -63,7 +65,12 @@ Its log is =/tmp/sucoder-dream-p4-focused.txt=.
 The identity-change test and 2 MiB metadata inspection cap are included in that final run.
 Final checks also passed the purpose/accepted-reuse cases and a new private-spec filename-substitution regression, plus mypy and native Org validation.
 The filename check prevents a valid reuse proof from being presented under another run ID.
-Next: finish checks/review, update implementation docs, commit this first P4 slice, then ordinarily integrate the reviewed actual SuCoder candidate b6c59f1 into this feature branch (not the disposable seeded wiki) and verify real accepted reuse with no provider calls.
+The actual SuCoder accepted-reuse check passed after ordinary integration at =dfbcf14=, with provider invocation patched to fail if attempted.
+Plan =22ce2298d81a30d44d462311182df99f9d85a8dc77d1ab74d14dc2b97a1d426c= produced reuse run =64f8d2c9a82809a1b80ce3943c64918a2e0981c1210bedf1e6dcc7c4c6a0f9a5=, =already_integrated=, zero provider calls and no candidate/ref/index/worktree change.
+The private plan directory contains =real-accepted-reuse-check.json=; the retained driver is =/tmp/sucoder-dream-p4-real-reuse.py=.
+The baseline actual wiki is now in the worktree at =.sucoder/wiki/topics/transcript-replies.org=, with its original source registry and receipt; =poetry run sucoder ... dream read SuCoder= works against HEAD.
+Next: commit this acceptance/status record and continue P4 transcript prefixes/appends, no-op convergence and bounded prior selection.
+Do not mark P4 or the full goal complete from unchanged-git reuse alone.
 Remaining P4: transcript prefix/appended-range reuse, bounded deterministic prior selection, targeted repairs and no-op decisions; P5 task/archive transitions and P6 scoped usefulness also remain.
 Live Claude remains explicitly deferred.
 
