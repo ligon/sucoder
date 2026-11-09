@@ -477,4 +477,25 @@ New transitions use a frozen execution timestamp; status must replay it and all 
 V5 should clarify supported private-transcript citations and CUSTOM_ID link forms exposed by the two P4 live mechanical repairs.
 P5 acceptance still requires the public runtime lifecycle, archive/history preservation and a fresh reader following a specific archived decision; design-only native checks do not satisfy it.
 
+* P5 native mechanics verification
+
+- OK (sections 2 and 5) :: The additive =native-editorial-org-v1= interface uses native Org subtree/property/heading operations and the existing source hashing, path checks, byte limits and deadlines.
+  Existing v1-v4 inventories and public role paths are unchanged.
+- OK (sections 3 and 4) :: Explicit frozen timestamps replay in UTC across host timezone changes.
+  Transitions preserve earlier LOGBOOK/completion records and audit owner/property changes; archive moves retain identities, source/outline/time context and inherited tags, with non-task forwarders and destination-preserving link updates.
+  Missing targets, stale hashes, duplicate actions and open descendant tasks reject inline edits without publication.
+  Source-directed setup files, hooks and Babel remain inactive.
+- Tests :: Sixteen native/editorial cases plus eleven reader regressions passed (27 total), including a direct comparison against actual =org-archive-subtree=.
+  Mypy passed the new runtime module.
+  The log is =/tmp/sucoder-dream-editorial-native-verified.txt=.
+- Packaging :: The wheel built from =0211002= contains both new runtime files and the original validator.
+  An extracted-wheel import executed the packaged native inspection successfully with zero provider calls.
+  The artifact and =verification.json= are in =/tmp/sucoder-dream-p5-native-wheel/=.
+- Scope :: Staged detection covered four expected files and 27 symbols with MEDIUM aggregate risk over one flow; the native entry point has LOW impact and one internal caller.
+  The P4 full-suite/baseline comparison predates this additive foundation; no new full-suite claim is made.
+
+No anchored CONTRADICTION or REINVENTION remains in this mechanics slice.
+P5 remains ACTIVE: v5 authority/policy validation, review of materialized changes, public lifecycle acceptance and fresh archived-decision retrieval are still required.
+P6 usefulness and the user's live Claude deferral remain in force.
+
 Prepared by Sue.
