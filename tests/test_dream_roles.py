@@ -207,7 +207,7 @@ else:
     import os
     monkeypatch.setenv("PATH", str(scratch) + os.pathsep + os.environ["PATH"])
     frozen = plan(workspace)
-    result = command(workspace, "run", frozen, "--harness", harness, "--model", "fixture-model")
+    result = command(workspace, "run", frozen, "--harness", harness, "--model", "fixture-model", "--mode", "notes")
     assert result.exit_code == 0, result.output
     value = json.loads(result.output)
     assert value["harness"] == harness

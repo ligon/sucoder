@@ -9,7 +9,7 @@ import typer
 
 from . import dream
 from . import dream_run
-from . import dream_roles
+from . import dream_wiki
 from .config import ConfigError, load_config
 
 
@@ -54,12 +54,14 @@ def run(
     harness: str = typer.Option(..., "--harness", help="fixture (exact quotations), codex or claude (native structured roles)."),
     model: Optional[str] = typer.Option(None, "--model", help="Required for native roles; sends admitted evidence and prior wiki to this model's provider."),
     attempt: int = typer.Option(1, "--attempt", min=1, help="Explicit native attempt number; a new number starts a new run and allowance."),
+    mode: str = typer.Option("wiki", "--mode", help="Native output: wiki author/editor (default) or legacy notes."),
+    purpose: str = typer.Option(dream_wiki.PURPOSE, "--purpose", show_default=False, help="What the wiki should help readers understand; wiki mode only."),
 ):
     """Prepare a candidate on a new dream branch, preserving worktree and index."""
-    if harness == "fixture" and model is None and attempt == 1:
+    if harness == "fixture" and model is None and attempt == 1 and mode in ("wiki", "notes") and purpose == dream_wiki.PURPOSE:
         _data_command(ctx, "dream_run", dream_run.run_fixture, mirror, plan_path, harness)
     else:
-        _data_command(ctx, "dream_run", dream_roles.run, mirror, plan_path, harness, model, attempt)
+        _data_command(ctx, "dream_run", dream_wiki.run, mirror, plan_path, harness, model, attempt, mode, purpose)
 
 
 @app.command("status")

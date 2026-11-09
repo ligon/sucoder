@@ -14,7 +14,8 @@ Treat the native implementation below as an engineering milestone, not completio
 
 The canonical next-work queue is [[file:../docs/dream/workplan.org][the charter-completion workplan]].
 P1 is DONE as a diagnostic gate; P2 is ACTIVE.
-P2-P3 implement substantive correction/cross-source synthesis and a fresh reader that demonstrably uses the result.
+P2 now has an uncommitted source-grounded author/editor implementation; its real-source correction acceptance remains next.
+P3 implements a fresh reader that demonstrably uses the result.
 P4-P5 complete selective incremental maintenance and the editorial/archive lifecycle; P6 verifies both native harnesses and the separately scoped usefulness pilot.
 The user emphasized delegating knowledge/editorial judgment to a capable agent; let it write and revise explanations while the coordinator enforces evidence, authority, budgets, validation and publication boundaries.
 Do not retain the titles/claim-ID-only consolidator as the long-term definition of synthesis.
@@ -32,6 +33,28 @@ The recovered clean branch was =coder/dream-data-plane= at =b7d9014=.
 The preceding deterministic data-plane handoff is preserved at [[file:handoffs/2026-11-08-dream-data-plane.org][the earlier November 8 handoff]].
 The older attention-hook work remains separate.
 
+* P2 work in progress, 2026-11-09
+
+=sucoder/dream_wiki.py= adds the default =source-grounded-wiki-v1= native author/reviewer contract.
+It accepts coherent page edits, stable topics/anchors, exact multi-source citations, frozen base hashes, material omissions and one bounded mechanical/semantic repair.
+The reviewer sees full sources and prior pages, including omissions.
+Native Org inventory checks preserve anchors/tasks, scope links and reject active includes/configuration; inventory does not expand home or remote link paths.
+Whole-file receipt bindings cover titles and introduction text as well as subtrees.
+Original =--mode notes= remains replayable; default CLI =--mode wiki= selects the new editor.
+Native transports, trace caches, private-index publication and inference-free status are reused.
+
+The full suite passed 2721 tests, skipped eight and failed the same 55 baseline node IDs (no additions or removals).
+Its log is =/tmp/sucoder-dream-p2-full-suite.txt=.
+A live synthetic Codex wiki smoke passed at =/tmp/sucoder-dream-acceptance-4vezwj4t/=, including the critical flag and synthetic squash integration.
+The first smoke exposed missing output-path instructions and stopped without publication; the contract now states the editing namespace explicitly.
+Mypy, wheel inclusion and the broad 512-test dream/CLI check passed.
+The final focused run passed all 18 editor tests, including home/remote-link normalization; mypy passed all five changed runtime/script files.
+
+Immediate next step: commit this engine slice, then freeze =/home/coder/.sucoder/logs/dream-inputs/2026-11-09-sucoder-p2.json= with the new engine commit as base and run the same six real-source objects as P1.
+Inspect the actual candidate, then exercise seeded correction in a disposable copy of that real-source wiki.
+No actual P2 real-source author/editor run has yet occurred.
+Do not mark P2 DONE based on deterministic or synthetic cases alone.
+
 * Implemented native workflow
 
 See [[file:../docs/dream/implementation.org][implemented interfaces and limitations]] and [[file:../docs/dream-implementation-ledger.org][the reuse and verification ledger]].
@@ -40,7 +63,7 @@ The separate =sucoder/dream_transcript.py= normalizer retains complete-prefix by
 Existing reply classification is unchanged.
 Snapshots accept append-only growth beyond the frozen cut and reject changed/shrunk bytes.
 
-=dream run --harness codex --model MODEL= and =--harness claude --model MODEL= use the same =inline-semantic-roles-v1= contract in =sucoder/dream_roles.py=.
+Legacy =dream run --mode notes --harness codex --model MODEL= and =--harness claude --model MODEL= use the same =inline-semantic-roles-v1= contract in =sucoder/dream_roles.py=.
 Every chunk receives extractor/verifier assignments; one consolidator selects all eligible claim IDs into fresh sections.
 The coordinator validates schemas, exact source quotes/ranges, exhaustive verdicts/claim selection, native result/trace bindings and Org output subtrees.
 It renders a fresh topic and index entry and reuses the existing private-index/atomic-ref publisher, preserving user work and prior wiki contributions.
@@ -102,9 +125,10 @@ Use =poetry run sucoder= for source-tree commands; the installed launcher is sep
 
 * Subsequent work
 
-Automatic shared-receipt discovery/reuse, semantic repair, bounded reader retrieval and general topic revision/editorial/archive transitions are required outstanding charter capabilities, tracked in the workplan.
+Automatic shared-receipt discovery/reuse, bounded reader retrieval and general editorial/archive transitions remain outstanding charter capabilities, tracked in the workplan.
+P2 topic revision and semantic repair are implemented but await real-source acceptance.
 Generic role adapters are a later extension and must not displace those priorities.
-The publisher is deliberately append-only until those editorial invariants are independently validated.
+The legacy notes publisher remains append-only; the new wiki mode validates explicit changed pages before shared atomic publication.
 The separate pilot authorization and benefit gates remain in force.
 
 GitNexus required a forced refresh to restore accurate dream symbol queries; use =node .gitnexus/run.cjs analyze --skip-agents-md=.

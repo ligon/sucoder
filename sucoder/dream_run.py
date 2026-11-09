@@ -361,9 +361,26 @@ def run_fixture(config, mirror, plan_path, harness):
         return publish(plan, fd, directory, sources, deadline, path, content, receipt, _index_entry(receipt["run_id"]))
 
 
+def output_bindings_match(files, parsed, bindings):
+    """Versioned exact output rules, including text outside Org subtrees."""
+    for binding in bindings:
+        path = binding["path"]
+        if path not in files:
+            return False
+        if binding["rule"] == "file-utf8-v1":
+            actual = digest(files[path].encode())
+        elif binding["rule"] == "org-subtree-utf8-v1":
+            actual = parsed.get(path, {}).get(binding["target"])
+        else:
+            raise DreamError("Unsupported dream output binding rule")
+        if actual != binding["sha256"]:
+            return False
+    return True
+
+
 def publish(plan, fd, directory, sources, deadline, path, content, receipt, index_entry,
-            *, receipt_name="fixture-receipt.json", result_name="run.json"):
-    """Shared atomic append-only publication, independent of role transport."""
+            *, receipt_name="fixture-receipt.json", result_name="run.json", wiki_files=None):
+    """Shared atomic publication; wiki edits are validated before this call."""
     source = sources[plan["repository"]]
     if len(canonical(receipt)) + len(content.encode()) > plan["limits"]["max_proposal_bytes"]:
         raise DreamError("Fixture proposals exceed max_proposal_bytes", 3)
@@ -371,16 +388,27 @@ def publish(plan, fd, directory, sources, deadline, path, content, receipt, inde
     ref = "refs/heads/dream/" + run_id
     previous = {item["path"]: item["blob"] for item in plan["prior_wiki"]["files"]}
     receipt_path = ".sucoder/wiki/receipts/" + run_id + ".json"
-    if path in previous or receipt_path in previous:
+    if (wiki_files is None and path in previous) or receipt_path in previous:
         raise DreamError("Fixture output already exists in the integration tree; re-plan")
     index_path = ".sucoder/wiki/index.org"
-    index = source.blob(previous[index_path]).decode("utf-8") if index_path in previous else "#+title: Companion wiki\n"
-    index += "\n" + index_entry
-    files = {path: content, index_path: index}
+    if wiki_files is None:
+        index = source.blob(previous[index_path]).decode("utf-8") if index_path in previous else "#+title: Companion wiki\n"
+        index += "\n" + index_entry
+        files = {path: content, index_path: index}
+    else:
+        files = dict(wiki_files)
+        if not files:
+            raise DreamError("A wiki change set must not be empty")
+        for name, text in files.items():
+            dream._path(name)
+            if (not name.startswith(".sucoder/wiki/") or not name.endswith(".org") or
+                    not isinstance(text, str) or not text.strip()):
+                raise DreamError("Wiki edits must be nonempty Org files within the companion")
+        if sum(len(text.encode()) for text in files.values()) + len(canonical(receipt)) > plan["limits"]["max_proposal_bytes"]:
+            raise DreamError("Wiki proposal exceeds max_proposal_bytes", 3)
     parsed = _validate_org(files, deadline)
-    for binding in receipt["outputs"]:
-        if parsed[binding["path"]].get(binding["target"]) != binding["sha256"]:
-            raise DreamError("Native Org subtree differs from output binding", 1)
+    if not output_bindings_match(files, parsed, receipt["outputs"]):
+        raise DreamError("Native Org output differs from its receipt binding", 1)
     files[receipt_path] = canonical(receipt).decode() + "\n"
     registry = ".sucoder/wiki/sources.json"
     if registry not in previous:
@@ -461,8 +489,13 @@ def status(config, mirror, plan_path, run_id=None):
         # Recompute fixture identities and expected receipt, rather than trust a
         # mutable local run record as evidence of shared accepted progress.
         if native:
-            from . import dream_roles
-            expected = dream_roles.restore(plan, fd, run_id, deadline)
+            spec = dream._json(_read(fd, "native-" + run_id + "-spec.json", 16384))
+            if spec.get("contract") == "source-grounded-wiki-v1":
+                from . import dream_wiki
+                expected = dream_wiki.restore(plan, fd, run_id, deadline)
+            else:
+                from . import dream_roles
+                expected = dream_roles.restore(plan, fd, run_id, deadline)
         else:
             _, _, expected = _fixture(plan, fd)
         run = _run_result(plan, expected, commit)
@@ -494,7 +527,7 @@ def status(config, mirror, plan_path, run_id=None):
                         files[binding["path"]] = source.blob(blob).decode("utf-8")
                     else:
                         parsed = _validate_org(files, deadline)
-                        if all(parsed.get(b["path"], {}).get(b["target"]) == b["sha256"] for b in expected["outputs"]):
+                        if output_bindings_match(files, parsed, expected["outputs"]):
                             state = "integrated_candidate" if native else "integrated_fixture"
                 except UnicodeError:
                     pass  # A human replacement no longer matches the Org contract.

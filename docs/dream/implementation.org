@@ -16,7 +16,8 @@ Those capabilities are required work toward the original objective.
 =sucoder dream plan= implements the first part of the [[file:../dream.org::#implementation][data-plane sequence]].
 It freezes explicitly admitted local git selections or native Claude/Codex transcript prefixes and budgets in a private JSON manifest without inference, source synchronization, or repository writes.
 Frozen-plan validation, private snapshots, deterministic quotation fixtures, native Org subtree checks, output-bound receipts, atomic candidate publication, and local run status are implemented.
-Native Claude and Codex adapters execute a shared schema-bound extractor/verifier/consolidator contract with an explicit model and conservative append-only publication.
+Native Claude and Codex adapters now default to a source-grounded wiki author/editor with independent whole-candidate review; legacy =--mode notes= preserves the earlier extractor/verifier/grouping contract.
+Wiki mode can revise existing topics while preserving their anchors and current editorial task subtrees.
 Automatic receipt reuse in planning, general editorial validation, generic native adapters and reader retrieval remain subsequent work.
 The planning manifest retains =execution.available: false= and =prior_wiki.progress: not_evaluated=: planning itself does not execute roles or establish accepted progress.
 Original git-only frozen plans remain compatible, including their legacy execution-reason text.
@@ -197,13 +198,48 @@ The planner binds the normalization digest; snapshots privately store both exact
 Neither the existing reply classifiers nor their delivery rules change.
 Transcript source identity uses the target repository UUID, harness kind and native thread ID; copying a transcript path creates no independent source identity.
 
-* Native semantic candidates
+* Wiki author/editor mode (default)
 
 #+begin_example
 poetry run sucoder --config ~/.sucoder/config.yaml dream run SuCoder \
-  --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json --harness codex --model MODEL
+  --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json --harness codex --model MODEL \
+  --purpose "Explain reply evidence and transcript identity for future maintainers."
+#+end_example
+
+The =source-grounded-wiki-v1= contract lets the agent select salient knowledge, write natural explanatory Org, combine source contributions and correct existing topic prose.
+The assignment explicitly supplies the permitted =.sucoder/wiki/index.org= and =.sucoder/wiki/topics/TOPIC.org= paths, change/reference format, existing page hashes, prior anchors/tasks and source-link examples.
+Those interface rules bind the run identity; the agent decides the content and organization.
+The coordinator owns initial settings, receipts, source registry and git publication.
+
+The first bounded implementation supplies the entire selected source bundle and prior active wiki inline, using the existing native transport and private role records.
+Both author and independent reviewer receive the full admitted evidence; final-page review checks material omissions, unsupported relationships, human authority and essential operational qualifications.
+A small catalog is required when that complete context cannot fit =max_consolidation_bytes=; bounded read/search support remains later work.
+The planner's conservative role reservation is not a promise that this mode needs a separate invocation per chunk.
+
+The author returns full changed-page text, before-page digests, reasoned change dispositions, source-bound section references and material omissions.
+Mechanical checks validate edit paths, exact source quotes/ranges, retained existing anchors, existing editorial task subtrees, wiki/source link targets and index reachability.
+Native Org inventories distinguish active directives from inert examples; arbitrary inclusion/configuration directives and links outside the admitted source/wiki view are rejected.
+The model can reorganize prose and replace mistaken factual explanations, while old task subtrees remain byte-preserved until their transition/authority checks are implemented.
+
+A reviewer accepts or returns concrete blocking findings.
+At most one editorial repair is allowed, followed by another whole-candidate review; a nonactionable revision request or persistent failure produces no candidate.
+This repair is distinct from an uncertain native request, which is never silently repeated.
+All calls, results and repairs use the shared invocation/time/proposal allowances.
+Mechanical checks and model acceptance still do not prove semantic truth or future usefulness; ordinary review and reader acceptance remain required.
+
+One atomic candidate changes only the validated wiki files and coordinator-owned metadata, preserving the user's index/worktree/branch.
+Receipts bind complete changed-file bytes, including text outside anchored subtrees, and identify multi-source references, dispositions, findings and exact role payloads.
+Inference-free status replays the saved contract and validates outputs after ordinary or squash integration; a title/intro edit can require reconciliation even if all subtree bodies remain unchanged.
+This conservative binding will be refined for selective claim-level reuse in P4.
+Legacy notes/fixture receipts continue using their original contract and subtree rules.
+
+* Native notes mode (legacy)
+
+#+begin_example
 poetry run sucoder --config ~/.sucoder/config.yaml dream run SuCoder \
-  --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json --harness claude --model MODEL
+  --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json --harness codex --model MODEL --mode notes
+poetry run sucoder --config ~/.sucoder/config.yaml dream run SuCoder \
+  --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json --harness claude --model MODEL --mode notes
 #+end_example
 
 The model is required; no harness or model fallback is attempted.
@@ -280,10 +316,10 @@ This contract is exercised with deterministic role fixtures and isolated native 
 
 * Next implementation slices
 
-1. Add compatible shared-receipt discovery/reuse during planning and bounded reader retrieval/previews.
-2. Extend append-only publication to independently validated topic revisions, editorial transitions, human decisions and archival moves.
-3. Add explicit generic execution adapters against the same capability/result contract.
-4. Review the separate pilot authorization and gates before any real corpus/provider experiment.
+1. Complete the real-source correction/synthesis acceptance in [[file:workplan.org][P2]], then bounded reader retrieval and fresh-reader use in P3.
+2. Add compatible shared-receipt discovery/reuse, selective maintenance, editorial transitions and archival moves in P4-P5.
+3. Verify both native harnesses and review the separate pilot authorization and gates in P6.
+4. Add generic execution adapters only after those charter priorities.
 
 The [[file:../dream-implementation-ledger.org][implementation ledger]] records reuse decisions and invariants.
 

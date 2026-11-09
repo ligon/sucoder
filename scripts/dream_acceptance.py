@@ -14,7 +14,7 @@ import pwd
 import subprocess
 import tempfile
 
-from sucoder import dream, dream_roles, dream_run
+from sucoder import dream, dream_wiki, dream_run
 from sucoder.config import load_config
 
 
@@ -23,6 +23,7 @@ def main():
     parser.add_argument("--harness", required=True, choices=("codex", "claude"))
     parser.add_argument("--model", required=True)
     parser.add_argument("--kind", choices=("git", "codex-jsonl", "claude-jsonl"), default="git")
+    parser.add_argument("--mode", choices=("wiki", "notes"), default="wiki")
     args = parser.parse_args()
     root = Path(tempfile.mkdtemp(prefix="sucoder-dream-acceptance-"))
     print(json.dumps(dict(state="started", private_artifacts=str(root))), flush=True)
@@ -65,11 +66,11 @@ def main():
     config = load_config(configuration)
     plan = dream.create_plan(config, "canary", catalog, "refs/heads/main")
     before = (git("status", "--porcelain"), (repository / ".git/index").read_bytes(), git("symbolic-ref", "HEAD"))
-    result = dream_roles.run(config, "canary", Path(plan["plan_path"]), args.harness, args.model)
+    result = dream_wiki.run(config, "canary", Path(plan["plan_path"]), args.harness, args.model, mode=args.mode)
     if before != (git("status", "--porcelain"), (repository / ".git/index").read_bytes(), git("symbolic-ref", "HEAD")):
         raise RuntimeError("Candidate publication changed user worktree/index/branch")
-    page = git("show", result["candidate_commit"] + ":.sucoder/wiki/topics/dream-" + result["run_id"] + ".org")
-    if "--dry-run" not in page:
+    paths = git("ls-tree", "-r", "--name-only", result["candidate_commit"], "--", ".sucoder/wiki/topics/").splitlines()
+    if not any("--dry-run" in git("show", result["candidate_commit"] + ":" + path) for path in paths):
         raise RuntimeError("Live semantic acceptance lost the required command flag")
     status = dream_run.status(config, "canary", Path(plan["plan_path"]))
     if status["integration"]["state"] != "not_integrated":

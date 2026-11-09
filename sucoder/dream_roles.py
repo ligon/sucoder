@@ -115,10 +115,16 @@ class Coordinator:
         self.usage, self.traces = [], []
         self.version = None
 
+    def make_assignment(self, role, inputs):
+        return assignment(self.run_id, role, inputs)
+
+    def result_schema(self, role):
+        return schema(role)
+
     def call(self, role, inputs):
         if self.invocations >= self.plan["limits"]["max_role_invocations"] or time.monotonic() >= self.deadline:
             raise DreamError("Shared dream role or elapsed allowance exhausted", 3)
-        task = assignment(self.run_id, role, inputs)
+        task = self.make_assignment(role, inputs)
         if len(canonical(task)) > self.plan["limits"]["max_consolidation_bytes"]:
             raise DreamError("Role assignment exceeds max_consolidation_bytes", 3)
         key = self.run_id + "-" + task["assignment_id"]
@@ -135,7 +141,7 @@ class Coordinator:
             else:
                 raise DreamError("An earlier role attempt has no validated result; inspect its private trace and select a new --attempt", 3)
             dream_run._store(self.fd, key + "-started.json", canonical(dict(state="started", assignment_id=task["assignment_id"])) + b"\n")
-            result, usage, trace = self.transport(self.harness, self.model, task, schema(role),
+            result, usage, trace = self.transport(self.harness, self.model, task, self.result_schema(role),
                                                  min(self.deadline, time.monotonic() + 180))
             dream_run._store(self.fd, key + "-trace.json", canonical(trace) + b"\n")
             if result is None:
@@ -166,7 +172,7 @@ class Coordinator:
         return saved["result"]
 
     def check_result(self, task, result):
-        validate_schema(result, schema(task["role"]))
+        validate_schema(result, self.result_schema(task["role"]))
         for key in ("assignment_id", "input_sha256", "role"):
             if result[key] != task[key]:
                 raise DreamError("Role result does not match its frozen assignment")
