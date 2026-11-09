@@ -13,6 +13,9 @@ The approved scope is 36 answers over the twelve frozen passages, Codex =gpt-6.1
 Independent implementation/audit work is complete and the approved proposal is intact; its execution directory did not exist at the pre-run check.
 Run the committed driver against =/tmp/sucoder-dream-p6-preparation-NjfocZ97/review-final/pilot-proposal.json= and the sibling =blobs/= directory, retaining its aggregate journal across any inspected explicit retry.
 The previous scope blocker is resolved; keep the explicit live-Claude deferral and do not change runtime code once the comparison begins.
+The approved pilot started on commit =7e8487b= at approximately 19:03 UTC, exec session =81805=, with log =/tmp/sucoder-dream-p6-live-pilot.txt=.
+Its authoritative journal is =/tmp/sucoder-dream-p6-preparation-NjfocZ97/review-final/execution/=.
+Poll that confirmed handle and journal before any restart; an observation timeout is not a stopped run.
 
 Independent review identified two pilot-resume defects: execution-contract drift and unjournaled seed commits.
 Both are corrected at =c753aed= and accepted after independent reinspection.
