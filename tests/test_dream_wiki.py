@@ -66,7 +66,7 @@ class EditorTransport:
                 changes=[dict(path=TOPIC, before_sha256=before, reason="Correct a mistaken rule using both admitted sources; preserve the maintainer's unresolved constraint."),
                          dict(path=wiki.INDEX, before_sha256="", reason="Provide a short topic-oriented entry point.")],
                 references=[dict(path=TOPIC, target="reply-proof", evidence_status="inference", citations=[
-                    dict(unit_id=s["unit_id"], byte_start=s["byte_start"], byte_end=s["byte_end"], quote=s["text"]) for s in inputs["sources"]])],
+                    dict(unit_id=s["unit_id"], quote=s["text"]) for s in inputs["sources"]])],
                 omissions=[])
         if self.mutate:
             self.mutate(task, result)
@@ -204,3 +204,55 @@ def test_status_checks_whole_files_including_unanchored_intro_after_squash(works
     git(repo, "add", TOPIC)
     git(repo, "commit", "-qm", "Change only text outside anchored subtrees")
     assert dream_run.status(workspace[2], "sample", Path(plan["plan_path"]))["integration"]["state"] == "needs_reconciliation"
+
+
+@pytest.mark.parametrize("quote,accepted", [("\u03bb\nunique", True), ("alpha", False), ("missing", False), ("", False)])
+def test_quote_resolution_is_unique_exact_utf8_and_absolute(quote, accepted):
+    import time
+    text = "alpha \u03bb\nunique evidence\nalpha \u03bb\n"
+    source = dict(unit_id="selected", byte_start=101, byte_end=101 + len(text.encode()), text=text)
+    proposal = dict(pages=[dict(path=wiki.INDEX, content="[[file:topics/rule.org::#rule][Rule]]\n"),
+                          dict(path=".sucoder/wiki/topics/rule.org", content="* Rule\n:PROPERTIES:\n:CUSTOM_ID: rule\n:END:\nExplanation.\n")],
+                    changes=[dict(path=path, before_sha256="", reason="Explain evidence") for path in
+                             (wiki.INDEX, ".sucoder/wiki/topics/rule.org")],
+                    references=[dict(path=".sucoder/wiki/topics/rule.org", target="rule", evidence_status="inference",
+                                     citations=[dict(unit_id="selected", quote=quote)])], omissions=[])
+    plan = dict(repository="sample", limits=dict(max_consolidation_bytes=65536))
+    if not accepted:
+        with pytest.raises(dream.DreamError, match="occurring once"):
+            wiki.validate_proposal(plan, proposal, {}, [source], time.monotonic() + 5)
+    else:
+        references = wiki.validate_proposal(plan, proposal, {}, [source], time.monotonic() + 5)[2]
+        citation = references[0]["citations"][0]
+        assert citation["byte_start"] == 107
+        assert citation["byte_end"] == 107 + len(quote.encode())
+        assert "byte_start" not in proposal["references"][0]["citations"][0]
+
+
+def test_legacy_wiki_v1_receipt_replays_with_original_assignments(workspace):
+    import time
+    plan = planned(workspace)
+    class LegacyTransport(EditorTransport):
+        def __call__(self, harness, model, task, contract, deadline):
+            result, usage, trace = super().__call__(harness, model, task, contract, deadline)
+            for reference in result.get("references", []):
+                for citation in reference["citations"]:
+                    unit = next(s for s in task["input"]["sources"] if s["unit_id"] == citation["unit_id"])
+                    citation.update(byte_start=unit["byte_start"], byte_end=unit["byte_end"])
+            trace["stdout"] = json.dumps(dict(type="item.completed", item=dict(type="agent_message", text=json.dumps(result)))) + "\n" + json.dumps(dict(type="turn.completed", usage={})) + "\n"
+            return result, usage, trace
+    deadline = time.monotonic() + 30
+    with dream_run._directory(workspace[2], Path(plan["plan_path"])) as (fd, directory):
+        plan = dream_run._load(fd, directory.name, "sample")
+        _, sources = dream_run._snapshot(workspace[2], "sample", plan, fd, deadline)
+        coordinator = wiki.WikiCoordinator(plan, fd, "codex", "model", deadline, LegacyTransport(), contract=wiki.LEGACY_CONTRACT)
+        prefix = "native-" + coordinator.run_id
+        dream_run._store(fd, prefix + "-spec.json", dream.canonical(dict(contract=wiki.LEGACY_CONTRACT,
+            run_id=coordinator.run_id, harness="codex", model="model", native_version=coordinator.expected_version,
+            attempt=1, purpose=wiki.PURPOSE)) + b"\n")
+        pages, receipt = coordinator.prepare()
+        result = dream_run.publish(plan, fd, directory, sources, deadline, wiki.INDEX, pages[wiki.INDEX], receipt, "",
+            receipt_name=prefix + "-receipt.json", result_name=prefix + "-run.json", wiki_files=pages)
+    status = dream_run.status(workspace[2], "sample", directory / "plan.json")
+    assert status["run_id"] == result["run_id"]
+    assert status["state"] == "candidate_ready"

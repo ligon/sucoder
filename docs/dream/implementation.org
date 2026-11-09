@@ -206,7 +206,7 @@ poetry run sucoder --config ~/.sucoder/config.yaml dream run SuCoder \
   --purpose "Explain reply evidence and transcript identity for future maintainers."
 #+end_example
 
-The =source-grounded-wiki-v1= contract lets the agent select salient knowledge, write natural explanatory Org, combine source contributions and correct existing topic prose.
+The =source-grounded-wiki-v2= contract lets the agent select salient knowledge, write natural explanatory Org, combine source contributions and correct existing topic prose.
 The assignment explicitly supplies the permitted =.sucoder/wiki/index.org= and =.sucoder/wiki/topics/TOPIC.org= paths, change/reference format, existing page hashes, prior anchors/tasks and source-link examples.
 Those interface rules bind the run identity; the agent decides the content and organization.
 The coordinator owns initial settings, receipts, source registry and git publication.
@@ -218,6 +218,9 @@ The planner's conservative role reservation is not a promise that this mode need
 
 The author returns full changed-page text, before-page digests, reasoned change dispositions, source-bound section references and material omissions.
 Mechanical checks validate edit paths, exact source quotes/ranges, retained existing anchors, existing editorial task subtrees, wiki/source link targets and index reachability.
+The author selects a unit ID and literal quotation; the coordinator derives its exact UTF-8 byte range only when that quote occurs once in the selected unit.
+Modified, absent or ambiguous quotations are rejected without fuzzy matching.
+The older =source-grounded-wiki-v1= offset-bearing contract remains replayable for saved runs; it is not used for new wiki runs.
 Native Org inventories distinguish active directives from inert examples; arbitrary inclusion/configuration directives and links outside the admitted source/wiki view are rejected.
 The model can reorganize prose and replace mistaken factual explanations, while old task subtrees remain byte-preserved until their transition/authority checks are implemented.
 

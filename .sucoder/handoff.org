@@ -14,7 +14,7 @@ Treat the native implementation below as an engineering milestone, not completio
 
 The canonical next-work queue is [[file:../docs/dream/workplan.org][the charter-completion workplan]].
 P1 is DONE as a diagnostic gate; P2 is ACTIVE.
-P2 now has an uncommitted source-grounded author/editor implementation; its real-source correction acceptance remains next.
+P2 has a committed source-grounded author/editor implementation at =51c599d=; its real-source correction acceptance remains next.
 P3 implements a fresh reader that demonstrably uses the result.
 P4-P5 complete selective incremental maintenance and the editorial/archive lifecycle; P6 verifies both native harnesses and the separately scoped usefulness pilot.
 The user emphasized delegating knowledge/editorial judgment to a capable agent; let it write and revise explanations while the coordinator enforces evidence, authority, budgets, validation and publication boundaries.
@@ -35,7 +35,7 @@ The older attention-hook work remains separate.
 
 * P2 work in progress, 2026-11-09
 
-=sucoder/dream_wiki.py= adds the default =source-grounded-wiki-v1= native author/reviewer contract.
+=sucoder/dream_wiki.py= adds the default =source-grounded-wiki-v2= native author/reviewer contract.
 It accepts coherent page edits, stable topics/anchors, exact multi-source citations, frozen base hashes, material omissions and one bounded mechanical/semantic repair.
 The reviewer sees full sources and prior pages, including omissions.
 Native Org inventory checks preserve anchors/tasks, scope links and reject active includes/configuration; inventory does not expand home or remote link paths.
@@ -50,9 +50,14 @@ The first smoke exposed missing output-path instructions and stopped without pub
 Mypy, wheel inclusion and the broad 512-test dream/CLI check passed.
 The final focused run passed all 18 editor tests, including home/remote-link normalization; mypy passed all five changed runtime/script files.
 
-Immediate next step: commit this engine slice, then freeze =/home/coder/.sucoder/logs/dream-inputs/2026-11-09-sucoder-p2.json= with the new engine commit as base and run the same six real-source objects as P1.
+Immediate next step: verify/commit the v2 quote-resolution refinement, then replan =/home/coder/.sucoder/logs/dream-inputs/2026-11-09-sucoder-p2.json= with the new engine commit as base and make an explicitly recorded =--attempt 2= on the same six real-source objects as P1.
 Inspect the actual candidate, then exercise seeded correction in a disposable copy of that real-source wiki.
-No actual P2 real-source author/editor run has yet occurred.
+The first actual P2 author/editor run used plan =a08c285fb6ef1de353e96c9bcdcf32e60e26a38b75f1a21ecd00773cd4ed38b5= and run =8000587fd2086feb76b627230dfeedf70676c36930056878b565f4833f2c5160=.
+It wrote a useful 6,947-byte topic but its 24 valid exact quotations had unit-wide offsets; mechanical checks requested repair, which timed out after 180 seconds, so nothing was published.
+The private trace and unvalidated partial repair are retained.
+V2 asks for exact quotations and computes only unique literal matches deterministically, retaining original notes and v1 replay.
+The retained opt-in correction driver is =/tmp/sucoder-dream-p2-correction.py=; it creates a disposable copy from the successful actual candidate, seeds an incorrect established note and unresolved maintainer constraint, runs native correction and retains all artifacts.
+The driver reads the actual candidate result from =/tmp/sucoder-dream-p2-live-result.json=, so replace that result only after the new run finishes successfully.
 Do not mark P2 DONE based on deterministic or synthetic cases alone.
 
 * Implemented native workflow

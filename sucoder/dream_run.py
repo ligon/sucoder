@@ -490,7 +490,7 @@ def status(config, mirror, plan_path, run_id=None):
         # mutable local run record as evidence of shared accepted progress.
         if native:
             spec = dream._json(_read(fd, "native-" + run_id + "-spec.json", 16384))
-            if spec.get("contract") == "source-grounded-wiki-v1":
+            if spec.get("contract") in ("source-grounded-wiki-v1", "source-grounded-wiki-v2"):
                 from . import dream_wiki
                 expected = dream_wiki.restore(plan, fd, run_id, deadline)
             else:
