@@ -10,7 +10,7 @@ This section is authoritative; the later milestone sections retain chronological
 
 Independent review identified two pilot-resume defects: execution-contract drift and unjournaled seed commits.
 Both are corrected at =c753aed= and accepted after independent reinspection.
-A final confirmed retry-order defect is also corrected: unusable schema-valid question decks/grades no longer become frozen before semantic checks; valid critical grades remain immutable.
+A final confirmed retry-order defect is corrected at =6117288=: unusable schema-valid question decks/grades no longer become frozen before semantic checks; valid critical grades remain immutable.
 All eighteen driver cases and five preparation cases have passing partitioned checks, plus four-module mypy.
 The integration suite on =7aec2cc= completed: 2,855 passed, eight skipped and the exact 55 known baseline failures explicitly deselected; its log is =/tmp/sucoder-dream-p6-final-integration.txt=.
 Session =57516= is terminal and closed; do not restart it.
