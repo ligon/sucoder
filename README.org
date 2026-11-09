@@ -2568,6 +2568,11 @@ Authors and reviewers can request bounded frozen topic/source lookups and specif
 =sucoder dream run --harness fixture= exercises complete chunk delivery and prepares an attributed-quotation candidate with output-bound receipts; =sucoder dream status --plan= checks its candidate ref and integration bindings.
 The fixture invokes no model and establishes quotation fidelity only.
 Native =--harness codex --model MODEL= and =--harness claude --model MODEL= default to a shared wiki author/editor and independent whole-candidate review.
+Wiki mode may synthesize new explanations, relationships and abstractions from multiple admitted sources; the explanation need not appear verbatim in any one source.
+Record derived reasoning as =inference= in its source references, cite the supporting evidence and preserve uncertainty and attribution in the prose.
+Independent review checks whether the evidence supports the explanation and its qualifications.
+Readers use the explanatory wiki alongside normal source retrieval; maintained sources remain available for details and verification.
+This is the [[file:docs/dream/workplan.org::#accepted-synthesis][user-accepted operating mode]].
 Use =--purpose TEXT= to state what the companion should help readers understand; =--mode notes= retains the earlier extractor/verifier/grouping pipeline.
 These commands transmit admitted evidence and prior wiki context to the selected provider; there is no provider/model fallback.
 

@@ -4,9 +4,10 @@
 
 * Completion finding
 
-The implemented workflows and approved scoped comparison have engineering evidence; the full goal remains in human review.
+The runtime workplan is complete under the user's accepted operating mode and explicit live-Claude deferral.
 P1-P5 passed their runtime gates, and [[file:runs/sucoder-p6.org][P6]] completed all 36 scheduled attempts with a small wiki-plus-search quality gain, two failed wiki-only diagnostics and no dependable context saving.
-The user's assessment of the explanations and maintenance value remains pending.
+The user selected [[file:workplan.org::#accepted-synthesis][explanatory synthesis alongside source search]], explicitly permitting dreaming to synthesize new explanations.
+This supplies the requested human disposition while retaining the measured limitations.
 Live Claude is an explicit user deferral, not a passed live check.
 This audit maps the [[file:workplan.org][runtime workplan]] and [[file:../dream-charter.org::#research-conclusions][charter conclusions]] to inspectable artifacts, rather than treating the design workshop's DONE entries as runtime results.
 
@@ -74,7 +75,7 @@ The pilot's source admission, model and repetition limits remain binding; comple
 The 180-call ceiling counts native role invocations, not unobserved internal HTTP retries.
 Native-reported token fields and controlled submitted-byte counts are recorded separately; currency and unobservable provider accounting remain unknown.
 The original exploratory quality threshold is met in this one comparison; post-start instrumentation corrections, failed diagnostics and small item differences limit its interpretation.
-Human assessment of readability/usefulness still remains necessary.
+The user's selection accepts maintaining an explanatory wiki with source fallback; it does not change the measured results or establish general effectiveness.
 Page counts, fixture grades, a verified wheel or a protocol-green Claude adapter cannot substitute for that evidence.
 
 Prepared by Sue.

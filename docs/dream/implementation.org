@@ -1,15 +1,15 @@
 #+title: Dream implementation status and backend boundary
 #+author: Sue
-#+date: 2026-11-08
+#+date: 2026-11-09
 #+setupfile: settings.org
 
 * Full runtime charter status
 
-The full runtime objective remains incomplete.
-P1-P5 have passed their engineering gates, including real SuCoder correction/synthesis, fresh-reader use, selective maintenance and editorial/archive behavior.
-The [[file:workplan.org][charter-completion workplan]] has P6 active for the scoped usefulness comparison and operator acceptance.
-See [[file:runs/sucoder-p5.org][the P5 acceptance report]] and [[file:p6-next.org][the concrete P6 scope and continuation]].
-Live Claude verification remains explicitly deferred; usefulness has not yet been measured.
+The runtime objective is complete under the [[file:workplan.org::#accepted-synthesis][user-accepted explanatory-synthesis mode]] and explicit live-Claude deferral.
+P1-P6 have their recorded engineering, pilot and human dispositions, including real SuCoder correction/synthesis, fresh-reader use, selective maintenance and editorial/archive behavior.
+The [[file:runs/sucoder-p6.org][completed pilot]] records a small wiki-plus-search quality gain, two failed wiki-only diagnostics and no dependable context saving.
+The user chose to retain explanatory articles alongside source search and explicitly permitted dreaming to synthesize new explanations.
+Live Claude verification remains unverified under the user's deferral; accepting this operating mode does not imply broader performance evidence or automatic deployment.
 
 * Implemented slices: explicit evidence and native role publication
 
@@ -17,6 +17,8 @@ Live Claude verification remains explicitly deferred; usefulness has not yet bee
 It freezes explicitly admitted local git selections or native Claude/Codex transcript prefixes and budgets in a private JSON manifest without inference, source synchronization, or repository writes.
 Frozen-plan validation, private snapshots, deterministic quotation fixtures, native Org subtree checks, output-bound receipts, atomic candidate publication, and local run status are implemented.
 Native Claude and Codex adapters now default to a source-grounded wiki author/editor with independent whole-candidate review; legacy =--mode notes= preserves the earlier extractor/verifier/grouping contract.
+Wiki mode permits new explanations and abstractions inferred across admitted sources, with supporting citations and =inference= source-reference status.
+The explanation need not appear verbatim in one source; independent review assesses the inferred relationship and necessary qualifications.
 Wiki mode can revise existing topics while preserving their anchors and current editorial task subtrees.
 Accepted receipt reuse is evaluated at execution, while planning remains inference-free; generic native adapters remain subsequent work.
 Bounded deterministic wiki/source retrieval and fresh native readers are implemented; real-reader engineering acceptance is tracked in P3.
@@ -444,11 +446,11 @@ Unsupported capabilities fail before inference with no provider/model fallback.
 Money or token limits are enforceable only when the adapter demonstrates run-wide accounting and enforcement; missing usage remains unknown.
 This contract is exercised with deterministic role fixtures and isolated native executable fixtures, independently of live account availability.
 
-* Next implementation slices
+* Deferred verification and extensions
 
-1. Complete [[file:workplan.org][P6]] package/operator verification and the separately scoped usefulness experiment; P1-P5 have passed engineering acceptance.
-2. Retain the user's explicit live-Claude deferral and report it as unverified.
-3. Add generic execution adapters only after those charter priorities.
+The [[file:workplan.org][runtime workplan]] is complete under its recorded acceptance and deferral dispositions.
+Retain the user's explicit live-Claude deferral and report that live check as unverified.
+Further comparison models/repetitions, background automation and generic execution adapters are separate extensions rather than unfinished requirements of this accepted scope.
 
 The [[file:../dream-implementation-ledger.org][implementation ledger]] records reuse decisions and invariants.
 

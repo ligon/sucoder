@@ -1,19 +1,22 @@
-#+TITLE: sucoder dream: completed scoped pilot and human review
+#+TITLE: sucoder dream: accepted explanatory synthesis
 #+DATE: 2026-11-09
-#+STATUS: REVIEW
+#+STATUS: COMPLETE
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
 * Current objective and disposition
 
 Implement a source-grounded dreaming loop for Codex and Claude, including a real wiki, correction/synthesis, fresh readers, selective maintenance, editorial/archive behavior and measured use.
-P1-P5 passed their engineering gates; the user-approved P6 pilot is complete and the workplan is now in human REVIEW.
-The remaining assessment is whether the explanations and small measured quality gain warrant their maintenance cost.
+P1-P6 are complete under the recorded acceptance and deferral dispositions.
+On 2026-11-09 the user selected option one: "Let's proceed with option one, permitting dreaming to synthesize new  explanations."
+Dreaming may synthesize new explanations, relationships and abstractions across admitted evidence, maintaining explanatory articles alongside normal source search.
+The explanation need not occur verbatim in a source; supporting evidence and inferred reasoning remain traceable, with uncertainty, attribution and independent review.
+The existing default author/editor implements this behavior; the user's selection supplies the remaining human disposition.
 Live Claude verification remains explicitly deferred by the user because of the configured account's weekly quota; do not probe it or request credentials.
 No inference process, test process or approved comparison case remains running.
 Do not restart or extend the completed pilot, add models/repetitions, admit private transcripts, change actual LSMS sources or infer a rollout authorization.
 
-The canonical current evidence is [[file:../docs/dream/runs/sucoder-p6.org][the P6 report]], [[file:../docs/dream/workplan.org][the workplan]] and [[file:../docs/dream/runtime-audit.org][the runtime audit]].
+The canonical current evidence is [[file:../docs/dream/runs/sucoder-p6.org][the P6 report]], [[file:../docs/dream/workplan.org::#accepted-synthesis][the accepted operating mode]] and [[file:../docs/dream/runtime-audit.org][the runtime audit]].
 The complete earlier recovery/milestone narrative is preserved at [[file:handoffs/2026-11-09-dream-runtime-pilot-history.org][the archived session history]]; its running/pending statements are historical.
 
 * Completed live experiment
@@ -62,5 +65,7 @@ The broader integration run on =7aec2cc= passed 2,855 tests, skipped eight and e
 The prior P5 unfiltered suite reproduced all 55 baseline failures with no additions/removals.
 Those full-suite snapshots predate the additive pilot-only fixes/scripts; targeted checks cover the later changes and no later unfiltered full-suite result is claimed.
 Public runtime, both native harness protocols, packaged native Org and the real Codex wiki/reader loop have the earlier milestone evidence linked from the workplan.
+After the user's synthesis selection, =tests/test_dream_wiki.py::test_corrects_existing_topic_and_combines_sources_preserving_human_task= passed both harness protocol cases and native Org export/link/archive validation passed.
+The adoption changes documentation and acceptance state; no runtime contract or provider invocation changed.
 
 Prepared by Sue (GPT-6 Codex).

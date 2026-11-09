@@ -5,7 +5,7 @@
 * Prepared engineering boundary
 
 P1-P5 passed engineering gates; [[file:runs/sucoder-p5.org][P5's report]] retains the exact live/protocol evidence and limitations.
-P6's paid two-repository experiment is complete; see [[file:runs/sucoder-p6.org][the result, exact artifacts and remaining review]].
+P6's paid two-repository experiment and human operating-mode disposition are complete; see [[file:runs/sucoder-p6.org][the result, exact artifacts and acceptance]].
 The user explicitly approved the concrete scope below on 2026-11-09: "Pilot approved".
 Live Claude remains explicitly deferred regardless of that decision.
 
@@ -87,7 +87,8 @@ The original exploratory wiki-plus-search quality threshold is met, while the am
 The exact continuation and grading/outcome amendments are recorded in [[file:runs/sucoder-p6.org][the P6 report]].
 The final report is =review-final/execution/report-outcomes.json=, SHA-256 =7ca6c5e91f5475e483fb9314bf3fd465a20b580c8bb10edcaa24431b2de9c35d=.
 An exact zero-inference replay passed, and a private copy of sources, runtime, traces and operator logs is retained under =/home/coder/.sucoder/logs/dream-pilots/2026-11-09-p6-7ca6c5e9/=.
-Do not restart or extend the completed experiment; the next disposition is human assessment of usefulness, with live Claude still explicitly deferred.
+The user subsequently accepted [[file:workplan.org::#accepted-synthesis][explanatory synthesis alongside source search]]; P6 is complete with live Claude still explicitly deferred.
+The completed experiment and its measured limitations remain intact.
 
 The following implementation/operational constraints describe how the retained run was bounded.
 Independent re-review found and resolved partial-runtime mixing and duplicate seed recovery defects at =c753aed=; [[file:runtime-audit.org][the runtime audit]] records the cases and limits.

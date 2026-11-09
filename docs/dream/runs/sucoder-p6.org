@@ -9,7 +9,7 @@ Independent grades recorded zero critical errors; 34 attempts answered and two L
 The wiki-plus-search comparison meets the original exploratory quality threshold, but establishes no dependable context or monetary saving.
 The amended collector conservatively labels the complete run inconclusive because it retains the two failed diagnostic attempts.
 Those diagnostic failures and that additional conservative classification are distinct from the original wiki-plus-search decision rule.
-The single small comparison, instrument corrections during execution and sensitivity to individual rubric details preclude a rollout claim; human readability/usefulness assessment remains necessary.
+The single small comparison, instrument corrections during execution and sensitivity to individual rubric details preclude a rollout claim; the user's subsequent operating-mode disposition is recorded below.
 The user approved the prepared pilot on 2026-11-09 with "Pilot approved".
 Its unchanged scope is twelve frozen passages, 45,708 selected bytes, Codex CLI 0.167.0 with explicit =gpt-6.1-sol=, 36 answers, two hours total and 180 native invocations.
 All unsuccessful calls, inspected retries, question generation, construction, readers and graders share that original allowance.
@@ -20,6 +20,14 @@ The questions and rubrics were frozen before construction and withheld from buil
 The preparation canary enforced the evaluator-only filesystem boundary; the protocol, worked examples and other answers were also excluded.
 Reader order uses the prepared randomized schedule with seed 20261109.
 No private transcripts were admitted and no LSMS source files or scientific decisions were changed.
+
+* Human disposition
+
+On 2026-11-09 the user selected option one: "Let's proceed with option one, permitting dreaming to synthesize new  explanations."
+This accepts maintaining explanatory wiki articles alongside source search, including new source-grounded explanations and abstractions that need not appear verbatim in one source.
+The [[file:../workplan.org::#accepted-synthesis][recorded operating mode]] retains citations, uncertainty, independent review and source fallback.
+P6's requested human disposition is complete, with live Claude verification still explicitly deferred.
+The original exploratory threshold, conservative collector classification, failed diagnostics, costs and statistical limits remain unchanged.
 
 * Frozen sources and constructed wikis
 

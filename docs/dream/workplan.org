@@ -1,7 +1,7 @@
 #+title: Dream runtime: workplan for charter completion
 #+author: Sue
 #+date: 2026-11-09
-#+status: REVIEW -- P1-P5 engineering gates and scoped comparison complete; human usefulness assessment pending
+#+status: DONE -- explanatory synthesis accepted; live Claude verification explicitly deferred
 #+setupfile: settings.org
 #+todo: TODO(t!) NEXT(n!) ACTIVE(a!) WAITING(w@/!) REVIEW(r@/!) | DONE(d!) MOOT(m@)
 #+startup: logdone logdrawer
@@ -24,6 +24,20 @@ The user explicitly left live Claude verification pending because its configured
 
 This workplan records implementation work and acceptance gates.
 Preparing it does not run inference, admit private transcripts, integrate a candidate or authorize the separate two-repository pilot.
+
+* Accepted operating mode
+:PROPERTIES:
+:CUSTOM_ID: accepted-synthesis
+:END:
+
+On 2026-11-09 the user selected the explanatory-wiki option: "Let's proceed with option one, permitting dreaming to synthesize new  explanations."
+Dreaming may combine admitted evidence into new explanations, relationships and useful abstractions, then maintain and correct that understanding across sessions.
+The explanation need not be stated verbatim in any source; its supporting evidence and derived reasoning must remain traceable, with uncertainty and attribution preserved.
+Readers use the explanatory wiki alongside normal source search, including when wiki-only coverage is insufficient.
+The existing default author/editor already implements this mode; the public cross-source correction case exercises it through both harness protocols.
+This records the requested human disposition and completes P6 under the user's explicit live-Claude deferral.
+The pilot's small quality gain, failed wiki-only diagnostics, conservative inconclusive classification and lack of dependable context savings remain as measured.
+The selection adopts the operating mode and does not turn those limited results into a broader performance claim.
 
 * Delegate the knowledge work to the agent
 :PROPERTIES:
@@ -197,7 +211,8 @@ Retain active forwarding anchors and repair tracked incoming links in the same c
 - Current evidence :: [[file:runs/sucoder-p5.org][The public editorial/archive report]] records both protocol lifecycles, live Codex, exact retained attempts/usage and the root-suite baseline comparison.
 - Charter :: [[file:../dream-charter.org::#wiki-task-workflow][Editorial task workflow]] and [[file:../dream.org::#editorial][archive contract]].
 
-** REVIEW P6. Verify both harnesses and measure usefulness before rollout
+** DONE P6. Verify both harnesses and measure usefulness before rollout
+CLOSED: [2026-11-09 Mon 23:36]
 :PROPERTIES:
 :CUSTOM_ID: acceptance
 :OWNER: Sue
@@ -205,6 +220,8 @@ Retain active forwarding anchors and repair tracked incoming links in the same c
 :DEPENDS_ON: fresh-reader incremental editorial
 :END:
 :LOGBOOK:
+- State "DONE" from "REVIEW" [2026-11-09 Mon 23:36] \\
+  Sue: The user selected option one and explicitly permitted dreaming to synthesize new explanations. This accepts the explanatory wiki alongside source search and supplies the requested human disposition. Preserve the measured pilot limitations and explicit deferral of live Claude; no new experiment or automatic rollout follows from this state change.
 - State "REVIEW" from "ACTIVE" [2026-11-09 Mon 20:20] \\
   Sue: The explicitly approved pilot completed all 36 attempts in 71.2 minutes/137 native invocations, with zero graded critical errors and two retained wiki-only failures. Wiki plus search meets the original exploratory quality-gain threshold; context savings are unsupported and the amended collector conservatively reports inconclusive. The linked P6 report retains exact artifacts, corrections, usage and zero-inference replay. Human usefulness assessment and the explicit live-Claude deferral remain visible.
 - State "ACTIVE" from "TODO" [2026-11-09 Mon 09:21] \\
@@ -228,7 +245,7 @@ Measure critical errors, missing qualifications, answer quality, reader bytes, l
 - Current evidence :: [[file:runs/sucoder-p6.org][Completed paired comparison, failed diagnostics, native costs and retained artifacts]].
   Codex live evidence and both harness protocols pass the implemented workflows; live Claude remains deferred under the user's explicit disposition.
   Keep source fallback and explicit invocation, retain the existing small real SuCoder wiki, and enable no background rollout or additional comparison repetitions from this result.
-  The remaining review is whether the explanations and small observed qualification gain warrant their maintenance cost.
+  The user selected explanatory synthesis with source fallback; [[#accepted-synthesis][the recorded disposition]] retains the measured limitations.
 - Charter :: [[file:../dream-charter.org::#evaluate-construction][Evaluate construction and use]], [[file:../dream-charter.org::#acceptance-review][independent review]] and [[file:../dream-charter.org::#acceptance-examples][both grounded examples]].
 
 * Progress and completion rules
@@ -236,8 +253,8 @@ Measure critical errors, missing qualifications, answer quality, reader bytes, l
 :CUSTOM_ID: completion
 :END:
 
-P1-P5 have passed their engineering gates; P6 is in human review after the scoped comparison.
-The [[file:runtime-audit.org][runtime requirement/evidence audit]] records proven behavior, independent review corrections, the measured comparison and remaining human assessment.
+P1-P6 are complete under the recorded acceptance and deferral dispositions.
+The [[file:runtime-audit.org][runtime requirement/evidence audit]] records proven behavior, independent review corrections, the measured comparison and the user's acceptance of explanatory synthesis.
 P2-P3 establish the first functional dreaming loop, and P4 establishes selective repeated maintenance.
 Live native parity can be checked throughout, with the user's explicit Claude deferral retained.
 Do not add a generic backend framework, a global vector store, nightly automation or more transport machinery ahead of a demonstrated need in this sequence.
