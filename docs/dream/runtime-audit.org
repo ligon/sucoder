@@ -4,8 +4,9 @@
 
 * Completion finding
 
-The full goal is not complete.
-P1-P5 have runtime engineering evidence; P6's real comparison and the user's usefulness assessment remain unproven.
+The implemented workflows and approved scoped comparison have engineering evidence; the full goal remains in human review.
+P1-P5 passed their runtime gates, and [[file:runs/sucoder-p6.org][P6]] completed all 36 scheduled attempts with a small wiki-plus-search quality gain, two failed wiki-only diagnostics and no dependable context saving.
+The user's assessment of the explanations and maintenance value remains pending.
 Live Claude is an explicit user deferral, not a passed live check.
 This audit maps the [[file:workplan.org][runtime workplan]] and [[file:../dream-charter.org::#research-conclusions][charter conclusions]] to inspectable artifacts, rather than treating the design workshop's DONE entries as runtime results.
 
@@ -41,6 +42,11 @@ This audit maps the [[file:workplan.org][runtime workplan]] and [[file:../dream-
 - Packaging and entry :: The extracted wheel from =0a5e84d= executed the packaged native Org helper and exposed =--wiki-only=, with zero provider requests.
   Explicit =dream read/source/ask= provide session entry without rewriting instructions or installing automatic background work.
   [[file:p6-next.org][The P6 continuation]] retains the checksum, commands and artifact paths.
+- Comparative use :: The approved Codex pilot reproduced all twelve frozen passages, completed six construction stages and recorded 36 fresh-reader attempts under the original two-hour/180-call cap.
+  Wiki plus search scored 23/24 versus 22/24 on SuCoder and 25/26 versus 23/26 on LSMS, with a three-item synthesis/caveat gain and zero graded critical errors.
+  That meets the original exploratory quality alternative; context savings and broader benefit are unestablished.
+  Two LSMS wiki-only readers explicitly reported missing evidence and were retained without answer regeneration; the separately frozen outcome collector conservatively classifies the full run inconclusive.
+  [[file:runs/sucoder-p6.org][The P6 report]] preserves the original criterion, amended classification, actual failures, source-read traces, full costs and sensitivity to the rejected baseline citation attempt.
 
 * Independent review and current verification
 
@@ -53,17 +59,22 @@ The final partitions passed nineteen fast guard/preparation cases and four full/
 Four-module mypy also passed.
 The broader integration run on =7aec2cc= passed 2,855 cases, skipped eight and explicitly deselected the exact 55 known baseline failures; =/tmp/sucoder-dream-p6-final-integration.txt= records it.
 The pilot-only review fixes are committed at =c753aed= and followed that integration collection; their separate tests above cover the changes.
-These tests use protocol fixtures and simulated grades, not new real pilot model calls.
+Those pre-pilot tests use protocol fixtures and simulated grades.
+The later live pilot exposed ambiguous grader failure reporting and terminal reader-failure collection; separate frozen helper scripts correct the orchestration without changing the original reader/model inputs or runtime.
+Five grading-amendment cases and two outcome-collector cases pass, including complete negative/failure comparisons, preserved original allowances, zero-call replay and trace-tampering rejection; mypy passes both scripts.
+The actual completed live comparison then replayed exactly with native inference forbidden and no new reservations.
 
 * Limits that still matter
 
-The prepared twelve source passages reproduce exact Git blob IDs and selected digests, but no held-out native questions, real comparison answers or scientific conclusions have been generated for the scoped experiment.
-The user was asked to approve that experiment or leave it pending; there is no reply in the current continuation.
-Do not interpret the automatic goal continuation or elapsed time as that approval.
+The user explicitly approved the scoped pilot; it completed 137 native invocations in 71.2 minutes and reported 2,003,683 input/87,760 output tokens, including every failed attempt and both grading versions.
+No scientific ruling or actual LSMS change was made.
+Its evidence and frozen runtime are retained privately outside =/tmp= under =/home/coder/.sucoder/logs/dream-pilots/2026-11-09-p6-7ca6c5e9/=.
+The pilot's source admission, model and repetition limits remain binding; completion does not authorize new cases/models or a rollout.
 
 The 180-call ceiling counts native role invocations, not unobserved internal HTTP retries.
 Native-reported token fields and controlled submitted-byte counts are recorded separately; currency and unobservable provider accounting remain unknown.
-A positive exploratory comparison requires the frozen experiment and its criteria; human assessment of readability/usefulness still remains necessary.
+The original exploratory quality threshold is met in this one comparison; post-start instrumentation corrections, failed diagnostics and small item differences limit its interpretation.
+Human assessment of readability/usefulness still remains necessary.
 Page counts, fixture grades, a verified wheel or a protocol-green Claude adapter cannot substitute for that evidence.
 
 Prepared by Sue.

@@ -5,7 +5,7 @@
 * Prepared engineering boundary
 
 P1-P5 passed engineering gates; [[file:runs/sucoder-p5.org][P5's report]] retains the exact live/protocol evidence and limitations.
-P6's paid two-repository experiment has not run.
+P6's paid two-repository experiment is complete; see [[file:runs/sucoder-p6.org][the result, exact artifacts and remaining review]].
 The user explicitly approved the concrete scope below on 2026-11-09: "Pilot approved".
 Live Claude remains explicitly deferred regardless of that decision.
 
@@ -59,7 +59,7 @@ Do not add models/repetitions, admit private history, modify actual LSMS documen
 
 * Driver implementation and subsequent authorized execution
 
-Implement and test the bounded experiment driver around the existing public planner/run/reader APIs while awaiting the scope decision; real inference requires approval.
+The bounded experiment driver was implemented and tested around the existing public planner/run/reader APIs before the user's explicit scope approval.
 The implemented =scripts/dream_pilot_run.py= uses those existing APIs and rejects execution without =--execute=.
 It imports verified full blobs into disposable Git envelopes and verifies their resulting Git object IDs before any question role.
 Separate question/scoring roles reuse the original native Coordinator, schema checking, traces and private caches.
@@ -73,7 +73,7 @@ These simulated grades establish orchestration behavior, not usefulness.
 All nine driver cases passed at =/tmp/sucoder-dream-p6-driver-verified.txt=; twelve focused guard/preparation cases and four-module mypy also passed.
 Implementation commit =0a5e84d= has a verified extracted wheel at =/tmp/sucoder-dream-p6-preparation-NjfocZ97/final-wheel/=, with its exact checksum/native-helper/CLI record in =final-wheel-verification.json= beside that directory.
 
-The scope is approved; the exact invocation is:
+The approved original invocation was:
 
 #+begin_example
 poetry run python scripts/dream_pilot_run.py \
@@ -81,7 +81,15 @@ poetry run python scripts/dream_pilot_run.py \
   --blobs /tmp/sucoder-dream-p6-preparation-NjfocZ97/blobs --execute
 #+end_example
 
-No real pilot role has been called.
+The approved experiment completed all 36 attempts in 71.2 minutes using 137 native invocations.
+All six construction stages passed; zero critical errors were graded and two wiki-only failed attempts were retained without regeneration.
+The original exploratory wiki-plus-search quality threshold is met, while the amended collector conservatively classifies the full result inconclusive and no dependable context saving is established.
+The exact continuation and grading/outcome amendments are recorded in [[file:runs/sucoder-p6.org][the P6 report]].
+The final report is =review-final/execution/report-outcomes.json=, SHA-256 =7ca6c5e91f5475e483fb9314bf3fd465a20b580c8bb10edcaa24431b2de9c35d=.
+An exact zero-inference replay passed, and a private copy of sources, runtime, traces and operator logs is retained under =/home/coder/.sucoder/logs/dream-pilots/2026-11-09-p6-7ca6c5e9/=.
+Do not restart or extend the completed experiment; the next disposition is human assessment of usefulness, with live Claude still explicitly deferred.
+
+The following implementation/operational constraints describe how the retained run was bounded.
 Independent re-review found and resolved partial-runtime mixing and duplicate seed recovery defects at =c753aed=; [[file:runtime-audit.org][the runtime audit]] records the cases and limits.
 Execution now freezes source/role/retrieval contracts before transport and replays completed readers, while a write-ahead seed intent recovers atomic replacement and commit interruptions.
 Semantic question/grade checks precede the immutable validated pointer, allowing explicit retries of rejected results while preserving a valid critical-error stop.
@@ -95,6 +103,6 @@ Freeze the final accepted companion before randomized fresh reader comparisons.
 Independent grading sees the frozen rubric/evidence/one answer; builders and readers never see grading material or other answers.
 Report paired rubric scores, critical errors/qualifications, actual read traces, controlled-input bytes, latency, native usage and separate/cumulative construction costs.
 Apply [[file:pilot.org::#decision-rule][the existing decision rule]], stopping on fabricated decisions or lost material qualifications; report inconclusive results without a benefit claim.
-If the user leaves the pilot pending, retain this preparation and record that explicit disposition without manufacturing usefulness results.
+Retain the original proposal and all attempted-call records rather than resetting allowances or manufacturing additional usefulness results.
 
 Prepared by Sue.
