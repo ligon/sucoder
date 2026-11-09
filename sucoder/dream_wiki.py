@@ -114,8 +114,11 @@ def validate_proposal(plan, proposal, prior, sources, deadline, contract=CONTRAC
     No claim that these mechanical checks prove semantic fidelity is made.
     """
     pages = {}
+    existing = {item["path"] for item in plan.get("prior_wiki", {}).get("files", [])}
     for page in proposal["pages"]:
         path = editable_path(page["path"])
+        if path in existing and path not in prior:
+            raise DreamError("Existing page is outside the delivered prior context; include it before editing")
         if path in pages or not page["content"].strip():
             raise DreamError("Duplicate or empty authored wiki page")
         pages[path] = page["content"]
@@ -156,6 +159,8 @@ def validate_proposal(plan, proposal, prior, sources, deadline, contract=CONTRAC
             if old_tasks - new_tasks:
                 raise DreamError("Existing editorial tasks must be preserved until explicit transition validation")
     for path, details in parsed.items():
+        retained_links = Counter((link["type"], link["raw_path"], link["path"], link["search"])
+                                 for link in old.get(path, {}).get("links", []))
         for link in details["links"]:
             kind, destination, search = link["type"], link["path"], link["search"]
             if kind == "custom-id":
@@ -166,6 +171,10 @@ def validate_proposal(plan, proposal, prior, sources, deadline, contract=CONTRAC
                     raise DreamError("Wiki file links must be repository-relative, not home/absolute paths")
                 if destination.startswith(".sucoder/wiki/"):
                     if destination not in parsed:
+                        key = (kind, link["raw_path"], destination, search)
+                        if destination in existing and retained_links[key]:
+                            retained_links[key] -= 1
+                            continue  # Preserve the original frozen external link.
                         raise DreamError("Wiki links to an unavailable page or unselected archive")
                     if search and (not search.startswith("#") or search[1:] not in parsed[destination]["targets"]):
                         raise DreamError("Wiki file link has an unsupported or missing target")
@@ -259,6 +268,9 @@ class WikiCoordinator(dream_roles.Coordinator):
             prior=[dict(path=path, content=text, sha256=digest(text.encode()), inventory=prior_details[path])
                    for path, text in sorted(prior.items())],
             maintenance=self.plan["maintenance"], topic=self.plan["topic"])
+        if "selection" in self.plan["prior_wiki"]:
+            from . import dream_prior
+            inputs["prior_context"] = dream_prior.context(self.plan)
         proposal = self.call("author", inputs)
         review = None
         for repair in range(self.plan["limits"]["max_repairs"] + 1):

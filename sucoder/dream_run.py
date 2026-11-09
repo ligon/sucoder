@@ -142,7 +142,15 @@ def _plan_shape(plan):
                 if (any(type(chunk[key]) is not int or chunk[key] < 0 for key in ("byte_start", "byte_end")) or
                         not isinstance(chunk["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", chunk["sha256"])):
                     raise DreamError("Invalid frozen chunk schema")
-        dream._object(plan["prior_wiki"], ("tree_digest", "files", "selected", "omitted", "selected_bytes", "progress"))
+        dream._object(plan["prior_wiki"], ("tree_digest", "files", "selected", "omitted", "selected_bytes", "progress"), ("selection",))
+        if "selection" in plan["prior_wiki"]:
+            selection = plan["prior_wiki"]["selection"]
+            dream._object(selection, ("contract", "strategy", "seed_paths"))
+            if (selection["contract"] != "bounded-prior-v1" or selection["strategy"] not in ("all", "topic", "source_associations", "orientation") or
+                    not isinstance(selection["seed_paths"], list)):
+                raise DreamError("Invalid frozen prior-context selection")
+            for path in selection["seed_paths"]:
+                dream._path(path)
         if not isinstance(plan["repositories"], dict) or plan["repository"] not in plan["repositories"]:
             raise DreamError("Invalid frozen repository bindings")
         for repository in plan["repositories"].values():
@@ -165,7 +173,8 @@ def _validate(config, mirror, plan, deadline):
                            shareable=u["shareable"], locator=dict(repository=u["repository"],
                                commit=u["commit"], path=u["path"], lines=u["lines"])) for u in plan["units"]])
         current = dream.build_plan(config, mirror, request, plan["integration_ref"],
-                                   maintenance=plan["maintenance"], topic=plan["topic"], inspection_deadline=deadline)
+            maintenance=plan["maintenance"], topic=plan["topic"], inspection_deadline=deadline,
+            prior_policy=plan["prior_wiki"].get("selection", {}).get("contract", "all-active-v1"))
         # A provisional UUID is a frozen proposal, not a newly accepted registry.
         # Rebuilding the plan generates a fresh proposal; retain only the old UUID.
         for name, repository in current["repositories"].items():

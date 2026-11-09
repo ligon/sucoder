@@ -87,8 +87,12 @@ An optional =limits= object overrides positive integer defaults:
 At most one repair is permitted, and =max_repairs= may be zero.
 Chunks cover every selected byte contiguously, preferring complete lines and preserving UTF-8 boundaries for long lines.
 Each chunk reserves extraction and verification, plus one consolidation and the declared repair allowance.
-All active Org wiki files, including Talk and LOGBOOK content, count toward prior context; archive bodies and metadata are listed as omitted.
-This conservative slice rejects a prior-context overflow instead of attempting topic-based context selection.
+New plans use =bounded-prior-v1=: index/settings plus an explicit topic or source-associated current topics and direct topic neighbors.
+Without a relevant seed, the entire active wiki is selected when it fits; otherwise only orientation is delivered, with a bounded omitted-page catalog.
+Selected Org pages include Talk and LOGBOOK content and count toward =max_prior_bytes=; necessary selected context must fit that allowance.
+Omitted active pages retain exact frozen identities and byte ranges and cannot be overwritten as new pages.
+Receipt associations select relevance only, including current human edits; they do not establish accepted progress.
+Old frozen plans reconstruct their original all-active-pages policy without identity changes.
 Consolidation planning checks that prior bytes and the proposal allowance leave space for briefs and metadata; exact staged-payload validation belongs to the later execution slice.
 Planning itself has a separate 30-second inspection deadline and five-second git probe limits.
 
@@ -261,7 +265,7 @@ It records a private =accepted-wiki-progress-v1= proof referencing the accepted 
 Changing a required output, receipt or repository UUID reports reconciliation, including changes outside Org subtrees.
 Missing original evidence is not inferred from shared metadata.
 =--maintenance= with =--topic= bypasses the shortcut for an explicit checked repair using existing evidence.
-Transcript delta reuse and deterministic bounded prior selection remain P4 work; reviewed no-op decisions are now implemented.
+Transcript delta reuse and agent-requested context remain P4 work; reviewed no-op decisions and deterministic bounded prior selection are implemented.
 These slices do not complete that gate.
 
 * Bounded readers and explicit session entry

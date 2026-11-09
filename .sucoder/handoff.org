@@ -99,6 +99,15 @@ The concrete continuation constraints and acceptance cases are recorded in [[fil
 Do not alter v1/v2 briefs or default inventory fields: old native assignments include their exact bytes and hashes.
 P4 still requires transcript prefix/delta reuse and bounded deterministic prior selection; P5/P6 remain open and live Claude remains deferred.
 
+* P4 bounded prior context
+
+New plans version =bounded-prior-v1= in optional prior-selection metadata.
+They select orientation plus an explicit topic or current source-associated topics and direct neighbors, record omitted active ranges and reject unseen-page overwrites.
+Associations remain relevance hints even after human edits, never accepted progress.
+Legacy plans reconstruct the original all-active policy, preserving old role payloads.
+Focused planner/prior tests passed 62 cases; run/writer/no-op/reuse regressions passed 81 cases.
+Agent-requested context and accepted-prefix transcript appends are next; P4/P5/P6 remain incomplete and live Claude remains deferred.
+
 * Implemented native workflow
 
 See [[file:../docs/dream/implementation.org][implemented interfaces and limitations]] and [[file:../docs/dream-implementation-ledger.org][the reuse and verification ledger]].

@@ -2558,6 +2558,8 @@ These are explicit session entry commands; project instructions are not rewritte
 A run with unchanged git evidence can return =already_integrated= without model calls or a new candidate when compatible accepted receipts and every required output binding validate.
 Explicit maintenance bypasses that shortcut; changed required outputs request reconciliation.
 The author may also conclude that no useful edit is supported; independent review must accept that no-op before =unchanged= is recorded privately, with no candidate commit.
+New plans bound prior context to orientation, the named or source-associated topics and their direct neighbors.
+Unselected existing pages remain in the frozen inventory and cannot be overwritten without being fully delivered.
 
 =sucoder dream run --harness fixture= exercises complete chunk delivery and prepares an attributed-quotation candidate with output-bound receipts; =sucoder dream status --plan= checks its candidate ref and integration bindings.
 The fixture invokes no model and establishes quotation fidelity only.
@@ -2584,7 +2586,7 @@ Existing editorial task subtrees remain unchanged until explicit transition vali
 The quotation fixture and legacy notes mode remain append-only.
 Use =--attempt 2= to explicitly start a new native run after inspecting a failed attempt; completed role results are otherwise reused without another provider call.
 When a plan has multiple native runs, status requires =--run RUN_ID=.
-Planning and snapshots remain inference-free; generic adapters, automatic shared receipt reuse, editorial transitions/archival moves and bounded reader retrieval remain subsequent work.
+Planning and snapshots remain inference-free; transcript prefix reuse, agent-requested author context, editorial transitions/archival moves and generic adapters remain subsequent work.
 
 * Agent Skills Tracking
 

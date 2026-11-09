@@ -260,7 +260,8 @@ def _admit(unit, source, identity, limits):
                                (limits.max_role_invocations - 1 - limits.max_repairs) // 2))
 
 
-def _prior_wiki(source, base, limits):
+def _prior_wiki(source, base, limits, *, topic=None, units=(), policy="all-active-v1"):
+    from . import dream_prior
     data = source.git("ls-tree", "-r", "-z", base, "--", ".sucoder/wiki/")
     files, selected, omitted = [], [], []
     total = 0
@@ -273,19 +274,28 @@ def _prior_wiki(source, base, limits):
             raise DreamError("Prior wiki must contain regular files only")
         path = _path(name.decode("utf-8"))
         files.append(dict(path=path, blob=oid))
-        if path.endswith(".org") and not path.startswith(".sucoder/wiki/archive/"):
+    chosen, selection = dream_prior.choose(source, files, limits, topic, units, policy)
+    for item in files:
+        path, oid = item["path"], item["blob"]
+        if path in chosen:
             content = source.blob(oid, limits.max_prior_bytes)
             total += len(content)
             if total > limits.max_prior_bytes:
                 raise DreamError("Prior wiki exceeds max_prior_bytes; explicitly increase the allowance")
             selected.append(dict(path=path, blob=oid, byte_start=0, byte_end=len(content), sha256=digest(content)))
+        elif dream_prior.active(path):
+            size = int(source.git("cat-file", "-s", oid).strip())
+            omitted.append(dict(path=path, blob=oid, byte_start=0, byte_end=size, reason="unselected_active_topic"))
         else:
             omitted.append(dict(path=path, reason="archive_or_metadata"))
-    return dict(tree_digest=digest(canonical(files)), files=files, selected=selected,
-                omitted=omitted, selected_bytes=total, progress="not_evaluated")
+    result = dict(tree_digest=digest(canonical(files)), files=files, selected=selected,
+                  omitted=omitted, selected_bytes=total, progress="not_evaluated")
+    if selection is not None:
+        result["selection"] = selection
+    return result
 
 
-def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, inspection_deadline=None):
+def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, inspection_deadline=None, prior_policy="bounded-prior-v1"):
     """Freeze selections, never imply inference or shared completion."""
     from . import dream_transcript
     _object(request, ("schema_version", "repository", "integration_ref", "units"), ("limits",))
@@ -345,7 +355,7 @@ def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, i
         if total > limits.max_source_bytes:
             raise DreamError("Selected evidence exceeds max_source_bytes")
         admitted.append(item)
-    prior = _prior_wiki(target, base_commit, limits)
+    prior = _prior_wiki(target, base_commit, limits, topic=topic, units=admitted, policy=prior_policy)
     count = sum(len(item["chunks"]) for item in admitted)
     required = 2 * count + 1
     if required + limits.max_repairs > limits.max_role_invocations:
