@@ -88,6 +88,14 @@ Only the coordinator renders shared Org and writes receipts/git objects; native 
 
 * 6. Open questions and next checks
 
+The user authorized starting the [[file:dream/workplan.org][full runtime workplan]] on 2026-11-09.
+P1 now has a [[file:dream/runs/sucoder-p1.org][real SuCoder candidate and inspection report]]; the omissions are acceptance evidence for the next slice, not a memory-benefit claim.
+P2 will extend the existing bounded role runner with a separate author/editor contract, preserving legacy notes assignments and receipt replay.
+The new contract must allow multi-source prose, edits to stable topic pages, reasoned dispositions and final-page checking against the whole admitted evidence bundle.
+Reuse private artifacts, native transport, source/citation checks, Org parsing and atomic publication; extend staged change validation instead of adding a separate execution/publication framework.
+Complete selected-evidence delivery does not require publishing every extracted statement, and mechanical source bindings do not certify salience or completeness.
+No user decision blocks P2; live Claude verification remains explicitly deferred.
+
 The user authorized a working Codex and Claude implementation on 2026-11-08 after recovery of the two interrupted sessions.
 Continue through transcript admission, shared schema-bound roles, native capability checks, and candidate publication.
 Reuse the existing snapshot store, git publisher, native Org parser and integration checks; keep evidence harness and execution harness independent.
