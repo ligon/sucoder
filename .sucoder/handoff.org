@@ -163,6 +163,31 @@ The v4 live repairs exposed useful prompt ergonomics for the next contract: priv
 Source/runtime examples, the existing native =docs/dream/validate.el= archive check and the P5 charter/workplan are the grounding; do not confuse that design-only archive validator with completed runtime behavior.
 The separate P6 usefulness experiment and live Claude deferral remain in force.
 
+** P5 native mechanics foundation, 2026-11-09 07:53 UTC
+
+=sucoder/dream_editorial.py= and the separate =dream_editorial.el= expose =native-editorial-org-v1= over supplied inline file texts.
+The existing v1-v4 default inventories and public runtime remain unchanged; this helper is not yet the completed P5 workflow.
+The helper inspects task properties, completion/logbook data, exact UTF-8 subtree/link ranges, outline paths and inherited tags.
+It materializes transitions with an explicit frozen UTC timestamp, preserving history and recording property/owner changes, and can archive a terminal task without open descendants.
+Archive materialization preserves native properties/IDs/history, normalizes repository-relative file/outline/time context, creates non-task forwarding anchors for every moved target and rebases outgoing/history/incoming links among supplied files.
+All operations stay in inline buffers; source-directed setup settings, hooks and Babel do not run.
+Source and destination must be supplied, actions bind frozen subtree SHA-256 values and duplicate actions fail without partial publication.
+The same frozen task can transition and archive in one inline transaction; reopening before archival preserves its earlier resolution.
+
+The final focused check passed 27 cases (sixteen new editorial/native cases plus eleven reader regressions), including comparison against actual =org-archive-subtree=, timezone replay, hostile setup settings and forwarding titles that resemble TODO keywords.
+Mypy passed the new runtime module; the log is =/tmp/sucoder-dream-editorial-native-verified.txt=.
+GitNexus reports LOW impact for the native entry point with one internal caller and no existing public execution flow.
+The last full-suite/baseline comparison belongs to P4, before this additive foundation.
+
+Immediate next implementation: connect a v5 author/reviewer action schema and policy validation to these primitives.
+Require recorded human authority where needed, named review/acceptance/blocker metadata and source-bound explanations; do not infer human approval from model claims.
+The independent reviewer must see the materialized texts and derived change/move manifests.
+Freeze the execution timestamp privately per run and require it on replay; the native helper never invents a timestamp for edits.
+Validate author task state/properties/history against the frozen prior before compiling native edits, and have the coordinator calculate any intermediate hashes after authored prose changes.
+Archive/incoming-link edits require frozen fully delivered context within the existing allowances; stop explicitly when it cannot fit.
+Only v5 may admit validated task changes/archive paths/derived navigation references; preserve v1-v4 schemas, briefs, identities and saved status behavior.
+Then exercise the worked lifecycle through public =dream run= and prove fresh specific-archive retrieval; P5 and the full goal remain incomplete until those gates pass.
+
 * Implemented native workflow
 
 See [[file:../docs/dream/implementation.org][implemented interfaces and limitations]] and [[file:../docs/dream-implementation-ledger.org][the reuse and verification ledger]].
