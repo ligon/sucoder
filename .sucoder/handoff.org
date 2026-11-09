@@ -13,11 +13,12 @@ See [[file:../docs/dream/runs/sucoder-p1.org][the exact run and inspection repor
 Treat the native implementation below as an engineering milestone, not completion of the original dreaming objective.
 
 The canonical next-work queue is [[file:../docs/dream/workplan.org][the charter-completion workplan]].
-P1-P3 are DONE as engineering gates; P4 is ACTIVE.
-Current P4 code includes accepted transcript prefixes/appends and passes 114 focused dream tests; the final full-suite comparison and live sanitized append acceptance are the immediate verification steps.
-After those checks, continue to P5 editorial transitions/archives and P6 usefulness; the full goal remains incomplete.
+P1-P4 are DONE as engineering gates; P5 is ACTIVE and P6 remains outstanding.
+Current P4 code includes accepted transcript prefixes/appends, passes 114 focused dream tests and passed a live sanitized Codex same-topic update followed by a zero-call accepted rerun.
+The final full suite passed 2,796 tests, skipped eight and failed exactly the same 55 pre-existing baseline nodes.
+Continue with P5 editorial transitions/archives and P6 usefulness; the full goal remains incomplete.
 P2 passed real-source authorship/correction; P3 passed fresh-reader use of that correction, synthesis and direct lookup.
-P4-P5 complete selective incremental maintenance and the editorial/archive lifecycle; P6 verifies both native harnesses and the separately scoped usefulness pilot.
+P5 completes the editorial/archive lifecycle; P6 verifies both native harnesses and the separately scoped usefulness pilot.
 The user emphasized delegating knowledge/editorial judgment to a capable agent; let it write and revise explanations while the coordinator enforces evidence, authority, budgets, validation and publication boundaries.
 Do not retain the titles/claim-ID-only consolidator as the long-term definition of synthesis.
 
@@ -140,10 +141,27 @@ The final seven-module dream regression passed 114 tests, including eighteen pre
 Cases include same-topic updates, alias changes, unchanged zero-call reuse, required-output and prefix/normalization reconciliation, pending/ambiguous calls, interruption, squash integration, peer races, targeted repair and private no-op non-acceptance.
 Mypy passed seven runtime/script modules; native Org design checks passed.
 The first expanded footprint test exposed a publisher assumption that all bound pages were changed; validation now includes frozen required pages, and the final regression passes.
-The first full-suite attempt was interrupted before completion; =/tmp/sucoder-dream-p4-full-suite-final.txt= is the authoritative final run currently being observed.
-Live sanitized acceptance is prepared in =scripts/dream_append_acceptance.py=; use explicit Codex =gpt-6.1-sol=, never probe the deferred Claude quota.
+The first full-suite attempt was interrupted before completion; the authoritative =/tmp/sucoder-dream-p4-full-suite-final.txt= finished with 2,796 passed, eight skipped and the exact 55 baseline failures.
+The exact node comparison at =/tmp/sucoder-dream-p4-baseline-comparison.json= has no added or removed failures.
+Live sanitized acceptance passed on code =2b93784= via =scripts/dream_append_acceptance.py= with explicit Codex =gpt-6.1-sol=; never probe the deferred Claude quota.
 The script integrates only its private fixture candidates and retains exact source/usage/proof records.
-P4 stays ACTIVE until those verification results are recorded; P5/P6 remain outstanding.
+Artifacts are at =/tmp/sucoder-dream-append-acceptance-7geb_1mt/=; see [[file:../docs/dream/runs/sucoder-p4-append.org][the exact append report]].
+The established =publishing.org= topic retained =--dry-run=, gained =--scope repo= and kept synthetic failure/unverified execution qualifiers.
+The update initially delivered 431 tail bytes, reused a 505-byte accepted prefix and requested no older raw context.
+Initial and update runs each used author/repair/reviewer: the mechanical repairs removed unsupported file/=id:= links; cumulative native usage was 72,475 input and 3,782 output tokens, with currency unknown.
+The fresh accepted rerun made zero provider calls.
+P4 is DONE as an engineering gate; P5 is now ACTIVE and P6 remains outstanding.
+
+* Next operational work: P5 editorial lifecycle
+
+Implement the seven-state worked lifecycle and actual archive moves through the public runtime.
+Retain owners/reviewers/decisions/LOGBOOKs and require recorded human authority where the task requires it; archive only eligible terminal trees without open descendants.
+Use a new contract for task/archive actions and an opt-in richer native Org inventory so frozen v1/v2/v3/v4 payloads remain replayable.
+Preserve native archive properties/inherited tags and repository-relative provenance, keep forwarding anchors and update tracked incoming links atomically.
+Verify fresh specific-archive retrieval and ordinary exclusion of archive bodies/history.
+The v4 live repairs exposed useful prompt ergonomics for the next contract: private transcript citations must not invent source-file links, and CUSTOM_ID links use supported =[[#target]]= / relative file-target forms, not =id:=.
+Source/runtime examples, the existing native =docs/dream/validate.el= archive check and the P5 charter/workplan are the grounding; do not confuse that design-only archive validator with completed runtime behavior.
+The separate P6 usefulness experiment and live Claude deferral remain in force.
 
 * Implemented native workflow
 

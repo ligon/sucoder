@@ -140,11 +140,16 @@ Use the same original-source search interface for the baseline and wiki-assisted
 - Evidence :: [[file:runs/sucoder-p3.org][Fresh questions, source-bound retrieval traces, answers and limits]].
 - Charter :: [[file:../dream-charter.org::#retrieve-evidence][Wiki plus source retrieval]] and [[file:../dream-charter.org::#reader-context][bounded reader context]].
 
-** ACTIVE P4. Make repeated dreaming selective and convergent
+** DONE P4. Make repeated dreaming selective and convergent
+CLOSED: [2026-11-09 Mon 07:15]
 :PROPERTIES:
 :CUSTOM_ID: incremental
 :OWNER: Sue
 :DEPENDS_ON: correction-synthesis fresh-reader
+:END:
+:LOGBOOK:
+- State "DONE" from "ACTIVE" [2026-11-09 Mon 07:15] \\
+  Sue: Real accepted Git reuse, reviewed no-op, bounded context and live sanitized appended update/zero-call convergence passed; final full-suite failures exactly match the known baseline. See the P4 reports.
 :END:
 
 Discover compatible shared receipts in the designated integration tree and validate their required output bindings before reusing progress.
@@ -162,14 +167,18 @@ Require a stopping rule and account for analysis, verification, repair and impli
   An appended session updates the appropriate established topic; an altered required output reports reconciliation; a targeted repair works without a new session.
   Overlapping runs, different machines, squash integration and interrupted publication cannot create false accepted coverage or erase another contribution.
 - Current evidence :: Real accepted unchanged-git reuse and independently reviewed no-op runs are recorded in [[file:runs/sucoder-p4-git-reuse.org][the reuse report]] and [[file:runs/sucoder-p4-noop.org][the maintenance report]].
-  Bounded prior selection and agent-requested frozen context are implemented and tested; accepted transcript prefix/appended-range updates remain before this gate can pass.
+  Bounded prior selection and agent-requested frozen context are implemented and tested; [[file:runs/sucoder-p4-append.org][the accepted append report]] records the live same-topic update and zero-call rerun, eighteen prefix cases and full-suite baseline comparison.
 - Charter :: [[file:../dream-charter.org::#selective-maintenance][Selective maintenance]] and [[file:../dream.org::#admission][receipt compatibility/replacement]].
 
-** TODO P5. Complete editorial lifecycle and archives
+** ACTIVE P5. Complete editorial lifecycle and archives
 :PROPERTIES:
 :CUSTOM_ID: editorial
 :OWNER: Sue
 :DEPENDS_ON: correction-synthesis fresh-reader
+:END:
+:LOGBOOK:
+- State "ACTIVE" from "TODO" [2026-11-09 Mon 07:15] \\
+  Sue: P4 passed its engineering gate; next implement recorded task transitions and native archival moves through the public runtime, then verify a fresh reader's archive retrieval.
 :END:
 
 Implement the charter's TODO, NEXT, ACTIVE, WAITING, REVIEW, DONE and MOOT workflow in generated wiki settings and actual editorial tasks.
@@ -212,8 +221,9 @@ Measure critical errors, missing qualifications, answer quality, reader bytes, l
 :CUSTOM_ID: completion
 :END:
 
-P1 supplies the recorded real-source diagnostic; P2 is active, and P2-P3 are the first functional dreaming loop.
-P4 and P5 can proceed in parallel once that loop works; live native parity can be checked throughout.
+P1-P4 have passed their engineering gates; P5 is active and P6 remains outstanding.
+P2-P3 establish the first functional dreaming loop, and P4 establishes selective repeated maintenance.
+Live native parity can be checked throughout, with the user's explicit Claude deferral retained.
 Do not add a generic backend framework, a global vector store, nightly automation or more transport machinery ahead of a demonstrated need in this sequence.
 Optional previews and convenience interfaces do not substitute for correction or reader use.
 
