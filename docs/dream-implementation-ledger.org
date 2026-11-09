@@ -398,4 +398,15 @@ No new global configuration or source admission is required.
 No anchored CONTRADICTION or REINVENTION remains in this selection slice.
 Agent context requests, accepted-prefix transcript updates, P5 and P6 remain outstanding; live Claude remains deferred.
 
+* Frozen author-context grounding
+
+Add a wiki-v4 extension of the existing curation loop, retaining v1/v2/v3 briefs, schemas and cached identities.
+Allow the author, reviewer and repair roles to request bounded source range/search, full active topics and specific archive sections from the frozen plan only.
+Reuse literal source search, native Org projection/inventory, strict native schemas/traces, invocation/output/time budgets and atomic publication.
+Cache requested wiki blobs privately with their Git object identities so status can replay without inference or fetching missing context.
+Only fully delivered active pages enter the editable prior map; archive excerpts remain read-only.
+The independent reviewer receives the complete accumulated delivery trace, and receipts record actual requests, responses and cumulative byte accounting.
+Retain the old no-op footprint and accepted-progress requirements, with contract-aware replay and compatibility.
+Accepted transcript prefix selection remains the next extension; this context service must support exact delivered windows without equating private no-ops to shared progress.
+
 Prepared by Sue.
