@@ -108,6 +108,22 @@ Legacy plans reconstruct the original all-active policy, preserving old role pay
 Focused planner/prior tests passed 62 cases; run/writer/no-op/reuse regressions passed 81 cases.
 Agent-requested context and accepted-prefix transcript appends are next; P4/P5/P6 remain incomplete and live Claude remains deferred.
 
+* P4 frozen agent context requests
+
+New default wiki runs use =source-grounded-wiki-v4= in =dream_author.py=, extending the original curation loop.
+Author, reviewer and repair roles can request frozen topic/source reads, literal searches and specific archive sections through =dream_context.py=.
+Full active pages enter the editable prior map; snippets and archive entries remain read-only.
+Twelve requests share prior/extra-source/search/invocation/output/time budgets, and receipts record exact responses and cumulative delivery.
+Context blobs are cached by frozen Git identity; status replays cached roles/context without fetching missing blobs or invoking a provider.
+Immutable call-order records reject changed context before it can become a new paid assignment on automatic resume.
+The eight new tests pass for both harness protocols, unseen-topic correction, archive review, range validation, corrupt caches and old v3 replay.
+Actual saved v2 candidate, accepted-git reuse and v3 no-op statuses still replay without inference.
+Broad dream regression results are recorded in the implementation ledger after completion.
+
+Next: implement accepted transcript prefixes and appended-range updates using this window/context contract.
+Preserve the new empty-prefix v4 identities when adding optional prefix manifests; do not edit frozen v1/v2/v3/v4 briefs or schemas.
+P4 remains ACTIVE and P5/P6 remain outstanding; live Claude remains explicitly deferred.
+
 * Implemented native workflow
 
 See [[file:../docs/dream/implementation.org][implemented interfaces and limitations]] and [[file:../docs/dream-implementation-ledger.org][the reuse and verification ledger]].

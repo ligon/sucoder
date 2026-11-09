@@ -73,13 +73,14 @@ class Curator(wiki.WikiCoordinator):
 def unchanged_value(plan, receipt):
     return dict(schema_version=1, operation="dream_run", state="unchanged", plan_id=plan["plan_id"],
         run_id=receipt["run_id"], harness=receipt["harness"], model=receipt["model"], native_version=receipt["native_version"],
-        fidelity=CONTRACT, base_commit=plan["base_commit"], candidate_commit=None, candidate_ref=None,
+        fidelity=receipt["contract"], base_commit=plan["base_commit"], candidate_commit=None, candidate_ref=None,
         rationale=receipt["rationale"], coverage=receipt["coverage"], usage=receipt["usage"],
         integration=dict(state="no_changes_proposed", evidence=dict(inspected_commit=plan["base_commit"])))
 
 
 def record_unchanged(plan, fd, sources, receipt, deadline):
-    if receipt["contract"] != CONTRACT or receipt["decision"] != "unchanged":
+    from . import dream_author
+    if receipt["contract"] not in (CONTRACT, dream_author.CONTRACT) or receipt["decision"] != "unchanged":
         raise DreamError("Expected a checked unchanged curation result")
     source = sources[plan["repository"]]
     if receipt["outputs"] and not dream_run.bound_outputs(source, plan["base_commit"], receipt["outputs"], deadline):

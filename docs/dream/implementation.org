@@ -211,14 +211,21 @@ poetry run sucoder --config ~/.sucoder/config.yaml dream run SuCoder \
   --purpose "Explain reply evidence and transcript identity for future maintainers."
 #+end_example
 
-The default =source-grounded-wiki-v3= contract lets the agent select salient knowledge, write natural explanatory Org, combine source contributions and correct existing topic prose.
+The default =source-grounded-wiki-v4= contract lets the agent select salient knowledge, write natural explanatory Org, combine source contributions and correct existing topic prose.
 The assignment explicitly supplies the permitted =.sucoder/wiki/index.org= and =.sucoder/wiki/topics/TOPIC.org= paths, change/reference format, existing page hashes, prior anchors/tasks and source-link examples.
 Those interface rules bind the run identity; the agent decides the content and organization.
 The coordinator owns initial settings, receipts, source registry and git publication.
 
-The first bounded implementation supplies the entire selected source bundle and prior active wiki inline, using the existing native transport and private role records.
-Both author and independent reviewer receive the full admitted evidence; final-page review checks material omissions, unsupported relationships, human authority and essential operational qualifications.
-A small catalog is required when that complete context cannot fit =max_consolidation_bytes=; bounded read/search support remains later work.
+The initial assignment supplies the selected source bundle and bounded prior pages inline, using the existing native transport and private role records.
+The author, reviewer and repair roles may request frozen source ranges/literal searches, full active topics, active-topic searches and specific archive sections.
+Requests cannot admit new sources or read current worktree files.
+At most twelve requests share the run's role/time/output limits, the prior-context allowance and an extra 32 KiB source-delivery allowance; active-topic search also has a cumulative 2 MiB scan allowance.
+Only a full active-topic response authorizes editing that page; search snippets and archive sections remain read-only.
+Both author and independent reviewer receive the admitted evidence and accumulated context; final-page review checks material omissions, unsupported relationships, human authority and essential operational qualifications.
+Exact request/response traces and byte accounting enter the receipt; frozen wiki blobs are cached privately by Git identity for inference-free status.
+Call-order bindings prevent changed cached context from silently starting a different paid assignment during resume.
+Saved v1/v2/v3 writer and no-op runs retain their original briefs, schemas and replay identities.
+Assignments that cannot fit =max_consolidation_bytes= stop as incomplete.
 The planner's conservative role reservation is not a promise that this mode needs a separate invocation per chunk.
 
 The author returns full changed-page text, before-page digests, reasoned change dispositions, source-bound section references and material omissions.
@@ -252,7 +259,7 @@ Legacy notes/fixture receipts continue using their original contract and subtree
 
 * Accepted shared progress: first incremental slice
 
-Before wiki inference, execution inspects compatible changed wiki-v2/v3 receipts in the frozen designated integration tree.
+Before wiki inference, execution inspects compatible changed wiki-v2/v3/v4 receipts in the frozen designated integration tree.
 The current shortcut supports complete unchanged git selections; it does not yet reuse transcript prefixes or partially changed dependencies.
 Every receipt dependency must still be admitted with the same repository/source identity, selected range and exact bytes.
 It verifies complete chunk coverage, the accepted final review, native harness/model/build, brief and purpose, and every required output binding.
@@ -265,7 +272,7 @@ It records a private =accepted-wiki-progress-v1= proof referencing the accepted 
 Changing a required output, receipt or repository UUID reports reconciliation, including changes outside Org subtrees.
 Missing original evidence is not inferred from shared metadata.
 =--maintenance= with =--topic= bypasses the shortcut for an explicit checked repair using existing evidence.
-Transcript delta reuse and agent-requested context remain P4 work; reviewed no-op decisions and deterministic bounded prior selection are implemented.
+Transcript delta reuse remains P4 work; reviewed no-op decisions, deterministic bounded prior selection and agent-requested context are implemented.
 These slices do not complete that gate.
 
 * Bounded readers and explicit session entry

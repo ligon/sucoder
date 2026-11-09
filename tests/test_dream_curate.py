@@ -45,6 +45,8 @@ class NoopTransport(EditorTransport):
                 pages=[], changes=[], references=[], omissions=[])
             if self.defect == "reason": result["rationale"] = ""
             if self.defect == "edits": result["pages"] = [dict(path=dream_wiki.INDEX, content="A stealth edit")]
+        if task["contract"] == "source-grounded-wiki-v4":
+            result["requests"] = []
         if harness == "codex":
             events = [dict(type="item.completed", item=dict(type="agent_message", text=json.dumps(result))), dict(type="turn.completed", usage={})]
         else:
@@ -84,7 +86,7 @@ def test_independent_review_can_reject_noop_and_obtain_correction(workspace):
     assert "assertion is not proof" in git(workspace[0], "show", result["candidate_commit"] + ":" + TOPIC)
     receipt = json.loads(git(workspace[0], "show", result["candidate_commit"] + ":.sucoder/wiki/receipts/" + result["run_id"] + ".json"))
     assert receipt["decision"] == "change"
-    assert receipt["contract"] == dream_curate.CONTRACT
+    assert receipt["contract"] == "source-grounded-wiki-v4"
 
 
 @pytest.mark.parametrize("defect", ["reason", "edits"])

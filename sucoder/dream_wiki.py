@@ -260,11 +260,16 @@ class WikiCoordinator(dream_roles.Coordinator):
         task["assignment_id"] = digest(canonical(task))
         return task
 
+    def bundles(self):
+        return source_bundle(self.plan, self.fd), prior_bundle(self.plan, self.fd)
+
+    def input_sources(self, sources):
+        return sources
+
     def prepare(self):
-        sources = source_bundle(self.plan, self.fd)
-        prior = prior_bundle(self.plan, self.fd)
+        sources, prior = self.bundles()
         prior_details = inventory(prior, self.deadline) if prior else {}
-        inputs = dict(purpose=self.purpose, editing=self.editing, sources=sources,
+        inputs = dict(purpose=self.purpose, editing=self.editing, sources=self.input_sources(sources),
             prior=[dict(path=path, content=text, sha256=digest(text.encode()), inventory=prior_details[path])
                    for path, text in sorted(prior.items())],
             maintenance=self.plan["maintenance"], topic=self.plan["topic"])
@@ -331,8 +336,9 @@ def run(config, mirror, plan_path, harness, model, attempt=1, mode="wiki", purpo
                                          transport.version, purpose, deadline)
         if reused is not None:
             return reused
-        from . import dream_curate
-        coordinator = dream_curate.Curator(plan, fd, harness, model, deadline, transport, attempt=attempt, purpose=purpose)
+        from . import dream_curate, dream_author
+        coordinator = dream_author.Author(plan, fd, harness, model, deadline, transport,
+            attempt=attempt, purpose=purpose, source=source_readers[mirror])
         prefix = "native-" + coordinator.run_id
         dream_run._store(fd, prefix + "-spec.json", canonical(dict(contract=coordinator.contract, run_id=coordinator.run_id,
             harness=harness, model=model, native_version=coordinator.expected_version, attempt=attempt, purpose=purpose)) + b"\n")
@@ -347,13 +353,15 @@ def run(config, mirror, plan_path, harness, model, attempt=1, mode="wiki", purpo
 def restore(plan, fd, run_id, deadline):
     spec = dream._json(dream_run._read(fd, "native-" + run_id + "-spec.json", 16384))
     dream._object(spec, ("contract", "run_id", "harness", "model", "native_version", "attempt", "purpose"))
-    from . import dream_curate
-    if spec["contract"] not in (CONTRACT, LEGACY_CONTRACT, dream_curate.CONTRACT) or spec["run_id"] != run_id or spec["harness"] not in ("codex", "claude"):
+    from . import dream_curate, dream_author
+    if spec["contract"] not in (CONTRACT, LEGACY_CONTRACT, dream_curate.CONTRACT, dream_author.CONTRACT) or spec["run_id"] != run_id or spec["harness"] not in ("codex", "claude"):
         raise DreamError("Invalid wiki run specification")
     def no_inference(*args):
         raise DreamError("Wiki run is incomplete; status never invokes inference", 3)
     parameters = dict(native_version=spec["native_version"], attempt=spec["attempt"], purpose=spec["purpose"])
-    coordinator = (dream_curate.Curator(plan, fd, spec["harness"], spec["model"], deadline, no_inference, **parameters)
+    coordinator = (dream_author.Author(plan, fd, spec["harness"], spec["model"], deadline, no_inference, **parameters)
+        if spec["contract"] == dream_author.CONTRACT else
+        dream_curate.Curator(plan, fd, spec["harness"], spec["model"], deadline, no_inference, **parameters)
         if spec["contract"] == dream_curate.CONTRACT else
         WikiCoordinator(plan, fd, spec["harness"], spec["model"], deadline, no_inference, contract=spec["contract"], **parameters))
     if coordinator.run_id != run_id:

@@ -11,6 +11,9 @@ See the [[file:runs/sucoder-p4-git-reuse.org][reuse]] and [[file:runs/sucoder-p4
 Keep the full [[file:workplan.org::#incremental][P4 gate]] intact; these milestones do not complete it.
 Do not alter v1/v2/v3 briefs, schemas or default inventory fields when adding the next contract: saved task hashes include their exact values.
 The v3 receipt already pins each transcript unit's frozen normalization contract/digest.
+Bounded prior selection is implemented at =3946e03=; the default v4 writer now serves bounded frozen context requests.
+The eight context tests exercise both harness protocols, omitted-topic correction, archive review, cache/range failures and original v3 replay.
+The remaining implementation is accepted transcript prefix/delta reuse, followed by P5/P6.
 
 * Bound prior context without erasing unseen contributions
 
@@ -25,6 +28,7 @@ Existing unchanged links to unselected pages need their original semantics prese
 * Serve frozen requests and analyze appended evidence
 
 Use a new role contract for source-window/context requests; retain v3 replay.
+The current =source-grounded-wiki-v4= contract and =frozen-author-context-v1= service supply that interface; preserve their empty-prefix saved identities when extending them.
 The coordinator serves only admitted source snapshots and wiki objects from the frozen integration tree, with byte/time/invocation limits and private cached responses.
 Expose source range/search and prior-topic/specific-archive requests, with explicit unavailable or incomplete results.
 Only fully delivered prior pages may be rewritten; partial archive/context reads are evidence context, not permission to replace a whole file.
@@ -36,6 +40,13 @@ Deliver new ranges plus relevant prior wiki and bounded needed old context; carr
 Every selected byte must be accounted for as validated accepted-prefix reuse or actual new delivery.
 A new receipt must bind the complete current revision and record replacement/dispositions and reused-prefix provenance; source normalization changes or rewritten prefixes cannot silently reuse old progress.
 A private no-op is not shared accepted coverage; do not claim cross-machine acceptance from it.
+
+An optional compact prefix manifest can bind the selected parent receipts into the native spec and run ID without changing existing empty-prefix v4 payloads.
+Cache canonical parent receipts and the exact required-output blobs needed to verify their binding at the frozen planning tree; inference-free restore must validate those cached proofs too.
+Later accepted successor receipts bind their own current outputs and complete normalized source revisions; they need not pretend the parent's superseded topic still matches the new topic.
+Keep original source and prior bundles available only inside the coordinator for validation; the model receives the selected windows and explicit accepted-prefix provenance.
+Coverage must partition each current source revision into verified accepted prefixes and newly delivered suffixes.
+Current requests already pin call order, so altered context cannot silently cause a different paid assignment during resume.
 
 Required checks include both transcript kinds crossed with both execution protocols, a genuine appended update of the established topic, unchanged accepted reruns without inference, changed-prefix/output reconciliation, explicit targeted maintenance, interrupted publication and frozen-plan/status replay.
 Use sanitized opt-in live Codex fixtures for new transcript engineering cases; no actual private transcript discovery or live Claude quota probes are authorized by these notes.

@@ -161,6 +161,8 @@ Require a stopping rule and account for analysis, verification, repair and impli
 - Acceptance :: Replanning unchanged accepted inputs needs no new extraction/model calls and creates no duplicate topic.
   An appended session updates the appropriate established topic; an altered required output reports reconciliation; a targeted repair works without a new session.
   Overlapping runs, different machines, squash integration and interrupted publication cannot create false accepted coverage or erase another contribution.
+- Current evidence :: Real accepted unchanged-git reuse and independently reviewed no-op runs are recorded in [[file:runs/sucoder-p4-git-reuse.org][the reuse report]] and [[file:runs/sucoder-p4-noop.org][the maintenance report]].
+  Bounded prior selection and agent-requested frozen context are implemented and tested; accepted transcript prefix/appended-range updates remain before this gate can pass.
 - Charter :: [[file:../dream-charter.org::#selective-maintenance][Selective maintenance]] and [[file:../dream.org::#admission][receipt compatibility/replacement]].
 
 ** TODO P5. Complete editorial lifecycle and archives

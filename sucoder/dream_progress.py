@@ -19,17 +19,20 @@ def identity(unit):
 
 
 def compatible(plan, receipt, fd, harness, model, version, purpose):
-    from . import dream_curate
+    from . import dream_curate, dream_author
     contract = receipt.get("contract")
-    briefs = dream_wiki.BRIEFS if contract == dream_wiki.CONTRACT else dream_curate.BRIEFS
-    if (type(receipt.get("schema_version")) is not int or receipt["schema_version"] != 1 or contract not in (dream_wiki.CONTRACT, dream_curate.CONTRACT) or
+    briefs = {dream_wiki.CONTRACT: dream_wiki.BRIEFS, dream_curate.CONTRACT: dream_curate.BRIEFS,
+              dream_author.CONTRACT: dream_author.BRIEFS}.get(contract)
+    if (type(receipt.get("schema_version")) is not int or receipt["schema_version"] != 1 or briefs is None or
             receipt.get("repository_uuid") != plan["repository_uuid"] or receipt.get("harness") != harness or
             receipt.get("model") != model or receipt.get("native_version") != version or receipt.get("purpose") != purpose or
             receipt.get("brief_sha256") != digest(canonical(briefs))):
         return set()
-    if contract == dream_curate.CONTRACT and receipt.get("decision") != "change":
+    if contract in (dream_curate.CONTRACT, dream_author.CONTRACT) and receipt.get("decision") != "change":
         return set()
-    dream_roles.validate_schema(receipt["review"], dream_wiki.schema("reviewer"))
+    dream_roles.validate_schema(receipt["review"], dream_author.schema("reviewer") if contract == dream_author.CONTRACT else dream_wiki.schema("reviewer"))
+    if contract == dream_author.CONTRACT and receipt["review"]["requests"]:
+        return set()
     if (receipt["review"]["verdict"] != "accept" or receipt["review"]["failures"] or
             any(f["severity"] == "blocking" for f in receipt["review"]["findings"])):
         return set()
