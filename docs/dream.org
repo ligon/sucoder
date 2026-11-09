@@ -55,7 +55,8 @@ An unmerged =refs/heads/dream/*= candidate cannot be designated as the integrati
 First-release collection and execution are local to an already accessible mirror; remote operators first supply an explicit local export through their established transfer workflow.
 This avoids turning a design for memory into a new allocation or credential lifecycle.
 
-Exit 0 means a valid plan, a prepared candidate, or a complete read/status operation, according to the reported operation.
+Exit 0 means a valid plan, a prepared candidate, a checked no-op, or a complete read/status operation, according to the reported operation.
+An =unchanged= no-op retains private analysis evidence and creates no candidate or new shared accepted-progress claim.
 Exit 2 rejects arguments, an unsupported backend, or invalid input before inference.
 Exit 3 reports incomplete evidence or exhausted work allowance without a publishable candidate; exit 1 reports an execution or validation failure; interruption may use 130.
 The proposed JSON envelope is version 1 and contains operation, run ID, base commit, state, coverage, limits, usage, candidate commit/ref, and integration evidence.

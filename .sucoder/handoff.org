@@ -75,7 +75,7 @@ Do not mark P4 or the full goal complete from unchanged-git reuse alone.
 Remaining P4: transcript prefix/appended-range reuse, bounded deterministic prior selection, targeted repairs and no-op decisions; P5 task/archive transitions and P6 scoped usefulness also remain.
 Live Claude remains explicitly deferred.
 
-* Current uncommitted P4 curation slice
+* P4 curation milestone, committed and verified
 
 =dream_curate.py= adds =source-grounded-wiki-v3=, now selected by new default wiki runs.
 The author/repair returns =change= or =unchanged= and a rationale; independent review sees the full selected evidence/prior pages for both.
@@ -90,7 +90,12 @@ Mypy passed the four runtime modules.
 The combined seven-module dream regression passed 120 tests, logged at =/tmp/sucoder-dream-curation-focused.txt=.
 The final ten curation cases additionally pin normalized interpretation for both transcript formats, and mypy passed all four runtime modules.
 V3 receipt units retain the frozen normalization contract/digest for the upcoming append-prefix reuse check.
-Next: commit curation and its verification ledger, then run a real explicit maintenance pass on the accepted SuCoder topic to observe its change/no-op decision and record the result.
+Curation is committed at =0fcb84e= and its verification ledger at =dc0279f=.
+The actual explicit SuCoder maintenance run returned =unchanged= after two native calls, with no candidate/ref/index/worktree change.
+Plan =d3e1297bcd7c0bda1feda381db27cc7a02d000063e4062f2ff706bb4cdc17a29= and run =19edc9239c69e2ee42ebb992233e25ed37207f89498b7ff8786b6e8aed4c198b= retain the private check and inference-forbidden replay, both passed.
+See [[file:../docs/dream/runs/sucoder-p4-noop.org][the live maintenance report]].
+Next: version prior-context selection while keeping old frozen plans reproducible, then implement bounded author context requests and accepted-prefix transcript updates.
+The concrete continuation constraints and acceptance cases are recorded in [[file:../docs/dream/p4-next.org][P4 implementation notes]].
 Do not alter v1/v2 briefs or default inventory fields: old native assignments include their exact bytes and hashes.
 P4 still requires transcript prefix/delta reuse and bounded deterministic prior selection; P5/P6 remain open and live Claude remains deferred.
 
