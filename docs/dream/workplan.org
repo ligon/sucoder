@@ -17,8 +17,8 @@ The native pipeline milestone did not complete this broader objective.
 
 Baseline =78e5193= implements explicit git/Claude/Codex evidence, private snapshots, bounded native roles, exact citations, append-only candidate publication and local output-binding checks.
 Its [[file:implementation.org][engineering verification]] includes synthetic Codex runs and isolated protocol tests for both harnesses.
-As checked on 2026-11-09, SuCoder has no generated wiki, dream candidate branch or configured dream run records.
-No real SuCoder wiki build or fresh-reader benefit has been demonstrated.
+The [[file:runs/sucoder-p1.org][first real SuCoder run]] has now produced an unintegrated candidate and exposed concrete selection/navigation failures.
+There is still no accepted maintained wiki or demonstrated fresh-reader benefit.
 The user explicitly left live Claude verification pending because its configured account quota is exhausted.
 
 This workplan records implementation work and acceptance gates.
@@ -54,10 +54,15 @@ Use disjoint analyst outputs when delegation helps, then one editorial owner and
 :CUSTOM_ID: sequence
 :END:
 
-** NEXT P1. Build and inspect a real SuCoder wiki candidate
+** DONE P1. Build and inspect a real SuCoder wiki candidate
+CLOSED: [2026-11-09 Mon 03:03]
 :PROPERTIES:
 :CUSTOM_ID: real-sucoder
 :OWNER: Sue
+:END:
+:LOGBOOK:
+- State "DONE" from "NEXT" [2026-11-09 Mon 03:03] \\
+  Sue: Actual SuCoder candidate 635f040 was produced from six real git passages and inspected; status confirms it is available and unintegrated. The linked run report records omissions and limited synthesis. This completes the diagnostic gate only.
 :END:
 
 Use the current implementation on a small explicit selection of real SuCoder documentation, implementation and tests concerning reply/transcript evidence.
@@ -73,12 +78,16 @@ Distinguish a candidate produced for the actual configured SuCoder repository fr
 - Acceptance :: A reproducible real-source candidate exists for SuCoder, its qualifications and references can be checked, and its usefulness/limitations are recorded.
   A successful build is an early diagnostic, not proof that the full charter is implemented.
 - Reuse :: [[file:../../sucoder/dream.py][planning]], [[file:../../sucoder/dream_run.py][snapshots/publication]], [[file:../../sucoder/dream_native.py][native transport]] and the [[file:../dream-implementation-ledger.org][reuse ledger]].
+- Evidence :: [[file:runs/sucoder-p1.org][Actual run identity, coverage, usage and inspection findings]].
 
-** TODO P2. Deliver real correction and cross-source synthesis
+** ACTIVE P2. Deliver real correction and cross-source synthesis
 :PROPERTIES:
 :CUSTOM_ID: correction-synthesis
 :OWNER: Sue
 :DEPENDS_ON: real-sucoder
+:END:
+:LOGBOOK:
+- State "ACTIVE" from "TODO" [2026-11-09 Mon 03:03]
 :END:
 
 Extend the role contract to support multi-source evidence, meaningful topic paths and stable anchors, full explanatory page text and proposed edits to established pages.
@@ -190,7 +199,7 @@ Measure critical errors, missing qualifications, answer quality, reader bytes, l
 :CUSTOM_ID: completion
 :END:
 
-P1 is the immediate next action; P2-P3 are the first functional dreaming loop.
+P1 supplies the recorded real-source diagnostic; P2 is active, and P2-P3 are the first functional dreaming loop.
 P4 and P5 can proceed in parallel once that loop works; live native parity can be checked throughout.
 Do not add a generic backend framework, a global vector store, nightly automation or more transport machinery ahead of a demonstrated need in this sequence.
 Optional previews and convenience interfaces do not substitute for correction or reader use.

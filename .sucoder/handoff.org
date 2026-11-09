@@ -7,17 +7,22 @@
 * Current objective and immediate next step
 
 The full runtime charter remains incomplete.
-The user's November 9 review established that successful native runs so far used synthetic evidence in disposable repositories, and no wiki has been generated for the actual SuCoder repository.
+The user's November 9 review established that earlier successful native runs used synthetic evidence in disposable repositories.
+P1 has now completed a real SuCoder run: unintegrated candidate =635f040183f8ed0770fa1f96157e2b6cac3dc143= on =refs/heads/dream/228cde57cac21c9adb2ef29c3e76cd7f069ba0f80f5e45a95b49a7e9fb57b99b=.
+See [[file:../docs/dream/runs/sucoder-p1.org][the exact run and inspection report]]; the candidate omits important parser behavior and a literal command flag, so it is a diagnostic, not an accepted companion.
 Treat the native implementation below as an engineering milestone, not completion of the original dreaming objective.
 
 The canonical next-work queue is [[file:../docs/dream/workplan.org][the charter-completion workplan]].
-P1 is a bounded real SuCoder wiki candidate and inspection.
+P1 is DONE as a diagnostic gate; P2 is ACTIVE.
 P2-P3 implement substantive correction/cross-source synthesis and a fresh reader that demonstrably uses the result.
 P4-P5 complete selective incremental maintenance and the editorial/archive lifecycle; P6 verifies both native harnesses and the separately scoped usefulness pilot.
 The user emphasized delegating knowledge/editorial judgment to a capable agent; let it write and revise explanations while the coordinator enforces evidence, authority, budgets, validation and publication boundaries.
 Do not retain the titles/claim-ID-only consolidator as the long-term definition of synthesis.
 
-The November 9 planning session changed documentation only; it did not run a real wiki build, admit private transcripts, run a pilot or integrate a candidate.
+The earlier November 9 planning session changed documentation only.
+The subsequent work session ran P1 with six explicitly selected git units (23,236 bytes), thirteen native roles and a 900-second allowance on Codex CLI 0.167.0 with explicit =gpt-6.1-sol=.
+Its plan ID is =b432f3958540c25459dc7cbe69f2ed65dcc0b04daa65bf539020ef0157f7c060= under the configured dream log directory; =candidate-review.org= is retained there.
+No private transcripts were admitted, no candidate was integrated and no usefulness pilot was run.
 The user's explicit deferral of live Claude verification remains in force.
 
 * Authorized goal and recovered baseline
