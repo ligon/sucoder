@@ -68,6 +68,8 @@ class EditorTransport:
                 references=[dict(path=TOPIC, target="reply-proof", evidence_status="inference", citations=[
                     dict(unit_id=s["unit_id"], quote=s["text"]) for s in inputs["sources"]])],
                 omissions=[])
+        if task["contract"] == "source-grounded-wiki-v3" and task["role"] != "reviewer":
+            result.update(decision="change", rationale="Correct unsupported memory and connect the two necessary sources.")
         if self.mutate:
             self.mutate(task, result)
         if harness == "codex":
@@ -105,7 +107,7 @@ def test_corrects_existing_topic_and_combines_sources_preserving_human_task(work
     assert len(transport.calls) == 2
     assert dream_run.status(workspace[2], "sample", Path(plan["plan_path"]))["state"] == "candidate_ready"
     receipt = json.loads(git(repo, "show", result["candidate_commit"] + ":.sucoder/wiki/receipts/" + result["run_id"] + ".json"))
-    assert receipt["contract"] == wiki.CONTRACT
+    assert receipt["contract"] == "source-grounded-wiki-v3"
     assert len(receipt["references"][0]["citations"]) == 2
     assert all(b["rule"] == "file-utf8-v1" for b in receipt["outputs"])
 
@@ -163,7 +165,7 @@ def test_cli_defaults_to_editor_and_binds_operator_purpose(workspace, monkeypatc
     result = command(workspace, "run", plan, "--harness", "codex", "--model", "explicit-model",
                      "--purpose", "Explain how reply evidence differs from historical summaries.")
     assert result.exit_code == 0, result.output
-    assert json.loads(result.output)["fidelity"] == wiki.CONTRACT
+    assert json.loads(result.output)["fidelity"] == "source-grounded-wiki-v3"
     assert transport.calls[0]["input"]["purpose"] == "Explain how reply evidence differs from historical summaries."
     status = command(workspace, "status", plan)
     assert status.exit_code == 0, status.output

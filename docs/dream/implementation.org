@@ -207,7 +207,7 @@ poetry run sucoder --config ~/.sucoder/config.yaml dream run SuCoder \
   --purpose "Explain reply evidence and transcript identity for future maintainers."
 #+end_example
 
-The =source-grounded-wiki-v2= contract lets the agent select salient knowledge, write natural explanatory Org, combine source contributions and correct existing topic prose.
+The default =source-grounded-wiki-v3= contract lets the agent select salient knowledge, write natural explanatory Org, combine source contributions and correct existing topic prose.
 The assignment explicitly supplies the permitted =.sucoder/wiki/index.org= and =.sucoder/wiki/topics/TOPIC.org= paths, change/reference format, existing page hashes, prior anchors/tasks and source-link examples.
 Those interface rules bind the run identity; the agent decides the content and organization.
 The coordinator owns initial settings, receipts, source registry and git publication.
@@ -221,7 +221,9 @@ The author returns full changed-page text, before-page digests, reasoned change 
 Mechanical checks validate edit paths, exact source quotes/ranges, retained existing anchors, existing editorial task subtrees, wiki/source link targets and index reachability.
 The author selects a unit ID and literal quotation; the coordinator derives its exact UTF-8 byte range only when that quote occurs once in the selected unit.
 Modified, absent or ambiguous quotations are rejected without fuzzy matching.
-The older =source-grounded-wiki-v1= offset-bearing contract remains replayable for saved runs; it is not used for new wiki runs.
+The older =source-grounded-wiki-v1= offset-bearing and =source-grounded-wiki-v2= quotation-bearing contracts remain replayable for saved runs.
+V3 adds a reasoned =change= or =unchanged= disposition to author/repair results while preserving both older briefs and identities.
+V3 transcript receipt units also retain the frozen normalization contract/digest, so later prefix reuse can verify the interpretation as well as literal bytes.
 Native Org inventories distinguish active directives from inert examples; arbitrary inclusion/configuration directives and links outside the admitted source/wiki view are rejected.
 The model can reorganize prose and replace mistaken factual explanations, while old task subtrees remain byte-preserved until their transition/authority checks are implemented.
 
@@ -231,6 +233,13 @@ This repair is distinct from an uncertain native request, which is never silentl
 All calls, results and repairs use the shared invocation/time/proposal allowances.
 Mechanical checks and model acceptance still do not prove semantic truth or future usefulness; ordinary review and reader acceptance remain required.
 
+An author may decide that useful knowledge is already represented, or that no worthwhile edit is supported.
+An unchanged proposal requires a reason and empty page/change/reference arrays; the independent reviewer still sees all selected evidence and prior pages and may reject that decision.
+The one bounded repair can replace a mistaken no-op with a real source-grounded correction.
+A checked no-op stores private coverage, rationale, review and native traces and returns =unchanged=, without a candidate or shared accepted-progress claim.
+Its atomic marker makes an interrupted local result write recoverable without inference.
+Status replays the original contract and reports reconciliation if the wiki context has changed.
+
 One atomic candidate changes only the validated wiki files and coordinator-owned metadata, preserving the user's index/worktree/branch.
 Receipts bind complete changed-file bytes, including text outside anchored subtrees, and identify multi-source references, dispositions, findings and exact role payloads.
 Inference-free status replays the saved contract and validates outputs after ordinary or squash integration; a title/intro edit can require reconciliation even if all subtree bodies remain unchanged.
@@ -239,7 +248,7 @@ Legacy notes/fixture receipts continue using their original contract and subtree
 
 * Accepted shared progress: first incremental slice
 
-Before wiki inference, execution inspects compatible =source-grounded-wiki-v2= receipts in the frozen designated integration tree.
+Before wiki inference, execution inspects compatible changed wiki-v2/v3 receipts in the frozen designated integration tree.
 The current shortcut supports complete unchanged git selections; it does not yet reuse transcript prefixes or partially changed dependencies.
 Every receipt dependency must still be admitted with the same repository/source identity, selected range and exact bytes.
 It verifies complete chunk coverage, the accepted final review, native harness/model/build, brief and purpose, and every required output binding.
@@ -252,7 +261,8 @@ It records a private =accepted-wiki-progress-v1= proof referencing the accepted 
 Changing a required output, receipt or repository UUID reports reconciliation, including changes outside Org subtrees.
 Missing original evidence is not inferred from shared metadata.
 =--maintenance= with =--topic= bypasses the shortcut for an explicit checked repair using existing evidence.
-General transcript delta reuse, deterministic bounded prior selection and agent no-op decisions remain P4 work; this first slice does not complete that gate.
+Transcript delta reuse and deterministic bounded prior selection remain P4 work; reviewed no-op decisions are now implemented.
+These slices do not complete that gate.
 
 * Bounded readers and explicit session entry
 
@@ -370,8 +380,8 @@ This contract is exercised with deterministic role fixtures and isolated native 
 
 * Next implementation slices
 
-1. Complete the fresh-reader engineering acceptance in [[file:workplan.org][P3]]; P2 actual-source authorship/correction passed.
-2. Add compatible shared-receipt discovery/reuse, selective maintenance, editorial transitions and archival moves in P4-P5.
+1. Complete [[file:workplan.org][P4]] transcript updates and bounded prior selection; P1-P3 and unchanged-git reuse have passed engineering acceptance.
+2. Complete P5 editorial transitions and archival moves, preserving the existing correction/reader invariants.
 3. Verify both native harnesses and review the separate pilot authorization and gates in P6.
 4. Add generic execution adapters only after those charter priorities.
 

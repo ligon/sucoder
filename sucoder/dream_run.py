@@ -507,6 +507,14 @@ def status(config, mirror, plan_path, run_id=None):
                     raise DreamError("Shared-progress specification differs from its storage identity")
                 from . import dream_progress
                 return dream_progress.restore(config, mirror, plan, fd, spec, deadline)
+            if spec.get("contract") == "source-grounded-wiki-v3":
+                try:
+                    marker = dream._json(_read(fd, "native-" + run_id + "-unchanged.json", MAX_PLAN_BYTES))
+                except FileNotFoundError:
+                    pass
+                else:
+                    from . import dream_curate
+                    return dream_curate.unchanged_status(config, mirror, plan, fd, run_id, marker, deadline)
         try:
             commit = _read(fd, "candidate-" + run_id + ".txt", 128).decode().strip()
         except FileNotFoundError:
@@ -517,7 +525,7 @@ def status(config, mirror, plan_path, run_id=None):
         # mutable local run record as evidence of shared accepted progress.
         if native:
             spec = dream._json(_read(fd, "native-" + run_id + "-spec.json", 16384))
-            if spec.get("contract") in ("source-grounded-wiki-v1", "source-grounded-wiki-v2"):
+            if spec.get("contract") in ("source-grounded-wiki-v1", "source-grounded-wiki-v2", "source-grounded-wiki-v3"):
                 from . import dream_wiki
                 expected = dream_wiki.restore(plan, fd, run_id, deadline)
             else:

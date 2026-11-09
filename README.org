@@ -2557,6 +2557,7 @@ Planning preserves the mirror's worktree, index, and refs.
 These are explicit session entry commands; project instructions are not rewritten.
 A run with unchanged git evidence can return =already_integrated= without model calls or a new candidate when compatible accepted receipts and every required output binding validate.
 Explicit maintenance bypasses that shortcut; changed required outputs request reconciliation.
+The author may also conclude that no useful edit is supported; independent review must accept that no-op before =unchanged= is recorded privately, with no candidate commit.
 
 =sucoder dream run --harness fixture= exercises complete chunk delivery and prepares an attributed-quotation candidate with output-bound receipts; =sucoder dream status --plan= checks its candidate ref and integration bindings.
 The fixture invokes no model and establishes quotation fidelity only.

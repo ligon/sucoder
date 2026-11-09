@@ -32,7 +32,7 @@ The recovered clean branch was =coder/dream-data-plane= at =b7d9014=.
 The preceding deterministic data-plane handoff is preserved at [[file:handoffs/2026-11-08-dream-data-plane.org][the earlier November 8 handoff]].
 The older attention-hook work remains separate.
 
-* P2 completed; P3 active, 2026-11-09
+* Real-source milestones (P2/P3), 2026-11-09
 
 See [[file:../docs/dream/runs/sucoder-p2.org][the complete real-source and correction report]].
 Actual SuCoder candidate =b6c59f15d666763df1c0987429d12b417ae099ea= exists on =refs/heads/dream/ba7ba3aa22adabd09f0b9534803a26bbfc0690df69201c8ce83498c538d1c2c1=.
@@ -69,10 +69,30 @@ The actual SuCoder accepted-reuse check passed after ordinary integration at =df
 Plan =22ce2298d81a30d44d462311182df99f9d85a8dc77d1ab74d14dc2b97a1d426c= produced reuse run =64f8d2c9a82809a1b80ce3943c64918a2e0981c1210bedf1e6dcc7c4c6a0f9a5=, =already_integrated=, zero provider calls and no candidate/ref/index/worktree change.
 The private plan directory contains =real-accepted-reuse-check.json=; the retained driver is =/tmp/sucoder-dream-p4-real-reuse.py=.
 The baseline actual wiki is now in the worktree at =.sucoder/wiki/topics/transcript-replies.org=, with its original source registry and receipt; =poetry run sucoder ... dream read SuCoder= works against HEAD.
-Next: commit this acceptance/status record and continue P4 transcript prefixes/appends, no-op convergence and bounded prior selection.
+The first P4 acceptance/status record is committed at =a9f6e3c=, with its verification ledger at =c568d55=.
+Continue P4 with the curation slice below, then transcript prefixes/appends and bounded prior selection.
 Do not mark P4 or the full goal complete from unchanged-git reuse alone.
 Remaining P4: transcript prefix/appended-range reuse, bounded deterministic prior selection, targeted repairs and no-op decisions; P5 task/archive transitions and P6 scoped usefulness also remain.
 Live Claude remains explicitly deferred.
+
+* Current uncommitted P4 curation slice
+
+=dream_curate.py= adds =source-grounded-wiki-v3=, now selected by new default wiki runs.
+The author/repair returns =change= or =unchanged= and a rationale; independent review sees the full selected evidence/prior pages for both.
+The base writer has small virtual hooks for briefs, proposal validation and bindings; original v1/v2 schemas/briefs/run identities are unchanged and saved actual v2 status/progress still replay without inference.
+An accepted no-op stores a private receipt and atomic marker, creates no candidate/ref and is distinct from accepted shared progress.
+Status reconstructs its cached roles and checks the entire wiki context; interruption after marker publication is recoverable without inference.
+Shared git reuse accepts compatible changed v2/v3 receipts; private no-ops do not establish shared coverage.
+
+All 33 existing writer/reuse tests pass under the new default, and all eight no-op cases pass for both harness protocols, repair of a rejected no-op, malformed decisions, empty initial wiki, changed context and publication interruption.
+The initial no-op repair fixture accidentally inherited a reject-all flag; that fixture variable was separated, with no production workaround.
+Mypy passed the four runtime modules.
+The combined seven-module dream regression passed 120 tests, logged at =/tmp/sucoder-dream-curation-focused.txt=.
+The final ten curation cases additionally pin normalized interpretation for both transcript formats, and mypy passed all four runtime modules.
+V3 receipt units retain the frozen normalization contract/digest for the upcoming append-prefix reuse check.
+Next: commit curation and its verification ledger, then run a real explicit maintenance pass on the accepted SuCoder topic to observe its change/no-op decision and record the result.
+Do not alter v1/v2 briefs or default inventory fields: old native assignments include their exact bytes and hashes.
+P4 still requires transcript prefix/delta reuse and bounded deterministic prior selection; P5/P6 remain open and live Claude remains deferred.
 
 * Implemented native workflow
 

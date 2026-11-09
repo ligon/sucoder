@@ -235,8 +235,18 @@ class WikiCoordinator(dream_roles.Coordinator):
     def result_schema(self, role):
         return schema(role, self.contract)
 
+    def briefs(self):
+        return BRIEFS
+
+    def proposal(self, proposal, prior, sources):
+        return validate_proposal(self.plan, proposal, prior, sources, self.deadline, self.contract)
+
+    def bindings(self, pages, prior):
+        return [dict(path=path, target="", sha256=digest(text.encode()), rule="file-utf8-v1")
+                for path, text in sorted(pages.items())]
+
     def make_assignment(self, role, inputs):
-        task = dict(contract=self.contract, run_id=self.run_id, role=role, brief=BRIEFS[role],
+        task = dict(contract=self.contract, run_id=self.run_id, role=role, brief=self.briefs()[role],
                     input=inputs, result_schema=self.result_schema(role), input_sha256=digest(canonical(inputs)))
         task["assignment_id"] = digest(canonical(task))
         return task
@@ -253,7 +263,7 @@ class WikiCoordinator(dream_roles.Coordinator):
         review = None
         for repair in range(self.plan["limits"]["max_repairs"] + 1):
             try:
-                pages, parsed, references = validate_proposal(self.plan, proposal, prior, sources, self.deadline, self.contract)
+                pages, parsed, references = self.proposal(proposal, prior, sources)
             except DreamError as exc:
                 if exc.exit_code != 2:
                     raise
@@ -269,14 +279,13 @@ class WikiCoordinator(dream_roles.Coordinator):
                 raise DreamError("Wiki revision did not pass mechanical and independent review: " +
                                  "; ".join(f["message"] for f in findings), 3)
             proposal = self.call("repair", dict(inputs, candidate=proposal, findings=findings))
-        outputs = [dict(path=path, target="", sha256=digest(text.encode()), rule="file-utf8-v1")
-                   for path, text in sorted(pages.items())]
+        outputs = self.bindings(pages, prior)
         coverage = [dict(unit_id=s["unit_id"], **chunk, extraction="author_inline_delivered",
                          verification="whole_candidate_review") for s in sources for chunk in s["chunks"]]
         receipt = dict(schema_version=1, contract=self.contract, run_id=self.run_id, plan_id=self.plan["plan_id"],
             repository_uuid=self.plan["repository_uuid"], base_commit=self.plan["base_commit"],
             harness=self.harness, model=self.model, native_version=self.version,
-            purpose=self.purpose, brief_sha256=digest(canonical(BRIEFS)),
+            purpose=self.purpose, brief_sha256=digest(canonical(self.briefs())),
             outputs=outputs, coverage=coverage, fidelity="source_grounded_editorial_review",
             references=references, changes=proposal["changes"], omissions=proposal["omissions"],
             review=review, assignments=self.traces,
@@ -310,12 +319,15 @@ def run(config, mirror, plan_path, harness, model, attempt=1, mode="wiki", purpo
                                          transport.version, purpose, deadline)
         if reused is not None:
             return reused
-        coordinator = WikiCoordinator(plan, fd, harness, model, deadline, transport, attempt=attempt, purpose=purpose)
+        from . import dream_curate
+        coordinator = dream_curate.Curator(plan, fd, harness, model, deadline, transport, attempt=attempt, purpose=purpose)
         prefix = "native-" + coordinator.run_id
-        dream_run._store(fd, prefix + "-spec.json", canonical(dict(contract=CONTRACT, run_id=coordinator.run_id,
+        dream_run._store(fd, prefix + "-spec.json", canonical(dict(contract=coordinator.contract, run_id=coordinator.run_id,
             harness=harness, model=model, native_version=coordinator.expected_version, attempt=attempt, purpose=purpose)) + b"\n")
         with dream_roles.run_lock(fd, prefix):
             pages, receipt = coordinator.prepare()
+            if not pages:
+                return dream_curate.record_unchanged(plan, fd, source_readers, receipt, deadline)
             return dream_run.publish(plan, fd, directory, source_readers, deadline, INDEX, pages.get(INDEX, ""), receipt, "",
                 receipt_name=prefix + "-receipt.json", result_name=prefix + "-run.json", wiki_files=pages)
 
@@ -323,12 +335,15 @@ def run(config, mirror, plan_path, harness, model, attempt=1, mode="wiki", purpo
 def restore(plan, fd, run_id, deadline):
     spec = dream._json(dream_run._read(fd, "native-" + run_id + "-spec.json", 16384))
     dream._object(spec, ("contract", "run_id", "harness", "model", "native_version", "attempt", "purpose"))
-    if spec["contract"] not in (CONTRACT, LEGACY_CONTRACT) or spec["run_id"] != run_id or spec["harness"] not in ("codex", "claude"):
+    from . import dream_curate
+    if spec["contract"] not in (CONTRACT, LEGACY_CONTRACT, dream_curate.CONTRACT) or spec["run_id"] != run_id or spec["harness"] not in ("codex", "claude"):
         raise DreamError("Invalid wiki run specification")
     def no_inference(*args):
         raise DreamError("Wiki run is incomplete; status never invokes inference", 3)
-    coordinator = WikiCoordinator(plan, fd, spec["harness"], spec["model"], deadline, no_inference,
-        native_version=spec["native_version"], attempt=spec["attempt"], purpose=spec["purpose"], contract=spec["contract"])
+    parameters = dict(native_version=spec["native_version"], attempt=spec["attempt"], purpose=spec["purpose"])
+    coordinator = (dream_curate.Curator(plan, fd, spec["harness"], spec["model"], deadline, no_inference, **parameters)
+        if spec["contract"] == dream_curate.CONTRACT else
+        WikiCoordinator(plan, fd, spec["harness"], spec["model"], deadline, no_inference, contract=spec["contract"], **parameters))
     if coordinator.run_id != run_id:
         raise DreamError("Wiki run identity differs from its frozen contract")
     return coordinator.prepare()[1]

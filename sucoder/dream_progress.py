@@ -19,10 +19,15 @@ def identity(unit):
 
 
 def compatible(plan, receipt, fd, harness, model, version, purpose):
-    if (type(receipt.get("schema_version")) is not int or receipt["schema_version"] != 1 or receipt.get("contract") != "source-grounded-wiki-v2" or
+    from . import dream_curate
+    contract = receipt.get("contract")
+    briefs = dream_wiki.BRIEFS if contract == dream_wiki.CONTRACT else dream_curate.BRIEFS
+    if (type(receipt.get("schema_version")) is not int or receipt["schema_version"] != 1 or contract not in (dream_wiki.CONTRACT, dream_curate.CONTRACT) or
             receipt.get("repository_uuid") != plan["repository_uuid"] or receipt.get("harness") != harness or
             receipt.get("model") != model or receipt.get("native_version") != version or receipt.get("purpose") != purpose or
-            receipt.get("brief_sha256") != digest(canonical(dream_wiki.BRIEFS))):
+            receipt.get("brief_sha256") != digest(canonical(briefs))):
+        return set()
+    if contract == dream_curate.CONTRACT and receipt.get("decision") != "change":
         return set()
     dream_roles.validate_schema(receipt["review"], dream_wiki.schema("reviewer"))
     if (receipt["review"]["verdict"] != "accept" or receipt["review"]["failures"] or
