@@ -1,0 +1,51 @@
+#+TITLE: Reading transcript replies
+
+* Evidence and reply contract
+:PROPERTIES:
+:CUSTOM_ID: reply-contract
+:END:
+A message-id search does not establish delivery, and the next assistant entry does not establish a reply. Copies occur in request blobs, tool output, summaries and forked histories; assistant output also includes preambles and tool activity. The [[file:../../../docs/reply-transcripts-evidence.org][investigation]] recommends recognizing the harness-specific delivery and then finding assistant text with a line matching =^REPLY <id>:= after it, with a deadline rather than a fallback to the next assistant message.
+
+These are Sue's reported read-only observations from 2026-10-23, attributed to Claude Opus 5.5 running Claude Code 2.1.309. The [[file:../../../docs/reply-from-transcript.org][protocol notes]] also scope Codex observations to 0.163.0 with managed codex_state. The implementation and tests below were inspected as source at commit =1db3566b29e34312f1c36b61b8cc4eef65d2cf86=; this wiki does not report a new execution of them.
+
+* Recognizing delivery and assistant text
+:PROPERTIES:
+:CUSTOM_ID: harness-events
+:END:
+The [[file:../../../sucoder/reply_probe.py][maintained adapters]] distinguish a Claude enqueue from delivery. A normal user entry can deliver input, while an input absorbed mid-turn arrives as an =attachment= with =attachment.type: queued_command=. A =queue-operation= enqueue alone establishes only queueing. The adapter excludes sidechains, compaction summaries, meta user entries and user content containing tool results. Only assistant =text= blocks yield reply text; tool-use inputs cannot establish a reply.
+
+Harness-shape classification must be paired with frame matching that accommodates pasted content. The [[file:../../../docs/reply-transcripts-evidence.org][investigation]] reports Claude user content with leading newlines and a =<pasted_content>= wrapper around the message frame: requiring =^\[message= at the start of the content misses real delivery. The [[file:../../../docs/reply-from-transcript.org][protocol notes]] also document this wrapper and reused paste ids. Match the message frame within the eligible delivery content; a paste id cannot identify a message. The byte search described below locates candidate transcript lines but does not replace delivery classification or this content-matching constraint.
+
+For Codex, delivery is a =response_item= whose payload is a =message= with =role: user=. Replies come from assistant =output_text= in that same message shape, in any phase. Commentary can therefore answer a message while the surrounding turn continues. =event_msg= twins, compacted history and subagent =agent_message= items are excluded; =task_complete= marks a turn end rather than a required reply boundary. Selecting the main rollout remains important because forked files can copy the parent's delivery.
+
+The [[file:../../../tests/test_reply_probe.py][fixtures]] encode these distinctions, including queue-only input, a queued-command delivery, commentary replies and ignored subagent messages. They are evidence of specified test cases, not evidence that a test run passed here.
+
+* Reader window and result meanings
+:PROPERTIES:
+:CUSTOM_ID: reader-results
+:END:
+Static inspection of [[file:../../../sucoder/reply_probe.py][read_transcript]] shows that it parses only complete newline-terminated lines, leaving a growing file's unfinished final line for a later read. It searches bytes for the first =[message <id> = occurrence, then classifies JSON entries from that line onward. Without a match it reads the tail. File position determines sequence: Claude can write a queued attachment after later-timestamped entries.
+
+After recognizing delivery, the reader scans assistant text until a tagged reply or the next different delivered input. A repeated matching delivery is skipped as a twin. It also remembers a bare =REPLY:= and uses it if no tagged reply is found before the window closes. Turn end is recorded but does not itself close the scan. The [[file:../../../tests/test_reply_probe.py][fixtures]] explicitly reject replies after intervening input and accept a reply inside a longer assistant text block.
+
+The returned states distinguish evidence levels. =replied= includes reply text truncated to =REPLY_MAX= and =source: transcript=. =seen= means delivery was recognized but no reply was accepted, and carries =turn_ended=. =queued= means an enqueue was recognized without delivery. =unrecognized= covers an unknown frame-bearing shape or insufficient timestamp evidence. =absent= requires freshness evidence: an entry timestamp at or after =sent_at - skew= without recognized delivery, queueing or an unknown frame-bearing entry. The implementation may inspect an earlier bounded region for freshness if the first frame copy is later in the file. These states describe the inspected transcript bytes, not a guarantee about what appeared on screen.
+
+* Finding the correct transcript
+:PROPERTIES:
+:CUSTOM_ID: transcript-identity
+:END:
+The [[file:../../../sucoder/replies.py][identity selector]] trusts the launch record's harness rather than a pane's process name, and rejects records for another job or a job-backed record for a login recipient. An explicit harness takes precedence over leftover Claude ids or managed-owner metadata. For older records without a harness, it falls back to a complete managed owner, then a Claude session id. A missing record, job mismatch or unsupported harness returns no transcript identity, which the function documents as selecting the screen path.
+
+For Claude, the [[file:../../../docs/reply-from-transcript.org][versioned protocol notes]] place transcripts at =${CLAUDE_CONFIG_DIR:-~/.claude}/projects/<cwd>/<session-id>.jsonl=, with every non-alphanumeric cwd character replaced by =-=. On Savio the shared home made compute transcripts readable from a login node without =srun=. Open file descriptors do not locate them because writes append and close; pid-to-session metadata may be missing or stale. =--session-id <uuid>= permits choosing the id at launch. These notes refine the earlier investigation's statement that compute-node file discovery was unsolved; they do not establish universal discovery across installations.
+
+For managed Codex 0.163.0, the notes identify a durable replica at =~/mirrors/.sucoder-state/codex/<scope>/runs/<run>/rollouts/<thread>.jsonl=. The measured lag was zero bytes in three samples, not a general synchronization guarantee. Node-local rollouts were readable through =srun --overlap= outside the bwrap namespace. Main-thread =session_meta.thread_source= is ="user"=; forks use ="subagent"= and =forked_from_id=. Unmanaged Codex uses =${CODEX_HOME:-~/.codex}/sessions/...= without runner metadata.
+
+The identity selector passes candidate =cwds= from the mirror path and, when supplied, =<local_root>/mirrors/<token>=. It also supplies =start_date= from the first ten characters of the launch record's =created= value, or no date when unavailable, and mailbox candidates at =~/.sucoder/mail= plus =.sucoder/mail= under each candidate cwd. Managed Codex identity additionally carries durable root, scope, job and local root. These are discovery inputs, not proof that a transcript or mailbox exists.
+
+* Talk
+:PROPERTIES:
+:CUSTOM_ID: talk
+:END:
+The investigation recommends a tagged =^REPLY <id>:= line and a deadline. The inspected reader additionally accepts a bare =REPLY:= when no different input intervenes, and closes its attribution window at the next different delivered input. The fixtures deliberately cover the bare-reply behavior. This is a documented policy difference; the supplied evidence contains no human ruling on whether to tighten the implementation or revise the recommendation. The supplied reader excerpt also does not establish how an external waiting deadline is enforced.
+
+Sue reported that LSMS_Library had no assistant entry mentioning message 1733 even though its compaction summary claimed it had answered. Preserve that distinction: the summary is not a reply. Whether a screen showed a reply missing from the transcript, or the model silently dropped the message, remained conditional on screen evidence not supplied here. The corresponding fixture guards against accepting the summary as assistant output.
