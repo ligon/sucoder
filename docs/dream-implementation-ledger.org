@@ -1,6 +1,6 @@
 #+title: Prior-art ledger: dream implementation
 #+author: Sue
-#+date: 2026-11-08
+#+date: 2026-11-09
 #+options: toc:2 num:nil
 
 * 1. Task and baseline
@@ -9,7 +9,8 @@ The implementation of [[file:dream.org][dream]] began at =944b0f2= with an infer
 It implements =sucoder dream plan= for explicitly admitted local git files and passages, private manifests, exact byte coverage, bounded work estimates, and binding checks.
 The resumed data plane, committed at =07d4c4f=, adds frozen-plan validation, private snapshots, quotation-fixture coverage, native Org subtree checks, output-bound receipts, atomic candidate publication and local integration status.
 The native slice now adds explicit Claude/Codex transcript normalization and shared schema-bound extractor/verifier/consolidator roles for both native CLIs.
-General editorial validation, automatic accepted-receipt reuse in planning, generic adapters and retrieval remain subsequent slices.
+The P2 editor now adds coherent multi-source prose, frozen-base topic edits, bounded repair and whole-candidate review.
+General task/archive transitions, automatic accepted-receipt reuse in planning, generic adapters and retrieval remain subsequent slices.
 The user requested agent-independent dreaming on 2026-11-08; the coordinator must support Codex and generic agents as well as Claude.
 The design's Claude-first adapter proposal does not constrain that architecture or establish an implemented capability.
 
@@ -36,8 +37,12 @@ The [[file:dream-ledger.org][design ledger]] remains the source inventory for ev
   The observation helper has no stdin payload interface and decodes invalid UTF-8; the dispatcher deliberately bypasses permissions and cannot supply this contract.
 - =sucoder/dream_roles.py:105=, =Coordinator= :: New provider-neutral role schema, assignment, citation, coverage and result/trace bindings.
   =tests/test_dream_roles.py= covers both execution harnesses crossed with all three evidence kinds, complete chunk delivery, semantic rejection, unknown outcomes, explicit attempts, concurrency and integration checks.
-- =sucoder/dream_run.py:364=, =publish= :: Reuse the existing private-index/atomic-ref publisher for fixture and semantic candidates; the generated topic/index subtrees remain bound by native Org parsing.
+- =sucoder/dream_run.py=, =publish= :: Reuse the existing private-index/atomic-ref publisher for fixture and semantic candidates; legacy topic/index subtrees remain bound by native Org parsing; edited wiki pages use whole-file UTF-8 bindings, including text outside subtrees.
   Existing =tests/test_dream_run.py= still covers worktree/index/hook/filter preservation, output reconciliation, concurrent ref movement and publication interruption.
+
+- =sucoder/dream_wiki.py=, =WikiCoordinator= and =validate_proposal= :: Extend the role runner with source-grounded author/reviewer/repair contracts and exact-base multi-page edits.
+  =tests/test_dream_wiki.py= covers correction, multi-source prose, human/task/anchor preservation, omitted flags, bounded repair, path/link/directive rejection, both native protocols and inference-free status.
+  The opt-in native Org inventory reuses =sucoder/dream_validate.el= without changing its original output mode.
 
 * 3. Definitions and conventions
 
@@ -55,6 +60,9 @@ The [[file:dream-ledger.org][design ledger]] remains the source inventory for ev
   Its digest binds exact bytes; normalization preserves native order, provenance and unknown records, and marks session completion/independence unestablished.
 - Semantic candidate :: A fresh topic and navigation entry rendered from cited model-checked claims, under =inline-semantic-roles-v1=.
   It is distinct from quotation fidelity and from integrated progress; unresolved claims retain explicit caveats, and contradicted claims are omitted.
+- Wiki candidate :: Under =source-grounded-wiki-v1= the agent writes explanatory page text and reasoned changes/references/omissions; an independent reviewer sees the full admitted bundle and prior wiki.
+  Exact citations and native structural checks are mechanical evidence, not proof of semantic truth or completeness.
+  Every changed page has an exact base digest and whole-file output binding; existing anchors and editorial task subtrees remain intact.
 - Attempt :: An explicit independent native run identity with its own allowance.
   A per-run advisory lock prevents duplicate provider work; validated results are reusable, while a started request with no validated result requires a new explicit attempt.
 
@@ -70,7 +78,8 @@ Native runs require an explicit model and shareable selections, and transmit onl
 Linux Landlock confines the native process tree; unsupported kernels/builds fail before inference.
 External model tools, inherited settings/plugins/hooks and parent session/relay context are disabled or excluded; authentication is staged separately in a private temporary home.
 The provider connection retains network access; do not describe filesystem confinement as operating-system network isolation.
-Only the coordinator renders shared Org and writes receipts/git objects; native success prose cannot establish delivery or semantic truth.
+The legacy coordinator renders notes; the wiki author proposes Org text and the coordinator alone validates/publishes it and writes receipts/git objects.
+Native success prose cannot establish delivery or semantic truth.
 
 * 5. Reuse decisions
 
@@ -84,13 +93,17 @@ Only the coordinator renders shared Org and writes receipts/git objects; native 
 - New :: Shared inline semantic role contracts, strict native traces and Landlock-confined Claude/Codex transport.
   Existing headless dispatch does not isolate source access or provide this structured result contract; observation capture cannot deliver role input.
 - Extend :: The existing private-index publisher and local status checks for native output-bound receipts, including squash integration and human edits.
-- Defer :: General topic revisions/editorial validation, automatic shared receipt discovery/reuse, generic execution adapters, automatic semantic repair and reader retrieval.
+- Extend :: Source/citation helpers, role assignment/cache/trace checks, native Org parsing, private-index publication and status for substantive wiki page edits.
+  Keep legacy notes briefs/schemas/run identities unchanged for receipt replay; dispatch schema/assignment construction through subclass hooks.
+- New :: An author/editor schema and wiki change validator.
+  The legacy claim renderer cannot revise established explanations or check omissions against the full source bundle; it remains available as =--mode notes=.
+- Defer :: General task/archive transitions, automatic shared receipt discovery/reuse, generic execution adapters and reader retrieval.
 
 * 6. Open questions and next checks
 
 The user authorized starting the [[file:dream/workplan.org][full runtime workplan]] on 2026-11-09.
 P1 now has a [[file:dream/runs/sucoder-p1.org][real SuCoder candidate and inspection report]]; the omissions are acceptance evidence for the next slice, not a memory-benefit claim.
-P2 will extend the existing bounded role runner with a separate author/editor contract, preserving legacy notes assignments and receipt replay.
+P2 extends the existing bounded role runner with a separate author/editor contract, preserving legacy notes assignments and receipt replay.
 The new contract must allow multi-source prose, edits to stable topic pages, reasoned dispositions and final-page checking against the whole admitted evidence bundle.
 Reuse private artifacts, native transport, source/citation checks, Org parsing and atomic publication; extend staged change validation instead of adding a separate execution/publication framework.
 Complete selected-evidence delivery does not require publishing every extracted statement, and mechanical source bindings do not certify salience or completeness.
@@ -220,5 +233,33 @@ Native implementation is committed at =da1495a=.
 Staged change detection covered sixteen expected files and 71 coarse symbols and reported CRITICAL aggregate risk across broad CLI flows, including unrelated flows with unnamed changed nodes.
 Direct diff inspection confines production changes to the six dream modules; symbol-specific helper/publication impacts are LOW, while planner/schema impact is HIGH and covered by the focused regression suite.
 Graph receiver-resolution omissions and unnamed mappings remain analysis limits, not evidence of edits to the unrelated flows.
+
+* P2 engineering verification against this ledger
+
+- OK (sections 2 and 5) :: The editor reuses the exact snapshot/citation helpers, native role caches/traces, filesystem boundary, Org parser, atomic publisher and status reconstruction.
+  No second transport, configuration system or git publication framework was introduced.
+- OK (sections 3 and 4) :: The author and reviewer receive full selected evidence and prior pages; semantic review checks omissions and can request one concrete repair.
+  Citation ranges, base hashes, output paths, anchors, task subtree hashes, active directives, topic reachability and local source links receive independent mechanical checks.
+  Whole-file output bindings detect edits to titles and introductions after squash integration.
+- OK (sections 3 and 4) :: Original notes assignments and identities remain unchanged; saved P1 status replay still works without inference.
+  Both native protocol fixtures cover coherent correction and a necessary two-source explanation with an essential command qualification and preserved unresolved maintainer constraint.
+- Full-suite evidence :: The P2 engine passed 2721 tests, skipped eight and failed 55.
+  Every failing node ID exactly matches the existing 55-case baseline; no failures were added or removed.
+  The log is =/tmp/sucoder-dream-p2-full-suite.txt=.
+  The final link-normalization refinement is covered by all 18 passing editor tests; mypy passed five changed runtime/script files.
+- Live evidence :: Codex CLI 0.167.0 with explicit =gpt-6.1-sol= passed =scripts/dream_acceptance.py --mode wiki=, including the critical flag, user-work preservation and synthetic squash integration.
+  Its private artifacts are at =/tmp/sucoder-dream-acceptance-4vezwj4t/=.
+  An initial smoke stopped without publishing because the editorial namespace was unspecified; explicit editing instructions now bind the run identity.
+- Packaging :: Wheel construction includes =sucoder/dream_wiki.py= and =sucoder/dream_validate.el=.
+
+The engine slice is committed at =51c599d=.
+Staged GitNexus detection covered eleven expected files and 52 symbols, with 43 affected processes and CRITICAL aggregate risk through shared run/status/CLI hooks.
+Direct diff inspection confines runtime changes to dream modules and the opt-in acceptance script; unrelated credential/config flow mappings arise through the shared CLI callback.
+Symbol-specific impacts were reviewed before editing, and CLI/config regressions and exact baseline comparison cover the shared routes.
+Native Org design validation also passed.
+
+No anchored CONTRADICTION or REINVENTION remains in this engine slice.
+P2 real-source correction acceptance, fresh-reader use, selective maintenance and editorial/archive transitions remain outstanding.
+The synthetic editor acceptance does not establish those gates or real-corpus pilot benefit.
 
 Prepared by Sue.
