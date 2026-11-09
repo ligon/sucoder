@@ -339,4 +339,16 @@ No anchored CONTRADICTION or REINVENTION remains in this first reuse slice.
 P4 remains ACTIVE: append processing, bounded prior selection and no-op convergence are outstanding.
 P5 editorial/archive behavior and P6 scoped usefulness remain outstanding; live Claude remains explicitly deferred.
 
+* Next P4 slice: agent no-op convergence
+
+Extend the existing author/reviewer loop with a versioned wiki-v3 disposition: change or unchanged, plus a reason.
+The agent chooses whether useful editorial work exists; the independent reviewer sees the complete selected sources and prior pages before accepting either disposition.
+A no-op has no page edits, references or git publication; retain its complete source coverage, reason, review, source/wiki footprint and native traces privately.
+Inference-free status must replay the frozen contract and distinguish a checked no-op from accepted shared progress, incomplete work or changed context.
+Keep one bounded repair so a reviewer can reject a mistaken no-op and obtain a real correction.
+Reuse role/citation/schema checks and publication; add small virtual hooks for briefs, proposal validation and bindings so old wiki-v1/v2 identities remain reproducible.
+Keep earlier schemas/briefs and native saved runs replayable; new default runs use wiki-v3, with both harness protocols tested.
+Explicit maintenance bypasses shared reuse and may now finish without creating a redundant candidate.
+Transcript deltas and bounded prior selection remain subsequent P4 work.
+
 Prepared by Sue.
