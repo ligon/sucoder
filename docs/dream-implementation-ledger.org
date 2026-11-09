@@ -10,7 +10,8 @@ It implements =sucoder dream plan= for explicitly admitted local git files and p
 The resumed data plane, committed at =07d4c4f=, adds frozen-plan validation, private snapshots, quotation-fixture coverage, native Org subtree checks, output-bound receipts, atomic candidate publication and local integration status.
 The native slice now adds explicit Claude/Codex transcript normalization and shared schema-bound extractor/verifier/consolidator roles for both native CLIs.
 The P2 editor now adds coherent multi-source prose, frozen-base topic edits, bounded repair and whole-candidate review.
-General task/archive transitions, automatic accepted-receipt reuse in planning, generic adapters and retrieval remain subsequent slices.
+Unchanged accepted git receipts can now save model work; general transcript delta reuse, task/archive transitions and generic adapters remain subsequent slices.
+Bounded reader retrieval and fresh native readers are implemented and verified.
 The user requested agent-independent dreaming on 2026-11-08; the coordinator must support Codex and generic agents as well as Claude.
 The design's Claude-first adapter proposal does not constrain that architecture or establish an implemented capability.
 
@@ -43,6 +44,10 @@ The [[file:dream-ledger.org][design ledger]] remains the source inventory for ev
 - =sucoder/dream_wiki.py=, =WikiCoordinator= and =validate_proposal= :: Extend the role runner with source-grounded author/reviewer/repair contracts and exact-base multi-page edits.
   =tests/test_dream_wiki.py= covers correction, multi-source prose, human/task/anchor preservation, omitted flags, bounded repair, path/link/directive rejection, both native protocols and inference-free status.
   The opt-in native Org inventory reuses =sucoder/dream_validate.el= without changing its original output mode.
+
+- =sucoder/dream_progress.py= :: New shared-receipt discovery with complete dependency/coverage/contract checks and replayable private reuse proofs.
+  =tests/test_dream_progress.py= covers both harnesses, zero model calls/no candidate, current-output/identity reconciliation, malformed/incomplete receipts, changed dependencies and private-spec substitution.
+  Reuses =dream_run.bound_outputs=, factored from the original status loop, rather than a second binding validator.
 
 * 3. Definitions and conventions
 
@@ -97,7 +102,8 @@ Native success prose cannot establish delivery or semantic truth.
   Keep legacy notes briefs/schemas/run identities unchanged for receipt replay; dispatch schema/assignment construction through subclass hooks.
 - New :: An author/editor schema and wiki change validator.
   The legacy claim renderer cannot revise established explanations or check omissions against the full source bundle; it remains available as =--mode notes=.
-- Defer :: General task/archive transitions, automatic shared receipt discovery/reuse, generic execution adapters and reader retrieval.
+- Extend :: Shared accepted-receipt discovery and inference-free status for complete unchanged git evidence; transcript prefixes and selective prior context remain deferred.
+- Defer :: General task/archive transitions, transcript delta reuse, generic execution adapters and agent no-op decisions.
 
 * 6. Open questions and next checks
 
@@ -311,5 +317,26 @@ Receipt presence or an unintegrated candidate never establishes accepted progres
 A reused run must create no candidate/model calls, retain an independently replayable private proof, and report reconciliation after an output/receipt change.
 Maintenance bypasses this shortcut to re-evaluate explicit existing evidence.
 Appended transcript deltas, bounded prior selection, agent no-op decisions and task/archive transitions remain additional work; do not mark P4 complete from this first extension.
+
+* First P4 slice verification against this ledger
+
+- OK (sections 2 and 5) :: Shared discovery reuses the source snapshots, schema checker, binding matcher/native Org parser and private artifact/lock helpers.
+  The original status binding-read loop was factored for both callers, preserving legacy candidate handling.
+- OK (sections 3 and 4) :: Only compatible receipts in the frozen integration tree with complete unchanged git dependencies, exact coverage hashes, accepted final review and valid required outputs establish progress.
+  Model/build/purpose/brief changes, incomplete/malformed receipts and changed source dependencies cannot falsely save work.
+  Current output/receipt/identity changes require reconciliation, and private specs cannot be substituted under another run filename.
+- Test evidence :: The combined dream run passed 111 tests; final focused checks passed both accepted-reuse harnesses, purpose handling and the filename-substitution regression.
+  Mypy and native Org design checks passed.
+  The P3 full suite and exact 55-failure baseline comparison preceded this reuse code; no later full-suite claim is made.
+- Real-source evidence :: After ordinary reviewed integration at =dfbcf14=, a new actual SuCoder plan reused all six unchanged real git passages without access to the original run's private role cache.
+  Provider invocation was patched to fail if attempted; the result was =already_integrated= with zero provider calls, no candidate and no ref/index/worktree change.
+  [[file:dream/runs/sucoder-p4-git-reuse.org][The exact plan/run/proof report]] records identity and reproduction artifacts.
+- Scope check :: Staged detection covered seven expected files and 22 symbols, reporting 21 affected processes and CRITICAL aggregate risk through shared dream flows.
+  Symbol-specific run/status impact is LOW (one resolved script caller each); direct inspection also accounts for dynamic CLI registration.
+  The production change is confined to the new progress module, shared binding-read helper and narrow wiki run/status hooks.
+
+No anchored CONTRADICTION or REINVENTION remains in this first reuse slice.
+P4 remains ACTIVE: append processing, bounded prior selection and no-op convergence are outstanding.
+P5 editorial/archive behavior and P6 scoped usefulness remain outstanding; live Claude remains explicitly deferred.
 
 Prepared by Sue.
