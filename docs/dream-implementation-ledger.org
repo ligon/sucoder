@@ -541,6 +541,18 @@ Implement/test the driver independently of experiment authorization; require an 
 
 Prepared by Sue.
 
+* Corrected pilot grading contract grounding
+
+The approved live experiment stopped after 27 native calls: two complete negative grades put missed rubric details into =failures=, which the shared Coordinator defines as incomplete role execution.
+Both retained grades give the same two-of-four result and no critical error; neither answer will be regenerated to improve that result.
+Reuse =Budget=, the frozen parent execution contract, question/reader replay, source verification and =report= without changing their code or resetting their original allowance.
+Add a separately labeled grading-only continuation: clarify the grader brief/schema, freeze its own source/brief and parent artifact bindings, and grade every answer under that one revised contract in separate evaluator/paired records.
+Keep parent grades/traces intact, reject any previously recorded valid critical grade, and preserve all earlier calls and the original deadline in the same journal.
+The original builder and reader runtime must remain byte-identical; this is an explicit evaluator amendment, not permission to mix changed reader conditions.
+Exercise complete negative grading, genuine execution failure, immutable replay, original-budget retention, contract drift and critical-stop behavior before further live calls.
+
+Prepared by Sue.
+
 * P5 public workflow and P6 preparation verification
 
 - Reuse :: V5 extends the existing author/context/reviewer loop with narrow materialization/validation hooks and the verified inline native Org primitive.
