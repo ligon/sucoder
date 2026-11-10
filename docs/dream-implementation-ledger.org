@@ -68,7 +68,7 @@ The [[file:dream-ledger.org][design ledger]] remains the source inventory for ev
 - Wiki candidate :: Under =source-grounded-wiki-v1= the agent writes explanatory page text and reasoned changes/references/omissions; an independent reviewer sees the full admitted bundle and prior wiki.
   Exact citations and native structural checks are mechanical evidence, not proof of semantic truth or completeness.
   Every changed page has an exact base digest and whole-file output binding; existing anchors and editorial task subtrees remain intact.
-- Attempt :: An explicit independent native run identity with its own allowance.
+- Attempt :: An explicit independent native run identity with per-attempt limits inside the remaining persisted job allowance.
   A per-run advisory lock prevents duplicate provider work; validated results are reusable, while a started request with no validated result requires a new explicit attempt.
 
 * 4. Invariants
@@ -521,6 +521,19 @@ The separately scoped pilot requires six independently authored held-out questio
 Prepare these operator artifacts before seeking the separate experiment authorization; do not infer permission to transmit private history or adjudicate an LSMS decision.
 
 Prepared by Sue.
+
+* Durable whole-job budget grounding
+
+The user approved [[file:dream/budget.org][the whole-job budget scope]] after the unattended-operation amendment.
+Reuse =scripts/dream_pilot_run.py:Budget='s immutable pre-call reservations and returns, =dream_run._read/_store= private atomic artifacts and =dream_roles.run_lock= advisory ownership.
+The product needs a separate runtime module because the pilot budget binds one fixed two-corpus experiment and imports preparation/evaluator code.
+Extend =dream_roles.Coordinator.call= with optional frozen budget advice and a budget-wrapped transport; legacy coordinators without that metadata keep their original tasks and hashes.
+Attach the budget after the concrete coordinator finishes deriving its run ID, because WikiCoordinator and its editorial subclasses replace the base ID.
+Extend native wiki/notes entry points and private specs/status reconstruction, preserving the source-plan schema and existing author/editor briefs.
+Default policy derives elapsed/call ceilings from the existing plan; explicit execution options may choose a shared private job directory and immutable limits.
+No native adapter currently guarantees a whole-request token/dollar bound; reject those requested hard caps before provider startup and retain reported usage/unknowns separately.
+Persist closeout reserves and request hints; cached replay must never regenerate advice from the current balance or spend another call.
+Tests must exercise interrupted reservations, failed and uncertain calls, job concurrency, immutable settings, expiry across restarts, legacy status and both harness protocols before acceptance.
 
 * P6 bounded experiment-driver grounding
 
