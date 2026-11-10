@@ -37,6 +37,9 @@ This audit maps the [[file:workplan.org][runtime workplan]] and [[file:../dream-
   [[file:../../tests/test_dream_native.py][Actual boundary cases]] enforce filesystem canaries and disabled external tools; authenticated provider networking remains enabled.
 - Stable replay :: [[file:../../tests/test_dream_roles.py::test_failed_native_request_is_not_automatically_repeated][Unknown-outcome rejection]], [[file:../../tests/test_dream_context.py][frozen-context cases]] and [[file:../../tests/test_dream_editor.py::test_changed_private_execution_time_cannot_start_a_new_paid_assignment][timestamp drift rejection]] prevent silent new paid assignments after changed or incomplete caches.
   Actual saved v2-v4 candidate/progress/no-op statuses were also replayed without inference, as recorded in the implementation ledger.
+- Unattended execution :: [[file:../../tests/test_dream_unattended.py][Headless regressions]] exercise no controlling terminal, finite assignment stdin, disabled interactive approvals, and public CLI runs with human prompt functions forbidden.
+  Both harness protocol cases prepare a candidate containing independent synthesis and a new evidence-bound human WAITING question, preserve the existing human constraint and replay status without another role call.
+  These checks use protocol fixtures, not new live provider requests; live Claude remains deferred.
 - Harness parity :: Shared protocol fixtures cover both execution harnesses independently of Git/Claude/Codex evidence formats.
   Live Codex has real-source construction and fresh-reader evidence plus synthetic append/archive evidence.
   Live Claude remains unverified under the user's quota-related deferral; no new Claude probe was made for this audit.

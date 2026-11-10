@@ -2548,6 +2548,12 @@ overwrite.
 * Dream companion candidates with Codex and Claude
 
 =sucoder dream plan= starts an agent-independent, checked-in companion wiki workflow by freezing explicitly selected local git files, passages, or Claude/Codex transcript prefixes into a private plan.
+Dreaming is expected to run unsupervised, including overnight or headless, with the same unattended contract whether or not a terminal is present.
+Supply the source selection, configuration, authentication, harness/model and allowances before launch; an unusable prerequisite produces an error without an interactive human question.
+Agent review and bounded context requests may continue within the run.
+Important unresolved questions are recorded beneath the relevant article's Talk heading, with evidence, the missing decision and a condition for revisiting them; human-dependent items remain WAITING or REVIEW.
+The run completes independent work and returns its candidate/status for later inspection; unresolved human questions do not suspend the process waiting for a reply.
+See the [[file:docs/dream.org::#unattended][unattended execution contract]].
 Planning preserves the mirror's worktree, index, and refs.
 =sucoder dream snapshot= validates a stored plan and copies exact admitted bytes into private storage.
 =sucoder dream read MIRROR= supplies bounded session orientation; =--topic NAME= retrieves active prose without LOGBOOK history, and =--archives --target ID= reads one specific archived entry.

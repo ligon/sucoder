@@ -8,14 +8,14 @@
 :CUSTOM_ID: decision
 :END:
 
-Introduce a manually invoked dream that prepares a reviewable wiki revision from explicitly admitted evidence.
+Provide an explicitly configured dream command that can run unattended, including overnight and headless, preparing a reviewable wiki revision from explicitly admitted evidence.
 The wiki explains a project's accumulated understanding for humans and agents, while its Talk tasks expose unresolved editorial work.
 The first implementation publishes a candidate git commit on a separate branch; acceptance uses the repository's ordinary integration workflow.
-There is no automatic merge, instruction-file rewrite, scheduler job, or hosted service.
+An operator may invoke it from a terminal or batch scheduler; the command remains bounded and publishes a reviewable candidate through the existing integration boundary.
 
 This is the full implementation design under the [[file:dream-charter.org][approved workshop charter]]; it does not establish a measured memory improvement.
 The [[file:dream/implementation.org][implementation status]] records explicit Git/Claude/Codex evidence, native source-grounded authorship/review, correction, accepted progress, task/archive editing and bounded fresh readers.
-The [[file:dream/workplan.org][runtime workplan]] tracks the remaining charter requirements and their behavioral acceptance gates; the native pipeline milestone did not complete the full runtime objective.
+The [[file:dream/workplan.org][runtime workplan]] records the charter requirements, implemented behavior and acceptance dispositions.
 The [[file:dream-ledger.org][prior-art ledger]] supplies the reuse decisions and source limitations.
 Read the [[file:dream/prompts.org][role briefs]], [[file:dream/scenarios.org][scenario checks]], [[file:dream/pilot.org][pilot protocol]], and the [[file:dream/examples/sucoder.org][SuCoder]] and [[file:dream/examples/lsms.org][LSMS]] examples for operational detail.
 
@@ -66,6 +66,27 @@ Exit 2 rejects arguments, an unsupported backend, or invalid input before infere
 Exit 3 reports incomplete evidence or exhausted work allowance without a publishable candidate; exit 1 reports an execution or validation failure; interruption may use 130.
 The proposed JSON envelope is version 1 and contains operation, run ID, base commit, state, coverage, limits, usage, candidate commit/ref, and integration evidence.
 Its =candidate_ready= state never means accepted or integrated.
+
+** Unattended execution
+:PROPERTIES:
+:CUSTOM_ID: unattended
+:END:
+
+The [[file:dream-charter.org::#unattended-operation][user's unattended requirement]] applies with or without a terminal.
+No human question, confirmation, login dialogue or approval prompt is part of a running dream.
+Prepare configuration, admitted sources, credentials, the explicit harness/model and bounded allowances before launching the job.
+The CLI bypasses interactive agent startup; native roles receive a finite immutable assignment on stdin, have no controlling terminal and use noninteractive approval settings.
+Missing or unusable prerequisites return an explicit error with a nonzero exit, while model and tool work remain bounded by the run's allowances.
+
+The coordinator may consult agent roles and serve bounded context requests while the human is absent.
+Resolve questions from the admitted evidence where possible; record important remaining questions under the relevant article's Talk heading.
+Include the question, supporting evidence and uncertainty, any provisional assumption, the missing information or decision and a revisit condition.
+Human-dependent tasks remain WAITING or REVIEW with their required metadata and authority intact.
+Continue independent source-grounded work and prepare a reviewed candidate that retains those open items.
+A saved WAITING item records the dependency; the process returns its result once independent work is complete.
+If a blocker prevents any valid result, preserve the private trace/diagnostic and return an explicit incomplete or rejected outcome instead of waiting for input.
+An uncertain or failed provider call still requires an inspected explicit new attempt; unattended operation does not grant unlimited retries.
+Inspect the JSON result, private run status, proposed wiki and open questions after the job; subsequent integration uses the ordinary workflow.
 
 * Files, claims, and links
 :PROPERTIES:

@@ -11,6 +11,15 @@ The [[file:runs/sucoder-p6.org][completed pilot]] records a small wiki-plus-sear
 The user chose to retain explanatory articles alongside source search and explicitly permitted dreaming to synthesize new explanations.
 Live Claude verification remains unverified under the user's deferral; accepting this operating mode does not imply broader performance evidence or automatic deployment.
 
+** Unattended operation
+
+=sucoder dream= is expected to run unsupervised, including overnight/headless operation, under the [[file:../dream.org::#unattended][unattended execution contract]].
+The CLI already bypasses interactive startup; the native transport starts a detached process with finite assignment stdin, bounded output/time and noninteractive approval flags for both harnesses.
+The author/editor can preserve and create open Talk tasks while completing unrelated supported work.
+Record important human questions as WAITING or REVIEW items with the missing decision and resumption condition, then return a candidate/status for later inspection.
+Agent review and bounded context requests remain available during execution.
+Configure the sources, model, credentials and allowances before launch; an unusable prerequisite returns an error rather than requesting human input.
+
 * Implemented slices: explicit evidence and native role publication
 
 =sucoder dream plan= implements the first part of the [[file:../dream.org::#implementation][data-plane sequence]].
@@ -450,7 +459,8 @@ This contract is exercised with deterministic role fixtures and isolated native 
 
 The [[file:workplan.org][runtime workplan]] is complete under its recorded acceptance and deferral dispositions.
 Retain the user's explicit live-Claude deferral and report that live check as unverified.
-Further comparison models/repetitions, background automation and generic execution adapters are separate extensions rather than unfinished requirements of this accepted scope.
+Further comparison models/repetitions and generic execution adapters are separate extensions rather than unfinished requirements of this accepted scope.
+The existing CLI's unattended execution is part of the accepted scope and can be scheduled by the operator.
 
 The [[file:../dream-implementation-ledger.org][implementation ledger]] records reuse decisions and invariants.
 

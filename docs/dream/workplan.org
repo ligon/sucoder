@@ -38,6 +38,9 @@ The existing default author/editor already implements this mode; the public cros
 This records the requested human disposition and completes P6 under the user's explicit live-Claude deferral.
 The pilot's small quality gain, failed wiki-only diagnostics, conservative inconclusive classification and lack of dependable context savings remain as measured.
 The selection adopts the operating mode and does not turn those limited results into a broader performance claim.
+The user subsequently clarified that dreaming must run unsupervised, potentially overnight and headless, without interactive questions to the human.
+Apply the [[file:../dream.org::#unattended][unattended execution contract]]: consult agent roles and admitted context as needed, record important open questions in Talk/WAITING items and finish independent work without awaiting a human reply.
+Source admission, credentials, explicit model selection and allowances are prepared before launch; missing prerequisites terminate with diagnostics.
 
 * Delegate the knowledge work to the agent
 :PROPERTIES:
@@ -257,7 +260,8 @@ P1-P6 are complete under the recorded acceptance and deferral dispositions.
 The [[file:runtime-audit.org][runtime requirement/evidence audit]] records proven behavior, independent review corrections, the measured comparison and the user's acceptance of explanatory synthesis.
 P2-P3 establish the first functional dreaming loop, and P4 establishes selective repeated maintenance.
 Live native parity can be checked throughout, with the user's explicit Claude deferral retained.
-Do not add a generic backend framework, a global vector store, nightly automation or more transport machinery ahead of a demonstrated need in this sequence.
+Unattended/headless execution is part of the accepted runtime requirement; the same bounded CLI may be invoked by an operator's scheduler.
+Do not add a generic backend framework, a global vector store or more transport machinery ahead of a demonstrated need in this sequence.
 Optional previews and convenience interfaces do not substitute for correction or reader use.
 
 Record each milestone's code revision, exact evidence selection, run ID/candidate artifact, check result and remaining uncertainty here when it is exercised.
