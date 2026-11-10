@@ -44,6 +44,28 @@ Source admission, credentials, explicit model selection and allowances are prepa
 The user subsequently approved [[file:budget.org][durable whole-job budgets]] for unattended execution, sharing elapsed/call ceilings across roles, repairs, explicit attempts and restarts, with optional sharing across plans.
 The budget extension keeps the completed pilot and the explicit live-Claude deferral intact.
 
+* Exploratory default: next interface direction
+:PROPERTIES:
+:CUSTOM_ID: exploratory-default
+:END:
+
+The user clarified that the verb =dream= carries little advance precision: the topics a dreamer lands on may, and perhaps should, be somewhat unpredictable.
+The proposed bare =sucoder dream= interface should give the agent an admitted repository scope, a purpose and a bounded allowance, then let it choose and revise its investigative path.
+Potentially useful connections, contradictions, neglected material and unresolved questions can guide attention; a predetermined topic list is optional.
+Repeated jobs may examine different material or develop new explanations from unchanged sources.
+Accepted coverage of particular evidence must not become a blanket conclusion that an unchanged repository has nothing left to dream about.
+
+Keep resource limits, admission boundaries, attribution and independent publication review fixed while allowing topic choice and emphasis to vary.
+All discovery and investigation spend from the same durable job budget, preserving review/finalization capacity.
+Record the actual selected source snapshots, investigative choices and coverage; record a seed when explicit random sampling is used.
+An interrupted job resumes its recorded work and remaining allowance; a deliberately new job may take another path.
+The coordinator can report partial repository coverage while preserving complete coverage claims only for the evidence actually admitted to each reviewed candidate.
+
+Unpredictability is an intended freedom, not a requirement to manufacture novelty or publish an edit on every run.
+Retain useful supported explanations, record important open questions and accept a justified no-change result.
+Exact source catalogs, topics and maintenance purposes remain available when an operator wants advance precision.
+This section records the next interface's design direction; automatic discovery and bare-command launch remain to be implemented.
+
 * Delegate the knowledge work to the agent
 :PROPERTIES:
 :CUSTOM_ID: delegation

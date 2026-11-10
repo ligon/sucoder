@@ -25,6 +25,13 @@ Do not restart or extend the completed pilot, add models/repetitions, admit priv
 The canonical current evidence is [[file:../docs/dream/runs/sucoder-p6.org][the P6 report]], [[file:../docs/dream/workplan.org::#accepted-synthesis][the accepted operating mode]] and [[file:../docs/dream/runtime-audit.org][the runtime audit]].
 The complete earlier recovery/milestone narrative is preserved at [[file:handoffs/2026-11-09-dream-runtime-pilot-history.org][the archived session history]]; its running/pending statements are historical.
 
+* Next interface direction: exploratory dreaming
+
+The user discussed =cd ~ligon/Projects/SuCoder && sucoder dream= with sensible defaults, then clarified that little advance topic precision and somewhat unpredictable investigative choices belong to the meaning of dreaming.
+Follow [[file:../docs/dream/workplan.org::#exploratory-default][the recorded exploratory default]]: fix admission/resource/review boundaries, delegate topic choice, allow new connections from unchanged evidence and preserve the actual investigative trail.
+Discovery must share the durable job budget; interrupted resume retains its work and balance, while a new job may explore differently.
+Automatic discovery and the bare-command facade are design direction, not implemented capabilities; the completed explicit-plan runtime and budget verification above remain unchanged.
+
 * Durable budget extension
 
 The implementation is committed at =314111c=, with its separate prior-art ledger at =6c1d0e0=.
