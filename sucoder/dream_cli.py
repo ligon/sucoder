@@ -10,6 +10,7 @@ import typer
 from . import dream
 from . import dream_run
 from . import dream_wiki
+from . import dream_budget
 from . import dream_reader
 from . import dream_reader_agent
 from .config import ConfigError, load_config
@@ -55,15 +56,38 @@ def run(
     plan_path: Path = typer.Option(..., "--plan", help="Stored private plan.json."),
     harness: str = typer.Option(..., "--harness", help="fixture (exact quotations), codex or claude (native structured roles)."),
     model: Optional[str] = typer.Option(None, "--model", help="Required for native roles; sends admitted evidence and prior wiki to this model's provider."),
-    attempt: int = typer.Option(1, "--attempt", min=1, help="Explicit native attempt number; a new number starts a new run and allowance."),
+    attempt: int = typer.Option(1, "--attempt", min=1, help="Explicit native attempt number; every attempt shares the persisted job budget."),
     mode: str = typer.Option("wiki", "--mode", help="Native output: wiki author/editor (default) or legacy notes."),
     purpose: str = typer.Option(dream_wiki.PURPOSE, "--purpose", show_default=False, help="What the wiki should help readers understand; wiki mode only."),
+    budget_path: Optional[Path] = typer.Option(None, "--budget", help="Private persistent job-budget directory; defaults to this plan's job-budget. Share explicitly across plans."),
+    max_total_seconds: Optional[int] = typer.Option(None, "--max-total-seconds", min=1, help="Immutable whole-job elapsed ceiling; defaults to the plan's elapsed limit."),
+    max_total_calls: Optional[int] = typer.Option(None, "--max-total-calls", min=1, help="Immutable whole-job native invocation ceiling across all attempts."),
+    reserve_seconds: Optional[int] = typer.Option(None, "--reserve-seconds", min=0, help="Time kept for review/repair/finalization; ordinary author work stops earlier."),
+    reserve_calls: Optional[int] = typer.Option(None, "--reserve-calls", min=0, help="Native invocations kept for review/repair/consolidation."),
+    max_total_tokens: Optional[int] = typer.Option(None, "--max-total-tokens", min=1, help="Requested hard token ceiling; rejected by current native adapters before provider startup."),
+    max_cost_usd: Optional[str] = typer.Option(None, "--max-cost-usd", help="Requested hard dollar ceiling; rejected when the native adapter cannot enforce it."),
 ):
     """Prepare a candidate on a new dream branch, preserving worktree and index."""
+    policy = dict(max_elapsed_seconds=max_total_seconds, max_native_calls=max_total_calls,
+        reserve_seconds=reserve_seconds, reserve_calls=reserve_calls, max_total_tokens=max_total_tokens, max_cost_usd=max_cost_usd)
+    if harness == "fixture" and (budget_path is not None or any(value is not None for value in policy.values())):
+        raise typer.BadParameter("Job budgets apply to native codex/claude execution")
     if harness == "fixture" and model is None and attempt == 1 and mode in ("wiki", "notes") and purpose == dream_wiki.PURPOSE:
         _data_command(ctx, "dream_run", dream_run.run_fixture, mirror, plan_path, harness)
     else:
-        _data_command(ctx, "dream_run", dream_wiki.run, mirror, plan_path, harness, model, attempt, mode, purpose)
+        _data_command(ctx, "dream_run", dream_wiki.run, mirror, plan_path, harness, model, attempt, mode, purpose,
+            budget_path=budget_path, budget_limits=policy)
+
+
+@app.command("budget")
+def budget_status(
+    ctx: typer.Context,
+    mirror: str = typer.Argument(..., help="Configured local mirror."),
+    plan_path: Path = typer.Option(..., "--plan", help="Stored private plan.json."),
+    budget_path: Optional[Path] = typer.Option(None, "--budget", help="Explicit shared budget directory; omit for the plan's default."),
+):
+    """Inspect the persisted allowance and observed usage without inference."""
+    _data_command(ctx, "dream_budget", dream_budget.inspect, mirror, plan_path, budget_path)
 
 
 @app.command("status")
@@ -129,12 +153,15 @@ def ask(
     _data_command(ctx, "dream_ask", dream_reader_agent.ask, mirror, plan_path, question, harness, model, base, not source_only, attempt)
 
 
-def _data_command(ctx, operation, function, *args):
+def _data_command(ctx, operation, function, *args, **kwargs):
     try:
         config = load_config(ctx.obj["config_path"])
-        value = function(config, *args)
+        value = function(config, *args, **kwargs)
     except (ConfigError, dream.DreamError, OSError, UnicodeError) as exc:
-        typer.echo(json.dumps(dict(schema_version=1, operation=operation, state="rejected", error=str(exc))))
+        value = dict(schema_version=1, operation=operation, state="rejected", error=str(exc))
+        if isinstance(exc, dream_budget.Exhausted):
+            value.update(state="budget_exhausted", budget=exc.budget)
+        typer.echo(json.dumps(value))
         code = 3 if isinstance(exc, OSError) else getattr(exc, "exit_code", 2)
         raise typer.Exit(code) from exc
     typer.echo(json.dumps(value, sort_keys=True))

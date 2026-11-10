@@ -122,9 +122,14 @@ class Coordinator:
         return schema(role)
 
     def call(self, role, inputs):
+        budget = getattr(self, "budget", None)
         if self.invocations >= self.plan["limits"]["max_role_invocations"] or time.monotonic() >= self.deadline:
+            if budget is not None and not budget.readonly and not budget.remaining():
+                budget.fail("elapsed allowance exhausted", dict(role=role, run_id=self.run_id))
             raise DreamError("Shared dream role or elapsed allowance exhausted", 3)
         task = self.make_assignment(role, inputs)
+        if budget is not None:
+            task = budget.assignment(task)
         if len(canonical(task)) > self.plan["limits"]["max_consolidation_bytes"]:
             raise DreamError("Role assignment exceeds max_consolidation_bytes", 3)
         key = self.run_id + "-" + task["assignment_id"]
@@ -139,7 +144,11 @@ class Coordinator:
             except FileNotFoundError:
                 pass
             else:
+                if budget is not None:
+                    budget.denied(task)
                 raise DreamError("An earlier role attempt has no validated result; inspect its private trace and select a new --attempt", 3)
+            if budget is not None:
+                budget.reserve(task)
             dream_run._store(self.fd, key + "-started.json", canonical(dict(state="started", assignment_id=task["assignment_id"])) + b"\n")
             result, usage, trace = self.transport(self.harness, self.model, task, self.result_schema(role),
                                                  min(self.deadline, time.monotonic() + 180))
@@ -281,7 +290,7 @@ class Coordinator:
         return path, "#+title: Dream project understanding\n\n" + "".join(bodies), receipt, index_entry
 
 
-def run(config, mirror, plan_path, harness, model, attempt=1, *, transport=None):
+def run(config, mirror, plan_path, harness, model, attempt=1, *, transport=None, budget_path=None, budget_limits=None):
     if harness not in ("claude", "codex"):
         raise DreamError("Native dream harness must be claude or codex")
     dream._text(model, "Explicit --model")
@@ -289,22 +298,30 @@ def run(config, mirror, plan_path, harness, model, attempt=1, *, transport=None)
         raise DreamError("--attempt must be an integer between 1 and 1000000")
     with dream_run._directory(config, plan_path) as (fd, directory):
         plan = dream_run._load(fd, directory.name, mirror)
-        deadline = time.monotonic() + plan["limits"]["max_elapsed_seconds"]
         if any(not u["shareable"] for u in plan["units"]):
             raise DreamError("Native candidate publication requires explicitly shareable sources")
         if any(name != mirror and value["provisional"] for name, value in plan["repositories"].items()):
             raise DreamError("External sources require an accepted repository UUID")
-        _, sources = dream_run._snapshot(config, mirror, plan, fd, deadline)
-        transport = transport or dream_native.Transport(harness, deadline)
-        coordinator = Coordinator(plan, fd, harness, model, deadline, transport, attempt=attempt)
-        prefix = "native-" + coordinator.run_id
-        dream_run._store(fd, prefix + "-spec.json", canonical(dict(contract=CONTRACT,
-            run_id=coordinator.run_id, harness=harness, model=model, native_version=coordinator.expected_version,
-            attempt=attempt)) + b"\n")
-        with run_lock(fd, prefix):
-            path, content, receipt, entry = coordinator.prepare()
-            return dream_run.publish(plan, fd, directory, sources, deadline, path, content, receipt, entry,
-                                     receipt_name=prefix + "-receipt.json", result_name=prefix + "-run.json")
+        from . import dream_budget
+        with dream_budget.open_job(plan, directory, budget_path, budget_limits) as budget:
+            if not budget.remaining():
+                cached = dream_budget.completed(config, mirror, plan_path, fd, budget, harness, model, attempt)
+                if cached is not None:
+                    return cached
+                budget.fail("elapsed allowance exhausted")
+            deadline = min(time.monotonic() + plan["limits"]["max_elapsed_seconds"], budget.deadline())
+            _, sources = dream_run._snapshot(config, mirror, plan, fd, deadline)
+            transport = transport or dream_native.Transport(harness, deadline)
+            coordinator = Coordinator(plan, fd, harness, model, deadline, transport, attempt=attempt)
+            budget.attach(coordinator)
+            prefix = "native-" + coordinator.run_id
+            dream_run._store(fd, prefix + "-spec.json", canonical(dict(contract=CONTRACT,
+                run_id=coordinator.run_id, harness=harness, model=model, native_version=coordinator.expected_version,
+                attempt=attempt, budget=budget.descriptor())) + b"\n")
+            with run_lock(fd, prefix):
+                path, content, receipt, entry = coordinator.prepare()
+                return dream_run.publish(plan, fd, directory, sources, deadline, path, content, receipt, entry,
+                                         receipt_name=prefix + "-receipt.json", result_name=prefix + "-run.json")
 
 
 @contextmanager
@@ -330,13 +347,17 @@ def run_lock(fd, prefix):
 def restore(plan, fd, run_id, deadline):
     """Revalidate saved role results and traces without any native invocation."""
     spec = dream._json(dream_run._read(fd, "native-" + run_id + "-spec.json", 16384))
-    dream._object(spec, ("contract", "run_id", "harness", "model", "native_version", "attempt"))
+    dream._object(spec, ("contract", "run_id", "harness", "model", "native_version", "attempt"), ("budget",))
     if spec["contract"] != CONTRACT or spec["run_id"] != run_id or spec["harness"] not in ("codex", "claude"):
         raise DreamError("Invalid native run specification")
     def no_inference(*args):
         raise DreamError("Native run is incomplete; status never invokes inference", 3)
     coordinator = Coordinator(plan, fd, spec["harness"], spec["model"], deadline, no_inference,
                               native_version=spec["native_version"], attempt=spec["attempt"])
-    if coordinator.run_id != run_id:
-        raise DreamError("Native run identity differs from its frozen role contract")
-    return coordinator.prepare()[2]
+    from . import dream_budget
+    with dream_budget.restore(spec.get("budget")) as budget:
+        if budget is not None:
+            budget.attach(coordinator)
+        if coordinator.run_id != run_id:
+            raise DreamError("Native run identity differs from its frozen role contract")
+        return coordinator.prepare()[2]

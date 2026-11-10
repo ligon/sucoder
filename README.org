@@ -2589,7 +2589,31 @@ sucoder --config ~/.sucoder/config.yaml dream run SuCoder \
   --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json --harness codex --model MODEL
 sucoder --config ~/.sucoder/config.yaml dream status SuCoder \
   --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json
+sucoder --config ~/.sucoder/config.yaml dream budget SuCoder \
+  --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json
 #+end_example
+
+Native runs persist a whole-job budget before snapshotting or native startup.
+By default the plan's elapsed and role ceilings become a shared deadline and native invocation cap (normally 900 seconds and 40 invocations), including review, repairs, context-request turns, failed calls and explicit attempts.
+Elapsed time includes idle time between restarts; restarting a process or selecting =--attempt 2= does not replenish the budget.
+Use =--max-total-seconds= and =--max-total-calls= on the first run to choose different job ceilings; the plan's per-attempt bounds still apply.
+The defaults reserve 30 seconds (or one tenth of a shorter job) and one invocation for closeout.
+=--reserve-seconds= and =--reserve-calls= change those reserves; author/extractor work stops earlier, while review, verification, repair and consolidation can use the reserve.
+This leaves closeout capacity available without guaranteeing that every proposal can finish review.
+
+The default private budget directory is =job-budget/= beside =plan.json=.
+To share an allowance across several plans, pass the same =--budget /PRIVATE/EXISTING/PARENT/JOB= to every participating run and to =dream budget=; the final directory is created privately when absent.
+One coordinator owns a shared budget at a time, and its limits become immutable on creation.
+A deliberately new job needs a different budget directory; =dream ask= reader sessions are separate jobs and do not debit this writer allowance.
+For example, add =--budget /PRIVATE/LOGS/overnight-job --max-total-seconds 28800 --max-total-calls 120= to the first run, then reuse that directory for subsequent plans without redefining its limits.
+
+=dream budget= reports remaining time/calls and aggregated native-reported usage without inference.
+Every reserved call remains charged even if its outcome is unknown; the cap counts native invocations rather than hidden provider HTTP retries.
+Native adapters currently cannot enforce complete token or dollar ceilings, so =--max-total-tokens= and =--max-cost-usd= are rejected before any provider request.
+Missing token or currency data remains unknown.
+Budget exhaustion returns JSON with =state: budget_exhausted= and exit 3, retaining completed roles, traces, proposals and a stop checkpoint privately for inspection.
+An unreviewed proposal cannot become a candidate; validated completed results and status remain replayable after expiry without model calls.
+See [[file:docs/dream/budget.org][the durable budget contract and verification]].
 
 See [[file:docs/dream/implementation.org][the implemented request format, limits, and backend boundary]] and [[file:docs/dream.org][the complete design]].
 Plans use the existing =log_dir= setting (or =~/.sucoder/logs/= when unset) and must live outside inspected repositories.
@@ -2601,7 +2625,7 @@ Editorial work uses the TODO/NEXT/ACTIVE/WAITING/REVIEW/DONE/MOOT workflow throu
 The coordinator preserves task history, records transitions and required ownership/review metadata, and archives eligible terminal trees with forwarding anchors and repaired incoming wiki links.
 Tasks requiring a human decision need recorded source evidence; independent review checks attribution and satisfaction of the acceptance criteria.
 The quotation fixture and legacy notes mode remain append-only.
-Use =--attempt 2= to explicitly start a new native run after inspecting a failed attempt; completed role results are otherwise reused without another provider call.
+Use =--attempt 2= to explicitly start a new native run after inspecting a failed attempt, spending from the same persisted job budget; completed role results are otherwise reused without another provider call.
 When a plan has multiple native runs, status requires =--run RUN_ID=.
 Planning and snapshots remain inference-free; generic harness adapters remain subsequent work.
 

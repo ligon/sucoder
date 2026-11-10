@@ -271,6 +271,10 @@ Proposed first-pilot defaults, chosen for bounded manual runs rather than inferr
 
 The planner calculates the required extraction/verification count before inference and rejects a plan that cannot fit its declared role cap.
 All phases and implicit retries spend from one shared allowance; a native retry that the coordinator cannot bound makes a hard-cap claim unavailable.
+Native wiki/notes execution now persists a whole-job deadline and invocation ledger across attempts and restarts, with optional explicit sharing across plans and capacity reserved for review/finalization.
+Budget settings are supplied before launch; exhaustion preserves private checkpoints and yields =budget_exhausted= without publishing unchecked work.
+Current native transports reject requested hard token/dollar caps before provider work and report incomplete usage explicitly.
+See [[file:dream/budget.org][the implemented durable budget contract]] and the CLI options in [[file:dream/implementation.org][the implementation guide]].
 Allow at most one consolidation repair attempt; if checks remain unsatisfied, fail without a candidate.
 Never call repeated passes improvement merely because more pages or links exist.
 

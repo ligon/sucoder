@@ -70,6 +70,12 @@ The actual completed live comparison then replayed exactly with native inference
 
 * Limits that still matter
 
+The subsequently approved [[file:budget.org][durable budget extension]] gives native wiki/notes runs a persisted elapsed deadline and invocation ledger, reserved closeout capacity, shared-plan budgets and inference-free inspection.
+Frozen remaining-budget advice binds each assignment; failed/unknown reservations remain charged, and exhaustion retains private checkpoints without publishing unchecked proposals.
+Current adapters reject requested hard token/dollar caps before provider work, reporting native observations and unknowns separately.
+The original real SuCoder =source-grounded-wiki-v2= run still reports an integrated candidate with native startup/invocation replaced by exceptions and no budget directory created.
+The private check is =/tmp/sucoder-dream-budget-legacy-status.txt=.
+
 The user explicitly approved the scoped pilot; it completed 137 native invocations in 71.2 minutes and reported 2,003,683 input/87,760 output tokens, including every failed attempt and both grading versions.
 No scientific ruling or actual LSMS change was made.
 Its evidence and frozen runtime are retained privately outside =/tmp= under =/home/coder/.sucoder/logs/dream-pilots/2026-11-09-p6-7ca6c5e9/=.

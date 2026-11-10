@@ -1,6 +1,6 @@
 #+TITLE: sucoder dream: accepted explanatory synthesis
 #+DATE: 2026-11-10
-#+STATUS: COMPLETE
+#+STATUS: ACTIVE
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
@@ -16,7 +16,10 @@ The user's next modification requires unsupervised operation, potentially overni
 Agent review and bounded admitted-context requests remain available; important unresolved human questions are recorded as Talk/WAITING or REVIEW items while independent work completes.
 Follow the [[file:../docs/dream.org::#unattended][unattended execution contract]], supplying sources, credentials, explicit model and allowances before launch and returning diagnostics for missing prerequisites.
 Live Claude verification remains explicitly deferred by the user because of the configured account's weekly quota; do not probe it or request credentials.
-No inference process, test process or approved comparison case remains running.
+The user next approved implementing durable whole-job budgets for unattended dream runs.
+The active extension and definition of done are [[file:../docs/dream/budget.org][the budget charter]]; preserve the completed pilot and deferred live Claude verification.
+No inference process or approved comparison case is running.
+Local budget and regression tests are in progress; inspect =/tmp/sucoder-dream-budget-*.txt= before starting duplicate checks.
 Do not restart or extend the completed pilot, add models/repetitions, admit private transcripts, change actual LSMS sources or infer a rollout authorization.
 
 The canonical current evidence is [[file:../docs/dream/runs/sucoder-p6.org][the P6 report]], [[file:../docs/dream/workplan.org::#accepted-synthesis][the accepted operating mode]] and [[file:../docs/dream/runtime-audit.org][the runtime audit]].

@@ -327,11 +327,13 @@ class WikiCoordinator(dream_roles.Coordinator):
         return pages, receipt
 
 
-def run(config, mirror, plan_path, harness, model, attempt=1, mode="wiki", purpose=PURPOSE, *, transport=None):
+def run(config, mirror, plan_path, harness, model, attempt=1, mode="wiki", purpose=PURPOSE, *, transport=None,
+        budget_path=None, budget_limits=None):
     if mode == "notes":
         if purpose != PURPOSE:
             raise DreamError("A custom editorial purpose requires wiki mode")
-        return dream_roles.run(config, mirror, plan_path, harness, model, attempt, transport=transport)
+        return dream_roles.run(config, mirror, plan_path, harness, model, attempt, transport=transport,
+            budget_path=budget_path, budget_limits=budget_limits)
     if mode != "wiki" or harness not in ("codex", "claude"):
         raise DreamError("Use native codex/claude with mode wiki or notes")
     dream._text(model, "Explicit --model")
@@ -344,35 +346,42 @@ def run(config, mirror, plan_path, harness, model, attempt=1, mode="wiki", purpo
             raise DreamError("Wiki publication requires shareable sources")
         if any(name != mirror and item["provisional"] for name, item in plan["repositories"].items()):
             raise DreamError("External source repositories need an accepted UUID")
-        deadline = time.monotonic() + plan["limits"]["max_elapsed_seconds"]
-        _, source_readers = dream_run._snapshot(config, mirror, plan, fd, deadline)
-        transport = transport or dream_native.Transport(harness, deadline)
-        from . import dream_progress
-        reused = dream_progress.try_reuse(plan, fd, source_readers[mirror], harness, model,
-                                         transport.version, purpose, deadline)
-        if reused is not None:
-            return reused
-        from . import dream_curate, dream_editor, dream_prefix
-        prefixes = dream_prefix.discover(plan, fd, source_readers[mirror], harness, model, transport.version, purpose, deadline)
-        coordinator = dream_editor.Editor(plan, fd, harness, model, deadline, transport,
-            attempt=attempt, purpose=purpose, source=source_readers[mirror], prefixes=prefixes)
-        prefix = "native-" + coordinator.run_id
-        spec = dict(contract=coordinator.contract, run_id=coordinator.run_id, harness=harness, model=model,
-            native_version=coordinator.expected_version, attempt=attempt, purpose=purpose)
-        if prefixes:
-            spec["prefixes"] = prefixes
-        dream_run._store(fd, prefix + "-spec.json", canonical(spec) + b"\n")
-        with dream_roles.run_lock(fd, prefix):
-            pages, receipt = coordinator.prepare()
-            if not pages:
-                return dream_curate.record_unchanged(plan, fd, source_readers, receipt, deadline)
-            return dream_run.publish(plan, fd, directory, source_readers, deadline, INDEX, pages.get(INDEX, ""), receipt, "",
-                receipt_name=prefix + "-receipt.json", result_name=prefix + "-run.json", wiki_files=pages)
+        from . import dream_budget, dream_progress
+        with dream_budget.open_job(plan, directory, budget_path, budget_limits) as budget:
+            if not budget.remaining():
+                cached = dream_budget.completed(config, mirror, plan_path, fd, budget, harness, model, attempt, purpose)
+                if cached is not None:
+                    return cached
+                budget.fail("elapsed allowance exhausted")
+            deadline = min(time.monotonic() + plan["limits"]["max_elapsed_seconds"], budget.deadline())
+            _, source_readers = dream_run._snapshot(config, mirror, plan, fd, deadline)
+            transport = transport or dream_native.Transport(harness, deadline)
+            reused = dream_progress.try_reuse(plan, fd, source_readers[mirror], harness, model,
+                                             transport.version, purpose, deadline)
+            if reused is not None:
+                return reused
+            from . import dream_curate, dream_editor, dream_prefix
+            prefixes = dream_prefix.discover(plan, fd, source_readers[mirror], harness, model, transport.version, purpose, deadline)
+            coordinator = dream_editor.Editor(plan, fd, harness, model, deadline, transport,
+                attempt=attempt, purpose=purpose, source=source_readers[mirror], prefixes=prefixes)
+            budget.attach(coordinator)
+            prefix = "native-" + coordinator.run_id
+            spec = dict(contract=coordinator.contract, run_id=coordinator.run_id, harness=harness, model=model,
+                native_version=coordinator.expected_version, attempt=attempt, purpose=purpose, budget=budget.descriptor())
+            if prefixes:
+                spec["prefixes"] = prefixes
+            dream_run._store(fd, prefix + "-spec.json", canonical(spec) + b"\n")
+            with dream_roles.run_lock(fd, prefix):
+                pages, receipt = coordinator.prepare()
+                if not pages:
+                    return dream_curate.record_unchanged(plan, fd, source_readers, receipt, deadline)
+                return dream_run.publish(plan, fd, directory, source_readers, deadline, INDEX, pages.get(INDEX, ""), receipt, "",
+                    receipt_name=prefix + "-receipt.json", result_name=prefix + "-run.json", wiki_files=pages)
 
 
 def restore(plan, fd, run_id, deadline):
     spec = dream._json(dream_run._read(fd, "native-" + run_id + "-spec.json", 16384))
-    dream._object(spec, ("contract", "run_id", "harness", "model", "native_version", "attempt", "purpose"), ("prefixes",))
+    dream._object(spec, ("contract", "run_id", "harness", "model", "native_version", "attempt", "purpose"), ("prefixes", "budget"))
     from . import dream_curate, dream_author, dream_editor
     if spec["contract"] not in (CONTRACT, LEGACY_CONTRACT, dream_curate.CONTRACT, dream_author.CONTRACT, dream_editor.CONTRACT) or spec["run_id"] != run_id or spec["harness"] not in ("codex", "claude"):
         raise DreamError("Invalid wiki run specification")
@@ -390,6 +399,10 @@ def restore(plan, fd, run_id, deadline):
         dream_curate.Curator(plan, fd, spec["harness"], spec["model"], deadline, no_inference, **parameters)
         if spec["contract"] == dream_curate.CONTRACT else
         WikiCoordinator(plan, fd, spec["harness"], spec["model"], deadline, no_inference, contract=spec["contract"], **parameters))
-    if coordinator.run_id != run_id:
-        raise DreamError("Wiki run identity differs from its frozen contract")
-    return coordinator.prepare()[1]
+    from . import dream_budget
+    with dream_budget.restore(spec.get("budget")) as budget:
+        if budget is not None:
+            budget.attach(coordinator)
+        if coordinator.run_id != run_id:
+            raise DreamError("Wiki run identity differs from its frozen contract")
+        return coordinator.prepare()[1]

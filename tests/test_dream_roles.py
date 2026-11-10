@@ -126,9 +126,11 @@ def test_failed_native_request_is_not_automatically_repeated(workspace):
     calls = []
     def failed(*args):
         calls.append(args)
-        return None, None, dict(returncode=1, stderr="rate limit", stdout="", version="fixture-native-1")
-    for _ in range(2):
-        with pytest.raises(dream.DreamError):
+        return None, None, dict(returncode=1, stderr="rate limit", stdout="", version="fixture-native-1",
+            harness=args[0], model=args[1], input_sha256=dream.digest(dream.canonical(args[2])),
+            boundary="linux-landlock-inline-v1")
+    for expected in ("Native role failed", "earlier role attempt has no validated result"):
+        with pytest.raises(dream.DreamError, match=expected):
             roles.run(workspace[2], "sample", Path(frozen["plan_path"]), "claude", "model", transport=failed)
     assert len(calls) == 1
     assert list(Path(frozen["plan_path"]).parent.glob("*-trace.json"))
@@ -223,11 +225,14 @@ def test_concurrent_native_coordinator_cannot_repeat_provider_work(workspace):
     import time
     fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
     try:
-        coordinator = roles.Coordinator(frozen, fd, "codex", "model", time.monotonic() + 5, Transport())
+        from sucoder import dream_budget
         transport = Transport()
-        with roles.run_lock(fd, "native-" + coordinator.run_id):
+        with dream_budget.open_job(frozen, directory) as job:
+            coordinator = roles.Coordinator(frozen, fd, "codex", "model", time.monotonic() + 5, Transport())
+            job.attach(coordinator)
+            # A different attempt must also respect the whole-job lock.
             with pytest.raises(dream.DreamError, match="Another coordinator"):
-                roles.run(workspace[2], "sample", Path(frozen["plan_path"]), "codex", "model", transport=transport)
+                roles.run(workspace[2], "sample", Path(frozen["plan_path"]), "codex", "model", attempt=2, transport=transport)
         assert transport.calls == []
     finally:
         os.close(fd)
@@ -236,7 +241,9 @@ def test_concurrent_native_coordinator_cannot_repeat_provider_work(workspace):
 def test_explicit_attempt_retries_without_overwriting_failed_attempt(workspace):
     frozen = plan(workspace)
     def failed(*args):
-        return None, None, dict(returncode=1, stderr="quota", stdout="", version="fixture-native-1")
+        return None, None, dict(returncode=1, stderr="quota", stdout="", version="fixture-native-1",
+            harness=args[0], model=args[1], input_sha256=dream.digest(dream.canonical(args[2])),
+            boundary="linux-landlock-inline-v1")
     failed.version = Transport.version
     with pytest.raises(dream.DreamError, match="Native role failed"):
         roles.run(workspace[2], "sample", Path(frozen["plan_path"]), "claude", "model", transport=failed)

@@ -412,13 +412,25 @@ Status reconstructs expected outputs from those bound records without invoking a
 The public receipt identifies the requested harness/model, native build, checked source revisions, all chunk assignments and output bindings; private transcript paths and full transcripts are excluded.
 Delivery records show input provision, not comprehension; model verification remains fallible and candidates require ordinary review.
 
-The shared role count and elapsed deadline apply to the whole run; each role is bounded to 180 seconds within the remaining allowance.
+The plan's shared role count and elapsed deadline apply to each attempt; each role is bounded to 180 seconds within the remaining allowance.
+New native wiki and notes runs additionally use a durable whole-job deadline and invocation cap across roles, repairs, context-request turns, explicit attempts, several explicitly joined plans and process restarts.
+The job starts before snapshots/native startup; idle time between restarts counts, and a boot-domain change fails closed for new paid work while preserving inspection.
+Defaults use the plan's existing limits, reserving one invocation and up to 30 seconds for closeout.
+Use =--max-total-seconds=, =--max-total-calls=, =--reserve-seconds= and =--reserve-calls= on first creation; =--budget PATH= joins an explicit shared private directory instead of the plan's default =job-budget/=.
+Limits cannot change after creation.
+Each paid invocation has a durable reservation written before its started sentinel, with a bound trace/return record when available; unknown outcomes stay charged.
+Frozen remaining-budget advice participates in each assignment identity and replays without substituting later live balances.
 Cumulative result bytes, per-assignment bytes, trace bytes, proposals and staged output are bounded separately.
-Native usage is retained without inventing missing token/currency totals; no token or money ceiling is claimed.
-An advisory per-run lock prevents concurrent coordinators from repeating the same provider work.
+Native usage is aggregated without inventing missing token/currency totals; =--max-total-tokens= and =--max-cost-usd= fail before provider work because the current adapters cannot enforce those ceilings.
+The native-call cap excludes hidden HTTP retries, so it is not a financial guarantee.
+An advisory whole-job lock and the existing per-run lock prevent concurrent coordinators from repeating or overspending the same job.
 Validated completed results are reused on retry.
 A started/failed request with no validated result is never automatically repeated because its provider outcome and cost may be unknown.
-After inspecting its private trace, use an explicit new =--attempt 2= to start an independent run with a fresh allowance.
+After inspecting its private trace, use an explicit new =--attempt 2= to start an independent run within the same remaining job allowance.
+Exhaustion produces =budget_exhausted= JSON/exit 3 and a durable stop checkpoint; incomplete proposals and completed roles remain private rather than becoming unchecked candidates.
+=dream budget MIRROR --plan PLAN [--budget PATH]= is an inference-free live balance report separate from immutable role/output receipts.
+Read-only status and fully completed cached results remain replayable after budget expiry; legacy unbudgeted specifications retain their original identities.
+See [[file:budget.org][the durable budget charter and verification]].
 If a plan has multiple native runs, pass =dream status --plan PLAN --run RUN_ID=; an unfinished native run reports =incomplete=.
 The planner's repair allowance remains reserved; this slice does not automatically repair a rejected semantic role result.
 

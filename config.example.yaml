@@ -5,6 +5,18 @@ mirror_root: /var/tmp/coder-mirrors
 log_dir: /home/<your-username>/.sucoder/logs
 system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 
+# Dream execution budgets are CLI options, not YAML keys. Native writer runs
+# persist the plan's elapsed/call limits across restarts and --attempt changes.
+# First run: dream run MIRROR --plan PLAN --harness codex --model MODEL
+#   --max-total-seconds 28800 --max-total-calls 120
+#   --budget /PRIVATE/EXISTING/PARENT/overnight-job
+# Use that same --budget for other plans sharing the allowance. Inspect with
+# dream budget MIRROR --plan PLAN [--budget PATH]. Limits become immutable.
+# Default closeout reserve: --reserve-seconds 30 --reserve-calls 1 (short jobs
+# reserve one tenth of their seconds). Hard token/$ caps are unsupported;
+# --max-total-tokens and --max-cost-usd fail before provider work.
+# README.org and docs/dream/budget.org describe accounting and checkpoints.
+
 # Compute-side dispatch project settings are explicit JSON profiles, separate
 # from this interactive-mirror YAML. Use `dispatch submit --project-profile
 # /shared/private/project.json` or `dispatch verify-stage --project-profile ...`.
