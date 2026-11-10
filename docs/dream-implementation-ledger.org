@@ -539,6 +539,11 @@ Extend configuration with strict inherited global/per-project dream defaults; pr
 New machinery is limited to the exploratory coordinator-served project listing/read/search interface, durable job lifecycle and bare CLI facade, because existing readers can only retrieve already-admitted units.
 Record explored ranges, omitted inventory/search results and selected evidence separately; final receipts establish selected-evidence delivery rather than whole-project examination.
 Tests must cover both native protocols, canonical/cwd binding, dirty-state preservation, full-project navigation, unchanged-source re-exploration, shared accounting, crash recovery/concurrency, detached launch, unknown outcomes and inference-free replay.
+Verification is OK against sections 2-5: exact checkout binding, immutable Git evidence, role trace/cache validation, one persistent wallet and existing reviewed publication are reused as planned.
+The new role receives coordinator-served data only; no external tool, transcript discovery, implicit synchronization or unreviewed publication was added.
+Global/per-project defaults and actual shared-wallet policy are frozen per job, and each explorer reservation preserves author capacity beyond closeout.
+The final partitions cover 566 distinct relevant passing cases, including both protocol integrations, exact plan/publication recovery and a real detached fake-native child; mypy, Org export and packaged-source byte checks pass.
+Three independent review cycles found and cleared concrete handoff/cursor/admission-budget defects; no surviving concrete defect or live-provider claim remains.
 
 * Durable whole-job budget grounding
 
