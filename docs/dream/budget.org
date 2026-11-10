@@ -1,7 +1,7 @@
 #+title: Durable budgets for unattended dreaming
 #+author: Sue
 #+date: 2026-11-10
-#+status: ACTIVE
+#+status: COMPLETE
 
 * Approved scope
 
@@ -48,12 +48,16 @@ The targeted budget/adjusted-role group passed 27 cases, followed by one additio
 These cover both harness protocols, notes consolidation consuming its reserve, shared plans, immutable advice/policy, failed/uncertain calls, concurrent ownership, clock rollback/domain changes, expired snapshots/publication and denied-before-provider classification.
 The earlier four-file regression group passed 63 cases and exposed two obsolete test assumptions; the corrected lock-identity/failure-trace cases pass in the targeted group.
 The public planning/transcript/prior-context/reader/CLI group passed all 307 cases.
-The longer editorial/progress/prefix/context/native/config group is still running; inspect =/tmp/sucoder-dream-budget-integration.txt= before launching duplicate checks.
+The longer editorial/progress/prefix/context/native/config group passed all 206 cases in 966 seconds.
+The strengthened failed-request retry fixture also passes, checking the intended unknown-outcome diagnostic rather than accidentally accepting a corrupt trace.
+Together these partitions cover 604 distinct relevant cases, including the corrected original regression cases; this is not a new unfiltered whole-project run.
 
 Four-source-file mypy passes.
 Org export succeeds for the budget charter, implementation guide, design and README with Babel evaluation disabled; the optional htmlize package is absent, so source-block coloring is unavailable.
 The built wheel's budget, native coordinator/CLI and Org-validator files match the current source bytes, checked at =/tmp/sucoder-dream-budget-package-verified.txt=.
 The saved real SuCoder v2 wiki reports =integrated_candidate= with native startup/invocation replaced by exceptions, without creating a wallet.
 No provider request or live Claude check was made for this extension.
+The implementation is =314111c= and its separate prior-art ledger is =6c1d0e0=.
+Verification logs, tested-source hashes and the partition counts are retained under =/home/coder/.sucoder/logs/dream-budget/2026-11-10-314111c/=, indexed by =verification.json=.
 
 Prepared by Sue.

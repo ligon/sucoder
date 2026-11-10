@@ -75,6 +75,10 @@ Frozen remaining-budget advice binds each assignment; failed/unknown reservation
 Current adapters reject requested hard token/dollar caps before provider work, reporting native observations and unknowns separately.
 The original real SuCoder =source-grounded-wiki-v2= run still reports an integrated candidate with native startup/invocation replaced by exceptions and no budget directory created.
 The private check is =/tmp/sucoder-dream-budget-legacy-status.txt=.
+The extension's regression partitions cover 604 distinct relevant passing cases, including 26 new budget cases; four-file mypy, documentation export and packaged-source byte checks pass.
+Three independent review passes leave no surviving concrete budget defect.
+The implementation is =314111c=; final private logs and tested-source hashes are indexed by =/home/coder/.sucoder/logs/dream-budget/2026-11-10-314111c/verification.json=.
+No new provider experiment was run.
 
 The user explicitly approved the scoped pilot; it completed 137 native invocations in 71.2 minutes and reported 2,003,683 input/87,760 output tokens, including every failed attempt and both grading versions.
 No scientific ruling or actual LSMS change was made.

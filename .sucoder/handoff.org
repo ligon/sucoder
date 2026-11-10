@@ -1,6 +1,6 @@
-#+TITLE: sucoder dream: accepted explanatory synthesis
+#+TITLE: sucoder dream: explanatory synthesis and durable job budgets
 #+DATE: 2026-11-10
-#+STATUS: ACTIVE
+#+STATUS: COMPLETE
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
@@ -19,11 +19,23 @@ Live Claude verification remains explicitly deferred by the user because of the 
 The user next approved implementing durable whole-job budgets for unattended dream runs.
 The active extension and definition of done are [[file:../docs/dream/budget.org][the budget charter]]; preserve the completed pilot and deferred live Claude verification.
 No inference process or approved comparison case is running.
-Local budget and regression tests are in progress; inspect =/tmp/sucoder-dream-budget-*.txt= before starting duplicate checks.
+Local budget and regression verification is complete; no test process remains running.
 Do not restart or extend the completed pilot, add models/repetitions, admit private transcripts, change actual LSMS sources or infer a rollout authorization.
 
 The canonical current evidence is [[file:../docs/dream/runs/sucoder-p6.org][the P6 report]], [[file:../docs/dream/workplan.org::#accepted-synthesis][the accepted operating mode]] and [[file:../docs/dream/runtime-audit.org][the runtime audit]].
 The complete earlier recovery/milestone narrative is preserved at [[file:handoffs/2026-11-09-dream-runtime-pilot-history.org][the archived session history]]; its running/pending statements are historical.
+
+* Durable budget extension
+
+The implementation is committed at =314111c=, with its separate prior-art ledger at =6c1d0e0=.
+Native wiki/notes jobs persist time/call limits across attempts and restarts, can explicitly share a private budget across plans, reserve closeout capacity and reject unsupported hard token/dollar caps before provider work.
+Run =sucoder dream budget MIRROR --plan PLAN [--budget PATH]= to inspect remaining allowance and native-reported usage without inference.
+Three independent review passes found and then cleared two deadline-classification defects and checked final expired accepted-progress replay.
+Targeted budget/role checks, the 307-case public and 206-case integration regression groups, four-file mypy, documentation export, packaged-source byte verification and real legacy wiki status replay pass.
+Completed test/review-scope logs are retained under =/home/coder/.sucoder/logs/dream-budget/2026-11-10-314111c/=.
+=verification.json= records source/log hashes and 604 distinct relevant passing cases across the partitions, including the two original regression fixtures corrected for the new identity/trace contract.
+This is a focused integration verification, not a new unfiltered whole-project test result.
+The implementation and budget charter are complete; no further provider call, pilot repetition or live-Claude check is authorized by this work.
 
 * Completed live experiment
 
