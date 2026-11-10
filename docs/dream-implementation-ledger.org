@@ -522,6 +522,24 @@ Prepare these operator artifacts before seeking the separate experiment authoriz
 
 Prepared by Sue.
 
+* Project-wide exploratory launch grounding
+
+The user authorized implementing bare =sucoder dream= with territory left open inside the project, after approving [[file:dream/workplan.org::#exploratory-default][unpredictable investigative choices]].
+GitNexus query/impact plus direct source/test inspection supplied the navigation tier; dynamic CLI/config edges are cross-checked manually rather than treated as absent.
+Reuse =dream.GitSource= and =WorkspaceBinding.inspect= for pinned regular Git objects, exact paths and bounded reads, tested by =tests/test_dream.py= and the observation cases.
+For a canonical checkout or otherwise unconfigured project, an ephemeral Config binds the actual Git root as the sole local mirror; never substitute another checkout's HEAD or synchronize implicitly.
+Persist that exact binding and the job-local log root so status/resume do not depend on changing user defaults.
+Reuse =dream_roles.Coordinator.call= for schema/assignment/result/trace binding and unknown-outcome guards, and subclass only its role brief/schema and exploratory loop.
+Reuse =dream_budget.Job= for discovery plus author/reviewer invocations under one immutable wallet, frozen advice and closeout reserves; retain a separate orchestrator lock through the wallet handoff.
+Reuse =dream.create_plan= and =dream_wiki.run= for selected evidence, editorial work, independent review and atomic candidate publication, tested by the existing wiki/budget suites.
+Use explicit maintenance intent with an agent-chosen simple topic or documented fallback so existing accepted-receipt shortcuts remain available to explicit runs without suppressing new exploration.
+Plan creation can propose a fresh repository UUID: give each job its own plan log root and recover the sole persisted matching plan after interruption before writing its pointer.
+Reject a changed publication ref before plan creation; discovery and candidate base must bind the same commit.
+Extend configuration with strict inherited global/per-project dream defaults; preserve old Config/MirrorSettings constructors and all explicit commands.
+New machinery is limited to the exploratory coordinator-served project listing/read/search interface, durable job lifecycle and bare CLI facade, because existing readers can only retrieve already-admitted units.
+Record explored ranges, omitted inventory/search results and selected evidence separately; final receipts establish selected-evidence delivery rather than whole-project examination.
+Tests must cover both native protocols, canonical/cwd binding, dirty-state preservation, full-project navigation, unchanged-source re-exploration, shared accounting, crash recovery/concurrency, detached launch, unknown outcomes and inference-free replay.
+
 * Durable whole-job budget grounding
 
 The user approved [[file:dream/budget.org][the whole-job budget scope]] after the unattended-operation amendment.
