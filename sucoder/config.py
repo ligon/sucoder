@@ -403,6 +403,24 @@ DEFAULT_LAUNCH_MODES: Dict[AgentType, Literal["subprocess", "exec"]] = {
 }
 
 
+@dataclass(frozen=True)
+class DreamSettings:
+    """Exploratory job defaults (dream implementation ledger, discovery).
+
+    Harness/model may inherit the existing launcher selection at execution.
+    These limits cover discovery and the subsequent reviewed wiki candidate.
+    """
+
+    harness: Optional[str] = None
+    model: Optional[str] = None
+    max_total_seconds: int = 900
+    max_total_calls: int = 40
+    reserve_seconds: int = 30
+    reserve_calls: int = 3
+    max_discovery_calls: int = 8
+    max_discovery_bytes: int = 131072
+
+
 @dataclass
 class MirrorSettings:
     """Configuration for a single mirror repository."""
@@ -421,6 +439,7 @@ class MirrorSettings:
     mcp_servers: Dict[str, McpServerConfig] = field(default_factory=dict)
     remote: Optional[RemoteConfig] = None
     sync_policy: Literal["canonical", "external"] = "canonical"
+    dream: Optional[DreamSettings] = None
 
     def __post_init__(self) -> None:
         if self.sync_policy not in ("canonical", "external"):
@@ -542,6 +561,7 @@ class Config:
     tool_preflight: ToolPreflightConfig = field(default_factory=ToolPreflightConfig)
     session_relay: Optional[SessionRelayConfig] = None
     attention: AttentionConfig = field(default_factory=AttentionConfig)
+    dream: DreamSettings = field(default_factory=DreamSettings)
 
     def resolve_target(self, target_name: Optional[str]) -> Optional[RemoteConfig]:
         """Look up a named target, returning ``None`` for local execution."""
@@ -786,9 +806,10 @@ def _build_config(data: Dict[str, Any], *, path: Path) -> Config:
     tool_preflight = _parse_tool_preflight(data.get("tool_preflight"), path=path)
     session_relay = _parse_session_relay(data.get("session_relay"))
     attention = _parse_attention(data.get("attention"))
+    dream_settings = _parse_dream(data.get("dream"))
     mirrors = _parse_mirrors(
         data.get("mirrors"), global_skills=global_skills,
-        global_mcp_servers=global_mcp_servers, path=path,
+        global_mcp_servers=global_mcp_servers, path=path, global_dream=dream_settings,
     )
 
     mirror_root = _expand_path(mirror_root_raw)
@@ -813,7 +834,51 @@ def _build_config(data: Dict[str, Any], *, path: Path) -> Config:
         tool_preflight=tool_preflight,
         session_relay=session_relay,
         attention=attention,
+        dream=dream_settings,
     )
+
+
+def _parse_dream(
+    raw: Any,
+    defaults: Optional[DreamSettings] = None,
+    *,
+    label: str = "dream",
+) -> DreamSettings:
+    """Merge validated project overrides into the global dream defaults."""
+    defaults = defaults or DreamSettings()
+    if raw is None:
+        return defaults
+    if not isinstance(raw, dict):
+        raise ConfigError(f"`{label}` must be a mapping.")
+    fields = DreamSettings.__dataclass_fields__
+    unknown = set(raw) - set(fields)
+    if unknown:
+        raise ConfigError(
+            f"Unknown key(s) under `{label}`: "
+            + ", ".join(sorted(str(key) for key in unknown))
+            + "."
+        )
+    values = {key: getattr(defaults, key) for key in fields}
+    values.update(raw)
+    if values["harness"] is not None and values["harness"] not in ("codex", "claude"):
+        raise ConfigError(f"`{label}.harness` must be codex, claude, or null.")
+    model = values["model"]
+    if model is not None:
+        if not isinstance(model, str) or not model.strip():
+            raise ConfigError(f"`{label}.model` must be a non-empty string or null.")
+        values["model"] = model.strip()
+    for key in fields:
+        if key in ("harness", "model"):
+            continue
+        minimum = 0 if key.startswith("reserve_") else 1
+        if type(values[key]) is not int or values[key] < minimum:
+            kind = "nonnegative" if minimum == 0 else "positive"
+            raise ConfigError(f"`{label}.{key}` must be a {kind} integer.")
+    if values["reserve_seconds"] >= values["max_total_seconds"]:
+        raise ConfigError(f"`{label}.reserve_seconds` must be less than max_total_seconds.")
+    if values["reserve_calls"] > values["max_total_calls"]:
+        raise ConfigError(f"`{label}.reserve_calls` must not exceed max_total_calls.")
+    return DreamSettings(**values)
 
 
 def _parse_attention(raw: Any) -> AttentionConfig:
@@ -1111,6 +1176,7 @@ def _parse_mirrors(
     global_skills: List[Path],
     global_mcp_servers: Dict[str, McpServerConfig],
     path: Path,
+    global_dream: Optional[DreamSettings] = None,
 ) -> Dict[str, MirrorSettings]:
     if raw is None:
         return {}  # No mirrors configured; zero-config detection will add them.
@@ -1174,6 +1240,7 @@ def _parse_mirrors(
             mcp_servers=mcp_servers,
             remote=remote,
             sync_policy=value.get("sync_policy", "canonical"),
+            dream=_parse_dream(value.get("dream"), global_dream, label=f"mirrors.{name}.dream"),
         )
 
     _reject_token_collisions(list(mirrors))

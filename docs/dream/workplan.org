@@ -44,7 +44,7 @@ Source admission, credentials, explicit model selection and allowances are prepa
 The user subsequently approved [[file:budget.org][durable whole-job budgets]] for unattended execution, sharing elapsed/call ceilings across roles, repairs, explicit attempts and restarts, with optional sharing across plans.
 The budget extension keeps the completed pilot and the explicit live-Claude deferral intact.
 
-* Exploratory default: next interface direction
+* Exploratory default
 :PROPERTIES:
 :CUSTOM_ID: exploratory-default
 :END:
@@ -64,7 +64,8 @@ The coordinator can report partial repository coverage while preserving complete
 Unpredictability is an intended freedom, not a requirement to manufacture novelty or publish an edit on every run.
 Retain useful supported explanations, record important open questions and accept a justified no-change result.
 Exact source catalogs, topics and maintenance purposes remain available when an operator wants advance precision.
-This section records the next interface's design direction; automatic discovery and bare-command launch remain to be implemented.
+The user subsequently left even advance territory open within the project and authorized implementation.
+[[file:exploration.org][The exploratory launch extension]] implements the bare-command interface and records its verification separately from the completed P1-P6 pilot.
 
 * Delegate the knowledge work to the agent
 :PROPERTIES:

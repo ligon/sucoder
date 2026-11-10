@@ -37,6 +37,10 @@ sucoder dream source MIRROR --plan PLAN.json --search TEXT
 sucoder dream ask MIRROR "QUESTION" --plan PLAN.json --harness codex --model MODEL
 #+end_example
 
+Bare =sucoder dream= uses [[file:dream/exploration.org][the exploratory launch interface]]: territory is open within the committed project, topics are agent-selected and all discovery/editorial work shares one durable budget.
+Each new job may develop different connections from unchanged evidence; the coordinator records actual navigation/omissions and selected source snapshots rather than claiming whole-project examination.
+The explicit commands retain advance source/topic control and inference-free planning when that precision is useful.
+
 =plan= resolves the configured mirror, inspects its binding, and freezes an explicit base commit and source selection.
 It makes no inference request, fetch, checkout update, scheduler call, or source modification.
 It writes a private local plan containing a reproducible manifest and the proposed work and budgets.

@@ -5,8 +5,21 @@ mirror_root: /var/tmp/coder-mirrors
 log_dir: /home/<your-username>/.sucoder/logs
 system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 
-# Dream execution budgets are CLI options, not YAML keys. Native writer runs
-# persist the plan's elapsed/call limits across restarts and --attempt changes.
+# Bare `sucoder dream` explores the current committed project. Configure a
+# native model once; harness/model otherwise inherit agent_launcher selection.
+# The same optional block under mirrors.NAME overrides individual defaults.
+# dream:
+#   harness: codex                 # codex | claude
+#   model: YOUR_AVAILABLE_MODEL
+#   max_total_seconds: 900         # discovery + authorship + review, across resume
+#   max_total_calls: 40            # native invocations, not hidden HTTP retries
+#   reserve_seconds: 30           # review/repair/finalization
+#   reserve_calls: 3
+#   max_discovery_calls: 8         # also leaves one author call beyond closeout
+#   max_discovery_bytes: 131072    # bounded navigation delivery; selected evidence <= 64 KiB
+
+# Explicit plan/run budgets are CLI options; bare-launch defaults use dream
+# above. Native writer runs persist limits across restarts/--attempt changes.
 # First run: dream run MIRROR --plan PLAN --harness codex --model MODEL
 #   --max-total-seconds 28800 --max-total-calls 120
 #   --budget /PRIVATE/EXISTING/PARENT/overnight-job

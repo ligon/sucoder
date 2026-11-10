@@ -22,6 +22,17 @@ Configure the sources, model, credentials and allowances before launch; an unusa
 
 * Implemented slices: explicit evidence and native role publication
 
+Bare =sucoder dream= now implements [[file:exploration.org][bounded project-wide exploration]] without an explicit source catalog or advance topic.
+It pins the actual current checkout, resolves strict inherited =dream= configuration defaults and starts a durable private job before native discovery.
+The explorer requests paginated directory listings, file/line reads and literal search over committed regular text, then selects bounded evidence for the existing author/editor and independent reviewer.
+All stages share the same wallet; explorer reservations preserve one author invocation beyond the closeout reserve, even when another job already spent part of that wallet.
+The job stores its exact source revision, configuration, native traces, lookup observations and handoff intent; resume/inspection preserve those identities and unknown paid outcomes.
+Each job has a private plan log root, allowing recovery of a saved provisional-identity plan after interruption before its pointer was recorded.
+Explicit maintenance intent keeps new exploration available on unchanged evidence while retaining the existing explicit-run accepted-receipt shortcut.
+=--detach= starts the same job with private logs and finite stdin; =dream status= and =dream budget= inspect the latest job for the current project, or select =--job PATH= explicitly.
+Configured model/harness and native capabilities are validated without interactive human questions; missing prerequisites return diagnostics.
+The existing explicit commands below remain available.
+
 =sucoder dream plan= implements the first part of the [[file:../dream.org::#implementation][data-plane sequence]].
 It freezes explicitly admitted local git selections or native Claude/Codex transcript prefixes and budgets in a private JSON manifest without inference, source synchronization, or repository writes.
 Frozen-plan validation, private snapshots, deterministic quotation fixtures, native Org subtree checks, output-bound receipts, atomic candidate publication, and local run status are implemented.

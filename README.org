@@ -2547,6 +2547,51 @@ overwrite.
 
 * Dream companion candidates with Codex and Claude
 
+=sucoder dream= explores the current committed Git project without a source catalog or a prescribed topic.
+The agent can navigate the whole project's regular text files through bounded paginated listings, reads and literal search, choosing connections, contradictions or questions worth investigating.
+It selects up to six exact evidence ranges (64 KiB total) for the existing wiki author/editor and independent reviewer.
+A later job can find new relationships in unchanged sources; ordinary explicit-plan receipt reuse remains available.
+Run it from a canonical checkout, mirror or project subdirectory: the job binds that checkout's committed HEAD and branch rather than silently using a stale configured mirror.
+Staged/unstaged/untracked files, symlink targets, submodule contents and private session directories are outside automatic admission.
+
+Configure the native model once in =~/.sucoder/config.yaml=:
+
+#+begin_example
+dream:
+  harness: codex
+  model: YOUR_AVAILABLE_MODEL
+  max_total_seconds: 900
+  max_total_calls: 40
+#+end_example
+
+The optional =mirrors.NAME.dream= block overrides individual global defaults.
+Harness/model can inherit the existing launcher selection; an absent model returns a diagnostic without prompting or provider startup.
+There is no provider/model fallback after a failure.
+Bare-launch defaults allow eight discovery turns and 128 KiB navigation delivery, reserving 30 seconds and three invocations for closeout plus one ordinary invocation for authorship.
+All discovery, author, reviewer and repair calls share the same durable job budget.
+
+#+begin_example
+cd ~/Projects/SuCoder
+sucoder dream
+sucoder dream --detach --max-total-seconds 1800 --max-total-calls 30
+sucoder dream status
+sucoder dream budget
+sucoder dream --job /PRIVATE/LOGS/dream-jobs/JOB_ID
+sucoder dream status --job /PRIVATE/LOGS/dream-jobs/JOB_ID
+#+end_example
+
+Use =poetry run sucoder= from this source checkout when the installed launcher has not been upgraded.
+Bare launch runs unsupervised in the foreground; =--detach= launches the same persisted job with private stdout/stderr logs and returns its process ID and job location.
+Job settings, exact project binding, discovery choices and paid-work reservations are frozen before reuse; =--job= resumes the same allowance, while a new bare launch creates a new job that may investigate differently.
+=--attempt 2= is an explicit retry after inspecting a failed/unknown request, still within that job's remaining allowance.
+Keep the selected publication branch stable while work is underway; a moved base returns an explicit conflict while retaining private work.
+Output includes the private job/plan paths, examined navigation, selected evidence and important open questions, with a reviewed candidate or independently reviewed =unchanged= result when editorial work completes.
+=no_selection= records a discovery decision with no selected evidence and no reviewed wiki proposal; exhaustion retains a private checkpoint without publishing unchecked work.
+Default status/budget lookup selects the latest job for the exact project path; explicit =--job= inspection works independently of later configuration defaults.
+=dream budget= reports aggregate discovery/editorial usage for the shared wallet; the candidate receipt's usage describes its editorial roles.
+Current native adapters reject requested hard token/dollar caps before provider work.
+See [[file:docs/dream/exploration.org][the exploratory launch contract and verification]].
+
 =sucoder dream plan= starts an agent-independent, checked-in companion wiki workflow by freezing explicitly selected local git files, passages, or Claude/Codex transcript prefixes into a private plan.
 Dreaming is expected to run unsupervised, including overnight or headless, with the same unattended contract whether or not a terminal is present.
 Supply the source selection, configuration, authentication, harness/model and allowances before launch; an unusable prerequisite produces an error without an interactive human question.
@@ -2617,7 +2662,7 @@ See [[file:docs/dream/budget.org][the durable budget contract and verification]]
 
 See [[file:docs/dream/implementation.org][the implemented request format, limits, and backend boundary]] and [[file:docs/dream.org][the complete design]].
 Plans use the existing =log_dir= setting (or =~/.sucoder/logs/= when unset) and must live outside inspected repositories.
-There are no new YAML configuration keys.
+The =dream= YAML defaults apply to exploratory launches; explicit plan/run settings retain their existing execution options.
 Native execution currently requires Linux Landlock ABI 3 or newer and the CLI isolation/schema flags checked at runtime.
 Models receive immutable inline input in a private temporary environment, with external tools disabled; the coordinator alone publishes git objects and refs.
 Wiki mode writes explanatory Org and can revise existing topics against their frozen base, with exact source references, retained anchors and one bounded repair after actionable findings.

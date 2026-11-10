@@ -208,8 +208,9 @@ class Job:
             self.fail("native invocation allowance exhausted", task)
         closeout = task is not None and task["role"] in CLOSEOUT
         if task is not None and not closeout:
-            if len(self.calls) >= cap["max_native_calls"] - cap["reserve_calls"]:
-                self.fail("remaining invocations are reserved for review and closeout", task)
+            author = int(task["role"] == "explorer")
+            if len(self.calls) >= cap["max_native_calls"] - cap["reserve_calls"] - author:
+                self.fail("remaining invocations are reserved for " + ("authorship, " if author else "") + "review and closeout", task)
             if self.remaining() <= cap["reserve_seconds"]:
                 self.fail("remaining time is reserved for review and closeout", task)
 

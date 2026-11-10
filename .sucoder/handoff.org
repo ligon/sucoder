@@ -1,4 +1,4 @@
-#+TITLE: sucoder dream: explanatory synthesis and durable job budgets
+#+TITLE: sucoder dream: project-wide exploration and durable job budgets
 #+DATE: 2026-11-10
 #+STATUS: COMPLETE
 #+AUTHOR: Sue
@@ -25,12 +25,23 @@ Do not restart or extend the completed pilot, add models/repetitions, admit priv
 The canonical current evidence is [[file:../docs/dream/runs/sucoder-p6.org][the P6 report]], [[file:../docs/dream/workplan.org::#accepted-synthesis][the accepted operating mode]] and [[file:../docs/dream/runtime-audit.org][the runtime audit]].
 The complete earlier recovery/milestone narrative is preserved at [[file:handoffs/2026-11-09-dream-runtime-pilot-history.org][the archived session history]]; its running/pending statements are historical.
 
-* Next interface direction: exploratory dreaming
+* Project-wide exploratory launch
 
 The user discussed =cd ~ligon/Projects/SuCoder && sucoder dream= with sensible defaults, then clarified that little advance topic precision and somewhat unpredictable investigative choices belong to the meaning of dreaming.
 Follow [[file:../docs/dream/workplan.org::#exploratory-default][the recorded exploratory default]]: fix admission/resource/review boundaries, delegate topic choice, allow new connections from unchanged evidence and preserve the actual investigative trail.
 Discovery must share the durable job budget; interrupted resume retains its work and balance, while a new job may explore differently.
-Automatic discovery and the bare-command facade are design direction, not implemented capabilities; the completed explicit-plan runtime and budget verification above remain unchanged.
+The user then left territory open within the project and explicitly said "Let's implement".
+The completed extension is [[file:../docs/dream/exploration.org][project-wide exploratory launch]], grounded at =7dad839=.
+New =dream_discover= and =dream_explore= modules reuse native transport/role caching, the shared budget and existing wiki author/reviewer; the CLI and strict inherited configuration defaults are implemented.
+Final verification covers 567 distinct relevant cases across exploratory/configuration, CLI/planning, legacy wiki/notes/unattended and budget partitions, including the final frozen-checkout-path guard.
+The 211-case combined new/config suite and 65-case legacy wiki suite are green; thirty facade cases include a real detached fake-native child and twelve runtime integrations cover both harness protocols, canonical checkout/subdirectory binding, dirty-state preservation, unchanged-source re-exploration, source/base races and exact handoff recovery.
+Three independent review cycles leave no surviving concrete defect; five-source-file mypy, documentation export and packaged-source byte verification pass.
+Private verification/source hashes are retained under =/home/coder/.sucoder/logs/dream-exploration/2026-11-10-7dad839/=.
+The final post-guard runtime/binding group passes all 24 cases against the final source, including both harnesses and interrupted replay.
+No test or inference process remains running.
+Use =sucoder dream= with configured =dream.harness/model= (or launcher model), =--detach= for background execution, and =dream status= / =dream budget= for this project's latest job; =--job PATH= resumes its frozen binding/settings/allowance.
+The installed launcher must include this feature branch; =poetry run sucoder= uses the current checkout without deployment.
+No live provider call or account probe was made, and the earlier live-Claude deferral remains binding.
 
 * Durable budget extension
 

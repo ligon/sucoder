@@ -2,7 +2,11 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import stat
+import subprocess
+import sys
 from typing import Optional
 
 import typer
@@ -16,7 +20,85 @@ from . import dream_reader_agent
 from .config import ConfigError, load_config
 
 
-app = typer.Typer(help="Plan, snapshot and publish companion-wiki candidates from explicit git or transcript evidence.")
+app = typer.Typer(invoke_without_command=True,
+    help="Explore the current project and prepare a reviewed companion-wiki candidate, or use explicit evidence commands.")
+
+
+@app.callback()
+def explore(
+    ctx: typer.Context,
+    harness: Optional[str] = typer.Option(None, "--harness", help="Native codex/claude; otherwise use configured defaults."),
+    model: Optional[str] = typer.Option(None, "--model", help="Native model; otherwise use configured defaults."),
+    purpose: Optional[str] = typer.Option(None, "--purpose", help="What the dream should help readers understand; topics remain agent-selected."),
+    job_path: Optional[Path] = typer.Option(None, "--job", help="Resume this private exploratory job with its frozen settings and remaining allowance."),
+    budget_path: Optional[Path] = typer.Option(None, "--budget", help="Explicit shared private budget directory for a new job."),
+    attempt: int = typer.Option(1, "--attempt", min=1, max=1000000, help="Explicit native attempt within the same persisted job budget."),
+    max_total_seconds: Optional[int] = typer.Option(None, "--max-total-seconds", min=1, help="Whole-job elapsed ceiling, including discovery and review."),
+    max_total_calls: Optional[int] = typer.Option(None, "--max-total-calls", min=1, help="Whole-job native invocation ceiling, including discovery and review."),
+    reserve_seconds: Optional[int] = typer.Option(None, "--reserve-seconds", min=0, help="Time reserved for review, repair and finalization."),
+    reserve_calls: Optional[int] = typer.Option(None, "--reserve-calls", min=0, help="Invocations reserved for review, repair and finalization."),
+    discovery_calls: Optional[int] = typer.Option(None, "--discovery-calls", min=1, help="Maximum native investigation turns before authorship."),
+    discovery_bytes: Optional[int] = typer.Option(None, "--discovery-bytes", min=1, help="Maximum project-navigation bytes delivered during discovery."),
+    max_total_tokens: Optional[int] = typer.Option(None, "--max-total-tokens", min=1, help="Requested hard token ceiling; current native adapters reject it before provider work."),
+    max_cost_usd: Optional[str] = typer.Option(None, "--max-cost-usd", help="Requested hard dollar ceiling; current native adapters reject it before provider work."),
+    detach: bool = typer.Option(False, "--detach", help="Launch the durable job in the background and print its location and process ID."),
+):
+    """Without a subcommand, let the agent investigate within this project."""
+    if ctx.invoked_subcommand is not None:
+        supplied = [parameter.name for parameter in ctx.command.params
+                    if parameter.name is not None and
+                    getattr(ctx.get_parameter_source(parameter.name), "name", None) == "COMMANDLINE"]
+        if supplied:
+            raise typer.BadParameter("Put explicit-command options after the subcommand; unused dream options: " + ", ".join(supplied))
+        return
+    from . import dream_explore
+    overrides = dict(harness=harness, model=model, purpose=purpose,
+        max_total_seconds=max_total_seconds, max_total_calls=max_total_calls,
+        reserve_seconds=reserve_seconds, reserve_calls=reserve_calls,
+        max_discovery_calls=discovery_calls, max_discovery_bytes=discovery_bytes,
+        max_total_tokens=max_total_tokens, max_cost_usd=max_cost_usd)
+    overrides = {key: value for key, value in overrides.items() if value is not None}
+    if detach:
+        _data_command(ctx, "dream_job", _detach, ctx.obj["config_path"], job_path,
+            overrides=overrides, budget_path=budget_path, attempt=attempt)
+    else:
+        _data_command(ctx, "dream_job", dream_explore.start, job_path,
+            overrides=overrides, budget_path=budget_path, attempt=attempt)
+
+
+def _detach(config, config_path, job_path=None, *, overrides=None, budget_path=None, attempt=1):
+    """Start the same persisted job without a terminal or parent-process stdin."""
+    from . import dream_explore
+    job = dream_explore.prepare(config, job_path, overrides=overrides, budget_path=budget_path, attempt=attempt)
+    directory = Path(job["job_path"])
+    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    handles = []
+    try:
+        info = os.fstat(fd)
+        if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077:
+            raise dream.DreamError("Detached job directory must be private and account-owned", 3)
+        for name in ("worker.stdout.log", "worker.stderr.log"):
+            handle = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK,
+                0o600, dir_fd=fd)
+            try:
+                info = os.fstat(handle)
+                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077:
+                    raise dream.DreamError("Detached logs must be private regular files owned by this account", 3)
+                handles.append(os.fdopen(handle, "ab"))
+            except BaseException:
+                os.close(handle)
+                raise
+        argv = [sys.executable, "-c", "from sucoder.cli import app; app()",
+            "--config", str(Path(config_path).expanduser().absolute()), "dream", "--job", str(directory),
+            "--attempt", str(attempt)]
+        process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=handles[0], stderr=handles[1],
+            start_new_session=True, close_fds=True)
+        return dict(job, schema_version=1, operation="dream_job", state="detached", pid=process.pid,
+            stdout_path=str(directory / "worker.stdout.log"), stderr_path=str(directory / "worker.stderr.log"))
+    finally:
+        for stream in handles:
+            stream.close()
+        os.close(fd)
 
 
 @app.command("plan")
@@ -82,23 +164,37 @@ def run(
 @app.command("budget")
 def budget_status(
     ctx: typer.Context,
-    mirror: str = typer.Argument(..., help="Configured local mirror."),
-    plan_path: Path = typer.Option(..., "--plan", help="Stored private plan.json."),
+    mirror: Optional[str] = typer.Argument(None, help="Configured mirror for an explicit plan; omit for the current project's latest job."),
+    plan_path: Optional[Path] = typer.Option(None, "--plan", help="Stored private plan.json for explicit evidence execution."),
     budget_path: Optional[Path] = typer.Option(None, "--budget", help="Explicit shared budget directory; omit for the plan's default."),
+    job_path: Optional[Path] = typer.Option(None, "--job", help="Specific exploratory job; omit to inspect the current project's latest job."),
 ):
     """Inspect the persisted allowance and observed usage without inference."""
-    _data_command(ctx, "dream_budget", dream_budget.inspect, mirror, plan_path, budget_path)
+    if mirror is not None and plan_path is not None and job_path is None:
+        _data_command(ctx, "dream_budget", dream_budget.inspect, mirror, plan_path, budget_path)
+    elif mirror is None and plan_path is None and budget_path is None:
+        from . import dream_explore
+        _data_command(ctx, "dream_budget", dream_explore.budget_status, job_path)
+    else:
+        raise typer.BadParameter("Use MIRROR --plan PLAN [--budget PATH], or omit them and optionally select --job PATH")
 
 
 @app.command("status")
 def status(
     ctx: typer.Context,
-    mirror: str = typer.Argument(..., help="Configured local mirror."),
-    plan_path: Path = typer.Option(..., "--plan", help="Stored private plan.json for this run."),
+    mirror: Optional[str] = typer.Argument(None, help="Configured mirror for an explicit plan; omit for the current project's latest job."),
+    plan_path: Optional[Path] = typer.Option(None, "--plan", help="Stored private plan.json for an explicit run."),
     run_id: Optional[str] = typer.Option(None, "--run", help="Select a run ID when this plan has multiple native runs."),
+    job_path: Optional[Path] = typer.Option(None, "--job", help="Specific exploratory job; omit to inspect the current project's latest job."),
 ):
     """Print JSON separating candidate preparation from validated integration."""
-    _data_command(ctx, "dream_status", dream_run.status, mirror, plan_path, run_id)
+    if mirror is not None and plan_path is not None and job_path is None:
+        _data_command(ctx, "dream_status", dream_run.status, mirror, plan_path, run_id)
+    elif mirror is None and plan_path is None and run_id is None:
+        from . import dream_explore
+        _data_command(ctx, "dream_status", dream_explore.status, job_path)
+    else:
+        raise typer.BadParameter("Use MIRROR --plan PLAN [--run RUN_ID], or omit them and optionally select --job PATH")
 
 
 @app.command("read")
