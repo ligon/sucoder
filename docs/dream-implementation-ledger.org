@@ -542,7 +542,8 @@ Tests must cover both native protocols, canonical/cwd binding, dirty-state prese
 Verification is OK against sections 2-5: exact checkout binding, immutable Git evidence, role trace/cache validation, one persistent wallet and existing reviewed publication are reused as planned.
 The new role receives coordinator-served data only; no external tool, transcript discovery, implicit synchronization or unreviewed publication was added.
 Global/per-project defaults and actual shared-wallet policy are frozen per job, and each explorer reservation preserves author capacity beyond closeout.
-The final partitions cover 566 distinct relevant passing cases, including both protocol integrations, exact plan/publication recovery and a real detached fake-native child; mypy, Org export and packaged-source byte checks pass.
+The main partitions cover 566 distinct relevant passing cases, including both protocol integrations, exact plan/publication recovery and a real detached fake-native child; mypy, Org export and packaged-source byte checks pass.
+A final additional regression reproduces and rejects a frozen checkout path replaced by a symlink to another location, before provider work; actual resolved root equality remains part of the job binding.
 Three independent review cycles found and cleared concrete handoff/cursor/admission-budget defects; no surviving concrete defect or live-provider claim remains.
 
 * Durable whole-job budget grounding
