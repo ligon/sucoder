@@ -640,4 +640,19 @@ The README, workplan, implementation status and handoff now record this accepted
 After the selection, the existing public cross-source correction/synthesis regression passed for both harness protocols (two cases), and native Org export/link/archive validation passed.
 These are documentation/disposition changes; no runtime contract, configuration or model call was added.
 
+* Unattended operation grounding
+
+The user clarified that dreaming is expected to run unsupervised, potentially overnight and headless, with no interactive questions to the human.
+Reuse =dream_cli= startup bypass and explicit command arguments, =dream_native.capture='s finite assignment stdin/detached process/deadline, and existing noninteractive native flags.
+Reuse the v5 author/editor's Talk, WAITING, blocker/resumption metadata and recorded-human authority checks for important open questions.
+Agent-to-agent review and bounded admitted-context requests remain available; the absent human must not become a synchronous dependency.
+Continue independent source-grounded work, keep human-dependent decisions unresolved, and return a candidate or explicit bounded failure for later inspection.
+Preparation supplies sources, model, authentication and allowances; an unusable prerequisite must return an error rather than start a dialogue.
+Extend regression coverage for no terminal/assignment-only stdin, public CLI execution with human prompts forbidden, persisted new WAITING questions and inference-free status.
+The existing machinery already supports this behavior, so preserve frozen runtime contracts and document the requirement rather than adding a scheduler or a second headless adapter.
+Verification passed six cases in =tests/test_dream_unattended.py=: no terminal/finite stdin, both public CLI harness protocols recording a new human WAITING question while producing useful work, both noninteractive native command settings, and missing-model rejection without prompting/provider startup.
+Status replay and ordinary retrieval of the recorded question also pass without another role call; existing human policy is preserved.
+Native Org export/link/archive validation passed, and the final test log is =/tmp/sucoder-dream-unattended-tests-complete.txt=.
+OK against sections 2 and 4: the transport/editor are reused, with no runtime source, brief/schema, configuration or paid provider change.
+
 Prepared by Sue.
