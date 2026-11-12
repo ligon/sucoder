@@ -1,7 +1,7 @@
 #+title: Dream charter amendment: aligning with "The components of agent memory"
 #+author: Sue
 #+date: 2026-11-12
-#+status: ACCEPTED 2026-11-12 -- S1-S4 implemented; deferred items in section 5
+#+status: ACCEPTED 2026-11-12 -- S1-S4 implemented; first live generation published (E1); deferred items in section 5
 #+options: toc:2 num:nil
 
 * 1. Aim and human dispositions
@@ -169,5 +169,9 @@ On 2026-11-12 the human accepted the charter with "go", taking the proposed answ
   The explorer sees a virtual =@sessions= directory whose =read=, =search= and selections use raw byte offsets, snapped to complete records; sessions are pinned in the stored inventory, so an inspection replay reproduces its lookups after a resumed session grows.
   Navigation lists the committed notes (=.sucoder/handoff.org=, =.sucoder/handoffs/*.org=, ledgers), and the experience brief and purpose follow section 3.
 - What the end-to-end test shows :: =tests/test_dream_experience.py= drives a job from the session inventory through a =claude-view= selection, authorship, review and in-place publication, then sees the consumed range on the next inventory.
-  Its fake author writes a fixed correction, so it establishes the plumbing, not that a real model makes the correction; that needs a live run, which remains deferred.
+  Its fake author writes a fixed correction, so it establishes the plumbing, not that a real model makes the correction.
+- Live runs :: The [[file:runs/sucoder-e1.org][E1 record]] covers six live experience dreams with Codex on 2026-11-12.
+  The sixth published the first generation, =371afd3=, whose claims check out against its three sources.
+  The first five each stopped on a defect in the explorer contract or a validator, fixed between runs: the last call must finish, =failures= is not for caveats, topic phrases, line ends, long session records, and earlier source links on an edited page.
+  Email addresses are now redacted from rendered windows as well.
 - Header compatibility :: Jobs frozen before these settings record fewer keys; validation compares only the keys a job recorded.

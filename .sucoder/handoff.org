@@ -1,4 +1,4 @@
-#+TITLE: sucoder dream: essay alignment S1-S4 complete; integration awaits the human
+#+TITLE: sucoder dream: essay alignment complete and first live generation published; integration awaits the human
 #+DATE: 2026-11-12
 #+STATUS: COMPLETE
 #+AUTHOR: Sue
@@ -17,6 +17,10 @@ Nothing is pushed, nothing is merged to =main=, and the installed =/opt/sucoder=
 - =ac0b717= :: S3, rendered =claude-view= session windows as admitted evidence and the mirror-scoped session inventory (=sucoder/dream_view.py=, =sucoder/dream_experience.py=); full pytest 3097 passed, the same 50 failed.
 - =99423ed= :: S4, experience mode as the bare default (=@sessions= navigation, notes, the experience purpose), =--explore= for project mode; full pytest 3104 passed, the same 50 failed.
 
+- =04d38ed= .. =09b2863= :: Fixes found by six live experience dreams with Codex (=gpt-6.1-sol=), recorded in [[file:../docs/dream/runs/sucoder-e1.org][docs/dream/runs/sucoder-e1.org]]: the last discovery call offers only =finish= in both modes, =failures= excludes caveats, topic phrases become names, line ends clamp, a session window holds at least one record, a page keeps its earlier source links, and email addresses are redacted.
+  The human approved the two CRITICAL-impact changes (=validate_proposal=, =redact=).
+  Run 6 published =371afd3= on =refs/heads/sucoder/memory= (topic =codex-hook-validation=); its claims were checked against its three sources.
+
 A read-only check on this mirror's real sessions (no model calls, statistics only) rendered all three without error: 5.21, 1.91 and 6.97 MB raw became 447, 74 and 520 KB (4-9 percent); the running session was marked live and the others finished.
 
 The 50 known failures, environment-specific here and green in CI: =test_codex_state_runner= 39, =test_codex_state= 4, =test_direct_remote= 3, =test_codex_app_server= 2, =test_timer_lifecycle= 2.
@@ -27,11 +31,13 @@ The charter's four slices are implemented; nothing remains that this branch can 
 
 1. Integration :: Whether to merge =coder/dream-essay= into =main= and reinstall =/opt/sucoder= is the human's call; =/opt/sucoder= is root-owned.
    Until then =poetry run sucoder dream= from this worktree is the way to run it.
-2. Live verification :: No real model has run an experience dream; every new test uses fake transports, and live Claude verification remains deferred by the human.
-   The end-to-end test establishes plumbing, not that a model makes the right correction.
+2. Live verification :: Six Codex experience dreams ran on 2026-11-12 (E1); one generation is published, which is one observation, not a quality estimate.
+   Live Claude verification remains deferred by the human, and no live project-mode (=--explore=) dream has run.
 3. Deferred by the charter :: A staleness pass over pages whose cited sources changed; an organizer and pruning pass; Codex session discovery (S3b); a scheduler example for nightly dreams.
 4. Known limits :: Queued-command attachments are dropped when rendering, so a message delivered to a busy session is not visible in a window.
    The injected reading hint assumes the session's repository has the memory branch; node-local and remote clones may not.
+   Memory pages link into the project tree (=file:../../../docs/...=), which the wiki-only branch does not contain.
+   The author repeats a section's reference in most live runs; the repair fixes it at the cost of one call.
 
 * How to work here
 
@@ -45,6 +51,8 @@ The charter's four slices are implemented; nothing remains that this branch can 
 * Open items
 
 - The memory branch must stay out of public remotes; it is documented, and SuCoder never pushes it.
+  It now exists in the SuCoder mirror (=e0aa81c= seed, =371afd3= generation); =origin= has no such head and the =ligon= remote's push URL is =no_push=.
+- Jobs =acc43579=, =9dc6e6a8=, =a2e82ed5= and =0d98ce29= no longer replay readonly under the fixed explorer, and the rejected =f6131ffc= window no longer matches its plan after email redaction; none published anything.
 - =dream/228cde57= is the P1 diagnostic candidate, cited by hash in =docs/dream/runs/sucoder-p1.org=: keep it, do not merge it.
 - The untracked =.sucoder/handoffs/2026-11-12-dream-summary.org= in the main mirror checkout predates this work and is now stale; this handoff supersedes it.
 - The previous handoff (exploration and budgets, COMPLETE) is [[file:handoffs/2026-11-10-dream-exploration-and-budgets.org]].
