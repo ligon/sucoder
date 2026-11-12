@@ -6961,3 +6961,103 @@ def test_confined_pane_staging_failure_never_submits(tmp_path, monkeypatch):
             prelude_sentinel="__X__", env=None, detached=True,
         )
     assert not any(c["args"][0] == "sbatch" for c in calls)
+
+
+# --- collaborate --node on a confined target (sbatch --nodelist) ----------
+
+
+def _pinned(manager, node="n0035.savio4"):
+    manager.executor.confined_nodelist = node
+    return manager
+
+
+def _launch(manager, ctx, *, detached=False):
+    return manager._launch_confined(
+        ctx, ["claude"], remote_prelude_text=None, prelude_sentinel="__X__",
+        env=None, detached=detached,
+    )
+
+
+def test_launch_confined_pinned_submits_to_that_node(tmp_path, monkeypatch):
+    manager, ctx = _confined_manager(tmp_path, monkeypatch)
+    _pinned(manager)
+    calls = []
+    manager.executor.run_agent = _confined_responder(
+        calls, sbatch_out="501", poll_states=["RUNNING|n0035.savio4|None|N/A"],
+    )
+    assert _launch(manager, ctx, detached=True) == 0
+    sbatch = [c["args"] for c in calls if c["args"][0] == "sbatch"]
+    assert len(sbatch) == 1 and "--nodelist=n0035.savio4" in sbatch[0]
+
+
+def test_launch_confined_unpinned_submits_anywhere(tmp_path, monkeypatch):
+    manager, ctx = _confined_manager(tmp_path, monkeypatch)
+    calls = []
+    manager.executor.run_agent = _confined_responder(calls, sbatch_out="502")
+    assert _launch(manager, ctx, detached=True) == 0
+    sbatch = [c["args"] for c in calls if c["args"][0] == "sbatch"]
+    assert sbatch and not any(a.startswith("--nodelist") for a in sbatch[0])
+
+
+def test_launch_confined_pinned_reuses_a_live_job_already_on_that_node(tmp_path, monkeypatch):
+    from sucoder.session import RemoteSession
+
+    manager, ctx = _confined_manager(tmp_path, monkeypatch)
+    _pinned(manager)
+    sess = RemoteSession.load("sample", target_name=None)
+    sess.slurm_job_id = 4242
+    sess.save()
+    calls = []
+    manager.executor.run_agent = _confined_responder(
+        calls, live_state="RUNNING", poll_states=["RUNNING|n0035.savio4|None|N/A"],
+    )
+    assert _launch(manager, ctx) == 0
+    assert not any(c["args"][0] == "sbatch" for c in calls)
+    attach = [c for c in calls if c["args"][0] == "srun" and "attach-session" in c["args"]]
+    assert attach and "--jobid=4242" in attach[0]["args"]
+
+
+@pytest.mark.parametrize("poll, where", [
+    ("RUNNING|n0001.savio4|None|N/A", "RUNNING, on n0001.savio4"),
+    ("PENDING||Priority|N/A", "PENDING, node not known"),
+])
+def test_launch_confined_pinned_refuses_a_live_job_elsewhere(tmp_path, monkeypatch, poll, where):
+    """The silent drop: --node over a live job on another node used to
+    attach to that job.  Now it says so, and submits nothing."""
+    from sucoder.session import RemoteSession
+
+    manager, ctx = _confined_manager(tmp_path, monkeypatch, target_name="carleton-htc")
+    _pinned(manager)
+    sess = RemoteSession.load("sample", target_name="carleton-htc")
+    sess.slurm_job_id = 4242
+    sess.save()
+    calls = []
+    manager.executor.run_agent = _confined_responder(
+        calls, live_state=poll.split("|")[0], poll_states=[poll],
+    )
+    with pytest.raises(MirrorError) as exc:
+        _launch(manager, ctx)
+    msg = str(exc.value)
+    assert "--node n0035.savio4" in msg and "job 4242" in msg and where in msg
+    assert "sucoder -T carleton-htc release sample" in msg
+    assert not any(c["args"][0] in ("sbatch", "scancel") for c in calls)
+    assert not any(c["args"][0] == "srun" and "attach-session" in c["args"] for c in calls)
+    assert RemoteSession.load("sample", target_name="carleton-htc").slurm_job_id == 4242
+
+
+def test_launch_confined_pinned_refuses_a_job_adopted_by_name_elsewhere(tmp_path, monkeypatch):
+    """The by-name adoption path carries no node at all; the scheduler is
+    asked, the record is still healed, and a job elsewhere is refused."""
+    from sucoder.session import RemoteSession
+
+    manager, ctx = _confined_manager(tmp_path, monkeypatch)
+    _pinned(manager)
+    calls = []
+    manager.executor.run_agent = _confined_responder(
+        calls, by_name=f"4242|{_THIS_TARGET}", live_state="RUNNING",
+        poll_states=["RUNNING|n0001.savio4|None|N/A"],
+    )
+    with pytest.raises(MirrorError, match="on n0001.savio4"):
+        _launch(manager, ctx)
+    assert not any(c["args"][0] == "sbatch" for c in calls)
+    assert RemoteSession.load("sample", target_name=None).slurm_job_id == 4242
