@@ -57,6 +57,19 @@ def test_rendering_keeps_conversation_clips_tools_drops_thinking_and_redacts(tmp
     assert dream_view.render(raw, SID, 0) == (text, mapping)
 
 
+@pytest.mark.parametrize("text, redacted", [
+    ("Write to someone.private@example.org today.", "Write to [REDACTED] today."),
+    ("Co-Authored-By: Agent <noreply@anthropic.com>", "Co-Authored-By: Agent <[REDACTED]>"),
+    ('"git commit -m \\"x\\nfirst.last+tag@mail.example.com\\""', '"git commit -m \\"x\\n[REDACTED]\\""'),
+    ("git clone git@github.com:owner/repo.git", None),
+    ('"cat > t.py <<EOF\\n@pytest.fixture\\ndef f(): pass"', None),
+    ("tests/x.py-60-@pytest.mark.parametrize", None),
+    ("ssh coder@vantage", None),
+])
+def test_email_addresses_are_redacted_but_remotes_and_decorators_are_not(text, redacted):
+    assert dream_view.redact(text) == ((redacted, 1) if redacted else (text, 0))
+
+
 def test_user_attribution_only_for_main_thread_user_blocks(tmp_path):
     raw = sample(tmp_path).read_bytes()
     text, mapping = dream_view.render(raw, SID, 0)

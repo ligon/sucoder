@@ -38,6 +38,14 @@ PATTERNS = [re.compile(p) for p in (
 )]
 LABELLED = re.compile(r"(?i)\b((?:authorization:\s*bearer|api[_-]?key|access[_-]?token|client[_-]?secret|"
                       r"password|passwd|secret)[\"']?\s*[=:]?\s*[\"']?)([^\s\"']{12,})")
+# Email addresses are personal data: Claude Code puts the user's address into
+# session context, and this mirror's live session renders it (E1 run record).
+# Every address is redacted except SSH remote specs (git@host:...). An address
+# may follow a literal \n, \r or \t escape in rendered tool input, but not any
+# other backslash, so "\n@pytest.fixture" and "60-@pytest.fixture" (decorators
+# in escaped commands and grep output) are not mistaken for addresses.
+EMAIL = re.compile(r"(?:(?<![A-Za-z0-9._%+\\-])|(?<=\\[nrt]))(?!git@)[A-Za-z0-9._%+-]*[A-Za-z0-9_%+]"
+                   r"@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b")
 
 
 def redact(text):
@@ -46,6 +54,8 @@ def redact(text):
         text, n = pattern.subn(REDACTED, text)
         count += n
     text, n = LABELLED.subn(lambda m: m.group(1) + REDACTED, text)
+    count += n
+    text, n = EMAIL.subn(REDACTED, text)
     return text, count + n
 
 
