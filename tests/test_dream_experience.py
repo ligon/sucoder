@@ -59,6 +59,26 @@ class ExperienceTransport(ExploringTransport):
         return result, dict(native={}, currency_usd=None), trace
 
 
+class ReadsUntilToldTransport(ExperienceTransport):
+    """Keeps reading the session until the navigation leaves only finish, as the first live explorer did."""
+
+    def __call__(self, harness, model, task, schema, deadline):
+        if task["role"] != "explorer" or task["input"]["navigation"]["actions"] == ["finish"]:
+            return super().__call__(harness, model, task, schema, deadline)
+        self.calls.append(copy.deepcopy(task))
+        step = len(task["input"]["history"])
+        result = {key: task[key] for key in ("assignment_id", "input_sha256", "role")}
+        result.update(failures=[], action="list" if step == 0 else "read", path="@sessions" + ("/" + SID if step else ""),
+                      query="", offset=0, start=0, end=0, selections=[], topic="reply-evidence",
+                      rationale="Keep checking the session.", questions=[])
+        events = [dict(type="item.completed", item=dict(type="agent_message", text=json.dumps(result))),
+                  dict(type="turn.completed", usage={})]
+        trace = dict(harness=harness, model=model, version=self.version, returncode=0,
+                     input_sha256=dream.digest(dream.canonical(task)),
+                     stdout="\n".join(json.dumps(e) for e in events) + "\n", stderr="", boundary="linux-landlock-inline-v1")
+        return result, dict(native={}, currency_usd=None), trace
+
+
 @pytest.fixture
 def no_live(monkeypatch):
     monkeypatch.setattr(explore, "_live_sessions", lambda config: set())
@@ -96,6 +116,20 @@ def test_a_dream_corrects_a_wrong_note_from_what_the_session_saw(workspace, cloc
     assert explore.status(config, Path(result["job_path"]))["state"] == "published"
     _, rows = inventory(workspace, Path(os.environ["HOME"]), memory_commit=git(repo, "rev-parse", MEMORY))
     assert rows[0]["consumed"] == [[0, view["raw"]["byte_end"]]]
+
+
+def test_the_last_discovery_call_offers_only_finish(workspace, clock, no_live):
+    planned(workspace)
+    repo, _, config, _ = workspace
+    write_session(Path(os.environ["HOME"]), repo)
+    native = ReadsUntilToldTransport()
+    result = explore.start(config, cwd=repo, transport=native, overrides=dict(harness="codex", model="explicit-model"))
+    assert result["state"] == "published"
+    navigations = [t["input"]["navigation"] for t in native.calls if t["role"] == "explorer"]
+    assert len(navigations) == config.dream.max_discovery_calls
+    assert navigations[-1]["actions"] == ["finish"] and navigations[-1]["remaining_discovery_calls"] == 1
+    assert all(n["actions"] == ["list", "read", "search", "finish"] for n in navigations[:-1])
+    assert "finish is itself a discovery call" in dream_discover.EXPERIENCE_BRIEF
 
 
 def test_session_windows_snap_to_records_and_respect_the_pinned_size(workspace, tmp_path):

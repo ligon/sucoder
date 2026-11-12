@@ -37,7 +37,9 @@ EXPERIENCE_BRIEF = (
     "For @sessions, list shows each session's size, state and the raw byte ranges earlier dreams already admitted; prefer "
     "material they did not. read on @sessions/ID treats start/end as raw byte offsets and returns the rendered window from the "
     "first complete record at or after start, up to end or the delivery allowance; search on @sessions scans sessions from offset. "
-    "Live or recently written sessions are listed but cannot be selected. At finish select up to six ranges for the independent "
+    "Live or recently written sessions are listed but cannot be selected. finish is itself a discovery call: when "
+    "navigation.remaining_discovery_calls is 1, navigation.actions offers only finish, and no later call exists to finish in. "
+    "At finish select up to six ranges for the independent "
     "author and reviewer: files by inclusive lines, sessions by raw byte offsets with a nonzero end; at most 65536 rendered or "
     "UTF-8 bytes in total. Give a simple topic name and a rationale. Empty selections mean no evidence was selected. Record "
     "important open questions without asking the human. Novelty and publication are not quotas. Preserve enough shared budget "
@@ -350,6 +352,10 @@ class Explorer(dream_roles.Coordinator):
             if self.experience:
                 navigation.update(sessions_root=SESSIONS, sessions=len(self.inventory.sessions),
                                   notes=self.inventory.notes())
+                # The first live experience dream spent its last call on a read, expecting a
+                # finish turn after it. Project mode keeps its frozen navigation for replay.
+                if step == self.cap - 1:
+                    navigation["actions"] = ["finish"]
             result = self.call("explorer", dict(project=self.header["project"], purpose=self.header["purpose"],
                 variation=self.header["job_id"], navigation=navigation, history=history))
             if result["action"] == "finish":
