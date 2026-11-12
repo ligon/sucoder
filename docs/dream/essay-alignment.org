@@ -1,7 +1,7 @@
 #+title: Dream charter amendment: aligning with "The components of agent memory"
 #+author: Sue
 #+date: 2026-11-12
-#+status: ACCEPTED 2026-11-12 -- S1 and S2 implemented; S3 and S4 pending
+#+status: ACCEPTED 2026-11-12 -- S1, S2 and S3 implemented; S4 pending
 #+options: toc:2 num:nil
 
 * 1. Aim and human dispositions
@@ -89,7 +89,7 @@ Both constraints carry over unchanged.
   User and assistant text are kept whole; tool calls and results are cut to a head and tail with an explicit omission marker naming the JSONL lines; thinking and metadata records are dropped.
   Measured on this mirror's largest session: 6.97 MB raw holds about 92 KB of user and assistant text, 0.8 MB of tool results, 0.4 MB of tool calls, 0.76 MB of thinking and 2.2 MB of metadata records.
   Quotes are validated against the rendered view, whose digest is recorded with the raw range it came from.
-- Evidence contract (refined 2026-11-12, proposed) :: Today a transcript unit is a raw JSONL prefix from byte 0, delivered to the author as raw JSONL (=sucoder/dream_wiki.py:90=), and quotes must match those raw bytes (=:214=).
+- Evidence contract (refined and accepted 2026-11-12) :: Today a transcript unit is a raw JSONL prefix from byte 0, delivered to the author as raw JSONL (=sucoder/dream_wiki.py:90=), and quotes must match those raw bytes (=:214=).
   The editor's human-decision check maps a quote's byte range onto normalized records (=sucoder/dream_editor.py:200=).
   A rendered view therefore cannot merely be displayed; it must be the admitted evidence.
   S3 adds a new unit kind, =claude-view=, whose admitted bytes are the deterministic rendering of a complete-line raw range =[byte_start, byte_end)=.
@@ -106,7 +106,7 @@ Both constraints carry over unchanged.
   No fixed salience rule is added; the essay found that "record only failures" removed most of the benefit.
 - Selection :: The explorer chooses which sessions and notes to dream over from the inventory instead of choosing code topics.
   =--explore= keeps today's open exploration of the committed project.
-- Analysis (refined 2026-11-12, proposed) :: The explorer selects rendered session windows and note passages from the inventory, as it selects code passages today, within the same six-unit, 64 KiB allowance; the existing author and reviewer consume them unchanged.
+- Analysis (refined and accepted 2026-11-12) :: The explorer selects rendered session windows and note passages from the inventory, as it selects code passages today, within the same six-unit, 64 KiB allowance; the existing author and reviewer consume them unchanged.
   This replaces the per-chunk analyzer originally planned here.
   The cookbook fans out one analyzer per transcript because it reads every transcript in full; a bounded job that chooses its windows does not need that role, and the fan-out can return later if coverage of whole sessions proves to matter.
 - Authoring :: The existing editor pipeline receives the selected windows, the related prior pages and the notes, and writes or corrects pages; the reviewer checks against the same admitted evidence.
@@ -161,3 +161,7 @@ On 2026-11-12 the human accepted the charter with "go", taking the proposed answ
 - Injected layer :: =_memory_block= (=sucoder/mirror.py=) reads the index from the local mirror, drops PROPERTIES and LOGBOOK drawers, and cuts at a line to =inject_bytes= (at most 16384) with a note giving both sizes.
   Its reading hint names =git show BRANCH:PATH=, which assumes the session's repository has the memory branch.
   A node-local or remote clone may not, until branch transfer to those clones is decided.
+- Session windows :: =sucoder/dream_view.py= implements =claude-view-v1=; block headers name the raw byte offset (=[@OFFSET]=) rather than a line number, because a window need not start at line one.
+  Records without conversation text, including queued-command attachments, are dropped and counted in the header; delivery of a busy-session message through a queue is therefore not yet visible in a window.
+  Receipt units carry the raw range and render digest, never the private path, which is how =dream_experience.consumed= finds what earlier generations admitted.
+- Inventory :: =sucoder/dream_experience.py= lists finished sessions from the project directories of the mirror and its registered worktrees; the quiet period is a parameter until S4 reads it from =dream.session_quiet_minutes=.

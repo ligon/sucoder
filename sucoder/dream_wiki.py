@@ -12,7 +12,7 @@ import posixpath
 import subprocess
 import time
 
-from . import dream, dream_native, dream_roles, dream_run, dream_transcript
+from . import dream, dream_native, dream_roles, dream_run, dream_transcript, dream_view
 from .dream import DreamError, canonical, digest
 from .dream_roles import TEXT, CITATION, array_schema, object_schema
 
@@ -90,6 +90,12 @@ def source_bundle(plan, fd):
         source["text"] = raw.decode()
         if unit["kind"] == "git":
             source.update({key: unit[key] for key in ("repository", "commit", "blob", "path", "lines")})
+        elif unit["kind"] == dream_view.KIND:
+            mapping = dream._json(dream_run._read(fd, "render-" + unit["sha256"] + ".json", dream_run.MAX_PLAN_BYTES))
+            if digest(canonical(mapping)) != unit["render"]["sha256"]:
+                raise DreamError("Private render map differs from the plan")
+            # Raw range and render digests let later inventories see what was consumed; the path stays private.
+            source.update(thread_id=unit["thread_id"], raw=unit["raw"], render=unit["render"], provenance=mapping)
         else:
             source.update(thread_id=unit["thread_id"],
                           provenance=dream_transcript.normalize(raw, unit["kind"], unit["thread_id"]))
@@ -330,6 +336,9 @@ class WikiCoordinator(dream_roles.Coordinator):
 def run(config, mirror, plan_path, harness, model, attempt=1, mode="wiki", purpose=PURPOSE, *, transport=None,
         budget_path=None, budget_limits=None):
     if mode == "notes":
+        with dream_run._directory(config, plan_path) as (fd, directory):
+            if any(u["kind"] == dream_view.KIND for u in dream_run._load(fd, directory.name, mirror)["units"]):
+                raise DreamError("Rendered session windows require wiki mode")
         if purpose != PURPOSE:
             raise DreamError("A custom editorial purpose requires wiki mode")
         return dream_roles.run(config, mirror, plan_path, harness, model, attempt, transport=transport,

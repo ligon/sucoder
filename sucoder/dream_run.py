@@ -19,6 +19,7 @@ from urllib.parse import quote
 
 from . import dream
 from . import dream_transcript
+from . import dream_view
 from .dream import DreamError, canonical, digest
 
 
@@ -116,6 +117,9 @@ def _plan_shape(plan):
         if not isinstance(plan["units"], list) or not 1 <= len(plan["units"]) <= limits.max_units:
             raise DreamError("Invalid frozen unit selection")
         for unit in plan["units"]:
+            if unit.get("kind") == dream_view.KIND:
+                dream_view.shape(unit, limits)
+                continue  # Snapshotting re-renders and checks both digests.
             if unit.get("kind") in dream_transcript.KINDS:
                 dream._object(unit, ("unit_id", "kind", "shareable", "source_id", "repository", "repository_uuid",
                     "path", "thread_id", "byte_start", "byte_end", "bytes", "sha256", "chunks", "normalization"))
@@ -196,7 +200,7 @@ def _validate(config, mirror, plan, deadline, *, pinned=False):
     """Reconstruct the planner's full contract, reusing admission (ledger 2, 6)."""
     try:
         request = dict(schema_version=1, repository=mirror, integration_ref=plan["integration_ref"],
-                       limits=plan["limits"], units=[dream_transcript.request_unit(u) if u["kind"] in dream_transcript.KINDS else dict(unit_id=u["unit_id"], kind=u["kind"],
+                       limits=plan["limits"], units=[dream_view.request_unit(u) if u["kind"] == dream_view.KIND else dream_transcript.request_unit(u) if u["kind"] in dream_transcript.KINDS else dict(unit_id=u["unit_id"], kind=u["kind"],
                            shareable=u["shareable"], locator=dict(repository=u["repository"],
                                commit=u["commit"], path=u["path"], lines=u["lines"])) for u in plan["units"]])
         current = dream.build_plan(config, mirror, request, plan["integration_ref"],
@@ -250,6 +254,8 @@ def _snapshot(config, mirror, plan, fd, deadline):
             if source.entry(unit["commit"], unit["path"]) != unit["blob"]:
                 raise DreamError("Frozen git source object changed or disappeared", 3)
             raw = source.blob(unit["blob"])[unit["byte_start"]:unit["byte_end"]]
+        elif unit["kind"] == dream_view.KIND:
+            raw, mapping = dream_view.snapshot(unit, deadline)
         else:
             raw = dream_transcript.read_prefix(dream_transcript.request_unit(unit)["locator"],
                                                plan["limits"]["max_source_bytes"], deadline)
@@ -257,7 +263,9 @@ def _snapshot(config, mirror, plan, fd, deadline):
             raise DreamError("Snapshot bytes differ from the frozen selection", 3)
         name = "evidence-" + unit["sha256"] + ".txt"
         _store(fd, name, raw)
-        if unit["kind"] != "git":
+        if unit["kind"] == dream_view.KIND:
+            _store(fd, "render-" + unit["sha256"] + ".json", canonical(mapping) + b"\n")
+        elif unit["kind"] != "git":
             normalized = canonical(dream_transcript.normalize(raw, unit["kind"], unit["thread_id"]))
             if digest(normalized) != unit["normalization"]["sha256"]:
                 raise DreamError("Transcript normalization differs from frozen plan", 3)

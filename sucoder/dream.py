@@ -306,7 +306,7 @@ def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, i
     base after the branch has moved on to the plan's own generation; the
     caller establishes that, and the base must still be an ancestor.
     """
-    from . import dream_transcript
+    from . import dream_transcript, dream_view
     _object(request, ("schema_version", "repository", "integration_ref", "units"), ("limits",))
     if type(request["schema_version"]) is not int or request["schema_version"] != SCHEMA_VERSION:
         raise DreamError("Unsupported source request schema_version")
@@ -334,13 +334,15 @@ def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, i
         if uid in seen:
             raise DreamError("Duplicate unit_id: " + uid)
         seen.add(uid)
-        if unit["kind"] not in ("git", *dream_transcript.KINDS):
-            raise DreamError("Unsupported evidence kind; use git, claude-jsonl or codex-jsonl")
+        if unit["kind"] not in ("git", *dream_transcript.KINDS, dream_view.KIND):
+            raise DreamError("Unsupported evidence kind; use git, claude-jsonl, codex-jsonl or claude-view")
         if type(unit["shareable"]) is not bool:
             raise DreamError("shareable must explicitly be true or false")
         if unit["kind"] == "git":
             _object(unit["locator"], ("repository", "commit", "path"), ("lines",))
             _text(unit["locator"]["repository"], "locator repository")
+        elif unit["kind"] == dream_view.KIND:
+            _object(unit["locator"], ("path", "thread_id", "byte_start", "byte_end"))
         else:
             _object(unit["locator"], ("path", "thread_id"), ("byte_end",))
     deadline = time.monotonic() + 30
@@ -368,6 +370,7 @@ def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, i
             sources[alias] = GitSource(config, alias, deadline)
             identities[alias] = _repository_uuid(sources[alias], sources[alias].commit("HEAD"))
         item = (_admit(unit, sources[alias], identities[alias], limits) if unit["kind"] == "git" else
+                dream_view.admit(unit, alias, identities[alias], limits, deadline) if unit["kind"] == dream_view.KIND else
                 dream_transcript.admit(unit, alias, identities[alias], limits, deadline))
         total += item["bytes"]
         if total > limits.max_source_bytes:

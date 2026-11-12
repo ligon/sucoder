@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import json
 import posixpath
 
-from . import dream, dream_author, dream_context, dream_editorial as org, dream_roles, dream_run, dream_wiki as wiki
+from . import dream, dream_author, dream_context, dream_editorial as org, dream_roles, dream_run, dream_view, dream_wiki as wiki
 from .dream import DreamError, canonical, digest
 
 
@@ -200,6 +200,8 @@ class Editor(dream_author.Author):
         unit = next(source for source in sources if source["unit_id"] == citation["unit_id"])
         if unit["kind"] == "git":
             return True  # Independent review must verify the recorded human attribution in maintained prose.
+        if unit["kind"] == dream_view.KIND:
+            return dream_view.user_quote(unit["provenance"], citation)
         for record in unit["provenance"]["records"]:
             if not record["byte_start"] <= citation["byte_start"] < citation["byte_end"] <= record["byte_end"]:
                 continue

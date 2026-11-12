@@ -2623,6 +2623,10 @@ Set =inject: false= to launch without it.
 See [[file:docs/dream/essay-alignment.org][the essay-alignment charter]].
 
 =sucoder dream plan= starts an agent-independent, checked-in companion wiki workflow by freezing explicitly selected local git files, passages, or Claude/Codex transcript prefixes into a private plan.
+A =claude-view= unit admits a rendered window of a Claude session instead of raw JSONL: its locator names the transcript =path=, =thread_id= and a complete-line raw range =byte_start=/=byte_end=.
+Rendering keeps user and assistant text, clips tool calls and results to a head and tail with an omission marker, drops thinking and metadata records, labels sidechains and compaction summaries, and redacts high-confidence credential patterns.
+Each block starts with =[@OFFSET]=, the raw byte offset of its record; quotes are checked against the rendered text, and the plan records both the raw and the rendered digests, so a changed window is refused before any model call.
+Receipts record the raw range but not the private path; rendered windows require wiki mode.
 Dreaming is expected to run unsupervised, including overnight or headless, with the same unattended contract whether or not a terminal is present.
 Supply the source selection, configuration, authentication, harness/model and allowances before launch; an unusable prerequisite produces an error without an interactive human question.
 Agent review and bounded context requests may continue within the run.
