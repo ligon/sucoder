@@ -254,9 +254,11 @@ def _plan(config, fd, header, chosen, deadline):
                 dream_memory.ensure(source, memory_ref, header["project"]["base_commit"],
                                     Path(header["directory"]), deadline)
             _store(fd, "sources.json", request)
+            # The project tree the explorer inventoried is what pages may link (S5).
             value = dream.create_plan(effective, source.name, Path(header["directory"]) / "sources.json",
                 request["integration_ref"], maintenance=maintenance, topic=topic,
-                publication="in_place" if memory_ref else None)
+                publication="in_place" if memory_ref else None,
+                project_commit=header["project"]["base_commit"])
             path = Path(value["plan_path"])
         pointer = dict(plan_path=str(path))
         _store(fd, "plan-pointer.json", pointer)

@@ -103,7 +103,7 @@ def _plan_shape(plan):
         dream._object(plan, ("schema_version", "operation", "state", "repository", "repository_uuid",
             "integration_ref", "base_commit", "repositories", "units", "prior_wiki", "maintenance", "topic",
             "limits", "work", "coverage", "usage", "execution", "candidate_commit", "candidate_ref", "integration", "plan_id"),
-            ("publication",))
+            ("publication", "project"))
         if type(plan["schema_version"]) is not int or plan["schema_version"] != 1:
             raise DreamError("Unsupported frozen plan schema")
         if plan["operation"] != "dream_plan" or plan["state"] != "planned":
@@ -113,6 +113,13 @@ def _plan_shape(plan):
             raise DreamError("Invalid frozen integration ref")
         if "publication" in plan and (plan["publication"] != "in_place" or not ref.startswith("refs/heads/")):
             raise DreamError("Invalid frozen publication mode")
+        if "project" in plan:
+            dream._object(plan["project"], ("commit", "paths"))
+            dream._text(plan["project"]["commit"], "project commit")
+            if not isinstance(plan["project"]["paths"], list):
+                raise DreamError("Invalid frozen project files")
+            for item in plan["project"]["paths"]:
+                dream._path(item)
         limits = dream.Limits.parse(plan["limits"])
         if not isinstance(plan["units"], list) or not 1 <= len(plan["units"]) <= limits.max_units:
             raise DreamError("Invalid frozen unit selection")
@@ -206,7 +213,8 @@ def _validate(config, mirror, plan, deadline, *, pinned=False):
         current = dream.build_plan(config, mirror, request, plan["integration_ref"],
             maintenance=plan["maintenance"], topic=plan["topic"], inspection_deadline=deadline,
             prior_policy=plan["prior_wiki"].get("selection", {}).get("contract", "all-active-v1"),
-            publication=plan.get("publication"), pinned_base=plan["base_commit"] if pinned else None)
+            publication=plan.get("publication"), pinned_base=plan["base_commit"] if pinned else None,
+            project_commit=plan["project"]["commit"] if "project" in plan else None)
         # A provisional UUID is a frozen proposal, not a newly accepted registry.
         # Rebuilding the plan generates a fresh proposal; retain only the old UUID.
         for name, repository in current["repositories"].items():
@@ -551,7 +559,26 @@ def publish(plan, fd, directory, sources, deadline, path, content, receipt, inde
             _git_write(source, private_index, ["update-ref", "--no-deref", "--stdin"], deadline, transaction.encode())
     result = _run_result(plan, receipt, commit)
     _store(fd, result_name, canonical(result) + b"\n")
+    if in_place:
+        _refresh_copy(source, ref)
     return result
+
+
+def _refresh_copy(source, ref):
+    """Refresh the read-only wiki copy in the checkout the dream ran from (S5).
+
+    Best-effort: the reviewed generation is already published, so a copy that
+    cannot be written (a tracked or foreign .sucoder/wiki, a held lock) is
+    skipped and the next launch or ``sucoder dream checkout`` retries it.
+    """
+    settings = source.config.mirrors[source.name].dream if source.name in source.config.mirrors else None
+    if not getattr(settings or source.config.dream, "checkout", False):
+        return
+    try:
+        from . import dream_memory
+        dream_memory.materialize(source.path, ref[len("refs/heads/"):])
+    except Exception:  # noqa: BLE001 - never undo or fail a publication for the copy
+        pass
 
 
 def in_place_plan(plan):

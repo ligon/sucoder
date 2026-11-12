@@ -213,6 +213,17 @@ def read(
     _data_command(ctx, "dream_read", dream_reader.read, mirror, topic, archives, target, max_bytes, base)
 
 
+@app.command("checkout")
+def checkout(
+    ctx: typer.Context,
+    path: Optional[Path] = typer.Argument(None, help="Root of a git checkout that has the memory branch; default: the current one."),
+    branch: Optional[str] = typer.Option(None, "--branch", help="Memory branch; default: the configured dream.memory_branch."),
+):
+    """Copy the dream memory wiki, read-only, into the checkout's .sucoder/wiki, where its project links resolve."""
+    from . import dream_memory
+    _data_command(ctx, "dream_checkout", dream_memory.checkout, path, branch)
+
+
 @app.command("source")
 def source(
     ctx: typer.Context,

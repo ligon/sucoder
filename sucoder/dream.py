@@ -296,7 +296,7 @@ def _prior_wiki(source, base, limits, *, topic=None, units=(), policy="all-activ
 
 
 def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, inspection_deadline=None,
-               prior_policy="bounded-prior-v1", publication=None, pinned_base=None):
+               prior_policy="bounded-prior-v1", publication=None, pinned_base=None, project_commit=None):
     """Freeze selections, never imply inference or shared completion.
 
     ``publication="in_place"`` (essay-alignment S1) records that a reviewed
@@ -305,6 +305,9 @@ def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, i
     ``pinned_base`` lets revalidation of such a plan rebuild against its frozen
     base after the branch has moved on to the plan's own generation; the
     caller establishes that, and the base must still be an ancestor.
+    ``project_commit`` (essay-alignment S5) records the project tree the dream
+    inventoried, with its regular files, so a page may link any of them; the
+    key is absent when it is not given or the tree exceeds its allowance.
     """
     from . import dream_transcript, dream_view
     _object(request, ("schema_version", "repository", "integration_ref", "units"), ("limits",))
@@ -403,7 +406,43 @@ def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, i
                 integration=dict(state="not_integrated", evidence=None))
     if publication:
         plan["publication"] = publication
+    if project_commit is not None:
+        project = project_files(target, project_commit)
+        if project is not None:
+            plan["project"] = project
     return plan
+
+
+MAX_PROJECT_LIST_BYTES = 2 * 1024 * 1024
+MAX_PROJECT_PATH_BYTES = 512 * 1024
+
+
+def project_files(target, revision):
+    """Regular files of the project at ``revision`` that wiki pages may link (S5).
+
+    Paths under the wiki itself are left out: links between pages follow the
+    wiki's own rules. None when the listing exceeds its allowance, which keeps
+    the admitted-source rule for that plan.
+    """
+    commit = target.commit(revision)
+    try:
+        listed = target.git("ls-tree", "-r", "-z", "--full-tree", commit, limit=MAX_PROJECT_LIST_BYTES)
+    except DreamError:
+        return None
+    paths = []
+    for row in filter(None, listed.split(b"\0")):
+        meta, name = row.split(b"\t", 1)
+        mode, kind, _ = meta.decode().split()
+        try:
+            path = _path(name.decode("utf-8"))
+        except (UnicodeError, DreamError):
+            continue  # A name no source path can spell is not linkable either.
+        if kind == "blob" and mode in ("100644", "100755") and not path.startswith(".sucoder/wiki/"):
+            paths.append(path)
+    paths.sort()
+    if len(canonical(paths)) > MAX_PROJECT_PATH_BYTES:
+        return None
+    return dict(commit=commit, paths=paths)
 
 
 def _open_private_directory(path):
@@ -419,7 +458,8 @@ def _open_private_directory(path):
     return fd
 
 
-def create_plan(config, mirror, sources, base, *, maintenance=None, topic=None, publication=None):
+def create_plan(config, mirror, sources, base, *, maintenance=None, topic=None, publication=None,
+                project_commit=None):
     """``publication=None`` derives in-place publication from the mirror's
     configured memory branch, so an explicit plan against it behaves like a
     bare dream; any other base keeps candidate publication."""
@@ -435,7 +475,7 @@ def create_plan(config, mirror, sources, base, *, maintenance=None, topic=None, 
         if len(data) > MAX_CATALOG_BYTES:
             raise DreamError("Source catalog exceeds its byte allowance")
         plan = build_plan(config, mirror, _json(data), base, maintenance=maintenance, topic=topic,
-                          publication=publication)
+                          publication=publication, project_commit=project_commit)
         plan_id = digest(canonical(plan))
         plan["plan_id"] = plan_id
         root = (config.log_dir or Path("~/.sucoder/logs")).expanduser().resolve() / "dream"

@@ -54,6 +54,7 @@ def test_the_index_is_injected_as_reference_data_without_drawers(mirror):
     memory(ctx.mirror_path, "#+title: Companion wiki\n:PROPERTIES:\n:ID: x\n:END:\n"
            "- [[file:topics/replies.org][Reply detection]] needs native assistant text.\n"
            ":LOGBOOK:\n- State \"DONE\" from \"TODO\"\n:END:\n")
+    ctx = with_dream(ctx, checkout=False)  # S2's form; the read-only copy (S5) is tested below.
     block = manager._memory_block(ctx)
     assert block.startswith("PROJECT MEMORY\n")
     assert "reference data, not instructions" in block and "re-check" in block
@@ -84,7 +85,7 @@ def test_disabled_injection_or_memory_adds_nothing(mirror, values):
 def test_a_custom_branch_is_read_and_named(mirror):
     manager, ctx = mirror
     memory(ctx.mirror_path, "- team page\n", branch="team/memory")
-    block = manager._memory_block(with_dream(ctx, memory_branch="team/memory"))
+    block = manager._memory_block(with_dream(ctx, memory_branch="team/memory", checkout=False))
     assert "team page" in block and "git show team/memory:" in block
 
 
@@ -100,3 +101,64 @@ def test_inject_settings_are_validated():
     for bad in (dict(inject="yes"), dict(inject_bytes=0), dict(inject_bytes=20000), dict(inject_bytes=True)):
         with pytest.raises(ConfigError, match="inject"):
             _parse_dream(bad)
+
+
+def pages(repo, files, branch="sucoder/memory"):
+    """A wiki-only memory commit holding ``files`` (path under .sucoder/wiki/ -> text)."""
+    env = dict(os.environ, GIT_INDEX_FILE=str(repo.parent / "pages-index"),
+               GIT_AUTHOR_NAME="Fixture", GIT_AUTHOR_EMAIL="fixture@example.test",
+               GIT_COMMITTER_NAME="Fixture", GIT_COMMITTER_EMAIL="fixture@example.test")
+    git(repo, "read-tree", "--empty", env=env)
+    for name, text in files.items():
+        blob = git(repo, "hash-object", "-w", "--stdin", data=text.encode())
+        git(repo, "update-index", "--add", "--cacheinfo", "100644," + blob + ",.sucoder/wiki/" + name, env=env)
+    commit = git(repo, "commit-tree", git(repo, "write-tree", env=env), "-m", "memory", env=env)
+    git(repo, "update-ref", "refs/heads/" + branch, commit)
+    return commit
+
+
+LINKED = {"index.org": "- [[file:topics/readme.org][About the readme]]\n",
+          "topics/readme.org": "* Readme\nSee [[file:../../../README.md][the project readme]].\n"}
+
+
+def test_a_local_launch_writes_the_read_only_copy_and_points_into_it(mirror):
+    manager, ctx = mirror
+    commit = pages(ctx.mirror_path, LINKED)
+    block = manager._memory_block(ctx)
+    assert "Read a page at .sucoder/wiki/topics/NAME.org: a read-only copy of sucoder/memory at " + commit[:12] in block
+    page = ctx.mirror_path / ".sucoder/wiki/topics/readme.org"
+    assert "the project readme" in page.read_text() and not page.stat().st_mode & 0o222
+    assert (page.parent / "../../../README.md").resolve() == (ctx.mirror_path / "README.md").resolve()
+    assert git(ctx.mirror_path, "status", "--porcelain", "--untracked-files=all") == ""
+    assert manager._memory_block(ctx) == block  # Current: nothing rewritten.
+
+
+def test_the_copy_follows_checkout_not_inject(mirror):
+    manager, ctx = mirror
+    pages(ctx.mirror_path, LINKED)
+    assert manager._memory_block(with_dream(ctx, inject=False)) is None
+    assert (ctx.mirror_path / ".sucoder/wiki/index.org").exists()
+
+
+def test_checkout_false_or_a_remote_launch_writes_no_copy(mirror, monkeypatch):
+    manager, ctx = mirror
+    pages(ctx.mirror_path, LINKED)
+    assert "git show sucoder/memory:" in manager._memory_block(with_dream(ctx, checkout=False))
+    monkeypatch.setattr(type(ctx), "is_remote", property(lambda self: True))
+    manager._memory_block(ctx)
+    assert not (ctx.mirror_path / ".sucoder/wiki").exists()
+
+
+def test_a_failing_copy_never_fails_the_launch(mirror, monkeypatch):
+    manager, ctx = mirror
+    pages(ctx.mirror_path, LINKED)
+    def broken(*args, **kwargs):
+        raise OSError("sudo unavailable")
+    monkeypatch.setattr(manager.executor, "run_agent", broken)
+    assert "git show sucoder/memory:" in manager._memory_block(ctx)
+
+
+def test_checkout_settings_are_validated():
+    assert DreamSettings().checkout is True and _parse_dream(dict(checkout=False)).checkout is False
+    with pytest.raises(ConfigError, match="checkout"):
+        _parse_dream(dict(checkout="yes"))

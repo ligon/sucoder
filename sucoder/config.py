@@ -413,6 +413,8 @@ class DreamSettings:
     in place (docs/dream/essay-alignment.org, S1); None keeps the legacy
     candidate branches that wait for a human merge. ``inject`` adds that
     branch's index, cut to ``inject_bytes``, to every launch's context (S2).
+    ``checkout`` writes a read-only copy of the branch's wiki into the local
+    mirror at launch and after publication, so its project links resolve (S5).
     """
 
     harness: Optional[str] = None
@@ -426,6 +428,7 @@ class DreamSettings:
     memory_branch: Optional[str] = "sucoder/memory"
     inject: bool = True
     inject_bytes: int = 2048
+    checkout: bool = True
     session_quiet_minutes: int = 30
 
 
@@ -885,12 +888,13 @@ def _parse_dream(
                        memory.endswith(("/", ".", ".lock"))):
             raise ConfigError(f"`{label}.memory_branch` must be a simple branch name outside dream/.")
         values["memory_branch"] = memory or None
-    if type(values["inject"]) is not bool:
-        raise ConfigError(f"`{label}.inject` must be true or false.")
+    for flag in ("inject", "checkout"):
+        if type(values[flag]) is not bool:
+            raise ConfigError(f"`{label}.{flag}` must be true or false.")
     if type(values["inject_bytes"]) is not int or not 1 <= values["inject_bytes"] <= 16384:
         raise ConfigError(f"`{label}.inject_bytes` must be an integer from 1 to 16384.")
     for key in fields:
-        if key in ("harness", "model", "memory_branch", "inject"):
+        if key in ("harness", "model", "memory_branch", "inject", "checkout"):
             continue
         minimum = 0 if key.startswith("reserve_") else 1
         if type(values[key]) is not int or values[key] < minimum:

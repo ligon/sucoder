@@ -170,6 +170,9 @@ def validate_proposal(plan, proposal, prior, sources, deadline, contract=CONTRAC
             approved = Counter((approved_tasks or {}).get(path, []))
             if old_tasks - new_tasks - approved:
                 raise DreamError("Existing editorial tasks must be preserved until explicit transition validation")
+    # Any regular file of the project the dream inventoried may be linked (S5);
+    # citations still need admitted evidence.
+    project = frozenset(plan.get("project", {}).get("paths", ()))
     for path, details in parsed.items():
         retained_links = Counter((link["type"], link["raw_path"], link["path"], link["search"])
                                  for link in old.get(path, {}).get("links", []))
@@ -181,6 +184,11 @@ def validate_proposal(plan, proposal, prior, sources, deadline, contract=CONTRAC
             elif kind == "file":
                 if link["raw_path"].startswith(("/", "~")):
                     raise DreamError("Wiki file links must be repository-relative, not home/absolute paths")
+                # The Org normalizer clamps at the root, so one ../ too many would pass as a
+                # project path while the link itself leaves the project tree.
+                climbed = posixpath.normpath(posixpath.join(posixpath.dirname(path), link["raw_path"]))
+                if climbed == ".." or climbed.startswith("../"):
+                    raise DreamError("Wiki file link climbs above the project root: " + link["raw_path"])
                 if destination.startswith(".sucoder/wiki/"):
                     if destination not in parsed:
                         key = (kind, link["raw_path"], destination, search)
@@ -190,6 +198,8 @@ def validate_proposal(plan, proposal, prior, sources, deadline, contract=CONTRAC
                         raise DreamError("Wiki links to an unavailable page or unselected archive")
                     if search and (not search.startswith("#") or search[1:] not in parsed[destination]["targets"]):
                         raise DreamError("Wiki file link has an unsupported or missing target")
+                elif destination in project:
+                    continue
                 elif not any(s.get("repository") == plan["repository"] and s.get("path") == destination for s in sources):
                     # A source link this page already carried was admitted by the reviewed generation
                     # that wrote it. Without this, the fifth live experience dream could not list a new
@@ -198,7 +208,8 @@ def validate_proposal(plan, proposal, prior, sources, deadline, contract=CONTRAC
                     if retained_links[key]:
                         retained_links[key] -= 1
                         continue
-                    raise DreamError("Wiki file link is outside the admitted source set")
+                    raise DreamError("Wiki file link is outside the admitted source set" +
+                                     (" and the project" if project else "") + ": " + destination)
             elif kind not in ("http", "https"):
                 raise DreamError("Unsupported wiki link type: " + kind)
     reachable, pending = {INDEX}, [INDEX]

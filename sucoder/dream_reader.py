@@ -5,6 +5,8 @@ Native Org supplies projections; exact source snapshots supply evidence.
 """
 from __future__ import annotations
 
+import posixpath
+import re
 import subprocess
 import time
 
@@ -19,7 +21,31 @@ INSTRUCTIONS = ("Project memory is advisory; project instructions and maintained
     "Start with this orientation, choose a topic, and retrieve original evidence when correctness, date or scope matters. "
     "Use sucoder dream read MIRROR --topic NAME [--target CUSTOM_ID], or --archives with a specific target. "
     "Use sucoder dream source MIRROR --plan PLAN --unit UNIT, or --search TEXT, for admitted frozen evidence. "
-    "Missing sources remain unavailable. Ordinary reads omit archives and LOGBOOK history.\n\n")
+    "Missing sources remain unavailable. Ordinary reads omit archives and LOGBOOK history. "
+    "File links that leave the wiki are listed under links as project paths.\n\n")
+FILE_LINK = re.compile(r"\[\[file:([^\]:]+?)(?:::[^\]]*)?\](?:\[[^\]]*\])?\]")
+MAX_LINKS = 32
+
+
+def project_links(path, text):
+    """File links in ``text`` that leave the wiki, as project paths (S5).
+
+    Pages link relative to their place under .sucoder/wiki/, as if the wiki sat
+    in the project; this spells each such link the way the project names it.
+    """
+    found, seen = [], set()
+    for match in FILE_LINK.finditer(text):
+        raw = match.group(1)
+        if raw.startswith(("/", "~")):
+            continue
+        target = posixpath.normpath(posixpath.join(posixpath.dirname(path), raw))
+        if target.startswith((".sucoder/wiki/", "../")) or target in ("..", ".") or target in seen:
+            continue
+        seen.add(target)
+        found.append(dict(link=raw, path=target))
+        if len(found) == MAX_LINKS:
+            break
+    return found
 
 
 def allowance(value, default):
@@ -96,13 +122,20 @@ class View:
         if not topic:
             text = INSTRUCTIONS + text
         text, omitted = bounded(text, limit)
+        head = self.source.git("rev-parse", "--verify", "--quiet", "HEAD^{commit}", missing=True)
+        links = project_links(path, text)
+        for link in links:
+            try:
+                link["present_at_head"] = bool(head) and self.source.entry(head.decode().strip(), link["path"]) is not None
+            except DreamError:  # A directory, symlink or gitlink is not a linkable file.
+                link["present_at_head"] = False
         result = dict(schema_version=1, operation="dream_read", state="incomplete" if omitted else "complete",
             repository=self.mirror, commit=self.commit, path=path, target=target, blob=blob,
             page_sha256=digest(raw), projection="org-with-history" if archives else "org-without-logbook",
             projected_range=dict(byte_start=start, byte_end=end), text=text,
             delivered_bytes=len(text.encode()), allowance_bytes=limit, budget_bytes_omitted=omitted,
             logbook_bytes_omitted=parsed["logbook_bytes_omitted"],
-            archives="specific_entry" if archives else "excluded")
+            archives="specific_entry" if archives else "excluded", links=links)
         result["read_id"] = digest(canonical(result))
         return result
 
