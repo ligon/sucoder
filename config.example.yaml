@@ -19,6 +19,8 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #   max_discovery_bytes: 131072    # bounded navigation delivery; selected evidence <= 64 KiB
 #   memory_branch: sucoder/memory  # wiki-only branch reviewed dreams update in place;
 #                                  # "" keeps dream/<run> candidates for a human merge
+#   inject: true                   # add that branch's index to every launch's context
+#   inject_bytes: 2048             # cut at a line; at most 16384
 
 # Explicit plan/run budgets are CLI options; bare-launch defaults use dream
 # above. Native writer runs persist limits across restarts/--attempt changes.
