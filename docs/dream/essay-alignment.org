@@ -1,7 +1,7 @@
 #+title: Dream charter amendment: aligning with "The components of agent memory"
 #+author: Sue
 #+date: 2026-11-12
-#+status: ACCEPTED 2026-11-12 -- S1-S4 implemented; first live generation published (E1); S5 proposed; deferred items in section 5
+#+status: ACCEPTED 2026-11-12 -- S1-S5 implemented; first live generation published (E1); deferred items in section 5
 #+options: toc:2 num:nil
 
 * 1. Aim and human dispositions
@@ -213,3 +213,18 @@ On 2026-11-12 the human accepted the charter with "go", taking the proposed answ
   The first five each stopped on a defect in the explorer contract or a validator, fixed between runs: the last call must finish, =failures= is not for caveats, topic phrases, line ends, long session records, and earlier source links on an edited page.
   Email addresses are now redacted from rendered windows as well.
 - Header compatibility :: Jobs frozen before these settings record fewer keys; validation compares only the keys a job recorded.
+- Read-only copy :: =dream_memory.materialize= reads the branch's wiki with =ls-tree= and one =cat-file --batch=, so the copy is byte for byte and free of attribute filters.
+  It refuses any entry that is not a regular blob (a symlink in the branch cannot point the copy elsewhere).
+  It writes into a staging directory beside the destination, under =.sucoder/.wiki-lock=, then renames.
+  Files are mode 0444 less the umask; the staging, retired and lock names all match the second exclude line (=/.sucoder/.wiki-*=), so nothing shows as untracked.
+  A launch runs it as =python -m sucoder.dream_memory checkout MIRROR BRANCH= through =run_agent=, from =/=, so the copy is agent-owned and no module is imported from the mirror's own tree.
+  The launch never waits more than 15 seconds for it, and a failure leaves the =git show= hint in place.
+- Reading hint :: With a current copy the =PROJECT MEMORY= block says to read =.sucoder/wiki/topics/NAME.org= and names the copy's commit; without one it keeps S2's =git show= form.
+- Project files :: =dream.project_files= lists the regular blobs of the inventoried commit outside =.sucoder/wiki/=, skipping names no source path can spell.
+  It records nothing when the listing exceeds 2 MiB or the sorted list 512 KiB; those plans keep the admitted-source rule.
+  The plan key =project= (=commit=, =paths=) is optional in =_plan_shape= and rebuilt by =_validate=, so replay checks the same set.
+  Role inputs do not carry the list: the author links what its sources name, and the validator decides.
+- Climbing links :: The Org link normalizer clamps a path at the repository root, so a link with one =../= too many would have validated as a project path while pointing outside the project.
+  =validate_proposal= now refuses any =file:= link that climbs above the root.
+- Copy of record :: =6c6d96b= removed the tracked P2 wiki from =coder/dream-essay=; the memory branch's seed =e0aa81c= holds the same tree.
+  With it gone, a copy written into this worktree resolves all twelve links of the three live pages, including those that P2 and run 6 wrote.

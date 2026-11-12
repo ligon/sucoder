@@ -217,7 +217,9 @@ def materialize(checkout, branch, *, timeout=10):
             fd = os.open(staging / MARKER, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o444)
             with os.fdopen(fd, "w", encoding="utf-8") as stream:
                 stream.write(json.dumps(note, sort_keys=True) + "\n")
-            os.chmod(staging, 0o755 & ~mask)
+            # mkdtemp's 0700 becomes the mask's usual directory mode; keep a setgid bit
+            # inherited from a group-shared parent, as the subdirectories do.
+            os.chmod(staging, (0o755 & ~mask) | (os.stat(parent).st_mode & 0o2000))
             if marker is not None:
                 retired = parent / (".wiki-old-" + secrets.token_hex(6))
                 os.rename(destination, retired)

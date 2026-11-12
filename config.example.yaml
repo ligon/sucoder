@@ -22,6 +22,8 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #                                  # "" keeps dream/<run> candidates for a human merge
 #   inject: true                   # add that branch's index to every launch's context
 #   inject_bytes: 2048             # cut at a line; at most 16384
+#   checkout: true                 # read-only copy of the wiki at .sucoder/wiki, where
+#                                  # its project links resolve (local launches, publication)
 #   session_quiet_minutes: 30      # a session quiet this long, with no live launch, is finished
 
 # Explicit plan/run budgets are CLI options; bare-launch defaults use dream

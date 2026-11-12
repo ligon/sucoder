@@ -2578,6 +2578,7 @@ dream:
   memory_branch: sucoder/memory   # "" keeps candidate branches
   inject: true                    # add the memory index to each launch
   inject_bytes: 2048
+  checkout: true                  # keep a read-only copy of the wiki in the mirror
   session_quiet_minutes: 30       # sessions quieter than this count as finished
 #+end_example
 
@@ -2624,6 +2625,14 @@ Set =memory_branch: ""= to keep the earlier candidate branches, which wait for a
 Every agent launch in a mirror with a memory branch carries a =PROJECT MEMORY= block in its context: a caveat that the wiki can be stale, how to read a page with =git show sucoder/memory:.sucoder/wiki/topics/NAME.org=, and the index itself without drawers, cut at a line to =dream.inject_bytes= (default 2048, at most 16384).
 The block is read from the local mirror with one bounded git call; when the branch is absent or unreadable the launch proceeds without it.
 Set =inject: false= to launch without it.
+
+Wiki pages link into the project with ordinary Org =file:= links, written relative to the page as if the wiki sat at =.sucoder/wiki/= in the project (for example =file:../../../docs/attention.org= from a topic page).
+A wiki-only branch holds no project files, so SuCoder keeps a read-only copy of the branch's wiki at =.sucoder/wiki/= in the checkout, where those links resolve in Emacs, in a shell and in an agent's file tools.
+A local launch refreshes the copy in the mirror as the agent account before composing its context, and the =PROJECT MEMORY= block then points into it; a reviewed in-place dream refreshes it in the checkout it ran from.
+=sucoder dream checkout [PATH]= writes one in any checkout that has the memory branch; in your own clone, run =git fetch MIRROR sucoder/memory:sucoder/memory= first.
+The copy carries a marker naming the branch commit, is listed in the repository's local =info/exclude=, and is replaced whole when the branch moves, so edits made there are lost; a checkout that tracks files under =.sucoder/wiki/=, or holds a directory there that SuCoder did not write, is left alone and reported.
+Set =checkout: false= to stop the automatic copies; remote sessions never get one.
+A dream page may link any regular file of the project commit the dream inventoried, while citations still need admitted evidence; =sucoder dream read= lists the links that leave the wiki as project paths, each with whether that file exists at =HEAD=.
 See [[file:docs/dream/essay-alignment.org][the essay-alignment charter]].
 
 =sucoder dream plan= starts an agent-independent, checked-in companion wiki workflow by freezing explicitly selected local git files, passages, or Claude/Codex transcript prefixes into a private plan.

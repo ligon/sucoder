@@ -1,4 +1,4 @@
-#+TITLE: sucoder dream: essay alignment complete and first live generation published; integration awaits the human
+#+TITLE: sucoder dream: essay alignment S1-S5 complete and first live generation published; integration awaits the human
 #+DATE: 2026-11-12
 #+STATUS: COMPLETE
 #+AUTHOR: Sue
@@ -21,6 +21,12 @@ Nothing is pushed, nothing is merged to =main=, and the installed =/opt/sucoder=
   The human approved the two CRITICAL-impact changes (=validate_proposal=, =redact=).
   Run 6 published =371afd3= on =refs/heads/sucoder/memory= (topic =codex-hook-validation=); its claims were checked against its three sources.
 
+- =8c69f14=, =7797b3d=, =6c6d96b= :: S5, project links (charter section 3, the human's "go" of 2026-11-12).
+  The memory branch's wiki is copied, read-only, into =.sucoder/wiki/= of a checkout: at local launch through =run_agent=, after in-place publication, and by =sucoder dream checkout=.
+  Pages may link any regular file of the inventoried project commit.
+  The tracked P2 copy is gone from this branch; the memory branch holds it.
+  In this worktree the copy resolves all twelve links of the three live pages.
+
 A read-only check on this mirror's real sessions (no model calls, statistics only) rendered all three without error: 5.21, 1.91 and 6.97 MB raw became 447, 74 and 520 KB (4-9 percent); the running session was marked live and the others finished.
 
 The 50 known failures, environment-specific here and green in CI: =test_codex_state_runner= 39, =test_codex_state= 4, =test_direct_remote= 3, =test_codex_app_server= 2, =test_timer_lifecycle= 2.
@@ -36,7 +42,8 @@ The charter's four slices are implemented; nothing remains that this branch can 
 3. Deferred by the charter :: A staleness pass over pages whose cited sources changed; an organizer and pruning pass; Codex session discovery (S3b); a scheduler example for nightly dreams.
 4. Known limits :: Queued-command attachments are dropped when rendering, so a message delivered to a busy session is not visible in a window.
    The injected reading hint assumes the session's repository has the memory branch; node-local and remote clones may not.
-   Memory pages link into the project tree (=file:../../../docs/...=), which the wiki-only branch does not contain.
+   Remote and confined sessions get no wiki copy: their working clone is not the local mirror, so their block keeps the =git show= hint.
+   Your own clone needs =git fetch <mirror> sucoder/memory:sucoder/memory= and =sucoder dream checkout= to get working links.
    The author repeats a section's reference in most live runs; the repair fixes it at the cost of one call.
 
 * How to work here
