@@ -42,8 +42,9 @@ def explore(
     max_total_tokens: Optional[int] = typer.Option(None, "--max-total-tokens", min=1, help="Requested hard token ceiling; current native adapters reject it before provider work."),
     max_cost_usd: Optional[str] = typer.Option(None, "--max-cost-usd", help="Requested hard dollar ceiling; current native adapters reject it before provider work."),
     detach: bool = typer.Option(False, "--detach", help="Launch the durable job in the background and print its location and process ID."),
+    explore_project: bool = typer.Option(False, "--explore", help="Explore the committed project with open topic choice instead of dreaming over this mirror's sessions and notes."),
 ):
-    """Without a subcommand, let the agent investigate within this project."""
+    """Without a subcommand, dream over this mirror's finished sessions and agent notes (or, with --explore, the project)."""
     if ctx.invoked_subcommand is not None:
         supplied = [parameter.name for parameter in ctx.command.params
                     if parameter.name is not None and
@@ -56,7 +57,8 @@ def explore(
         max_total_seconds=max_total_seconds, max_total_calls=max_total_calls,
         reserve_seconds=reserve_seconds, reserve_calls=reserve_calls,
         max_discovery_calls=discovery_calls, max_discovery_bytes=discovery_bytes,
-        max_total_tokens=max_total_tokens, max_cost_usd=max_cost_usd)
+        max_total_tokens=max_total_tokens, max_cost_usd=max_cost_usd,
+        mode="project" if explore_project else None)
     overrides = {key: value for key, value in overrides.items() if value is not None}
     if detach:
         _data_command(ctx, "dream_job", _detach, ctx.obj["config_path"], job_path,

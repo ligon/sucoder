@@ -5,7 +5,8 @@ mirror_root: /var/tmp/coder-mirrors
 log_dir: /home/<your-username>/.sucoder/logs
 system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 
-# Bare `sucoder dream` explores the current committed project. Configure a
+# Bare `sucoder dream` dreams over this mirror's finished sessions and agent notes
+# (`--explore`: the committed project). Configure a
 # native model once; harness/model otherwise inherit agent_launcher selection.
 # The same optional block under mirrors.NAME overrides individual defaults.
 # dream:
@@ -21,6 +22,7 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #                                  # "" keeps dream/<run> candidates for a human merge
 #   inject: true                   # add that branch's index to every launch's context
 #   inject_bytes: 2048             # cut at a line; at most 16384
+#   session_quiet_minutes: 30      # a session quiet this long, with no live launch, is finished
 
 # Explicit plan/run budgets are CLI options; bare-launch defaults use dream
 # above. Native writer runs persist limits across restarts/--attempt changes.

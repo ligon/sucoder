@@ -13,7 +13,8 @@ import re
 import time
 import uuid
 
-from . import dream, dream_budget, dream_discover, dream_memory, dream_native, dream_roles, dream_run, dream_wiki
+from . import (attention, dream, dream_budget, dream_discover, dream_experience, dream_memory, dream_native,
+               dream_roles, dream_run, dream_view, dream_wiki)
 from .config import AgentLauncher, BranchPrefixes, DreamSettings, MirrorSettings, _parse_dream
 from .dream import DreamError, canonical, digest
 from .observation_process import Budget
@@ -21,6 +22,13 @@ from .observations import WorkspaceBinding
 
 
 CONTRACT = "exploratory-dream-job-v1"
+# The charter's experience purpose (docs/dream/essay-alignment.org, S4); no fixed salience rule.
+EXPERIENCE_PURPOSE = (
+    "Keep this project's agent memory correct and useful. Verify existing memory pages and agent notes against "
+    "what sessions actually did. Record what sessions learned that the repository does not already say: commands "
+    "and flags that worked, failed approaches and traps, decisions with their dates and who made them, and open "
+    "questions. Prefer correcting and pruning to adding.")
+MODES = ("experience", "project")
 
 
 def _read(fd, name):
@@ -79,13 +87,18 @@ def _job(path):
         if info.st_uid != os.geteuid() or info.st_mode & 0o077:
             raise DreamError("Dream job directory must be private and account-owned", 3)
         header = _read(fd, "job.json")
-        dream._object(header, ("contract", "job_id", "directory", "created_at", "project", "settings", "purpose", "budget_path"))
+        dream._object(header, ("contract", "job_id", "directory", "created_at", "project", "settings", "purpose", "budget_path"),
+                      ("mode",))
+        if header.get("mode", "project") not in MODES:
+            raise DreamError("Invalid frozen exploratory job mode", 3)
         if header["contract"] != CONTRACT or header["job_id"] != path.name or header["directory"] != str(path):
             raise DreamError("Exploratory job identity changed", 3)
         if _read(fd, "identity.json") != dict(sha256=digest(canonical(header))):
             raise DreamError("Frozen exploratory job settings changed", 3)
         settings = _parse_dream(header["settings"])
-        if asdict(settings) != header["settings"] or settings.harness not in ("codex", "claude") or not settings.model:
+        # Jobs frozen before later settings existed record fewer keys; compare what they recorded.
+        if ({k: v for k, v in asdict(settings).items() if k in header["settings"]} != header["settings"] or
+                settings.harness not in ("codex", "claude") or not settings.model):
             raise DreamError("Invalid frozen exploratory job settings", 3)
         prepared = _read(fd, "prepared.json")
         if prepared.get("job_id") != header["job_id"] or prepared.get("budget") != _budget(header):
@@ -101,7 +114,7 @@ def prepare(config, job_path=None, *, cwd=None, overrides=None, budget_path=None
         raise DreamError("--attempt must be between 1 and 1000000")
     if job_path is not None:
         with _job(job_path) as (_, path, header):
-            expected = dict(header["settings"], purpose=header["purpose"])
+            expected = dict(header["settings"], purpose=header["purpose"], mode=header.get("mode", "project"))
             if any(key not in expected or value != expected[key] for key, value in overrides.items()):
                 raise DreamError("Job settings are immutable; resume without changing its options", 3)
             if budget_path is not None and str(Path(budget_path).expanduser().absolute()) != header["budget_path"]:
@@ -110,7 +123,10 @@ def prepare(config, job_path=None, *, cwd=None, overrides=None, budget_path=None
     root, name, item, branch, commit = project(config, cwd)
     if not branch or not commit or branch.startswith("dream/"):
         raise DreamError("Exploratory launch requires a committed non-dream branch; select one before launch", 3)
-    purpose = overrides.pop("purpose", dream_wiki.PURPOSE)
+    mode = overrides.pop("mode", "experience")
+    if mode not in MODES:
+        raise DreamError("Dream mode must be experience or project")
+    purpose = overrides.pop("purpose", EXPERIENCE_PURPOSE if mode == "experience" else dream_wiki.PURPOSE)
     dream._text(purpose, "dream purpose")
     hard = {key: overrides.pop(key) for key in ("max_total_tokens", "max_cost_usd") if key in overrides}
     settings = _parse_dream(overrides, item.dream or config.dream)
@@ -153,7 +169,7 @@ def prepare(config, job_path=None, *, cwd=None, overrides=None, budget_path=None
             if memory_ref:
                 project_binding["memory_ref"] = memory_ref
             header = dict(contract=CONTRACT, job_id=job_id, directory=str(directory), created_at=time.time(),
-                project=project_binding, settings=frozen, purpose=purpose, budget_path=str(target))
+                project=project_binding, settings=frozen, purpose=purpose, budget_path=str(target), mode=mode)
             _store(fd, "job.json", header)
             _store(fd, "identity.json", dict(sha256=digest(canonical(header))))
             _store(fd, "prepared.json", dict(job_id=job_id, budget=budget.descriptor()))
@@ -183,7 +199,14 @@ def _base(source, header):
 def _discovery(config, fd, header, budget, *, attempt=1, transport=None, readonly=False):
     deadline = time.monotonic() + 30 if readonly else budget.deadline()
     source = _source(config, header, deadline)
-    inventory = dream_discover.Inventory(source, header["project"]["base_commit"])
+    sessions = None
+    if header.get("mode") == "experience":
+        if readonly:
+            # Replay uses the sessions pinned at discovery; a resumed session may have grown since.
+            sessions = dream._json(dream_run._read(fd, "inventory.json", dream_run.MAX_PLAN_BYTES)).get("sessions", [])
+        else:
+            sessions = _sessions(config, source, header)
+    inventory = dream_discover.Inventory(source, header["project"]["base_commit"], sessions=sessions)
     raw = canonical(inventory.manifest) + b"\n"
     if readonly:
         if dream_run._read(fd, "inventory.json", dream_run.MAX_PLAN_BYTES) != raw:
@@ -249,6 +272,12 @@ def _plan(config, fd, header, chosen, deadline):
             raise DreamError("Saved exploratory plan differs from the handoff intent", 3)
         for unit, proposed in zip(plan["units"], request["units"]):
             locator = proposed["locator"]
+            if proposed["kind"] == dream_view.KIND:
+                if (unit["kind"] != dream_view.KIND or unit["path"] != locator["path"] or
+                        unit["thread_id"] != locator["thread_id"] or
+                        [unit["raw"]["byte_start"], unit["raw"]["byte_end"]] != [locator["byte_start"], locator["byte_end"]]):
+                    raise DreamError("Saved plan evidence differs from the exploratory choice", 3)
+                continue
             raw = source.blob(source.entry(header["project"]["base_commit"], locator["path"]))
             lines = locator.get("lines", [1, raw.count(b"\n") + int(not raw.endswith(b"\n"))])
             if unit["path"] != locator["path"] or unit["commit"] != locator["commit"] or unit["lines"] != lines:
@@ -372,6 +401,17 @@ def _latest(config, cwd):
     if not found:
         raise DreamError("No exploratory dream job exists for this project", 3)
     return max(found)[2]
+
+
+def _live_sessions(config):
+    """Session IDs of running local agent launches (attention.scan_local_launches)."""
+    return {sid for _, _, sid in attention.scan_local_launches(agent_user=config.agent_user, agent_uid=os.getuid()) if sid}
+
+
+def _sessions(config, source, header):
+    memory_ref = header["project"].get("memory_ref")
+    return dream_experience.sessions(source, quiet_minutes=header["settings"].get("session_quiet_minutes", 30),
+        live=_live_sessions(config), memory_commit=dream_memory.tip(source, memory_ref) if memory_ref else None)
 
 
 def _inspect(config, fd, header, attempt):

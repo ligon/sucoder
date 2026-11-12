@@ -52,6 +52,18 @@ def consumed(source, memory_commit):
     return {key: sorted(value) for key, value in ranges.items()}
 
 
+def _complete(path, size):
+    """Bytes up to the last complete JSONL line within ``size`` (a write may be in flight)."""
+    with open(path, "rb") as stream:
+        for back in (65536, 1 << 20, size):
+            stream.seek(max(0, size - back))
+            tail = stream.read(min(back, size))
+            cut = tail.rfind(b"\n")
+            if cut >= 0:
+                return max(0, size - len(tail)) + cut + 1
+    return 0
+
+
 def sessions(source, *, home=None, quiet_minutes=30, live=(), memory_commit=None, now=None):
     """Finished Claude sessions of this mirror, newest first, with consumed ranges.
 
@@ -74,9 +86,12 @@ def sessions(source, *, home=None, quiet_minutes=30, live=(), memory_commit=None
             info = entry.stat()
             if not entry.is_file() or not info.st_size:
                 continue
+            pinned = _complete(entry, info.st_size)
+            if not pinned:
+                continue
             seen.add(entry.stem)
             state = ("live" if entry.stem in live else
                      "recent" if now - info.st_mtime < quiet_minutes * 60 else "finished")
-            found.append(dict(path=str(entry), thread_id=entry.stem, workspace=workspace, bytes=info.st_size,
+            found.append(dict(path=str(entry), thread_id=entry.stem, workspace=workspace, bytes=pinned,
                               modified=info.st_mtime, state=state, consumed=done.get(entry.stem, [])))
     return sorted(found, key=lambda item: (-item["modified"], item["thread_id"]))

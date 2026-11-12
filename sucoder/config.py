@@ -426,6 +426,7 @@ class DreamSettings:
     memory_branch: Optional[str] = "sucoder/memory"
     inject: bool = True
     inject_bytes: int = 2048
+    session_quiet_minutes: int = 30
 
 
 @dataclass

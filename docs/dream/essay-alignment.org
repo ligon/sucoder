@@ -1,7 +1,7 @@
 #+title: Dream charter amendment: aligning with "The components of agent memory"
 #+author: Sue
 #+date: 2026-11-12
-#+status: ACCEPTED 2026-11-12 -- S1, S2 and S3 implemented; S4 pending
+#+status: ACCEPTED 2026-11-12 -- S1-S4 implemented; deferred items in section 5
 #+options: toc:2 num:nil
 
 * 1. Aim and human dispositions
@@ -164,4 +164,10 @@ On 2026-11-12 the human accepted the charter with "go", taking the proposed answ
 - Session windows :: =sucoder/dream_view.py= implements =claude-view-v1=; block headers name the raw byte offset (=[@OFFSET]=) rather than a line number, because a window need not start at line one.
   Records without conversation text, including queued-command attachments, are dropped and counted in the header; delivery of a busy-session message through a queue is therefore not yet visible in a window.
   Receipt units carry the raw range and render digest, never the private path, which is how =dream_experience.consumed= finds what earlier generations admitted.
-- Inventory :: =sucoder/dream_experience.py= lists finished sessions from the project directories of the mirror and its registered worktrees; the quiet period is a parameter until S4 reads it from =dream.session_quiet_minutes=.
+- Inventory :: =sucoder/dream_experience.py= lists finished sessions from the project directories of the mirror and its registered worktrees, pinned at their last complete line; =dream.session_quiet_minutes= (default 30) sets the quiet period, and =attention.scan_local_launches= supplies live session IDs.
+- Experience mode :: Bare =sucoder dream= is now an experience job (=mode= in the job header); =--explore= is the earlier project mode, and a header without =mode= is project mode.
+  The explorer sees a virtual =@sessions= directory whose =read=, =search= and selections use raw byte offsets, snapped to complete records; sessions are pinned in the stored inventory, so an inspection replay reproduces its lookups after a resumed session grows.
+  Navigation lists the committed notes (=.sucoder/handoff.org=, =.sucoder/handoffs/*.org=, ledgers), and the experience brief and purpose follow section 3.
+- What the end-to-end test shows :: =tests/test_dream_experience.py= drives a job from the session inventory through a =claude-view= selection, authorship, review and in-place publication, then sees the consumed range on the next inventory.
+  Its fake author writes a fixed correction, so it establishes the plumbing, not that a real model makes the correction; that needs a live run, which remains deferred.
+- Header compatibility :: Jobs frozen before these settings record fewer keys; validation compares only the keys a job recorded.

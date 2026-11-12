@@ -2558,12 +2558,14 @@ overwrite.
 
 * Dream companion candidates with Codex and Claude
 
-=sucoder dream= explores the current committed Git project without a source catalog or a prescribed topic.
-The agent can navigate the whole project's regular text files through bounded paginated listings, reads and literal search, choosing connections, contradictions or questions worth investigating.
-It selects up to six exact evidence ranges (64 KiB total) for the existing wiki author/editor and independent reviewer.
-A later job can find new relationships in unchanged sources; ordinary explicit-plan receipt reuse remains available.
+=sucoder dream= dreams over this mirror's own experience: its finished agent sessions and the agents' notes (=.sucoder/handoff.org=, =.sucoder/handoffs/=, ledgers), with the committed project available for checking.
+Following [[file:docs/dream/essay-alignment.org][the essay-alignment charter]], its default purpose is to verify memory and notes against what sessions actually did, and to record what sessions learned that the repository does not already say.
+Sessions are the Claude transcripts in the project directories derived from the mirror path and its registered worktrees; nothing else in the home directory is searched.
+A session counts as finished when no live local launch uses it and its file has been quiet for =dream.session_quiet_minutes= (default 30); live and recent sessions are listed but never read or selected.
+The explorer reads sessions as rendered =claude-view= windows under a virtual =@sessions= directory, sees which raw byte ranges earlier dreams admitted, and selects up to six session windows or file ranges (64 KiB of rendered or UTF-8 bytes in total) for the existing wiki author/editor and independent reviewer.
+=--explore= keeps the earlier open exploration of the committed project, with agent-selected topics; a later job can find new relationships in unchanged sources, and ordinary explicit-plan receipt reuse remains available.
 Run it from a canonical checkout, mirror or project subdirectory: the job binds that checkout's committed HEAD and branch rather than silently using a stale configured mirror.
-Staged/unstaged/untracked files, symlink targets, submodule contents and private session directories are outside automatic admission.
+Staged/unstaged/untracked files, symlink targets and submodule contents are outside automatic admission, and Codex sessions are not yet discovered.
 
 Configure the native model once in =~/.sucoder/config.yaml=:
 
@@ -2576,6 +2578,7 @@ dream:
   memory_branch: sucoder/memory   # "" keeps candidate branches
   inject: true                    # add the memory index to each launch
   inject_bytes: 2048
+  session_quiet_minutes: 30       # sessions quieter than this count as finished
 #+end_example
 
 The optional =mirrors.NAME.dream= block overrides individual global defaults.
@@ -2588,6 +2591,7 @@ All discovery, author, reviewer and repair calls share the same durable job budg
 cd ~/Projects/SuCoder
 sucoder dream
 sucoder dream --detach --max-total-seconds 1800 --max-total-calls 30
+sucoder dream --explore
 sucoder dream status
 sucoder dream budget
 sucoder dream --job /PRIVATE/LOGS/dream-jobs/JOB_ID
