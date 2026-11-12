@@ -1,2 +1,0 @@
-#+TODO: TODO(t!) NEXT(n!) ACTIVE(a!) WAITING(w@/!) REVIEW(r@/!) | DONE(d!) MOOT(m@)
-#+STARTUP: logdone logdrawer

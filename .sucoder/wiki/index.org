@@ -1,9 +1,0 @@
-#+TITLE: SuCoder companion wiki
-
-* Transcript replies
-:PROPERTIES:
-:CUSTOM_ID: transcript-replies
-:END:
-[[file:topics/transcript-replies.org::#reply-contract][Reading transcript replies]] explains why delivery, queueing and assistant output must be distinguished, how the current reader interprets them, and where transcript identity comes from. It also records an unresolved difference between the investigation's tagged-reply recommendation and the implemented bare-reply fallback.
-
-The maintained starting points are the [[file:../../docs/reply-transcripts-evidence.org][reported investigation]] and [[file:../../sucoder/reply_probe.py][probe implementation]].
