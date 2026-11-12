@@ -7340,10 +7340,9 @@ If you find issues, describe each one clearly with the filename and specific con
         settings = getattr(ctx.settings, "dream", None) or getattr(ctx.config, "dream", None)
         if settings is None or not settings.memory_branch:
             return None
-        branch = settings.memory_branch
-        copy = self._memory_copy(ctx, branch) if getattr(settings, "checkout", False) and not ctx.is_remote else None
-        if not settings.inject:
+        if not (settings.inject or getattr(settings, "checkout", False)):
             return None
+        branch = settings.memory_branch
         mirror_path = ctx.mirror_path
         env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
         env.update(GIT_TERMINAL_PROMPT="0", GIT_OPTIONAL_LOCKS="0", GIT_NO_LAZY_FETCH="1")
@@ -7358,6 +7357,10 @@ If you find issues, describe each one clearly with the filename and specific con
             self.logger.debug("Dream memory index unavailable: %s", exc)
             return None
         if result.returncode != 0:
+            return None  # No memory branch or no index: nothing to copy or inject.
+        # Only a mirror that has memory pays for the copy (one agent-side process).
+        copy = self._memory_copy(ctx, branch) if getattr(settings, "checkout", False) and not ctx.is_remote else None
+        if not settings.inject:
             return None
         lines, skipping = [], False
         for line in result.stdout.decode("utf-8", errors="replace").splitlines():

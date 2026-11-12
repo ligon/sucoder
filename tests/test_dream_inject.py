@@ -162,3 +162,11 @@ def test_checkout_settings_are_validated():
     assert DreamSettings().checkout is True and _parse_dream(dict(checkout=False)).checkout is False
     with pytest.raises(ConfigError, match="checkout"):
         _parse_dream(dict(checkout="yes"))
+
+
+def test_a_mirror_without_memory_spawns_no_copy(mirror, monkeypatch):
+    # Launch tests read the agent command from run_agent's calls; mirrors without memory add none.
+    manager, ctx = mirror
+    calls = []
+    monkeypatch.setattr(manager.executor, "run_agent", lambda *args, **kwargs: calls.append(args))
+    assert manager._memory_block(ctx) is None and calls == []
