@@ -1,7 +1,7 @@
 #+title: Dream charter amendment: aligning with "The components of agent memory"
 #+author: Sue
 #+date: 2026-11-12
-#+status: ACCEPTED 2026-11-12 -- S1-S4 implemented; first live generation published (E1); deferred items in section 5
+#+status: ACCEPTED 2026-11-12 -- S1-S4 implemented; first live generation published (E1); S5 proposed; deferred items in section 5
 #+options: toc:2 num:nil
 
 * 1. Aim and human dispositions
@@ -112,6 +112,37 @@ Both constraints carry over unchanged.
 - Authoring :: The existing editor pipeline receives the selected windows, the related prior pages and the notes, and writes or corrects pages; the reviewer checks against the same admitted evidence.
 - Secrets :: The briefs forbid copying credentials, as the cookbook's do, and rendering redacts high-confidence token patterns before any model sees the text.
 
+** S5. Project links
+:PROPERTIES:
+:CUSTOM_ID: project-links
+:END:
+
+Wiki pages link into the project with ordinary Org =file:= links, written relative to the page as if the wiki sat at =<project>/.sucoder/wiki/=; run 6 of [[file:runs/sucoder-e1.org][E1]] wrote =file:../../../docs/attention.org=.
+Since S1 the wiki lives on a wiki-only branch, so no tree holds both the pages and the files they link to, and such links resolve nowhere.
+The human wants them to work (2026-11-12), with a read-only copy and links to any project file (section 6).
+
+- Read-only copy :: =dream_memory.materialize= extracts the memory branch's =.sucoder/wiki/= into a checkout's =.sucoder/wiki/=, from which every =file:= link resolves in Emacs, in a shell and in an agent's file tools alike.
+  Files are written read-only, and a marker file records the ref and commit they came from.
+  The copy replaces only a directory that carries that marker: if the checkout tracks files under =.sucoder/wiki/= (legacy candidate mode), or holds an unmarked directory there, it is left alone and the reason is reported.
+  A new copy is written beside the old one and swapped in by rename; =/.sucoder/wiki/= is added once to the repository's =info/exclude=, so the copy never shows as untracked.
+  The branch layout is unchanged; an editable worktree would need the wiki at the branch root and was not chosen.
+- When :: At launch, before the prelude is composed, best-effort and bounded like S2, so a failure omits the copy and never delays or fails a launch.
+  After an in-place publication, in the checkout the dream ran from.
+  On demand with =sucoder dream checkout=, in any checkout that has the memory branch, for example the human's after =git fetch <mirror> sucoder/memory:sucoder/memory=.
+  =dream.checkout= (default true) disables the launch and publication copies.
+- Readers :: When the copy is current, the injected block names =.sucoder/wiki/topics/NAME.org= in the checkout and says that its links resolve there; otherwise it keeps the =git show= form.
+  =sucoder dream read= reports each =file:= link that leaves the wiki as a project path (=docs/attention.org=).
+- Link targets :: A =file:= link outside the wiki is valid when it names an admitted source, a link the page already carried, or a regular file present in the project commit the dream inventoried.
+  The plan records that commit and the digest of its sorted path list; the snapshot stores the list, so a replay checks the same set.
+  Citations still need admitted evidence: a link to an unadmitted file is navigation, not support, and the reviewer cannot check what it says.
+  A refused link is named in the error, so a repair can fix it.
+  Plans without a project commit (explicit =sucoder dream plan= catalogs) keep the admitted-source rule.
+  The role briefs already ask for links to maintained definitions and are unchanged, so receipts' brief digests still hold.
+- One copy of record :: =coder/dream-essay= still tracks the P2 wiki under =.sucoder/wiki/=, byte for byte the memory branch's seed (tree =355c065=).
+  Merged as it stands, =main= would hold a frozen wiki exactly where the copy belongs, so S5 removes it from the branch; the memory branch keeps it.
+- Versions :: A link names the live file; the receipt pins the cited commit and blob.
+  A link whose file later changes or disappears is what the deferred staleness pass would catch; anchors such as =::#custom-id= drift less than line numbers.
+
 * 4. Slices and definition of done
 :PROPERTIES:
 :CUSTOM_ID: slices
@@ -121,6 +152,11 @@ Both constraints carry over unchanged.
 2. S2 top layer :: Prelude block with cap and truncation tests in =tests/test_mirror.py=, absent-branch and disabled cases.
 3. S3 inventory :: Claude discovery, quiet and live exclusion, suffix locators and rendering, with fixtures drawn from the existing reply-probe shapes.
 4. S4 experience dream :: Default purpose, session selection, analyzer brief and an end-to-end fake-native job that corrects a seeded wrong note, after the essay's Mt. Moon example.
+5. S5 project links :: The read-only copy with marker, tracked/unmarked guards, atomic swap and exclude entry.
+   It is made at launch, after publication and by =sucoder dream checkout=, with launch-path tests that it never fails a launch.
+   The injected block and =dream read= point into the copy, and link validation accepts existing project files and names refused links.
+   The tracked P2 copy is removed from the branch.
+   An end-to-end fake-native job links an unadmitted project file and finds the link resolving in the materialized copy.
 
 Each slice updates =README.org= and =config.example.yaml= for its settings, adds targeted tests, and shows no new failures against the 50-failure baseline of =main=.
 S1 and S2 together already close the loop for the existing wiki; S3 and S4 change what it learns from.
@@ -146,6 +182,8 @@ On 2026-11-12 the human accepted the charter with "go", taking the proposed answ
    It reaches =~ligon/Projects/SuCoder= like any branch, so a documented warning applies; SuCoder never pushes it, and a pre-push hook in the human's repository remains the human's choice.
 2. Redaction :: Rendering redacts high-confidence token patterns in the rendered view, in addition to the briefs' rule against copying credentials, and quotes are checked against that redacted view (S3).
 3. Cap :: The injected index defaults to 2 KiB (S2).
+4. Project links :: On 2026-11-12, after E1, the human asked "I think we /want/ the wiki to be able to link to files in the project tree; what needs to change?"
+   It chose a "Read-only copy" over an editable worktree, and "Any file in the project" over admitted sources only (S5).
 
 * 7. Implementation notes
 :PROPERTIES:
