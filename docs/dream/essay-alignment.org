@@ -1,0 +1,152 @@
+#+title: Dream charter amendment: aligning with "The components of agent memory"
+#+author: Sue
+#+date: 2026-11-12
+#+status: ACCEPTED 2026-11-12 -- S1 implemented; S2-S4 pending
+#+options: toc:2 num:nil
+
+* 1. Aim and human dispositions
+:PROPERTIES:
+:CUSTOM_ID: aim
+:END:
+
+The [[https://www.anthropic.com/research/components-of-agent-memory][essay]] treats dreaming as a background pass over an agent's own experience that corrects and reorganizes the memory later sessions read.
+The current bare =sucoder dream= instead explores committed project files, publishes a candidate branch that waits for a human merge, and is never read by a later session.
+On 2026-11-12 the human chose four changes that move the design toward the essay's aims:
+
+- Input :: This mirror's finished agent sessions plus agent notes, admitted automatically, with no other home-directory search.
+  This reverses the earlier recorded rule "do not admit private transcripts" for this mirror's own sessions only.
+- Purpose :: Verify and distill experience by default.
+  Check notes against what sessions actually did, and record what sessions learned that the repository does not already say.
+- Top layer :: The launcher injects a capped index of the memory into every session of a mirror that has one.
+- Integration :: Accepted dreams commit in place to one dedicated memory branch; git history is the audit log and review follows publication.
+
+The [[file:../dream-ledger.org::#prompts][ledger's startup-context entry]] already names =_compose_context_prelude= as the integration point and forbids injecting the whole wiki or rewriting project policy.
+The [[file:../dream-ledger.org::#transcript-discovery][transcript-discovery entry]] asks discovery to reuse the existing identity machinery and to leave ambiguous association ambiguous.
+Both constraints carry over unchanged.
+
+* 2. What stays
+:PROPERTIES:
+:CUSTOM_ID: invariants
+:END:
+
+- One writer per page and one coordinator that publishes.
+  The essay's contract experiment supports this (41 of 57 facts survived a shared table; 57 of 57 survived one writer per page).
+- An independent reviewer and mechanical Org, link and quote validation before anything is published.
+- Native roles run without tools under Landlock, and all admitted text is untrusted data.
+- Durable job budgets, no automatic retry of an unknown provider outcome, and rejection of caps that cannot be enforced.
+- No invented human decisions; conflicts go to Talk with both sources.
+- Dreaming never edits project files, handoffs or instructions.
+  A note that experience contradicts is recorded in memory as a conflict; it is not rewritten.
+
+* 3. Design changes
+:PROPERTIES:
+:CUSTOM_ID: design
+:END:
+
+** S1. Memory-branch generations
+:PROPERTIES:
+:CUSTOM_ID: memory-branch
+:END:
+
+- New setting =dream.memory_branch=, default =sucoder/memory=; an empty value keeps the legacy candidate-branch behavior.
+- The memory branch is an orphan history whose tree holds only =.sucoder/wiki/=.
+  Its first use seeds a root commit from the =.sucoder/wiki/= subtree at the launch commit when one exists, which migrates the accepted P2 wiki, and otherwise from an empty tree.
+- A plan whose =integration_ref= is the memory branch publishes in place.
+  The generation's parent is the plan's base, and the same =update-ref= transaction that checks the base moves the memory branch to the new commit.
+  No =dream/<run>= ref is created; a concurrent generation fails the check and the job retains its work for a re-plan.
+- Publication in place keeps the existing gate: a candidate that still fails mechanical or independent review after the last repair raises before publication (=sucoder/dream_wiki.py:309-311=), so nothing reaches the memory branch.
+- =dream status= reports a generation as integrated from the memory branch, and =dream read= defaults to the memory branch when it exists.
+- Explicit plans against a code ref keep the existing candidate path and its tests unchanged.
+- Reuse: =dream.build_plan=, =dream._prior_wiki= and the link validator already work on a wiki-only tree, because source links are checked against admitted sources rather than the tree (=sucoder/dream_wiki.py:184=) and the repository UUID comes from =.sucoder/wiki/sources.json= (=sucoder/dream.py:185=).
+  The change is confined to job preparation, the publish transaction (=sucoder/dream_run.py:410=), the run record and status.
+
+** S2. Injected top layer
+:PROPERTIES:
+:CUSTOM_ID: top-layer
+:END:
+
+- =_compose_context_prelude= (=sucoder/mirror.py:7079=) gains a =PROJECT MEMORY= block when the mirror has the memory branch with =.sucoder/wiki/index.org=.
+- The block says what the memory is (dreamed from earlier sessions, reviewed by a model, possibly stale), how to read a page (=git show sucoder/memory:.sucoder/wiki/topics/NAME.org=), and that a fact the task depends on should be re-checked.
+- It then carries the index text, cut at a line boundary to =dream.inject_bytes= (default 2048) with an explicit truncation note.
+  The essay's Claude Code example loads 200 lines or 25 KB; 2 KiB keeps the block well under that while the wiki is small.
+- =dream.inject= (default true) disables it; a mirror without the branch gets no block.
+  The prelude is composed from the local mirror, so remote sessions add no remote git call.
+
+** S3. Experience inventory
+:PROPERTIES:
+:CUSTOM_ID: inventory
+:END:
+
+- Claude sessions :: =*.jsonl= files in the project directories that =claude_transcript_path= (=sucoder/attention.py:603=) derives from the mirror path and from its registered git worktrees.
+  Today that is one directory with three sessions, 10.7 MB.
+  A session counts as finished when no live local launch uses that directory (=scan_local_launches=) and the file has been quiet for =dream.session_quiet_minutes= (default 30).
+- Codex sessions :: Deferred to S3b.
+  This host has no =~/.codex/sessions=; managed rollouts live in SuCoder's node-local state, and the ledger's =managed_codex_threads= needs job records to associate a rollout with this mirror.
+- Agent notes :: Committed =.sucoder/handoff.org=, =.sucoder/handoffs/*.org= and =docs/*ledger*= files, admitted as ordinary git units at the launch commit.
+- Consumption :: Receipts on the memory branch already record each transcript unit's source identity, byte range and digest, and =dream_prefix= already recognizes an accepted prefix of an appended transcript.
+  The inventory offers only the unconsumed suffix of each session, which requires a byte-start in transcript locators (today they admit a prefix from byte 0).
+- Rendering :: A new compact view derived from =dream_transcript.normalize=, which already keeps line and byte ranges.
+  User and assistant text are kept whole; tool calls and results are cut to a head and tail with an explicit omission marker naming the JSONL lines; thinking and metadata records are dropped.
+  Measured on this mirror's largest session: 6.97 MB raw holds about 92 KB of user and assistant text, 0.8 MB of tool results, 0.4 MB of tool calls, 0.76 MB of thinking and 2.2 MB of metadata records.
+  Quotes are validated against the rendered view, whose digest is recorded with the raw range it came from.
+
+** S4. Experience dream
+:PROPERTIES:
+:CUSTOM_ID: experience
+:END:
+
+- Default purpose :: "Keep this project's agent memory correct and useful. Verify existing memory pages and agent notes against what sessions actually did. Record what sessions learned that the repository does not already say: commands and flags that worked, failed approaches and traps, decisions with their dates and who made them, and open questions. Prefer correcting and pruning to adding."
+  No fixed salience rule is added; the essay found that "record only failures" removed most of the benefit.
+- Selection :: The explorer chooses which sessions and notes to dream over from the inventory instead of choosing code topics.
+  =--explore= keeps today's open exploration of the committed project.
+- Analysis :: One analyzer call per rendered chunk returns memory items (fact, correction, trap, decision, open question), each with cited rendered lines and a date.
+  This extends the notes-mode extractor contract (=sucoder/dream_roles.py=) with a new brief rather than adding a role family.
+- Authoring :: The existing editor pipeline receives the items, their cited excerpts, the related prior pages and the notes, and writes or corrects pages; the reviewer checks against the cited excerpts.
+- Secrets :: The briefs forbid copying credentials, as the cookbook's do, and rendering redacts high-confidence token patterns before any model sees the text.
+
+* 4. Slices and definition of done
+:PROPERTIES:
+:CUSTOM_ID: slices
+:END:
+
+1. S1 memory branch :: In-place publication, seeding, status and read defaults, with fake-native tests for seed, publish, concurrent-generation failure, rejected-review no-op and legacy-path regression.
+2. S2 top layer :: Prelude block with cap and truncation tests in =tests/test_mirror.py=, absent-branch and disabled cases.
+3. S3 inventory :: Claude discovery, quiet and live exclusion, suffix locators and rendering, with fixtures drawn from the existing reply-probe shapes.
+4. S4 experience dream :: Default purpose, session selection, analyzer brief and an end-to-end fake-native job that corrects a seeded wrong note, after the essay's Mt. Moon example.
+
+Each slice updates =README.org= and =config.example.yaml= for its settings, adds targeted tests, and shows no new failures against the 50-failure baseline of =main=.
+S1 and S2 together already close the loop for the existing wiki; S3 and S4 change what it learns from.
+
+* 5. Deferred
+:PROPERTIES:
+:CUSTOM_ID: deferred
+:END:
+
+- A staleness pass that re-verifies pages whose cited sources changed since their receipt.
+- An organizer pass that merges and prunes across pages, and page retirement.
+- Codex session discovery (S3b) and a cron or scheduler example for nightly dreams.
+- Live verification with a paid model; all new tests use the fake native transport.
+
+* 6. Dispositions
+:PROPERTIES:
+:CUSTOM_ID: dispositions
+:END:
+
+On 2026-11-12 the human accepted the charter with "go", taking the proposed answers to its three open questions.
+
+1. Pushing :: The memory branch holds explanations distilled from private transcripts.
+   It reaches =~ligon/Projects/SuCoder= like any branch, so a documented warning applies; SuCoder never pushes it, and a pre-push hook in the human's repository remains the human's choice.
+2. Redaction :: Rendering redacts high-confidence token patterns in the rendered view, in addition to the briefs' rule against copying credentials, and quotes are checked against that redacted view (S3).
+3. Cap :: The injected index defaults to 2 KiB (S2).
+
+* 7. Implementation notes
+:PROPERTIES:
+:CUSTOM_ID: notes
+:END:
+
+- Replay after publication :: Every run first rebuilds its plan against the current tip of the integration ref.
+  For a memory plan that tip moves when the plan's own generation is published, so a replay after an interruption would be refused.
+  =_own_generation= (=sucoder/dream_run.py=) recognizes a tip that descends from one of the plan's own generations, and revalidation then pins the frozen base (=pinned_base= in =dream.build_plan=).
+  A tip moved by another dream is not recognized, and the plan is refused before any model call, as for candidates.
+- Status :: A generation reports =published= while the memory branch descends from it, including after later generations or a revert commit, and =detached= if the branch is reset behind it.
+- Legacy mode :: An empty =dream.memory_branch= restores candidate branches; plans against code refs never carry the =publication= key, so their identities and bytes are unchanged.
