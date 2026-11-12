@@ -179,7 +179,8 @@ class Inventory:
             count = len(lines)
             locator = dict(repository=self.source.name, commit=self.commit, path=path)
             if start or end:
-                if not 1 <= start <= end <= count:
+                end = min(end, count)  # An end past the last line selects through the end of the file.
+                if not 1 <= start <= end:
                     raise DreamError("Selected lines fall outside the pinned file")
                 locator["lines"] = [start, end]
                 offsets = [0] + [i + 1 for i, byte in enumerate(raw) if byte == 10]
@@ -226,8 +227,10 @@ class Inventory:
             offsets = [0] + [i + 1 for i, byte in enumerate(raw) if byte == 10]
             count = len(offsets) - (1 if raw.endswith(b"\n") else 0)
             start = request["start"] or 1
-            end = request["end"] or min(count, start + 39)
-            if not 1 <= start <= end <= count:
+            # An end past the last line reads to the end of the file: live explorers ask for
+            # lines 1-220 of files they have not yet seen, and a refusal costs a discovery call.
+            end = min(request["end"] or start + 39, count)
+            if not 1 <= start <= end:
                 raise DreamError("Requested lines fall outside the pinned file")
             lo, hi = offsets[start - 1], offsets[end] if end < len(offsets) else len(raw)
             text = raw[lo:hi].decode()
@@ -367,15 +370,14 @@ class Explorer(dream_roles.Coordinator):
                 variation=self.header["job_id"], navigation=navigation, history=history))
             if result["action"] == "finish":
                 try:
-                    if result["topic"] and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", result["topic"]):
-                        raise DreamError("Use a simple topic name")
+                    topic = topic_name(result["topic"])
                     if not result["rationale"].strip():
                         raise DreamError("Explain the exploratory selection or no-selection decision")
                     units = self.inventory.selected(result["selections"])
                 except (DreamError, UnicodeError) as exc:
                     observation = dict(state="invalid_selection", error=str(exc))
                 else:
-                    return dict(units=units, topic=result["topic"] or "exploration", rationale=result["rationale"],
+                    return dict(units=units, topic=topic or "exploration", rationale=result["rationale"],
                         questions=result["questions"], history=history, assignments=self.traces)
             else:
                 try:
@@ -392,3 +394,18 @@ class Explorer(dream_roles.Coordinator):
             used += len(encoded)
             history.append(dict(action=result, observation=observation))
         self.budget.fail("exploration allowance exhausted; author/reviewer capacity remains reserved")
+
+
+TOPIC = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
+
+
+def topic_name(text):
+    """A simple wiki topic name from the explorer's topic.
+
+    Live explorers write phrases ("Confined launch verification and local merge");
+    refusing one on the last discovery call lost a sound selection, so a phrase
+    becomes a lowercase hyphenated name and a simple name is kept as given.
+    """
+    if not text or TOPIC.fullmatch(text):
+        return text
+    return re.sub(r"[^a-z0-9_-]+", "-", text.lower()).strip("-_")[:128].rstrip("-_")

@@ -49,6 +49,29 @@ def test_git_line_ranges_preserve_lf_semantics_crlf_and_multibyte_evidence():
     assert selected[0]["locator"]["commit"] == "pinned"
 
 
+def test_line_ends_past_the_file_clamp_but_starts_past_it_do_not():
+    raw = b"".join(b"line %d\n" % n for n in range(1, 110))  # 109 lines, as in the live run.
+    inventory = discover.Inventory(Source({"handoff.org": raw}), "pinned")
+    result = inventory.lookup(request("read", "handoff.org", start=100, end=220), 131072)
+    assert (result["start"], result["end"], result["total_lines"]) == (100, 109, 109)
+    assert result["text"].encode() == raw[raw.index(b"line 100\n"):]
+    assert inventory.selected([dict(path="handoff.org", start=1, end=220)])[0]["locator"]["lines"] == [1, 109]
+    with pytest.raises(dream.DreamError, match="outside the pinned file"):
+        inventory.lookup(request("read", "handoff.org", start=110, end=220), 131072)
+    with pytest.raises(dream.DreamError, match="outside the pinned file"):
+        inventory.selected([dict(path="handoff.org", start=110, end=220)])
+
+
+@pytest.mark.parametrize("given, expected", [
+    ("reply-evidence", "reply-evidence"), ("Reply_Evidence", "Reply_Evidence"), ("", ""),
+    ("Confined launch verification and local merge", "confined-launch-verification-and-local-merge"),
+    ("  Dream: budgets & replay (v2)!  ", "dream-budgets-replay-v2"), ("___", ""), ("x" * 200, "x" * 128),
+])
+def test_explorer_topic_phrases_become_simple_names(given, expected):
+    assert discover.topic_name(given) == expected
+    assert not expected or discover.TOPIC.fullmatch(expected)
+
+
 def test_search_advances_past_oversized_blobs_and_records_omissions():
     inventory = discover.Inventory(Source({"a-large.txt": b"x" * (2 * 1024 * 1024 + 1),
         "b-small.txt": b"needle\n"}), "pinned")
