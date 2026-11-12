@@ -134,10 +134,11 @@ class Inventory:
                 if size > cap - 1024:
                     hi = block["offset"]
                     break
-            if hi <= lo:
-                hi = next(o for o in starts if o > lo)
+        # A window always holds at least its first record. One 143 KB attachment record
+        # in the first live runs made every end short of its own end an empty window,
+        # and the explorer had no way to learn where that record ended.
         if hi <= lo:
-            raise DreamError("Session window is empty; give a raw end after the start")
+            hi = next(o for o in starts if o > lo)
         text, _ = dream_view.render(raw[lo:hi], row["thread_id"], lo)
         return lo, hi, text
 
@@ -299,7 +300,8 @@ class Inventory:
                           thread_id=row["thread_id"], byte_start=lo, byte_end=hi, session_bytes=row["bytes"],
                           next_offset=hi, text=text)
             if len(canonical(result)) > cap:
-                return dict(state="range_too_large", path=path, allowance=cap, note="Request a smaller raw byte range.")
+                return dict(state="range_too_large", path=path, allowance=cap, byte_start=lo, next_offset=hi,
+                            note="Request a smaller raw byte range, or start at next_offset to skip this one.")
             return result
         if action == "search":
             if not request["query"] or request["start"] or request["end"]:

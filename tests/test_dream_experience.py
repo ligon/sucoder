@@ -163,6 +163,27 @@ def test_session_windows_snap_to_records_and_respect_the_pinned_size(workspace, 
         inv.selected([dict(path="@sessions/" + SID, start=0, end=0)])
 
 
+def test_a_record_longer_than_the_requested_window_is_read_whole(workspace, tmp_path):
+    # The first live runs met a 143 KB attachment record: every end short of its own end gave an empty window.
+    attachment = json.dumps(dict(type="attachment", sessionId=SID, attachment=dict(content="x" * 60000))).encode() + b"\n"
+    path = dream_experience.project_dir(tmp_path, workspace[0]) / (SID + ".jsonl")
+    path.parent.mkdir(parents=True)
+    path.write_bytes(line("user", "before") + attachment + line("assistant", [dict(type="text", text=TRUTH + " detail" * 300)]))
+    os.utime(path, (time.time() - 3600, time.time() - 3600))
+    inv, rows = inventory(workspace, tmp_path)
+    lo = len(line("user", "before"))
+    hi = lo + len(attachment)
+    window = inv.lookup(dict(action="read", path="@sessions/" + SID, offset=0, query="", start=lo, end=lo + 1000), 16384)
+    assert (window["byte_start"], window["byte_end"], window["next_offset"]) == (lo, hi, hi)
+    assert "1 records without conversation text omitted" in window["text"]
+    after = inv.lookup(dict(action="read", path="@sessions/" + SID, offset=0, query="", start=window["next_offset"],
+                            end=rows[0]["bytes"]), 16384)
+    assert TRUTH in after["text"]
+    assert inv.selected([dict(path="@sessions/" + SID, start=lo, end=lo + 1000)])[0]["locator"]["byte_end"] == hi
+    big = inv.lookup(dict(action="read", path="@sessions/" + SID, offset=0, query="", start=0, end=rows[0]["bytes"]), 1024)
+    assert big["state"] == "range_too_large" and big["next_offset"] == rows[0]["bytes"]
+
+
 @pytest.mark.parametrize("state, kwargs", [("live", dict(live={SID})), ("recent", dict(quiet_minutes=120))])
 def test_live_or_recent_sessions_are_listed_but_never_read_or_selected(workspace, tmp_path, state, kwargs):
     write_session(tmp_path, workspace[0])
