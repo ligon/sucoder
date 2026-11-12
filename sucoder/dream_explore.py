@@ -13,7 +13,7 @@ import re
 import time
 import uuid
 
-from . import dream, dream_budget, dream_discover, dream_native, dream_roles, dream_run, dream_wiki
+from . import dream, dream_budget, dream_discover, dream_memory, dream_native, dream_roles, dream_run, dream_wiki
 from .config import AgentLauncher, BranchPrefixes, DreamSettings, MirrorSettings, _parse_dream
 from .dream import DreamError, canonical, digest
 from .observation_process import Budget
@@ -123,6 +123,9 @@ def prepare(config, job_path=None, *, cwd=None, overrides=None, budget_path=None
         raise DreamError("Configure dream.model (or agent_launcher.model), or supply --model; dreaming never prompts")
     dream._text(model, "configured native model")
     settings = replace(settings, harness=harness, model=model)
+    memory_ref = dream_memory.branch_ref(settings.memory_branch) if settings.memory_branch else None
+    if memory_ref == "refs/heads/" + branch:
+        raise DreamError("dream.memory_branch must differ from the launch branch", 3)
     frozen = asdict(settings)
     # Capability rejection precedes job creation, native probes and all calls.
     dream_budget.limits(dict(limits=dict(max_elapsed_seconds=settings.max_total_seconds,
@@ -146,9 +149,11 @@ def prepare(config, job_path=None, *, cwd=None, overrides=None, budget_path=None
             repositories={name: dict(path=str(root))})
         with dream_budget.open_job(plan, directory, target, supplied) as budget:
             frozen.update({key: budget.header["limits"][value] for key, value in policy_keys.items()})
+            project_binding = dict(name=name, path=str(root), base_ref="refs/heads/" + branch, base_commit=commit)
+            if memory_ref:
+                project_binding["memory_ref"] = memory_ref
             header = dict(contract=CONTRACT, job_id=job_id, directory=str(directory), created_at=time.time(),
-                project=dict(name=name, path=str(root), base_ref="refs/heads/" + branch, base_commit=commit),
-                settings=frozen, purpose=purpose, budget_path=str(target))
+                project=project_binding, settings=frozen, purpose=purpose, budget_path=str(target))
             _store(fd, "job.json", header)
             _store(fd, "identity.json", dict(sha256=digest(canonical(header))))
             _store(fd, "prepared.json", dict(job_id=job_id, budget=budget.descriptor()))
@@ -166,6 +171,10 @@ def _source(config, header, deadline):
 
 def _base(source, header):
     project = header["project"]
+    if project.get("memory_ref"):
+        # The memory branch, not the launch branch, is the publication base;
+        # evidence stays pinned to base_commit and publish checks the memory tip.
+        return
     if (source.git("symbolic-ref", "--quiet", project["base_ref"], missing=True) is not None or
             source.commit(project["base_ref"]) != project["base_commit"]):
         raise DreamError("Project publication base changed during exploration; preserve this job and start a new plan", 3)
@@ -199,7 +208,8 @@ def _discovery(config, fd, header, budget, *, attempt=1, transport=None, readonl
 def _plan(config, fd, header, chosen, deadline):
     effective = _binding(config, header)
     source = _source(config, header, deadline)
-    request = dict(schema_version=1, repository=source.name, integration_ref=header["project"]["base_ref"],
+    memory_ref = header["project"].get("memory_ref")
+    request = dict(schema_version=1, repository=source.name, integration_ref=memory_ref or header["project"]["base_ref"],
         units=chosen["outcome"]["units"], limits=dict(max_elapsed_seconds=header["settings"]["max_total_seconds"]))
     topic = chosen["outcome"]["topic"]
     maintenance = ("Exploratory job " + header["job_id"] + ": " + _line(chosen["outcome"]["rationale"]))[:4096]
@@ -216,16 +226,25 @@ def _plan(config, fd, header, chosen, deadline):
         if existing:
             path = existing[0]
         else:
+            if memory_ref:
+                # First use seeds the orphan memory branch from the launch commit's wiki.
+                dream_memory.ensure(source, memory_ref, header["project"]["base_commit"],
+                                    Path(header["directory"]), deadline)
             _store(fd, "sources.json", request)
             value = dream.create_plan(effective, source.name, Path(header["directory"]) / "sources.json",
-                request["integration_ref"], maintenance=maintenance, topic=topic)
+                request["integration_ref"], maintenance=maintenance, topic=topic,
+                publication="in_place" if memory_ref else None)
             path = Path(value["plan_path"])
         pointer = dict(plan_path=str(path))
         _store(fd, "plan-pointer.json", pointer)
     path = Path(pointer["plan_path"])
     with dream_run._directory(effective, path) as (plan_fd, plan_directory):
         plan = dream_run._load(plan_fd, plan_directory.name, source.name)
-        if (plan["base_commit"] != header["project"]["base_commit"] or plan["maintenance"] != maintenance or
+        if memory_ref:
+            bound = plan["integration_ref"] == memory_ref and dream_run.in_place_plan(plan)
+        else:
+            bound = plan["base_commit"] == header["project"]["base_commit"]
+        if (not bound or plan["maintenance"] != maintenance or
                 plan["topic"] != topic or len(plan["units"]) != len(request["units"])):
             raise DreamError("Saved exploratory plan differs from the handoff intent", 3)
         for unit, proposed in zip(plan["units"], request["units"]):

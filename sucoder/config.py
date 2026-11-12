@@ -409,6 +409,9 @@ class DreamSettings:
 
     Harness/model may inherit the existing launcher selection at execution.
     These limits cover discovery and the subsequent reviewed wiki candidate.
+    ``memory_branch`` names the wiki-only branch that reviewed dreams update
+    in place (docs/dream/essay-alignment.org, S1); None keeps the legacy
+    candidate branches that wait for a human merge.
     """
 
     harness: Optional[str] = None
@@ -419,6 +422,7 @@ class DreamSettings:
     reserve_calls: int = 3
     max_discovery_calls: int = 8
     max_discovery_bytes: int = 131072
+    memory_branch: Optional[str] = "sucoder/memory"
 
 
 @dataclass
@@ -867,8 +871,18 @@ def _parse_dream(
         if not isinstance(model, str) or not model.strip():
             raise ConfigError(f"`{label}.model` must be a non-empty string or null.")
         values["model"] = model.strip()
+    memory = values["memory_branch"]
+    if memory is not None:
+        if not isinstance(memory, str):
+            raise ConfigError(f"`{label}.memory_branch` must be a branch name, or empty/null to disable.")
+        memory = memory.strip()
+        if memory and (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,127}", memory) or
+                       memory.startswith("dream/") or ".." in memory or "//" in memory or
+                       memory.endswith(("/", ".", ".lock"))):
+            raise ConfigError(f"`{label}.memory_branch` must be a simple branch name outside dream/.")
+        values["memory_branch"] = memory or None
     for key in fields:
-        if key in ("harness", "model"):
+        if key in ("harness", "model", "memory_branch"):
             continue
         minimum = 0 if key.startswith("reserve_") else 1
         if type(values[key]) is not int or values[key] < minimum:

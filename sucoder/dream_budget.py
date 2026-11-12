@@ -426,10 +426,10 @@ def completed(config, mirror, plan_path, fd, job, harness, model, attempt, purpo
             result = _read(fd, "native-" + spec["run_id"] + "-run.json")
         except FileNotFoundError:
             continue
-        if result.get("state") not in (("already_integrated",) if reused else ("candidate_ready", "unchanged")):
+        if result.get("state") not in (("already_integrated",) if reused else ("candidate_ready", "published", "unchanged")):
             continue
         checked = dream_run.status(config, mirror, plan_path, spec["run_id"])
-        if checked["state"] not in ("candidate_ready", "already_integrated", "unchanged"):
+        if checked["state"] not in ("candidate_ready", "published", "already_integrated", "unchanged"):
             raise DreamError("Completed budgeted result needs reconciliation; inspect status", 3)
         return result
     return None

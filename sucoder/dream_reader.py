@@ -54,6 +54,11 @@ class View:
     def __init__(self, config, mirror, base="HEAD", deadline=None):
         self.deadline = deadline or time.monotonic() + 30
         self.source = dream.GitSource(config, mirror, self.deadline)
+        if base is None:
+            # No explicit revision: read the memory branch when it exists (essay-alignment S1).
+            from . import dream_memory
+            memory = dream_memory.configured(config, mirror)
+            base = memory if memory and dream_memory.tip(self.source, memory) else "HEAD"
         self.commit = self.source.commit(base)
         self.mirror = mirror
 

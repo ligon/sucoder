@@ -101,7 +101,8 @@ def _plan_shape(plan):
     try:
         dream._object(plan, ("schema_version", "operation", "state", "repository", "repository_uuid",
             "integration_ref", "base_commit", "repositories", "units", "prior_wiki", "maintenance", "topic",
-            "limits", "work", "coverage", "usage", "execution", "candidate_commit", "candidate_ref", "integration", "plan_id"))
+            "limits", "work", "coverage", "usage", "execution", "candidate_commit", "candidate_ref", "integration", "plan_id"),
+            ("publication",))
         if type(plan["schema_version"]) is not int or plan["schema_version"] != 1:
             raise DreamError("Unsupported frozen plan schema")
         if plan["operation"] != "dream_plan" or plan["state"] != "planned":
@@ -109,6 +110,8 @@ def _plan_shape(plan):
         ref = dream._text(plan["integration_ref"], "integration_ref")
         if not ref.startswith(("refs/heads/", "refs/remotes/")) or ref.startswith("refs/heads/dream/"):
             raise DreamError("Invalid frozen integration ref")
+        if "publication" in plan and (plan["publication"] != "in_place" or not ref.startswith("refs/heads/")):
+            raise DreamError("Invalid frozen publication mode")
         limits = dream.Limits.parse(plan["limits"])
         if not isinstance(plan["units"], list) or not 1 <= len(plan["units"]) <= limits.max_units:
             raise DreamError("Invalid frozen unit selection")
@@ -165,7 +168,31 @@ def _plan_shape(plan):
         raise DreamError("Invalid frozen plan schema: " + str(exc)) from None
 
 
-def _validate(config, mirror, plan, deadline):
+def _own_generation(config, mirror, plan, fd, deadline):
+    """True when an in-place plan's memory branch has moved on to (or past) one of
+    this plan's own published generations, so revalidation pins the frozen base.
+    Another dream's move is not ours: revalidation then fails as for candidates."""
+    if not in_place_plan(plan):
+        return False
+    own = []
+    for name in os.listdir(fd):
+        if re.fullmatch(r"candidate-[0-9a-f]{64}\.txt", name):
+            own.append(_read(fd, name, 128).decode().strip())
+    if not own:
+        return False
+    source = dream.GitSource(config, mirror, deadline)
+    tip = source.commit(plan["integration_ref"])
+    if tip == plan["base_commit"]:
+        return False
+    for commit in own:
+        if (re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit) and
+                source.git("show", "-s", "--format=%P", commit, missing=True) == (plan["base_commit"] + "\n").encode() and
+                source.git("merge-base", "--is-ancestor", commit, tip, missing=True) is not None):
+            return True
+    return False
+
+
+def _validate(config, mirror, plan, deadline, *, pinned=False):
     """Reconstruct the planner's full contract, reusing admission (ledger 2, 6)."""
     try:
         request = dict(schema_version=1, repository=mirror, integration_ref=plan["integration_ref"],
@@ -174,7 +201,8 @@ def _validate(config, mirror, plan, deadline):
                                commit=u["commit"], path=u["path"], lines=u["lines"])) for u in plan["units"]])
         current = dream.build_plan(config, mirror, request, plan["integration_ref"],
             maintenance=plan["maintenance"], topic=plan["topic"], inspection_deadline=deadline,
-            prior_policy=plan["prior_wiki"].get("selection", {}).get("contract", "all-active-v1"))
+            prior_policy=plan["prior_wiki"].get("selection", {}).get("contract", "all-active-v1"),
+            publication=plan.get("publication"), pinned_base=plan["base_commit"] if pinned else None)
         # A provisional UUID is a frozen proposal, not a newly accepted registry.
         # Rebuilding the plan generates a fresh proposal; retain only the old UUID.
         for name, repository in current["repositories"].items():
@@ -212,7 +240,8 @@ def _sources(config, plan, deadline):
 
 
 def _snapshot(config, mirror, plan, fd, deadline):
-    _validate(config, mirror, plan, deadline)
+    pinned = _own_generation(config, mirror, plan, fd, deadline)
+    _validate(config, mirror, plan, deadline, pinned=pinned)
     sources = _sources(config, plan, deadline)
     records = []
     for unit in plan["units"]:
@@ -242,7 +271,7 @@ def _snapshot(config, mirror, plan, fd, deadline):
         _store(fd, "prior-" + item["sha256"] + ".org", raw)
     for source in sources.values():
         source.check_binding()
-    if sources[mirror].commit(plan["integration_ref"]) != plan["base_commit"]:
+    if not pinned and sources[mirror].commit(plan["integration_ref"]) != plan["base_commit"]:
         raise DreamError("Integration ref changed while snapshotting; re-plan", 3)
     result = dict(schema_version=1, operation="dream_snapshot", plan_id=plan["plan_id"],
                   state="snapshotted", coverage=records, usage=plan["usage"],
@@ -414,7 +443,8 @@ def publish(plan, fd, directory, sources, deadline, path, content, receipt, inde
     if len(canonical(receipt)) + len(content.encode()) > plan["limits"]["max_proposal_bytes"]:
         raise DreamError("Fixture proposals exceed max_proposal_bytes", 3)
     run_id = receipt["run_id"]
-    ref = "refs/heads/dream/" + run_id
+    in_place = in_place_plan(plan)
+    ref = plan["integration_ref"] if in_place else "refs/heads/dream/" + run_id
     previous = {item["path"]: item["blob"] for item in plan["prior_wiki"]["files"]}
     receipt_path = ".sucoder/wiki/receipts/" + run_id + ".json"
     if (wiki_files is None and path in previous) or receipt_path in previous:
@@ -473,8 +503,12 @@ def publish(plan, fd, directory, sources, deadline, path, content, receipt, inde
         try:
             commit = _read(fd, commit_name, 128).decode().strip()
         except FileNotFoundError:
-            message = ("Dream candidate " + run_id +
-                       "\n\nRequires ordinary review and integration.\n")
+            if in_place:
+                message = ("Dream memory generation " + run_id + "\n\nReviewed by the dream coordinator and published "
+                           "in place to " + ref + ".\nPlan " + plan["plan_id"] + "; receipt " + receipt_path + ".\n")
+            else:
+                message = ("Dream candidate " + run_id +
+                           "\n\nRequires ordinary review and integration.\n")
             commit = _git_write(source, private_index, ["commit-tree", tree, "-p", plan["base_commit"], "-F", "-"], deadline, message.encode())
             _store(fd, commit_name, (commit + "\n").encode())
         if (not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit) or
@@ -486,18 +520,45 @@ def publish(plan, fd, directory, sources, deadline, path, content, receipt, inde
                 source.git("symbolic-ref", "--quiet", plan["integration_ref"], missing=True) is not None):
             raise DreamError("Candidate and integration refs must not be symbolic", 3)
         existing = source.git("rev-parse", "--verify", ref, missing=True)
-        if existing is not None and existing.decode().strip() != commit:
-            raise DreamError("Candidate ref already exists with different content", 3)
-        action = "create" if existing is None else "verify"
-        transaction = ("start\nverify " + plan["integration_ref"] + " " + plan["base_commit"] +
-                       "\n" + action + " " + ref + " " + commit + "\nprepare\ncommit\n")
-        _git_write(source, private_index, ["update-ref", "--no-deref", "--stdin"], deadline, transaction.encode())
+        existing = existing.decode().strip() if existing is not None else None
+        if in_place:
+            # The memory branch moves from the frozen base to this generation in
+            # one checked update; a replay after publication finds it already there.
+            if existing == commit or (existing is not None and source.git(
+                    "merge-base", "--is-ancestor", commit, existing, missing=True) is not None):
+                transaction = None  # Already published, possibly with later generations on top.
+            elif existing != plan["base_commit"]:
+                raise DreamError("Memory branch moved since planning; the reviewed generation is retained "
+                                 "privately; re-plan against the new memory tip", 3)
+            else:
+                transaction = ("start\nupdate " + ref + " " + commit + " " + plan["base_commit"] +
+                               "\nprepare\ncommit\n")
+        else:
+            if existing is not None and existing != commit:
+                raise DreamError("Candidate ref already exists with different content", 3)
+            action = "create" if existing is None else "verify"
+            transaction = ("start\nverify " + plan["integration_ref"] + " " + plan["base_commit"] +
+                           "\n" + action + " " + ref + " " + commit + "\nprepare\ncommit\n")
+        if transaction is not None:
+            _git_write(source, private_index, ["update-ref", "--no-deref", "--stdin"], deadline, transaction.encode())
     result = _run_result(plan, receipt, commit)
     _store(fd, result_name, canonical(result) + b"\n")
     return result
 
 
+def in_place_plan(plan):
+    """A plan frozen to update its wiki-only memory branch (essay-alignment S1)."""
+    return plan.get("publication") == "in_place"
+
+
 def _run_result(plan, receipt, commit):
+    if in_place_plan(plan):
+        return dict(schema_version=1, operation="dream_run", run_id=receipt["run_id"], plan_id=plan["plan_id"],
+            state="published", harness=receipt.get("harness", "fixture"), fidelity=receipt["contract"],
+            base_commit=plan["base_commit"], candidate_commit=commit, candidate_ref=None,
+            memory_ref=plan["integration_ref"], coverage=receipt["coverage"], usage=receipt["usage"],
+            integration=dict(state="integrated", evidence=dict(integration_commit=commit)),
+            **({key: receipt[key] for key in ("model", "native_version")} if "harness" in receipt else {}))
     return dict(schema_version=1, operation="dream_run", run_id=receipt["run_id"], plan_id=plan["plan_id"],
         state="candidate_ready", harness=receipt.get("harness", "fixture"), fidelity=receipt["contract"],
         base_commit=plan["base_commit"], candidate_commit=commit,
@@ -566,6 +627,15 @@ def status(config, mirror, plan_path, run_id=None):
             if canonical(recorded) != canonical(run):
                 raise DreamError("Stored run record does not match its frozen role plan")
         source = _sources(config, plan, deadline)[mirror]
+        if in_place_plan(plan):
+            # A generation stays published while the memory branch descends
+            # from it; later generations and reverts are new commits on top.
+            memory = source.commit(plan["integration_ref"])
+            contained = source.git("merge-base", "--is-ancestor", commit, memory, missing=True) is not None
+            source.check_binding()
+            return dict(run, operation="dream_status", state="published" if contained else "detached",
+                        integration=dict(state="integrated", evidence=dict(integration_commit=memory))
+                        if contained else dict(state="not_integrated", evidence=None))
         base = source.commit(plan["integration_ref"])
         receipt_path = ".sucoder/wiki/receipts/" + expected["run_id"] + ".json"
         oid = source.entry(base, receipt_path)

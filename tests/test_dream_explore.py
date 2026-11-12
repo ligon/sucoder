@@ -92,7 +92,9 @@ def test_canonical_subdirectory_uses_exact_head_preserves_dirty_state_and_replay
         git(repo, "symbolic-ref", "HEAD"), git(repo, "rev-parse", "HEAD"))
     native = ExploringTransport()
     result = explore.start(config, cwd=subdir, overrides=options(harness), transport=native)
-    assert result["state"] == "candidate_ready"
+    assert result["state"] == "published" and result["candidate_ref"] is None
+    assert git(repo, "rev-parse", "refs/heads/sucoder/memory") == result["candidate_commit"]
+    assert not [r for r in git(repo, "for-each-ref", "--format=%(refname)").split() if r.startswith("refs/heads/dream/")]
     assert result["project"]["path"] == str(repo) and result["project"]["base_commit"] == commit
     assert [task["role"] for task in native.calls] == ["explorer"] * 4 + ["author", "reviewer"]
     assert before == (git(repo, "status", "--porcelain"), (repo / ".git/index").read_bytes(),
@@ -117,7 +119,7 @@ def test_canonical_subdirectory_uses_exact_head_preserves_dirty_state_and_replay
     changed = replace(config, log_dir=repo.parent / "different-logs", dream=DreamSettings(model="wrong-model"))
     assert explore.start(changed, job) == result
     checked = explore.status(changed, job)
-    assert checked["state"] == "candidate_ready" and checked["budget"]["state"] == "budget_exhausted"
+    assert checked["state"] == "published" and checked["budget"]["state"] == "budget_exhausted"
     assert checked["budget"]["reserved_calls"] == 6 and len(native.calls) == 6
 
 
@@ -149,7 +151,7 @@ def test_new_job_reexplores_accepted_unchanged_sources_and_still_reviews_noop(wo
     planned(workspace)
     repo, _, config, _ = workspace
     first = explore.start(config, cwd=repo, overrides=options(), transport=ExploringTransport())
-    git(repo, "merge", "--ff-only", first["candidate_commit"])
+    assert first["state"] == "published"  # In place: no human merge stands between the two jobs.
     native = ExploringTransport(editor=NoopTransport())
     second = explore.start(config, cwd=repo, overrides=options(), transport=native)
     assert second["job_id"] != first["job_id"]
@@ -157,6 +159,7 @@ def test_new_job_reexplores_accepted_unchanged_sources_and_still_reviews_noop(wo
     assert [task["role"] for task in native.calls] == ["explorer"] * 4 + ["author", "reviewer"]
     first_plan, second_plan = [json.loads(Path(value["plan_path"]).read_bytes()) for value in (first, second)]
     assert [u["sha256"] for u in first_plan["units"]] == [u["sha256"] for u in second_plan["units"]]
+    assert second_plan["base_commit"] == first["candidate_commit"]
     assert first_plan["maintenance"] != second_plan["maintenance"]
     assert explore.status(config, cwd=repo)["job_id"] == second["job_id"]
 
@@ -239,7 +242,8 @@ def test_unknown_provider_outcome_keeps_its_reservation_without_automatic_retry(
 def test_moved_publication_base_during_discovery_stops_before_editor(workspace):
     planned(workspace)
     repo, _, config, _ = workspace
-    prepared = explore.prepare(config, cwd=repo, overrides=options())
+    # Legacy candidate mode: the launch branch is the publication base.
+    prepared = explore.prepare(config, cwd=repo, overrides=options(memory_branch=""))
     native = ExploringTransport(on_finish=lambda: git(repo, "commit", "--allow-empty", "-qm", "Concurrent human commit"))
     job = Path(prepared["job_path"])
     with pytest.raises(dream.DreamError, match="publication base changed"):
@@ -247,6 +251,19 @@ def test_moved_publication_base_during_discovery_stops_before_editor(workspace):
     assert [task["role"] for task in native.calls] == ["explorer"] * 4
     assert not list(job.glob("dream/*/plan.json"))
     assert explore.status(config, job)["budget"]["reserved_calls"] == 4
+    assert "refs/heads/sucoder/memory" not in git(repo, "for-each-ref", "--format=%(refname)").split()
+
+
+def test_a_launch_branch_commit_during_discovery_does_not_stop_a_memory_dream(workspace):
+    planned(workspace)
+    repo, _, config, _ = workspace
+    launch = git(repo, "rev-parse", "HEAD")
+    native = ExploringTransport(on_finish=lambda: git(repo, "commit", "--allow-empty", "-qm", "Concurrent human commit"))
+    result = explore.start(config, cwd=repo, overrides=options(), transport=native)
+    assert result["state"] == "published" and result["project"]["base_commit"] == launch
+    plan = json.loads(Path(result["plan_path"]).read_bytes())
+    assert all(u["commit"] == launch for u in plan["units"])  # Evidence stays pinned to the launch commit.
+    assert git(repo, "rev-parse", "HEAD") != launch
 
 
 @pytest.mark.parametrize("stage", ["plan-pointer.json", "result-000001.json"])
@@ -282,6 +299,6 @@ def test_handoff_interruption_recovers_the_exact_plan_and_published_result(works
     else:
         result = explore.run(config, job, transport=native)
         assert len(native.calls) == 6
-    assert result["state"] == "candidate_ready" and result["plan_path"] == str(paths[0])
+    assert result["state"] == "published" and result["plan_path"] == str(paths[0])
     assert list(job.glob("dream/*/plan.json")) == paths and paths[0].read_bytes() == frozen
     assert explore.status(config, job)["budget"]["reserved_calls"] == 6

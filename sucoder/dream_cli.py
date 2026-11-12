@@ -205,7 +205,7 @@ def read(
     archives: bool = typer.Option(False, "--archives", help="Read one archive entry; requires topic and target."),
     target: Optional[str] = typer.Option(None, "--target", help="Specific CUSTOM_ID to retrieve."),
     max_bytes: Optional[int] = typer.Option(None, "--max-bytes", min=1, help="Explicit UTF-8 allowance; defaults to 2 KiB orientation or 12 KiB topic."),
-    base: str = typer.Option("HEAD", "--base", help="Revision/ref to read without checkout."),
+    base: Optional[str] = typer.Option(None, "--base", help="Revision/ref to read without checkout; default: the memory branch if it exists, else HEAD."),
 ):
     """Read a pinned wiki view; ordinary reads omit LOGBOOK and archives."""
     _data_command(ctx, "dream_read", dream_reader.read, mirror, topic, archives, target, max_bytes, base)
@@ -234,7 +234,7 @@ def ask(
     plan_path: Path = typer.Option(..., "--plan", help="Explicit admitted plan with frozen source snapshots."),
     harness: str = typer.Option(..., "--harness", help="Native codex or claude."),
     model: str = typer.Option(..., "--model", help="Explicit model; transmits admitted reader context to its provider."),
-    base: str = typer.Option("HEAD", "--base", help="Pinned wiki revision or integration ref."),
+    base: Optional[str] = typer.Option(None, "--base", help="Pinned wiki revision or integration ref; default: the memory branch if it exists, else HEAD."),
     source_only: bool = typer.Option(False, "--source-only", help="Use the identical evidence interface without wiki access."),
     wiki_only: bool = typer.Option(False, "--wiki-only", help="Read only the companion and specific archives; disable original-source tools."),
     attempt: int = typer.Option(1, "--attempt", min=1, help="Explicit attempt; uncertain native outcomes are never silently retried."),

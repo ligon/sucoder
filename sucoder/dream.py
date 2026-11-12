@@ -295,8 +295,17 @@ def _prior_wiki(source, base, limits, *, topic=None, units=(), policy="all-activ
     return result
 
 
-def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, inspection_deadline=None, prior_policy="bounded-prior-v1"):
-    """Freeze selections, never imply inference or shared completion."""
+def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, inspection_deadline=None,
+               prior_policy="bounded-prior-v1", publication=None, pinned_base=None):
+    """Freeze selections, never imply inference or shared completion.
+
+    ``publication="in_place"`` (essay-alignment S1) records that a reviewed
+    result advances ``base`` itself, the wiki-only memory branch, instead of
+    creating a candidate ref; the key is absent from candidate plans.
+    ``pinned_base`` lets revalidation of such a plan rebuild against its frozen
+    base after the branch has moved on to the plan's own generation; the
+    caller establishes that, and the base must still be an ancestor.
+    """
     from . import dream_transcript
     _object(request, ("schema_version", "repository", "integration_ref", "units"), ("limits",))
     if type(request["schema_version"]) is not int or request["schema_version"] != SCHEMA_VERSION:
@@ -306,6 +315,8 @@ def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, i
     _text(base, "base")
     if base != request["integration_ref"] or not base.startswith(("refs/heads/", "refs/remotes/")) or base.startswith("refs/heads/dream/"):
         raise DreamError("--base must match a full non-dream integration_ref under refs/heads/ or refs/remotes/")
+    if publication not in (None, "in_place") or (publication and not base.startswith("refs/heads/")):
+        raise DreamError("In-place publication requires a local memory branch under refs/heads/")
     if (maintenance is None) != (topic is None):
         raise DreamError("--maintenance and --topic must be supplied together")
     if maintenance is not None:
@@ -340,6 +351,13 @@ def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, i
     if target.git("symbolic-ref", "--quiet", base, missing=True) is not None:
         raise DreamError("The designated integration ref must not be symbolic")
     base_commit = target.commit(base)
+    if pinned_base is not None:
+        if not publication or target.git("merge-base", "--is-ancestor", pinned_base, base_commit, missing=True) is None:
+            raise DreamError("A pinned base must be an ancestor of the in-place memory branch", 3)
+        base_commit = pinned_base
+    if publication:
+        from . import dream_memory
+        dream_memory.check_tree(target, base_commit)
     identity = _repository_uuid(target, base_commit)
     sources = {mirror: target}
     identities = {mirror: identity}
@@ -364,9 +382,9 @@ def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, i
         raise DreamError("Prior context and proposal allowance leave no consolidation space for briefs/metadata")
     for source in sources.values():
         source.check_binding()
-    if target.commit(base) != base_commit:
+    if pinned_base is None and target.commit(base) != base_commit:
         raise DreamError("Integration ref changed during planning; re-plan", 3)
-    return dict(schema_version=SCHEMA_VERSION, operation="dream_plan", state="planned",
+    plan = dict(schema_version=SCHEMA_VERSION, operation="dream_plan", state="planned",
                 repository=mirror, repository_uuid=identity["repository_uuid"],
                 integration_ref=base, base_commit=base_commit,
                 repositories={name: dict(path=str(source.path), **identities[name]) for name, source in sources.items()},
@@ -380,6 +398,9 @@ def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, i
                 execution=dict(available=False, reason="Planning performs no inference; dream run checks native execution capabilities"),
                 candidate_commit=None, candidate_ref=None,
                 integration=dict(state="not_integrated", evidence=None))
+    if publication:
+        plan["publication"] = publication
+    return plan
 
 
 def _open_private_directory(path):
@@ -395,8 +416,14 @@ def _open_private_directory(path):
     return fd
 
 
-def create_plan(config, mirror, sources, base, *, maintenance=None, topic=None):
+def create_plan(config, mirror, sources, base, *, maintenance=None, topic=None, publication=None):
+    """``publication=None`` derives in-place publication from the mirror's
+    configured memory branch, so an explicit plan against it behaves like a
+    bare dream; any other base keeps candidate publication."""
     try:
+        if publication is None:
+            from . import dream_memory
+            publication = "in_place" if base == dream_memory.configured(config, mirror) else None
         catalog = os.open(Path(sources), os.O_RDONLY | os.O_NONBLOCK)
         with os.fdopen(catalog, "rb") as stream:
             if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
@@ -404,7 +431,8 @@ def create_plan(config, mirror, sources, base, *, maintenance=None, topic=None):
             data = stream.read(MAX_CATALOG_BYTES + 1)
         if len(data) > MAX_CATALOG_BYTES:
             raise DreamError("Source catalog exceeds its byte allowance")
-        plan = build_plan(config, mirror, _json(data), base, maintenance=maintenance, topic=topic)
+        plan = build_plan(config, mirror, _json(data), base, maintenance=maintenance, topic=topic,
+                          publication=publication)
         plan_id = digest(canonical(plan))
         plan["plan_id"] = plan_id
         root = (config.log_dir or Path("~/.sucoder/logs")).expanduser().resolve() / "dream"

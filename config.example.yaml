@@ -17,6 +17,8 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #   reserve_calls: 3
 #   max_discovery_calls: 8         # also leaves one author call beyond closeout
 #   max_discovery_bytes: 131072    # bounded navigation delivery; selected evidence <= 64 KiB
+#   memory_branch: sucoder/memory  # wiki-only branch reviewed dreams update in place;
+#                                  # "" keeps dream/<run> candidates for a human merge
 
 # Explicit plan/run budgets are CLI options; bare-launch defaults use dream
 # above. Native writer runs persist limits across restarts/--attempt changes.
