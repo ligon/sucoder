@@ -2925,6 +2925,44 @@ class MirrorManager:
         )
         return match_target(row, {name: remote}, [name]) == name
 
+    def _refuse_pin_over_live_job(
+        self, ctx: MirrorContext, pinned_node: Optional[str], job_id: int, state: str,
+    ) -> None:
+        """Refuse to reuse a live job that is not on the ``--node`` asked for.
+
+        A mirror runs one confined job at a time, so ``collaborate --node``
+        over a live job can neither submit beside it nor quietly attach to
+        a job somewhere else -- the second is the silent drop this guards
+        against.  A job already on the pinned node is the one asked for and
+        is reused.  The node comes from the scheduler, not the session
+        record, which a job adopted by name does not carry; a PENDING job
+        (no node yet) or a failed query cannot show the node, and refuses.
+        """
+        if not pinned_node:
+            return
+        node = ""
+        try:
+            result = self.executor.run_agent(
+                ["squeue", "--job", str(job_id), "--noheader",
+                 "-o", self._NODE_POLL_FORMAT],
+                check=False, capture_output=True, show_progress=False,
+            )
+            if result.returncode == 0:
+                node = (result.stdout.strip().split("|") + ["", ""])[1].strip()
+        except Exception:  # noqa: BLE001 -- an unknown node refuses below
+            node = ""
+        if node == pinned_node:
+            return
+        target = f"-T {self.target_name} " if self.target_name else ""
+        where = f"on {node}" if node else "node not known"
+        raise MirrorError(
+            f"--node {pinned_node}: mirror {ctx.settings.name} already has live "
+            f"confined SLURM job {job_id} ({state}, {where}).  A mirror runs one "
+            "confined job at a time, so it was neither reused nor replaced.  "
+            f"Attach to it with `sucoder {target}attach {ctx.settings.name}`, or "
+            f"`sucoder {target}release {ctx.settings.name}` and rerun with --node."
+        )
+
     def _reuse_confined_job(
         self, ctx: MirrorContext, job_id: int, state: str, session_name: str,
         socket: str, detached: bool, *, selection: Optional[str] = None,
@@ -3174,6 +3212,10 @@ class MirrorManager:
             )
             if result.returncode == 0:
                 return True
+            # Reuse the quiet scheduler probe (confined-launch ledger 2/4):
+            # a failed transport is uncertainty, not evidence of a dead job.
+            if self._confined_job_state_quiet(job_id) is None:
+                return False
             if attempt == 0:
                 # Only now is there a wait to explain: on the reuse path the
                 # session is usually already up and the first probe answers.
@@ -3337,6 +3379,10 @@ class MirrorManager:
         assert ctx.settings.remote is not None and ctx.settings.remote.slurm is not None
         slurm = ctx.settings.remote.slurm
         session_name, socket = confined_tmux_target(ctx.settings.name)
+        # ``collaborate --node``: the job must run on this node.  It rides
+        # on the executor (cli._build_executor) because the session record's
+        # compute_node is the *last* job's node, not a request.
+        pinned_node = getattr(self.executor, "confined_nodelist", None) or None
 
         # Reuse-probe: never submit a second job while one is live.
         sess = RemoteSession.load(ctx.settings.name, target_name=self.target_name)
@@ -3353,6 +3399,7 @@ class MirrorManager:
                     "Reusing live confined SLURM job %s (%s) for mirror %s.",
                     sess.slurm_job_id, state, ctx.settings.name,
                 )
+                self._refuse_pin_over_live_job(ctx, pinned_node, sess.slurm_job_id, state)
                 return self._reuse_confined_job(
                     ctx, sess.slurm_job_id, state, session_name, socket, detached,
                     selection=selection,
@@ -3402,6 +3449,7 @@ class MirrorManager:
             sess.slurm_job_id = job_id
             sess.service_launch = None  # Adopted job's mode is discovered from tmux.
             sess.save()
+            self._refuse_pin_over_live_job(ctx, pinned_node, job_id, state)
             return self._reuse_confined_job(
                 ctx, job_id, state, session_name, socket, detached,
                 selection=selection,
@@ -3426,6 +3474,14 @@ class MirrorManager:
         script_path = f"{cache_dir}/job-{safe}.sh"
         log_path = f"{cache_dir}/job-{safe}-%j.out"
 
+        # Exclusive creation prevents concurrent launches from overwriting a
+        # queued job's command (confined-launch ledger 3/4).
+        pane_path = f"{cache_dir}/pane-{safe}-{secrets.token_hex(16)}.sh"
+        pane_script = "#!/bin/bash\n" + "".join(
+            f"export {shlex.quote(k)}={shlex.quote(str(v))}\n"
+            for k, v in (env or {}).items()
+        ) + f"exec {windowed_cmd}\n"
+
         mirror_path = self._resolve_remote_path(ctx)
         timer_path = f"{cache_dir}/slurm-timer-{safe}-{secrets.token_hex(8)}.sh"
         # Local-disk tiering (docs/local-disk-tiering.org): the executor
@@ -3435,7 +3491,7 @@ class MirrorManager:
         prepare_path = f"{cache_dir}/local-tier-{safe}.sh" if local_disk_root else None
         script = self._build_batch_script(
             tmux_session=session_name, socket=socket,
-            mirror_path=mirror_path, agent_cmd_str=windowed_cmd, env=env,
+            mirror_path=mirror_path, agent_cmd_str=f"bash {shlex.quote(pane_path)}",
             timer_path=timer_path, prepare_path=prepare_path,
             local_disk_root=local_disk_root, mirror_token=safe,
             window_name=ctx.settings.name,
@@ -3508,13 +3564,29 @@ class MirrorManager:
                 local_disk_root, safe,
             )
 
+        # Keep the full wrapped command off tmux's bounded message, while
+        # retaining the existing login shell and inherited cwd/environment.
+        self.executor.run_agent(
+            ["sh", "-c", 'umask 077 && set -C && cat > "$1"',
+             "sucoder-pane-script", pane_path],
+            input=pane_script, check=True, capture_output=True,
+        )
+
         # Submit.  check=False so a transport drop AFTER the remote sbatch
         # created the job (rc 255) is reported as a MirrorError with a
         # recovery hint rather than an uncaught CommandError traceback that
         # hides a possible leak.
+        if pinned_node:
+            # No fallback to another node, unlike the unconfined salloc
+            # path: the node was asked for by name, so a busy one leaves
+            # the job queued there and the poll below says why.
+            self.logger.info(
+                "Submitting the confined job to node %s (sbatch --nodelist).",
+                pinned_node,
+            )
         sbatch_argv = _build_sbatch_command(
             slurm, job_name=session_name, log_path=log_path,
-            script_path=script_path,
+            script_path=script_path, nodelist=pinned_node,
         )
         result = self.executor.run_agent(
             sbatch_argv, check=False, capture_output=True,
@@ -3595,7 +3667,19 @@ class MirrorManager:
             ),
         ):
             if self._confined_job_state_quiet(job_id) is None:
-                raise MirrorError(self._confined_terminal_message(job_id))
+                try:
+                    log = self.executor.run_agent(
+                        ["tail", "-n", "40", job_log], check=False,
+                        capture_output=True, show_progress=False,
+                    )
+                    detail = log.stdout.strip() if log.returncode == 0 else ""
+                except Exception:  # noqa: BLE001 -- diagnostics must not mask failure
+                    detail = ""
+                raise MirrorError(
+                    self._confined_terminal_message(job_id)
+                    + f"\nJob log: {job_log}"
+                    + (f"\n--- job log ---\n{detail}" if detail else "")
+                )
             pane = self._confined_capture_pane(job_id, session_name, socket)
             raise MirrorError(
                 f"Confined SLURM job {job_id} is RUNNING on {node} but its "

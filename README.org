@@ -1409,6 +1409,15 @@ sucoder -T savio attach --node n0047.savio3
 The =--node= option sets a preferred node for the SLURM allocation.
 If that node is unavailable, SLURM may fall back to another node.
 
+On a =confined= target, =collaborate --node= submits the batch job to
+that node (=sbatch --nodelist=) and does not fall back: if the node
+lacks free cores, the job waits there and =sucoder= reports Slurm's
+pending reason.  It allocates a new job beside whatever else you run on
+the node; it does not adopt a job you started yourself.  If the mirror
+already has a live confined job, =--node= reuses it only when it is on
+the named node, and otherwise refuses and names the job, so you can
+=attach= to it or =release= it first.
+
 **** Sharing a reserved node
 
 An exclusive partition hands out the whole node, but a single agent
@@ -1424,6 +1433,8 @@ sucoder -T savio collaborate Bar --node n0020.savio3  # shares it
 Each mirror gets its own tmux session (=sucoder-Foo=, =sucoder-Bar=)
 and its own clone, so the two agents run side by side on one node.
 Adoption only ever attaches to *your own* RUNNING jobs on that node.
+It applies to unconfined targets; a confined target pins a new job
+instead (above).
 
 Because the sessions share one SLURM job, =sucoder release= is
 job-aware: releasing a mirror while siblings still hold the job
