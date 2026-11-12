@@ -89,6 +89,13 @@ Both constraints carry over unchanged.
   User and assistant text are kept whole; tool calls and results are cut to a head and tail with an explicit omission marker naming the JSONL lines; thinking and metadata records are dropped.
   Measured on this mirror's largest session: 6.97 MB raw holds about 92 KB of user and assistant text, 0.8 MB of tool results, 0.4 MB of tool calls, 0.76 MB of thinking and 2.2 MB of metadata records.
   Quotes are validated against the rendered view, whose digest is recorded with the raw range it came from.
+- Evidence contract (refined 2026-11-12, proposed) :: Today a transcript unit is a raw JSONL prefix from byte 0, delivered to the author as raw JSONL (=sucoder/dream_wiki.py:90=), and quotes must match those raw bytes (=:214=).
+  The editor's human-decision check maps a quote's byte range onto normalized records (=sucoder/dream_editor.py:200=).
+  A rendered view therefore cannot merely be displayed; it must be the admitted evidence.
+  S3 adds a new unit kind, =claude-view=, whose admitted bytes are the deterministic rendering of a complete-line raw range =[byte_start, byte_end)=.
+  The plan records the raw range, the raw digest, the rendering contract and the rendered digest; snapshotting re-renders and must reproduce the digest.
+  A render map from rendered offsets to raw line numbers, record kinds and roles replaces the normalized records for the attribution check.
+  The existing =claude-jsonl= and =codex-jsonl= kinds, their prefix reuse and every existing plan and receipt are unchanged.
 
 ** S4. Experience dream
 :PROPERTIES:
@@ -99,9 +106,10 @@ Both constraints carry over unchanged.
   No fixed salience rule is added; the essay found that "record only failures" removed most of the benefit.
 - Selection :: The explorer chooses which sessions and notes to dream over from the inventory instead of choosing code topics.
   =--explore= keeps today's open exploration of the committed project.
-- Analysis :: One analyzer call per rendered chunk returns memory items (fact, correction, trap, decision, open question), each with cited rendered lines and a date.
-  This extends the notes-mode extractor contract (=sucoder/dream_roles.py=) with a new brief rather than adding a role family.
-- Authoring :: The existing editor pipeline receives the items, their cited excerpts, the related prior pages and the notes, and writes or corrects pages; the reviewer checks against the cited excerpts.
+- Analysis (refined 2026-11-12, proposed) :: The explorer selects rendered session windows and note passages from the inventory, as it selects code passages today, within the same six-unit, 64 KiB allowance; the existing author and reviewer consume them unchanged.
+  This replaces the per-chunk analyzer originally planned here.
+  The cookbook fans out one analyzer per transcript because it reads every transcript in full; a bounded job that chooses its windows does not need that role, and the fan-out can return later if coverage of whole sessions proves to matter.
+- Authoring :: The existing editor pipeline receives the selected windows, the related prior pages and the notes, and writes or corrects pages; the reviewer checks against the same admitted evidence.
 - Secrets :: The briefs forbid copying credentials, as the cookbook's do, and rendering redacts high-confidence token patterns before any model sees the text.
 
 * 4. Slices and definition of done

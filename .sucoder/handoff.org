@@ -1,109 +1,54 @@
-#+TITLE: sucoder dream: project-wide exploration and durable job budgets
-#+DATE: 2026-11-10
-#+STATUS: COMPLETE
+#+TITLE: sucoder dream: essay alignment, S1-S2 done, S3-S4 next
+#+DATE: 2026-11-12
+#+STATUS: READY
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
-* Current objective and disposition
+* Where things stand
 
-Implement a source-grounded dreaming loop for Codex and Claude, including a real wiki, correction/synthesis, fresh readers, selective maintenance, editorial/archive behavior and measured use.
-P1-P6 are complete under the recorded acceptance and deferral dispositions.
-On 2026-11-09 the user selected option one: "Let's proceed with option one, permitting dreaming to synthesize new  explanations."
-Dreaming may synthesize new explanations, relationships and abstractions across admitted evidence, maintaining explanatory articles alongside normal source search.
-The explanation need not occur verbatim in a source; supporting evidence and inferred reasoning remain traceable, with uncertainty, attribution and independent review.
-The existing default author/editor implements this behavior; the user's selection supplies the remaining human disposition.
-The user's next modification requires unsupervised operation, potentially overnight and headless, with no interactive questions to the human.
-Agent review and bounded admitted-context requests remain available; important unresolved human questions are recorded as Talk/WAITING or REVIEW items while independent work completes.
-Follow the [[file:../docs/dream.org::#unattended][unattended execution contract]], supplying sources, credentials, explicit model and allowances before launch and returning diagnostics for missing prerequisites.
-Live Claude verification remains explicitly deferred by the user because of the configured account's weekly quota; do not probe it or request credentials.
-The user next approved implementing durable whole-job budgets for unattended dream runs.
-The active extension and definition of done are [[file:../docs/dream/budget.org][the budget charter]]; preserve the completed pilot and deferred live Claude verification.
-No inference process or approved comparison case is running.
-Local budget and regression verification is complete; no test process remains running.
-Do not restart or extend the completed pilot, add models/repetitions, admit private transcripts, change actual LSMS sources or infer a rollout authorization.
+Work is on =coder/dream-essay=, checked out in the worktree =/home/coder/mirrors/SuCoder-dream-merge=; the main mirror checkout stays on =coder/confined-node=.
+Nothing is pushed, nothing is merged to =main=, and the installed =/opt/sucoder= (=c50d913=) has no =dream= command.
 
-The canonical current evidence is [[file:../docs/dream/runs/sucoder-p6.org][the P6 report]], [[file:../docs/dream/workplan.org::#accepted-synthesis][the accepted operating mode]] and [[file:../docs/dream/runtime-audit.org][the runtime audit]].
-The complete earlier recovery/milestone narrative is preserved at [[file:handoffs/2026-11-09-dream-runtime-pilot-history.org][the archived session history]]; its running/pending statements are historical.
+- =8370dcc= :: =main= merged into =coder/dream-data-plane=.
+  Full pytest: =main= 2578 passed, 50 failed; merged 3063 passed, the same 50 failed.
+- =8585b8a= :: The charter, [[file:../docs/dream/essay-alignment.org][docs/dream/essay-alignment.org]], with the human's four choices and three answers ("go", 2026-11-12).
+- =5cbfdad= :: S1, in-place generations on the wiki-only memory branch =sucoder/memory=; full pytest 3082 passed, the same 50 failed.
+- =2f239e6= :: S2, the =PROJECT MEMORY= block in every launch's context; launch-path suites 820 passed.
+  Its full-suite result was pending when this note was written; rerun it if no later note records it.
 
-* Project-wide exploratory launch
+The 50 known failures, environment-specific here and green in CI: =test_codex_state_runner= 39, =test_codex_state= 4, =test_direct_remote= 3, =test_codex_app_server= 2, =test_timer_lifecycle= 2.
 
-The user discussed =cd ~ligon/Projects/SuCoder && sucoder dream= with sensible defaults, then clarified that little advance topic precision and somewhat unpredictable investigative choices belong to the meaning of dreaming.
-Follow [[file:../docs/dream/workplan.org::#exploratory-default][the recorded exploratory default]]: fix admission/resource/review boundaries, delegate topic choice, allow new connections from unchanged evidence and preserve the actual investigative trail.
-Discovery must share the durable job budget; interrupted resume retains its work and balance, while a new job may explore differently.
-The user then left territory open within the project and explicitly said "Let's implement".
-The completed extension is [[file:../docs/dream/exploration.org][project-wide exploratory launch]], grounded at =7dad839=.
-New =dream_discover= and =dream_explore= modules reuse native transport/role caching, the shared budget and existing wiki author/reviewer; the CLI and strict inherited configuration defaults are implemented.
-Final verification covers 567 distinct relevant cases across exploratory/configuration, CLI/planning, legacy wiki/notes/unattended and budget partitions, including the final frozen-checkout-path guard.
-The 211-case combined new/config suite and 65-case legacy wiki suite are green; thirty facade cases include a real detached fake-native child and twelve runtime integrations cover both harness protocols, canonical checkout/subdirectory binding, dirty-state preservation, unchanged-source re-exploration, source/base races and exact handoff recovery.
-Three independent review cycles leave no surviving concrete defect; five-source-file mypy, documentation export and packaged-source byte verification pass.
-Private verification/source hashes are retained under =/home/coder/.sucoder/logs/dream-exploration/2026-11-10-7dad839/=.
-The final post-guard runtime/binding group passes all 24 cases against the final source, including both harnesses and interrupted replay.
-No test or inference process remains running.
-Use =sucoder dream= with configured =dream.harness/model= (or launcher model), =--detach= for background execution, and =dream status= / =dream budget= for this project's latest job; =--job PATH= resumes its frozen binding/settings/allowance.
-The installed launcher must include this feature branch; =poetry run sucoder= uses the current checkout without deployment.
-No live provider call or account probe was made, and the earlier live-Claude deferral remains binding.
+* The task: S3 and S4
 
-* Durable budget extension
+Follow the charter's [[file:../docs/dream/essay-alignment.org::#inventory][S3]] and [[file:../docs/dream/essay-alignment.org::#experience][S4]] sections.
+Two refinements there are marked "proposed" and need the human's acceptance before code depends on them:
 
-The implementation is committed at =314111c=, with its separate prior-art ledger at =6c1d0e0=.
-Native wiki/notes jobs persist time/call limits across attempts and restarts, can explicitly share a private budget across plans, reserve closeout capacity and reject unsupported hard token/dollar caps before provider work.
-Run =sucoder dream budget MIRROR --plan PLAN [--budget PATH]= to inspect remaining allowance and native-reported usage without inference.
-Three independent review passes found and then cleared two deadline-classification defects and checked final expired accepted-progress replay.
-Targeted budget/role checks, the 307-case public and 206-case integration regression groups, four-file mypy, documentation export, packaged-source byte verification and real legacy wiki status replay pass.
-Completed test/review-scope logs are retained under =/home/coder/.sucoder/logs/dream-budget/2026-11-10-314111c/=.
-=verification.json= records source/log hashes and 604 distinct relevant passing cases across the partitions, including the two original regression fixtures corrected for the new identity/trace contract.
-This is a focused integration verification, not a new unfiltered whole-project test result.
-The implementation and budget charter are complete; no further provider call, pilot repetition or live-Claude check is authorized by this work.
+1. A new =claude-view= evidence kind whose admitted bytes are the deterministic rendering of a complete-line raw transcript range, with a render map for attribution.
+2. No per-chunk analyzer role; the explorer selects rendered session windows and note passages within the existing six-unit, 64 KiB allowance.
 
-* Completed live experiment
+Grounding already done, so it need not be repeated:
 
-The user explicitly approved "Pilot approved" on 2026-11-09.
-The immutable scope was twelve Git passages/45,708 bytes, Codex CLI 0.167.0 with =gpt-6.1-sol=, 36 attempts and a two-hour/180-native-call aggregate allowance.
-All six construction stages passed: initial, incremental and seeded-error correction for each repository, integrated only in disposable evaluation repositories.
-The held-out decks preceded construction, the filesystem canary enforced isolation and the reader conditions shared the same frozen prompts, schema and source interface.
-The run completed in 71.2 minutes with 137 calls, 34 answered attempts, two retained LSMS wiki-only failures and zero graded critical errors.
-Native-reported usage totals 2,003,683 input and 87,760 output tokens; currency and unobserved internal HTTP retries remain unknown.
+- Transcript admission is a prefix from byte 0 (=sucoder/dream_transcript.py:34=); =_plan_shape= rejects a nonzero =byte_start= (=sucoder/dream_run.py=, transcript branch).
+- Authors receive raw JSONL (=sucoder/dream_wiki.py:90=), quotes are matched against those bytes (=:214=), and the editor's human-decision check maps byte ranges onto normalized records (=sucoder/dream_editor.py:200=).
+- This mirror's Claude sessions live in one project directory derived by =claude_transcript_path= (=sucoder/attention.py:603=); live launches come from =scan_local_launches= beside it.
+  This host has no =~/.codex/sessions=, so Codex discovery (S3b) stays deferred.
+- Measured composition of the largest session: 6.97 MB raw, about 92 KB of user and assistant text, 0.8 MB tool results, 0.4 MB tool calls, 0.76 MB thinking, 2.2 MB metadata records.
 
-Wiki plus search scored 23/24 versus source-only 22/24 for SuCoder and 25/26 versus 23/26 for LSMS.
-The three-item synthesis/caveat gain meets the original exploratory quality alternative.
-The separately frozen outcome collector conservatively labels the full result inconclusive because of the failed diagnostic attempts; this additional classification is distinct from the original quality threshold.
-No dependable context saving is established: LSMS wiki plus search used 16.1 percent more median assignment bytes; SuCoder's apparent 1.9 percent saving depends on including a failed source-only citation attempt.
-Using only retained completed attempts, SuCoder wiki plus search uses 24.4 percent more median bytes.
-The small comparison and post-start instrumentation corrections do not establish broad benefit or justify automatic rollout.
+* How to work here
 
-* Exact artifacts and frozen identities
+- Tests :: =PYTHONPATH=$PWD /home/coder/.cache/pypoetry/virtualenvs/sucoder-_hu1CrVA-py3.12/bin/python -m pytest -q -p no:cacheprovider= from the worktree.
+  =PYTHONPATH= matters: the venv's editable install points at the main mirror checkout.
+  The full suite takes about 32 minutes because dream tests start Emacs; run it on a frozen detached worktree in the scratchpad so the working tree stays editable.
+- GitNexus :: The worktree is indexed separately, also named =SuCoder=; pass =--repo /home/coder/mirrors/SuCoder-dream-merge= and exact =--uid= values to =impact=.
+  Refresh with =node /home/coder/mirrors/SuCoder/.gitnexus/run.cjs analyze --index-only /home/coder/mirrors/SuCoder-dream-merge=.
+- No paid inference :: Every new test uses the fake native transports; live Claude verification remains deferred by the human.
 
-The original private proposal is =/tmp/sucoder-dream-p6-preparation-NjfocZ97/review-final/pilot-proposal.json=, with sibling-parent =blobs/=.
-Its =execution/= directory contains =report-outcomes.json=, all 36 =paired-outcomes-NN.json= records, answers, failed-reader records, held-out decks, immutable reservations/returns and original/amended contracts.
-The report SHA-256 is =7ca6c5e91f5475e483fb9314bf3fd465a20b580c8bb10edcaa24431b2de9c35d=.
-A private copy outside =/tmp= is =/home/coder/.sucoder/logs/dream-pilots/2026-11-09-p6-7ca6c5e9/=; =archive-manifest.json= hashes 1,766 retained files, including frozen source/runtime and operator logs.
-Internal path strings retain the original execution location; this copy is evidence rather than a relocated runnable configuration.
+* Open items
 
-The original engine is =7e8487b=; the grading-only amendment is =1f1b17e= and terminal-failure collection is =9519550=.
-The original runtime/reader code was never changed during the experiment; each additive collector has a separate immutable contract and retains the original budget/deadline.
-A duplicated author reference and copied reviewer/read-ID hashes were rejected before publication/scoring and retained in usage.
-Ambiguous grader failures were fixed in a separate contract, grading every case under that one clarified schema/brief.
-Two substantive wiki-only failures were collected without inference and never regenerated for a better answer.
+- The memory branch must stay out of public remotes; it is documented, and SuCoder never pushes it.
+- The injected reading hint assumes the session's repository has the memory branch; node-local and remote clones may not.
+- =dream/228cde57= is the P1 diagnostic candidate, cited by hash in =docs/dream/runs/sucoder-p1.org=: keep it, do not merge it.
+- The untracked =.sucoder/handoffs/2026-11-12-dream-summary.org= in the main mirror checkout predates this work.
+- The previous handoff (exploration and budgets, COMPLETE) is [[file:handoffs/2026-11-10-dream-exploration-and-budgets.org]].
 
-The final disposable SuCoder wiki is =5a93f1af24c271643c72ed27c36e1253e9cf9fcf= and LSMS wiki is =0e76fcea8654ab4b351653effce6760bdcecb8bf=.
-The actual accepted SuCoder wiki remains the separate P2 artifact, ordinarily integrated on this feature branch at =dfbcf14=, with its 8,312-byte topic and original receipt intact.
-No pilot candidate was merged into the actual SuCoder repository, no actual LSMS source was changed and no human/scientific decision was manufactured.
-
-* Verification
-
-The actual completed pilot replayed with native invocation replaced by an exception: the report matched exactly and no new reservation occurred.
-=execution/zero-inference-replay.json= records 137 unchanged calls and zero new invocations.
-Five grader-amendment cases and two outcome-collector cases pass, covering complete negative/failure comparisons, preserved original budgets, cached replay, critical-grade retention and trace-tampering rejection.
-Mypy passed both additive scripts; actual terminal-failure collection also made zero calls.
-The focused logs are retained in the private evidence copy's =operator-logs/=.
-
-The broader integration run on =7aec2cc= passed 2,855 tests, skipped eight and explicitly deselected the exact 55 known baseline failures.
-The prior P5 unfiltered suite reproduced all 55 baseline failures with no additions/removals.
-Those full-suite snapshots predate the additive pilot-only fixes/scripts; targeted checks cover the later changes and no later unfiltered full-suite result is claimed.
-Public runtime, both native harness protocols, packaged native Org and the real Codex wiki/reader loop have the earlier milestone evidence linked from the workplan.
-After the user's synthesis selection, =tests/test_dream_wiki.py::test_corrects_existing_topic_and_combines_sources_preserving_human_task= passed both harness protocol cases and native Org export/link/archive validation passed.
-The adoption changes documentation and acceptance state; no runtime contract or provider invocation changed.
-The unattended amendment reuses the existing transport/editor and passes six new regression cases, including both harness CLI protocols saving a human question while completing independent work, no terminal/finite stdin, disabled human approvals and missing-model rejection without prompting.
-The new question is visible through ordinary topic retrieval; status replay requires no new role call, and native Org export/link/archive validation passes.
-
-Prepared by Sue (GPT-6 Codex).
+Recorded by Sue (Claude Opus 5.5).
