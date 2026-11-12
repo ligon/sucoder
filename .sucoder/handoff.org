@@ -13,8 +13,7 @@ Nothing is pushed, nothing is merged to =main=, and the installed =/opt/sucoder=
   Full pytest: =main= 2578 passed, 50 failed; merged 3063 passed, the same 50 failed.
 - =8585b8a= :: The charter, [[file:../docs/dream/essay-alignment.org][docs/dream/essay-alignment.org]], with the human's four choices and three answers ("go", 2026-11-12).
 - =5cbfdad= :: S1, in-place generations on the wiki-only memory branch =sucoder/memory=; full pytest 3082 passed, the same 50 failed.
-- =2f239e6= :: S2, the =PROJECT MEMORY= block in every launch's context; launch-path suites 820 passed.
-  Its full-suite result was pending when this note was written; rerun it if no later note records it.
+- =2f239e6= :: S2, the =PROJECT MEMORY= block in every launch's context; full pytest 3090 passed, the same 50 failed.
 
 The 50 known failures, environment-specific here and green in CI: =test_codex_state_runner= 39, =test_codex_state= 4, =test_direct_remote= 3, =test_codex_app_server= 2, =test_timer_lifecycle= 2.
 
