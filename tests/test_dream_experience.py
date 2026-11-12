@@ -60,17 +60,23 @@ class ExperienceTransport(ExploringTransport):
 
 
 class ReadsUntilToldTransport(ExperienceTransport):
-    """Keeps reading the session until the navigation leaves only finish, as the first live explorer did."""
+    """Keeps reading until the navigation leaves only finish, as the first live explorer did."""
 
     def __call__(self, harness, model, task, schema, deadline):
-        if task["role"] != "explorer" or task["input"]["navigation"]["actions"] == ["finish"]:
+        if task["role"] == "explorer" and task["input"]["navigation"]["actions"] == ["finish"]:
+            if "sessions_root" not in task["input"]["navigation"]:  # Project mode: the evidence-a/b selection.
+                return ExploringTransport.__call__(self, harness, model, task, schema, deadline)
+            return super().__call__(harness, model, task, schema, deadline)
+        if task["role"] != "explorer":
             return super().__call__(harness, model, task, schema, deadline)
         self.calls.append(copy.deepcopy(task))
         step = len(task["input"]["history"])
+        experience = "sessions_root" in task["input"]["navigation"]
+        path = ("@sessions" + ("/" + SID if step else "")) if experience else "evidence-a.org"
         result = {key: task[key] for key in ("assignment_id", "input_sha256", "role")}
-        result.update(failures=[], action="list" if step == 0 else "read", path="@sessions" + ("/" + SID if step else ""),
+        result.update(failures=[], action="list" if experience and step == 0 else "read", path=path,
                       query="", offset=0, start=0, end=0, selections=[], topic="reply-evidence",
-                      rationale="Keep checking the session.", questions=[])
+                      rationale="Keep checking the evidence.", questions=[])
         events = [dict(type="item.completed", item=dict(type="agent_message", text=json.dumps(result))),
                   dict(type="turn.completed", usage={})]
         trace = dict(harness=harness, model=model, version=self.version, returncode=0,
@@ -118,18 +124,21 @@ def test_a_dream_corrects_a_wrong_note_from_what_the_session_saw(workspace, cloc
     assert rows[0]["consumed"] == [[0, view["raw"]["byte_end"]]]
 
 
-def test_the_last_discovery_call_offers_only_finish(workspace, clock, no_live):
+@pytest.mark.parametrize("mode", ["experience", "project"])
+def test_the_last_discovery_call_offers_only_finish(workspace, clock, no_live, mode):
     planned(workspace)
     repo, _, config, _ = workspace
     write_session(Path(os.environ["HOME"]), repo)
     native = ReadsUntilToldTransport()
-    result = explore.start(config, cwd=repo, transport=native, overrides=dict(harness="codex", model="explicit-model"))
+    result = explore.start(config, cwd=repo, transport=native, overrides=options(mode=mode))
     assert result["state"] == "published"
     navigations = [t["input"]["navigation"] for t in native.calls if t["role"] == "explorer"]
     assert len(navigations) == config.dream.max_discovery_calls
     assert navigations[-1]["actions"] == ["finish"] and navigations[-1]["remaining_discovery_calls"] == 1
     assert all(n["actions"] == ["list", "read", "search", "finish"] for n in navigations[:-1])
-    assert "finish is itself a discovery call" in dream_discover.EXPERIENCE_BRIEF
+    brief = native.calls[0]["brief"]
+    assert brief == (dream_discover.EXPERIENCE_BRIEF if mode == "experience" else dream_discover.BRIEF)
+    assert dream_discover.TURN_RULES in brief
 
 
 def test_session_windows_snap_to_records_and_respect_the_pinned_size(workspace, tmp_path):
