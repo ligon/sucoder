@@ -191,6 +191,13 @@ def validate_proposal(plan, proposal, prior, sources, deadline, contract=CONTRAC
                     if search and (not search.startswith("#") or search[1:] not in parsed[destination]["targets"]):
                         raise DreamError("Wiki file link has an unsupported or missing target")
                 elif not any(s.get("repository") == plan["repository"] and s.get("path") == destination for s in sources):
+                    # A source link this page already carried was admitted by the reviewed generation
+                    # that wrote it. Without this, the fifth live experience dream could not list a new
+                    # topic in an index that still linked the P2 sources.
+                    key = (kind, link["raw_path"], destination, search)
+                    if retained_links[key]:
+                        retained_links[key] -= 1
+                        continue
                     raise DreamError("Wiki file link is outside the admitted source set")
             elif kind not in ("http", "https"):
                 raise DreamError("Unsupported wiki link type: " + kind)

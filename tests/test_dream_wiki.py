@@ -212,6 +212,38 @@ def test_status_checks_whole_files_including_unanchored_intro_after_squash(works
     assert dream_run.status(workspace[2], "sample", Path(plan["plan_path"]))["integration"]["state"] == "needs_reconciliation"
 
 
+@pytest.mark.parametrize("change, accepted", [
+    ("keep", True), ("add-unadmitted", False), ("move-to-topic", False), ("duplicate", False)])
+def test_a_page_keeps_its_earlier_source_links_but_gains_no_unadmitted_ones(change, accepted):
+    # The fifth live experience dream added a topic to an index that still linked the P2 sources.
+    import time
+    earlier = "[[file:../../docs/earlier.org][Earlier investigation]]"
+    old = "* Earlier topic\nThe maintained starting point is the " + earlier + ".\n"
+    text = "Admitted evidence.\n"
+    source = dict(unit_id="selected", repository="sample", path="docs/new.org", byte_start=0,
+                  byte_end=len(text.encode()), text=text)
+    index = old + "\n[[file:topics/rule.org::#rule][Rule]] cites [[file:../../docs/new.org][the new source]].\n"
+    topic = "* Rule\n:PROPERTIES:\n:CUSTOM_ID: rule\n:END:\nExplanation.\n"
+    if change == "add-unadmitted":
+        index += "[[file:../../docs/never-admitted.org][Unadmitted]]\n"
+    elif change == "move-to-topic":
+        index = index.replace(earlier, "the earlier investigation")
+        topic += "See " + earlier.replace("../../", "../../../") + ".\n"
+    elif change == "duplicate":
+        index += "Again: " + earlier + ".\n"
+    proposal = dict(pages=[dict(path=wiki.INDEX, content=index), dict(path=".sucoder/wiki/topics/rule.org", content=topic)],
+                    changes=[dict(path=wiki.INDEX, before_sha256=dream.digest(old.encode()), reason="List the new topic"),
+                             dict(path=".sucoder/wiki/topics/rule.org", before_sha256="", reason="Explain evidence")],
+                    references=[dict(path=".sucoder/wiki/topics/rule.org", target="rule", evidence_status="inference",
+                                     citations=[dict(unit_id="selected", quote="Admitted evidence.")])], omissions=[])
+    plan = dict(repository="sample", limits=dict(max_consolidation_bytes=65536), prior_wiki=dict(files=[dict(path=wiki.INDEX)]))
+    if accepted:
+        wiki.validate_proposal(plan, proposal, {wiki.INDEX: old}, [source], time.monotonic() + 5)
+    else:
+        with pytest.raises(dream.DreamError, match="outside the admitted source set"):
+            wiki.validate_proposal(plan, proposal, {wiki.INDEX: old}, [source], time.monotonic() + 5)
+
+
 @pytest.mark.parametrize("quote,accepted", [("\u03bb\nunique", True), ("alpha", False), ("missing", False), ("", False)])
 def test_quote_resolution_is_unique_exact_utf8_and_absolute(quote, accepted):
     import time
