@@ -785,6 +785,13 @@ def _build_executor(
         executor_kwargs["forward_x11_explicit"] = x11_explicit
         if use_local_disk:
             executor_kwargs["local_disk_root"] = local_disk_root
+        # ``collaborate --node`` on a confined target: the sbatch that
+        # _launch_confined submits carries --nodelist for it.  Only a
+        # confined launch submits through this executor, so the pin is
+        # dropped everywhere else rather than carried as a stray field.
+        confined_node = (cli_ctx.obj or {}).get("confined_node") if cli_ctx else None
+        if confined and confined_node:
+            executor_kwargs["confined_nodelist"] = confined_node
         # Route filesystem scaffolding through the login node: the shared
         # mirror is reachable from there whichever node the agent works on,
         # and it spares a compute-node target the three-hop chain.
@@ -1427,6 +1434,9 @@ def _get_login_node_override(ctx: Optional[click.Context]) -> Optional[str]:
 
 # sbatch/salloc --time: minutes, MM:SS, HH:MM:SS, D-HH, D-HH:MM, D-HH:MM:SS.
 _SLURM_TIME_RE = re.compile(r"^(?:\d+-)?\d+(?::\d{1,2}){0,2}$")
+
+# collaborate --node: one Slurm hostname (n0035.savio4), no shell syntax.
+_NODE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 def _get_time_limit_override(ctx: Optional[click.Context]) -> Optional[str]:
@@ -2950,7 +2960,10 @@ def collaborate(
         help="Request a specific compute node (e.g. --node n0047.savio3). "
              "Useful to recover work on local disk from a previous session. "
              "If you already hold a live allocation on that node, this "
-             "session adopts (shares) it instead of reserving a new one.",
+             "session adopts (shares) it instead of reserving a new one. "
+             "On a confined target the new job is submitted to that node "
+             "(sbatch --nodelist) and waits there if it is busy; a live job "
+             "of this mirror on another node is refused, not reused.",
     ),
     wrap_tmux: bool = typer.Option(
         True,
@@ -2992,17 +3005,37 @@ def collaborate(
         if _direct is not None and _direct.host:
             typer.echo("--node requires a cluster target.", err=True)
             raise typer.Exit(code=1)
-        # ``ctx`` is the typer.Context for this subcommand and carries
-        # the callback's obj; don't go through click.get_current_context
-        # (typer >=0.21 doesn't push onto Click's global stack).
-        _tgt = ((ctx.obj or {}).get("target_name") if ctx else None)
-        _session = RemoteSession.load(mirror, target_name=_tgt)
-        # Clear the old job so _ensure_slurm_node allocates a new one,
-        # but set compute_node so it becomes the preferred_node.
-        _session.slurm_job_id = None
-        _session.compute_node = node
-        _session.save()
-        logger.info("Requesting specific node %s", node)
+        # The node reaches a remote shell as one word of a command string
+        # (the salloc line below is joined unquoted), so admit only the
+        # characters a Slurm hostname uses.
+        if not _NODE_NAME_RE.match(node):
+            raise typer.BadParameter(
+                f"{node!r} is not a node name (e.g. n0035.savio4).",
+                param_hint="--node",
+            )
+        if _direct is not None and _direct.slurm is not None and _direct.slurm.confined:
+            # A confined target submits its own sbatch and never reads the
+            # session's compute_node, so the record-based pin below would
+            # be dropped there without a word.  Hand the node to the
+            # executor instead (``_build_executor`` -> confined_nodelist),
+            # and leave the session record alone: clearing its job id
+            # would hide a live job from the id-keyed reuse probe.
+            if ctx.obj is None:
+                ctx.obj = {}
+            ctx.obj["confined_node"] = node
+            logger.info("Pinning the confined job to node %s", node)
+        else:
+            # ``ctx`` is the typer.Context for this subcommand and carries
+            # the callback's obj; don't go through click.get_current_context
+            # (typer >=0.21 doesn't push onto Click's global stack).
+            _tgt = ((ctx.obj or {}).get("target_name") if ctx else None)
+            _session = RemoteSession.load(mirror, target_name=_tgt)
+            # Clear the old job so _ensure_slurm_node allocates a new one,
+            # but set compute_node so it becomes the preferred_node.
+            _session.slurm_job_id = None
+            _session.compute_node = node
+            _session.save()
+            logger.info("Requesting specific node %s", node)
 
     manager = _build_manager_for_mirror(config, logger, dry_run, mirror, cli_ctx=ctx)
     command_override = _resolve_harness_command(

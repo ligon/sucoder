@@ -2925,6 +2925,44 @@ class MirrorManager:
         )
         return match_target(row, {name: remote}, [name]) == name
 
+    def _refuse_pin_over_live_job(
+        self, ctx: MirrorContext, pinned_node: Optional[str], job_id: int, state: str,
+    ) -> None:
+        """Refuse to reuse a live job that is not on the ``--node`` asked for.
+
+        A mirror runs one confined job at a time, so ``collaborate --node``
+        over a live job can neither submit beside it nor quietly attach to
+        a job somewhere else -- the second is the silent drop this guards
+        against.  A job already on the pinned node is the one asked for and
+        is reused.  The node comes from the scheduler, not the session
+        record, which a job adopted by name does not carry; a PENDING job
+        (no node yet) or a failed query cannot show the node, and refuses.
+        """
+        if not pinned_node:
+            return
+        node = ""
+        try:
+            result = self.executor.run_agent(
+                ["squeue", "--job", str(job_id), "--noheader",
+                 "-o", self._NODE_POLL_FORMAT],
+                check=False, capture_output=True, show_progress=False,
+            )
+            if result.returncode == 0:
+                node = (result.stdout.strip().split("|") + ["", ""])[1].strip()
+        except Exception:  # noqa: BLE001 -- an unknown node refuses below
+            node = ""
+        if node == pinned_node:
+            return
+        target = f"-T {self.target_name} " if self.target_name else ""
+        where = f"on {node}" if node else "node not known"
+        raise MirrorError(
+            f"--node {pinned_node}: mirror {ctx.settings.name} already has live "
+            f"confined SLURM job {job_id} ({state}, {where}).  A mirror runs one "
+            "confined job at a time, so it was neither reused nor replaced.  "
+            f"Attach to it with `sucoder {target}attach {ctx.settings.name}`, or "
+            f"`sucoder {target}release {ctx.settings.name}` and rerun with --node."
+        )
+
     def _reuse_confined_job(
         self, ctx: MirrorContext, job_id: int, state: str, session_name: str,
         socket: str, detached: bool, *, selection: Optional[str] = None,
@@ -3341,6 +3379,10 @@ class MirrorManager:
         assert ctx.settings.remote is not None and ctx.settings.remote.slurm is not None
         slurm = ctx.settings.remote.slurm
         session_name, socket = confined_tmux_target(ctx.settings.name)
+        # ``collaborate --node``: the job must run on this node.  It rides
+        # on the executor (cli._build_executor) because the session record's
+        # compute_node is the *last* job's node, not a request.
+        pinned_node = getattr(self.executor, "confined_nodelist", None) or None
 
         # Reuse-probe: never submit a second job while one is live.
         sess = RemoteSession.load(ctx.settings.name, target_name=self.target_name)
@@ -3357,6 +3399,7 @@ class MirrorManager:
                     "Reusing live confined SLURM job %s (%s) for mirror %s.",
                     sess.slurm_job_id, state, ctx.settings.name,
                 )
+                self._refuse_pin_over_live_job(ctx, pinned_node, sess.slurm_job_id, state)
                 return self._reuse_confined_job(
                     ctx, sess.slurm_job_id, state, session_name, socket, detached,
                     selection=selection,
@@ -3406,6 +3449,7 @@ class MirrorManager:
             sess.slurm_job_id = job_id
             sess.service_launch = None  # Adopted job's mode is discovered from tmux.
             sess.save()
+            self._refuse_pin_over_live_job(ctx, pinned_node, job_id, state)
             return self._reuse_confined_job(
                 ctx, job_id, state, session_name, socket, detached,
                 selection=selection,
@@ -3532,9 +3576,17 @@ class MirrorManager:
         # created the job (rc 255) is reported as a MirrorError with a
         # recovery hint rather than an uncaught CommandError traceback that
         # hides a possible leak.
+        if pinned_node:
+            # No fallback to another node, unlike the unconfined salloc
+            # path: the node was asked for by name, so a busy one leaves
+            # the job queued there and the poll below says why.
+            self.logger.info(
+                "Submitting the confined job to node %s (sbatch --nodelist).",
+                pinned_node,
+            )
         sbatch_argv = _build_sbatch_command(
             slurm, job_name=session_name, log_path=log_path,
-            script_path=script_path,
+            script_path=script_path, nodelist=pinned_node,
         )
         result = self.executor.run_agent(
             sbatch_argv, check=False, capture_output=True,
