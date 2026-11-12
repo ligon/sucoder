@@ -1,6 +1,6 @@
-#+TITLE: sucoder dream: essay alignment, S1-S3 done, S4 next
+#+TITLE: sucoder dream: essay alignment S1-S4 complete; integration awaits the human
 #+DATE: 2026-11-12
-#+STATUS: READY
+#+STATUS: COMPLETE
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
@@ -14,30 +14,25 @@ Nothing is pushed, nothing is merged to =main=, and the installed =/opt/sucoder=
 - =8585b8a= :: The charter, [[file:../docs/dream/essay-alignment.org][docs/dream/essay-alignment.org]], with the human's four choices and three answers ("go", 2026-11-12).
 - =5cbfdad= :: S1, in-place generations on the wiki-only memory branch =sucoder/memory=; full pytest 3082 passed, the same 50 failed.
 - =2f239e6= :: S2, the =PROJECT MEMORY= block in every launch's context; full pytest 3090 passed, the same 50 failed.
-- =ac0b717= :: S3, rendered =claude-view= session windows as admitted evidence and the mirror-scoped session inventory (=sucoder/dream_view.py=, =sucoder/dream_experience.py=); related dream suites 188 passed.
+- =ac0b717= :: S3, rendered =claude-view= session windows as admitted evidence and the mirror-scoped session inventory (=sucoder/dream_view.py=, =sucoder/dream_experience.py=); full pytest 3097 passed, the same 50 failed.
+- =99423ed= :: S4, experience mode as the bare default (=@sessions= navigation, notes, the experience purpose), =--explore= for project mode; affected dream suites 274 passed.
   Its full-suite run was started when this note was updated; rerun it if no later note records the result.
+
+A read-only check on this mirror's real sessions (no model calls, statistics only) rendered all three without error: 5.21, 1.91 and 6.97 MB raw became 447, 74 and 520 KB (4-9 percent); the running session was marked live and the others finished.
 
 The 50 known failures, environment-specific here and green in CI: =test_codex_state_runner= 39, =test_codex_state= 4, =test_direct_remote= 3, =test_codex_app_server= 2, =test_timer_lifecycle= 2.
 
-* The task: S4
+* What remains
 
-Follow the charter's [[file:../docs/dream/essay-alignment.org::#experience][S4 section]]; both refinements there were accepted by the human on 2026-11-12.
-S4 connects S3 to bare =sucoder dream=:
+The charter's four slices are implemented; nothing remains that this branch can do without a human decision.
 
-1. Inventory :: Extend =dream_discover.Inventory= (=sucoder/dream_discover.py:36=) with this mirror's finished sessions from =dream_experience.sessions= and with agent notes (committed =.sucoder/handoff.org=, =.sucoder/handoffs/*.org=, =docs/*ledger*=).
-   Pass live session IDs from =attention.scan_local_launches= and add =dream.session_quiet_minutes= (default 30) when the inventory first reads it; document it in =README.org= and =config.example.yaml=.
-2. Explorer actions :: Add listing, reading and literal search over rendered session windows, with reads cut at complete raw lines and rendered with =dream_view.render=, inside the existing navigation byte budget.
-   Selections of sessions become =claude-view= units (=path=, =thread_id=, raw =byte_start=/=byte_end=); note selections stay git units.
-   Show each session's consumed ranges so the explorer prefers material earlier dreams did not admit.
-3. Purpose and mode :: Make the charter's experience purpose the bare default and keep today's open project exploration behind =--explore=.
-4. End-to-end test :: Seed a memory page with a wrong note, give a session window that shows the truth, and check that a fake-transport job corrects the page and publishes in place, after the essay's Mt. Moon example.
-
-Grounding for S4:
-
-- The explorer brief and actions are in =sucoder/dream_discover.py:12-24= and =:201-236=; =Inventory.lookup= (=:98=) serves list, read and search over git blobs.
-- =dream_explore._plan= (=sucoder/dream_explore.py=) turns the explorer's selections into a source request; it currently assumes git units when it re-checks the saved plan against the selections.
-- The exploratory tests' fake explorer is =ExploringTransport= in =tests/test_dream_explore.py=; =EditorTransport= quotes each source's whole text, so a session window plus the two git evidence files works end to end (see =tests/test_dream_view.py=).
-- Known limit of S3 rendering: queued-command attachments are dropped, so a message delivered to a busy session is not yet visible in a window.
+1. Integration :: Whether to merge =coder/dream-essay= into =main= and reinstall =/opt/sucoder= is the human's call; =/opt/sucoder= is root-owned.
+   Until then =poetry run sucoder dream= from this worktree is the way to run it.
+2. Live verification :: No real model has run an experience dream; every new test uses fake transports, and live Claude verification remains deferred by the human.
+   The end-to-end test establishes plumbing, not that a model makes the right correction.
+3. Deferred by the charter :: A staleness pass over pages whose cited sources changed; an organizer and pruning pass; Codex session discovery (S3b); a scheduler example for nightly dreams.
+4. Known limits :: Queued-command attachments are dropped when rendering, so a message delivered to a busy session is not visible in a window.
+   The injected reading hint assumes the session's repository has the memory branch; node-local and remote clones may not.
 
 * How to work here
 
@@ -51,9 +46,8 @@ Grounding for S4:
 * Open items
 
 - The memory branch must stay out of public remotes; it is documented, and SuCoder never pushes it.
-- The injected reading hint assumes the session's repository has the memory branch; node-local and remote clones may not.
 - =dream/228cde57= is the P1 diagnostic candidate, cited by hash in =docs/dream/runs/sucoder-p1.org=: keep it, do not merge it.
-- The untracked =.sucoder/handoffs/2026-11-12-dream-summary.org= in the main mirror checkout predates this work.
+- The untracked =.sucoder/handoffs/2026-11-12-dream-summary.org= in the main mirror checkout predates this work and is now stale; this handoff supersedes it.
 - The previous handoff (exploration and budgets, COMPLETE) is [[file:handoffs/2026-11-10-dream-exploration-and-budgets.org]].
 
 Recorded by Sue (Claude Opus 5.5).
