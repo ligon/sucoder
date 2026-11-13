@@ -1,4 +1,4 @@
-#+TITLE: sucoder dream and the test-environment fixes merged locally into main; publication awaits the human
+#+TITLE: sucoder dream, the test-environment fixes and the Python 3.9 floor merged locally into main; publication awaits the human
 #+DATE: 2026-11-13
 #+STATUS: COMPLETE
 #+AUTHOR: Sue
@@ -35,9 +35,20 @@ The main mirror checkout stays on =coder/confined-node=.
   The tracked P2 copy is gone from this branch; the memory branch holds it.
   In this worktree the copy resolves all twelve links of the three live pages.
 
+- =4c55c47= :: =coder/drop-py36-tests=: the tests that needed a =python3.6= interpreter are gone (the human, 2026-11-13).
+- =43e2592= :: =coder/pin-receiving-python= (worktree =/home/coder/mirrors/SuCoder-pin-python=).
+  A live probe on Savio found a pooled dispatch step (=srun --export=NONE=) ran the image's =/usr/bin/python3=, 3.6.8, while =sbatch= got 3.12 only through the human's =~/.local/bin/python3= symlink.
+  =batch.sh= now execs the controller's resolved interpreter by absolute path and exits 72 on a receiving node that lacks it or has one older than 3.9; =project-inputs.sh= runs under the worker's own interpreter.
+  Verified on n0034 under =srun --export=NONE=; recorded in [[file:../docs/dispatch-pool-ledger.org][docs/dispatch-pool-ledger.org]].
+  Full suite 3205 passed, 1 skipped.
+- =5a28233= :: =coder/python-floor= (worktree =/home/coder/mirrors/SuCoder-py39=), the human's "drop 3.6 support too".
+  Targets take an optional =python:= (default =python3=) for the managed Codex state runner, the context installer, the remote-control helper and the reply probe; the launch preflight probes it against =PYTHON_FLOOR= (3.9) and warns.
+  The runner's =sqlite3= CLI backup fallback is removed, and the staged modules and grammar tests move to 3.9.
+  Full suite at =ef546ba= had 23 failures, all in =test_reply_cli.py= from a test fake lacking the field; =e225b37= adds it and that file passes.
+
 A read-only check on this mirror's real sessions (no model calls, statistics only) rendered all three without error: 5.21, 1.91 and 6.97 MB raw became 447, 74 and 520 KB (4-9 percent); the running session was marked live and the others finished.
 
-The 50 known failures, environment-specific here and green in CI: =test_codex_state_runner= 39, =test_codex_state= 4, =test_direct_remote= 3, =test_codex_app_server= 2, =test_timer_lifecycle= 2.
+The 50 failures this host showed before =8ccb066= are resolved; the full suite now fails none and skips one.
 
 * What remains
 
@@ -45,6 +56,8 @@ The charter's five slices are implemented and merged locally; nothing remains th
 
 1. Publication :: Push =main= from the canonical account (=/home/ligon/Projects/SuCoder=) and reinstall the root-owned =/opt/sucoder=; until then the installed launcher has neither the dream command nor the wiki copy.
    Never push =sucoder/memory=.
+   The dispatch interpreter fix takes effect on Savio only once SuCoder is updated there, since the controller that writes =batch.sh= runs there.
+   After reinstalling, set =python: /usr/bin/python3.12= on the Savio targets; until then =python3= reaches 3.12 only through the human's dotfiles.
 2. Live verification :: Six Codex experience dreams ran on 2026-11-12 (E1); one generation is published, which is one observation, not a quality estimate.
    Live Claude verification remains deferred by the human, and no live project-mode (=--explore=) dream has run.
 3. Deferred by the charter :: A staleness pass over pages whose cited sources changed; an organizer and pruning pass; Codex session discovery (S3b); a scheduler example for nightly dreams.
@@ -53,8 +66,7 @@ The charter's five slices are implemented and merged locally; nothing remains th
    Remote and confined sessions get no wiki copy: their working clone is not the local mirror, so their block keeps the =git show= hint.
    Your own clone needs =git fetch <mirror> sucoder/memory:sucoder/memory= and =sucoder dream checkout= to get working links.
    The author repeats a section's reference in most live runs; the repair fixes it at the cost of one call.
-5. Test host :: Nine tests skip here for missing =python3.6= (seven), =zsh= (one) and nested user namespaces (one, AppArmor =bwrap-userns-restrict=).
-   Ubuntu 24.04 packages no Python 3.6; =zsh= needs root to install.
+5. Test host :: One test skips here, for nested user namespaces (AppArmor =bwrap-userns-restrict=); the =python3.6= tests are gone and the human installed =zsh=.
    The =bwrap=-dependent tests likely skip in CI, which is how the orphaned-Codex defect stayed hidden there.
    Whether =--die-with-parent= ends a sandboxed Codex on Savio's kernel is unknown; since =207503d= the runner no longer depends on it.
 
@@ -74,6 +86,11 @@ The charter's five slices are implemented and merged locally; nothing remains th
 - Jobs =acc43579=, =9dc6e6a8=, =a2e82ed5= and =0d98ce29= no longer replay readonly under the fixed explorer, and the rejected =f6131ffc= window no longer matches its plan after email redaction; none published anything.
 - =dream/228cde57= is the P1 diagnostic candidate, cited by hash in =docs/dream/runs/sucoder-p1.org=: keep it, do not merge it.
 - The untracked =.sucoder/handoffs/2026-11-12-dream-summary.org= in the main mirror checkout predates this work and is now stale; this handoff supersedes it.
+- =examples/lsms/burst.sbatch:17= still runs a bare =python3= under =sbatch --export=NONE=, which reloads the login environment, and =dispatch_verify.py:105='s =run= field names =python3= too.
+- The coder account now has a 12-hour BRC certificate in =~/.ssh/ssh_certs/= (the human minted it 2026-11-13) and accepted the gateway's ED25519 host key on first use, =SHA256:ciu39oN/Yirco9ODd+pcwewL2XwqpznHWPmvtuuxzpo=; the human has not yet compared it with their own known_hosts.
+- On Savio, the human's =~/.local/bin/python3.12= and =python3.13= point into =/local/job40653699/=, which no longer exists.
+- Merged branches with worktrees awaiting the human's OK to remove: =coder/dream-essay=, =coder/test-env-failures=, =coder/drop-py36-tests=, =coder/pin-receiving-python=, =coder/python-floor=, =coder/confined-node=; =coder/issue-90-confined-launch='s four commits are on =main= under rebased hashes (=git cherry=).
+  Scratch worktrees =pin-old=, =py39-old=, =py39-head= and =suite-ec= live in the session scratchpad.
 - The previous handoff (exploration and budgets, COMPLETE) is [[file:handoffs/2026-11-10-dream-exploration-and-budgets.org]].
 
 Recorded by Sue (Claude Opus 5.5).
