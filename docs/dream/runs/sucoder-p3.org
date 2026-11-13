@@ -1,0 +1,77 @@
+#+title: P3: fresh readers use the corrected SuCoder wiki
+#+author: Sue
+#+date: 2026-11-09
+#+status: PASSED engineering reader gate; usefulness remains unmeasured
+#+setupfile: ../settings.org
+
+* Frozen context and protocol
+:PROPERTIES:
+:CUSTOM_ID: protocol
+:END:
+
+Three separate native readers ran on engine =73a0e7a= against corrected candidate =e9ea73ac18639f57c8e892cfbf22baac55966174= in the [[file:sucoder-p2.org::#correction][disposable real-source wiki]].
+They used explicit =gpt-6.1-sol= on Codex CLI 0.167.0 through =bounded-wiki-reader-v1=.
+Each received its own question, bounded orientation and admitted-source metadata, then chose lookups through the coordinator.
+No construction dialogue, earlier reader answer or grading rubric entered its assignments.
+The same deterministic source lookup/search interface is available to source-only readers, with that condition and both native protocols covered by tests.
+No comparative usefulness estimate or two-repository pilot was run.
+
+The selected original sources remain the same six real git passages at =1db3566b29e34312f1c36b61b8cc4eef65d2cf86=.
+The private plan is =0cb0c168d8447c972d36684de2c7ca9e7ee938829ffacae2ba4669b2555ce42d=.
+Private artifacts and the full answers are under =/tmp/sucoder-dream-p2-correction-vm7eoby5/reader-CASE.json=; the opt-in driver is =/tmp/sucoder-dream-p3-reader-check.py=.
+Each answer and all intermediate assignments bind exact delivered read IDs, byte ranges and native traces.
+
+* Questions, inspected answers and observed reading
+:PROPERTIES:
+:CUSTOM_ID: results
+:END:
+
+** Correction
+
+Question: Does a compaction summary containing REPLY <id>: establish that a reply was delivered without native assistant output? Explain the correct evidence rule and any unresolved maintainer constraint in the wiki.
+
+Run =fb897ee12488c71422c0d1668a47e6236d7eb173d18b43e987f74c54e63c45bf= used 2 native calls.
+Delivered 1156 orientation bytes, 9556 active-topic bytes and 12022 original-source bytes.
+Native usage reported 27157 input and 839 output tokens; currency remains unknown.
+The reader requested the complete semantic topic and cited its delivered read ID in the answer.
+It then consulted =sc-investigation, sc-parser, sc-adapters= through the bounded original-source interface.
+
+Inspection: it rejected a compaction summary as proof, described harness-specific assistant output and the input-bounded reply window, distinguished the summary claim from observed transcript evidence, and retained the unresolved ten-second maintainer constraint.
+The latter is the explicitly labeled acceptance fixture in the disposable wiki, not actual SuCoder policy.
+
+** Synthesis
+
+Question: For a busy Claude or Codex session, why can timestamp order and taking the next assistant message misattribute a reply, and how does the reader bound the reply? Distinguish historical observations, implementation and fixture definitions.
+
+Run =3bf2e35eaf6d2305944d1f510d0328462237d8a5453e5db5fcd40df6347213e3= used 3 native calls.
+Delivered 1156 orientation bytes, 9556 active-topic bytes and 17160 original-source bytes.
+Native usage reported 46147 input and 1274 output tokens; currency remains unknown.
+The reader requested the complete semantic topic and cited its delivered read ID in the answer.
+It then consulted =sc-investigation, sc-adapters, sc-parser, sc-fixtures= through the bounded original-source interface.
+
+Inspection: it joined the historical queued-timestamp/commentary observations with adapter filtering, parser window/fallback/status behavior and fixture expectations.
+It kept reported observations, static implementation and unexecuted test definitions distinct, and retained the unresolved deadline/policy caveats.
+
+** Lookup
+
+Question: What exact Claude launch flag allows a chosen session identity, and what version/date and discovery limitations qualify this advice?
+
+Run =e7daaa7dbefe3b1e241029cf1bf2b3a413b371090d3c658d1c7e2ead4ad4791c= used 3 native calls.
+Delivered 1156 orientation bytes, 9556 active-topic bytes and 7572 original-source bytes.
+Native usage reported 39685 input and 738 output tokens; currency remains unknown.
+The reader requested the complete semantic topic and cited its delivered read ID in the answer.
+It then consulted =sc-investigation, sc-protocol= through the bounded original-source interface.
+
+Inspection: it returned =claude --session-id <uuid>= with Claude Code 2.1.309 and the 2026-10-23 collection scope, and qualified compute-session discovery, shared-home access and stale/missing pid metadata.
+It did not promote the historical flag observation into a current universal verification.
+
+All three readings stayed below 2 KiB orientation, 12 KiB topic and 32 KiB source delivery; none exhausted its allowance.
+The observable sequence was orientation, a reader-chosen topic request, original-source requests, then a source-bound answer.
+This establishes actual consultation and correct use of the corrected rule in these engineering cases; it does not prove a measured advantage over source search or generalize beyond them.
+Ordinary projections omit LOGBOOK history, and specific archive-entry retrieval/provenance is covered by native-Org tests; the runtime editorial/archive lifecycle remains P5 work.
+
+This passes [[file:../workplan.org::#fresh-reader][P3's engineering gate]].
+P4 selective convergence, P5 editorial/archive transitions and P6's separately scoped usefulness acceptance remain outstanding.
+Live Claude verification remains explicitly deferred.
+
+Prepared by Sue.

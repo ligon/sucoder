@@ -2556,6 +2556,171 @@ subsequent launches).  If =CLAUDE.md= or =.claude/skills= already
 exist independently, =sucoder= leaves them in place and does not
 overwrite.
 
+* Dream companion candidates with Codex and Claude
+
+=sucoder dream= dreams over this mirror's own experience: its finished agent sessions and the agents' notes (=.sucoder/handoff.org=, =.sucoder/handoffs/=, ledgers), with the committed project available for checking.
+Following [[file:docs/dream/essay-alignment.org][the essay-alignment charter]], its default purpose is to verify memory and notes against what sessions actually did, and to record what sessions learned that the repository does not already say.
+Sessions are the Claude transcripts in the project directories derived from the mirror path and its registered worktrees; nothing else in the home directory is searched.
+A session counts as finished when no live local launch uses it and its file has been quiet for =dream.session_quiet_minutes= (default 30); live and recent sessions are listed but never read or selected.
+The explorer reads sessions as rendered =claude-view= windows under a virtual =@sessions= directory, sees which raw byte ranges earlier dreams admitted, and selects up to six session windows or file ranges (64 KiB of rendered or UTF-8 bytes in total) for the existing wiki author/editor and independent reviewer.
+=--explore= keeps the earlier open exploration of the committed project, with agent-selected topics; a later job can find new relationships in unchanged sources, and ordinary explicit-plan receipt reuse remains available.
+Run it from a canonical checkout, mirror or project subdirectory: the job binds that checkout's committed HEAD and branch rather than silently using a stale configured mirror.
+Staged/unstaged/untracked files, symlink targets and submodule contents are outside automatic admission, and Codex sessions are not yet discovered.
+
+Configure the native model once in =~/.sucoder/config.yaml=:
+
+#+begin_example
+dream:
+  harness: codex
+  model: YOUR_AVAILABLE_MODEL
+  max_total_seconds: 900
+  max_total_calls: 40
+  memory_branch: sucoder/memory   # "" keeps candidate branches
+  inject: true                    # add the memory index to each launch
+  inject_bytes: 2048
+  checkout: true                  # keep a read-only copy of the wiki in the mirror
+  session_quiet_minutes: 30       # sessions quieter than this count as finished
+#+end_example
+
+The optional =mirrors.NAME.dream= block overrides individual global defaults.
+Harness/model can inherit the existing launcher selection; an absent model returns a diagnostic without prompting or provider startup.
+There is no provider/model fallback after a failure.
+Bare-launch defaults allow eight discovery turns and 128 KiB navigation delivery, reserving 30 seconds and three invocations for closeout plus one ordinary invocation for authorship.
+All discovery, author, reviewer and repair calls share the same durable job budget.
+
+#+begin_example
+cd ~/Projects/SuCoder
+sucoder dream
+sucoder dream --detach --max-total-seconds 1800 --max-total-calls 30
+sucoder dream --explore
+sucoder dream status
+sucoder dream budget
+sucoder dream --job /PRIVATE/LOGS/dream-jobs/JOB_ID
+sucoder dream status --job /PRIVATE/LOGS/dream-jobs/JOB_ID
+#+end_example
+
+Use =poetry run sucoder= from this source checkout when the installed launcher has not been upgraded.
+Bare launch runs unsupervised in the foreground; =--detach= launches the same persisted job with private stdout/stderr logs and returns its process ID and job location.
+Job settings, exact project binding, discovery choices and paid-work reservations are frozen before reuse; =--job= resumes the same allowance, while a new bare launch creates a new job that may investigate differently.
+=--attempt 2= is an explicit retry after inspecting a failed/unknown request, still within that job's remaining allowance.
+The publication base is the memory branch (the launch branch when =memory_branch= is empty); if it moves while work is underway, the job returns an explicit conflict and retains its private work, while evidence stays pinned to the launch commit.
+Output includes the private job/plan paths, examined navigation, selected evidence and important open questions, with a reviewed candidate or independently reviewed =unchanged= result when editorial work completes.
+=no_selection= records a discovery decision with no selected evidence and no reviewed wiki proposal; exhaustion retains a private checkpoint without publishing unchecked work.
+Default status/budget lookup selects the latest job for the exact project path; explicit =--job= inspection works independently of later configuration defaults.
+=dream budget= reports aggregate discovery/editorial usage for the shared wallet; the candidate receipt's usage describes its editorial roles.
+Current native adapters reject requested hard token/dollar caps before provider work.
+See [[file:docs/dream/exploration.org][the exploratory launch contract and verification]].
+
+Reviewed dreams update a dedicated memory branch in place (=dream.memory_branch=, default =sucoder/memory=).
+The branch holds only =.sucoder/wiki/= and shares no history with code branches.
+Its first use seeds a root commit from the launch commit's companion wiki, or from an empty tree when there is none.
+A generation that passes mechanical and independent review is committed on top of the frozen memory tip, and the same checked ref update moves the branch, so no =dream/<run>= candidate waits for a merge and no code branch receives wiki commits.
+Git history is the audit log: =git log sucoder/memory= lists the generations, and an ordinary revert commit on the branch (for example in =git worktree add ../memory sucoder/memory=) undoes one.
+When another dream has moved the branch first, the later job stops with a conflict and keeps its reviewed work privately; launch again to plan against the new tip.
+=dream read= and =dream ask= read the memory branch when it exists, unless =--base= names another revision.
+An explicit =dream plan --base refs/heads/sucoder/memory= publishes in place in the same way.
+The branch holds explanations distilled from this project's evidence; keep it out of public remotes.
+SuCoder never pushes it.
+Set =memory_branch: ""= to keep the earlier candidate branches, which wait for an ordinary human merge.
+Every agent launch in a mirror with a memory branch carries a =PROJECT MEMORY= block in its context: a caveat that the wiki can be stale, how to read a page with =git show sucoder/memory:.sucoder/wiki/topics/NAME.org=, and the index itself without drawers, cut at a line to =dream.inject_bytes= (default 2048, at most 16384).
+The block is read from the local mirror with one bounded git call; when the branch is absent or unreadable the launch proceeds without it.
+Set =inject: false= to launch without it.
+
+Wiki pages link into the project with ordinary Org =file:= links, written relative to the page as if the wiki sat at =.sucoder/wiki/= in the project (for example =file:../../../docs/attention.org= from a topic page).
+A wiki-only branch holds no project files, so SuCoder keeps a read-only copy of the branch's wiki at =.sucoder/wiki/= in the checkout, where those links resolve in Emacs, in a shell and in an agent's file tools.
+A local launch refreshes the copy in the mirror as the agent account before composing its context, and the =PROJECT MEMORY= block then points into it; a reviewed in-place dream refreshes it in the checkout it ran from.
+=sucoder dream checkout [PATH]= writes one in any checkout that has the memory branch; in your own clone, run =git fetch MIRROR sucoder/memory:sucoder/memory= first.
+The copy carries a marker naming the branch commit, is listed in the repository's local =info/exclude=, and is replaced whole when the branch moves, so edits made there are lost; a checkout that tracks files under =.sucoder/wiki/=, or holds a directory there that SuCoder did not write, is left alone and reported.
+Set =checkout: false= to stop the automatic copies; remote sessions never get one.
+A dream page may link any regular file of the project commit the dream inventoried, while citations still need admitted evidence; =sucoder dream read= lists the links that leave the wiki as project paths, each with whether that file exists at =HEAD=.
+See [[file:docs/dream/essay-alignment.org][the essay-alignment charter]].
+
+=sucoder dream plan= starts an agent-independent, checked-in companion wiki workflow by freezing explicitly selected local git files, passages, or Claude/Codex transcript prefixes into a private plan.
+A =claude-view= unit admits a rendered window of a Claude session instead of raw JSONL: its locator names the transcript =path=, =thread_id= and a complete-line raw range =byte_start=/=byte_end=.
+Rendering keeps user and assistant text, clips tool calls and results to a head and tail with an omission marker, drops thinking and metadata records, labels sidechains and compaction summaries, and redacts high-confidence credential patterns.
+Each block starts with =[@OFFSET]=, the raw byte offset of its record; quotes are checked against the rendered text, and the plan records both the raw and the rendered digests, so a changed window is refused before any model call.
+Receipts record the raw range but not the private path; rendered windows require wiki mode.
+Dreaming is expected to run unsupervised, including overnight or headless, with the same unattended contract whether or not a terminal is present.
+Supply the source selection, configuration, authentication, harness/model and allowances before launch; an unusable prerequisite produces an error without an interactive human question.
+Agent review and bounded context requests may continue within the run.
+Important unresolved questions are recorded beneath the relevant article's Talk heading, with evidence, the missing decision and a condition for revisiting them; human-dependent items remain WAITING or REVIEW.
+The run completes independent work and returns its candidate/status for later inspection; unresolved human questions do not suspend the process waiting for a reply.
+See the [[file:docs/dream.org::#unattended][unattended execution contract]].
+Planning preserves the mirror's worktree, index, and refs.
+=sucoder dream snapshot= validates a stored plan and copies exact admitted bytes into private storage.
+=sucoder dream read MIRROR= supplies bounded session orientation; =--topic NAME= retrieves active prose without LOGBOOK history, and =--archives --target ID= reads one specific archived entry.
+=sucoder dream source MIRROR --plan PLAN --search TEXT= searches the exact locally frozen evidence, with explicit byte accounting and no transcript discovery.
+=sucoder dream ask MIRROR "QUESTION" --plan PLAN --base REVISION --harness codex --model MODEL= starts a fresh native reader that chooses bounded topic/source lookups and records its actual retrievals; Claude uses the same interface.
+=--source-only= provides the same source lookup interface without wiki access.
+=--wiki-only= provides a diagnostic companion/archive reader with original-source tools disabled.
+These are explicit session entry commands; project instructions are not rewritten.
+A run with unchanged admitted evidence can return =already_integrated= without model calls or a new candidate when compatible accepted receipts and every required output binding validate.
+For appended Claude/Codex transcripts, a compatible accepted complete-line prefix can be reused while the author/reviewer receive the new bytes and relevant existing wiki.
+Pending and ambiguous tool-call provenance crosses the cut; older source text remains available through bounded requests.
+Explicit maintenance bypasses that shortcut; changed required outputs request reconciliation.
+The author may also conclude that no useful edit is supported; independent review must accept that no-op before =unchanged= is recorded privately, with no candidate commit.
+New plans bound prior context to orientation, the named or source-associated topics and their direct neighbors.
+Unselected existing pages remain in the frozen inventory and cannot be overwritten without being fully delivered.
+Authors and reviewers can request bounded frozen topic/source lookups and specific archived decisions; snippets remain read-only and status replays the cached context without inference.
+
+=sucoder dream run --harness fixture= exercises complete chunk delivery and prepares an attributed-quotation candidate with output-bound receipts; =sucoder dream status --plan= checks its candidate ref and integration bindings.
+The fixture invokes no model and establishes quotation fidelity only.
+Native =--harness codex --model MODEL= and =--harness claude --model MODEL= default to a shared wiki author/editor and independent whole-candidate review.
+Wiki mode may synthesize new explanations, relationships and abstractions from multiple admitted sources; the explanation need not appear verbatim in any one source.
+Record derived reasoning as =inference= in its source references, cite the supporting evidence and preserve uncertainty and attribution in the prose.
+Independent review checks whether the evidence supports the explanation and its qualifications.
+Readers use the explanatory wiki alongside normal source retrieval; maintained sources remain available for details and verification.
+This is the [[file:docs/dream/workplan.org::#accepted-synthesis][user-accepted operating mode]].
+Use =--purpose TEXT= to state what the companion should help readers understand; =--mode notes= retains the earlier extractor/verifier/grouping pipeline.
+These commands transmit admitted evidence and prior wiki context to the selected provider; there is no provider/model fallback.
+
+#+begin_example
+sucoder --config ~/.sucoder/config.yaml dream plan SuCoder \
+  --sources sources.json --base refs/heads/main
+sucoder --config ~/.sucoder/config.yaml dream run SuCoder \
+  --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json --harness codex --model MODEL
+sucoder --config ~/.sucoder/config.yaml dream status SuCoder \
+  --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json
+sucoder --config ~/.sucoder/config.yaml dream budget SuCoder \
+  --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json
+#+end_example
+
+Native runs persist a whole-job budget before snapshotting or native startup.
+By default the plan's elapsed and role ceilings become a shared deadline and native invocation cap (normally 900 seconds and 40 invocations), including review, repairs, context-request turns, failed calls and explicit attempts.
+Elapsed time includes idle time between restarts; restarting a process or selecting =--attempt 2= does not replenish the budget.
+Use =--max-total-seconds= and =--max-total-calls= on the first run to choose different job ceilings; the plan's per-attempt bounds still apply.
+The defaults reserve 30 seconds (or one tenth of a shorter job) and one invocation for closeout.
+=--reserve-seconds= and =--reserve-calls= change those reserves; author/extractor work stops earlier, while review, verification, repair and consolidation can use the reserve.
+This leaves closeout capacity available without guaranteeing that every proposal can finish review.
+
+The default private budget directory is =job-budget/= beside =plan.json=.
+To share an allowance across several plans, pass the same =--budget /PRIVATE/EXISTING/PARENT/JOB= to every participating run and to =dream budget=; the final directory is created privately when absent.
+One coordinator owns a shared budget at a time, and its limits become immutable on creation.
+A deliberately new job needs a different budget directory; =dream ask= reader sessions are separate jobs and do not debit this writer allowance.
+For example, add =--budget /PRIVATE/LOGS/overnight-job --max-total-seconds 28800 --max-total-calls 120= to the first run, then reuse that directory for subsequent plans without redefining its limits.
+
+=dream budget= reports remaining time/calls and aggregated native-reported usage without inference.
+Every reserved call remains charged even if its outcome is unknown; the cap counts native invocations rather than hidden provider HTTP retries.
+Native adapters currently cannot enforce complete token or dollar ceilings, so =--max-total-tokens= and =--max-cost-usd= are rejected before any provider request.
+Missing token or currency data remains unknown.
+Budget exhaustion returns JSON with =state: budget_exhausted= and exit 3, retaining completed roles, traces, proposals and a stop checkpoint privately for inspection.
+An unreviewed proposal cannot become a candidate; validated completed results and status remain replayable after expiry without model calls.
+See [[file:docs/dream/budget.org][the durable budget contract and verification]].
+
+See [[file:docs/dream/implementation.org][the implemented request format, limits, and backend boundary]] and [[file:docs/dream.org][the complete design]].
+Plans use the existing =log_dir= setting (or =~/.sucoder/logs/= when unset) and must live outside inspected repositories.
+The =dream= YAML defaults apply to exploratory launches; explicit plan/run settings retain their existing execution options.
+Native execution currently requires Linux Landlock ABI 3 or newer and the CLI isolation/schema flags checked at runtime.
+Models receive immutable inline input in a private temporary environment, with external tools disabled; the coordinator alone publishes git objects and refs.
+Wiki mode writes explanatory Org and can revise existing topics against their frozen base, with exact source references, retained anchors and one bounded repair after actionable findings.
+Editorial work uses the TODO/NEXT/ACTIVE/WAITING/REVIEW/DONE/MOOT workflow through explicit reviewed actions.
+The coordinator preserves task history, records transitions and required ownership/review metadata, and archives eligible terminal trees with forwarding anchors and repaired incoming wiki links.
+Tasks requiring a human decision need recorded source evidence; independent review checks attribution and satisfaction of the acceptance criteria.
+The quotation fixture and legacy notes mode remain append-only.
+Use =--attempt 2= to explicitly start a new native run after inspecting a failed attempt, spending from the same persisted job budget; completed role results are otherwise reused without another provider call.
+When a plan has multiple native runs, status requires =--run RUN_ID=.
+Planning and snapshots remain inference-free; generic harness adapters remain subsequent work.
+
 * Agent Skills Tracking
 
 Agents may write skill files to =~coder/.claude/skills/= during sessions.

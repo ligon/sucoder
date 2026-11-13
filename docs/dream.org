@@ -8,12 +8,14 @@
 :CUSTOM_ID: decision
 :END:
 
-Introduce a manually invoked dream that prepares a reviewable wiki revision from explicitly admitted evidence.
+Provide an explicitly configured dream command that can run unattended, including overnight and headless, preparing a reviewable wiki revision from explicitly admitted evidence.
 The wiki explains a project's accumulated understanding for humans and agents, while its Talk tasks expose unresolved editorial work.
 The first implementation publishes a candidate git commit on a separate branch; acceptance uses the repository's ordinary integration workflow.
-There is no automatic merge, instruction-file rewrite, scheduler job, or hosted service.
+An operator may invoke it from a terminal or batch scheduler; the command remains bounded and publishes a reviewable candidate through the existing integration boundary.
 
-This is a proposed implementation design under the [[file:dream-charter.org][approved workshop charter]], not an implemented command or a measured memory improvement.
+This is the full implementation design under the [[file:dream-charter.org][approved workshop charter]]; it does not establish a measured memory improvement.
+The [[file:dream/implementation.org][implementation status]] records explicit Git/Claude/Codex evidence, native source-grounded authorship/review, correction, accepted progress, task/archive editing and bounded fresh readers.
+The [[file:dream/workplan.org][runtime workplan]] records the charter requirements, implemented behavior and acceptance dispositions.
 The [[file:dream-ledger.org][prior-art ledger]] supplies the reuse decisions and source limitations.
 Read the [[file:dream/prompts.org][role briefs]], [[file:dream/scenarios.org][scenario checks]], [[file:dream/pilot.org][pilot protocol]], and the [[file:dream/examples/sucoder.org][SuCoder]] and [[file:dream/examples/lsms.org][LSMS]] examples for operational detail.
 
@@ -22,15 +24,22 @@ Read the [[file:dream/prompts.org][role briefs]], [[file:dream/scenarios.org][sc
 :CUSTOM_ID: interface
 :END:
 
-Proposed commands, not currently available:
+The implemented core interface uses explicit stored plans; [[file:dream/implementation.org][implementation status]] records versioned contracts and limits:
 
 #+begin_example
 sucoder dream plan MIRROR --sources SOURCES.json --base REF
 sucoder dream plan MIRROR --sources SOURCES.json --base REF --maintenance REASON --topic TOPIC
+sucoder dream snapshot MIRROR --plan PLAN.json
 sucoder dream run MIRROR --plan PLAN.json --harness claude --model MODEL
-sucoder dream status MIRROR --run RUN_ID --json
+sucoder dream status MIRROR --plan PLAN.json [--run RUN_ID]
 sucoder dream read MIRROR --topic TOPIC [--archives] --max-bytes BYTES
+sucoder dream source MIRROR --plan PLAN.json --search TEXT
+sucoder dream ask MIRROR "QUESTION" --plan PLAN.json --harness codex --model MODEL
 #+end_example
+
+Bare =sucoder dream= uses [[file:dream/exploration.org][the exploratory launch interface]]: territory is open within the committed project, topics are agent-selected and all discovery/editorial work shares one durable budget.
+Each new job may develop different connections from unchanged evidence; the coordinator records actual navigation/omissions and selected source snapshots rather than claiming whole-project examination.
+The explicit commands retain advance source/topic control and inference-free planning when that precision is useful.
 
 =plan= resolves the configured mirror, inspects its binding, and freezes an explicit base commit and source selection.
 It makes no inference request, fetch, checkout update, scheduler call, or source modification.
@@ -39,6 +48,8 @@ It writes a private local plan containing a reproducible manifest and the propos
 The plan includes all limits; changing a limit or source produces a new plan identity.
 =status= separates execution, validation, candidate preparation, and integration evidence.
 =read= is deterministic file/Org retrieval, with no model call, and reports omitted content when its limit is reached.
+=status= always returns its JSON envelope; select =--run= when the plan contains multiple native attempts.
+=ask= starts a fresh bounded reader; =--source-only= and =--wiki-only= select explicit evidence-access restrictions.
 
 The initial source request is an explicitly supplied JSON catalog of git files or passages and supported local Claude/Codex transcript files.
 The proposed version-1 request has =repository= (configured mirror), =integration_ref= (full non-dream ref name), and =units= (a nonempty list).
@@ -53,11 +64,33 @@ An unmerged =refs/heads/dream/*= candidate cannot be designated as the integrati
 First-release collection and execution are local to an already accessible mirror; remote operators first supply an explicit local export through their established transfer workflow.
 This avoids turning a design for memory into a new allocation or credential lifecycle.
 
-Exit 0 means a valid plan, a prepared candidate, or a complete read/status operation, according to the reported operation.
+Exit 0 means a valid plan, a prepared candidate, a checked no-op, or a complete read/status operation, according to the reported operation.
+An =unchanged= no-op retains private analysis evidence and creates no candidate or new shared accepted-progress claim.
 Exit 2 rejects arguments, an unsupported backend, or invalid input before inference.
 Exit 3 reports incomplete evidence or exhausted work allowance without a publishable candidate; exit 1 reports an execution or validation failure; interruption may use 130.
 The proposed JSON envelope is version 1 and contains operation, run ID, base commit, state, coverage, limits, usage, candidate commit/ref, and integration evidence.
 Its =candidate_ready= state never means accepted or integrated.
+
+** Unattended execution
+:PROPERTIES:
+:CUSTOM_ID: unattended
+:END:
+
+The [[file:dream-charter.org::#unattended-operation][user's unattended requirement]] applies with or without a terminal.
+No human question, confirmation, login dialogue or approval prompt is part of a running dream.
+Prepare configuration, admitted sources, credentials, the explicit harness/model and bounded allowances before launching the job.
+The CLI bypasses interactive agent startup; native roles receive a finite immutable assignment on stdin, have no controlling terminal and use noninteractive approval settings.
+Missing or unusable prerequisites return an explicit error with a nonzero exit, while model and tool work remain bounded by the run's allowances.
+
+The coordinator may consult agent roles and serve bounded context requests while the human is absent.
+Resolve questions from the admitted evidence where possible; record important remaining questions under the relevant article's Talk heading.
+Include the question, supporting evidence and uncertainty, any provisional assumption, the missing information or decision and a revisit condition.
+Human-dependent tasks remain WAITING or REVIEW with their required metadata and authority intact.
+Continue independent source-grounded work and prepare a reviewed candidate that retains those open items.
+A saved WAITING item records the dependency; the process returns its result once independent work is complete.
+If a blocker prevents any valid result, preserve the private trace/diagnostic and return an explicit incomplete or rejected outcome instead of waiting for input.
+An uncertain or failed provider call still requires an inspected explicit new attempt; unattended operation does not grant unlimited retries.
+Inspect the JSON result, private run status, proposed wiki and open questions after the job; subsequent integration uses the ordinary workflow.
 
 * Files, claims, and links
 :PROPERTIES:
@@ -242,6 +275,10 @@ Proposed first-pilot defaults, chosen for bounded manual runs rather than inferr
 
 The planner calculates the required extraction/verification count before inference and rejects a plan that cannot fit its declared role cap.
 All phases and implicit retries spend from one shared allowance; a native retry that the coordinator cannot bound makes a hard-cap claim unavailable.
+Native wiki/notes execution now persists a whole-job deadline and invocation ledger across attempts and restarts, with optional explicit sharing across plans and capacity reserved for review/finalization.
+Budget settings are supplied before launch; exhaustion preserves private checkpoints and yields =budget_exhausted= without publishing unchecked work.
+Current native transports reject requested hard token/dollar caps before provider work and report incomplete usage explicitly.
+See [[file:dream/budget.org][the implemented durable budget contract]] and the CLI options in [[file:dream/implementation.org][the implementation guide]].
 Allow at most one consolidation repair attempt; if checks remain unsatisfied, fail without a candidate.
 Never call repeated passes improvement merely because more pages or links exist.
 

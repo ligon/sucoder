@@ -1,0 +1,63 @@
+#+title: Durable budgets for unattended dreaming
+#+author: Sue
+#+date: 2026-11-10
+#+status: COMPLETE
+
+* Approved scope
+
+The user approved implementing the proposed whole-job budget after discussion of unattended execution.
+Normal native dream runs must share durable limits across roles, repairs, explicit attempts and process restarts.
+Reuse the pilot's pre-invocation reservation/return journal, private atomic storage and advisory locks.
+Keep existing frozen plans and unbudgeted saved role/status contracts replayable.
+Live Claude checks remain explicitly deferred; protocol fixtures supply harness parity without new provider calls.
+
+* Definition of done
+
+- Normal native wiki and notes runs have a persisted job budget by default, using the plan's existing elapsed/invocation ceilings.
+- An explicit private budget directory can share one allowance across several plans; a new attempt never silently resets it.
+- Every native call is reserved durably before invocation, including failed/unknown outcomes; concurrent coordinators cannot overspend the same budget.
+- Wall-clock and native-call ceilings are enforced with a reserved closeout allowance; model assignments receive frozen, replayable remaining-budget advice.
+- Requested hard token or dollar ceilings are rejected before provider work when the selected native adapter cannot guarantee them.
+  Observed native usage is aggregated separately, and missing usage/currency remains unknown.
+- Exhaustion produces a structured =budget_exhausted= outcome and durable checkpoints; no unchecked candidate is published.
+- Read-only budget inspection and cached role/status replay remain available after exhaustion, including saved legacy runs.
+- Tests cover shared retries/restarts, explicit shared plans, unknown outcomes, concurrent ownership, clock/deadline drift, closeout, rejected unsupported ceilings and both harness protocols.
+- CLI documentation and the configuration example describe the supported settings and limits without inventing a dollar/token guarantee.
+
+* Implementation decisions
+
+Budget settings are execution inputs rather than additions to the frozen source-plan schema.
+The default budget lives under the private plan directory; =--budget= names a private shared budget directory when an operator wants a larger job scope.
+Budget identity and frozen per-assignment advice bind new run identities while old specifications without budget metadata retain their original reconstruction.
+Native role limits count invocations, not hidden HTTP requests.
+The existing native adapters do not expose a demonstrated complete token/dollar bound, so this slice advertises hard elapsed/call limits and rejects unsupported hard financial/token settings.
+The coordinator retains exact role results, traces and incomplete work privately when review cannot finish.
+Review/repair/consolidation may consume the reserved closeout allowance; ordinary author/extractor work stops earlier.
+No scheduler, automatic provider fallback, new corpus experiment or alternative Claude account is introduced.
+
+* Grounding and review
+
+See [[file:../dream-implementation-ledger.org][the implementation ledger]] for existing machinery and invariants.
+The workshop skill's independent skeptical review found two concrete deadline-classification defects: work-reserve expiry returned a generic rejection, and expiry outside the native transport could lose its budget classification.
+Both now produce typed exhaustion/checkpoints while preserving the original phase diagnostic.
+The second review found no surviving defect; a third checked the final expired shared-progress replay, which revalidates accepted output proofs without native startup.
+
+* Verification
+
+The targeted budget/adjusted-role group passed 27 cases, followed by one additional expired accepted-progress case.
+These cover both harness protocols, notes consolidation consuming its reserve, shared plans, immutable advice/policy, failed/uncertain calls, concurrent ownership, clock rollback/domain changes, expired snapshots/publication and denied-before-provider classification.
+The earlier four-file regression group passed 63 cases and exposed two obsolete test assumptions; the corrected lock-identity/failure-trace cases pass in the targeted group.
+The public planning/transcript/prior-context/reader/CLI group passed all 307 cases.
+The longer editorial/progress/prefix/context/native/config group passed all 206 cases in 966 seconds.
+The strengthened failed-request retry fixture also passes, checking the intended unknown-outcome diagnostic rather than accidentally accepting a corrupt trace.
+Together these partitions cover 604 distinct relevant cases, including the corrected original regression cases; this is not a new unfiltered whole-project run.
+
+Four-source-file mypy passes.
+Org export succeeds for the budget charter, implementation guide, design and README with Babel evaluation disabled; the optional htmlize package is absent, so source-block coloring is unavailable.
+The built wheel's budget, native coordinator/CLI and Org-validator files match the current source bytes, checked at =/tmp/sucoder-dream-budget-package-verified.txt=.
+The saved real SuCoder v2 wiki reports =integrated_candidate= with native startup/invocation replaced by exceptions, without creating a wallet.
+No provider request or live Claude check was made for this extension.
+The implementation is =314111c= and its separate prior-art ledger is =6c1d0e0=.
+Verification logs, tested-source hashes and the partition counts are retained under =/home/coder/.sucoder/logs/dream-budget/2026-11-10-314111c/=, indexed by =verification.json=.
+
+Prepared by Sue.

@@ -5,6 +5,39 @@ mirror_root: /var/tmp/coder-mirrors
 log_dir: /home/<your-username>/.sucoder/logs
 system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 
+# Bare `sucoder dream` dreams over this mirror's finished sessions and agent notes
+# (`--explore`: the committed project). Configure a
+# native model once; harness/model otherwise inherit agent_launcher selection.
+# The same optional block under mirrors.NAME overrides individual defaults.
+# dream:
+#   harness: codex                 # codex | claude
+#   model: YOUR_AVAILABLE_MODEL
+#   max_total_seconds: 900         # discovery + authorship + review, across resume
+#   max_total_calls: 40            # native invocations, not hidden HTTP retries
+#   reserve_seconds: 30           # review/repair/finalization
+#   reserve_calls: 3
+#   max_discovery_calls: 8         # also leaves one author call beyond closeout
+#   max_discovery_bytes: 131072    # bounded navigation delivery; selected evidence <= 64 KiB
+#   memory_branch: sucoder/memory  # wiki-only branch reviewed dreams update in place;
+#                                  # "" keeps dream/<run> candidates for a human merge
+#   inject: true                   # add that branch's index to every launch's context
+#   inject_bytes: 2048             # cut at a line; at most 16384
+#   checkout: true                 # read-only copy of the wiki at .sucoder/wiki, where
+#                                  # its project links resolve (local launches, publication)
+#   session_quiet_minutes: 30      # a session quiet this long, with no live launch, is finished
+
+# Explicit plan/run budgets are CLI options; bare-launch defaults use dream
+# above. Native writer runs persist limits across restarts/--attempt changes.
+# First run: dream run MIRROR --plan PLAN --harness codex --model MODEL
+#   --max-total-seconds 28800 --max-total-calls 120
+#   --budget /PRIVATE/EXISTING/PARENT/overnight-job
+# Use that same --budget for other plans sharing the allowance. Inspect with
+# dream budget MIRROR --plan PLAN [--budget PATH]. Limits become immutable.
+# Default closeout reserve: --reserve-seconds 30 --reserve-calls 1 (short jobs
+# reserve one tenth of their seconds). Hard token/$ caps are unsupported;
+# --max-total-tokens and --max-cost-usd fail before provider work.
+# README.org and docs/dream/budget.org describe accounting and checkpoints.
+
 # Compute-side dispatch project settings are explicit JSON profiles, separate
 # from this interactive-mirror YAML. Use `dispatch submit --project-profile
 # /shared/private/project.json` or `dispatch verify-stage --project-profile ...`.

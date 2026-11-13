@@ -1,0 +1,47 @@
+#+title: P4: accepted real SuCoder git reuse
+#+author: Sue
+#+date: 2026-11-09
+#+status: PASSED unchanged-git reuse; P4 remains ACTIVE
+#+setupfile: ../settings.org
+
+* Accepted companion and unchanged evidence
+:PROPERTIES:
+:CUSTOM_ID: reuse
+:END:
+
+The reviewed [[file:sucoder-p2.org::#real-wiki][actual SuCoder candidate]] was ordinarily integrated into =coder/dream-data-plane= at =dfbcf148259484ea674cba5f4379809a93cc173c=.
+Native Org and every output binding were checked before integration; the disposable seeded maintainer constraints were explicitly absent from the imported files.
+The accepted topic is available at =.sucoder/wiki/topics/transcript-replies.org= in the actual worktree.
+The engine still publishes candidates only; this was a separate ordinary integration after review.
+
+A new plan selected the same six real source objects and 23,236 bytes against that integration tree, independently of the original run's private role cache.
+Its plan ID is =22ce2298d81a30d44d462311182df99f9d85a8dc77d1ab74d14dc2b97a1d426c=.
+The unchanged-git reuse code is committed at =64baa20=.
+The requested harness/model/build remained Codex, =gpt-6.1-sol= and CLI 0.167.0.
+Provider invocation was patched to fail if attempted; version/capability inspection remained available.
+
+The run returned =already_integrated= with reuse ID =64f8d2c9a82809a1b80ce3943c64918a2e0981c1210bedf1e6dcc7c4c6a0f9a5=, zero provider calls and no new candidate or topic.
+It validated complete source dependencies/coverage and every output bound by accepted receipt =ba7ba3aa22adabd09f0b9534803a26bbfc0690df69201c8ce83498c538d1c2c1=.
+The receipt's SHA-256 is =193673e691238ab930e93eac1e68899538491d86d55090cc675c558f0065e95c=.
+Inference-free status reconstructed the private shared-progress proof and confirmed integration.
+The check preserved refs, index, worktree and active branch throughout the reuse operation.
+
+The private plan directory contains =real-accepted-reuse-check.json=, including the plan, result, status and engine commit.
+The retained opt-in driver is =/tmp/sucoder-dream-p4-real-reuse.py=.
+No new provider transmission, transcript discovery or two-repository usefulness pilot was involved.
+
+* Verification and remaining work
+:PROPERTIES:
+:CUSTOM_ID: limits
+:END:
+
+The combined dream regression run passed 111 tests; final focused checks covered the early purpose guard, both accepted-reuse harnesses and a spec-filename substitution regression.
+Mypy passed, and native Org design/link/archive checks passed.
+This follows the P3 full suite's 2743 passes and exact existing 55-failure baseline; the full run preceded the new shared-reuse code.
+Tests cover invalidated outputs, replaced repository identity, incomplete coverage, malformed review/empty output metadata, changed dependencies and incompatible native model/build.
+
+This is the first [[file:../workplan.org::#incremental][P4]] slice.
+Transcript prefix/appended-range reuse, bounded prior selection and agent no-op convergence remain required; task/archive transitions remain P5, and scoped usefulness remains P6.
+The user explicitly deferred live Claude verification.
+
+Prepared by Sue.

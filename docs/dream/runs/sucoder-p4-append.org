@@ -1,0 +1,71 @@
+#+title: P4 accepted transcript append and convergence check
+#+author: Sue
+#+date: 2026-11-09
+#+status: PASSED -- engineering acceptance, sanitized evidence
+#+setupfile: ../settings.org
+
+* Result and scope
+
+Code =2b9378464e2af0d3eaea47b93271672bdb4bfdfe= passed a live Codex append cycle in a private disposable repository.
+The agent updated the established =publishing.org= topic, retained =--dry-run=, added =--scope repo= and preserved both stable explanatory anchors.
+It described the synthetic failure and kept successful execution unverified.
+The update initially delivered 431 appended bytes and reused an accepted 505-byte prefix, with no older-source requests.
+A fresh plan over the ordinarily integrated appended revision returned =already_integrated= with zero provider calls and no candidate.
+
+All source records and tool results in this check were generated fixtures.
+No private real transcript was discovered or admitted, no sample publishing command was executed, and no fixture candidate was integrated into SuCoder.
+The real SuCoder wiki and fresh-reader milestones remain recorded separately in P2/P3.
+Usefulness and cost benefit remain for P6; live Claude remains explicitly deferred.
+
+* Reproduce and inspect
+
+#+begin_example
+poetry run python scripts/dream_append_acceptance.py \
+  --harness codex --model gpt-6.1-sol --kind codex-jsonl
+#+end_example
+
+The actual harness was =codex-cli 0.167.0= with explicit =gpt-6.1-sol=.
+Private artifacts are retained at =/tmp/sucoder-dream-append-acceptance-7geb_1mt/=, including =acceptance.json=, exact source bytes, plans, role assignments/results/traces, receipts and the disposable Git repository.
+The source adapter's native thread is =sanitized-append-thread= and its normalization contract is =native-jsonl-evidence-v1=.
+The 936-byte complete current revision is the exact 505-byte accepted prefix followed by the 431-byte tail.
+
+| Stage          | Plan ID                                                          | Run ID                                                           | Candidate                                |
+|----------------+------------------------------------------------------------------+------------------------------------------------------------------+------------------------------------------|
+| Initial wiki   | bfd56343a330449dbc41d58abdb29da6778accccc5f6d968d20e0460b473159a | 7fa31ebed94a7eff462d1ebef58756faf711937636b83e1d324d8dbdfa5d7b5f | 338c8a3ea0e7f3c99a97dbd88f37e28261d66455 |
+| Append         | 46ccbb2e6a6181d66b08344c203d9b75699575aeb2d806fcd3249244f8eafed8 | b82fc33666c1e18e7d7a877bac5c14784709a2894f75795e91240d2000392259 | 37ee23bf7c3131763ffb223fe5631a76a55b5fd1 |
+| Accepted rerun | 59c774cb0fb650e70f3fe17982947da9d7586b66d99157816be1562192aab0ec | dface422cdfc2d75d1c87af3515207afff7fdf6ed9b23735ced7e7e154a8e1de | None                                     |
+
+* Behavior, review and usage
+
+Each substantive run used author, repair and independent reviewer, three native calls.
+The initial mechanical finding rejected an invented file link outside the admitted source set; the append finding rejected an unsupported =id:= link.
+Both repairs passed validation and independent review, with no unknown provider outcome or implicit retry.
+The same topic retained targets =procedure= and =execution-evidence= through the update.
+
+Every append assignment's source text was exactly the frozen suffix.
+Its accepted-prefix manifest pinned the prior canonical receipt and required-output Git objects, and its boundary metadata retained the earlier pending call without exposing omitted raw arguments.
+The receipt binds the complete current normalized revision, required prior navigation/decisions and the partitioned source coverage.
+The script checked unchanged worktree/index/branch during candidate publication and validated the fresh integrated result while patching provider invocation to fail if attempted.
+
+The initial run reported 35,060 input and 1,966 output tokens; the append reported 37,415 input and 1,816 output tokens.
+Cumulative construction/update usage was 72,475 input and 3,782 output tokens across six calls.
+Currency was unreported and remains unknown.
+Prefix source-byte savings alone do not establish lower overall cost, particularly on this small fixture with two repairs.
+V5/operator ergonomics should make the supported transcript-source and CUSTOM_ID link forms clearer while retaining frozen v4 replay.
+
+* Broader verification
+
+The final seven-module dream regression passed 114 tests, including eighteen prefix cases.
+Both transcript formats crossed with both harness protocols update the same topic and establish accepted zero-call reuse.
+Additional cases cover alias changes, rewritten/shrunk prefixes, normalization/output changes, pending/ambiguous calls, explicit older-range retrieval, interrupted publication, squash integration, peer races, targeted repair without a new session and private no-op non-acceptance.
+Mypy passed seven runtime/script modules and native Org design checks passed.
+
+The full suite passed 2,796 tests, skipped eight and failed 55 in 891.67 seconds.
+All 55 failing node IDs exactly match the reproduced pre-dream baseline at =b7d9014= under the same installed native CLI; there are no added or removed failures.
+The log is =/tmp/sucoder-dream-p4-full-suite-final.txt= and exact comparison is =/tmp/sucoder-dream-p4-baseline-comparison.json=.
+The earlier full-suite attempt was interrupted before completion and is not the acceptance result.
+
+P4's engineering gate is complete together with the [[file:sucoder-p4-git-reuse.org][real accepted Git reuse]], [[file:sucoder-p4-noop.org][real reviewed no-op]], bounded prior selection and frozen agent-requested context.
+P5 editorial/archive transitions and P6 scoped usefulness remain outstanding.
+
+Prepared by Sue.

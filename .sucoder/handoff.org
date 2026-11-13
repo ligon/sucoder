@@ -1,56 +1,67 @@
-#+TITLE: sucoder attention: PR 89 merged; Codex hooks await their first live launch
-#+DATE: 2026-11-03
-#+STATUS: READY
+#+TITLE: sucoder dream: essay alignment S1-S5 complete and first live generation published; integration awaits the human
+#+DATE: 2026-11-12
+#+STATUS: COMPLETE
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
 * Where things stand
 
-PR 89 (agent status records, =sucoder attention=, untracked-session listing, Codex hooks, the coordinator example) is merged into =main= as =3a68deb=.
-GitHub, =~ligon/Projects/SuCoder= and this mirror's =main= are all at =3a68deb=; CI on =main= is green on 3.9 and 3.11, and the docs deploy succeeded.
-=/opt/sucoder= on vantage is installed from that commit (=2026.7.1.dev383+g3a68deb=).
-The Coordinator mirror (=~coder/mirrors/Coordinator=) and =~ligon/Projects/Coordinator= are level at =9e07c23=; its brief (=CLAUDE.md=, commit =ff0b3fe=) covers untracked sessions.
-The branch =coder/attention-status= is kept on GitHub and here; delete it when convenient.
-The ligon-owned worktree =~ligon/.cache/sucoder-attention= has been removed.
+Work is on =coder/dream-essay=, checked out in the worktree =/home/coder/mirrors/SuCoder-dream-merge=; the main mirror checkout stays on =coder/confined-node=.
+Nothing is pushed, nothing is merged to =main=, and the installed =/opt/sucoder= (=c50d913=) has no =dream= command.
 
-The design note is [[file:../docs/attention.org][docs/attention.org]]: Codex at =docs/attention.org:83=, trust at =:111=, untracked sessions at =:150=, the open list at =:287=.
+- =8370dcc= :: =main= merged into =coder/dream-data-plane=.
+  Full pytest: =main= 2578 passed, 50 failed; merged 3063 passed, the same 50 failed.
+- =8585b8a= :: The charter, [[file:../docs/dream/essay-alignment.org][docs/dream/essay-alignment.org]], with the human's four choices and three answers ("go", 2026-11-12).
+- =5cbfdad= :: S1, in-place generations on the wiki-only memory branch =sucoder/memory=; full pytest 3082 passed, the same 50 failed.
+- =2f239e6= :: S2, the =PROJECT MEMORY= block in every launch's context; full pytest 3090 passed, the same 50 failed.
+- =ac0b717= :: S3, rendered =claude-view= session windows as admitted evidence and the mirror-scoped session inventory (=sucoder/dream_view.py=, =sucoder/dream_experience.py=); full pytest 3097 passed, the same 50 failed.
+- =99423ed= :: S4, experience mode as the bare default (=@sessions= navigation, notes, the experience purpose), =--explore= for project mode; full pytest 3104 passed, the same 50 failed.
 
-* The task: confirm Codex hooks from a live launch
+- =04d38ed= .. =09b2863= :: Fixes found by six live experience dreams with Codex (=gpt-6.1-sol=), recorded in [[file:../docs/dream/runs/sucoder-e1.org][docs/dream/runs/sucoder-e1.org]]: the last discovery call offers only =finish= in both modes, =failures= excludes caveats, topic phrases become names, line ends clamp, a session window holds at least one record, a page keeps its earlier source links, and email addresses are redacted.
+  The human approved the two CRITICAL-impact changes (=validate_proposal=, =redact=).
+  Run 6 published =371afd3= on =refs/heads/sucoder/memory= (topic =codex-hook-validation=); its claims were checked against its three sources.
 
-The human's launcher defaults to Codex, and =attention.hooks: true= is set in =~ligon/.sucoder/config.yaml:249=, so the next SuCoder Codex launch on vantage is the first real one with hooks.
-Codex hooks are untrusted until the account that runs Codex reviews them once; as of 2026-11-03 =~coder/.codex/config.toml= has no =session-flags= trust entries.
-On the first hooked launch Codex shows "Hooks need review"; the human chooses "2. Trust all and continue".
-Codex writes =[hooks.state."/<session-flags>/config.toml:<event>:0:0"]= entries; SuCoder never writes that file and never passes =--dangerously-bypass-hook-trust= (the human's rule: ask first).
-The hook command is the same on every launch (the record key is in =SUCODER_ATTENTION_KEY=), so one review covers every later launch; this was checked in a throwaway =CODEX_HOME=.
+- =8c69f14=, =7797b3d=, =6c6d96b= :: S5, project links (charter section 3, the human's "go" of 2026-11-12).
+  The memory branch's wiki is copied, read-only, into =.sucoder/wiki/= of a checkout: at local launch through =run_agent=, after in-place publication, and by =sucoder dream checkout=.
+  Pages may link any regular file of the inventoried project commit.
+  The tracked P2 copy is gone from this branch; the memory branch holds it.
+  In this worktree the copy resolves all twelve links of the three live pages.
 
-What has been seen fire live: =SessionStart= (in the TUI it fires at the first prompt), =UserPromptSubmit=, =SessionEnd=.
-What has not, and should be checked with =sucoder attention= (or =cat ~coder/.sucoder/attention/<mirror>--<target>.rec=) while the session runs:
+A read-only check on this mirror's real sessions (no model calls, statistics only) rendered all three without error: 5.21, 1.91 and 6.97 MB raw became 447, 74 and 520 KB (4-9 percent); the running session was marked live and the others finished.
 
-1. =PermissionRequest= :: an approval prompt shows =waiting [permission]= and the watcher's push arrives (=permission= is in =notify_kinds=).
-2. =Stop= :: a finished turn shows =idle=, then =waiting [idle]= "Codex is waiting for your input" a minute later; that is synthesized by =synthesize_idle_waits= (=sucoder/attention.py:452=), because Codex has no idle notification.  =idle= is not in the human's =notify_kinds=, so it lists but does not push.
-3. =Interrupt= (Esc during a turn) :: back to =idle=.
-4. =PreToolUse= with matcher =^request_user_input= :: a model question shows =waiting [question]=.
+The 50 known failures, environment-specific here and green in CI: =test_codex_state_runner= 39, =test_codex_state= 4, =test_direct_remote= 3, =test_codex_app_server= 2, =test_timer_lifecycle= 2.
 
-If any of these does not fire, the event names and matchers are in =CODEX_EVENTS= (=sucoder/attention.py:76=) and =codex_overrides= (=:209=); the launch wiring is =_with_attention_hooks= (=sucoder/mirror.py:5414=).
-Record what was seen in =docs/attention.org:293= (open item 3) and remove the item once all four are confirmed.
+* What remains
 
-Known gaps, documented, not bugs: MCP elicitations raise no hook; a failed Codex turn emits no =Stop= and reads =working=; a session launched with its own =hooks.*= override is left unhooked (=_codex_sets_hooks=, =sucoder/mirror.py:8139=).
+The charter's four slices are implemented; nothing remains that this branch can do without a human decision.
 
-* Other open items (from =docs/attention.org:287=)
+1. Integration :: Whether to merge =coder/dream-essay= into =main= and reinstall =/opt/sucoder= is the human's call; =/opt/sucoder= is root-owned.
+   Until then =poetry run sucoder dream= from this worktree is the way to run it.
+2. Live verification :: Six Codex experience dreams ran on 2026-11-12 (E1); one generation is published, which is one observation, not a quality estimate.
+   Live Claude verification remains deferred by the human, and no live project-mode (=--explore=) dream has run.
+3. Deferred by the charter :: A staleness pass over pages whose cited sources changed; an organizer and pruning pass; Codex session discovery (S3b); a scheduler example for nightly dreams.
+4. Known limits :: Queued-command attachments are dropped when rendering, so a message delivered to a busy session is not visible in a window.
+   The injected reading hint assumes the session's repository has the memory branch; node-local and remote clones may not.
+   Remote and confined sessions get no wiki copy: their working clone is not the local mirror, so their block keeps the =git show= hint.
+   Your own clone needs =git fetch <mirror> sucoder/memory:sucoder/memory= and =sucoder dream checkout= to get working links.
+   The author repeats a section's reference in most live runs; the repair fixes it at the cost of one call.
 
-- A hooked interactive session on Savio; confirm =Notification= for permission and idle (Claude), and the Codex events above on a compute node.
-- A record whose tmux is gone stays at its last state; the listing could mark it orphaned now that it knows what is running (=mark_untracked=, =sucoder/attention.py:737=), but an absent local process is weak evidence.
-- Allocation expiry and renewal failure as watcher events; =message= and =peek= for local sessions.
-- CI: the test job is pinned to =ubuntu-24.04= because =ubuntu-latest= (26.04) has no Python 3.9 build.  Whether to drop 3.9 instead (=pyproject.toml:11= says =^3.9=) is the human's decision.
-- Local full suite on vantage: 49 failures (=codex_state_runner= 39, =codex_state= 4, =direct_remote= 3, =timer_lifecycle= 2, =codex_app_server= 1) that also fail on =main= here and pass in CI; environment-specific, not investigated.
+* How to work here
 
-* Loose files outside the repo
+- Tests :: =PYTHONPATH=$PWD /home/coder/.cache/pypoetry/virtualenvs/sucoder-_hu1CrVA-py3.12/bin/python -m pytest -q -p no:cacheprovider= from the worktree.
+  =PYTHONPATH= matters: the venv's editable install points at the main mirror checkout.
+  The full suite takes about 32 minutes because dream tests start Emacs; run it on a frozen detached worktree in the scratchpad so the working tree stays editable.
+- GitNexus :: The worktree is indexed separately, also named =SuCoder=; pass =--repo /home/coder/mirrors/SuCoder-dream-merge= and exact =--uid= values to =impact=.
+  Refresh with =node /home/coder/mirrors/SuCoder/.gitnexus/run.cjs analyze --index-only /home/coder/mirrors/SuCoder-dream-merge=.
+- No paid inference :: Every new test uses the fake native transports; live Claude verification remains deferred by the human.
 
-=~coder/try-attention.sh=, =~coder/merge-attention.sh= and =~coder/pr89-body.md= were the human's runbooks for this rollout.
-The setup steps in =try-attention.sh= (perms, coordinator, tmux, start) are still the quickest way to rebuild the coordinator; the other two can be deleted.
+* Open items
 
-* Earlier handoffs
-
-The previous handoff (Codex node-local state, cross-node acceptance, 2026-10-16, COMPLETE) is at [[file:handoffs/2026-10-16-codex-local-state-acceptance.org]]; its open recovery gates are unchanged by this work.
+- The memory branch must stay out of public remotes; it is documented, and SuCoder never pushes it.
+  It now exists in the SuCoder mirror (=e0aa81c= seed, =371afd3= generation); =origin= has no such head and the =ligon= remote's push URL is =no_push=.
+- Jobs =acc43579=, =9dc6e6a8=, =a2e82ed5= and =0d98ce29= no longer replay readonly under the fixed explorer, and the rejected =f6131ffc= window no longer matches its plan after email redaction; none published anything.
+- =dream/228cde57= is the P1 diagnostic candidate, cited by hash in =docs/dream/runs/sucoder-p1.org=: keep it, do not merge it.
+- The untracked =.sucoder/handoffs/2026-11-12-dream-summary.org= in the main mirror checkout predates this work and is now stale; this handoff supersedes it.
+- The previous handoff (exploration and budgets, COMPLETE) is [[file:handoffs/2026-11-10-dream-exploration-and-budgets.org]].
 
 Recorded by Sue (Claude Opus 5.5).

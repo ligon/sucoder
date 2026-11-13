@@ -31,6 +31,19 @@ The candidate projects are SuCoder and LSMS_Library; their different documentati
 The [[#wiki-task-workflow][wiki task workflow]] is declared and exercised in this charter.
 The human approved the charter and this initial workflow on 2026-11-08; design review may propose subsequent changes with reasons.
 
+** Unattended runtime requirement, recorded 2026-11-10
+:PROPERTIES:
+:CUSTOM_ID: unattended-operation
+:END:
+
+The user clarified that =sucoder dream= is expected to run unsupervised, for example overnight and possibly headless, without asking the human interactive questions.
+It may consult other agent roles and request bounded admitted context while resolving questions from available evidence.
+Important questions that remain open belong beneath the relevant article's Talk heading, preserving evidence, uncertainty, the missing decision and what permits further work.
+Keep tasks requiring a human decision WAITING or REVIEW, complete independent supported work and return a candidate or an explicit bounded failure for later inspection.
+Configure source admission, authentication, harness/model and allowances before launch; missing prerequisites produce diagnostics and termination rather than a dialogue.
+Human review and any decisions happen outside that unattended run.
+The [[file:dream.org::#unattended][runtime execution contract]] and its regression checks implement this requirement.
+
 ** Premises to challenge
 
 A wiki earns its maintenance cost only if it helps readers answer questions or avoid mistakes that existing documentation and source search already address.
@@ -393,6 +406,7 @@ The approved charter includes this located candidate; record its exact revision 
 The design phase uses bounded source inspection and a maximum of three adversarial revision cycles.
 No paid corpus-processing experiment, installation, scheduler job, or operational change is included.
 Use the workshop's grounding and independent-review phases after charter approval; an engine that discovers a blocking scope problem returns to the human.
+Runtime dreaming follows the [[#unattended-operation][unattended requirement]] and records blockers for later human review.
 Anthropic's evaluations motivate the [[#research-conclusions][operational conclusions]] but do not establish effectiveness for SuCoder, LSMS_Library, or every supported harness and model.
 Numeric context and inference allowances, model choices, and pilot stop/go thresholds must be proposed and justified in the design; no value is inferred from an unrelated benchmark.
 

@@ -87,6 +87,9 @@ app.add_typer(list_app, name="list")
 from .dispatch_cli import app as dispatch_app
 app.add_typer(dispatch_app, name="dispatch")
 
+from .dream_cli import app as dream_app
+app.add_typer(dream_app, name="dream")
+
 _SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 
@@ -1816,6 +1819,16 @@ def main(
     ),
 ) -> None:
     """Load configuration once and store it on the Typer context."""
+    if ctx.invoked_subcommand == "dream":
+        # Planning reads only explicitly configured local mirrors. No agent
+        # detection, privilege setup, SSH, synchronization or default config.
+        unsupported = [parameter.name for parameter in ctx.command.params
+                       if parameter.name not in ("config", "version")
+                       and getattr(ctx.get_parameter_source(parameter.name), "name", None) == "COMMANDLINE"]
+        if unsupported:
+            raise typer.BadParameter("dream accepts only --config before the command; unsupported: " + ", ".join(unsupported))
+        ctx.obj = {"config_path": config or _default_config_path()}
+        return
     if ctx.invoked_subcommand == "dispatch":
         # Compute-side workers use the current uid and local scheduler, never
         # interactive SSH, sudo, agent detection, or mirror synchronization.
