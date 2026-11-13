@@ -16,6 +16,15 @@ MAX_SELECTED_BYTES = 65536
 # the 2 MiB plan bound, which refused LSMS_Library outright (19,466 files, a
 # 2.3 MB listing; 2026-11-13).  16 MiB lists about 120,000 such paths.
 MAX_INVENTORY_BYTES = 16 * 1024 * 1024
+# Navigation semantics are frozen per job: replay recomputes every lookup and
+# compares it with the stored response.  1 (implicit, never written to a job):
+# list and search take a directory prefix only, and search reads every file in
+# turn, 128 per call.  A file path therefore searched nothing yet reported
+# "complete", and the second LSMS_Library dream (2026-11-13) concluded that
+# country.py lacked a function it defines.  2: a file path names that file, a
+# path naming nothing is "no_such_path", and one git grep at the pinned commit
+# finds the matching files, so files without a match are never read.
+NAVIGATION = 2
 # Both briefs end with the turn rules the first live experience dreams (2026-11-12)
 # showed were missing: an explorer spent its last call on a read expecting a later
 # finish turn, and another put unverified caveats in failures, which rejects the job.
@@ -81,8 +90,9 @@ class Inventory:
     size, so an inspection replay reproduces its lookups after a resumed
     session grows.
     """
-    def __init__(self, source, commit, sessions=None):
+    def __init__(self, source, commit, sessions=None, navigation=None):
         self.source, self.commit = source, commit
+        self.navigation = NAVIGATION if navigation is None else navigation
         raw = source.git("ls-tree", "-r", "-l", "-z", commit, limit=MAX_INVENTORY_BYTES)
         self.files, self.omitted = {}, []
         for record in raw.split(b"\0"):
@@ -210,11 +220,16 @@ class Inventory:
         if action == "list":
             prefix = path.rstrip("/") + "/" if path else ""
             entries = {}
-            for name, item in self.files.items():
-                if name.startswith(prefix):
-                    suffix = name[len(prefix):]
-                    head = suffix.split("/", 1)[0]
-                    entries[head] = (dict(path=prefix + head, kind="directory") if "/" in suffix else dict(item, kind="file"))
+            if self.navigation >= 2 and path in self.files:
+                entries[path] = dict(self.files[path], kind="file")
+            else:
+                for name, item in self.files.items():
+                    if name.startswith(prefix):
+                        suffix = name[len(prefix):]
+                        head = suffix.split("/", 1)[0]
+                        entries[head] = (dict(path=prefix + head, kind="directory") if "/" in suffix else dict(item, kind="file"))
+            if self.navigation >= 2 and path and not entries:
+                return self._missing(path)
             rows = [entries[name] for name in sorted(entries)]
             if not path and self.sessions:
                 rows.insert(0, dict(path=SESSIONS, kind="directory", sessions=len(self.sessions)))
@@ -252,10 +267,31 @@ class Inventory:
                 raise DreamError("Search requires a literal query and file offset")
             prefix = path.rstrip("/") + "/" if path else ""
             names = [name for name in self.files if not prefix or name.startswith(prefix)]
+            counts = None
+            if self.navigation >= 2:
+                if path in self.files:
+                    names = [path]
+                elif path and not names:
+                    return self._missing(path)
+                counts = self._match_counts(request["query"], path, set(names))
+
+            def skip(at):
+                # Navigation 2 passes over, unread, the files git grep found no match in.
+                while counts is not None and at < len(names) and names[at] not in counts:
+                    at += 1
+                return at
+
+            def tally(value):
+                if counts is not None:
+                    value.update(matching_files=len(counts), total_matches=sum(counts.values()))
+                return value
             found: list[dict] = []
             scanned, omitted, examined = 0, [], 0
             cursor = request["offset"]
-            while cursor < len(names) and examined < 128:
+            while True:
+                cursor = skip(cursor)
+                if not (cursor < len(names) and examined < 128):
+                    break
                 name = names[cursor]
                 if self.files[name]["bytes"] > 2 * 1024 * 1024:
                     omitted.append(name)
@@ -276,13 +312,46 @@ class Inventory:
                     if request["query"] in line:
                         hit = dict(path=name, line=index, text=line[:512])
                         if len(canonical(found + [hit])) > cap - 1024:
-                            return dict(state="incomplete", matches=found, next_offset=cursor,
+                            return tally(dict(state="incomplete", matches=found, next_offset=cursor,
                                 searched_bytes=scanned, searched_files=examined, omitted=omitted[:16],
-                                truncated_matches=[dict(path=name, from_line=index)])
+                                truncated_matches=[dict(path=name, from_line=index)]))
                         found.append(hit)
-            return dict(state="complete" if cursor == len(names) and not omitted else "incomplete", matches=found,
-                next_offset=cursor, searched_bytes=scanned, searched_files=examined, omitted=omitted[:16])
+            cursor = skip(cursor)
+            return tally(dict(state="complete" if cursor == len(names) and not omitted else "incomplete", matches=found,
+                next_offset=cursor, searched_bytes=scanned, searched_files=examined, omitted=omitted[:16]))
         raise DreamError("Unknown exploratory navigation action")
+
+    @staticmethod
+    def _missing(path):
+        return dict(state="no_such_path", path=path,
+                    note="No committed file or directory has this path; list its parent directory.")
+
+    def _match_counts(self, query, path, scope):
+        """Matching-line counts per file in ``scope``, from one git grep at the pinned commit.
+
+        It searches committed blobs, never a working tree, and is literal
+        (-F) and case-sensitive, like the line scan that reports each match.
+        """
+        if "\n" in query:
+            return {}  # No line holds LF, and git grep -F would split the query into patterns.
+        args = ["grep", "-c", "-I", "-F", "-z", "--full-name", "--no-color", "-e", query, self.commit]
+        if path:
+            args += ["--", path if path in self.files else path.rstrip("/")]
+        raw = self.source.git(*args, limit=MAX_INVENTORY_BYTES, empty_status=1)
+        head, counts = self.commit.encode() + b":", {}
+        for record in raw.split(b"\n"):
+            if not record:
+                continue
+            name, _, count = record.partition(b"\0")
+            if not name.startswith(head) or not count.isdigit():
+                raise DreamError("Unexpected git grep output", 3)
+            try:
+                name = name[len(head):].decode("utf-8")
+            except UnicodeError:
+                continue  # Such a path is not in the inventory either.
+            if name in scope:
+                counts[name] = int(count)
+        return counts
 
     def _session_lookup(self, request, cap):
         path, action = request["path"], request["action"]

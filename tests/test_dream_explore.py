@@ -8,7 +8,7 @@ import subprocess
 
 import pytest
 
-from sucoder import dream, dream_budget, dream_explore as explore, dream_native, dream_run
+from sucoder import dream, dream_budget, dream_discover, dream_explore as explore, dream_native, dream_run
 from sucoder.config import DreamSettings
 from tests.test_dream import git, workspace  # noqa: F401
 from tests.test_dream_budget import Clock
@@ -166,6 +166,51 @@ def test_a_project_listing_past_the_plan_bound_is_explored_and_replayed(workspac
     monkeypatch.setattr(dream_native, "Transport", forbidden)
     assert explore.start(config, job) == result
     assert explore.status(config, job)["state"] == "published"
+
+
+class SearchingTransport(ExploringTransport):
+    """Searches one file path, then finishes with no selection."""
+
+    def __init__(self, path, query):
+        super().__init__(no_selection=True)
+        self.path, self.query = path, query
+
+    def __call__(self, harness, model, task, schema, deadline):
+        result, usage, trace = super().__call__(harness, model, task, schema, deadline)
+        if task["role"] == "explorer" and not task["input"]["history"]:
+            result.update(action="search", path=self.path, query=self.query)
+            trace["stdout"] = "\n".join(json.dumps(event) for event in (
+                dict(type="item.completed", item=dict(type="agent_message", text=json.dumps(result))),
+                dict(type="turn.completed", usage={}))) + "\n"
+        return result, usage, trace
+
+
+def test_navigation_is_frozen_per_job_so_earlier_jobs_still_replay(workspace, monkeypatch, clock):
+    repo, _, config, _ = workspace
+    (repo / "deep").mkdir()
+    (repo / "deep" / "long.txt").write_text("".join(
+        "def needle_gate(self):\n" if n == 4941 else f"line {n}\n" for n in range(1, 10635)))
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "deep file")
+    searches = {}
+    for version in (1, 2):
+        # A version-1 job is one prepared before navigation versions existed: its header has no key.
+        monkeypatch.setattr(dream_discover, "NAVIGATION", version)
+        native = SearchingTransport("deep/long.txt", "def needle_gate")
+        result = explore.start(config, cwd=repo, overrides=options(), transport=native)
+        assert result["state"] == "no_selection"
+        assert header(result["job_path"]).get("navigation_version") == (None if version == 1 else 2)
+        searches[version] = (result, native.calls[1]["input"]["history"][0]["observation"])
+    assert searches[1][1] == dict(state="complete", matches=[], next_offset=0, searched_bytes=0, searched_files=0, omitted=[])
+    assert searches[2][1]["matches"] == [dict(path="deep/long.txt", line=4941, text="def needle_gate(self):")]
+    clock.advance(901)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Cached exploratory replay attempted native startup")
+    monkeypatch.setattr(dream_native, "Transport", forbidden)
+    for result, _ in searches.values():
+        assert explore.start(config, Path(result["job_path"])) == result
+        assert explore.status(config, Path(result["job_path"]))["state"] == "no_selection"
 
 
 def test_unconfigured_project_from_subdirectory_can_record_no_selection_without_candidate(workspace):

@@ -123,7 +123,9 @@ class GitSource:
                 data["git_root"]["value"] != str(self.path) or data["mirror"]["value"] != self.name):
             raise DreamError("Configured mirror binding is unavailable, ambiguous, or changed: " + self.name, 3)
 
-    def git(self, *args, limit=MAX_TREE_BYTES, missing=False):
+    def git(self, *args, limit=MAX_TREE_BYTES, missing=False, empty_status=None):
+        # empty_status: an exit status that means "nothing found" (1 for git
+        # grep), returned as b"" so it is never confused with a failure.
         env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
         env.update(GIT_NO_LAZY_FETCH="1", GIT_TERMINAL_PROMPT="0", GIT_OPTIONAL_LOCKS="0",
                    GIT_ALLOW_PROTOCOL="", GIT_LITERAL_PATHSPECS="1")
@@ -143,6 +145,8 @@ class GitSource:
                 raise DreamError("Local git source inspection unavailable: " + self.name, 3) from None
             output.seek(0)
             data = output.read(limit + 1)
+        if result.returncode and result.returncode == empty_status:
+            return b""
         if result.returncode:
             if missing:
                 return None
