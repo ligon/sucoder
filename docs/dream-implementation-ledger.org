@@ -705,3 +705,18 @@ A new case in =tests/test_dream_explore.py= commits 7,200 paths of 245 bytes (a 
 Built from this source on n0035, the LSMS_Library inventory holds 19,419 files (47 omitted) in a 2.7 MB manifest, 16% of the bound, in 0.36 s, with no provider call.
 
 Prepared by Sue.
+
+* Exploratory search by git grep, frozen per job -- 2026-11-13
+The second live =--explore= dream on LSMS_Library (the human's checkout at =f138a3d=, 2026-11-13) ended =unchanged= after following the first dream's open question to the wrong place.
+Its search of =lsms_library= for =def _read_l2_country_cache= stopped after 128 files with no match; its search of =lsms_library/country.py= reported =complete= with zero files searched, because search took only a directory prefix; and it then read and selected lines 1-100 of that 10,634-line file, which the reviewer correctly found did not answer the question.
+The function is at line 4941.
+Navigation version 2 (=dream_discover.NAVIGATION=) makes one =git grep -c -I -F= at the pinned commit choose the files a search reads, so files without a match are never read and a whole-tree search no longer pages through 128 files per call.
+=git grep= reads committed blobs, as admission does; =rg= would read the working tree, with its uncommitted and untracked files.
+A file path now names that file for =list= and =search=, a path naming nothing returns =no_such_path= instead of an empty =complete=, and search results add =matching_files= and =total_matches=.
+=GitSource.git= gained =empty_status=, so =git grep='s exit status 1 is an empty result and every other failure still raises.
+The brief is unchanged.
+Replay recomputes every lookup and compares it with the stored response, so semantics are frozen per job: a new job records =navigation_version: 2=, version 1 stays implicit so earlier headers and digests are unchanged, and a job without the key replays with the old semantics.
+=tests/test_dream_explore.py= runs a version-1 and a version-2 job and replays both under the new code; passing the current version instead of the job's makes it fail with "Exploratory lookup differs from its frozen response".
+Built from this source on n0035 against =/local/job41201840/mirrors/LSMS_Library=, version 1 reproduced both failures (128 files and no match in 4.24 s; zero files for the file path), and version 2 found =country.py:4941= from the directory in 0.28 s and from the file path in 0.09 s; =import= reported 3,340 matching files and 18,891 matches.
+
+Prepared by Sue.

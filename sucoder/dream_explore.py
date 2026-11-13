@@ -90,9 +90,12 @@ def _job(path):
             raise DreamError("Dream job directory must be private and account-owned", 3)
         header = _read(fd, "job.json")
         dream._object(header, ("contract", "job_id", "directory", "created_at", "project", "settings", "purpose", "budget_path"),
-                      ("mode",))
+                      ("mode", "navigation_version"))
         if header.get("mode", "project") not in MODES:
             raise DreamError("Invalid frozen exploratory job mode", 3)
+        navigation = header.get("navigation_version", 1)
+        if type(navigation) is not int or not 1 <= navigation <= dream_discover.NAVIGATION:
+            raise DreamError("Invalid frozen exploratory navigation version", 3)
         if header["contract"] != CONTRACT or header["job_id"] != path.name or header["directory"] != str(path):
             raise DreamError("Exploratory job identity changed", 3)
         if _read(fd, "identity.json") != dict(sha256=digest(canonical(header))):
@@ -172,6 +175,9 @@ def prepare(config, job_path=None, *, cwd=None, overrides=None, budget_path=None
                 project_binding["memory_ref"] = memory_ref
             header = dict(contract=CONTRACT, job_id=job_id, directory=str(directory), created_at=time.time(),
                 project=project_binding, settings=frozen, purpose=purpose, budget_path=str(target), mode=mode)
+            if dream_discover.NAVIGATION > 1:
+                # Version 1 stays implicit, so earlier headers (and their digests) are unchanged.
+                header["navigation_version"] = dream_discover.NAVIGATION
             _store(fd, "job.json", header)
             _store(fd, "identity.json", dict(sha256=digest(canonical(header))))
             _store(fd, "prepared.json", dict(job_id=job_id, budget=budget.descriptor()))
@@ -208,7 +214,8 @@ def _discovery(config, fd, header, budget, *, attempt=1, transport=None, readonl
             sessions = dream._json(dream_run._read(fd, "inventory.json", INVENTORY_FILE_BYTES)).get("sessions", [])
         else:
             sessions = _sessions(config, source, header)
-    inventory = dream_discover.Inventory(source, header["project"]["base_commit"], sessions=sessions)
+    inventory = dream_discover.Inventory(source, header["project"]["base_commit"], sessions=sessions,
+                                         navigation=header.get("navigation_version", 1))
     raw = canonical(inventory.manifest) + b"\n"
     if readonly:
         if dream_run._read(fd, "inventory.json", INVENTORY_FILE_BYTES) != raw:
