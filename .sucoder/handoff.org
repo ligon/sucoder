@@ -45,6 +45,10 @@ The main mirror checkout stays on =coder/confined-node=.
   Targets take an optional =python:= (default =python3=) for the managed Codex state runner, the context installer, the remote-control helper and the reply probe; the launch preflight probes it against =PYTHON_FLOOR= (3.9) and warns.
   The runner's =sqlite3= CLI backup fallback is removed, and the staged modules and grammar tests move to 3.9.
   Full suite at =ef546ba= had 23 failures, all in =test_reply_cli.py= from a test fake lacking the field; =e225b37= adds it and that file passes.
+- =84281a6= :: =coder/editable-version=, the human's choice of an editable install on Savio ("Yes go", 2026-11-13).
+  =sucoder.__version__= follows the checkout an editable install runs from, in pyproject's version format; =git describe= runs once per HEAD and is cached in the checkout's git directory, and uncommitted edits are not detected.
+  README.org's "Installing on a cluster account" documents the layout.
+  Full suite 3232 passed, 1 skipped.
 
 A read-only check on this mirror's real sessions (no model calls, statistics only) rendered all three without error: 5.21, 1.91 and 6.97 MB raw became 447, 74 and 520 KB (4-9 percent); the running session was marked live and the others finished.
 
@@ -58,6 +62,8 @@ The charter's five slices are implemented and merged locally; nothing remains th
    Never push =sucoder/memory=.
    The dispatch interpreter fix takes effect on Savio only once SuCoder is updated there, since the controller that writes =batch.sh= runs there.
    After reinstalling, set =python: /usr/bin/python3.12= on the Savio targets; until then =python3= reaches 3.12 only through the human's dotfiles.
+   Savio's install is non-editable at =c9dafdb= in =~/.local/share/sucoder/venv= (=/usr/bin/python3.12=), recorded with its reinstall recipe in =~/.local/share/sucoder/INSTALLED_COMMIT=.
+   The planned conversion, after =sucoder -T savio-htc push SuCoder= publishes the commit: on a compute node, clone the Savio mirror to =~/.local/share/sucoder/src=, check out =refs/remotes/ligon/main= detached, and =pip install --force-reinstall --no-deps -e= it into that venv; keep =c9dafdb= in =INSTALLED_COMMIT= as the rollback point.
 2. Live verification :: Six Codex experience dreams ran on 2026-11-12 (E1); one generation is published, which is one observation, not a quality estimate.
    Live Claude verification remains deferred by the human, and no live project-mode (=--explore=) dream has run.
 3. Deferred by the charter :: A staleness pass over pages whose cited sources changed; an organizer and pruning pass; Codex session discovery (S3b); a scheduler example for nightly dreams.
@@ -89,8 +95,8 @@ The charter's five slices are implemented and merged locally; nothing remains th
 - =examples/lsms/burst.sbatch:17= still runs a bare =python3= under =sbatch --export=NONE=, which reloads the login environment, and =dispatch_verify.py:105='s =run= field names =python3= too.
 - The coder account now has a 12-hour BRC certificate in =~/.ssh/ssh_certs/= (the human minted it 2026-11-13) and accepted the gateway's ED25519 host key on first use, =SHA256:ciu39oN/Yirco9ODd+pcwewL2XwqpznHWPmvtuuxzpo=; the human has not yet compared it with their own known_hosts.
 - On Savio, the human's =~/.local/bin/python3.12= and =python3.13= point into =/local/job40653699/=, which no longer exists.
-- Merged branches with worktrees awaiting the human's OK to remove: =coder/dream-essay=, =coder/test-env-failures=, =coder/drop-py36-tests=, =coder/pin-receiving-python=, =coder/python-floor=, =coder/confined-node=; =coder/issue-90-confined-launch='s four commits are on =main= under rebased hashes (=git cherry=).
-  Scratch worktrees =pin-old=, =py39-old=, =py39-head= and =suite-ec= live in the session scratchpad.
+- Merged branches with worktrees awaiting the human's OK to remove: =coder/dream-essay=, =coder/test-env-failures=, =coder/drop-py36-tests=, =coder/pin-receiving-python=, =coder/python-floor=, =coder/editable-version=, =coder/confined-node=; =coder/issue-90-confined-launch='s four commits are on =main= under rebased hashes (=git cherry=).
+  Scratch worktrees =pin-old=, =py39-old=, =py39-head=, =suite-edver= and =suite-ec= live in the session scratchpad.
 - The previous handoff (exploration and budgets, COMPLETE) is [[file:handoffs/2026-11-10-dream-exploration-and-budgets.org]].
 
 Recorded by Sue (Claude Opus 5.5).
