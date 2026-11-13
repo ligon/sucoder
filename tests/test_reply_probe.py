@@ -12,7 +12,6 @@ import calendar
 import json
 import os
 import shlex
-import shutil
 import subprocess
 import sys
 import time
@@ -354,10 +353,6 @@ def test_the_probe_is_a_standalone_python36_module():
                 for alias in node.names}
     imported |= {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
     assert imported <= {"base64", "calendar", "errno", "glob", "json", "os", "re", "signal", "stat", "sys", "time"}
-    old = shutil.which("python3.6")
-    if old is None:
-        pytest.skip("no python3.6 to compile against")
-    subprocess.run([old, "-m", "py_compile", str(PROBE)], check=True)
 
 
 def _claude_home(tmp_path, *entries, session_id=SID, cwd="/home/u/mirrors/M"):

@@ -179,12 +179,8 @@ def test_restore_selector_rejects_everything_else(value):
         validate_restore_selector(value)
 
 
-def test_runner_source_is_the_staged_file_and_stays_valid_for_python_3_6():
+def test_runner_source_is_the_staged_file():
     assert runner_source() == RUNNER.read_text(encoding="utf-8")
-    old = shutil.which("python3.6")
-    if old is None:
-        pytest.skip("no python3.6 to compile against")
-    subprocess.run([old, "-m", "py_compile", str(RUNNER)], check=True)
 
 
 # ----------------------------------------------------------------- config

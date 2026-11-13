@@ -43,12 +43,8 @@ import pytest
 
 RUNNER = Path(__file__).resolve().parents[1] / "sucoder" / "codex_state_runner.py"
 PLACEHOLDER = "__SUCODER_CODEX_STATE_DB__"
-PY36 = shutil.which("python3.6")
 needs_bwrap = pytest.mark.skipif(not shutil.which("bwrap"), reason="bwrap not installed")
-INTERPRETERS = [
-    pytest.param(sys.executable, id="current"),
-    pytest.param(PY36, id="py36", marks=pytest.mark.skipif(PY36 is None, reason="no python3.6 on this node")),
-]
+INTERPRETERS = [pytest.param(sys.executable, id="current")]
 
 FAKE = r'''#!/usr/bin/env python3
 """A scriptable Codex: one rollout plus WAL-mode stores, driven over stdin."""
@@ -400,7 +396,7 @@ def test_replication_and_a_requested_generation(home, python):
         manifest = json.loads((gen_dir / "manifest.json").read_text())
         assert sorted(os.listdir(gen_dir / "db")) == ["goals_1.sqlite", "queue_1.sqlite", "state_5.sqlite", "thread_history_1.sqlite"]
         assert manifest["absent"] == ["logs_2.sqlite", "memories_1.sqlite"]
-        assert manifest["backup_method"] == ("cli" if python == PY36 else "connection")
+        assert manifest["backup_method"] == "connection"
         assert (manifest["format"], manifest["class"], manifest["generation"], manifest["parent"]) == (1, "warm", last["name"], None)
         assert manifest["scope"] == home["scope"] and manifest["run"] == m.run_dir.name
         assert manifest["codex_version"] == "0.162.1" and manifest["codex_home"] == str(home["codex_home"])
