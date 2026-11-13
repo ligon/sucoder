@@ -4698,6 +4698,7 @@ class _SnapshotsHarness:
 
     class _Remote:
         host = None
+        python = "python3"   # RemoteConfig's default
 
         def __init__(self, gateway, slurm, mirror_root="~/mirrors"):
             self.gateway = gateway
