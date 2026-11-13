@@ -10,6 +10,12 @@ from .dream import DreamError, canonical, digest
 
 CONTRACT = "project-exploration-v1"
 MAX_SELECTED_BYTES = 65536
+# The pinned inventory is local metadata: the explorer pages through it 64
+# entries at a time within its discovery allowance and never receives it whole.
+# So its bound follows project size, not what a model reads.  It used to share
+# the 2 MiB plan bound, which refused LSMS_Library outright (19,466 files, a
+# 2.3 MB listing; 2026-11-13).  16 MiB lists about 120,000 such paths.
+MAX_INVENTORY_BYTES = 16 * 1024 * 1024
 # Both briefs end with the turn rules the first live experience dreams (2026-11-12)
 # showed were missing: an explorer spent its last call on a read expecting a later
 # finish turn, and another put unverified caveats in failures, which rejects the job.
@@ -77,7 +83,7 @@ class Inventory:
     """
     def __init__(self, source, commit, sessions=None):
         self.source, self.commit = source, commit
-        raw = source.git("ls-tree", "-r", "-l", "-z", commit, limit=dream_run.MAX_PLAN_BYTES)
+        raw = source.git("ls-tree", "-r", "-l", "-z", commit, limit=MAX_INVENTORY_BYTES)
         self.files, self.omitted = {}, []
         for record in raw.split(b"\0"):
             if not record:
@@ -100,7 +106,7 @@ class Inventory:
         self.manifest = dict(commit=commit, files=list(self.files.values()), omitted=self.omitted)
         if sessions is not None:
             self.manifest["sessions"] = list(sessions)
-        if len(canonical(self.manifest)) > dream_run.MAX_PLAN_BYTES:
+        if len(canonical(self.manifest)) > MAX_INVENTORY_BYTES:
             raise DreamError("Project inventory exceeds its bounded metadata allowance", 3)
 
     def notes(self):

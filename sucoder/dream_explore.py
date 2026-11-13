@@ -29,6 +29,8 @@ EXPERIENCE_PURPOSE = (
     "and flags that worked, failed approaches and traps, decisions with their dates and who made them, and open "
     "questions. Prefer correcting and pruning to adding.")
 MODES = ("experience", "project")
+# inventory.json holds the canonical manifest and a newline.
+INVENTORY_FILE_BYTES = dream_discover.MAX_INVENTORY_BYTES + 1
 
 
 def _read(fd, name):
@@ -203,13 +205,13 @@ def _discovery(config, fd, header, budget, *, attempt=1, transport=None, readonl
     if header.get("mode") == "experience":
         if readonly:
             # Replay uses the sessions pinned at discovery; a resumed session may have grown since.
-            sessions = dream._json(dream_run._read(fd, "inventory.json", dream_run.MAX_PLAN_BYTES)).get("sessions", [])
+            sessions = dream._json(dream_run._read(fd, "inventory.json", INVENTORY_FILE_BYTES)).get("sessions", [])
         else:
             sessions = _sessions(config, source, header)
     inventory = dream_discover.Inventory(source, header["project"]["base_commit"], sessions=sessions)
     raw = canonical(inventory.manifest) + b"\n"
     if readonly:
-        if dream_run._read(fd, "inventory.json", dream_run.MAX_PLAN_BYTES) != raw:
+        if dream_run._read(fd, "inventory.json", INVENTORY_FILE_BYTES) != raw:
             raise DreamError("Pinned project inventory changed", 3)
     else:
         dream_run._store(fd, "inventory.json", raw)
