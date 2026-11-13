@@ -106,6 +106,31 @@ For multi-repo setups, skills, and system prompts, see [[*Configuration][Configu
 - bash
 - At least one supported harness CLI on the agent user's PATH: =claude=, =codex=, =gemini=, =aider=, =opencode=, =goose=, or =kimi=
 
+** Installing on a cluster account
+
+On a cluster where SuCoder changes often, an editable install from a
+dedicated checkout updates without a rebuild.  Keep that checkout separate
+from the SuCoder mirror agents work in: an install pointed at an agent's
+working tree changes whenever the agent switches branches.  Put it on
+storage the compute nodes share and that is not purged (home rather than
+scratch), and build the venv with an interpreter every node image has:
+
+#+begin_src sh
+python3.12 -m venv ~/.local/share/sucoder/venv
+git clone --no-hardlinks MIRROR ~/.local/share/sucoder/src
+git -C ~/.local/share/sucoder/src checkout --detach COMMIT
+~/.local/share/sucoder/venv/bin/python -m pip install -e ~/.local/share/sucoder/src
+ln -s ~/.local/share/sucoder/venv/bin/sucoder ~/.local/bin/sucoder
+#+end_src
+
+To update, fetch the new commit into the checkout and check it out
+detached; reinstall only when =pyproject.toml='s dependencies change.  Do
+not move the checkout while a SuCoder command is running: launches and
+dispatch read the staged helpers' source from it.  =sucoder --version=
+and each dispatch manifest's =dispatcher_version= follow the checkout's
+HEAD (=git describe= runs once per commit and is cached in the checkout's
+git directory); uncommitted edits are not detected.
+
 * Why Org-mode?
 This README is =.org=, the default system prompt is =.org=, and the skills repo leans heavily on Org-mode.  Why not Markdown?
 
@@ -212,7 +237,8 @@ storage remains available for comparison. Manual browser approval and
 SuCoder named-socket attachment remain acceptance gates; see the runbook.
 
 - --target/-T :: Select a named remote execution target (e.g., =--target savio=) to run the agent on a remote host.
-- --version/-V :: Print the installed sucoder version (CalVer, derived from git tags).
+- --version/-V :: Print the running sucoder version (CalVer, derived from git tags).
+  An editable install reports its checkout's current commit, not the one it was installed at; see [[*Installing on a cluster account][Installing on a cluster account]].
 - --dry-run :: Available on modifying commands to review logged operations without executing.
 
 * Usage
