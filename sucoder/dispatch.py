@@ -14,6 +14,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path, PurePosixPath
@@ -27,6 +28,11 @@ from .local_tier import build_worker_prepare_script, build_worker_snapshot_scrip
 
 DEFAULT_DIRECTORY_ROOT = Path.home() / ".sucoder" / "dispatch"
 HEARTBEAT_STALE_SECONDS = 60
+# The oldest interpreter batch.sh will exec the staged worker under. Exit 72
+# is distinct from the worker's own 70/71/74: the batch never reached it.
+RECEIVING_PYTHON_FLOOR = (3, 9)
+EXIT_INTERPRETER = 72
+SYSTEM_BIN = ("/usr/local/bin", "/usr/bin", "/bin")
 
 
 def _finite_seconds(value, label, *, allow_zero=False):
@@ -94,11 +100,49 @@ def _runtime_path(executable):
         if not node:
             raise ValueError("agent uses env node but no shared Node executable was found")
         node_path = Path(node).resolve()
-        if str(node_path.parent) not in ("/usr/local/bin", "/usr/bin", "/bin"):
+        if str(node_path.parent) not in SYSTEM_BIN:
             _shared_path(node_path, "Node executable")
         paths.append(str(node_path.parent))
-    paths.extend(("/usr/local/bin", "/usr/bin", "/bin"))
+    paths.extend(SYSTEM_BIN)
     return list(dict.fromkeys(paths))
+
+
+def _receiving_python():
+    """Pin the controller's own interpreter for the staged worker.
+
+    The receiving node must not choose by PATH. A pooled step starts under
+    srun --export=NONE with Bash's default PATH, where python3 is the image's
+    system default (3.6.8 on Savio), while sbatch --export=NONE reloads the
+    login environment and finds whatever the user's dotfiles put first. As
+    with Node in _runtime_path, a system directory passes as is (the image
+    ships it on every node); any other location must be shared storage.
+    """
+    if sys.version_info < RECEIVING_PYTHON_FLOOR:
+        raise ValueError("controller Python is older than %d.%d" % RECEIVING_PYTHON_FLOOR)
+    if not sys.executable or not os.path.isabs(sys.executable):
+        raise ValueError("controller Python has no absolute path to pin for the receiving node")
+    python = Path(sys.executable).resolve()
+    if str(python.parent) not in SYSTEM_BIN:
+        python = _shared_path(python, "receiving Python")
+    return python
+
+
+def _batch_script(python, worker, manifest):
+    """Exec the worker under the pinned interpreter, or exit EXIT_INTERPRETER.
+
+    The probe runs before the worker is parsed, so a missing or too-old
+    interpreter is named in slurm.stderr.log instead of surfacing as a
+    SyntaxError from a staged module.
+    """
+    floor = "%d.%d" % RECEIVING_PYTHON_FLOOR
+    probe = "import sys; print(sys.version.split()[0]); sys.exit(sys.version_info < %r)" % (RECEIVING_PYTHON_FLOOR,)
+    return ("#!/bin/bash\nset -eu\numask 077\n"
+            "SUCODER_RECEIVING_PYTHON=" + shlex.quote(str(python)) + "\n"
+            'SUCODER_RECEIVING_VERSION=$("$SUCODER_RECEIVING_PYTHON" -c ' + shlex.quote(probe) + ") || {\n"
+            '    echo "sucoder dispatch: receiving Python $SUCODER_RECEIVING_PYTHON is'
+            ' ${SUCODER_RECEIVING_VERSION:-unavailable} on $(uname -n); ' + floor + ' or newer is required" >&2\n'
+            "    exit " + str(EXIT_INTERPRETER) + "\n}\n"
+            'exec "$SUCODER_RECEIVING_PYTHON" ' + shlex.quote(str(worker)) + " " + shlex.quote(str(manifest)) + "\n")
 
 
 def _private_write(path: Path, content: str, executable=False):
@@ -198,6 +242,7 @@ def submit(repo, ref, task_file, agent, executable, resources, *, model=None,
     executable = _shared_path(Path(executable), "agent executable")
     if not executable.is_file() or not os.access(executable, os.X_OK):
         raise ValueError("agent executable must be an executable file")
+    python = _receiving_python()
     local_disk_root = str(Path(local_disk_root))
     if not Path(local_disk_root).is_absolute() or local_disk_root in ("/", "/tmp", "/var/tmp"):
         raise ValueError("local disk root must be an explicit node-local base")
@@ -320,17 +365,9 @@ def submit(repo, ref, task_file, agent, executable, resources, *, model=None,
     if project is not None:
         _private_write(directory / "dispatch_project.py", Path(__file__).with_name("dispatch_project.py").read_text())
         project_files.append("dispatch_project.py")
-    interpreter = "exec python3 "
-    if _execution is not None:
-        # Resolve on the receiver, not the controller. With --export=NONE,
-        # Bash can have an unexported default PATH; CPython started as bare
-        # 'python3' may then report sys.executable == ''. The managed runner
-        # must receive an actual interpreter path for its own subprocess.
-        interpreter = ('SUCODER_RECEIVING_PYTHON=$(command -v python3)\n'
-                       'case "$SUCODER_RECEIVING_PYTHON" in /*) ;; *) exit 70;; esac\n'
-                       'test -x "$SUCODER_RECEIVING_PYTHON"\n'
-                       'exec "$SUCODER_RECEIVING_PYTHON" ')
-    _private_write(directory / "batch.sh", "#!/bin/bash\nset -eu\numask 077\n" + interpreter + shlex.quote(str(directory / "worker.py")) + " " + shlex.quote(str(directory / "manifest.json")) + "\n", True)
+    # Both launch shapes exec the same pinned absolute path, which also gives
+    # the managed runner a nonempty sys.executable for its own subprocess.
+    _private_write(directory / "batch.sh", _batch_script(python, directory / "worker.py", directory / "manifest.json"), True)
     _write_json(directory / "digests.json", {name: hashlib.sha256((directory / name).read_bytes()).hexdigest() for name in ["task.txt", "prepare.sh", "snapshot.sh", "runner.py", "worker.py", "dispatch_protocol.py", "dispatch_artifacts.py", "environment.json", "manifest.json"] + project_files})
     # Persist the token before contacting Slurm. A crash here is conservatively unknown.
     report["state"] = "submission_unknown"

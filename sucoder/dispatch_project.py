@@ -183,8 +183,11 @@ def stage_profile(prepared, directory):
     directory = Path(directory)
     private_bytes(directory / "project.json", prepared["content"])
     private_bytes(directory / "project-bootstrap.sh", prepared["bootstrap"])
-    command = ["python3", str(directory / "dispatch_project.py"), "--copy-inputs", str(directory)]
-    private_bytes(directory / "project-inputs.sh", ("exec " + " ".join(shlex.quote(p) for p in command)
+    # prepare() supplies its own interpreter: a bare python3 would be the
+    # receiving worker PATH's /usr/bin/python3, the image default.
+    command = [str(directory / "dispatch_project.py"), "--copy-inputs", str(directory)]
+    private_bytes(directory / "project-inputs.sh", ('exec "${SUCODER_PROJECT_PYTHON:?}" '
+                                                   + " ".join(shlex.quote(p) for p in command)
                                                    + ' "$SUCODER_PROJECT_ROOT"\n').encode("utf-8"))
     names = ["project.json", "project-bootstrap.sh", "project-inputs.sh"]
     for name, content in prepared["secrets"].items():
@@ -285,8 +288,10 @@ def prepare(directory, work, root, environment, run_helper, cpus, heartbeat=None
                                  SUCODER_PROJECT_RESULT=str(receipt_path), SUCODER_PROJECT_ASSETS=str(assets))
     # Reuse supervision for asset copying too: a blocked shared-file read must
     # obey the same cancellation, deadline and owned-process cleanup contract.
-    run_helper(str(directory / "project-inputs.sh"), bootstrap_environment, max(0, deadline - time.monotonic()),
-               cancellation=cancellation, heartbeat=heartbeat, cwd=str(work))
+    if not sys.executable or not os.path.isabs(sys.executable):
+        raise ValueError("project input copy needs an absolute interpreter path")
+    run_helper(str(directory / "project-inputs.sh"), dict(bootstrap_environment, SUCODER_PROJECT_PYTHON=sys.executable),
+               max(0, deadline - time.monotonic()), cancellation=cancellation, heartbeat=heartbeat, cwd=str(work))
     run_helper(str(directory / frozen["bootstrap"]), bootstrap_environment, max(0, deadline - time.monotonic()),
                cancellation=cancellation, heartbeat=heartbeat, cwd=str(work))
     info = receipt_path.lstat()

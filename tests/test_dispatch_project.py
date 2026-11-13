@@ -70,6 +70,29 @@ def test_profile_cannot_replace_agent_or_scheduler_context(tmp_path, key):
         project.read_profile(path)
 
 
+def test_input_copy_runs_under_the_supplied_interpreter_not_path(tmp_path):
+    import subprocess
+    control = tmp_path / "control"
+    control.mkdir()
+    project.stage_profile(project.read_profile(profile_file(tmp_path)), control)
+    image = tmp_path / "image-bin"
+    image.mkdir()
+    for name, text in (("python3", "#!/bin/sh\necho image-python3\nexit 1\n"),
+                       ("pinned", '#!/bin/sh\necho pinned "$@"\n')):
+        (image / name).write_text(text)
+        (image / name).chmod(0o755)
+    environment = {"PATH": str(image) + ":/usr/bin:/bin", "SUCODER_PROJECT_ROOT": str(tmp_path / "root")}
+    script = str(control / "project-inputs.sh")
+    ran = subprocess.run(["/bin/bash", script], env=dict(environment, SUCODER_PROJECT_PYTHON=str(image / "pinned")),
+                         text=True, capture_output=True, timeout=10)
+    assert ran.returncode == 0, ran.stderr
+    assert ran.stdout.split() == ["pinned", str(control / "dispatch_project.py"), "--copy-inputs",
+                                  str(control), str(tmp_path / "root")]
+    unset = subprocess.run(["/bin/bash", script], env=environment, text=True, capture_output=True, timeout=10)
+    assert unset.returncode != 0 and "image-python3" not in unset.stdout
+    assert "SUCODER_PROJECT_PYTHON" in unset.stderr
+
+
 def test_profile_dry_run_does_not_stage_or_submit(source, monkeypatch, tmp_path):
     calls = scheduler(monkeypatch)
     path = profile_file(tmp_path)
