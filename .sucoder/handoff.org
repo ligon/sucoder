@@ -53,6 +53,11 @@ The main mirror checkout stays on =coder/confined-node=.
   The discovery inventory has its own 16 MiB bound (=dream_discover.MAX_INVENTORY_BYTES=) instead of the 2 MiB plan bound, which refused LSMS_Library (19,466 files) before any provider call; see the ledger entry of that date in =docs/dream-implementation-ledger.org=.
   Merged as =6f60c83= at the human's request while its full suite was still running; that suite then passed (3233 passed, 1 skipped).
   The first live =--explore= dream ran on it the same day, on this host in the human's =~/Projects/LSMS_Library= at =f138a3d= (Savio has no Landlock): it published =d5ae174= on that checkout's =sucoder/memory=, a cache-freshness page whose documentation conflicts hold against the code.
+- =ce54589= :: =coder/dream-search-file= (worktree =/home/coder/mirrors/SuCoder-dream-search=), the human's "yes" to fixing search and the question "why isn't the search done using rg".
+  The second LSMS_Library dream ended =unchanged= because search read files 128 at a time and treated a file path as an empty directory.
+  Navigation version 2 lets one =git grep= at the pinned commit choose the files a search reads (=git grep=, not =rg=, because evidence is the commit, not the working tree), names files and missing paths, and is frozen per job so earlier jobs replay.
+  =GitSource.git= (impact CRITICAL, 34 direct callers) gained only the optional =empty_status=.
+  Full suite 3239 passed, 1 skipped; merged as =8286823=.
 
 A read-only check on this mirror's real sessions (no model calls, statistics only) rendered all three without error: 5.21, 1.91 and 6.97 MB raw became 447, 74 and 520 KB (4-9 percent); the running session was marked live and the others finished.
 
