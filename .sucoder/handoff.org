@@ -62,11 +62,12 @@ The charter's five slices are implemented and merged locally; nothing remains th
    Never push =sucoder/memory=.
    The dispatch interpreter fix takes effect on Savio only once SuCoder is updated there, since the controller that writes =batch.sh= runs there.
    After reinstalling, set =python: /usr/bin/python3.12= on the Savio targets; until then =python3= reaches 3.12 only through the human's dotfiles.
-   Savio's install is now editable (2026-11-13, on ln000): =~/.local/share/sucoder/venv= (=/usr/bin/python3.12=) runs =~/.local/share/sucoder/src=, a GitHub clone detached at =c18a288=, the commit the human published to the Savio mirror.
+   Savio's install is now editable (2026-11-13, on ln000): =~/.local/share/sucoder/venv= (=/usr/bin/python3.12=) runs =~/.local/share/sucoder/src=, a GitHub clone on =main= tracking =origin/main=, installed at =c18a288=, the commit the human published to the Savio mirror.
+   It was detached at first and switched to =main= at the human's request ("the update instructions seem slightly baroque"), so an update is one =pull --ff-only=.
    =sucoder --version= reports =2026.7.1.dev518+gc18a288= on the login and compute nodes, and dispatch pins =/usr/bin/python3.12=.
    =~/.local/share/sucoder/INSTALLED_COMMIT= records it, the update steps and the previous =c9dafdb= install as the rollback point.
    A clone of the scratch mirror stalled and was cancelled; its partial copy is =~/.local/share/sucoder/src.partial-20261113=, for the human to delete.
-   =27b6f4c= and later are not on Savio yet; the next update is =git -C ~/.local/share/sucoder/src fetch origin= and a detached checkout, with no reinstall.
+   =27b6f4c= and later are not on Savio yet; the next update is =git -C ~/.local/share/sucoder/src pull --ff-only= once they are on GitHub, with no reinstall.
 2. Live verification :: Six Codex experience dreams ran on 2026-11-12 (E1); one generation is published, which is one observation, not a quality estimate.
    Live Claude verification remains deferred by the human, and no live project-mode (=--explore=) dream has run.
 3. Deferred by the charter :: A staleness pass over pages whose cited sources changed; an organizer and pruning pass; Codex session discovery (S3b); a scheduler example for nightly dreams.

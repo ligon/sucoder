@@ -118,17 +118,22 @@ scratch), and build the venv with an interpreter every node image has:
 #+begin_src sh
 python3.12 -m venv ~/.local/share/sucoder/venv
 git clone https://github.com/ligon/sucoder ~/.local/share/sucoder/src
-git -C ~/.local/share/sucoder/src checkout --detach COMMIT
 ~/.local/share/sucoder/venv/bin/python -m pip install -e ~/.local/share/sucoder/src
 ln -s ~/.local/share/sucoder/venv/bin/sucoder ~/.local/bin/sucoder
 #+end_src
 
-Clone from the canonical repository rather than a cluster mirror: on Savio
-a clone of the mirror on scratch stalled (14 MB in ten minutes), while
-GitHub took 35 seconds.  To update, fetch the new commit into the
-checkout and check it out detached; reinstall only when =pyproject.toml='s dependencies change.  Do
-not move the checkout while a SuCoder command is running: launches and
-dispatch read the staged helpers' source from it.  =sucoder --version=
+To update:
+
+#+begin_src sh
+git -C ~/.local/share/sucoder/src pull --ff-only
+#+end_src
+
+Rerun the =pip install -e= line only when =pyproject.toml='s dependencies
+change, and do not pull while a SuCoder command is running: launches and
+dispatch read the staged helpers' source from the checkout.  Clone and pull
+from the canonical repository rather than a cluster mirror: on Savio a
+clone of the mirror on scratch stalled (14 MB in ten minutes), while GitHub
+took 35 seconds.  =sucoder --version=
 and each dispatch manifest's =dispatcher_version= follow the checkout's
 HEAD (=git describe= runs once per commit and is cached in the checkout's
 git directory); uncommitted edits are not detected.
