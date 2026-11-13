@@ -1,4 +1,4 @@
-"""Frozen project preparation; Python 3.6, standard library only.
+"""Frozen project preparation; Python 3.9, standard library only.
 
 The bootstrap is trusted, explicitly selected code. Its exports are returned
 through a bounded JSON receipt rather than inherited from a child shell.

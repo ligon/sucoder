@@ -122,6 +122,9 @@ class RemoteConfig:
     system_prompt_extra: Optional[Path] = None      # Target-specific prompt snippet
     cert_file: Optional[Path] = None                # Local SSH cert (private key) presented to the gateway
     host: Optional[str] = None                      # Direct SSH host or ~/.ssh/config alias
+    python: str = "python3"                         # Interpreter for SuCoder's staged helpers
+                                                    # on this target: a command name or an
+                                                    # absolute path, at least PYTHON_FLOOR
 
     def __post_init__(self) -> None:
         if self.host:
@@ -622,7 +625,7 @@ _VALID_SLURM_KEYS = frozenset({
 _TARGET_LEVEL_KEYS = frozenset({
     "gateway", "transfer_host", "mirror_root", "ssh_options",
     "control_persist", "keepalive_interval", "keepalive_count_max",
-    "system_prompt_extra", "cert_file", "x11",
+    "system_prompt_extra", "cert_file", "x11", "python",
 })
 
 
@@ -1513,6 +1516,14 @@ def _parse_remote_config(raw: Any) -> Optional[RemoteConfig]:
     # falls back to the interactive prompt (and `tunnel doctor` flags it).
     cert_file = _expand_path(cert_file_raw)
 
+    # Runs on the target, so it is never expanded here. One shell word:
+    # every call site passes it through tmux, ssh and bash -c unquoted.
+    python = raw.get("python", "python3")
+    if (not isinstance(python, str) or not re.fullmatch(r"[A-Za-z0-9_.+/-]+", python)
+            or python.startswith("-") or ("/" in python and not python.startswith("/"))):
+        raise ConfigError("`remote.python` must be a command name or an absolute path "
+                          "without spaces or shell characters (e.g. /usr/bin/python3.12).")
+
     return RemoteConfig(
         host=host,
         gateway=gateway,
@@ -1527,6 +1538,7 @@ def _parse_remote_config(raw: Any) -> Optional[RemoteConfig]:
         slurm=slurm,
         system_prompt_extra=prompt_extra,
         cert_file=cert_file,
+        python=python,
     )
 
 

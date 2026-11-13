@@ -311,7 +311,7 @@ def describe_pending_work(pending: Any) -> str:
     requests the moment its thread resumes and a queued item executes once,
     so the operator decides per thread (pause the goal in Codex) and must
     never read a summary that hides one.  Mirrors the runner's own wording
-    without importing it (the staged runner is Python 3.6 code).
+    without importing it (the staged runner is standalone code).
     """
     if not isinstance(pending, Mapping):
         return "not reported"

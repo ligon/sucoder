@@ -1,4 +1,4 @@
-"""Receiving-side immutable allocation asset reuse (Python 3.6 stdlib)."""
+"""Receiving-side immutable allocation asset reuse (Python 3.9 stdlib)."""
 import hashlib
 import json
 import os

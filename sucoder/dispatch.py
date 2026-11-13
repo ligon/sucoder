@@ -20,7 +20,7 @@ import uuid
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Mapping, Optional
 
-from . import __version__
+from . import PYTHON_FLOOR, __version__
 from .codex_state import runner_source, scope_id
 from .dispatch_protocol import ENVIRONMENT_ALLOWLIST, SCHEMA_VERSION, TERMINAL_STATES
 from .dispatch_project import read_profile, stage_profile
@@ -30,7 +30,7 @@ DEFAULT_DIRECTORY_ROOT = Path.home() / ".sucoder" / "dispatch"
 HEARTBEAT_STALE_SECONDS = 60
 # The oldest interpreter batch.sh will exec the staged worker under. Exit 72
 # is distinct from the worker's own 70/71/74: the batch never reached it.
-RECEIVING_PYTHON_FLOOR = (3, 9)
+RECEIVING_PYTHON_FLOOR = PYTHON_FLOOR
 EXIT_INTERPRETER = 72
 SYSTEM_BIN = ("/usr/local/bin", "/usr/bin", "/bin")
 
