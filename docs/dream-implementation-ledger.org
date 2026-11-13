@@ -693,3 +693,15 @@ Native Org export/link/archive validation passed, and the final test log is =/tm
 OK against sections 2 and 4: the transport/editor are reused, with no runtime source, brief/schema, configuration or paid provider change.
 
 Prepared by Sue.
+
+* Inventory bound for large projects -- 2026-11-13
+An =--explore= launch on LSMS_Library (Savio, =/local/job41201840/mirrors/LSMS_Library= at =f138a3d=) was refused before any provider call with "Git inspection exceeds its byte allowance".
+The discovery inventory read =git ls-tree -r -l= and checked its manifest under the 2 MiB plan bound (=dream_run.MAX_PLAN_BYTES=), and that project lists 19,466 paths in 2.3 MB.
+The inventory is local metadata: the explorer pages through it 64 entries at a time within its discovery delivery allowance, so its bound need not match what a model reads.
+=dream_discover.MAX_INVENTORY_BYTES= (16 MiB) now bounds the listing and the manifest, and both readbacks of =inventory.json= use that bound plus the stored newline.
+Plans, receipts and every delivery allowance keep their bounds.
+=dream.project_files= still records nothing past its 2 MiB listing, so plans for such projects keep the admitted-source link rule.
+A new case in =tests/test_dream_explore.py= commits 7,200 paths of 245 bytes (a listing past 2 MiB with or without sizes), explores, publishes and replays without native startup; on =main= it failed with the Savio error.
+Built from this source on n0035, the LSMS_Library inventory holds 19,419 files (47 omitted) in a 2.7 MB manifest, 16% of the bound, in 0.36 s, with no provider call.
+
+Prepared by Sue.

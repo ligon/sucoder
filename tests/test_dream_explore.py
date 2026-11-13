@@ -2,12 +2,13 @@
 import copy
 from dataclasses import replace
 import json
+import os
 from pathlib import Path
 import subprocess
 
 import pytest
 
-from sucoder import dream, dream_budget, dream_explore as explore, dream_native
+from sucoder import dream, dream_budget, dream_explore as explore, dream_native, dream_run
 from sucoder.config import DreamSettings
 from tests.test_dream import git, workspace  # noqa: F401
 from tests.test_dream_budget import Clock
@@ -121,6 +122,50 @@ def test_canonical_subdirectory_uses_exact_head_preserves_dirty_state_and_replay
     checked = explore.status(changed, job)
     assert checked["state"] == "published" and checked["budget"]["state"] == "budget_exhausted"
     assert checked["budget"]["reserved_calls"] == 6 and len(native.calls) == 6
+
+
+def commit_bulk_directory(repo, count, width=240):
+    """Commit ``bulk/`` holding ``count`` long-named copies of one blob, by plumbing."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+    def plumb(*args, data=b""):
+        return subprocess.run(["git", "-C", str(repo), *args], input=data, env=env,
+                              check=True, capture_output=True).stdout.decode().strip()
+    blob = plumb("hash-object", "-w", "--stdin", data=b"bulk\n")
+    rows = "".join(f"100644 blob {blob}\t{i:05d}{'x' * (width - 5)}\n" for i in range(count))
+    bulk = plumb("mktree", data=rows.encode())
+    tree = plumb("mktree", data=(plumb("ls-tree", "HEAD") + f"\n040000 tree {bulk}\tbulk\n").encode())
+    commit = plumb("commit-tree", tree, "-p", "HEAD", "-m", "Bulk directory")
+    plumb("update-ref", "refs/heads/main", commit)
+    plumb("read-tree", "-u", "--reset", "HEAD")
+    return commit
+
+
+def test_a_project_listing_past_the_plan_bound_is_explored_and_replayed(workspace, monkeypatch, clock):
+    # LSMS_Library (19,466 files; a 2.3 MB listing) was refused on 2026-11-13 with
+    # "Git inspection exceeds its byte allowance": the inventory shared the 2 MiB
+    # plan bound.  7,200 paths of 245 bytes list past 2 MiB with or without sizes.
+    planned(workspace)
+    repo, _, config, _ = workspace
+    commit = commit_bulk_directory(repo, 7200)
+    assert len(subprocess.check_output(["git", "-C", str(repo), "ls-tree", "-r", "-l", "-z", commit])) > dream_run.MAX_PLAN_BYTES
+    files = len(git(repo, "ls-tree", "-r", "--name-only", commit).splitlines())
+    native = ExploringTransport()
+    result = explore.start(config, cwd=repo, overrides=options(), transport=native)
+    assert result["state"] == "published" and result["project"]["base_commit"] == commit
+    job = Path(result["job_path"])
+    stored = json.loads((job / "inventory.json").read_bytes())
+    assert stored["commit"] == commit and len(stored["files"]) == files
+    listed = [task["input"]["history"] for task in native.calls if task["role"] == "explorer"][-1][0]["observation"]
+    assert listed["inventory_files"] == files and listed["state"] == "complete"
+    # Replay re-derives the inventory and compares it with the stored copy.
+    clock.advance(901)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Cached exploratory replay attempted native startup")
+    monkeypatch.setattr(dream_native, "Transport", forbidden)
+    assert explore.start(config, job) == result
+    assert explore.status(config, job)["state"] == "published"
 
 
 def test_unconfigured_project_from_subdirectory_can_record_no_selection_without_candidate(workspace):
