@@ -1,8 +1,8 @@
 """Install mirror-scoped Codex instructions before starting a service (ledger 5).
 
 This module is also staged as a standalone script on the agent host. Keep it
-stdlib-only and compatible with Python 3.6: the remote host need not have the
-SuCoder package installed.
+stdlib-only and valid for Python 3.9, SuCoder's floor: the remote host need not
+have the SuCoder package installed.
 """
 
 import fcntl

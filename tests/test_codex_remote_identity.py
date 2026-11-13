@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 
-from sucoder import codex_state_runner as runner
+from sucoder import PYTHON_FLOOR, codex_state_runner as runner
 from sucoder.codex_remote import build_remote_command
 from sucoder.config import AgentLauncher, AgentType, CodexStateConfig
 from tests.test_remote_control import _manager
@@ -94,9 +94,9 @@ def test_legacy_service_uses_owned_app_server_and_does_not_strip_option_values()
     assert 'model="remote-control"' in server
 
 
-def test_remote_helper_is_standalone_and_compatible_with_target_python36():
+def test_remote_helper_is_standalone_and_valid_for_the_python_floor():
     source = Path(__file__).parents[1] / "sucoder/codex_remote_client.py"
-    ast.parse(source.read_text(), feature_version=(3, 6))
+    ast.parse(source.read_text(), feature_version=PYTHON_FLOOR)
 
 
 @pytest.mark.parametrize("kind", ["symlink", "hardlink"])

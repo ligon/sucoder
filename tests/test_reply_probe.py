@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from sucoder import reply_probe as rp
+from sucoder import PYTHON_FLOOR, reply_probe as rp
 from sucoder.replies import probe_command, probe_spec
 from sucoder.sessions_report import job_tmux_command
 
@@ -345,9 +345,9 @@ def test_timestamps_parse_as_utc():
 
 # ================================================================= the probe file
 
-def test_the_probe_is_a_standalone_python36_module():
+def test_the_probe_is_a_standalone_module_valid_for_the_python_floor():
     source = PROBE.read_text(encoding="utf-8")
-    ast.parse(source, feature_version=(3, 6))
+    ast.parse(source, feature_version=PYTHON_FLOOR)
     tree = ast.parse(source)
     imported = {alias.name.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.Import)
                 for alias in node.names}

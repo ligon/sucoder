@@ -100,8 +100,8 @@ if ! "$ready"; then
 fi
 echo "SuCoder: owned Codex server; local socket: $socket; server log: $runtime/server.log" >&2
 if [ -n "${SUCODER_CODEX_REMOTE_HELPER:-}" ]; then
-    python3 "$SUCODER_CODEX_REMOTE_HELPER" register --runtime "$runtime" --pid "$server_pid" || exit 1
-    python3 "$SUCODER_CODEX_REMOTE_HELPER" wait --timeout 20 || true
+    "${SUCODER_CODEX_REMOTE_PYTHON:-python3}" "$SUCODER_CODEX_REMOTE_HELPER" register --runtime "$runtime" --pid "$server_pid" || exit 1
+    "${SUCODER_CODEX_REMOTE_PYTHON:-python3}" "$SUCODER_CODEX_REMOTE_HELPER" wait --timeout 20 || true
 fi
 if [ "$mode" = server ]; then
     echo 'SuCoder: server only. Check relay status before pairing. Ctrl-C stops this server.' >&2

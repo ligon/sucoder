@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """SuCoder managed Codex state runner: one owned Codex process on local disk.
 
-Staged to the compute node and run as ``python3 <this file> --scope ...
+Staged to the compute node and run as ``<python> <this file> --scope ...
 --durable-root ... -- <command>``, like the native context installer, so it
-has no dependency beyond the standard library and must stay valid for the
-oldest ``python3`` a node image offers (3.6 has been seen).
+has no dependency beyond the standard library and must stay valid for
+Python 3.9, SuCoder's floor.  ``<python>`` is the target's ``python:``
+setting; a node image's system ``python3`` can be older (3.6 on Savio).
 
 What it does, per ``docs/codex-local-state.org`` ("Revision after Slice 0"):
 
@@ -2364,11 +2365,11 @@ class Replicator(object):
 # ----------------------------------------------------------------- capture
 
 def backup_method():
+    # Connection.backup exists on every interpreter at SuCoder's 3.9 floor;
+    # the sqlite3 CLI fallback that 3.6 needed is gone.
     if hasattr(sqlite3.Connection, "backup"):
         return "connection"
-    if shutil.which("sqlite3"):
-        return "cli"
-    raise CaptureFailed("no backup method: this python has no sqlite3 backup API and no sqlite3 CLI is installed")
+    raise CaptureFailed("no backup method: this python's sqlite3 has no backup API")
 
 
 def overdue(deadline):
@@ -2403,33 +2404,6 @@ def backup_with_connection(source, target, deadline):
             src.close()
 
 
-def backup_with_cli(source, target, deadline):
-    """``sqlite3 <src> ".backup <dst>"`` for interpreters without the API (3.6)."""
-    cli = shutil.which("sqlite3")
-    attempt = 0
-    while True:
-        attempt += 1
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise CaptureFailed("backup of %s overdue" % os.path.basename(source))
-        try:
-            proc = subprocess.run([cli, "-bail", "-cmd", ".timeout 5000", source, ".backup " + target],
-                                  stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=remaining)
-        except subprocess.TimeoutExpired:
-            raise CaptureFailed("sqlite3 .backup of %s timed out" % os.path.basename(source))
-        error = proc.stderr.decode("utf-8", "replace").strip()
-        if proc.returncode == 0 and not error:
-            os.chmod(target, 0o600)
-            return
-        if attempt >= 3:
-            raise CaptureFailed("sqlite3 .backup of %s failed (%d): %s" % (os.path.basename(source), proc.returncode, error[:200]))
-        try:
-            os.unlink(target)
-        except OSError:
-            pass
-        time.sleep(0.2)
-
-
 def connect_copy(path, deadline, readonly=True):
     """A connection to a copied store whose statements abort once the capture is overdue."""
     if readonly:
@@ -2450,10 +2424,7 @@ def backup_store(name, source, target, method, deadline):
     if overdue(deadline):
         raise CaptureFailed("capture overdue before %s" % name)
     try:
-        if method == "connection":
-            backup_with_connection(source, tmp, deadline)
-        else:
-            backup_with_cli(source, tmp, deadline)
+        backup_with_connection(source, tmp, deadline)
         conn = connect_copy(tmp, deadline, readonly=False)
         try:
             mode = conn.execute("pragma journal_mode=delete").fetchone()[0]
@@ -3714,6 +3685,10 @@ def run(args):
                 binds.append(binding)
                 env["SUCODER_CODEX_REMOTE_ID"] = installation
                 env["SUCODER_CODEX_REMOTE_HELPER"] = args.remote_helper
+                # The helper runs under this runner's own interpreter (the
+                # target's python:), not whatever python3 the pane's PATH finds.
+                if os.path.isabs(sys.executable):
+                    env["SUCODER_CODEX_REMOTE_PYTHON"] = sys.executable
                 status.note(remote_control={"installation_id": installation, "helper": args.remote_helper})
             argv = bwrap_argv(binds, command)
             owner = {

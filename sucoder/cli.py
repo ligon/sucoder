@@ -5657,7 +5657,8 @@ def _run_probe(config, hosts, w, route: str, *, logger, debug_ssh) -> Optional[D
     control = _control_for_recipient(config, hosts, r.host, r, debug_ssh)
     if control is None:
         return None
-    command = probe_command(w.spec)
+    target = config.targets.get(r.target or "")
+    command = probe_command(w.spec, python=target.python if target is not None else "python3")
     if route == "job" and r.job_id is not None:
         command = _in_job(r, command)
     timed_out = {"schema": PROBE_SCHEMA, "status": "unrecognized", "why": PROBE_TIMEOUT, "replies": []}

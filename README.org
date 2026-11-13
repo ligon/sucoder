@@ -615,6 +615,7 @@ targets:
     keepalive_count_max: 120     # ServerAliveCountMax (optional)
     cert_file: ~/.ssh/ssh_certs/brc_cert  # gateway SSH cert (optional)
     x11: false                   # disable the default X11 forwarding (optional)
+    python: /usr/bin/python3.12  # interpreter for SuCoder's helpers (optional)
 #+end_src
 
 No =mirrors:= entry is needed---zero-config repo detection works with
@@ -673,6 +674,19 @@ values shown above; tune them per target:
   automatically (tmux's default =update-environment= includes it), but
   processes already running keep the stale one --- refresh a shell with
   =eval "$(tmux show-environment -s DISPLAY)"=.
+- =python= --- the interpreter that runs SuCoder's staged helpers on the
+  target: the managed Codex state runner, the context installer, the
+  remote-control helper and the reply probe.  A command name or an
+  absolute path, one word with no shell characters; defaults to
+  =python3=.  The helpers need Python 3.9 or newer.  A bare =python3= is
+  whatever the target's PATH finds first, and a cluster image's system
+  =python3= can be older: on Savio it is 3.6.8, and only a user's own
+  dotfiles put a newer one first.  Name the interpreter outright there
+  (=/usr/bin/python3.12= ships on Savio's node images).  The launch-time
+  tool preflight probes this interpreter against the 3.9 floor and warns
+  when it is older.  Headless =dispatch= does not use this setting: it
+  pins the submitting process's own interpreter and refuses (exit 72)
+  on a receiving node that lacks it or has an older one.
 
 *** Using a target from Emacs / TRAMP
 

@@ -1,4 +1,4 @@
-"""Deterministic verification adapter; receiving path is Python 3.6/stdlb.
+"""Deterministic verification adapter; receiving path is Python 3.9/stdlib.
 
 No scheduler submission or model process: an existing burst job executes the
 frozen request with the same project preparation as a dispatched agent.

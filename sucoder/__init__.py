@@ -7,4 +7,8 @@ try:
 except PackageNotFoundError:
     __version__ = "0.0.0"
 
-__all__ = ["__version__"]
+# The oldest interpreter SuCoder's staged helpers are written for, on the
+# controller (pyproject's python = "^3.9") and on every target.
+PYTHON_FLOOR = (3, 9)
+
+__all__ = ["PYTHON_FLOOR", "__version__"]

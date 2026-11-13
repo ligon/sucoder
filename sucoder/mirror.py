@@ -92,6 +92,7 @@ def _frontmatter_problem(metadata: Optional[SkillMetadata]) -> Optional[str]:
         return f"({_FRONTMATTER_PARSE_MARKER}: {metadata.error})"
     return None
 
+from . import PYTHON_FLOOR
 from .config import (
     AGENT_PROFILES,
     DEFAULT_LAUNCH_MODES,
@@ -4000,6 +4001,7 @@ class MirrorManager:
                 temporary_local_root=state.temporary_local_root,
                 remote_helper=self._stage_codex_remote_helper(ctx) if state.remote_control else None,
                 publish_run=state.remote_control,
+                python=self._target_python(ctx),
             )
 
         # The Codex attention hooks' record key (not a secret): an argv
@@ -4229,7 +4231,18 @@ class MirrorManager:
         source = Path(__file__).with_name("codex_context.py").read_text(encoding="utf-8")
         source += f"\nrun({ascii(prelude)}, sys.argv[1:])\n"
         path = self._write_context_prelude_file(ctx, source)
-        return ["python3", path, *command]
+        return [self._target_python(ctx), path, *command]
+
+    @staticmethod
+    def _target_python(ctx: MirrorContext) -> str:
+        """The interpreter for staged helpers: the target's ``python:``.
+
+        A bare ``python3`` is whatever the target's PATH finds first, which
+        on a cluster image can be older than the helpers' floor (Savio's
+        system python3 is 3.6.8). The tool preflight probes this same name.
+        """
+        remote = ctx.settings.remote
+        return remote.python if remote is not None else "python3"
 
     def _codex_state_launch(
         self, ctx: MirrorContext, *, restore: Optional[str] = None, fresh: bool = False,
@@ -4515,7 +4528,7 @@ class MirrorManager:
         helper = remote["helper"]
         if not helper.startswith("/") or "\x00" in helper or "\n" in helper:
             raise MirrorError("The run's remote-control helper path is invalid.")
-        result = route.run(["python3", helper, action, "--run", run_dir],
+        result = route.run([self._target_python(ctx), helper, action, "--run", run_dir],
                            what=f"{action} Codex remote control")
         try:
             data = json.loads(result.stdout)
@@ -5022,7 +5035,10 @@ class MirrorManager:
         caller decides whether to log or to exit non-zero; the launch path
         does the former, ``sucoder doctor`` the latter.
         """
-        floors = self.config.tool_preflight.floors
+        # The staged helpers' interpreter is probed like any tool, against
+        # SuCoder's floor, unless the user's floors already name it.
+        floors = dict(self.config.tool_preflight.floors)
+        floors.setdefault(self._target_python(ctx), ".".join(map(str, PYTHON_FLOOR)))
         script = build_probe_script(list(floors))
         try:
             result = self.executor.run_agent(

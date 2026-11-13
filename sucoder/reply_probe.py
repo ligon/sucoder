@@ -5,8 +5,8 @@ misses replies that scrolled off a full-screen TUI, and cannot tell a message
 still queued from one taken in and ignored.  Both harnesses record what the
 model took in and said, in order, in a JSONL transcript; this reads it.
 
-Standalone and stdlib-only, kept Python 3.6 compatible: the laptop ships this
-file to the cluster as ``python3 -I -c "import base64,zlib;exec(...)"`` with
+Standalone and stdlib-only, valid for Python 3.9: the laptop ships this
+file to the cluster as ``<python> -I -c "import base64,zlib;exec(...)"`` with
 its arguments as one base64 JSON word (``replies.probe_command``), through the
 same routes ``message`` types into.  It prints exactly one JSON line with a
 schema version, and any exception becomes ``{"status": "unrecognized"}``,
