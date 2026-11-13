@@ -49,6 +49,9 @@ The main mirror checkout stays on =coder/confined-node=.
   =sucoder.__version__= follows the checkout an editable install runs from, in pyproject's version format; =git describe= runs once per HEAD and is cached in the checkout's git directory, and uncommitted edits are not detected.
   README.org's "Installing on a cluster account" documents the layout.
   Full suite 3232 passed, 1 skipped.
+- =649c93e= :: =coder/dream-large-inventory= (worktree =/home/coder/mirrors/SuCoder-dream-inventory=), the human's "fix the file-count limit" (2026-11-13).
+  The discovery inventory has its own 16 MiB bound (=dream_discover.MAX_INVENTORY_BYTES=) instead of the 2 MiB plan bound, which refused LSMS_Library (19,466 files) before any provider call; see the ledger entry of that date in =docs/dream-implementation-ledger.org=.
+  Merged as =6f60c83= at the human's request while its full suite was still running.
 
 A read-only check on this mirror's real sessions (no model calls, statistics only) rendered all three without error: 5.21, 1.91 and 6.97 MB raw became 447, 74 and 520 KB (4-9 percent); the running session was marked live and the others finished.
 
@@ -58,7 +61,7 @@ The 50 failures this host showed before =8ccb066= are resolved; the full suite n
 
 The charter's five slices are implemented and merged locally; nothing remains that this account can do without a human decision.
 
-1. Publication :: Push =main= from the canonical account (=/home/ligon/Projects/SuCoder=) and reinstall the root-owned =/opt/sucoder=; until then the installed launcher has neither the dream command nor the wiki copy.
+1. Publication :: The human pushed =main= to GitHub at =06b86cb= and reinstalled =/opt/sucoder= at that commit (both seen 2026-11-13); =6f60c83= and later wait for the next push from the canonical account (=/home/ligon/Projects/SuCoder=).
    Never push =sucoder/memory=.
    The dispatch interpreter fix takes effect on Savio only once SuCoder is updated there, since the controller that writes =batch.sh= runs there.
    After reinstalling, set =python: /usr/bin/python3.12= on the Savio targets; until then =python3= reaches 3.12 only through the human's dotfiles.
@@ -67,14 +70,18 @@ The charter's five slices are implemented and merged locally; nothing remains th
    =sucoder --version= reports =2026.7.1.dev518+gc18a288= on the login and compute nodes, and dispatch pins =/usr/bin/python3.12=.
    =~/.local/share/sucoder/INSTALLED_COMMIT= records it, the update steps and the previous =c9dafdb= install as the rollback point.
    A clone of the scratch mirror stalled and was cancelled; its partial copy is =~/.local/share/sucoder/src.partial-20261113=, for the human to delete.
-   =27b6f4c= and later are not on Savio yet; the next update is =git -C ~/.local/share/sucoder/src pull --ff-only= once they are on GitHub, with no reinstall.
+   Savio's checkout is still at =c18a288=; =git -C ~/.local/share/sucoder/src pull= brings it to GitHub's =main=, with no reinstall.
 2. Live verification :: Six Codex experience dreams ran on 2026-11-12 (E1); one generation is published, which is one observation, not a quality estimate.
    Live Claude verification remains deferred by the human, and no live project-mode (=--explore=) dream has run.
+   The first attempt, on LSMS_Library in Savio job 41201840 on n0035 (2026-11-13), was refused three times before any model call: Savio has no config file, its NFS home refuses =flock=, and the inventory bound fixed in =649c93e=.
+   Dreams on Savio take =--config ~/.sucoder/dream-savio.yaml=, which sets the harness and model and puts =log_dir= on scratch; =~/.sucoder/config.yaml= was deliberately not created, since the running coordinators call =sucoder= there.
+   Run from the node-local clone and chain =git push origin sucoder/memory= after the dream, or the generation dies with the job (issue 91); the Savio bulletin has the details.
 3. Deferred by the charter :: A staleness pass over pages whose cited sources changed; an organizer and pruning pass; Codex session discovery (S3b); a scheduler example for nightly dreams.
 4. Known limits :: Queued-command attachments are dropped when rendering, so a message delivered to a busy session is not visible in a window.
    The injected reading hint assumes the session's repository has the memory branch; node-local and remote clones may not.
    Remote and confined sessions get no wiki copy: their working clone is not the local mirror, so their block keeps the =git show= hint.
    Your own clone needs =git fetch <mirror> sucoder/memory:sucoder/memory= and =sucoder dream checkout= to get working links.
+   Not yet filed: =sucoder dream= requires a config file even with =--harness= and =--model=; its default =log_dir= (=~/.sucoder/logs=) fails with =ENOLCK= on an NFS home; and session discovery is keyed by checkout path, so sessions of earlier per-job =/local= clones (13 on Savio for LSMS_Library) are never found.
    The author repeats a section's reference in most live runs; the repair fixes it at the cost of one call.
 5. Test host :: One test skips here, for nested user namespaces (AppArmor =bwrap-userns-restrict=); the =python3.6= tests are gone and the human installed =zsh=.
    The =bwrap=-dependent tests likely skip in CI, which is how the orphaned-Codex defect stayed hidden there.
