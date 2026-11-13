@@ -2130,14 +2130,18 @@ def monitor(child, db_dir, local_root, status, timeout, result, placed_event=Non
             result["misplaced"] = sorted(set(misplaced))
             status.update("misplaced", misplaced=sorted(set(misplaced)), placed=sorted(set(placed)))
             log("Codex opened state outside the managed placement: %s; stopping it" % ", ".join(sorted(set(misplaced))[:4]))
+            # Signal the command, not bwrap, as Drain and signal forwarding do (command_pids).
+            # SIGTERM to bwrap ended bwrap alone: Codex survived as an orphan of init still
+            # holding the misplaced store, since --die-with-parent did not end it on this kernel
+            # (Linux 7.0, 2026-11-12), and the runner reported it stopped.
             try:
-                child.terminate()
+                deliver(command_pids(child), signal.SIGTERM)
                 for _ in range(50):
                     if child.poll() is not None:
                         break
                     time.sleep(0.1)
                 if child.poll() is None:
-                    child.kill()
+                    kill_command(child)
             except OSError:
                 pass
             return
