@@ -55,6 +55,12 @@ It uses a new frozen per-plan editorial version; contradictory current evidence 
 Session lessons must be dated and remain historical unless committed project evidence supports a present-tense statement.
 Issue 92 exports correction tasks only, links by marker only, and makes no model calls.
 Issues 91 and 98 share local-tier identity recognition; build it from configured layout and origin agreement rather than path guessing alone.
+Reuse =observations.WorkspaceBinding= for that recognition: it already requires an exact configured =work_path= and a local-path origin equal to the configured durable mirror.
+The dream's synthetic source binding drops unrelated targets to avoid counting its synthetic local mirror and the original local-tier mapping twice.
+Freeze the positively recognized durable target and expected memory tip in the job/plan; resumes recheck the original configuration mapping.
+Copy Git objects locally with bounded pack/unpack plumbing rather than permitting transport rewrites or a network fetch/push.
+After the local checked ref transaction, a second compare-and-swap publishes only to the frozen durable mirror.
+Durability conflicts retain the reviewed local commit and private artifacts; status checks the durable ref rather than claiming success from the disposable clone alone.
 
 * 6. Open checks
 
@@ -69,5 +75,17 @@ The broader exploration/experience/CLI run passed 55 cases and identified four o
 Three-file mypy passes.
 The fixtures cover a first navigation with memory/open items, frozen replay after memory movement, a job prepared before leads existed, changed-file priority, terminal-task exclusion and bounded committed-only navigation.
 No live provider acceptance is claimed.
+Issues 92 and 94 use one frozen editorial amendment, version 2, rather than changing a released job's briefs in place.
+The v5 result schema remains unchanged; the plan, amended brief and support metadata bind the coordinator identity.
+The accepted-receipt envelope checks editorial versions and the appropriate brief hash before reusing prior work.
+Three preservation/replay fixtures pass, covering a narrower successor, a contradictory current source and a plan made before the amendment.
+Five exporter cases pass, including an actual fake-transport reviewed generation, public source permalinks, marker idempotence, all four reconciliation cases and explicit disclosure/file gates.
+The combined new-feature/startup/mirror group passes 314 cases, and the tier/injection group passes 62.
+All 30 dream source modules pass mypy under the project's existing checking convention.
+Self-review found and corrected an invalid last-record seed, older-contract receipt reuse bypassing the new policy, and malformed receipt metadata producing raw exceptions.
+The final review regression group passes 20 cases, including actual v4-to-new-policy review and old-plan replay.
+A separate interruption case proves that a durable ref update followed by loss of the private run record replays without another provider call.
+Review was performed by the implementing agent; no independent code-review claim is made.
+The full suite and final packaged-source/document checks remain pending at this checkpoint.
 
 Prepared by Sue (GPT-6).
