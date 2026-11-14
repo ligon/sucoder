@@ -33,6 +33,9 @@ Implicit missing config uses derived defaults; an explicit missing path and malf
 Dream startup never prompts or modifies configuration, even when both harness CLIs are installed.
 Unknown provider outcomes remain charged and cannot be silently retried.
 Saved jobs and assignments retain their existing frozen identities and validated-result checks.
+Explicit =--retry-seconds= is bounded to 1-86400 seconds and must exceed the frozen closeout reserve.
+Retry records form a checked append-only sequence keyed by attempt; reopening a recorded window keeps its original deadlines.
+Original budget descriptors and reservations bind the original policy, while new advice records the active window's deadline and old advice remains replayable.
 
 * 4. Invariants
 
@@ -52,5 +55,12 @@ Verification will use disposable repositories and fake native transports, includ
 
 The human confirmed all eight dreaming issues, 91-98, while this first repair batch proceeds.
 Memory preservation policy (issue 94) and Savio execution placement need their own design decisions.
+
+* Verification
+
+Issues 96 and 97 reproduced before implementation; 125 startup, configuration, CLI and prerequisite-guard cases pass after the patch.
+The narrow ENOLCK preflight reuses =run_lock= without changing its CRITICAL-impact implementation.
+Issue 95's ten new regression cases pass: role/field/trace diagnostics, id resolution, expired retry, unchanged call cap, immutable retry deadlines and invalid requests.
+Broader role/budget and exploratory regression verification is in progress.
 
 Prepared by Sue (GPT-6).
