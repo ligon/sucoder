@@ -2737,6 +2737,7 @@ Plans made before this amendment retain their original briefs and replay behavio
 
 Reviewed project corrections are open TODO tasks with a stable =CUSTOM_ID=, =TARGET: path:START-END= at the pinned project commit, an =ACCEPTANCE= property and evidence references.
 =sucoder dream issues= prints correction issue drafts and matches existing issues by a stable hidden marker; =--repository OWNER/REPO= selects the project when GitHub remotes are absent or ambiguous.
+Drafting and listing require authenticated =gh= access to read the project's existing issues for reconciliation.
 =sucoder dream issues --list= reports open tasks without issues, tasks with open issues, closed issues whose tasks remain open, and terminal tasks whose issues remain open.
 Only an explicit =--file= creates missing issues through authenticated =gh=, adding the =dream-memory= label; repeat invocations recognize markers in open and closed issues.
 Tasks citing sessions, other repositories or missing provenance are withheld unless =--allow-private= explicitly permits disclosure after human review.

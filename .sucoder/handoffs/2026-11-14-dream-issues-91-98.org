@@ -1,0 +1,101 @@
+#+TITLE: Dream issues 91-98: implementation and verification
+#+DATE: 2026-11-14
+#+STATUS: IMPLEMENTED; PUBLICATION PENDING
+#+AUTHOR: Sue
+
+* Source and scope
+
+The human requested the dreaming backlog and confirmed all eight issues, 91-98.
+Work is on =coder/dream-recovery= in =/home/coder/mirrors/SuCoder-dream-recovery=, based on =a3db175=.
+The live-check implementation is =92e340b46b592feb3f39ca5cfe87301afa34b1d7=.
+Final runtime commit =6559b4f= skips malformed optional support history during planning while preserving strict exporter validation.
+The original mirror checkout remains on =coder/confined-node=, with its untracked November 12 summary preserved.
+No merge, installed deployment, issue filing or public memory publication has been performed.
+
+* Implemented behavior
+
+- Issue 91 :: A positively recognized local-tier clone imports its configured shared mirror's memory before planning and publishes reviewed memory back with a compare-and-swap.
+  Bounded offline pack/unpack transfers objects without following remotes.
+  Conflicts retain the reviewed local commit and private artifacts; status checks the durable ref, and interrupted durable publication replays without another provider call.
+  Fresh clone preparation imports a local memory head, including a configured custom branch, so launch injection can see it.
+- Issue 92 :: New editorial plans request correction TODO tasks with stable CUSTOM_ID, TARGET and ACCEPTANCE metadata and source references.
+  =dream issues= drafts by default, matches all open/closed issues by marker and reports task/issue discrepancies with =--list=.
+  Only =--file= files issues; session/external/missing evidence is withheld without =--allow-private=.
+  The exporter makes no model calls or wiki writes and omits history and child-task text.
+- Issue 93 :: New jobs freeze bounded memory navigation and a seed: open item, then changed committed material, then a random file or complete-record session window.
+  Earlier jobs retain their original briefs and inputs.
+  The live two-run criterion is separate from fixture verification.
+- Issue 94 :: New plans freeze editorial version 2 and bounded receipt-backed prior support, explicitly not freshly re-read.
+  A narrower selection alone does not justify erasure; contradictory current evidence can support correction.
+  Support lineage survives successor generations, and session-only advice stays dated unless committed evidence establishes current applicability.
+  Accepted-progress reuse respects the frozen editorial policy; earlier plans replay unchanged.
+- Issue 95 :: Identity errors name role, field, digest prefixes and trace; the failure record retains that diagnostic.
+  Resume/status/budget accept bare job ids.
+  =--job ID --attempt 2 --retry-seconds 900= explicitly records a new bounded time window while preserving the original policy, call ceiling, uncertain-call charges and closeout reserves.
+  Repeating a recorded extension cannot reset its deadline.
+- Issue 96 :: An absent implicit config derives defaults without prompting, even with multiple installed agent CLIs.
+  Explicit missing paths and malformed existing files still fail; no config file is created.
+- Issue 97 :: Lock support is probed under =<log_dir>/dream-jobs= before job creation.
+  ENOLCK names the directory and requests a =log_dir= with advisory locks; other errors retain their cause.
+- Issue 98 :: Configured job-clone directory names extend experience discovery after old clones disappear.
+  Native session id, cwd and branch records must confirm historical candidates; token ambiguity, unrelated directories, live/recent exclusions and complete-prefix rules remain enforced.
+  This does not add remote transcript access or kernel support on Savio.
+
+* Verification
+
+Tests use =PYTHONPATH=$PWD /home/coder/.cache/pypoetry/virtualenvs/sucoder-_hu1CrVA-py3.12/bin/python -m pytest -q -p no:cacheprovider=.
+The implementing agent performed the source review; no independent code-review claim is made.
+
+- Targeted groups :: 314 combined feature/startup/mirror cases, 62 tier/injection cases, 20 final review cases and one additional durable-publication interruption case passed; groups overlap.
+- Types :: All 30 dream source modules pass mypy under the project's existing checking convention.
+- Package :: =sucoder-2026.7.1.dev543+g6559b4f-py3-none-any.whl= contains byte-identical copies of all 30 dream modules plus config, local-tier and mirror (33 checked files).
+  =package-verification.json= in the delivery artifacts records source and wheel hashes.
+- Documents :: Changed Org documents export with Babel disabled; HTML is retained with the delivery artifacts.
+  The existing missing-htmlize warning affects source coloring only.
+- Scope :: GitNexus was refreshed with =--skip-agents-md --index-only=.
+  The final comparison with =main= reports 162 symbols and 97 affected flows, CRITICAL, across the expected dreaming, startup/configuration and local-tier paths.
+  The final optional-history correction itself changes only =dream_support.collect=; its upstream impact and affected tests were checked before committing.
+- Full suite :: At =92e340b=, 3,253 passed, 40 failed and one skipped in 2,289 seconds, from 3,294 collected cases.
+  The 38 native Codex/state failures reproduce exactly as a selected group on unchanged base =a3db175=.
+  The other two exposed malformed optional-history planning regressions and were corrected afterward; all 30 cases in the affected prior/progress/support/export group then passed at =6559b4f=, including both failures.
+  No final-source full-suite pass is claimed.
+  Full log: =/tmp/sucoder-dream-full-92e340b.log=; comparison: =/tmp/sucoder-dream-full-comparison-92e340b.json=.
+  Baseline log: =/tmp/sucoder-dream-baseline-native-selection.log=; selected IDs: =/tmp/sucoder-dream-baseline-failed-selection.json=.
+
+* Live acceptance and publication
+
+The human explicitly approved the two-run exception with "Run the bounded live check".
+Both Codex =gpt-6.1-sol= project-mode jobs completed on =92e340b=, using 18 of the shared 32 native calls within 1,800 seconds.
+The second followed the first page's recorded open count question, retained earlier knowledge and produced a structured correction TODO.
+Native usage reported 286,675 input and 10,838 output tokens; currency is unknown and no dollar/token ceiling was guaranteed.
+The pure exporter produced one public-evidence correction draft; no issue was filed.
+The report is [[file:../../docs/dream/runs/sucoder-e2.org][E2]], including pinned source checks and reproduction commands.
+Private approval, traces, sources, budget and =outcome.json= are under =/home/coder/.sucoder/logs/dream-issues-acceptance/2026-11-14-92e340b/=.
+Only committed project files in =/tmp/sucoder-dream-live-92e340b= were admitted.
+No actual memory ref was imported or published; the real mirror's memory remains =8668948f0ef968ca31b71d1d55b44ee4926cac95=.
+The approved two runs are complete: no third run or automatic retry is authorized.
+Live Claude verification remains deferred.
+
+GitHub main was =8d8fedc= when checked; local =main= adds two handoff-only commits before this branch's work.
+The coder CLI has no GitHub login and its mirror remote is =ligon= with push URL =no_push=.
+The connected GitHub writer does not expose commit-author fields; it was not used to recreate the commits with different authors.
+Local commits preserve =Sue the Coder <coder@sucoder.dev>= with the GPT-6 Codex trailer.
+A review description is prepared at =/tmp/sucoder-dream-issues-pr-body.md=, with no automatic issue-closing tokens.
+Do not mark the issues delivered merely because these local commits exist.
+
+* Delivery artifacts
+
+Final logs, comparison IDs, package source hashes, documentation exports and the PR description are retained under =/home/coder/.sucoder/logs/dream-issues-verification/2026-11-14-6559b4f/=.
+A code-branch-only Git bundle in that directory preserves the local commits for publication from the canonical account; it contains no memory ref.
+Use =git bundle verify= before importing it, then publish =coder/dream-recovery= through the normal canonical-account workflow.
+No merge or installation has been performed.
+The only runtime/test change after the full-suite and live pin =92e340b= is the optional-history correction in =sucoder/dream_support.py=; no tests changed after that pin.
+Its four-file regression command is the normal test command above with =tests/test_dream_prior.py tests/test_dream_progress.py tests/test_dream_support.py tests/test_dream_issues.py=.
+No provider call is needed to repeat these checks.
+
+* Grounding
+
+The ledgers are [[file:../../docs/dream-recovery-ledger.org][recovery]] and [[file:../../docs/dream-memory-followups-ledger.org][memory followups]].
+The earlier directions are [[file:2026-11-14-dream-directions.org][the dream-directions handoff]].
+
+Prepared by Sue (GPT-6 Codex).

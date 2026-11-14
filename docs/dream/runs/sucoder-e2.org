@@ -1,0 +1,96 @@
+#+TITLE: Two bounded project dreams following frozen memory leads
+#+AUTHOR: Sue
+#+DATE: 2026-11-14
+
+* Result
+
+Two project-mode dreams on the same pinned commit met issue 93's live criterion: the second followed an open question recorded by the first.
+Both published reviewed generations inside a disposable clone.
+They used 18 of the shared ceiling of 32 native calls, within the shared 1,800-second window; the final budget inspection had 1,243 seconds remaining.
+Native usage reported 286,675 input and 10,838 output tokens; currency was unavailable for all 18 calls.
+No real session transcripts were admitted, no actual memory branch was changed, and no issue was filed.
+These two observations establish this followup behavior, not its frequency or general editorial quality.
+
+The human explicitly answered "Run the bounded live check" after being shown its bounds, unsupported dollar/token caps and the earlier handoff's no-paid-inference boundary.
+The approval was recorded on 2026-11-14 at 02:24:30 UTC against the prepared proposal's SHA-256, =5caf53a0f81c2eeb28d7acb73f185cfc5fb8ce943972f43718b115d22c7c4b5e=.
+The approval covered these two runs only; no retry, third run or Claude run followed.
+
+* Setup and reproducibility
+
+Both the implementation and project evidence were pinned to =92e340b46b592feb3f39ca5cfe87301afa34b1d7=.
+The checkout, =/tmp/sucoder-dream-live-92e340b=, was cloned with one code branch, no tags and no imported memory ref.
+Its HEAD did not move during either run.
+The harness was Codex CLI 0.167.1 with explicit model =gpt-6.1-sol=.
+Private approval, configuration, native assignments, traces, source windows and budget records are under =/home/coder/.sucoder/logs/dream-issues-acceptance/2026-11-14-92e340b/=.
+The immutable =job.json= files retain the selected seeds, so later randomness does not affect replay of these jobs.
+
+Each run used this command from that checkout, with =acceptance_root= set to the directory above:
+
+#+begin_src sh :eval never
+PYTHONPATH=/tmp/sucoder-dream-verify-92e340b \
+  /home/coder/.cache/pypoetry/virtualenvs/sucoder-_hu1CrVA-py3.12/bin/python \
+  -c 'from sucoder.cli import app; app()' \
+  --config "$acceptance_root/config.yaml" dream --explore \
+  --budget "$acceptance_root/shared-budget" \
+  --max-total-seconds 1800 --max-total-calls 32 \
+  --reserve-seconds 30 --reserve-calls 3 \
+  --discovery-calls 8 --discovery-bytes 131072
+#+end_src
+
+This command invokes paid inference and documents the completed experiment; it does not authorize another run.
+The explorer's choice of source is random only when no open item or changed-source lead takes priority.
+Exact topic reproduction by a newly prepared job is not promised.
+
+* Runs
+
+| Run | Job                                | Explorer calls | Author/reviewer calls | Memory generation                        |
+|-----+------------------------------------+----------------+-----------------------+------------------------------------------|
+|   1 | =dad3c6f5f4fe4534bc2f14ace81fd7e2= |              8 |                     2 | =1c1228c493df8e81ecfd8121e86106e79dbfe10e= |
+|   2 | =d81cbc729d9248cd9274c7533c052856=  |              6 |                     2 | =b0a4b6f83d306fd48bf0d4b66ba7dcacf72578e7= |
+
+Run 1 received =docs/checkpoint-reuse-ledger.org= as its committed-file seed and produced =topics/checkpoint-reuse.org=.
+It explained the distinction between current-launch checkpoint readiness and durable generation history, the request-first scheduler branch and the scope of the existing regression.
+Its Talk section asked how count advances on skipped or failed captures, since the selected implementation windows had not included the increment.
+It also retained an explicitly unresolved coverage question about asserting the published manifest's trigger.
+The page said it had inspected committed sources, not executed their tests.
+
+Run 2 received that page's Talk section as its frozen =open_item= seed.
+Its first action explicitly followed the count/outcome question by searching for =last_outcome=.
+It found that =start_flight= increments count when admitting a capture, before starting its worker.
+Skipped, failed and lock-contended attempts remain counted; a trigger rejected because a flight already exists increments dropped without incrementing count.
+Consequently count is neither a completion counter nor a successful-publication counter, and count/dropped are not disjoint outcome categories.
+The second generation added these findings, corrected the page's qualified quotation of the ledger and removed the resolved count question.
+It retained the earlier readiness/recovery material and the separate trigger-coverage question.
+
+* Source check and correction draft
+
+The implementing agent checked the new claims against the pinned sources after both runs:
+
+- =sucoder/codex_state_runner.py:1279= :: =Status.load= removes the transient checkpoint view while keeping durable history.
+- =sucoder/codex_state_runner.py:2597= :: A new Checkpointer initializes count at zero.
+- =sucoder/codex_state_runner.py:2687= :: =start_flight= rejects an already active flight separately, then increments count before =worker.start=.
+- =sucoder/codex_state_runner.py:2733= :: The view and capture paths retain count across skipped/failed attempts; lock contention also increments dropped.
+- =sucoder/codex_state_runner.py:2650= :: The scheduler handles an existing request before its initial trigger.
+- =sucoder/codex_state_runner.py:2876= :: Unsynced adoption checks generation shape; retry acknowledgement separately verifies and syncs the directory and manifest.
+- =tests/test_codex_state_runner.py:1044= :: The gated reuse regression checks publication, sequence advancement and request removal, without explicitly asserting the manifest trigger.
+
+The narrower second selection preserved the earlier page's supported claims and distinguished the remaining coverage question from a demonstrated defect.
+It also created a TODO with CUSTOM_ID =correct-ledger-count-definition=, TARGET =docs/checkpoint-reuse-ledger.org:24-24= and an ACCEPTANCE property defining the intended documentation correction.
+The ledger calls count a completed-capture count at that pinned line, contrary to the inspected admission path.
+The project file was not edited.
+
+The pure =dream_issues.drafts= function produced exactly one public-evidence draft from the actual reviewed memory and an empty existing-issues list.
+The draft has a stable marker, the =dream-memory= label and a source permalink pinned to the code commit.
+This checks task extraction and provenance on real output, without exercising GitHub issue creation or asserting that the unpublished commit's URL already resolves publicly.
+The private result is =correction-drafts.json= beside =budget-final.json=.
+
+* Limits
+
+The final budget reports 18 completed calls, no failed or uncertain calls and 14 unused calls.
+Its native invocation ceiling does not bound hidden provider HTTP retries; dollar and token ceilings are unsupported.
+No extra call used the remaining allowance.
+The real mirror's =sucoder/memory= remains =8668948f0ef968ca31b71d1d55b44ee4926cac95=.
+Live Claude, historical Savio transcript execution and real local-tier publication were outside this experiment.
+The later optional-history validation correction was verified by regression tests, without repeating this approved experiment on a different code pin.
+
+Recorded by Sue (GPT-6 Codex).

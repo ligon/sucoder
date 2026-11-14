@@ -4,6 +4,13 @@
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
+* Dreaming followup, 2026-11-14
+
+The human requested all eight dreaming issues, 91-98.
+Their implementation, verification and publication boundary are in [[file:handoffs/2026-11-14-dream-issues-91-98.org][the issue-batch handoff]] on =coder/dream-recovery=.
+The explicitly approved two-run live check met issue 93's followup criterion; [[file:../docs/dream/runs/sucoder-e2.org][E2]] records its evidence and limits.
+The historical rollout and earlier observations follow below.
+
 * Where things stand
 
 On 2026-11-12 the human said "When tests are clean merge" and chose to merge both branches.

@@ -64,7 +64,7 @@ Durability conflicts retain the reviewed local commit and private artifacts; sta
 
 * 6. Open checks
 
-Issue 93's live two-run acceptance remains distinct from fake-transport regression coverage.
+Issue 93's live two-run acceptance is recorded separately from fake-transport regression coverage in [[file:dream/runs/sucoder-e2.org][E2]].
 Savio lacks Landlock; code fixes do not establish a place to execute native dreams over its transcripts.
 The final full suite must run against the completed frozen source with =PYTHONPATH= pointing at this worktree.
 
@@ -74,7 +74,7 @@ Issue 93: six new lead cases pass, and the final lead/experience group passes al
 The broader exploration/experience/CLI run passed 55 cases and identified four old exact-brief assertions; those assertions are updated and pass in the final group.
 Three-file mypy passes.
 The fixtures cover a first navigation with memory/open items, frozen replay after memory movement, a job prepared before leads existed, changed-file priority, terminal-task exclusion and bounded committed-only navigation.
-No live provider acceptance is claimed.
+The later explicitly approved two-run live check met its followup criterion in 18 shared calls; see [[file:dream/runs/sucoder-e2.org][E2]] for the exact code pin, evidence and limits.
 Issues 92 and 94 use one frozen editorial amendment, version 2, rather than changing a released job's briefs in place.
 The v5 result schema remains unchanged; the plan, amended brief and support metadata bind the coordinator identity.
 The accepted-receipt envelope checks editorial versions and the appropriate brief hash before reusing prior work.
@@ -86,6 +86,13 @@ Self-review found and corrected an invalid last-record seed, older-contract rece
 The final review regression group passes 20 cases, including actual v4-to-new-policy review and old-plan replay.
 A separate interruption case proves that a durable ref update followed by loss of the private run record replays without another provider call.
 Review was performed by the implementing agent; no independent code-review claim is made.
-The full suite and final packaged-source/document checks remain pending at this checkpoint.
+The wheel and original changed Org documents passed packaged-source/export checks at =92e340b=.
+The full suite found two regressions in malformed optional-history handling: prior association metadata and incomplete review metadata must not block a new plan.
+The support collector now skips invalid metadata after its bounded read, without swallowing source read failures or weakening the exporter's strict provenance check.
+The full suite at =92e340b= completed with 3,253 passed, 40 failed and one skipped in 2,289 seconds.
+Exactly 38 failures match the selected tests on unchanged base =a3db175=; the remaining two are the optional-history regressions.
+All 30 affected prior/progress/support/export tests pass after that correction at =6559b4f=, including both failing cases; =dream_support.py= also passes mypy.
+The only runtime change after the full-suite/live pin is this optional-history correction; the full suite was not rerun afterward.
+Final package/source hashes and documentation exports are retained in =/home/coder/.sucoder/logs/dream-issues-verification/2026-11-14-6559b4f/=.
 
 Prepared by Sue (GPT-6).
