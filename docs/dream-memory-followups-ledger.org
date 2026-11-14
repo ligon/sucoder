@@ -1,0 +1,65 @@
+#+TITLE: Dream memory followups prior-art ledger
+#+AUTHOR: Sue
+#+DATE: 2026-11-14
+
+* 1. Task and baseline
+
+Address remaining dreaming issues 91-94 and 98 after the recovery batch (=1fd57a6=).
+The human confirmed all eight issues, 91-98.
+Search tier: GitNexus CLI impact/query, git history and named source/test inspection.
+No live provider experiment, deployment, public memory push or tracker publication is part of implementation verification.
+
+* 2. Existing machinery
+
+- =dream_explore.prepare= freezes a digest-bound job before native execution; =_job= validates its fields and =_discovery= reconstructs its inventory.
+  =tests/test_dream_explore.py= covers earlier navigation versions, interrupted handoffs and inference-free replay.
+- =dream_discover.Explorer= binds the brief, header and schema into its run identity and already counts navigation deliveries.
+  Extend only jobs carrying a new frozen leads snapshot; preserve old header/brief behavior.
+- =dream_editorial.inspect= uses native Org parsing to report headings, TODO states, CUSTOM_IDs, properties, byte ranges and Talk ancestry.
+  Reuse it for memory leads and correction-task export; do not scrape Org tasks with a second parser.
+- =dream_prior.associations= and =dream_experience.consumed= scan prior receipts within bounds.
+  Reuse receipt provenance for preservation, changed-source leads and export privacy checks; receipt evidence is previously admitted, not freshly verified.
+- =dream_memory.tip/check_tree/ensure= and =dream_run.publish= own wiki-only branches and atomic local publication.
+  Extend local-tier publication with an explicit validated shared-mirror target and compare-and-swap; never follow the mirror's remotes.
+- =local_tier._PREPARE_TEMPLATE= creates the working clone and installs its marked post-commit hook.
+  Extend initial memory-branch setup; existing local-tier shell and memory-injection tests provide the integration anchor.
+- =dream_experience.project_dir/workspaces/sessions= scopes Claude discovery to checkout paths and applies quiet/live/complete-prefix checks.
+  Extend with recognized configured job-clone directory names and transcript repository confirmation; preserve the ordinary discovery boundary.
+- =dream_editor.Editor= is the current v5 schema/contract, built on the v4 context-request author.
+  Brief amendments must be frozen per plan; earlier plans must reconstruct unchanged.
+
+* 3. Definitions and conventions
+
+Memory is the configured private wiki-only branch, not the working copy of =.sucoder/wiki/=.
+New discovery leads are advisory and cannot authorize source admission or certify current project facts.
+Open items are open seven-state editorial tasks and Talk questions; terminal DONE/MOOT tasks are excluded.
+Correction tasks have a stable CUSTOM_ID, committed project TARGET, ACCEPTANCE and cited evidence.
+Issue markers link tasks to GitHub without an unreviewed write-back to memory.
+Only a positively recognized local-tier mapping authorizes publication to its configured local shared mirror; an origin URL alone is insufficient.
+
+* 4. Invariants
+
+Earlier jobs and plans retain their original briefs, assignments and replay behavior.
+Memory navigation and retained evidence are bounded and count toward existing delivery/source allowances.
+No missing evidence window establishes that an earlier claim is wrong; contradictory current evidence may support correction.
+Session-only lessons carry dates and cannot become advice about the launch commit without committed evidence.
+Public correction filing is an explicit command; tasks with noncommitted or missing provenance are withheld without an explicit override.
+Concurrent durable-memory publication cannot overwrite another generation; conflicts preserve reviewed private work.
+
+* 5. Reuse decisions
+
+Reuse native Org inspection, frozen job headers, receipt provenance, private atomic storage, existing role transport and budget checks.
+Issue 93 adds a bounded frozen memory snapshot and seed selection, with no change to earlier navigation contracts.
+Issue 94 retains bounded receipt support metadata for output-bound prior pages, explicitly marked previously admitted and not re-read.
+It uses a new frozen per-plan editorial version; contradictory current evidence can support correction, while a narrower selection alone does not justify deleting supported claims.
+Session lessons must be dated and remain historical unless committed project evidence supports a present-tense statement.
+Issue 92 exports correction tasks only, links by marker only, and makes no model calls.
+Issues 91 and 98 share local-tier identity recognition; build it from configured layout and origin agreement rather than path guessing alone.
+
+* 6. Open checks
+
+Issue 93's live two-run acceptance remains distinct from fake-transport regression coverage.
+Savio lacks Landlock; code fixes do not establish a place to execute native dreams over its transcripts.
+The final full suite must run against the completed frozen source with =PYTHONPATH= pointing at this worktree.
+
+Prepared by Sue (GPT-6).
