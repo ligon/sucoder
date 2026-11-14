@@ -15,7 +15,7 @@ import time
 import uuid
 
 from . import (attention, dream, dream_budget, dream_discover, dream_experience, dream_memory, dream_native,
-               dream_roles, dream_run, dream_view, dream_wiki)
+               dream_roles, dream_run, dream_view, dream_wiki, dream_retry)
 from .config import AgentLauncher, BranchPrefixes, DreamSettings, MirrorSettings, _parse_dream
 from .dream import DreamError, canonical, digest
 from .observation_process import Budget
@@ -126,12 +126,13 @@ def _job(path):
         os.close(fd)
 
 
-def prepare(config, job_path=None, *, cwd=None, overrides=None, budget_path=None, attempt=1):
+def prepare(config, job_path=None, *, cwd=None, overrides=None, budget_path=None, attempt=1, retry_seconds=None):
+    dream_retry.validate_request(job_path, attempt, retry_seconds)
     overrides = {key: value for key, value in (overrides or {}).items() if value is not None}
     if type(attempt) is not int or not 1 <= attempt <= 1000000:
         raise DreamError("--attempt must be between 1 and 1000000")
     if job_path is not None:
-        with _job(job_path) as (_, path, header):
+        with _job(_resolve_job(config, job_path)) as (_, path, header):
             expected = dict(header["settings"], purpose=header["purpose"], mode=header.get("mode", "project"))
             if any(key not in expected or value != expected[key] for key, value in overrides.items()):
                 raise DreamError("Job settings are immutable; resume without changing its options", 3)
@@ -347,8 +348,9 @@ def _result(header, outcome, attempt, written=None, plan_path=None):
         note="Discovery selected no evidence; no independently reviewed wiki candidate was proposed.")
 
 
-def run(config, job_path, attempt=1, *, transport=None):
-    prepare(config, job_path, attempt=attempt)
+def run(config, job_path, attempt=1, *, transport=None, retry_seconds=None):
+    job_path = _resolve_job(config, job_path)
+    prepare(config, job_path, attempt=attempt, retry_seconds=retry_seconds)
     with _job(job_path) as (fd, path, header), dream_roles.run_lock(fd, "orchestrator"):
         name = "result-" + str(attempt).zfill(6) + ".json"
         try:
@@ -361,6 +363,8 @@ def run(config, job_path, attempt=1, *, transport=None):
         _store(fd, "attempt-" + str(attempt).zfill(6) + ".json", dict(attempt=attempt))
         try:
             with dream_budget.open_job(_budget_plan(header), path, Path(header["budget_path"])) as budget:
+                if retry_seconds is not None:
+                    budget.renew(attempt, retry_seconds)
                 try:
                     chosen = _read(fd, "chosen.json")
                 except FileNotFoundError:
@@ -400,9 +404,17 @@ def run(config, job_path, attempt=1, *, transport=None):
             raise
 
 
-def start(config, job_path=None, *, cwd=None, overrides=None, budget_path=None, attempt=1, transport=None):
-    prepared = prepare(config, job_path, cwd=cwd, overrides=overrides, budget_path=budget_path, attempt=attempt)
-    return run(config, Path(prepared["job_path"]), attempt, transport=transport)
+def start(config, job_path=None, *, cwd=None, overrides=None, budget_path=None, attempt=1, transport=None, retry_seconds=None):
+    prepared = prepare(config, job_path, cwd=cwd, overrides=overrides, budget_path=budget_path,
+        attempt=attempt, retry_seconds=retry_seconds)
+    return run(config, Path(prepared["job_path"]), attempt, transport=transport, retry_seconds=retry_seconds)
+
+
+def _resolve_job(config, path):
+    path = Path(path).expanduser()
+    if re.fullmatch(r"[0-9a-f]{32}", str(path)):
+        path = (config.log_dir or Path("~/.sucoder/logs")).expanduser() / "dream-jobs" / path
+    return path.absolute()
 
 
 def _latest(config, cwd):
@@ -465,7 +477,7 @@ def _inspect(config, fd, header, attempt):
 
 
 def status(config, job_path=None, *, cwd=None):
-    path = Path(job_path) if job_path is not None else _latest(config, cwd)
+    path = _resolve_job(config, job_path) if job_path is not None else _latest(config, cwd)
     with _job(path) as (fd, _, header):
         attempts = [int(name[8:-5]) for name in os.listdir(fd) if re.fullmatch(r"attempt-[0-9]{6,7}\.json", name)]
         attempt = max(attempts, default=1)
@@ -485,6 +497,6 @@ def status(config, job_path=None, *, cwd=None):
 
 
 def budget_status(config, job_path=None, *, cwd=None):
-    path = Path(job_path) if job_path is not None else _latest(config, cwd)
+    path = _resolve_job(config, job_path) if job_path is not None else _latest(config, cwd)
     with _job(path) as (_, _, header), dream_budget.restore(_budget(header)) as budget:
         return dict(budget.summary(), job_path=str(path), exploratory_job_id=header["job_id"])

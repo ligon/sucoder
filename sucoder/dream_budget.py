@@ -16,7 +16,7 @@ import threading
 import time
 import uuid
 
-from . import dream, dream_run
+from . import dream, dream_run, dream_retry
 from .dream import DreamError, canonical, digest
 
 
@@ -142,18 +142,26 @@ class Job:
                 row = dict(reservation=reservation, state="uncertain", usage=None)
             self.calls.append(row)
             self.invoked.add(reservation["assignment_id"])
+        self.retry_windows = dream_retry.windows(fd, header, self.policy_sha256)
+
+    def renew(self, attempt, seconds):
+        dream_retry.renew(self, attempt, seconds, _clock())
+
+    def clock_header(self):
+        return self.retry_windows[-1] if self.retry_windows else self.header
 
     def descriptor(self):
         return dict(contract=CONTRACT, directory=str(self.path), job_id=self.header["job_id"], policy_sha256=self.policy_sha256)
 
     def remaining(self):
         now = _clock()
-        if now["boot_id"] != self.header["started"]["boot_id"]:
+        clock = self.clock_header()
+        if now["boot_id"] != clock["started"]["boot_id"]:
             return 0.0
-        latest = max([self.header["started"]["wall"]] + [row["reservation"]["reserved_at"] for row in self.calls])
+        latest = max([clock["started"]["wall"]] + [row["reservation"]["reserved_at"] for row in self.calls])
         if now["wall"] < latest:
             return 0.0
-        return max(0.0, min(self.header["deadline"] - now["wall"], self.header["monotonic_deadline"] - now["monotonic"]))
+        return max(0.0, min(clock["deadline"] - now["wall"], clock["monotonic_deadline"] - now["monotonic"]))
 
     def summary(self):
         totals: dict = dict(reported_input_tokens=0, reported_output_tokens=0, calls_without_token_usage=0,
@@ -183,7 +191,8 @@ class Job:
         cap = self.header["limits"]["max_native_calls"]
         return dict(schema_version=1, operation="dream_budget", contract=CONTRACT, job_id=self.header["job_id"],
             directory=str(self.path), state="budget_exhausted" if not left or len(self.calls) >= cap else "available",
-            limits=self.header["limits"], started_at=self.header["started"]["wall"], deadline=self.header["deadline"],
+            limits=self.header["limits"], started_at=self.header["started"]["wall"], deadline=self.clock_header()["deadline"],
+            retry_windows=self.retry_windows,
             remaining_seconds=left, reserved_calls=len(self.calls), remaining_calls=max(0, cap - len(self.calls)),
             call_states={state: sum(row["state"] == state for row in self.calls)
                 for state in ("completed", "failed", "uncertain", "denied_before_provider")},
@@ -239,7 +248,7 @@ class Job:
                     as_of=_clock()["wall"], remaining_seconds=self.remaining(),
                     remaining_calls=self.header["limits"]["max_native_calls"] - len(self.calls),
                     reserve_calls=self.header["limits"]["reserve_calls"], reserve_seconds=self.header["limits"]["reserve_seconds"],
-                    deadline=self.header["deadline"], usage=self.summary()["usage"]))
+                    deadline=self.clock_header()["deadline"], usage=self.summary()["usage"]))
             _store(self.fd, name, saved)
         if saved.get("base_sha256") != digest(canonical(task)) or saved.get("policy_sha256") != self.policy_sha256:
             raise DreamError("Frozen budget advice differs from its assignment", 3)
@@ -247,7 +256,8 @@ class Job:
         dream._object(advice, ("contract", "job_id", "instructions", "as_of", "remaining_seconds", "remaining_calls",
             "reserve_calls", "reserve_seconds", "deadline", "usage"))
         if (advice["contract"] != CONTRACT or advice["job_id"] != self.header["job_id"] or
-                advice["instructions"] != INSTRUCTIONS or advice["deadline"] != self.header["deadline"] or
+                advice["instructions"] != INSTRUCTIONS or advice["deadline"] not in
+                    [self.header["deadline"]] + [row["deadline"] for row in self.retry_windows] or
                 any(advice[key] != self.header["limits"][key] for key in ("reserve_calls", "reserve_seconds"))):
             raise DreamError("Frozen budget advice policy changed", 3)
         value = dict(task, budget=saved["advice"])

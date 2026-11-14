@@ -2652,6 +2652,10 @@ Use =poetry run sucoder= from this source checkout when the installed launcher h
 Bare launch runs unsupervised in the foreground; =--detach= launches the same persisted job with private stdout/stderr logs and returns its process ID and job location.
 Job settings, exact project binding, discovery choices and paid-work reservations are frozen before reuse; =--job= resumes the same allowance, while a new bare launch creates a new job that may investigate differently.
 =--attempt 2= is an explicit retry after inspecting a failed/unknown request, still within that job's remaining allowance.
+All exploratory =--job= options accept either the private directory path or its 32-hex job id, resolved under =<log_dir>/dream-jobs/=.
+After the elapsed window expires, =sucoder dream --job JOB_ID --attempt 2 --retry-seconds 900= explicitly grants that attempt a new bounded elapsed window (1-86400 seconds, longer than the closeout reserve).
+The original policy and cumulative call ceiling stay unchanged; failed and unknown calls remain charged.
+The retry window is recorded once in the shared budget: repeating the command does not reset its deadline, and another extension requires a later attempt.
 The publication base is the memory branch (the launch branch when =memory_branch= is empty); if it moves while work is underway, the job returns an explicit conflict and retains its private work, while evidence stays pinned to the launch commit.
 Output includes the private job/plan paths, examined navigation, selected evidence and important open questions, with a reviewed candidate or independently reviewed =unchanged= result when editorial work completes.
 =no_selection= records a discovery decision with no selected evidence and no reviewed wiki proposal; exhaustion retains a private checkpoint without publishing unchecked work.
@@ -2737,6 +2741,7 @@ sucoder --config ~/.sucoder/config.yaml dream budget SuCoder \
 Native runs persist a whole-job budget before snapshotting or native startup.
 By default the plan's elapsed and role ceilings become a shared deadline and native invocation cap (normally 900 seconds and 40 invocations), including review, repairs, context-request turns, failed calls and explicit attempts.
 Elapsed time includes idle time between restarts; restarting a process or selecting =--attempt 2= does not replenish the budget.
+An exploratory job can receive an explicit =--retry-seconds= window as described above; this is recorded separately from the original policy and never adds native calls.
 Use =--max-total-seconds= and =--max-total-calls= on the first run to choose different job ceilings; the plan's per-attempt bounds still apply.
 The defaults reserve 30 seconds (or one tenth of a shorter job) and one invocation for closeout.
 =--reserve-seconds= and =--reserve-calls= change those reserves; author/extractor work stops earlier, while review, verification, repair and consolidation can use the reserve.

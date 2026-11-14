@@ -33,6 +33,7 @@ def explore(
     job_path: Optional[Path] = typer.Option(None, "--job", help="Resume this private exploratory job with its frozen settings and remaining allowance."),
     budget_path: Optional[Path] = typer.Option(None, "--budget", help="Explicit shared private budget directory for a new job."),
     attempt: int = typer.Option(1, "--attempt", min=1, max=1000000, help="Explicit native attempt within the same persisted job budget."),
+    retry_seconds: Optional[int] = typer.Option(None, "--retry-seconds", min=1, max=86400, help="Explicit elapsed window for --job --attempt 2 or later; retains the cumulative call ceiling."),
     max_total_seconds: Optional[int] = typer.Option(None, "--max-total-seconds", min=1, help="Whole-job elapsed ceiling, including discovery and review."),
     max_total_calls: Optional[int] = typer.Option(None, "--max-total-calls", min=1, help="Whole-job native invocation ceiling, including discovery and review."),
     reserve_seconds: Optional[int] = typer.Option(None, "--reserve-seconds", min=0, help="Time reserved for review, repair and finalization."),
@@ -60,18 +61,20 @@ def explore(
         max_total_tokens=max_total_tokens, max_cost_usd=max_cost_usd,
         mode="project" if explore_project else None)
     overrides = {key: value for key, value in overrides.items() if value is not None}
+    retry = {} if retry_seconds is None else dict(retry_seconds=retry_seconds)
     if detach:
         _data_command(ctx, "dream_job", _detach, _config_path(ctx), job_path,
-            overrides=overrides, budget_path=budget_path, attempt=attempt)
+            overrides=overrides, budget_path=budget_path, attempt=attempt, **retry)
     else:
         _data_command(ctx, "dream_job", dream_explore.start, job_path,
-            overrides=overrides, budget_path=budget_path, attempt=attempt)
+            overrides=overrides, budget_path=budget_path, attempt=attempt, **retry)
 
 
-def _detach(config, config_path, job_path=None, *, overrides=None, budget_path=None, attempt=1):
+def _detach(config, config_path, job_path=None, *, overrides=None, budget_path=None, attempt=1, retry_seconds=None):
     """Start the same persisted job without a terminal or parent-process stdin."""
     from . import dream_explore
-    job = dream_explore.prepare(config, job_path, overrides=overrides, budget_path=budget_path, attempt=attempt)
+    retry = {} if retry_seconds is None else dict(retry_seconds=retry_seconds)
+    job = dream_explore.prepare(config, job_path, overrides=overrides, budget_path=budget_path, attempt=attempt, **retry)
     directory = Path(job["job_path"])
     fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     handles = []
@@ -94,6 +97,8 @@ def _detach(config, config_path, job_path=None, *, overrides=None, budget_path=N
         if config_path is not None:
             argv += ["--config", str(Path(config_path).expanduser().absolute())]
         argv += ["dream", "--job", str(directory), "--attempt", str(attempt)]
+        if retry_seconds is not None:
+            argv += ["--retry-seconds", str(retry_seconds)]
         process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=handles[0], stderr=handles[1],
             start_new_session=True, close_fds=True)
         return dict(job, schema_version=1, operation="dream_job", state="detached", pid=process.pid,

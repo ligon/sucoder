@@ -181,10 +181,13 @@ class Coordinator:
         return saved["result"]
 
     def check_result(self, task, result):
-        validate_schema(result, self.result_schema(task["role"]))
         for key in ("assignment_id", "input_sha256", "role"):
-            if result[key] != task[key]:
-                raise DreamError("Role result does not match its frozen assignment")
+            if isinstance(result, dict) and key in result and result[key] != task[key]:
+                trace = self.run_id + "-" + task["assignment_id"] + "-trace.json"
+                raise DreamError(f"Role result does not match its frozen assignment: role={task['role']} "
+                    f"field={key} expected={str(task[key])[:12]} received={str(result[key])[:12]}; "
+                    f"inspect its private trace: {trace}")
+        validate_schema(result, self.result_schema(task["role"]))
         if result["failures"]:
             raise DreamError("Role reported incomplete work: " + "; ".join(result["failures"]), 3)
 
