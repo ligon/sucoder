@@ -6,10 +6,11 @@
 * Source and scope
 
 The human requested the dreaming backlog and confirmed all eight issues, 91-98.
-Work is on =coder/dream-recovery= in =/home/coder/mirrors/SuCoder-dream-recovery=, based on =a3db175=.
+Implementation was prepared on =coder/dream-recovery= in =/home/coder/mirrors/SuCoder-dream-recovery=, based on =a3db175=.
+The later [[file:2026-11-14-worktree-cleanup.org][worktree cleanup]] put =main= in =/home/coder/mirrors/SuCoder= and archived the old checkout and code-branch pointer.
 The live-check implementation is =92e340b46b592feb3f39ca5cfe87301afa34b1d7=.
 Final runtime commit =6559b4f= skips malformed optional support history during planning while preserving strict exporter validation.
-The original mirror checkout remains on =coder/confined-node=, with its untracked November 12 summary preserved.
+During implementation the original mirror checkout stayed on =coder/confined-node=; it now holds =main=, with the superseded November 12 summary preserved in the cleanup archive.
 Local =main= now contains the reviewed branch; no installed deployment, issue filing or public memory publication has been performed.
 
 * Implemented behavior

@@ -1,8 +1,19 @@
-#+TITLE: sucoder dream, the test-environment fixes and the Python 3.9 floor merged locally into main; publication awaits the human
-#+DATE: 2026-11-13
+#+TITLE: SuCoder consolidated on main in the canonical mirror; publication pending
+#+DATE: 2026-11-14
 #+STATUS: COMPLETE
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Canonical checkout, 2026-11-14
+
+The human requested worktree cleanup and all useful work on main.
+There is now one registered worktree: =/home/coder/mirrors/SuCoder=, checked out on =main=.
+All useful implementation work was already present at =d835beb=; the other code branches and scratch tests were checked for unique work before removal.
+The 11 sibling worktrees, nine scratch worktrees and 14 obsolete code-branch pointers were archived and consolidated.
+The [[file:handoffs/2026-11-14-worktree-cleanup.org][cleanup handoff]] records the evidence, private archives and recovery instructions.
+Private memory and the diagnostic candidate remain separate.
+GitHub publication and installed deployment remain pending.
+The dated rollout notes below retain their earlier checkout paths and verification results; use the cleanup handoff for current workspace locations.
 
 * Dreaming followup, 2026-11-14
 
@@ -13,7 +24,7 @@ GitHub publication and installed deployment remain pending.
 The explicitly approved two-run live check met issue 93's followup criterion; [[file:../docs/dream/runs/sucoder-e2.org][E2]] records its evidence and limits.
 The historical rollout and earlier observations follow below.
 
-* Where things stand
+* Earlier rollout and verification
 
 On 2026-11-12 the human said "When tests are clean merge" and chose to merge both branches.
 =main= (checked out in =/home/coder/mirrors/SuCoder-issue-90-merge=) now holds:

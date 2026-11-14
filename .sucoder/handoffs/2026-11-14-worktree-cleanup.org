@@ -1,0 +1,81 @@
+#+TITLE: SuCoder worktree consolidation on main
+#+DATE: 2026-11-14
+#+STATUS: COMPLETE; GITHUB PUBLICATION PENDING
+#+AUTHOR: Sue
+
+* Outcome
+
+The human requested cleanup of the worktrees with all useful work on main.
+The sole registered worktree is now =/home/coder/mirrors/SuCoder=, checked out on =main=.
+All 11 sibling =SuCoder-*= directories and nine detached scratch worktrees were removed after their contents were archived and verified.
+The 14 obsolete =coder/*= branch pointers were moved atomically into =refs/archive/worktree-cleanup/2026-11-14/coder/*=.
+Their commits remain available through those refs and a verified Git bundle.
+No implementation merge, runtime edit or test edit was needed: all useful implementation work was already present on =main= at =d835beb=.
+This documentation commit records the consolidation.
+
+* Evidence reconciliation
+
+Thirteen code branches were already ancestors of =main=.
+The four exclusive commits on =coder/issue-90-confined-launch= had identical stable patch IDs to commits already on =main=:
+
+- =776374f= :: =fa7df87=, confined launch transport ledger.
+- =8fcff33= :: =a26c375=, staged pane commands.
+- =1c3424a= :: =5b63d9c=, confined state and remote arguments.
+- =9de9e50= :: =556e24c=, issue 90 verification record.
+
+No duplicate history was merged to manufacture ancestry.
+The dirty =pin-old= scratch checkout held changes to three dispatch test files.
+All seven added or changed functions match their counterparts on =main= by parsed Python syntax, excluding source locations.
+The untracked =py39-old/tests/test_target_python.py= is also present on =main=; its only difference is that main imports the shared =PYTHON_FLOOR= instead of defining a local copy.
+The November 12 untracked dream summary is superseded by the maintained handoff and README.
+The untracked editor backup of the November 14 directions differs from its tracked file only in table spacing.
+These extra files and the scratch patch were preserved in the private cleanup artifacts.
+
+* Separate memory and diagnostic history
+
+The actual =sucoder/memory= ref remains =8668948f0ef968ca31b71d1d55b44ee4926cac95=.
+The two =dream/*= refs were retained, including the documented P1 diagnostic candidate =635f040= that must not be merged into the code branch.
+The ignored wiki copy and agent preferences in the canonical checkout were retained.
+No memory publication or new provider call occurred.
+
+* Preservation and removal
+
+Artifacts are under =/home/coder/.sucoder/logs/worktree-cleanup/2026-11-14/=.
+The inventory records every original path, branch, commit, status and ignored file.
+All 20 linked worktrees were archived, including tracked files, ignored files, private wiki copies and uncommitted scratch material; only their Git worktree pointer files were excluded.
+Each archived regular file was checked against its source by SHA-256 and each symlink by its target before removal.
+The tar files total 2,131,691,520 bytes.
+The =archives.json= index maps original paths to archives; adjacent per-archive JSON files record file hashes.
+=pre-cleanup-code.bundle= contains the full code history and all 14 original code-branch tips, excluding the separate memory and diagnostic branch refs.
+=branch-dispositions.json= records ancestor checks and issue 90 patch equivalence.
+=scratch-test-comparison.json= records the seven matching functions.
+
+Clean worktrees were removed normally.
+The three worktrees with archived uncommitted material used forced worktree removal only after that material was verified and its substantive content reconciled with main.
+No local process cwd or readable account-owned open file descriptor referenced the extra worktrees during the audit.
+Configured remote session discovery reported unavailable authority; it did not establish that remote sessions were absent.
+No session was contacted, terminated or reconfigured.
+The ten redundant GitNexus registrations were removed through its current-repository clean command, after index files were archived.
+The canonical index is refreshed with =--skip-agents-md --index-only=.
+
+* Checks and recovery
+
+=git worktree list= shows only the canonical checkout on main.
+No sibling =SuCoder-*= directories remain.
+The source tree's =dream --help= smoke check runs without inference.
+Runtime and test files remain identical to =d835beb=, so the [[file:2026-11-14-dream-issues-91-98.org][recorded implementation verification and full-suite limitations]] still apply.
+The full test suite was not repeated for this workspace and documentation cleanup.
+GitHub publication and installed deployment remain pending.
+
+An archived branch can be recovered without a remote:
+
+#+begin_src sh :eval never
+git branch recovered-issue-90 \
+  refs/archive/worktree-cleanup/2026-11-14/coder/issue-90-confined-launch
+#+end_src
+
+Alternatively, verify =pre-cleanup-code.bundle= and fetch the desired original branch into a new recovery branch.
+To reconstruct an archived checkout, create a detached worktree at its recorded commit and unpack its tar into that worktree; the new Git worktree pointer is retained because the archive excludes the old pointer.
+The archive contains private material and must remain local.
+
+Recorded by Sue (GPT-6 Codex).
