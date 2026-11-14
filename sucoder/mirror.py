@@ -2757,6 +2757,7 @@ class MirrorManager:
             mirror_path=mirror_path, mirror_token=token,
             local_disk_root=local_disk_root, job_id=int(job_id),
             canonical_remote=(ctx.remote_name if getattr(ctx.settings, "sync_policy", "canonical") == "canonical" else None),
+            memory_branch=(ctx.settings.dream or self.config.dream).memory_branch,
         )
         self.executor.run_agent(
             [
@@ -3552,6 +3553,7 @@ class MirrorManager:
                 mirror_path=mirror_path, mirror_token=safe,
                 local_disk_root=local_disk_root,
                 canonical_remote=(ctx.remote_name if getattr(ctx.settings, "sync_policy", "canonical") == "canonical" else None),
+                memory_branch=(ctx.settings.dream or self.config.dream).memory_branch,
             )
             self.executor.run_agent(
                 [

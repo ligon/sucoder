@@ -15,7 +15,7 @@ import time
 import uuid
 
 from . import (attention, dream, dream_budget, dream_discover, dream_experience, dream_memory, dream_native,
-               dream_roles, dream_run, dream_view, dream_wiki, dream_retry, dream_leads)
+               dream_roles, dream_run, dream_view, dream_wiki, dream_retry, dream_leads, dream_local)
 from .config import AgentLauncher, BranchPrefixes, DreamSettings, MirrorSettings, _parse_dream
 from .dream import DreamError, canonical, digest
 from .observation_process import Budget
@@ -61,6 +61,9 @@ def project(config, cwd=None):
     root = Path(value["data"]["git_root"]["value"])
     matches = [(name, item) for name, item in config.mirrors.items()
         if root in (item.canonical_repo.resolve(), (config.mirror_root / item.mirror_dirname).resolve())]
+    observed = value["data"]["mirror"]["value"]
+    if not matches and observed in config.mirrors:
+        matches = [(observed, config.mirrors[observed])]
     if len(matches) > 1:
         raise DreamError("Project matches multiple configured mirrors; resolve the ambiguous configuration")
     if matches:
@@ -77,7 +80,7 @@ def _binding(config, header):
     name = header["project"]["name"]
     item = MirrorSettings(name=name, canonical_repo=root, mirror_name=root.name,
         branch_prefixes=BranchPrefixes(human=config.human_user, agent=config.agent_user))
-    return replace(config, mirror_root=root.parent, mirrors={name: item}, log_dir=Path(header["directory"]))
+    return replace(config, mirror_root=root.parent, mirrors={name: item}, targets={}, log_dir=Path(header["directory"]))
 
 
 def _limits(settings):
@@ -103,7 +106,7 @@ def _job(path):
             raise DreamError("Dream job directory must be private and account-owned", 3)
         header = _read(fd, "job.json")
         dream._object(header, ("contract", "job_id", "directory", "created_at", "project", "settings", "purpose", "budget_path"),
-                      ("mode", "navigation_version", "leads"))
+                      ("mode", "navigation_version", "leads", "memory_origin"))
         if "leads" in header:
             dream_leads.validate(header["leads"])
         if header.get("mode", "project") not in MODES:
@@ -135,6 +138,10 @@ def prepare(config, job_path=None, *, cwd=None, overrides=None, budget_path=None
         raise DreamError("--attempt must be between 1 and 1000000")
     if job_path is not None:
         with _job(_resolve_job(config, job_path)) as (_, path, header):
+            if "memory_origin" in header:
+                expected_origin = {key: value for key, value in header["memory_origin"].items() if key != "expected_tip"}
+                if dream_local.recognize(config, Path(header["project"]["path"])) != expected_origin:
+                    raise DreamError("Configured local-tier memory binding changed; preserve this job", 3)
             expected = dict(header["settings"], purpose=header["purpose"], mode=header.get("mode", "project"))
             if any(key not in expected or value != expected[key] for key, value in overrides.items()):
                 raise DreamError("Job settings are immutable; resume without changing its options", 3)
@@ -197,6 +204,10 @@ def prepare(config, job_path=None, *, cwd=None, overrides=None, budget_path=None
             if dream_discover.NAVIGATION > 1:
                 # Version 1 stays implicit, so earlier headers (and their digests) are unchanged.
                 header["navigation_version"] = dream_discover.NAVIGATION
+            recognized = dream_local.recognize(config, root) if memory_ref else None
+            if recognized is not None:
+                header["memory_origin"] = dream_local.synchronize(_source(config, header, time.monotonic() + 30),
+                    recognized, memory_ref, directory)
             if dream_leads.VERSION:
                 source = _source(config, header, time.monotonic() + 30)
                 sessions = _sessions(config, source, header) if mode == "experience" else None
@@ -292,7 +303,7 @@ def _plan(config, fd, header, chosen, deadline):
             value = dream.create_plan(effective, source.name, Path(header["directory"]) / "sources.json",
                 request["integration_ref"], maintenance=maintenance, topic=topic,
                 publication="in_place" if memory_ref else None,
-                project_commit=header["project"]["base_commit"])
+                project_commit=header["project"]["base_commit"], memory_origin=header.get("memory_origin"))
             path = Path(value["plan_path"])
         pointer = dict(plan_path=str(path))
         _store(fd, "plan-pointer.json", pointer)
@@ -303,7 +314,7 @@ def _plan(config, fd, header, chosen, deadline):
             bound = plan["integration_ref"] == memory_ref and dream_run.in_place_plan(plan)
         else:
             bound = plan["base_commit"] == header["project"]["base_commit"]
-        if (not bound or plan["maintenance"] != maintenance or
+        if (not bound or plan.get("memory_origin") != header.get("memory_origin") or plan["maintenance"] != maintenance or
                 plan["topic"] != topic or len(plan["units"]) != len(request["units"])):
             raise DreamError("Saved exploratory plan differs from the handoff intent", 3)
         for unit, proposed in zip(plan["units"], request["units"]):
@@ -366,7 +377,9 @@ def run(config, job_path, attempt=1, *, transport=None, retry_seconds=None):
         except FileNotFoundError:
             pass
         else:
-            _inspect(config, fd, header, attempt)
+            checked = _inspect(config, fd, header, attempt)
+            if "memory_origin" in header and checked["state"] == "conflict":
+                return dict(saved, state="conflict", validation=checked)
             return saved
         _store(fd, "attempt-" + str(attempt).zfill(6) + ".json", dict(attempt=attempt))
         try:
@@ -458,7 +471,7 @@ def _live_sessions(config):
 def _sessions(config, source, header):
     memory_ref = header["project"].get("memory_ref")
     return dream_experience.sessions(source, quiet_minutes=header["settings"].get("session_quiet_minutes", 30),
-        live=_live_sessions(config), memory_commit=dream_memory.tip(source, memory_ref) if memory_ref else None)
+        live=_live_sessions(config), memory_commit=dream_memory.tip(source, memory_ref) if memory_ref else None, config=config)
 
 
 def _inspect(config, fd, header, attempt):
@@ -484,6 +497,29 @@ def _inspect(config, fd, header, attempt):
     return checked
 
 
+def _pending_publication(config, fd, header, attempt):
+    """Inspect a retained reviewed candidate even when durability prevented a result."""
+    try:
+        pointer = _read(fd, "plan-pointer.json")
+    except FileNotFoundError:
+        return None
+    effective = _binding(config, header)
+    path = Path(pointer["plan_path"])
+    with dream_run._directory(effective, path) as (plan_fd, _):
+        for name in sorted(os.listdir(plan_fd)):
+            if not re.fullmatch(r"native-[0-9a-f]{64}-spec\.json", name):
+                continue
+            spec = dream._json(dream_run._read(plan_fd, name, 16384))
+            if spec.get("attempt") != attempt:
+                continue
+            try:
+                dream_run._read(plan_fd, "candidate-" + spec["run_id"] + ".txt", 128)
+            except FileNotFoundError:
+                continue
+            return dream_run.status(effective, header["project"]["name"], path, spec["run_id"])
+    return None
+
+
 def status(config, job_path=None, *, cwd=None):
     path = _resolve_job(config, job_path) if job_path is not None else _latest(config, cwd)
     with _job(path) as (fd, _, header):
@@ -495,6 +531,10 @@ def status(config, job_path=None, *, cwd=None):
             saved = _read(fd, "result-" + str(attempt).zfill(6) + ".json")
         except FileNotFoundError:
             result["state"] = "incomplete" if attempts else "prepared"
+            if "memory_origin" in header:
+                checked = _pending_publication(config, fd, header, attempt)
+                if checked is not None:
+                    result.update(state=checked["state"], validation=checked)
         else:
             checked = _inspect(config, fd, header, attempt)
             result.update(saved)

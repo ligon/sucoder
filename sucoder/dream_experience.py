@@ -3,7 +3,9 @@
 Discovery is scoped, not a home-directory crawl: Claude keeps a session's
 transcript in a project directory derived from its working directory
 (attention.claude_transcript_path), so only the directories derived from the
-mirror and its registered git worktrees are listed. A session counts as
+mirror and its registered git worktrees are listed. Configured local-tier
+projects also recognize historical job-clone directory names, admitting those
+sessions only after native cwd/branch/session confirmation. A session counts as
 finished when no live local launch uses it and its file has been quiet for
 ``dream.session_quiet_minutes``. Consumption comes from the receipts already
 on the memory branch, which record each admitted window's raw range.
@@ -64,7 +66,7 @@ def _complete(path, size):
     return 0
 
 
-def sessions(source, *, home=None, quiet_minutes=30, live=(), memory_commit=None, now=None):
+def sessions(source, *, home=None, quiet_minutes=30, live=(), memory_commit=None, now=None, config=None):
     """Finished Claude sessions of this mirror, newest first, with consumed ranges.
 
     ``live`` holds session IDs of running launches (attention.scan_local_launches);
@@ -76,7 +78,11 @@ def sessions(source, *, home=None, quiet_minutes=30, live=(), memory_commit=None
     now = time.time() if now is None else now
     done = consumed(source, memory_commit)
     found, seen = [], set()
-    for workspace in workspaces(source):
+    from . import dream_sessions
+    known = workspaces(source)
+    historical = dream_sessions.workspaces(source, config, home)
+    identity_bytes = 0
+    for workspace in known + [path for path in historical if path not in known]:
         directory = project_dir(home, workspace)
         if directory is None or not directory.is_dir() or directory.is_symlink():
             continue
@@ -86,6 +92,12 @@ def sessions(source, *, home=None, quiet_minutes=30, live=(), memory_commit=None
             info = entry.stat()
             if not entry.is_file() or not info.st_size:
                 continue
+            if workspace not in known:
+                confirmed, used = dream_sessions.belongs(entry, workspace, entry.stem, source.deadline,
+                    dream_sessions.MAX_IDENTITY_SCAN - identity_bytes)
+                identity_bytes += used
+                if not confirmed:
+                    continue
             pinned = _complete(entry, info.st_size)
             if not pinned:
                 continue

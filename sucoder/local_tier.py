@@ -5,7 +5,8 @@ mirror (``~/mirrors/<name>``, the laptop's push/pull target) stays the
 durable repository; the agent works in a full clone under
 ``<local_disk>/job<ID>/mirrors/<token>`` whose ``origin`` points back at
 the shared mirror.  A ``post-commit`` hook publishes every commit to the
-mirror the moment it exists, and the deadline timer
+mirror the moment it exists. Dream memory has its own checked local-to-mirror
+publication because commit-tree does not run that hook. The deadline timer
 (``slurm_timer``) snapshots the dirty tree to
 ``refs/sucoder/wip-job/<token>/<job>`` there.  Slurm's epilog wipes
 ``<local_disk>/job<ID>`` when the job ends, so there is nothing to clean
@@ -95,6 +96,7 @@ TOKEN=@TOKEN@
 LOCAL_ROOT=@LOCAL_ROOT@
 JOB=@JOB_REF@
 CANONICAL_REMOTE=@CANONICAL_REMOTE@
+MEMORY_BRANCH=@MEMORY_BRANCH@
 WORK="$LOCAL_ROOT/mirrors/$TOKEN"
 umask 077
 mkdir -p "$LOCAL_ROOT/mirrors" "$LOCAL_ROOT/cache/uv" "$LOCAL_ROOT/cache/pip" \
@@ -138,6 +140,13 @@ fi
 cd "$WORK" || exit 1
 git remote set-url origin "$MIRROR"
 git fetch --quiet origin || echo "SUCODER: fetch from $MIRROR failed; continuing with the clone as is" >&2
+if [ -n "$MEMORY_BRANCH" ] && git show-ref --verify --quiet "refs/remotes/origin/$MEMORY_BRANCH"; then
+    # A normal clone creates only the checked-out branch locally. Memory must
+    # also be a local head for launch injection and dream read to find it.
+    if ! git show-ref --verify --quiet "refs/heads/$MEMORY_BRANCH"; then
+        git branch --no-track "$MEMORY_BRANCH" "refs/remotes/origin/$MEMORY_BRANCH" || exit 1
+    fi
+fi
 if [ -n "$CANONICAL_REMOTE" ]; then
     # A clone copies heads, not the publisher's tracking refs. Keep these
     # separate from origin/*, including when the human prefix is "origin".
@@ -356,6 +365,7 @@ def build_prepare_script(
     local_disk_root: str = DEFAULT_LOCAL_DISK,
     job_id: Optional[int] = None,
     canonical_remote: Optional[str] = None,
+    memory_branch: str = "sucoder/memory",
 ) -> str:
     """Render the prepare script for one mirror.
 
@@ -378,6 +388,7 @@ def build_prepare_script(
         .replace("@LOCAL_ROOT@", local_root_shell(local_disk_root, job_id))
         .replace("@JOB_REF@", '"${SLURM_JOB_ID:-}"' if job_id is None else shlex.quote(str(job_id)))
         .replace("@CANONICAL_REMOTE@", shlex.quote(canonical_remote or ""))
+        .replace("@MEMORY_BRANCH@", shlex.quote(memory_branch))
         .replace("@HOOK@", hook)
     )
 

@@ -230,6 +230,20 @@ def checkout(
     _data_command(ctx, "dream_checkout", dream_memory.checkout, path, branch)
 
 
+@app.command("issues")
+def issues(
+    ctx: typer.Context,
+    repository: Optional[str] = typer.Option(None, "--repository", help="Project OWNER/REPO; otherwise require one unambiguous GitHub remote."),
+    file: bool = typer.Option(False, "--file", help="Explicitly file missing correction issues with gh; default: print drafts only."),
+    list_only: bool = typer.Option(False, "--list", help="Match correction tasks to open/closed issues by their stable marker."),
+    allow_private: bool = typer.Option(False, "--allow-private", help="Allow tasks citing noncommitted/session evidence after reviewing public disclosure."),
+):
+    """Draft correction issues from reviewed memory without model calls or wiki writes."""
+    from . import dream_issues
+    _data_command(ctx, "dream_issues", dream_issues.run, repository=repository, file=file,
+        list_only=list_only, allow_private=allow_private)
+
+
 @app.command("source")
 def source(
     ctx: typer.Context,
@@ -287,6 +301,8 @@ def _data_command(ctx, operation, function, *args, **kwargs):
         value = function(config, *args, **kwargs)
     except (ConfigError, dream.DreamError, OSError, UnicodeError) as exc:
         value = dict(schema_version=1, operation=operation, state="rejected", error=str(exc))
+        if getattr(exc, "state", None) == "conflict":
+            value["state"] = "conflict"
         if isinstance(exc, dream_budget.Exhausted):
             value.update(state="budget_exhausted", budget=exc.budget)
         typer.echo(json.dumps(value))

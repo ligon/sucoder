@@ -102,3 +102,18 @@ def test_terminal_tasks_are_not_open_leads(workspace):
     header = json.loads((Path(job["job_path"]) / "job.json").read_bytes())
     assert header["leads"]["open_items"] == []
     assert header["leads"]["seed"]["kind"] == "committed_file"
+
+
+def test_session_seed_is_a_complete_record_even_when_random_byte_is_in_final_record(workspace, monkeypatch):
+    from types import SimpleNamespace
+    from tests.test_dream_experience import write_session
+    transcript = write_session(Path.home(), workspace[0])
+    monkeypatch.setattr(explore, "_live_sessions", lambda config: set())
+    monkeypatch.setattr(dream_leads.random, "Random", lambda seed: SimpleNamespace(
+        choice=lambda rows: rows[0], randrange=lambda size: size - 1))
+    job = explore.prepare(workspace[2], cwd=workspace[0], overrides=options())
+    header = json.loads((Path(job["job_path"]) / "job.json").read_bytes())
+    seed = header["leads"]["seed"]
+    raw = transcript.read_bytes()
+    starts = {0} | {i + 1 for i, char in enumerate(raw) if char == 10 and i + 1 < len(raw)}
+    assert seed["kind"] == "session_window" and seed["start"] in starts

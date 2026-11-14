@@ -103,7 +103,13 @@ def _plan_shape(plan):
         dream._object(plan, ("schema_version", "operation", "state", "repository", "repository_uuid",
             "integration_ref", "base_commit", "repositories", "units", "prior_wiki", "maintenance", "topic",
             "limits", "work", "coverage", "usage", "execution", "candidate_commit", "candidate_ref", "integration", "plan_id"),
-            ("publication", "project"))
+            ("publication", "project", "editorial_version", "prior_support", "memory_origin"))
+        if "editorial_version" in plan or "prior_support" in plan:
+            from . import dream_support
+            if (type(plan.get("editorial_version")) is not int or plan.get("editorial_version") != 2 or
+                    not isinstance(plan.get("prior_support"), list) or
+                    len(canonical(plan["prior_support"])) > dream_support.MAX_BYTES):
+                raise DreamError("Invalid frozen editorial support policy")
         if type(plan["schema_version"]) is not int or plan["schema_version"] != 1:
             raise DreamError("Unsupported frozen plan schema")
         if plan["operation"] != "dream_plan" or plan["state"] != "planned":
@@ -214,7 +220,8 @@ def _validate(config, mirror, plan, deadline, *, pinned=False):
             maintenance=plan["maintenance"], topic=plan["topic"], inspection_deadline=deadline,
             prior_policy=plan["prior_wiki"].get("selection", {}).get("contract", "all-active-v1"),
             publication=plan.get("publication"), pinned_base=plan["base_commit"] if pinned else None,
-            project_commit=plan["project"]["commit"] if "project" in plan else None)
+            project_commit=plan["project"]["commit"] if "project" in plan else None,
+            editorial_version=plan.get("editorial_version", 1), memory_origin=plan.get("memory_origin"))
         # A provisional UUID is a frozen proposal, not a newly accepted registry.
         # Rebuilding the plan generates a fresh proposal; retain only the old UUID.
         for name, repository in current["repositories"].items():
@@ -557,6 +564,9 @@ def publish(plan, fd, directory, sources, deadline, path, content, receipt, inde
                            "\n" + action + " " + ref + " " + commit + "\nprepare\ncommit\n")
         if transaction is not None:
             _git_write(source, private_index, ["update-ref", "--no-deref", "--stdin"], deadline, transaction.encode())
+    if "memory_origin" in plan:
+        from . import dream_local
+        dream_local.publish(plan, source, commit, directory)
     result = _run_result(plan, receipt, commit)
     _store(fd, result_name, canonical(result) + b"\n")
     if in_place:
@@ -663,6 +673,9 @@ def status(config, mirror, plan_path, run_id=None):
                 raise DreamError("Stored run record does not match its frozen role plan")
         source = _sources(config, plan, deadline)[mirror]
         if in_place_plan(plan):
+            if "memory_origin" in plan:
+                from . import dream_local
+                return dict(run, operation="dream_status", **dream_local.status(plan, source, commit))
             # A generation stays published while the memory branch descends
             # from it; later generations and reverts are new commits on top.
             memory = source.commit(plan["integration_ref"])

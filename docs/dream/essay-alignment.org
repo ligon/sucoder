@@ -198,7 +198,7 @@ On 2026-11-12 the human accepted the charter with "go", taking the proposed answ
 - Legacy mode :: An empty =dream.memory_branch= restores candidate branches; plans against code refs never carry the =publication= key, so their identities and bytes are unchanged.
 - Injected layer :: =_memory_block= (=sucoder/mirror.py=) reads the index from the local mirror, drops PROPERTIES and LOGBOOK drawers, and cuts at a line to =inject_bytes= (at most 16384) with a note giving both sizes.
   Its reading hint names =git show BRANCH:PATH=, which assumes the session's repository has the memory branch.
-  A node-local or remote clone may not, until branch transfer to those clones is decided.
+  A node-local or remote clone may not, until branch transfer to those clones is decided (see the later local-tier amendment below).
 - Session windows :: =sucoder/dream_view.py= implements =claude-view-v1=; block headers name the raw byte offset (=[@OFFSET]=) rather than a line number, because a window need not start at line one.
   Records without conversation text, including queued-command attachments, are dropped and counted in the header; delivery of a busy-session message through a queue is therefore not yet visible in a window.
   Receipt units carry the raw range and render digest, never the private path, which is how =dream_experience.consumed= finds what earlier generations admitted.
@@ -228,3 +228,17 @@ On 2026-11-12 the human accepted the charter with "go", taking the proposed answ
   =validate_proposal= now refuses any =file:= link that climbs above the root.
 - Copy of record :: =6c6d96b= removed the tracked P2 wiki from =coder/dream-essay=; the memory branch's seed =e0aa81c= holds the same tree.
   With it gone, a copy written into this worktree resolves all twelve links of the three live pages, including those that P2 and run 6 wrote.
+
+* Local-tier and editorial amendment -- 2026-11-14
+
+The human requested work on issues 91-98 after the live runs described in the dream-directions handoff.
+The implementation ledger is [[file:../dream-memory-followups-ledger.org][the memory followups ledger]], with [[file:../dream-recovery-ledger.org][the recovery ledger]] for issues 95-97.
+The earlier no-public-push boundary remains: only a positively recognized local-tier clone may transfer its memory to its configured local shared mirror, with checked publication and no traversal of that mirror's remotes.
+Fresh prepared local clones create the configured memory head from its remote-tracking ref so the injected layer can read it.
+Historical job-clone session discovery uses configured names and native identity confirmation; remote transcript access and kernel support remain operational prerequisites.
+
+New job headers freeze bounded memory leads and a starting seed; earlier jobs keep their old discovery inputs.
+New plans freeze editorial version 2: receipt-backed prior support is historical metadata rather than fresh verification, a narrower source window alone is not grounds to erase it, and session-only lessons remain dated.
+Project corrections become TODO tasks with TARGET and ACCEPTANCE metadata.
+The explicit =dream issues= command exports those tasks by marker, with source-provenance disclosure gates and no automatic filing or memory write-back.
+Earlier plans retain their original editorial briefs and reconstruct unchanged.

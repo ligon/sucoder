@@ -2033,6 +2033,7 @@ human_user: ligon
 agent_user: coder
 agent_group: coder
 mirror_root: /var/tmp/coder-mirrors
+# Dream storage needs flock support; use suitable scratch storage on NFS homes without it.
 log_dir: ~/.sucoder/logs
 skills:
   - ~/.sucoder/skills  # optional global default for all mirrors (overridable per-mirror)
@@ -2677,7 +2678,12 @@ When another dream has moved the branch first, the later job stops with a confli
 =dream read= and =dream ask= read the memory branch when it exists, unless =--base= names another revision.
 An explicit =dream plan --base refs/heads/sucoder/memory= publishes in place in the same way.
 The branch holds explanations distilled from this project's evidence; keep it out of public remotes.
-SuCoder never pushes it.
+SuCoder never publishes it beyond the configured shared mirror.
+In a positively recognized local-tier clone, preparation imports that mirror's memory tip before planning, and a reviewed generation is copied back with a compare-and-swap against the frozen durable tip.
+Recognition requires the configured job-clone layout and a local-path origin matching that shared mirror; an origin URL or environment variable alone grants no publication authority.
+Object transfer is offline and never follows the shared mirror's remotes.
+If another job moves the durable branch first, status reports a conflict and the reviewed commit and private artifacts remain available in the working clone and job storage.
+Fresh prepared clones receive a local memory branch as well as the ordinary remote-tracking ref, so their launches can inject the memory index.
 Set =memory_branch: ""= to keep the earlier candidate branches, which wait for an ordinary human merge.
 Every agent launch in a mirror with a memory branch carries a =PROJECT MEMORY= block in its context: a caveat that the wiki can be stale, how to read a page with =git show sucoder/memory:.sucoder/wiki/topics/NAME.org=, and the index itself without drawers, cut at a line to =dream.inject_bytes= (default 2048, at most 16384).
 The block is read from the local mirror with one bounded git call; when the branch is absent or unreadable the launch proceeds without it.
@@ -2697,6 +2703,10 @@ A =claude-view= unit admits a rendered window of a Claude session instead of raw
 Rendering keeps user and assistant text, clips tool calls and results to a head and tail with an omission marker, drops thinking and metadata records, labels sidechains and compaction summaries, and redacts high-confidence credential patterns.
 Each block starts with =[@OFFSET]=, the raw byte offset of its record; quotes are checked against the rendered text, and the plan records both the raw and the rendered digests, so a changed window is refused before any model call.
 Receipts record the raw range but not the private path; rendered windows require wiki mode.
+For configured local-tier projects, experience discovery also recognizes Claude project directories for earlier =<local_disk>/job<ID>/mirrors/<token>= clones, even after those working directories disappear.
+It scans directory names only within Claude's project-directory catalog, then requires matching native session id, working directory and branch metadata before admitting a historical session.
+Live/recent exclusions and complete-line pinning still apply; unrelated directories and ambiguous mirror tokens are excluded.
+This does not provide remote transcript access or add Landlock to Savio's kernel: the dream still needs a supported host that can read its admitted transcripts.
 Dreaming is expected to run unsupervised, including overnight or headless, with the same unattended contract whether or not a terminal is present.
 Supply the source selection, configuration, authentication, harness/model and allowances before launch; an unusable prerequisite produces an error without an interactive human question.
 Agent review and bounded context requests may continue within the run.
@@ -2719,6 +2729,19 @@ The author may also conclude that no useful edit is supported; independent revie
 New plans bound prior context to orientation, the named or source-associated topics and their direct neighbors.
 Unselected existing pages remain in the frozen inventory and cannot be overwritten without being fully delivered.
 Authors and reviewers can request bounded frozen topic/source lookups and specific archived decisions; snippets remain read-only and status replays the cached context without inference.
+New plans freeze an editorial policy that supplies bounded earlier receipt support for existing pages, marked previously admitted and not re-read.
+A narrower current selection alone does not justify deleting supported claims; new contradictory evidence can support a correction.
+Preserved support remains available through later reviewed generations.
+Lessons drawn only from sessions retain their dates and historical scope; current project advice needs committed evidence from the launch commit.
+Plans made before this amendment retain their original briefs and replay behavior.
+
+Reviewed project corrections are open TODO tasks with a stable =CUSTOM_ID=, =TARGET: path:START-END= at the pinned project commit, an =ACCEPTANCE= property and evidence references.
+=sucoder dream issues= prints correction issue drafts and matches existing issues by a stable hidden marker; =--repository OWNER/REPO= selects the project when GitHub remotes are absent or ambiguous.
+=sucoder dream issues --list= reports open tasks without issues, tasks with open issues, closed issues whose tasks remain open, and terminal tasks whose issues remain open.
+Only an explicit =--file= creates missing issues through authenticated =gh=, adding the =dream-memory= label; repeat invocations recognize markers in open and closed issues.
+Tasks citing sessions, other repositories or missing provenance are withheld unless =--allow-private= explicitly permits disclosure after human review.
+The exporter omits LOGBOOK history and descendant task text, makes no model calls and does not write back to memory.
+Questions remain Talk leads rather than exported correction issues; closing an issue does not itself mark the memory task DONE.
 
 =sucoder dream run --harness fixture= exercises complete chunk delivery and prepares an attributed-quotation candidate with output-bound receipts; =sucoder dream status --plan= checks its candidate ref and integration bindings.
 The fixture invokes no model and establishes quotation fidelity only.

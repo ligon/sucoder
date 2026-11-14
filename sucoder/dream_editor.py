@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import json
 import posixpath
 
-from . import dream, dream_author, dream_context, dream_editorial as org, dream_roles, dream_run, dream_view, dream_wiki as wiki
+from . import dream, dream_author, dream_context, dream_editorial as org, dream_roles, dream_run, dream_view, dream_wiki as wiki, dream_support
 from .dream import DreamError, canonical, digest
 
 
@@ -93,6 +93,8 @@ class Editor(dream_author.Author):
             archive_destination="Use .sucoder/wiki/archive/TOPIC.org; keep explanatory qualifications active."))
         self.run_id = digest(canonical([CONTRACT, self.run_id, BRIEFS, self.editing,
             {role: schema(role) for role in BRIEFS}, POLICY, org.CONTRACT]))
+        if self.plan.get("editorial_version") == 2:
+            self.run_id = digest(canonical([self.run_id, 2, self.briefs(), self.plan["prior_support"]]))
         self.extra_prior: dict[str, str] = {}
         self.required_human: set[tuple[str, str, str]] = set()
         self.moves: list[dict] = []
@@ -102,7 +104,8 @@ class Editor(dream_author.Author):
         self.action_evidence: dict[tuple[str, str, str], tuple[str, str]] = {}
 
     def briefs(self):
-        return BRIEFS
+        return (dream_support.briefs(BRIEFS)
+            if self.plan.get("editorial_version") == 2 else BRIEFS)
 
     def result_schema(self, role):
         return schema(role)
@@ -122,6 +125,8 @@ class Editor(dream_author.Author):
         return sources, prior
 
     def call(self, role, inputs):
+        if self.plan.get("editorial_version") == 2:
+            inputs = dict(inputs, prior_support=self.plan["prior_support"])
         return super().call(role, dict(inputs, editorial=dict(contract=POLICY, proposed_at=self.timestamp)))
 
     def check_result(self, task, result):
@@ -388,6 +393,13 @@ class Editor(dream_author.Author):
 
     def prepare(self):
         pages, receipt = super().prepare()
+        if self.plan.get("editorial_version") == 2:
+            receipt["editorial_version"] = 2
+            bound = {row["path"]: row["sha256"] for row in receipt["outputs"] if row["rule"] == "file-utf8-v1"}
+            receipt["inherited_support"] = [dict(row, page_sha256=bound[row["path"]])
+                for row in self.plan["prior_support"] if row["path"] in bound]
+            if "project" in self.plan:
+                receipt["project_commit"] = self.plan["project"]["commit"]
         receipt["editorial"] = dict(contract=POLICY, proposed_at=self.timestamp,
             task_actions=self.materialized["task_actions"], required_human=[list(key) for key in sorted(self.required_human)], moves=self.moves)
         return pages, receipt

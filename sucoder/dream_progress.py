@@ -22,8 +22,16 @@ def envelope(plan, receipt, harness, model, version, purpose):
     """The shared accepted-review/output contract, independent of a revision."""
     from . import dream_curate, dream_author, dream_editor
     contract = receipt.get("contract")
+    if plan.get("editorial_version") == 2 and (contract != dream_editor.CONTRACT or receipt.get("editorial_version") != 2):
+        return False
     briefs = {dream_wiki.CONTRACT: dream_wiki.BRIEFS, dream_curate.CONTRACT: dream_curate.BRIEFS,
               dream_author.CONTRACT: dream_author.BRIEFS, dream_editor.CONTRACT: dream_editor.BRIEFS}.get(contract)
+    if contract == dream_editor.CONTRACT:
+        if receipt.get("editorial_version", 1) != plan.get("editorial_version", 1):
+            return False
+        if plan.get("editorial_version") == 2:
+            from . import dream_support
+            briefs = dream_support.briefs(dream_editor.BRIEFS)
     if (type(receipt.get("schema_version")) is not int or receipt["schema_version"] != 1 or briefs is None or
             receipt.get("repository_uuid") != plan["repository_uuid"] or receipt.get("harness") != harness or
             receipt.get("model") != model or receipt.get("native_version") != version or receipt.get("purpose") != purpose or

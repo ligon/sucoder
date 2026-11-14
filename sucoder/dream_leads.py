@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import random
 import re
+import os
+from pathlib import Path
 
-from . import dream, dream_editorial, dream_memory, dream_reader
+from . import dream, dream_editorial, dream_memory, dream_reader, dream_transcript
 from .dream import DreamError, canonical
 
 
@@ -39,6 +41,22 @@ def _receipts(source, commit):
         if not isinstance(value, dict):
             raise DreamError("Memory receipt must be an object", 3)
         yield value
+
+
+def _session_seed(row, rng):
+    start = rng.randrange(max(1, row["bytes"]))
+    if start:
+        try:
+            with os.fdopen(dream_transcript._open_source(Path(row["path"])), "rb") as stream:
+                stream.seek(start)
+                tail = stream.readline(min(1024 * 1024, row["bytes"] - start) + 1)
+        except OSError as exc:
+            raise DreamError("Seed session is no longer available", 3) from exc
+        end = start + len(tail)
+        # Start at the next full record, or the first if the random byte was
+        # inside the last/oversized record. No out-of-range lead is delivered.
+        start = end if tail.endswith(b"\n") and end < row["bytes"] else 0
+    return dict(kind="session_window", path="@sessions/" + row["thread_id"], start=start)
 
 
 def snapshot(source, header, inventory):
@@ -105,8 +123,7 @@ def snapshot(source, header, inventory):
         sessions = [row for row in inventory.sessions.values() if row["state"] == "finished"]
         if header.get("mode") == "experience" and sessions:
             row = rng.choice(sessions)
-            seed = dict(kind="session_window", path="@sessions/" + row["thread_id"],
-                start=rng.randrange(max(1, row["bytes"])))
+            seed = _session_seed(row, rng)
         else:
             candidates = [path for path, row in inventory.files.items() if 0 < row["bytes"] <= dream.MAX_BLOB_BYTES
                 and not path.startswith(".sucoder/wiki/")]

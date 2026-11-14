@@ -300,7 +300,8 @@ def _prior_wiki(source, base, limits, *, topic=None, units=(), policy="all-activ
 
 
 def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, inspection_deadline=None,
-               prior_policy="bounded-prior-v1", publication=None, pinned_base=None, project_commit=None):
+               prior_policy="bounded-prior-v1", publication=None, pinned_base=None, project_commit=None, editorial_version=None,
+               memory_origin=None):
     """Freeze selections, never imply inference or shared completion.
 
     ``publication="in_place"`` (essay-alignment S1) records that a reviewed
@@ -410,6 +411,20 @@ def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, i
                 integration=dict(state="not_integrated", evidence=None))
     if publication:
         plan["publication"] = publication
+    if memory_origin is not None:
+        from . import dream_local
+        if not publication:
+            raise DreamError("Durable local-tier memory requires in-place publication")
+        dream_local.validate(target, memory_origin)
+        plan["memory_origin"] = memory_origin
+    from . import dream_support
+    if editorial_version is None:
+        editorial_version = dream_support.VERSION
+    if editorial_version == 2:
+        plan["editorial_version"] = editorial_version
+        plan["prior_support"] = dream_support.collect(target, prior["files"], identity["repository_uuid"])
+    elif editorial_version != 1:
+        raise DreamError("Unsupported editorial plan version")
     if project_commit is not None:
         project = project_files(target, project_commit)
         if project is not None:
@@ -463,7 +478,7 @@ def _open_private_directory(path):
 
 
 def create_plan(config, mirror, sources, base, *, maintenance=None, topic=None, publication=None,
-                project_commit=None):
+                project_commit=None, memory_origin=None):
     """``publication=None`` derives in-place publication from the mirror's
     configured memory branch, so an explicit plan against it behaves like a
     bare dream; any other base keeps candidate publication."""
@@ -479,7 +494,7 @@ def create_plan(config, mirror, sources, base, *, maintenance=None, topic=None, 
         if len(data) > MAX_CATALOG_BYTES:
             raise DreamError("Source catalog exceeds its byte allowance")
         plan = build_plan(config, mirror, _json(data), base, maintenance=maintenance, topic=topic,
-                          publication=publication, project_commit=project_commit)
+                          publication=publication, project_commit=project_commit, memory_origin=memory_origin)
         plan_id = digest(canonical(plan))
         plan["plan_id"] = plan_id
         root = (config.log_dir or Path("~/.sucoder/logs")).expanduser().resolve() / "dream"
