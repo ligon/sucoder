@@ -1,6 +1,6 @@
 #+TITLE: Dream issues 91-98: implementation and verification
 #+DATE: 2026-11-14
-#+STATUS: IMPLEMENTED; PUBLICATION PENDING
+#+STATUS: MERGED LOCALLY; PUBLICATION PENDING
 #+AUTHOR: Sue
 
 * Source and scope
@@ -10,7 +10,7 @@ Work is on =coder/dream-recovery= in =/home/coder/mirrors/SuCoder-dream-recovery
 The live-check implementation is =92e340b46b592feb3f39ca5cfe87301afa34b1d7=.
 Final runtime commit =6559b4f= skips malformed optional support history during planning while preserving strict exporter validation.
 The original mirror checkout remains on =coder/confined-node=, with its untracked November 12 summary preserved.
-No merge, installed deployment, issue filing or public memory publication has been performed.
+Local =main= now contains the reviewed branch; no installed deployment, issue filing or public memory publication has been performed.
 
 * Implemented behavior
 
@@ -87,11 +87,23 @@ Do not mark the issues delivered merely because these local commits exist.
 
 Final logs, comparison IDs, package source hashes, documentation exports and the PR description are retained under =/home/coder/.sucoder/logs/dream-issues-verification/2026-11-14-6559b4f/=.
 A code-branch-only Git bundle in that directory preserves the local commits for publication from the canonical account; it contains no memory ref.
-Use =git bundle verify= before importing it, then publish =coder/dream-recovery= through the normal canonical-account workflow.
-No merge or installation has been performed.
+Use =git bundle verify= before importing it.
+A separate =dream-issues-main.bundle= retains =main= including the integration handoff; publication through the canonical account remains pending.
+No installation has been performed.
 The only runtime/test change after the full-suite and live pin =92e340b= is the optional-history correction in =sucoder/dream_support.py=; no tests changed after that pin.
 Its four-file regression command is the normal test command above with =tests/test_dream_prior.py tests/test_dream_progress.py tests/test_dream_support.py tests/test_dream_issues.py=.
 No provider call is needed to repeat these checks.
+
+* Local main integration
+
+The human requested "Let's merge into main" on 2026-11-14.
+In =/home/coder/mirrors/SuCoder-issue-90-merge=, =git merge --ff-only 377e8034a8f9876300adc15513c49b7ad72938f2= advanced =main= from =a3db175= to that reviewed tip with no conflicts.
+The merged tree exactly matches the branch that carried the recorded regression, type, package and live checks; no runtime or test files changed during integration.
+The source-tree =dream --help= smoke check passed without model calls.
+The main worktree's existing untracked =.sucoder/handoffs/2026-11-14-dream-directions.org~= was preserved byte-for-byte.
+The original mirror stays on =coder/confined-node= and the real memory ref remains =8668948f0ef968ca31b71d1d55b44ee4926cac95=.
+The integration record is =local-main-merge.json= beside the verification artifacts.
+A followup documentation commit records this integration; the earlier full-suite limitations remain as stated above.
 
 * Grounding
 

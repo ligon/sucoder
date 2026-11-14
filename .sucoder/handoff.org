@@ -6,8 +6,10 @@
 
 * Dreaming followup, 2026-11-14
 
-The human requested all eight dreaming issues, 91-98.
-Their implementation, verification and publication boundary are in [[file:handoffs/2026-11-14-dream-issues-91-98.org][the issue-batch handoff]] on =coder/dream-recovery=.
+The human requested all eight dreaming issues, 91-98, and then said "Let's merge into main".
+On 2026-11-14, local =main= fast-forwarded from =a3db175= to =377e803= in =/home/coder/mirrors/SuCoder-issue-90-merge=, with no conflicts or runtime changes beyond the reviewed branch.
+Their implementation, verification and publication boundary are in [[file:handoffs/2026-11-14-dream-issues-91-98.org][the issue-batch handoff]].
+GitHub publication and installed deployment remain pending.
 The explicitly approved two-run live check met issue 93's followup criterion; [[file:../docs/dream/runs/sucoder-e2.org][E2]] records its evidence and limits.
 The historical rollout and earlier observations follow below.
 
