@@ -62,4 +62,12 @@ Issue 93's live two-run acceptance remains distinct from fake-transport regressi
 Savio lacks Landlock; code fixes do not establish a place to execute native dreams over its transcripts.
 The final full suite must run against the completed frozen source with =PYTHONPATH= pointing at this worktree.
 
+* Verification
+
+Issue 93: six new lead cases pass, and the final lead/experience group passes all 16 cases.
+The broader exploration/experience/CLI run passed 55 cases and identified four old exact-brief assertions; those assertions are updated and pass in the final group.
+Three-file mypy passes.
+The fixtures cover a first navigation with memory/open items, frozen replay after memory movement, a job prepared before leads existed, changed-file priority, terminal-task exclusion and bounded committed-only navigation.
+No live provider acceptance is claimed.
+
 Prepared by Sue (GPT-6).
