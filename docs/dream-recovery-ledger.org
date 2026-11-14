@@ -61,6 +61,8 @@ Memory preservation policy (issue 94) and Savio execution placement need their o
 Issues 96 and 97 reproduced before implementation; 125 startup, configuration, CLI and prerequisite-guard cases pass after the patch.
 The narrow ENOLCK preflight reuses =run_lock= without changing its CRITICAL-impact implementation.
 Issue 95's ten new regression cases pass: role/field/trace diagnostics, id resolution, expired retry, unchanged call cap, immutable retry deadlines and invalid requests.
-Broader role/budget and exploratory regression verification is in progress.
+The final recovery/budget/exploratory/CLI/startup group passes 101 cases; the final focused role rejection and uncertain-request group passes 11 (15 deselected).
+Mypy passes the five changed coordinator, budget, retry, CLI and exploration source files.
+Verification is anchored on sections 2-5: existing default derivation and lock validation are reused, original policy and call reservations remain unchanged, and expired cached status/resume still make no provider call.
 
 Prepared by Sue (GPT-6).
