@@ -87,7 +87,8 @@ The charter's five slices are implemented and merged locally; nothing remains th
    The injected reading hint assumes the session's repository has the memory branch; node-local and remote clones may not.
    Remote and confined sessions get no wiki copy: their working clone is not the local mirror, so their block keeps the =git show= hint.
    Your own clone needs =git fetch <mirror> sucoder/memory:sucoder/memory= and =sucoder dream checkout= to get working links.
-   Not yet filed: =sucoder dream= requires a config file even with =--harness= and =--model=; its default =log_dir= (=~/.sucoder/logs=) fails with =ENOLCK= on an NFS home; and session discovery is keyed by checkout path, so sessions of earlier per-job =/local= clones (13 on Savio for LSMS_Library) are never found.
+   Dream issues filed 2026-11-14 from the LSMS_Library dreams: 92 (corrections to project issues, slices S1-S3), 93 (the explorer never sees memory, so repeat runs re-derive one topic), 94 (a narrower later generation deletes claims an earlier receipt supported), 95 (identity rejections, =--job= ids, retry after the wall-clock window), 96 (config file required), 97 (=ENOLCK= on an NFS =log_dir=) and 98 (sessions of earlier per-job =/local= clones are never found: 10 sessions, about 814 MB, on Savio for LSMS_Library).
+   LSMS_Library issues 1719 and 1720 carry the dreams' two documentation corrections, filed by hand.
    The author repeats a section's reference in most live runs; the repair fixes it at the cost of one call.
 5. Test host :: One test skips here, for nested user namespaces (AppArmor =bwrap-userns-restrict=); the =python3.6= tests are gone and the human installed =zsh=.
    The =bwrap=-dependent tests likely skip in CI, which is how the orphaned-Codex defect stayed hidden there.
