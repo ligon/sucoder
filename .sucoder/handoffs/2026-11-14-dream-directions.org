@@ -1,0 +1,94 @@
+#+TITLE: Dreaming after the first live LSMS_Library and seeded SuCoder runs: what we learned and where to go next
+#+DATE: 2026-11-14
+#+STATUS: PROPOSED
+#+AUTHOR: Sue
+#+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Purpose
+
+This note collects what the live dreams of 2026-11-13 and 2026-11-14 showed, and proposes an order for the next work on =sucoder dream=.
+Nothing here is decided; the human picks the direction.
+[[file:../handoff.org][The main handoff]] holds the session's merges and the publication state.
+
+* What changed in the code
+
+- =649c93e= (merge =6f60c83=) :: The discovery inventory has its own 16 MiB bound instead of the 2 MiB plan bound, which had refused LSMS_Library (19,466 files) before any model call.
+- =ce54589= (merge =8286823=) :: Navigation version 2: one =git grep= at the pinned commit picks the files a search reads, a file path names that file, and a path naming nothing is =no_such_path=.
+  New jobs record =navigation_version: 2=; earlier jobs replay with the old semantics.
+  =git grep= and not =rg=, because a dream's evidence is the commit, not the working tree.
+  Both are recorded in [[file:../../docs/dream-implementation-ledger.org][the dream implementation ledger]].
+
+* The live runs
+
+All LSMS_Library runs used Codex =gpt-6.1-sol= in the human's checkout =~/Projects/LSMS_Library= at =f138a3d= on vantage, and published to that checkout's =sucoder/memory=.
+
+| Run | Project, mode              | Result                                    | What it showed                                                  |
+|-----+----------------------------+-------------------------------------------+-----------------------------------------------------------------|
+|   1 | LSMS_Library, explore      | published =d5ae174= (=cache-freshness=)   | Real documentation conflicts, checked by hand                   |
+|   2 | LSMS_Library, explore      | =unchanged=                               | Search treated a file path as an empty directory                |
+|   3 | LSMS_Library, explore      | published =fde9d30=                       | With the search fix it answered run 1's open question           |
+|   4 | LSMS_Library, explore      | rejected: role identity mismatch          | Recovery failed: =--job= id, wall-clock window                  |
+|   5 | LSMS_Library, explore      | published =be768f8=                       | Same path as run 3; deleted correct text (=caching.md:131-139=) |
+|   6 | SuCoder, seeded experience | published =8668948= (=attention-rollout=) | New topic; checked a note against its transcript                |
+
+Run 6 ran as =coder= from =main= at =cac4f63=.
+Its purpose was the default experience purpose plus a random seed, a window of finished session =b3206283= from raw offset 6,242,604.
+It had =--discovery-calls 16 --discovery-bytes 262144 --max-total-seconds 1800=.
+Its job is =~coder/.sucoder/logs/dream-jobs/06aa5fab92dd4be9a7928f4105b5274e=; the LSMS_Library jobs are under =~ligon/.sucoder/logs/dream-jobs/=.
+The human's copies of the results in =/tmp/foo= and =/tmp/foo2= will not survive a reboot.
+
+On Savio no native dream can run: four launches in job 41201840 were refused before any model call.
+The refusals were: no config file, =ENOLCK= on the NFS home, the inventory bound (since fixed), and the absence of Landlock in the Rocky 8 kernel.
+Dreams there would use =--config ~/.sucoder/dream-savio.yaml=, which puts =log_dir= on scratch.
+
+* What the runs showed
+
+- Convergence :: Every LSMS_Library =--explore= run chose cache freshness, and the two after the search fix took the same five steps.
+  The explorer never sees memory, so each run starts from nothing (issue 93).
+- Erosion :: Run 5 selected less of =caching.md= than run 3 and deleted correct statements, because each generation is checked only against its own evidence (issue 94).
+- Staleness :: Run 6 recorded two facts from a November 4 session that are no longer true: that =.gitnexus/run.cjs= is missing, and that the Python 3.9 decision is still open (comment on issue 94).
+- Seeds help, on one run :: Run 6's random seed gave a new topic and the essay's core move, testing a note against a transcript; with the default 8 turns it would have stopped before reading the note (comment on issue 93).
+- Recovery is fragile :: An identity mismatch rejected run 4 without naming the role or field, and the documented =--attempt 2= recovery could not run after the job's 900-second wall clock ran out (issue 95).
+- Corrections reach nobody :: The two documentation errors went to ligon/LSMS_Library#1719 and ligon/LSMS_Library#1720 only because they were filed by hand (issue 92).
+
+Measured against [[https://www.anthropic.com/research/components-of-agent-memory][the essay]] and [[https://platform.claude.com/cookbook/managed-agents-cma-dreaming-with-a-dynamic-workflow][the cookbook]], neither source randomizes.
+The essay directs dreaming at a goal and at "information that's likely to change"; the cookbook reads every finished transcript since its last run.
+We are tighter than both in evidence bandwidth and in preservation, and only we review before publishing.
+The comparison table is in the comment on issue 93.
+
+* Proposed order of work
+
+1. Recovery and small fixes (issues 95, 96, 97) :: An identity error that names the role, field and trace; =--job= accepting an id; a retry that can state a new, bounded time allowance; a config-file fallback; an =flock= probe on =log_dir=.
+   These are small, need no model change, and make unattended runs and experiments recoverable.
+2. Seeds and leads (issue 93) :: A seed frozen in the job at preparation, tried in order: an open item from memory, then a file or note changed since the memory's last base commit, then a random file or session window.
+   The memory index and open items go into the explorer's navigation.
+   Version it per job, as =navigation_version= is, so earlier jobs replay.
+3. Preservation and staleness (issue 94) :: Choose among keeping receipt-backed claims, re-reading their sources, or a mechanical removal check.
+   Date lessons drawn from sessions, and check claims about project state against the launch commit.
+4. Corrections to issues (issue 92) :: S1, the exporter, needs no model change and can start at any time.
+   S2, correction tasks in a new editorial contract, is best done after 2 and 3: the same tasks serve as issues and as leads.
+5. An evaluation protocol :: Each run so far is one observation.
+   Before tuning briefs, fix a small protocol: a few runs per configuration (default, against seeded with a wider allowance), recording topic, path, outcome and a hand check of each claim as correct, stale or wrong.
+   Write each batch up under =docs/dream/runs/=, as [[file:../../docs/dream/runs/sucoder-e1.org][the E1 report]] does; the six runs above have no report yet.
+6. Savio (issues 91, 98) :: Decide where dreams over Savio work should run.
+   Savio's nodes lack Landlock, and their transcripts live in the Savio home.
+   Until then, =--explore= over a vantage checkout is the only working route, and its memory reaches the Savio coordinators only by hand.
+7. The charter's deferred items :: The staleness pass, an organizer and pruning pass, Codex session discovery (S3b), and a scheduler example.
+
+* Decisions for the human
+
+- Issue 92 :: Export corrections only at first, or open questions too; link by marker only, or also record an =ISSUE= property in the wiki.
+- Issue 94 :: Which preservation rule.
+- Issue 95 :: Count only active time, or let a retry state its own allowance (proposed).
+- Savio :: Where dreams over Savio work run, and whether LSMS_Library's =sucoder/memory= should be copied to the Savio mirror for the coordinators.
+
+* Housekeeping left open
+
+- Publication :: GitHub =main= is at =2463ee9=; =~ligon/Projects/SuCoder= is at =8d8fedc=; this mirror's =main= is a few commits ahead with handoff notes only.
+  =/opt/sucoder= and Savio's =~/.local/share/sucoder/src= are both editable checkouts: a pull updates them.
+- Worktrees :: The merged branches' worktrees remain, now including =coder/dream-large-inventory= and =coder/dream-search-file=.
+  The scratchpad holds detached worktrees =suite-inv= and =suite-search=; after the scratchpad is gone, =git worktree prune= clears their entries.
+- Savio leftovers :: =~/.local/share/sucoder/src.partial-20261113=, the three refused dream job directories under =~/.sucoder/logs/dream-jobs= and =~/var/sucoder/logs/dream-jobs=, and two package copies in =/local/job41201840/tmp/= that vanish with the job.
+- Untracked :: =.sucoder/handoffs/2026-11-12-dream-summary.org= in the =/home/coder/mirrors/SuCoder= checkout is not committed anywhere.
+
+Prepared by Sue.

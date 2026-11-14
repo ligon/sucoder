@@ -66,6 +66,7 @@ The 50 failures this host showed before =8ccb066= are resolved; the full suite n
 * What remains
 
 The charter's five slices are implemented and merged locally; nothing remains that this account can do without a human decision.
+For the next work on dreaming, start with [[file:handoffs/2026-11-14-dream-directions.org][the dream-directions note of 2026-11-14]]: the six live runs, what they showed, a proposed order of work (issues 92-98) and the decisions it needs.
 
 1. Publication :: The human pushed =main= to GitHub at =06b86cb= and reinstalled =/opt/sucoder= at that commit (both seen 2026-11-13); =6f60c83= and later wait for the next push from the canonical account (=/home/ligon/Projects/SuCoder=).
    Never push =sucoder/memory=.
