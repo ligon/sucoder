@@ -2,6 +2,8 @@ human_user: <your-username>
 agent_user: coder
 agent_group: coder
 mirror_root: /var/tmp/coder-mirrors
+# Dream jobs require advisory locks here; on NFS without flock support, choose
+# storage with lock support (for example, the cluster's scratch filesystem).
 log_dir: /home/<your-username>/.sucoder/logs
 system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 

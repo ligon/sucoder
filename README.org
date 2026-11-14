@@ -2631,6 +2631,8 @@ dream:
 
 The optional =mirrors.NAME.dream= block overrides individual global defaults.
 Harness/model can inherit the existing launcher selection; an absent model returns a diagnostic without prompting or provider startup.
+When the default configuration file is absent, dream derives user and project defaults and accepts =--harness= and =--model= without creating a config file or prompting for an agent.
+An explicit =--config= path must exist; malformed existing configuration is an error.
 There is no provider/model fallback after a failure.
 Bare-launch defaults allow eight discovery turns and 128 KiB navigation delivery, reserving 30 seconds and three invocations for closeout plus one ordinary invocation for authorship.
 All discovery, author, reviewer and repair calls share the same durable job budget.
@@ -2756,6 +2758,8 @@ See [[file:docs/dream/budget.org][the durable budget contract and verification]]
 
 See [[file:docs/dream/implementation.org][the implemented request format, limits, and backend boundary]] and [[file:docs/dream.org][the complete design]].
 Plans use the existing =log_dir= setting (or =~/.sucoder/logs/= when unset) and must live outside inspected repositories.
+Dream job storage requires advisory file-lock support; some NFS home mounts return =ENOLCK=.
+Launch probes =<log_dir>/dream-jobs= before creating a job and names the directory if locks are unavailable; set =log_dir= to storage with lock support, such as an appropriate scratch filesystem.
 The =dream= YAML defaults apply to exploratory launches; explicit plan/run settings retain their existing execution options.
 Native execution currently requires Linux Landlock ABI 3 or newer and the CLI isolation/schema flags checked at runtime.
 Models receive immutable inline input in a private temporary environment, with external tools disabled; the coordinator alone publishes git objects and refs.

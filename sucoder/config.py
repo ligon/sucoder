@@ -749,7 +749,7 @@ def _prompt_agent_choice(agents: List[str]) -> List[str]:
     return _default_agent_command(choice)
 
 
-def build_default_config() -> Config:
+def build_default_config(*, agent_command: Optional[List[str]] = None) -> Config:
     """Build a zero-config Config from the environment and git state.
 
     Derives all required fields from ``$USER`` and the git repository
@@ -765,7 +765,7 @@ def build_default_config() -> Config:
             "at ~/.sucoder/config.yaml."
         )
 
-    agent_command = detect_agent_command()
+    agent_command = detect_agent_command() if agent_command is None else agent_command
 
     git_toplevel = _detect_git_toplevel()
     mirror_name = git_toplevel.name

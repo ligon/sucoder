@@ -17,7 +17,7 @@ from . import dream_wiki
 from . import dream_budget
 from . import dream_reader
 from . import dream_reader_agent
-from .config import ConfigError, load_config
+from .config import ConfigError, build_default_config, load_config
 
 
 app = typer.Typer(invoke_without_command=True,
@@ -61,7 +61,7 @@ def explore(
         mode="project" if explore_project else None)
     overrides = {key: value for key, value in overrides.items() if value is not None}
     if detach:
-        _data_command(ctx, "dream_job", _detach, ctx.obj["config_path"], job_path,
+        _data_command(ctx, "dream_job", _detach, _config_path(ctx), job_path,
             overrides=overrides, budget_path=budget_path, attempt=attempt)
     else:
         _data_command(ctx, "dream_job", dream_explore.start, job_path,
@@ -90,9 +90,10 @@ def _detach(config, config_path, job_path=None, *, overrides=None, budget_path=N
             except BaseException:
                 os.close(handle)
                 raise
-        argv = [sys.executable, "-c", "from sucoder.cli import app; app()",
-            "--config", str(Path(config_path).expanduser().absolute()), "dream", "--job", str(directory),
-            "--attempt", str(attempt)]
+        argv = [sys.executable, "-c", "from sucoder.cli import app; app()"]
+        if config_path is not None:
+            argv += ["--config", str(Path(config_path).expanduser().absolute())]
+        argv += ["dream", "--job", str(directory), "--attempt", str(attempt)]
         process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=handles[0], stderr=handles[1],
             start_new_session=True, close_fds=True)
         return dict(job, schema_version=1, operation="dream_job", state="detached", pid=process.pid,
@@ -114,7 +115,7 @@ def plan(
 ):
     """Write a private plan and print JSON. Exit 2: invalid input; 3: unavailable evidence/storage."""
     try:
-        config = load_config(ctx.obj["config_path"])
+        config = _configuration(ctx)
         value = dream.create_plan(config, mirror, sources, base, maintenance=maintenance, topic=topic)
     except (ConfigError, dream.DreamError, OSError, UnicodeError) as exc:
         typer.echo(json.dumps(dict(schema_version=1, operation="dream_plan", state="rejected", error=str(exc))))
@@ -262,9 +263,22 @@ def ask(
     _data_command(ctx, "dream_ask", dream_reader_agent.ask, mirror, plan_path, question, harness, model, base, not source_only, attempt)
 
 
+def _config_path(ctx):
+    path = Path(ctx.obj["config_path"]).expanduser()
+    # Explicit paths never fall back, even when missing (recovery ledger, 3).
+    return path if ctx.find_root().params.get("config") is not None or path.exists() else None
+
+
+def _configuration(ctx):
+    path = _config_path(ctx)
+    # Reuse derived defaults without interactive harness detection; the dream
+    # requires its own model and applies --harness later (recovery ledger, 2).
+    return load_config(path) if path is not None else build_default_config(agent_command=["codex"])
+
+
 def _data_command(ctx, operation, function, *args, **kwargs):
     try:
-        config = load_config(ctx.obj["config_path"])
+        config = _configuration(ctx)
         value = function(config, *args, **kwargs)
     except (ConfigError, dream.DreamError, OSError, UnicodeError) as exc:
         value = dict(schema_version=1, operation=operation, state="rejected", error=str(exc))

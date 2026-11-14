@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import asdict, replace
+import errno
 import os
 from pathlib import Path
 import re
@@ -39,6 +40,18 @@ def _read(fd, name):
 
 def _store(fd, name, value):
     dream_run._store(fd, name, canonical(value) + b"\n")
+
+
+def _probe_locks(fd, directory):
+    # Reuse private/no-follow lock validation before creating a job (ledger, 2).
+    try:
+        with dream_roles.run_lock(fd, "storage-probe"):
+            pass
+    except OSError as exc:
+        if exc.errno != errno.ENOLCK:
+            raise
+        raise DreamError(f"Dream storage {directory} has no advisory lock support; "
+            "set log_dir to storage with lock support", 3) from exc
 
 
 def project(config, cwd=None):
@@ -156,7 +169,10 @@ def prepare(config, job_path=None, *, cwd=None, overrides=None, budget_path=None
         raise DreamError("Keep dream job storage outside the project")
     logs.parent.mkdir(parents=True, exist_ok=True)
     parent_fd = dream._open_private_directory(logs)
-    os.close(parent_fd)
+    try:
+        _probe_locks(parent_fd, logs)
+    finally:
+        os.close(parent_fd)
     job_id = uuid.uuid4().hex
     directory = logs / job_id
     fd = dream._open_private_directory(directory)
