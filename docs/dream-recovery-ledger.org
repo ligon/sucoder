@@ -1,0 +1,56 @@
+#+TITLE: Dream startup and recovery prior-art ledger
+#+AUTHOR: Sue
+#+DATE: 2026-11-14
+
+* 1. Task and baseline
+
+Address dreaming startup and recovery issues 95-97 on =main= at =a3db175= before the memory-behavior extensions.
+The current directions are in =.sucoder/handoffs/2026-11-14-dream-directions.org=; the November 12 summary is superseded.
+Search tier: GitNexus CLI query/impact, source, tests and git history; a separate worktree index is being refreshed.
+
+* 2. Existing machinery
+
+- =sucoder/config.py:752=, =build_default_config= :: Derives user/repository defaults but currently calls interactive agent detection.
+  Extend with an optional explicit agent command; preserve existing callers' detection behavior.
+- =sucoder/cli.py:1822= and =:1880= :: Dream bypasses interactive startup; ordinary commands fall back only when the implicit default config is absent.
+  Keep an explicit missing or invalid configuration an error.
+- =sucoder/dream_cli.py:266=, =_data_command= and =:106=, =plan= :: Both load config directly; reuse one dream configuration helper.
+  =tests/test_dream_explore_cli.py= covers CLI dispatch, structured errors, detached workers and inference-free inspection.
+- =sucoder/dream_explore.py:116=, =prepare= :: Creates private job storage before opening the persisted budget.
+  Probe locks in the private parent before creating a job, using =dream_roles.run_lock=.
+  =tests/test_dream_explore_guards.py= covers prerequisite rejection before provider work.
+- =sucoder/dream_roles.py:328=, =run_lock= :: Validates a private regular account-owned lock and takes a nonblocking exclusive flock.
+  Reuse its ownership and contention checks; translate only ENOLCK into actionable storage guidance.
+- =sucoder/dream_roles.py:183=, =check_result= :: Checks schema and the assignment's role and digests; =tests/test_dream_roles.py= covers rejected identities and uncertain requests.
+- =sucoder/dream_explore.py:82=, =_job= :: Validates directory identity and frozen settings; reuse it after resolving bare job ids under configured logs.
+- =sucoder/dream_budget.py:77=, =Job= :: Frozen original policy and append-only call reservations, with wall and monotonic deadlines and explicit attempts.
+  =tests/test_dream_budget.py= and =tests/test_dream_explore.py= cover exhaustion, inspection and explicit retry.
+
+* 3. Definitions and conventions
+
+A job id is 32 lowercase hexadecimal characters; an explicit path keeps its existing meaning.
+Implicit missing config uses derived defaults; an explicit missing path and malformed existing YAML fail.
+Dream startup never prompts or modifies configuration, even when both harness CLIs are installed.
+Unknown provider outcomes remain charged and cannot be silently retried.
+Saved jobs and assignments retain their existing frozen identities and validated-result checks.
+
+* 4. Invariants
+
+No paid inference, pilot restart, live Claude verification, private transcript admission, deployment or memory-branch publication is part of this repair batch.
+Job data remains private, outside the project; probes reuse no-follow file descriptors and do not change existing permissions.
+Lock contention and other filesystem errors must not be mislabeled as missing flock support.
+An explicit retry may receive a recorded bounded time window only on request; it must retain the original cumulative call ceiling and original policy identity.
+
+* 5. Reuse decisions
+
+Extend the default builder rather than duplicating user/repository discovery.
+Reuse the native run lock for a serialized parent-directory preflight rather than adding a second lock validator.
+Extend the existing CLI, job resolver, coordinator diagnostics and budget journal; keep legacy replay inputs unchanged.
+Verification will use disposable repositories and fake native transports, including negative cases for explicit missing configs, ENOLCK, exhausted calls and expired retries.
+
+* 6. Open questions
+
+The human confirmed all eight dreaming issues, 91-98, while this first repair batch proceeds.
+Memory preservation policy (issue 94) and Savio execution placement need their own design decisions.
+
+Prepared by Sue (GPT-6).
