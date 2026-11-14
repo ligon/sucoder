@@ -65,8 +65,13 @@ def collect(source, files, repository_uuid):
             continue
         raw = source.blob(item["blob"], SCAN_BYTES - read)
         read += len(raw)
-        receipt = dream._json(raw)
-        check_receipt(receipt)
+        try:
+            receipt = dream._json(raw)
+            check_receipt(receipt)
+        except DreamError:
+            # Optional history cannot block planning or establish support.
+            # Read failures above still propagate; export validates strictly.
+            continue
         review = receipt.get("review", {})
         if (receipt.get("repository_uuid") != repository_uuid or not isinstance(review, dict) or
                 review.get("verdict") != "accept" or review.get("failures") or
