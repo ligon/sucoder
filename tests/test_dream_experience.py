@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from sucoder import dream, dream_discover, dream_experience, dream_explore as explore, dream_view
+from sucoder import dream, dream_discover, dream_experience, dream_explore as explore, dream_view, dream_leads
 from tests.test_dream import git, workspace  # noqa: F401
 from tests.test_dream_explore import ExploringTransport, clock, options  # noqa: F401
 from tests.test_dream_explore_cli import exploratory_runtime, invoke  # noqa: F401
@@ -107,7 +107,7 @@ def test_a_dream_corrects_a_wrong_note_from_what_the_session_saw(workspace, cloc
     job = json.loads((Path(result["job_path"]) / "job.json").read_bytes())
     assert job["mode"] == "experience" and job["purpose"].startswith(explore.EXPERIENCE_PURPOSE)
     explorer = [t for t in native.calls if t["role"] == "explorer"]
-    assert explorer[0]["brief"] == dream_discover.EXPERIENCE_BRIEF
+    assert explorer[0]["brief"] == dream_discover.EXPERIENCE_BRIEF + dream_leads.BRIEF
     assert explorer[0]["input"]["navigation"]["sessions"] == 1
     listing = explorer[1]["input"]["history"][0]["observation"]
     assert listing["entries"][0]["state"] == "finished" and listing["entries"][0]["consumed"] == []
@@ -137,7 +137,7 @@ def test_the_last_discovery_call_offers_only_finish(workspace, clock, no_live, m
     assert navigations[-1]["actions"] == ["finish"] and navigations[-1]["remaining_discovery_calls"] == 1
     assert all(n["actions"] == ["list", "read", "search", "finish"] for n in navigations[:-1])
     brief = native.calls[0]["brief"]
-    assert brief == (dream_discover.EXPERIENCE_BRIEF if mode == "experience" else dream_discover.BRIEF)
+    assert brief == (dream_discover.EXPERIENCE_BRIEF if mode == "experience" else dream_discover.BRIEF) + dream_leads.BRIEF
     assert dream_discover.TURN_RULES in brief
 
 
@@ -203,7 +203,7 @@ def test_project_mode_keeps_open_exploration_without_sessions(workspace, clock, 
     job = Path(result["job_path"])
     header = json.loads((job / "job.json").read_bytes())
     assert header["mode"] == "project" and header["purpose"] == explore.dream_wiki.PURPOSE
-    assert native.calls[0]["brief"] == dream_discover.BRIEF
+    assert native.calls[0]["brief"] == dream_discover.BRIEF + dream_leads.BRIEF
     assert "sessions" not in json.loads((job / "inventory.json").read_bytes())
     with pytest.raises(dream.DreamError, match="immutable"):
         explore.prepare(config, job, overrides=dict(mode="experience"))

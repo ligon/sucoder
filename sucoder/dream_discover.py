@@ -4,7 +4,7 @@ from __future__ import annotations
 import fnmatch
 import re
 
-from . import dream, dream_budget, dream_roles, dream_run, dream_view
+from . import dream, dream_budget, dream_roles, dream_run, dream_view, dream_leads
 from .dream import DreamError, canonical, digest
 
 
@@ -419,6 +419,8 @@ class Explorer(dream_roles.Coordinator):
         self.header, self.inventory, self.cap = header, inventory, cap
         self.experience = header.get("mode") == "experience"
         self.brief = EXPERIENCE_BRIEF if self.experience else BRIEF
+        if "leads" in header:
+            self.brief += dream_leads.BRIEF
         self.run_id = digest(canonical([CONTRACT, plan["plan_id"], attempt, self.expected_version, self.brief, SCHEMA]))
 
     def make_assignment(self, role, inputs):
@@ -432,12 +434,14 @@ class Explorer(dream_roles.Coordinator):
 
     def prepare(self):
         history: list[dict] = []
-        used = 0
+        used = len(canonical(self.header["leads"])) if "leads" in self.header else 0
         for step in range(self.cap):
             navigation = dict(actions=["list", "read", "search", "finish"],
                 root="", files=len(self.inventory.files), selected_bytes=MAX_SELECTED_BYTES,
                 remaining_delivery_bytes=max(0, self.header["settings"]["max_discovery_bytes"] - used),
                 remaining_discovery_calls=self.cap - step)
+            if "leads" in self.header:
+                navigation["memory"] = self.header["leads"]
             if self.experience:
                 navigation.update(sessions_root=SESSIONS, sessions=len(self.inventory.sessions),
                                   notes=self.inventory.notes())

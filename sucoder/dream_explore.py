@@ -15,7 +15,7 @@ import time
 import uuid
 
 from . import (attention, dream, dream_budget, dream_discover, dream_experience, dream_memory, dream_native,
-               dream_roles, dream_run, dream_view, dream_wiki, dream_retry)
+               dream_roles, dream_run, dream_view, dream_wiki, dream_retry, dream_leads)
 from .config import AgentLauncher, BranchPrefixes, DreamSettings, MirrorSettings, _parse_dream
 from .dream import DreamError, canonical, digest
 from .observation_process import Budget
@@ -103,7 +103,9 @@ def _job(path):
             raise DreamError("Dream job directory must be private and account-owned", 3)
         header = _read(fd, "job.json")
         dream._object(header, ("contract", "job_id", "directory", "created_at", "project", "settings", "purpose", "budget_path"),
-                      ("mode", "navigation_version"))
+                      ("mode", "navigation_version", "leads"))
+        if "leads" in header:
+            dream_leads.validate(header["leads"])
         if header.get("mode", "project") not in MODES:
             raise DreamError("Invalid frozen exploratory job mode", 3)
         navigation = header.get("navigation_version", 1)
@@ -195,6 +197,12 @@ def prepare(config, job_path=None, *, cwd=None, overrides=None, budget_path=None
             if dream_discover.NAVIGATION > 1:
                 # Version 1 stays implicit, so earlier headers (and their digests) are unchanged.
                 header["navigation_version"] = dream_discover.NAVIGATION
+            if dream_leads.VERSION:
+                source = _source(config, header, time.monotonic() + 30)
+                sessions = _sessions(config, source, header) if mode == "experience" else None
+                inventory = dream_discover.Inventory(source, commit, sessions=sessions,
+                    navigation=header.get("navigation_version", 1))
+                header["leads"] = dream_leads.snapshot(source, header, inventory)
             _store(fd, "job.json", header)
             _store(fd, "identity.json", dict(sha256=digest(canonical(header))))
             _store(fd, "prepared.json", dict(job_id=job_id, budget=budget.descriptor()))

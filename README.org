@@ -2635,6 +2635,10 @@ When the default configuration file is absent, dream derives user and project de
 An explicit =--config= path must exist; malformed existing configuration is an error.
 There is no provider/model fallback after a failure.
 Bare-launch defaults allow eight discovery turns and 128 KiB navigation delivery, reserving 30 seconds and three invocations for closeout plus one ordinary invocation for authorship.
+New jobs freeze a bounded memory index, topic list and open Talk/task leads into their first discovery navigation, counting these bytes toward the navigation allowance.
+Their starting seed prefers an open memory item, then a committed file changed since the latest memory evidence, then a randomly chosen committed file or finished-session window.
+The explorer follows that lead or explains its alternative; the seed and brief version stay frozen when the job resumes.
+Earlier jobs keep their original navigation and briefs.
 All discovery, author, reviewer and repair calls share the same durable job budget.
 
 #+begin_example
