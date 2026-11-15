@@ -24,7 +24,7 @@ The requested deliverable is a design amendment; implementation and another nati
   =Explorer.prepare= at =:435= charges the encoded observations and memory leads against cumulative navigation delivery, and forces the final discovery call to finish.
 - =sucoder/dream_experience.py:57=, =_complete= :: Pins the last complete JSONL line, with a final whole-file read fallback that also needs a bound.
   Session discovery, quiet/live exclusions and consumed ranges are tested in =tests/test_dream_view.py=, =tests/test_dream_experience.py= and =tests/test_dream_job_sessions.py=.
-- =sucoder/dream_explore.py:118=, =prepare= and =:242=, =_discovery= :: Freeze navigation version, settings, inventory, native assignments and lookup observations.
+- =sucoder/dream_explore.py:134=, =prepare= and =:243=, =_discovery= :: Freeze navigation version, settings, inventory, native assignments and lookup observations.
   =test_navigation_is_frozen_per_job_so_earlier_jobs_still_replay= in =tests/test_dream_explore.py:188= anchors earlier-version replay.
 - =sucoder/dream_budget.py:239=, =Job.assignment= :: Freezes remaining-budget advice and validates its binding on replay; reservations and unknown outcomes stay charged.
   =tests/test_dream_explore.py:257= and =:271= cover shared budgets and author capacity; =tests/test_dream_budget.py= covers durable limits and expiry.
@@ -58,6 +58,7 @@ No new provider request, remote transcript transport, GitHub issue access by the
 - New :: A versioned opaque continuation cursor, because a session ordinal cannot resume midway through a session or a multi-block record.
 - New :: An automatic discovery-allocation policy for new jobs; current defaults cannot distinguish a deliberate eight-call ceiling from an inherited default.
 - Extend :: Existing source/response accounting with scanned, skipped and delivered intervals, retaining receipt semantics for accepted coverage.
+- Extend :: Frozen advice with a per-attempt/step navigation-allocation record, so live-wallet decisions do not change assignment reconstruction.
 - Preserve :: The current =claude-view-v1= bytes for the same admitted range; a renderer change would require its own contract migration.
 
 * 6. Open questions and verification boundary
@@ -68,3 +69,18 @@ The design can be checked against this ledger now; large-session and allocation 
 No new live experiment is needed to make the proposal reviewable.
 
 Prepared by Sue (GPT-6 Codex).
+
+* Anchored design verification
+
+- OK, sections 2 and 5 :: The amendment reuses the seekable admitted-range reader, renderer, redactor, attribution map, receipt consumption and persistent wallet.
+  The new iterator, cursor and allocation record address capabilities those existing components do not provide.
+- OK, section 3 :: The protocol retains half-open raw offsets, inclusive file lines, explicit nonzero selection ends, six units, 64 KiB selected evidence and separate navigation delivery.
+- OK, section 4 :: New behavior is isolated to version 3 with earlier schema/brief/error reconstruction preserved.
+  Per-turn allowance snapshots address the assignment-hash risk from recomputing live balances during replay.
+- OK, sections 4 and 5 :: The scan, alignment, response, selected-unit and inventory-probe bounds are explicit; partial scans, dropped render content and accepted receipt coverage have distinct meanings.
+- OK, section 6 :: Configuration null/auto allocation and large-session behavior remain proposed; the existing parser, configuration example, runtime and tests are unchanged.
+
+The two JSON examples parse, and added/new-document local links and CUSTOM_ID targets resolve.
+All eight affected Org documents export with Babel disabled; optional htmlize source coloring is unavailable.
+The implementation acceptance matrix remains unexecuted because no runtime implementation is included.
+Review was performed by the design's author against this ledger, without an independent-review claim.
