@@ -1,7 +1,7 @@
 #+TITLE: Bounded transcript navigation and discovery allocation
 #+AUTHOR: Sue
 #+DATE: 2026-11-15
-#+STATUS: PROPOSED -- design complete; runtime not implemented
+#+STATUS: PROPOSED -- red-team blockers open; runtime not implemented
 #+OPTIONS: toc:2 num:nil
 
 * Scope and evidence
@@ -159,7 +159,7 @@ Retain scoped discovery, live/recent exclusions, canonical regular-file checks, 
 Reject a changed selected window before author/reviewer invocation, as the existing snapshot check does.
 No cursor can enlarge the source universe or bypass a failed identity check.
 The inventory pins the source identity and prefix length; it is not a claim that the unobserved prefix has a frozen content digest.
-Existing lookup revalidation and selected-range snapshots retain exact-byte checks where bytes were actually observed or admitted.
+Existing lookup replay compares serialized rendered observations; raw-byte digests are established later during admission and snapshotting.
 
 Record scan/delivery counters, stop reasons, gaps and remaining cursors privately in the job outcome.
 The independent writer/reviewer receive the selected evidence and a concise coverage qualification, not a claim that the whole project or session was examined.
@@ -259,5 +259,34 @@ No runtime symbol is changed by this design update.
 
 Acceptance uses deterministic synthetic transcripts and fake native transports.
 A later live run requires its own instruction; this design does not restart the completed dream or authorize additional inference.
+
+* Red-team implementation gates
+:PROPERTIES:
+:CUSTOM_ID: red-team-gates
+:END:
+
+The independent [[file:transcript-navigation-review.org][red-team review]] of =5f892c7= found two high-priority blockers and one medium-priority gap.
+The proposal is not ready for implementation until the following requirements have concrete designs and a further review:
+
+- R1, source revision :: Bind continuation to a coherent source revision, or define an explicitly weaker completion state that cannot claim coherent query absence.
+  Session identity and prefix length alone do not prevent an equal-length rewrite between pages from hiding a hit.
+  Specify raw-byte validation wherever it is promised, including metadata omitted from rendering and records resumed between blocks.
+- R2, CPU bounds :: Specify an enforceable rendering/redaction deadline for navigation, selection normalization and admission/snapshot paths.
+  Raw byte limits and checks between records do not interrupt expensive processing inside one record.
+  Any timeout must leave a typed gap or terminal reason and a defined continuation.
+  Preserve the existing rendering contract or version its replacement explicitly.
+- R3, inventory enumeration :: Bound directory enumeration and metadata work before materializing or sorting candidates, with checks during enumeration.
+  Bound retained candidates as well as transcript probes.
+  When enumeration stops early, report unknown or lower-bound remaining counts instead of requiring a full traversal to count unprobed sources.
+
+Two recovery questions also require concrete specifications, although the review did not reproduce defects in an unimplemented version 3 journal:
+
+- Cursor commit :: Define the persisted lookup/cursor envelope, token derivation and commit point, with crash cases before and after publication of the observation.
+  Atomic publication of one artifact does not establish a transaction across separate cursor and lookup artifacts.
+- Partial-scan replay :: Define how a deadline-stopped observation retains its original stopping point and read receipts during replay.
+  Re-running it against a fresh inspection deadline is insufficient to guarantee the same response and continuation.
+
+The acceptance matrix above is incomplete until it covers these gates.
+No version 3 behavior or counterexample fix is implemented by this review.
 
 Prepared by Sue (GPT-6 Codex).

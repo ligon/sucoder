@@ -1,0 +1,179 @@
+#+TITLE: Red-team review of bounded transcript navigation
+#+AUTHOR: Sue
+#+DATE: 2026-11-15
+#+STATUS: REVIEW COMPLETE -- changes required before implementation
+#+OPTIONS: toc:2 num:nil
+
+* Verdict and scope
+:PROPERTIES:
+:CUSTOM_ID: verdict
+:END:
+
+The [[file:transcript-navigation.org][navigation proposal]] is not ready for implementation: two P1 findings and one P2 finding remain open.
+P1 means a correctness or deadline guarantee is unsupported; P2 means a remaining resource path needs a concrete bound.
+An independent review agent, =/root/navigation_red_team=, inspected the design at =5f892c7687ed9e5a141ce6c92c9d41a2af6aa674= against the existing implementation and tests.
+Sue separately reproduced the three counterexamples below.
+Version 3 does not exist yet; the reproductions exercise existing components and the proposed paging semantics, rather than a new implementation.
+
+The review covers source consistency, resource bounds, cursor recovery, earlier-job replay and the evidence/publication boundary.
+The [[file:../dream-transcript-navigation-ledger.org][grounding ledger]], sections 2-5, anchors the existing reader, renderer, journal and receipt contracts.
+No runtime, parser, test or configuration behavior changed, and no native dream or provider verification was launched.
+The design now records these findings as [[file:transcript-navigation.org::#red-team-gates][implementation gates]]; recording them does not resolve them.
+
+* R1: P1 -- paged completion lacks a coherent source revision
+:PROPERTIES:
+:CUSTOM_ID: revision
+:END:
+
+The reviewed design's protocol section permits =complete= after the pinned scope is scanned without gaps.
+Its cursor binds session identity, prefix length and record position, while its evidence section explicitly leaves the unobserved prefix unfrozen.
+Those bindings permit a no-hit result assembled from different source revisions.
+
+Consider two equal-sized records in the same session.
+Revision A contains =(absent, needle)= and revision B contains =(needle, absent)=.
+Read the first record from A, rewrite the file in place without changing its identity or length, then read the second record from B.
+Both complete revisions contain =needle=, but the combined pages contain no hit.
+A record resumed at a block index has the same unresolved dependency on its content revision.
+
+The design also overstated existing raw-byte replay checks.
+[[file:../../sucoder/dream_discover.py][Explorer.prepare, lines 468-472]] compares the serialized rendered observation on replay.
+An omitted attachment changing from =old= to =NEW= changes the raw digest while retaining identical rendering.
+Raw digests are established later by [[file:../../sucoder/dream_view.py][admit, lines 170-186]], and enforced by [[file:../../sucoder/dream_view.py][snapshot, lines 195-203]].
+The proposal's false claim has been corrected, but its source-revision policy remains open.
+
+Required revision: establish a coherent revision across continuation, or explicitly weaken completion so mixed revisions cannot establish coherent query absence.
+Specify the raw receipts needed for any promised exact-byte validation, including records omitted from rendering.
+Acceptance must cover the equal-length two-record swap, a changed record resumed between blocks, and an attachment mutation with unchanged rendering.
+Selected-window snapshot protection must remain intact.
+
+* R2: P1 -- byte bounds do not enforce a rendering deadline
+:PROPERTIES:
+:CUSTOM_ID: cpu
+:END:
+
+The bounds section admits records up to 16 MiB and promises operation within the shared deadline while reusing the current renderer.
+[[file:../../sucoder/dream_view.py][The private-key redaction pattern at line 32]] repeatedly searches suffixes when a body has many BEGIN markers without an END marker.
+Neither [[file:../../sucoder/dream_view.py][redact (line 51)]] nor [[file:../../sucoder/dream_view.py][render (line 138)]] accepts an interruptible deadline.
+A raw allowance, a response cap applied after rendering, and checks between records cannot stop work already inside that processing.
+The same renderer also serves admission and selected-range snapshots.
+
+A synthetic user record with 1,000, 2,000 and 4,000 unmatched markers measured 31,114, 62,114 and 124,114 bytes.
+Parent verification took 0.377, 1.507 and 6.157 seconds respectively; the independent review observed the same approximate fourfold time increase when input doubled.
+These timings demonstrate superlinear work well below the proposed record ceiling; they do not measure the duration of a full 16 MiB record.
+
+Required revision: provide an enforceable CPU/deadline boundary around parsing, rendering and redaction across navigation, normalization and admission/snapshot paths.
+A killable worker with a remaining-time allowance and typed timeout handling is one option; a renderer redesign needs a complexity argument and an explicit compatibility decision.
+Specify whether timeout advances a cursor with a reported gap or ends the operation with a terminal reason.
+Acceptance must run pathological small inputs under a strict external timeout, verify controlled termination and recovery, and preserve the earlier rendering contract where promised.
+
+* R3: P2 -- inventory probes leave enumeration unbounded
+:PROPERTIES:
+:CUSTOM_ID: inventory
+:END:
+
+The bounds section limits complete-prefix tail reads to 1 MiB per file and 32 MiB per inventory preparation.
+Those limits do not cover [[file:../../sucoder/dream_experience.py][sessions, line 89]], which materializes and sorts =directory.iterdir()= before processing the first entry.
+Invalid names consume enumeration and sorting resources without spending any transcript-probe allowance.
+Checking the deadline only between tail probes cannot bound this path.
+
+With a synthetic directory yielding 2,000 invalid =.txt= names and an already-expired preparation deadline, the current implementation enumerated all 2,000 entries and returned no sessions.
+It performed no transcript reads.
+This demonstrates a path outside the proposed probe accounting, rather than a claim that 2,000 entries alone exhaust memory.
+
+Required revision: bound entries, metadata operations and retained candidates, and check the deadline during enumeration before materialization or sorting.
+Define deterministic ordering within the bounded discovered subset.
+An incomplete enumeration must permit unknown or lower-bound remaining counts; counting every unprobed candidate would require completing the traversal that was stopped.
+Acceptance must include many invalid entries, metadata failures and an expired deadline without any transcript reads.
+
+* Recovery questions requiring specification
+:PROPERTIES:
+:CUSTOM_ID: recovery
+:END:
+
+These are unresolved design questions, not reproduced defects in a version 3 implementation.
+
+- Cursor publication :: The protocol requires atomic persistence of the cursor with its lookup observation but does not define the envelope, token derivation or commit point.
+  [[file:../../sucoder/dream_run.py][dream_run._store, line 44]] atomically publishes one artifact; it does not by itself transact across two artifacts.
+  Specify how interrupted writes and retries reproduce the original continuation without orphan or newly minted tokens.
+- Deadline-stopped replay :: A fresh inspection deadline can scan farther than the original deadline-stopped operation.
+  Define frozen stop/read receipts or saved-observation validation so replay does not recalculate a different response under fresh timing.
+  Include crash and expiry cases with no provider startup.
+
+* Bounded reproduction
+:PROPERTIES:
+:CUSTOM_ID: reproduction
+:END:
+
+The following synthetic-only program was saved as =/home/coder/.sucoder/logs/dream-design/2026-11-15-red-team/counterexamples.py= and run from the mirror root.
+Its assertions passed and it exited zero within a 15-second external ceiling.
+The adjacent =counterexamples.log= records the output, and =design-5f892c7.org= preserves the reviewed document.
+Timings depend on the host; a timeout on another host is not a passing result.
+
+#+begin_src sh :eval never
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$PWD timeout 15s \
+  /home/coder/.cache/pypoetry/virtualenvs/sucoder-_hu1CrVA-py3.12/bin/python \
+  /home/coder/.sucoder/logs/dream-design/2026-11-15-red-team/counterexamples.py
+#+end_src
+
+#+begin_src python :eval never
+import json
+import time
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+from sucoder import dream, dream_view, dream_experience, dream_sessions
+
+sid = "6d1f0c2a-9b3e-4c5d-8e7f-0a1b2c3d4e5f"
+
+def record(body):
+    return (json.dumps(dict(type="user", sessionId=sid,
+        message=dict(role="user", content=body))) + "\n").encode()
+
+a = record("absent") + record("needle")
+b = record("needle") + record("absent")
+cut = len(record("absent"))
+assert len(a) == len(b)
+assert all("needle" in dream_view.render(raw, sid, 0)[0] for raw in (a, b))
+assert not any("needle" in dream_view.render(raw, sid, start)[0]
+    for raw, start in ((a[:cut], 0), (b[cut:], cut)))
+print("source revision swap: needle exists in both complete revisions, paged result has no hit", flush=True)
+
+a = (json.dumps(dict(type="attachment", sessionId=sid,
+    attachment=dict(content="old"))) + "\n").encode()
+b = a.replace(b"old", b"NEW")
+assert dream.digest(a) != dream.digest(b)
+assert dream_view.render(a, sid, 0) == dream_view.render(b, sid, 0)
+print("omitted attachment: raw bytes changed, rendered observation identical", flush=True)
+
+seen = []
+class Directory:
+    def is_dir(self): return True
+    def is_symlink(self): return False
+    def iterdir(self):
+        for n in range(2000):
+            seen.append(n)
+            yield Path("/synthetic/" + str(n) + ".txt")
+
+source = SimpleNamespace(path=Path("/project"), deadline=time.monotonic() - 1)
+with patch.object(dream_experience, "workspaces", return_value=["/project"]), \
+        patch.object(dream_sessions, "workspaces", return_value=[]), \
+        patch.object(dream_experience, "project_dir", return_value=Directory()):
+    rows = dream_experience.sessions(source, home="/synthetic")
+assert len(seen) == 2000 and rows == []
+print("expired inventory: enumerated all 2000 invalid entries without transcript reads", flush=True)
+
+for n in (1000, 2000, 4000):
+    raw = record("-----BEGIN A PRIVATE KEY-----\n" * n)
+    started = time.monotonic()
+    dream_view.render(raw, sid, 0)
+    print("render timing:", len(raw), round(time.monotonic() - started, 3), flush=True)
+#+end_src
+
+* Verification boundary
+
+The independent review and parent reproductions support the three findings; they do not execute the proposed version 3 acceptance matrix.
+The earlier author-only ledger pass and successful document exports did not establish source-revision coherence, CPU bounds or bounded enumeration.
+No runtime change is included, so this review does not claim a new pytest result or resolved implementation defects.
+Next work is a concrete revision of the implementation gates followed by another design review.
+
+Prepared by Sue (GPT-6 Codex).

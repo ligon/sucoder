@@ -1,6 +1,6 @@
 #+TITLE: SuCoder consolidated on main in the canonical mirror; publication pending
 #+DATE: 2026-11-15
-#+STATUS: DESIGN COMPLETE; IMPLEMENTATION PENDING
+#+STATUS: DESIGN REVIEWED; BLOCKERS OPEN
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
@@ -11,6 +11,11 @@ The [[file:../docs/dream/transcript-navigation.org][design amendment]] specifies
 The [[file:../docs/dream-transcript-navigation-ledger.org][grounding ledger]] identifies existing machinery and replay constraints.
 Runtime and parser behavior are not yet changed; the amendment gives the implementation queue and synthetic acceptance cases.
 No additional native dream or paid verification was launched for this design task.
+
+An independent [[file:../docs/dream/transcript-navigation-review.org][red-team review]] found two high-priority blockers and one medium-priority gap: mixed source revisions can hide search hits, rendering can outlast a deadline within one record, and inventory enumeration remains unbounded before tail probes.
+The author reproduced all three with bounded synthetic inputs.
+The [[file:../docs/dream/transcript-navigation.org::#red-team-gates][implementation gates]] also require concrete cursor-commit and deadline-stopped replay protocols.
+The proposal needs revision and another review before runtime implementation.
 
 The completed experience dream published =f651866= on =sucoder/memory= using ten native calls in about 172 seconds.
 It qualified stale notes but failed to recover the already-recorded Python 3.6/3.9 decision after three unavailable navigation requests, motivating this amendment.
