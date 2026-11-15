@@ -2668,6 +2668,8 @@ Default status/budget lookup selects the latest job for the exact project path; 
 =dream budget= reports aggregate discovery/editorial usage for the shared wallet; the candidate receipt's usage describes its editorial roles.
 Current native adapters reject requested hard token/dollar caps before provider work.
 See [[file:docs/dream/exploration.org][the exploratory launch contract and verification]].
+The proposed [[file:docs/dream/transcript-navigation.org][transcript-navigation amendment]] specifies bounded session paging/search, continuation cursors and automatic discovery allocation.
+It is a design for subsequent implementation; the current default remains eight discovery turns, and =--discovery-calls= selects an explicit ceiling.
 
 Reviewed dreams update a dedicated memory branch in place (=dream.memory_branch=, default =sucoder/memory=).
 The branch holds only =.sucoder/wiki/= and shares no history with code branches.

@@ -3,6 +3,9 @@
 #+date: 2026-11-10
 #+status: COMPLETE
 
+This completion record describes the original project-exploration launch.
+The [[file:essay-alignment.org][experience charter]] defines the current bare-command mode, and the proposed [[file:transcript-navigation.org][transcript-navigation amendment]] specifies the next paging/search and discovery-allocation changes.
+
 * Approved scope
 
 The user approved implementing =cd ~ligon/Projects/SuCoder && sucoder dream= with sensible defaults, somewhat unpredictable topics and no narrower advance territory inside the project.

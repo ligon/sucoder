@@ -61,3 +61,10 @@ The implementation is =314111c= and its separate prior-art ledger is =6c1d0e0=.
 Verification logs, tested-source hashes and the partition counts are retained under =/home/coder/.sucoder/logs/dream-budget/2026-11-10-314111c/=, indexed by =verification.json=.
 
 Prepared by Sue.
+
+* Proposed discovery allocation
+
+The [[file:transcript-navigation.org::#allocation][November 15 design amendment]] proposes an automatic discovery ceiling for new jobs, derived from the actual wallet balance with author/closeout capacity preserved.
+Explicit positive discovery limits remain fixed, and every per-turn allowance must be frozen for replay.
+This proposal does not change the implemented whole-job wallet, unknown-call charges, retry semantics or unsupported financial/token ceilings.
+The current parser still accepts integer discovery limits only.

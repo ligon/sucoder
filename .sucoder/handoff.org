@@ -1,8 +1,20 @@
 #+TITLE: SuCoder consolidated on main in the canonical mirror; publication pending
-#+DATE: 2026-11-14
-#+STATUS: COMPLETE
+#+DATE: 2026-11-15
+#+STATUS: DESIGN COMPLETE; IMPLEMENTATION PENDING
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Transcript-navigation design, 2026-11-15
+
+The human requested a concrete design update after reviewing experience dream =9268f638ee3a4e34afc2911a714cda77= and Anthropic's cookbook.
+The [[file:../docs/dream/transcript-navigation.org][design amendment]] specifies bounded record reads/search, opaque continuation cursors, separate scan/delivery/accepted coverage, and automatic discovery allocation for new version 3 jobs.
+The [[file:../docs/dream-transcript-navigation-ledger.org][grounding ledger]] identifies existing machinery and replay constraints.
+Runtime and parser behavior are not yet changed; the amendment gives the implementation queue and synthetic acceptance cases.
+No additional native dream or paid verification was launched for this design task.
+
+The completed experience dream published =f651866= on =sucoder/memory= using ten native calls in about 172 seconds.
+It qualified stale notes but failed to recover the already-recorded Python 3.6/3.9 decision after three unavailable navigation requests, motivating this amendment.
+The private review is =/home/coder/.sucoder/logs/dream-reviews/2026-11-15-9268f638/review.json=.
 
 * Canonical checkout, 2026-11-14
 

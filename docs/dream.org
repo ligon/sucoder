@@ -16,6 +16,7 @@ An operator may invoke it from a terminal or batch scheduler; the command remain
 This is the full implementation design under the [[file:dream-charter.org][approved workshop charter]]; it does not establish a measured memory improvement.
 The [[file:dream/implementation.org][implementation status]] records explicit Git/Claude/Codex evidence, native source-grounded authorship/review, correction, accepted progress, task/archive editing and bounded fresh readers.
 The [[file:dream/workplan.org][runtime workplan]] records the charter requirements, implemented behavior and acceptance dispositions.
+The proposed [[file:dream/transcript-navigation.org][bounded transcript-navigation amendment]] specifies session paging/search, explicit scan/delivery coverage and discovery allocation while preserving saved-job contracts.
 The [[file:dream-ledger.org][prior-art ledger]] supplies the reuse decisions and source limitations.
 Read the [[file:dream/prompts.org][role briefs]], [[file:dream/scenarios.org][scenario checks]], [[file:dream/pilot.org][pilot protocol]], and the [[file:dream/examples/sucoder.org][SuCoder]] and [[file:dream/examples/lsms.org][LSMS]] examples for operational detail.
 
