@@ -15,6 +15,7 @@ The requested deliverable is a design amendment; implementation and another nati
   Reuse for admitted evidence; =test_windows_must_be_complete_lines_of_one_session= and =test_a_changed_window_is_refused_before_any_role_call= in =tests/test_dream_view.py= cover identity, boundaries and changed bytes.
 - =sucoder/dream_view.py:138=, =render= :: Deterministic redacted rendering, raw record offsets, role/provenance mapping and explicit tool-output omissions.
   =test_rendering_keeps_conversation_clips_tools_drops_thinking_and_redacts= and =test_user_attribution_only_for_main_thread_user_blocks= cover these definitions.
+  Neither =render= nor =redact= at =:51= has an interruptible deadline; unmatched private-key markers reproduce superlinear processing below the raw-byte limit.
 - =sucoder/dream_discover.py:133=, =Inventory._window= :: Reads the entire pinned session before finding the requested window.
   =tests/test_dream_experience.py:144= tests record alignment and appended bytes, and =:166= tests a first record longer than the request.
   Neither fixture has a session larger than 16 MiB.
@@ -22,8 +23,10 @@ The requested deliverable is a design amendment; implementation and another nati
   The window/alignment fixture includes search, but does not establish resumable search inside a large session.
 - =sucoder/dream_discover.py:211=, =Inventory.lookup= :: Already caps each encoded navigation response at 16 KiB or the remaining delivery allowance.
   =Explorer.prepare= at =:435= charges the encoded observations and memory leads against cumulative navigation delivery, and forces the final discovery call to finish.
+  Its replay check at =:468-472= compares serialized rendered observations, not raw transcript digests; raw checks begin with =dream_view.admit= at =:170= and =snapshot= at =:195=.
 - =sucoder/dream_experience.py:57=, =_complete= :: Pins the last complete JSONL line, with a final whole-file read fallback that also needs a bound.
   Session discovery, quiet/live exclusions and consumed ranges are tested in =tests/test_dream_view.py=, =tests/test_dream_experience.py= and =tests/test_dream_job_sessions.py=.
+  =sessions= at =:89= eagerly sorts all directory entries before transcript probes; probe-byte bounds alone do not bound this work.
 - =sucoder/dream_explore.py:134=, =prepare= and =:243=, =_discovery= :: Freeze navigation version, settings, inventory, native assignments and lookup observations.
   =test_navigation_is_frozen_per_job_so_earlier_jobs_still_replay= in =tests/test_dream_explore.py:188= anchors earlier-version replay.
 - =sucoder/dream_budget.py:239=, =Job.assignment= :: Freezes remaining-budget advice and validates its binding on replay; reservations and unknown outcomes stay charged.
@@ -47,13 +50,16 @@ Earlier job headers, briefs, schemas, assignments and lookup observations must r
 The 16 MiB admitted-range guard remains a range bound, never a whole-session eligibility test.
 Keep scoped discovery, canonical regular-file access, native identity checks, redaction, complete records and rejection of changed selected bytes.
 Appends after the pinned end do not enter an existing job's evidence.
+Prefix length and session identity do not establish a frozen content revision across pages.
+New resource guarantees must cover CPU, enumeration and metadata work as well as raw I/O and model delivery.
 Only admitted and independently reviewed evidence can support publication; scanned and delivered ranges have different meanings.
 Closeout reserves and author capacity survive discovery, shared-wallet use and explicit retries.
 No new provider request, remote transcript transport, GitHub issue access by the dream, or private-memory publication is authorized by this design task.
 
 * 5. Reuse decisions
 
-- Reuse :: Existing range admission, renderer, redactor, attribution map, receipt consumption, role transport, lookup journal and whole-job wallet.
+- Reuse :: Existing range admission, rendering bytes, redaction semantics, attribution map, receipt consumption, role transport, lookup journal and whole-job wallet.
+  Reusing rendering semantics does not establish interruptible execution; the deadline boundary remains a design decision.
 - Extend :: Session read/search callers and complete-prefix probing with a bounded record iterator; the existing whole-prefix navigation cannot page large sessions.
 - New :: A versioned opaque continuation cursor, because a session ordinal cannot resume midway through a session or a multi-block record.
 - New :: An automatic discovery-allocation policy for new jobs; current defaults cannot distinguish a deliberate eight-call ceiling from an inherited default.
@@ -63,24 +69,30 @@ No new provider request, remote transcript transport, GitHub issue access by the
 
 * 6. Open questions and verification boundary
 
-There is no missing human input blocking a concrete proposal.
-Resource constants, the automatic-allocation fraction and cursor shape must be stated in the amendment and reviewed before runtime implementation.
-The design can be checked against this ledger now; large-session and allocation behavior remains unimplemented and must be established by the proposed synthetic regression matrix.
-No new live experiment is needed to make the proposal reviewable.
+The independent [[file:dream/transcript-navigation-review.org][red-team review]] leaves three implementation gates open: coherent source-revision semantics, enforceable rendering deadlines, and bounded inventory enumeration/metadata work.
+Cursor publication and replay of deadline-stopped partial scans also need concrete recovery specifications.
+These are unresolved technical decisions; no missing human preference or additional live experiment prevents revising the proposal.
+Large-session and allocation behavior remains unimplemented and must be established by an expanded synthetic regression matrix after the design gates are resolved.
 
 Prepared by Sue (GPT-6 Codex).
 
-* Anchored design verification
+* Design verification and independent red-team status
 
 - OK, sections 2 and 5 :: The amendment reuses the seekable admitted-range reader, renderer, redactor, attribution map, receipt consumption and persistent wallet.
   The new iterator, cursor and allocation record address capabilities those existing components do not provide.
 - OK, section 3 :: The protocol retains half-open raw offsets, inclusive file lines, explicit nonzero selection ends, six units, 64 KiB selected evidence and separate navigation delivery.
 - OK, section 4 :: New behavior is isolated to version 3 with earlier schema/brief/error reconstruction preserved.
   Per-turn allowance snapshots address the assignment-hash risk from recomputing live balances during replay.
-- OK, sections 4 and 5 :: The scan, alignment, response, selected-unit and inventory-probe bounds are explicit; partial scans, dropped render content and accepted receipt coverage have distinct meanings.
+- OK, sections 3 and 5 :: The scan, alignment, response, selected-unit and tail-probe byte bounds are explicit; scanned, delivered and accepted coverage retain distinct meanings.
+- CONTRADICTION, sections 2 and 4 :: The original design claimed existing lookup replay checked observed raw bytes, but it compares rendered observations.
+  That statement is corrected; source-revision coherence and raw receipts remain open under review gate R1.
+- CONTRADICTION, sections 2 and 4 :: Raw byte and probe bounds do not establish the promised shared deadline or bounded preparation.
+  The existing renderer and eager inventory enumeration leave review gates R2 and R3 open.
+- OPEN, sections 4 and 5 :: Atomic cursor/observation publication and replay of deadline-stopped scans require concrete protocols and crash cases.
 - OK, section 6 :: Configuration null/auto allocation and large-session behavior remain proposed; the existing parser, configuration example, runtime and tests are unchanged.
 
-The two JSON examples parse, and added/new-document local links and CUSTOM_ID targets resolve.
-All eight affected Org documents export with Babel disabled; optional htmlize source coloring is unavailable.
+The design's two JSON examples parse, and added/new-document local links and CUSTOM_ID targets resolve.
+The original eight affected Org documents exported with Babel disabled; that formatting check did not establish implementation readiness.
 The implementation acceptance matrix remains unexecuted because no runtime implementation is included.
-Review was performed by the design's author against this ledger, without an independent-review claim.
+The independent reviewer and the author's separate bounded reproductions support the three findings recorded in the review report.
+The author-only verification missed these resource and revision gaps; the proposal is marked as requiring revision before implementation.
