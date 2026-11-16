@@ -1,0 +1,102 @@
+#+TITLE: Independent red-team review of the native prompt-caching design
+#+AUTHOR: Sue
+#+DATE: 2026-11-16
+#+STATUS: FINDINGS ADDRESSED; BOTH FOLLOWUP REVIEWS ACCEPTED
+
+* Review scope
+
+The human requested a design supporting prompt caching for Claude and OpenAI agents, followed by red-team review.
+Two independent reviewers inspected [[file:prompt-caching.org][the design]], the [[file:../dream-prompt-caching-ledger.org][grounding ledger]], current source/tests and official provider documentation.
+One focused on native/provider feasibility and accounting, and one on integrity, recovery and isolation.
+The reviewed draft is commit =7c75121=; original line references below refer to that version.
+The final revised body reviewed in followup has git blob =f32c1fa941e4d208c1b2a43c268e578a8d66fb48=; status metadata and the review backlink subsequently changed.
+No live native inference or paid cache-acceptance request was run.
+
+* Original findings and dispositions
+
+** P1: Native policy-file delivery has a reopen race
+
+The original =prompt-caching.org:149-160= verified a file digest before launch, then let Claude reopen =--system-prompt-file= by pathname.
+A write or replacement between those events could deliver different trusted instructions while the manifest still named the old bytes.
+Another prelaunch hash check would leave the same race.
+
+Resolution: the initial profile delivers at most 32 KiB of trusted policy as structurally encoded argv text, with a separate complete argv/environment bound and no file fallback.
+Claude's schema also uses argv; Codex's schema uses a write/grow/shrink/seal-protected Linux memfd passed to the native process through its descriptor path.
+The native-build/Landlock acceptance gate must establish that path is supported; otherwise the profile remains uncertified.
+The [[file:prompt-caching.org::#replay][delivery contract]] binds exact parent-owned stdin bytes and requires replacement/write tests and descriptor cleanup.
+The integrity reviewer accepted the revision, finding no new blocker.
+
+** P1: Hashes alone do not prove complete semantic delivery
+
+At original =prompt-caching.org:57-79= and =:144-160=, a renderer could omit prior support, substitute stale advice or resolve a deduplicated memory seed to the wrong item while retaining the correct assignment digest in a self-consistent manifest.
+Echoing that digest would not prove that the model had received the corresponding data.
+
+Resolution: the [[file:prompt-caching.org::#prompt-plan][prompt plan]] now requires an allowlisted field partition and exact canonical reconstruction of the assignment before envelope commitment and during replay.
+It checks authority, all evidence/support bytes, current advice, unknown/extra fields and uniquely bound acyclic references.
+Policy and native schema are delivered once rather than duplicated in user input.
+The integrity reviewer accepted the revision, finding no new blocker.
+
+** P1: The initial prefix profile needs native wire certification
+
+Original =prompt-caching.org:220= made native request capture conditional, although full-history certification at =:117= required it.
+A stable application-controlled instruction string might still follow changing hidden context, or lack an eligible provider cache boundary.
+OpenAI's [[https://developers.openai.com/api/docs/guides/prompt-caching#single-text-block-with-changing-content][caching guide]] explains why an unchanged beginning inside one changing text block need not be reusable.
+
+Resolution: both initial and later [[file:prompt-caching.org::#profiles][native profiles]] now require two-request fake-provider capture of actual request roles, prefix bytes, relevant settings and an eligible boundary, with changed advice, IDs and scratch paths.
+The design distinguishes stable application bytes, a certified eligible prefix and an observed live cache hit.
+Unavailable capture leaves eligibility unverified; CLI help and negative isolation tests cannot certify it.
+The live hit remains a separately authorized acceptance observation.
+The provider reviewer accepted this revision in followup.
+
+** P2: A frozen schema must permit mandatory finish variants
+
+Original =prompt-caching.org:90= bound an actual output schema into the job profile, while =:114= allowed a mandatory finish-only variant.
+That contradiction could cause an implementer to mutate a frozen profile or weaken closeout restrictions to keep a cache hit.
+
+Resolution: the profile freezes a schema-family policy and its permitted variants; each assignment/manifest binds the actual resolved schema digest.
+A required variant starts a new cache frontier and can lose reuse.
+Finish-only enforcement remains authoritative.
+The provider reviewer accepted this revision in followup.
+
+** P2: Local scope does not prove provider-account continuity
+
+Original =prompt-caching.org:91= used an opaque local scope in place of actual authentication identity without specifying observable account-change behavior.
+Fresh native invocations reread credentials; a locally generated cache scope would remain unchanged after a different account was selected.
+Provider cache isolation follows provider account/workspace boundaries, not an application's label.
+
+Resolution: freeze the configured route/mode and compare safely observable documented principal/workspace metadata before launch.
+Observed changes stop before reservation; unavailable identity is explicitly unverified, and a token refresh within the same observed principal is normal.
+Keep credentials and credential-file hashes out of manifests; no automatic billing-route switch is permitted.
+The [[https://platform.claude.com/docs/en/build-with-claude/prompt-caching#cache-storage-and-sharing][Anthropic cache-isolation documentation]] supports distinguishing provider boundaries from local namespaces.
+The provider reviewer accepted this revision in followup.
+
+** P1 followup: The installed Node launcher closes the schema descriptor
+
+The first revision proposed inherited sealed schema delivery through the normal =codex= launcher.
+The provider reviewer inspected the installed wrapper and reproduced extra-descriptor loss through Node =process.execve=, consistent with [[https://nodejs.org/docs/latest-v22.x/api/process.html#processexecvefile-args-env][Node's documentation]].
+The local wrapper uses this path and also supplies managed-package environment markers and a signal-disposition adjustment.
+A parent-owned =/proc/<pid>/fd/N= path worked in an unconfined probe, but the author's followup probe showed that the existing Landlock boundary denies that access.
+The [[https://docs.kernel.org/userspace-api/landlock.html#special-filesystems][kernel documentation]] distinguishes anonymous filesystem objects and proc/ptrace domain restrictions; adding a general procfs allowance would weaken the existing boundary.
+
+Resolution: the stable Codex profile explicitly resolves and pins the packaged vendor native executable, with wrapper-equivalent argv/environment/signals/authentication and native request-capture gates.
+It inherits a sealed schema descriptor directly and uses its own descriptor path; the old wrapper remains unchanged for legacy jobs.
+Unknown package layouts, failed equivalence and unsupported schema reads prevent certification before provider startup.
+Both reviewers accepted this resolution with no remaining design blocker.
+
+The author's bounded Node/Python-only probe is =/home/coder/.sucoder/logs/dream-cache-design/2026-11-16/probe.py=, with =probe-results.json= alongside it.
+It verifies inherited self-descriptor reading under the unchanged Landlock boundary, wrapper descriptor loss, parent-proc denial, denied writes to the sealed object and continued denial of unrelated proc environment reads.
+Run it from the mirror with =PYTHONPATH=$PWD /home/coder/.cache/pypoetry/virtualenvs/sucoder-_hu1CrVA-py3.12/bin/python /home/coder/.sucoder/logs/dream-cache-design/2026-11-16/probe.py=.
+It invokes neither native agent nor a model and does not certify actual Codex schema compatibility.
+
+* Review boundary and remaining gates
+
+Both reviewers found the deferred data/history capability gate explicit and justified.
+The document does not claim either current CLI can already cache all user evidence or growing history.
+Fresh native roles, independent review inputs, the existing wallet, unknown-outcome charging and earlier-job replay remain required.
+No implementation, live cache hit, native memfd compatibility or monetary saving has been demonstrated by this design review.
+
+The author accepted all five original findings and the additional launcher finding, and incorporated their fixes.
+Both reviewers accepted the final revised design within its phased scope and found no remaining design blocker.
+Implementation must satisfy the [[file:prompt-caching.org::#gates][acceptance gates]] before enabling a profile.
+
+Recorded by Sue (GPT-6 Codex).

@@ -1,7 +1,7 @@
 #+TITLE: Prompt caching for native dream agents
 #+AUTHOR: Sue
 #+DATE: 2026-11-16
-#+STATUS: DESIGN DRAFT; INDEPENDENT REVIEW PENDING
+#+STATUS: DESIGN REVIEWED; IMPLEMENTATION AND NATIVE CERTIFICATION PENDING
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
 * Purpose and scope
@@ -16,7 +16,8 @@ Discovery's first input was 12,854 tokens and its last 40,093 as observations ac
 These measurements motivate the change; they do not predict a cache hit rate or monetary saving.
 
 The design has two capability levels.
-The first release supports a stable trusted instruction prefix in both existing native transports, with accurate usage reporting.
+The first release targets a stable trusted instruction prefix in both existing native transports, with accurate usage reporting.
+Each native build must pass the request-capture certification below before that capability is advertised.
 Caching frozen evidence and growing history requires a separate native block/message capability gate; the current one-prompt transport cannot claim that capability.
 This distinction is part of the product contract, not an implementation detail hidden behind a generic "caching enabled" flag.
 No direct provider API backend, retained native process, prewarming, extra paid request or live acceptance run is included in this design task.
@@ -40,7 +41,7 @@ Its API =input_tokens= excludes cache reads and writes, so total input is the su
 No fixed threshold, price, rate-limit treatment or retention lifetime is shared between the providers by assumption.
 
 The [[https://platform.claude.com/cookbook/claude-agent-sdk-04-migrating-from-openai-agents-sdk][Claude Agent SDK cookbook]] documents automatic caching of native system prompts and tool schemas.
-The [[https://code.claude.com/docs/en/cli-reference#system-prompt-flags][Claude CLI reference]] documents replacing the system prompt from a file and the associated loss of default instructions.
+The [[https://code.claude.com/docs/en/cli-reference#system-prompt-flags][Claude CLI reference]] documents replacing the system prompt from inline text or a file and the associated loss of default instructions.
 The installed =claude= is =2.1.323= and exposes that flag, stream-JSON input and existing restriction flags.
 Help output does not prove that a supplied user content block or cache marker survives to the provider request.
 
@@ -75,6 +76,13 @@ The complete semantic assignment remains available for identity, limits and reco
 Current allowance advice and identifiers appear after reusable material in model-facing serialization.
 They remain part of the canonical assignment and its hash.
 The ordered plan also avoids duplicating a selected memory seed as a second full open-item body; references must resolve to the same frozen bytes, with no new retrieval or evidence admission.
+Define an allowlisted, versioned field partition of the semantic assignment before writing a renderer.
+Every field belongs to exactly one delivered surface or an explicitly named control-metadata slot; unknown, omitted and extra fields are errors.
+Policy and native output schema are represented once, rather than copied again into user input.
+The inverse projection must satisfy =canonical(reconstruct(plan, native_schema, control_metadata)) == canonical(A)= before request-envelope commitment and again during replay.
+This includes the exact current advice, prior support, evidence bytes, qualifications, identifiers and role; a correct digest label alone is insufficient.
+Deduplicated references are typed and content-bound, resolve uniquely inside the envelope, preserve order and authority, and cannot form cycles or select another memory item.
+The native-schema and instruction-policy associations are checked against the frozen profile, so a field cannot move from data to instructions while preserving only its bytes.
 Do not compact history, drop negative results or change source qualifications in this slice.
 Existing delivery, consolidation and output byte limits continue to apply, including the full encoded prompt rather than only its new suffix.
 Reaching a context/byte limit produces the existing bounded finish/checkpoint behavior, without an unbudgeted summarizer or native auto-compaction.
@@ -87,20 +95,43 @@ Reaching a context/byte limit produces the existing bounded finish/checkpoint be
 Each new job freezes the requested layout, resolved profile and native executable build before semantic assignment.
 Capabilities are fields, not one boolean: =instruction_prefix=, =user_block_boundaries=, =history_prefix=, =cache_read_usage= and =cache_write_usage=.
 Each field records supported, unsupported or unverified, its source and the profile-test version.
-Provider model, platform, reasoning settings, output schema, tool settings and native configuration affecting the request are part of the profile binding.
-Authentication identity is represented by an opaque local scope identifier, never credentials or an assumption that identical model names imply the same provider account.
+Provider model, platform, reasoning settings, tool settings and native configuration affecting the request are part of the profile binding.
+Freeze the schema-family policy and permitted variants in that profile; each assignment and delivery manifest separately binds the actual resolved output-schema digest.
+A mandatory variant change starts a new cache frontier and may lose reuse; it never relaxes a finish-only restriction or mutates the frozen family policy.
+Freeze the configured authentication route/mode, and record safely observable stable principal/workspace metadata where the native interface exposes it without secrets.
+Before each fresh launch, compare only such documented observable identity metadata; an observed route/principal change stops before reservation, while a token refresh within the same observable principal is normal.
+When identity is unavailable, record =account_continuity: unverified=; an opaque local cache scope never establishes continuous provider-account identity.
+Do not persist/hash tokens or credential-file contents, and never automatically switch authentication or billing routes.
+
+Certification distinguishes three observations: a stable application-controlled surface, a certified eligible provider prefix, and an observed live cache hit.
+Both initial instruction profiles and later block profiles require a two-request recording fake-provider test of the actual native request.
+Change assignment IDs, advice and scratch paths between the requests; verify the prefix bytes, authority, cache-affecting settings and an eligible write/lookup boundary remain reusable.
+If the build cannot expose a recording test path while preserving the production request semantics, eligibility stays unverified and no =stable= profile is certified for that build.
+Flag help, stable file bytes and a successful negative isolation test do not replace that request-level evidence.
+An actual provider hit remains a separately authorized live observation; recording tests establish request construction rather than provider cache state.
 
 ** Initial profile: native-instructions-v1
 
 Keep one fresh native process and private home per role invocation, the current Landlock boundary, authentication-only inheritance and strict tool/event rejection.
 Keep the configured harness/model/authentication path; do not replace native subscription authentication with API billing.
 For Codex, render the trusted role policy through a bounded =developer_instructions= override.
-For Claude, use a private =--system-prompt-file= containing the trusted policy and every guard previously supplied by the default/native role instructions.
+Its certified profile must name its launcher strategy explicitly.
+This host's Node launcher uses =process.execve=, which closes descriptors other than stdin/stdout/stderr; passing a schema descriptor through that wrapper cannot work.
+For the stable profile, resolve and pin the packaged vendor native executable before preparation, expose =launcher: direct-vendor-native= in status, and freeze the wrapper/package and native-build bindings.
+Retain all existing command restrictions and reproduce only the verified wrapper transformations: unchanged CLI arguments, managed-package root and package-manager environment markers, and signal disposition.
+Require recording tests of wrapper/direct-native request equivalence apart from the deliberate schema delivery path, plus authentication-route, environment, signal and descriptor tests for the pinned package/build.
+If the wrapper/package format is unknown or equivalence fails, refuse the stable profile before reservation; no silent binary resolution, different package, API backend or writable-schema fallback is allowed.
+Legacy jobs continue to use their original wrapper route.
+For Claude, use inline =--system-prompt= text containing the trusted policy and every guard previously supplied by the default/native role instructions.
 Replacement of Claude's default prompt requires a negative test for external tools, hooks, instruction injection and unexpected continuation before this profile can be enabled.
 Do not include transcript or memory bodies in either instruction surface.
-Large instruction text must be staged in a private supported configuration/file surface rather than exceed command argument limits; values are encoded structurally, never through shell interpolation.
+The initial profile delivers policy as argv text, not a file that the native process subsequently reopens.
+Limit policy to 32 KiB of UTF-8 with no NUL; structurally encode Codex's configuration string and pass Claude's text as one subprocess argument, without a shell.
+Bound the complete encoded argv plus environment to 64 KiB and below the observed platform launch limit with explicit overhead headroom; escaping expansion counts toward that bound.
+If either bound fails, stop before reservation instead of switching to pathname delivery.
+Only trusted policy enters argv; evidence, memory, credentials and prior support remain outside it.
 
-Both profiles keep the full semantic assignment data in user input, in deterministic plan order with current advice last.
+Both profiles keep all assignment data in user input, in deterministic plan order with current advice last, under the lossless projection check above.
 That user input may remain a single changing text block.
 The declared capability is therefore =instruction_prefix= only; =history_prefix= remains unverified/unsupported until the next gate passes.
 The initial prefix may fall below the provider/model minimum and yield no caching.
@@ -146,15 +177,27 @@ New jobs freeze =prompt_contract: dream-prompt-plan-v1= and a provider-profile d
 After frozen budget advice creates the complete semantic assignment =A=, derive the prompt plan and exact native delivery manifest =M= from =A=.
 =A= never contains =M='s digest, avoiding a recursive identity.
 
-=M= contains the assignment digest, plan digest, exact instruction-file and stdin hashes/byte counts, structured native argv/configuration, profile digest, schema digest, executable version and environment-policy digest.
-Random scratch locations are execution plumbing: the manifest names logical slots, with a separate launch record binding each slot to its actual private file and verified bytes.
+=M= contains the assignment digest, plan digest, exact inline policy and stdin hashes/byte counts, structured native argv/configuration, profile digest, actual schema digest, executable version and environment-policy digest.
+Random scratch locations are execution plumbing: the manifest names logical slots, with a separate launch record binding each slot to its actual private launch object.
 This does not claim to reconstruct hidden provider context; native wire-capture evidence and any unavailable provider-body hash are labelled separately.
 Record =provider_request_sha256: null= unless the adapter actually observes that request.
 Do not put raw credentials, authorization headers or credential-file hashes in either record.
 
 One immutable private request envelope commits =A=, =M= and segment references before reservation.
 Reserve against the combined envelope digest, then write the existing started marker and invoke the native transport with the verified envelope.
-The transport reads private files through regular-file/ownership checks and verifies their digests immediately before launch.
+The transport reads envelope segments through regular-file/ownership checks into bounded parent-owned buffers, verifies the projection and hashes, and launches those exact argv/stdin bytes.
+Use the existing owned unlinked input stream for stdin; replacing a journal pathname after that read cannot replace the launch bytes.
+The initial profile has no native-reopened policy file and no pathname fallback.
+Claude's schema is likewise passed as exact bounded argv bytes.
+For Codex's required schema-file argument, stage the verified bytes in a Linux memfd and seal it against writes, growth, shrinkage and further seal changes before launch.
+Pass the sealed descriptor directly to the certified vendor executable and use its =/proc/self/fd/N= path as the schema argument, binding the logical schema slot, bytes and descriptor identity in the launch record.
+Retain the descriptor through complete child/process-group exit and reaping, never reuse its slot during a call, and close it on every exit path.
+Do not grant general procfs access or add a rule for an anonymous memfd; verify inherited access under the unchanged Landlock boundary instead.
+The alternative =/proc/<coordinator-pid>/fd/N= path is rejected: the current boundary denies access to the less-restricted parent's descriptor even though an unconfined wrapper probe can read it.
+A recording test must establish that the native build accepts this path and reads the sealed bytes before provider work; otherwise the profile is uncertified and preparation refuses it.
+There is no writable-path fallback, and instruction/schema replacement tests must attempt both pathname substitution and writes through inherited descriptors.
+Local Node/Python-only probes verified the wrapper descriptor loss, parent-path denial and successful inherited self-descriptor access under Landlock; they did not run Codex against a provider or certify the native profile.
+Private probe results are =/home/coder/.sucoder/logs/dream-cache-design/2026-11-16/=.
 It records both =assignment_sha256= and =delivery_manifest_sha256= in the new trace contract, replacing neither with the other.
 Result validation still checks the echoed semantic identifiers and native output schema.
 Replay validates the complete envelope, launched segment bindings, native trace and result before using saved output.
@@ -217,7 +260,7 @@ All cold calls, misses, repairs and unknown outcomes count toward the existing c
 
 1. Usage and bindings :: Add versioned normalization and delivery manifests with fake transports only.
    Establish old-job replay with provider startup forbidden, including the real published E3 job.
-2. Native instruction profiles :: Add deterministic trusted-policy rendering for each native harness and fake-provider request capture where the build permits it.
+2. Native instruction profiles :: Add deterministic trusted-policy rendering and mandatory two-request fake-provider wire certification for each native harness/build.
    Retain =legacy= as the rollout default until the relevant native build passes its full negative/isolation suite.
 3. Native data/history profiles :: Certify each harness independently against actual captured requests; if unsupported, keep the visible instruction-only capability and report the missing boundary mechanism.
    No release claim of full history caching is allowed on the strength of API documentation or CLI help alone.
@@ -229,8 +272,11 @@ All cold calls, misses, repairs and unknown outcomes count toward the existing c
 Required deterministic cases include:
 
 - Identical frozen policy bytes across changing IDs, budgets and scratch directories; data remains user-priority even when it contains forged system instructions.
-- Unchanged canonical assignment identity plus separately bound instruction/stdin bytes; mutations to either surface prevent result reuse/publication.
-- Truncation, symlinks, ownership changes and file replacement at launch; stage-and-launch races cannot send unbound bytes.
+- Exact canonical reconstruction of each assignment plus separately bound instruction/stdin/schema bytes; omissions, extra fields, stale advice, ambiguous/cyclic references and authority changes prevent launch or saved-result reuse.
+- Truncation, symlinks, ownership changes and file replacement at launch; the native instruction text and schema cannot change after validation through a reopened writable pathname.
+- Policy/argv/environment byte bounds, structural escaping including quotes/newlines/non-ASCII, and a native-visible request-capture comparison over changed scratch paths and current IDs.
+- Codex launcher package/native pinning, wrapper-equivalent argv/environment/signals, sealed-descriptor survival, denial of the parent-proc workaround and unchanged native authentication/isolation restrictions.
+- Safely observable route/principal changes stop before reservation; token refresh with unchanged principal remains valid, and unavailable identity remains explicitly unverified.
 - Crash before/after envelope commit and reservation, missing manifests after started/finished calls, expired job replay and an explicit cold retry without duplicate provider work.
 - Cold, warm, expired and evicted provider caches; actual cache state never changes semantic selection, call accounting or accepted evidence.
 - OpenAI inclusive and Claude exclusive usage, nonzero writes, missing fields, observed zero, contradictory counts, duplicate final events and aggregate/per-iteration double counting.
@@ -241,5 +287,6 @@ Required deterministic cases include:
 Before implementation edits, run the project-required GitNexus upstream impact analysis on changed runtime symbols and report HIGH/CRITICAL risks.
 Before a commit, run change detection; run targeted pytest and the appropriate broader project checks for the implemented slice.
 No runtime implementation or live cache test is claimed by this document.
+The [[file:prompt-caching-review.org][independent review record]] preserves five original findings, an additional launcher feasibility finding, their resolutions and both reviewers' final acceptance within this phased scope.
 
 Prepared by Sue (GPT-6 Codex).

@@ -1,8 +1,21 @@
 #+TITLE: SuCoder consolidated on main in the canonical mirror; publication pending
 #+DATE: 2026-11-16
-#+STATUS: NAVIGATION IMPLEMENTED AND LIVE CHECKED; PUBLICATION PENDING
+#+STATUS: CACHING DESIGN REVIEWED; IMPLEMENTATION AND PUBLICATION PENDING
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Prompt-caching design and review, 2026-11-16
+
+The human requested a design for Claude/OpenAI prompt caching followed by red-team review.
+The [[file:../docs/dream/prompt-caching.org][design]] separates semantic assignment identity from model-facing policy/data/control segments, preserves evidence at data priority, and normalizes provider-specific usage without rewriting historical receipts.
+It targets initial native instruction-prefix profiles; caching evidence/history remains gated on actual native message/boundary certification.
+Two independent reviewers raised five original findings and an additional installed-launcher incompatibility, all addressed in the [[file:../docs/dream/prompt-caching-review.org][review record]].
+Their final followups found no remaining design blocker within the phased scope.
+The revised contract requires lossless assignment reconstruction, exact inline policy delivery, a sealed schema descriptor and an explicitly pinned wrapper-equivalent vendor-native Codex launcher.
+Synthetic Node/Python probes verified that the Node wrapper drops extra descriptors, the parent-proc workaround is denied under Landlock, and direct inherited schema access succeeds under the unchanged boundary.
+The probe and results are =/home/coder/.sucoder/logs/dream-cache-design/2026-11-16/=.
+No runtime change, native cache certification, live cache hit or monetary saving is claimed; no live dream or paid cache test ran for this design work.
+The [[file:../docs/dream-prompt-caching-ledger.org][grounding ledger]] records the reuse decisions and remaining implementation gates.
 
 * Live navigation dream, 2026-11-16
 

@@ -2672,6 +2672,7 @@ Default status/budget lookup selects the latest job for the exact project path; 
 Current native adapters reject requested hard token/dollar caps before provider work.
 See [[file:docs/dream/exploration.org][the exploratory launch contract and verification]].
 The [[file:docs/dream/transcript-navigation.org][transcript-navigation contract]] specifies bounded session paging/search, continuation cursors and automatic discovery allocation for new version 3 jobs.
+The proposed [[file:docs/dream/prompt-caching.org][native prompt-caching design]] and its [[file:docs/dream/prompt-caching-review.org][independent review]] cover Claude/Codex prefix delivery, usage accounting and the gates for caching evidence/history; this is not an implemented configuration option.
 Session search can return an empty incomplete page with a continuation; terminal =complete_unfrozen= records traversal over mutable sources and never proves query absence in a frozen whole-file revision.
 Processing timeouts and unavailable/oversized ranges are explicit, and only reviewed selected receipt ranges count as accepted coverage.
 =--discovery-calls= selects a fixed ceiling; saved jobs retain their original settings, schemas and briefs.
