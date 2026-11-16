@@ -367,4 +367,9 @@ The published job =9268f638...= still replays as =published= with provider start
 Evidence, source hashes and logs are under =/home/coder/.sucoder/logs/dream-implementation/2026-11-16-navigation/=.
 All new role tests use fake Codex/Claude transports and synthetic sources; no new live dream or provider request was made for implementation verification.
 
+After implementation, the human authorized one real experience dream at =cdb4a8c= with 1,800 seconds and 32 calls.
+The [[file:runs/sucoder-e3.org][E3 report]] records its reviewed publication, automatic discovery allocation of 16, two search continuations and successful admission beyond byte 20 million in the previously inaccessible transcript.
+It used 13 discovery calls and three editorial calls, with no navigation errors or reported gaps.
+This live observation complements the synthetic acceptance evidence; it did not exercise timeouts, oversized records, concurrent rewrites or stopped-job recovery.
+
 Prepared by Sue (GPT-6 Codex).

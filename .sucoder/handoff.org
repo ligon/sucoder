@@ -1,8 +1,21 @@
 #+TITLE: SuCoder consolidated on main in the canonical mirror; publication pending
 #+DATE: 2026-11-16
-#+STATUS: NAVIGATION COMPLETE ON LOCAL MAIN; PUBLICATION PENDING
+#+STATUS: NAVIGATION IMPLEMENTED AND LIVE CHECKED; PUBLICATION PENDING
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Live navigation dream, 2026-11-16
+
+The human requested another experience session after implementation, retaining the approved 1,800 seconds, 32 native calls and Codex =gpt-6.1-sol=.
+Job =877ffe18b431459ab29cd8f3d4129738= ran at local main =cdb4a8c= and published reviewed memory =d6a3621= in 319.5 seconds using 16 calls: 13 discovery, one author, one mechanical-reference repair and one independent reviewer.
+Automatic discovery resolved to 16 calls; the explorer finished voluntarily before that ceiling.
+It followed two search continuations and read a small window beyond byte 20 million in the previously inaccessible 20.6 MB transcript, with no unavailable/invalid navigation responses or processing errors.
+The correction distinguishes human approval of removing 3.6 while retaining 3.9 compatibility from Sue's later issue-comment interpretation; no separate human reconsideration of dropping 3.9 is established by this selection.
+The prior private review's attribution of that comment to the human was too strong.
+Lookup/receipt source hashes and preservation of unrelated memory passed the post-run audit.
+The [[file:../docs/dream/runs/sucoder-e3.org][E3 report]] records the selection, token usage, remaining efficiency concerns and live acceptance limits.
+Private audit artifacts are under =/home/coder/.sucoder/logs/dream-reviews/2026-11-16-877ffe18/=.
+No second dream or provider retry followed; the memory branch remains private.
 
 * Transcript-navigation implementation, 2026-11-16
 

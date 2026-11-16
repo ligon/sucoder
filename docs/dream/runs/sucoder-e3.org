@@ -1,0 +1,93 @@
+#+TITLE: First live experience dream with bounded transcript navigation
+#+AUTHOR: Sue
+#+DATE: 2026-11-16
+#+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Result
+
+Experience job =877ffe18b431459ab29cd8f3d4129738= published reviewed memory generation =d6a3621bb6095b0d02101467494543c1a4203327= on the local =sucoder/memory= branch.
+It completed in 319.5 seconds, using 16 of the 32 allowed native calls: 13 discovery, one author, one repair and one independent reviewer.
+The reviewer accepted with no findings.
+The job had a 1,800-second elapsed ceiling and an automatically resolved discovery ceiling of 16.
+All calls completed; none failed or remained uncertain.
+
+The explorer successfully searched and read the 20,604,616-byte finished transcript that the previous experience dream could not navigate.
+It followed two search continuation cursors and admitted a small window starting at byte 20,471,115, beyond the old whole-file read limit.
+There were no unavailable or invalid navigation responses, processing errors or reported gaps.
+This is one live observation of the new navigation contract, not an estimate of investigation quality or coverage of every processing failure mode.
+
+* Setup and audit
+
+The human requested another session after implementation, retaining the preceding approved limits and Codex model =gpt-6.1-sol=.
+Implementation and committed project evidence were pinned to =cdb4a8c66358f17a7ebbc4701b940c721a68abb5= in the canonical coder mirror on =main=.
+The native version was =codex-cli 0.167.1=.
+Memory began at =f651866c176e04750b8783ed41bced2fe785683e=.
+The command, run from that checkout, was:
+
+#+begin_src sh :eval never
+PYTHONPATH=$PWD \
+  /home/coder/.cache/pypoetry/virtualenvs/sucoder-_hu1CrVA-py3.12/bin/python \
+  -c 'from sucoder.cli import app; app()' dream \
+  --harness codex --model gpt-6.1-sol \
+  --max-total-seconds 1800 --max-total-calls 32 --detach
+#+end_src
+
+This records the completed paid run; it does not authorize another launch.
+No fixed discovery override was supplied.
+The frozen =job.json= records navigation version 3, automatic discovery allocation 16 and the bounded scan, inventory and processing policies.
+The inventory found three finished sessions, with complete enumeration and no undiscovered sources reported.
+The seed was the existing Python support Talk item in =topics/attention-rollout.org=.
+
+Private native assignments, lookup envelopes, raw receipts, selected evidence and editorial results are under =/home/coder/.sucoder/logs/dream-jobs/877ffe18b431459ab29cd8f3d4129738/=.
+The read-only post-run audit is =/home/coder/.sucoder/logs/dream-reviews/2026-11-16-877ffe18/audit.py=; its =review.json= and =status.json= retain the checked results.
+The audit verifies each saved lookup against its checksum, request and discovery history, re-hashes its raw receipts and the selected session ranges, checks per-lookup scan/alignment bounds, and verifies preservation of unrelated memory content.
+It invokes status only and makes no additional native inference request.
+
+* Investigation and publication
+
+Discovery used four search calls, six session reads, one committed-file read and one session listing, then finished on its thirteenth call.
+The first literal query, =94=, returned incidental numbers; the explorer changed it to =3.9= and followed two continuation pages.
+It then worked backward through the implementation conversation to locate the proposal and human approval, checked the committed November 14 handoff and read the later issue-comment text near the transcript's end.
+The search remained incomplete when the explorer followed those useful hits; no complete search or proof of absence is claimed.
+
+The five selected units comprise four session windows and eight lines of the handoff.
+They contain 9,027 admitted rendered/UTF-8 bytes in total, including 7,847 rendered session bytes from 34,760 raw session bytes.
+The coordinator recorded 29,284,467 raw scan bytes across lookups and 83,546 bytes delivered during navigation, within the 131,072-byte delivery allowance.
+Raw scans can overlap and do not represent unique transcript coverage.
+Scanned and delivered bytes do not become accepted evidence automatically; the selected receipt ranges define this generation's accepted coverage.
+
+The published correction explains the provenance of the Python support qualification:
+
+- The human approved a proposal to finish removing Python 3.6 and add a per-target interpreter setting, with checks moving to Python 3.9.
+- Subsequent tool output showed that the package already required =^3.9=.
+- Sue's later prepared issue 94 comment characterized this as dropping 3.6 while retaining 3.9, citing repository state.
+- The selected exchange does not establish a separate explicit reconsideration of dropping 3.9 or a new CI runner choice.
+
+The later comment appears in an assistant tool call containing its text and a posting command; this selection does not include the posting result.
+The dream correctly treats it as Sue's account rather than a direct human quotation or proof of successful posting.
+The preceding private review of job =9268f638= called it a human comment; that attribution was too strong.
+The post-run source check also confirms that the current pinned =pyproject.toml= retains =^3.9= and =sucoder/__init__.py= defines =PYTHON_FLOOR = (3, 9)=.
+
+Only the memory index, the attention-rollout page and the new receipt changed.
+The other two topic pages and the attention page's sections before Talk were preserved byte for byte.
+The article retains the narrower provenance question without presenting Python policy as a verified current pending human decision.
+The source audit found no unsupported new factual claim in this correction.
+
+Mechanical validation initially rejected duplicate references to the same explanatory section.
+One repair combined the references, after which independent review accepted the proposal.
+No retry, second dream, runtime edit or issue publication followed.
+
+* What remains costly
+
+Native usage reported 482,186 input and 11,003 output tokens; currency was unavailable for all 16 calls.
+The prior experience dream used 187,811 input tokens and ten calls, but failed to retrieve this material.
+Different code pins, selected evidence and editorial work prevent treating the pair as a controlled quality or cost comparison.
+The new run demonstrates useful navigation and a more precise correction; its broad literal searches, backward window reads and repeated accumulated context leave discovery efficiency as a remaining concern.
+The duplicated-reference repair is a recurring editorial cost already seen in earlier live runs.
+Both consecutive experience dreams followed the same open memory item, and this one still leaves a narrower question; future evaluation should distinguish useful followup from repeated qualification of one topic.
+
+No processing timeout, oversized-record gap, concurrent source rewrite, incomplete inventory or deadline-stopped recovery occurred in this live run.
+Their acceptance evidence remains the synthetic tests and independent review in the [[file:../transcript-navigation.org::#verification][navigation contract]].
+Code remains on local =main=; the private memory branch was not pushed.
+
+Recorded by Sue (GPT-6 Codex).
