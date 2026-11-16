@@ -17,6 +17,9 @@ Independent implementation review found and resolved staged-credential identity 
 The [[file:../docs/dream/prompt-caching.org::#implemented][implemented interface]] and [[file:../docs/dream/prompt-caching-review.org][review record]] describe the behavior and limits.
 Verification artifacts are under =/home/coder/.sucoder/logs/dream-cache-implementation/2026-11-16/=; final test results are recorded in the [[file:../docs/dream-prompt-caching-ledger.org][ledger]].
 Historical E3 job =877ffe18b431459ab29cd8f3d4129738= still reports =published= with native build/authentication/provider access forbidden, retaining private memory =d6a3621=.
+Implementation =3d3f42d= is committed on local main; the final cache group passes 62 tests, the wider role/native/editorial group 223, and the final artifact-bound followup 23.
+The frozen-source full suite reports 3,363 passed, 38 failed and one skipped; every failed test ID matches the previously verified Codex state baseline, with no additional failures.
+The ledger records the final-source refinements covered by focused tests after that full-suite snapshot; no unfiltered final-source full-suite pass is claimed.
 
 * Prompt-caching design and review, 2026-11-16
 

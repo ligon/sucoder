@@ -101,3 +101,58 @@ Constructor impact was also run by exact UID; UNKNOWN is not interpreted as abse
 Targeted recovery, role, budget, settings, navigation and native transport regressions will validate the integration, followed by the appropriate broader checks on a frozen clone.
 
 Prepared by Sue (GPT-6 Codex).
+
+* Anchored implementation verification, 2026-11-16
+
+Implementation =3d3f42d= preserves the machinery in sections 2-5 and adds four modules: =dream_prompt=, =dream_prompt_native=, =dream_cache_certify= and =dream_usage=.
+The implementation review and [[file:dream/prompt-caching.org::#implemented][operating interface]] distinguish offline native delivery from live cache acceptance.
+All commands below use the checkout on =PYTHONPATH=; the installed launcher was not updated.
+
+- OK, sections 2 and 4 :: The 62 caching-specific tests cover exact reconstruction, authority separation, deterministic storage/re-rendering, request corruption, schema variants, both provider usage definitions, missing counters and list-price estimates.
+  Stable role lifecycles for both fixture adapters reserve six calls, restore the shared wallet and replay with native build/authentication/provider access forbidden.
+  The native-delivery fixture reads the exact sealed schema descriptor, rejects writes, checks actual inline policy/stdin and retains a trace for duplicate final aggregates.
+- OK, sections 2 and 5 :: Missing/corrupt envelopes prevent saved-result reuse; failed native work cannot repeat its reservation.
+  The staged-account A/B regression rejects copied account B even if the original credential file is restored to A before the last source check.
+  Explicit API-key staging does not copy competing subscription credentials.
+- OK, sections 3 and 4 :: The production catalog contains 14 policy/schema pairs, including forced finish and editorial-version-2 support policy.
+  All generated fixture replies validate against their actual schemas.
+  Uncovered variants, unsupported cache modes, broken developer blocks, tools, compression and oversized captures/profiles are rejected before they can yield a usable certificate or request.
+- OK, section 5 :: Installed Claude =2.1.323= passed 28 fresh native captures for =claude-sonnet-4-6= and synthetic native credentials; loading the resulting certificate with the current build/route also passed.
+  Principal continuity is =unverified= for that route, not inferred from a local profile key.
+  Codex =0.167.1= failed after the first two captures for exposed additional tools; no usable stable Codex profile was published.
+  The same captures show changing per-thread cache keys.
+- OK, sections 2 and 5 :: Published E3 job =877ffe18b431459ab29cd8f3d4129738= replays with native startup, profile resolution and authentication access forbidden, retaining private memory =d6a3621bb6095b0d02101467494543c1a4203327=.
+  The check took 9.93 seconds and wrote only its private audit result.
+- OK, section 6 :: Independent implementation followups found no remaining blocker after correcting staged authentication, complete cache eligibility comparison, production variant coverage and fixture/report byte limits.
+  The [[file:dream/prompt-caching-review.org][review record]] preserves the findings and dispositions.
+
+The initial role/budget/exploration/wiki/settings group passed 169 cases.
+The wider native/role/settings/navigation-recovery/editorial group passed 223 cases.
+The final cache-specific source group passed 62 cases; after the final artifact-bound alignment, the 23 certificate/lifecycle cases passed again, and the certificate module's 14 cases passed with its additional oversized-profile assertion.
+All 12 changed source modules pass mypy and parse under Python 3.9's grammar; no Python 3.9 runtime test is claimed.
+All three caching Org documents export to HTML with Babel disabled.
+The wheel includes byte-identical copies of the changed runtime modules.
+
+The unfiltered suite on frozen normal clone =d7c08c8416577e90e84ce61985bbe95103818889= completed in 2,586.92 seconds: 3,363 passed, 38 failed and one skipped.
+All 38 failed test IDs exactly match the prior verified failures on unchanged base =359d018= in the Codex app-server/state/runner tests; there are no additional failures and no missing baseline failures.
+The comparison uses the preceding navigation verification's =full-comparison.json= and is reproducible with =compare-suite.py= in this verification directory.
+The snapshot precedes final trace naming/digest attestation, malformed-prefix diagnostics and artifact-bound refinements in four runtime modules; the final focused groups above cover those changes.
+No unfiltered final-source full-suite pass is claimed.
+=suite-source.json=, =suite-final-delta.json=, =full-suite.xml= and =full-comparison.json= preserve the source boundary and exact test-ID comparison.
+The final implementation is on local main, with one registered worktree and private memory unchanged.
+
+Verification artifacts are private under =/home/coder/.sucoder/logs/dream-cache-implementation/2026-11-16/=:
+=cache-final.xml=, =bounds-final.xml=, =mypy-final.txt=, =package-check.json=, =historical-replay.json=, =certificate-load.json= and =final-source.json=.
+=full-variants/dream-profiles/= retains the successful Claude report/profile and failed Codex report, with synthetic requests and usage.
+The initial unauthenticated endpoint experiment ignored an environment URL override and received 401 from the default endpoint; no inference ran.
+The committed certifier uses explicit native endpoint configuration and a kernel restriction to the local fixture port, with dummy credentials only.
+
+Reproduce the final focused checks from the mirror root:
+
+#+begin_example
+PYTHONPATH=$PWD /home/coder/.cache/pypoetry/virtualenvs/sucoder-_hu1CrVA-py3.12/bin/python -m pytest -q -p no:cacheprovider tests/test_dream_cache_certify.py tests/test_dream_prompt.py tests/test_dream_usage.py tests/test_dream_prompt_integration.py
+PYTHONPATH=$PWD /home/coder/.cache/pypoetry/virtualenvs/sucoder-_hu1CrVA-py3.12/bin/python -c 'from sucoder.cli import app; app()' dream certify-cache --harness claude --model claude-sonnet-4-6
+#+end_example
+
+No live dream, paid cache-acceptance request, repeat of a reserved native invocation, installation, GitHub push or memory-branch publication was performed for this implementation.
+Actual cache hits, minimum token thresholds, provider model availability and realized billing remain live acceptance questions.
