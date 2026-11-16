@@ -62,9 +62,9 @@ Verification logs, tested-source hashes and the partition counts are retained un
 
 Prepared by Sue.
 
-* Proposed discovery allocation
+* Version 3 discovery allocation
 
-The [[file:transcript-navigation.org::#allocation][November 15 design amendment]] proposes an automatic discovery ceiling for new jobs, derived from the actual wallet balance with author/closeout capacity preserved.
-Explicit positive discovery limits remain fixed, and every per-turn allowance must be frozen for replay.
-This proposal does not change the implemented whole-job wallet, unknown-call charges, retry semantics or unsupported financial/token ceilings.
-The current parser still accepts integer discovery limits only.
+The [[file:transcript-navigation.org::#allocation][navigation contract]] defines an automatic discovery ceiling for new jobs, derived from the actual wallet balance with author/closeout capacity preserved.
+Omitted/null =max_discovery_calls= uses auto; explicit positive limits remain fixed.
+Every per-turn allowance is saved before assignment and validated on replay; missing advice cannot produce a new paid request after assignment or reservation.
+The whole-job wallet, unknown-call charges, explicit retry semantics and unsupported financial/token ceilings retain their existing meanings.

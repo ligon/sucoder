@@ -4,7 +4,7 @@
 #+status: COMPLETE
 
 This completion record describes the original project-exploration launch.
-The [[file:essay-alignment.org][experience charter]] defines the current bare-command mode, and the proposed [[file:transcript-navigation.org][transcript-navigation amendment]] specifies the next paging/search and discovery-allocation changes.
+The [[file:essay-alignment.org][experience charter]] defines the current bare-command mode, and the [[file:transcript-navigation.org][transcript-navigation contract]] records version 3 paging/search, processing bounds and discovery allocation.
 
 * Approved scope
 
@@ -43,7 +43,9 @@ Independent skeptical review is required against the definition of done; no new 
 =sucoder dream= launches in the foreground, =--detach= starts a private worker and =--job PATH= resumes frozen settings and the same wallet.
 =dream status= and =dream budget= inspect the latest job for the exact current project path; explicit job paths remain usable after configured defaults change.
 The optional global/per-mirror =dream= block supplies harness/model, elapsed/call limits, closeout reserves and discovery limits.
-Defaults are 900 seconds, 40 native invocations, 30 closeout seconds, three closeout invocations, eight discovery turns and 128 KiB navigation delivery.
+Defaults are 900 seconds, 40 native invocations, 30 closeout seconds, three closeout invocations and 128 KiB navigation delivery.
+New jobs automatically allocate half the unreserved wallet calls to discovery, leaving author/closeout capacity; a fresh default wallet yields 20 turns.
+An explicit positive =max_discovery_calls= remains fixed; omitted/null uses auto, and saved jobs retain their resolved original ceiling.
 Exploration additionally leaves one ordinary author invocation; every new explorer reservation checks the wallet's live shared balance, while cached replay spends no new call.
 An existing shared wallet's policy takes precedence over configuration defaults; contradictory explicit budget overrides fail without changing it.
 

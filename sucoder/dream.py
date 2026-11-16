@@ -337,7 +337,16 @@ def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, i
         raise DreamError("Source request requires between one and max_units units")
     seen = set()
     for unit in units:
-        _object(unit, ("unit_id", "kind", "locator", "shareable"))
+        _object(unit, ("unit_id", "kind", "locator", "shareable"), ("processing", "expected_raw_sha256"))
+        if "expected_raw_sha256" in unit and (unit["kind"] != dream_view.KIND or
+                not isinstance(unit["expected_raw_sha256"], str) or
+                not re.fullmatch(r"[0-9a-f]{64}", unit["expected_raw_sha256"])):
+            raise DreamError("Expected raw digest requires rendered session evidence and SHA-256")
+        if "processing" in unit:
+            from . import dream_isolate
+            if unit["kind"] != dream_view.KIND:
+                raise DreamError("A processing policy requires rendered session evidence")
+            dream_isolate.validate(unit["processing"])
         uid = _text(unit["unit_id"], "unit_id")
         if uid in seen:
             raise DreamError("Duplicate unit_id: " + uid)

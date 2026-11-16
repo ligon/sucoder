@@ -15,7 +15,8 @@ import time
 import uuid
 
 from . import (attention, dream, dream_budget, dream_discover, dream_experience, dream_memory, dream_native,
-               dream_roles, dream_run, dream_view, dream_wiki, dream_retry, dream_leads, dream_local)
+               dream_roles, dream_run, dream_view, dream_wiki, dream_retry, dream_leads, dream_local,
+               dream_inventory, dream_isolate, dream_session_scan)
 from .config import AgentLauncher, BranchPrefixes, DreamSettings, MirrorSettings, _parse_dream
 from .dream import DreamError, canonical, digest
 from .observation_process import Budget
@@ -106,7 +107,8 @@ def _job(path):
             raise DreamError("Dream job directory must be private and account-owned", 3)
         header = _read(fd, "job.json")
         dream._object(header, ("contract", "job_id", "directory", "created_at", "project", "settings", "purpose", "budget_path"),
-                      ("mode", "navigation_version", "leads", "memory_origin"))
+                      ("mode", "navigation_version", "leads", "memory_origin", "navigation_limits", "processing",
+                       "inventory_sha256", "discovery_allocation"))
         if "leads" in header:
             dream_leads.validate(header["leads"])
         if header.get("mode", "project") not in MODES:
@@ -114,6 +116,15 @@ def _job(path):
         navigation = header.get("navigation_version", 1)
         if type(navigation) is not int or not 1 <= navigation <= dream_discover.NAVIGATION:
             raise DreamError("Invalid frozen exploratory navigation version", 3)
+        if navigation >= 3:
+            dream_session_scan.validate_limits(header.get("navigation_limits"))
+            dream_isolate.validate(header.get("processing"))
+            allocation = header.get("discovery_allocation", {})
+            if (allocation.get("contract") != "automatic-discovery-v1" or
+                    allocation.get("resolved") != header["settings"]["max_discovery_calls"] or
+                    allocation.get("mode") not in ("auto", "fixed") or
+                    not isinstance(header.get("inventory_sha256"), str)):
+                raise DreamError("Invalid frozen navigation allocation or inventory binding", 3)
         if header["contract"] != CONTRACT or header["job_id"] != path.name or header["directory"] != str(path):
             raise DreamError("Exploratory job identity changed", 3)
         if _read(fd, "identity.json") != dict(sha256=digest(canonical(header))):
@@ -196,6 +207,21 @@ def prepare(config, job_path=None, *, cwd=None, overrides=None, budget_path=None
             repositories={name: dict(path=str(root))})
         with dream_budget.open_job(plan, directory, target, supplied) as budget:
             frozen.update({key: budget.header["limits"][value] for key, value in policy_keys.items()})
+            allocation = None
+            if dream_discover.NAVIGATION >= 3:
+                available = budget.summary()["remaining_calls"]
+                reserve = budget.header["limits"]["reserve_calls"]
+                requested = frozen["max_discovery_calls"]
+                capacity = max(0, available - reserve - 1)
+                resolved = min(available // 2 if requested is None else requested, capacity)
+                if not resolved or budget.remaining() <= budget.header["limits"]["reserve_seconds"]:
+                    budget.fail("no unreserved discovery and author capacity at preparation")
+                frozen["max_discovery_calls"] = resolved
+                allocation = dict(contract="automatic-discovery-v1", mode="auto" if requested is None else "fixed",
+                    requested=requested, resolved=resolved, basis_remaining_calls=available,
+                    reserve_calls=reserve, author_calls=1, wallet=budget.descriptor())
+            elif frozen["max_discovery_calls"] is None:
+                frozen["max_discovery_calls"] = 8
             project_binding = dict(name=name, path=str(root), base_ref="refs/heads/" + branch, base_commit=commit)
             if memory_ref:
                 project_binding["memory_ref"] = memory_ref
@@ -204,16 +230,23 @@ def prepare(config, job_path=None, *, cwd=None, overrides=None, budget_path=None
             if dream_discover.NAVIGATION > 1:
                 # Version 1 stays implicit, so earlier headers (and their digests) are unchanged.
                 header["navigation_version"] = dream_discover.NAVIGATION
+            if allocation is not None:
+                header.update(discovery_allocation=allocation, navigation_limits=dict(dream_session_scan.LIMITS),
+                              processing=dict(dream_isolate.POLICY))
             recognized = dream_local.recognize(config, root) if memory_ref else None
             if recognized is not None:
                 header["memory_origin"] = dream_local.synchronize(_source(config, header, time.monotonic() + 30),
                     recognized, memory_ref, directory)
-            if dream_leads.VERSION:
-                source = _source(config, header, time.monotonic() + 30)
+            if dream_leads.VERSION or allocation is not None:
+                source = _source(config, header, min(time.monotonic() + 30,
+                    budget.deadline(dict(role="explorer")) if allocation is not None else budget.deadline()))
                 sessions = _sessions(config, source, header) if mode == "experience" else None
-                inventory = dream_discover.Inventory(source, commit, sessions=sessions,
-                    navigation=header.get("navigation_version", 1))
-                header["leads"] = dream_leads.snapshot(source, header, inventory)
+                inventory = _inventory(source, header, sessions)
+                if allocation is not None:
+                    header["inventory_sha256"] = digest(canonical(inventory.manifest))
+                    dream_run._store(fd, "inventory.json", canonical(inventory.manifest) + b"\n")
+                if dream_leads.VERSION:
+                    header["leads"] = dream_leads.snapshot(source, header, inventory)
             _store(fd, "job.json", header)
             _store(fd, "identity.json", dict(sha256=digest(canonical(header))))
             _store(fd, "prepared.json", dict(job_id=job_id, budget=budget.descriptor()))
@@ -241,17 +274,24 @@ def _base(source, header):
 
 
 def _discovery(config, fd, header, budget, *, attempt=1, transport=None, readonly=False):
-    deadline = time.monotonic() + 30 if readonly else budget.deadline()
+    deadline = time.monotonic() + 30 if readonly else budget.deadline(
+        dict(role="explorer") if header.get("navigation_version", 1) >= 3 else None)
     source = _source(config, header, deadline)
     sessions = None
-    if header.get("mode") == "experience":
+    frozen = None
+    if header.get("navigation_version", 1) >= 3:
+        frozen = dream._json(dream_run._read(fd, "inventory.json", INVENTORY_FILE_BYTES))
+        if digest(canonical(frozen)) != header["inventory_sha256"]:
+            raise DreamError("Frozen navigation inventory checksum differs", 3)
+        if header.get("mode") == "experience":
+            sessions = dict(sessions=frozen["sessions"], coverage=frozen["session_coverage"])
+    elif header.get("mode") == "experience":
         if readonly:
             # Replay uses the sessions pinned at discovery; a resumed session may have grown since.
             sessions = dream._json(dream_run._read(fd, "inventory.json", INVENTORY_FILE_BYTES)).get("sessions", [])
         else:
             sessions = _sessions(config, source, header)
-    inventory = dream_discover.Inventory(source, header["project"]["base_commit"], sessions=sessions,
-                                         navigation=header.get("navigation_version", 1))
+    inventory = _inventory(source, header, sessions)
     raw = canonical(inventory.manifest) + b"\n"
     if readonly:
         if dream_run._read(fd, "inventory.json", INVENTORY_FILE_BYTES) != raw:
@@ -273,12 +313,24 @@ def _discovery(config, fd, header, budget, *, attempt=1, transport=None, readonl
     return explorer.prepare(), native
 
 
+def _inventory(source, header, sessions):
+    if header.get("navigation_version", 1) >= 3:
+        return dream_discover.Inventory(source, header["project"]["base_commit"],
+            sessions=sessions["sessions"] if sessions is not None else None,
+            navigation=header["navigation_version"], limits=header["navigation_limits"], processing=header["processing"],
+            session_coverage=sessions["coverage"] if sessions is not None else None)
+    return dream_discover.Inventory(source, header["project"]["base_commit"], sessions=sessions,
+                                   navigation=header.get("navigation_version", 1))
+
+
 def _plan(config, fd, header, chosen, deadline):
     effective = _binding(config, header)
     source = _source(config, header, deadline)
     memory_ref = header["project"].get("memory_ref")
     request = dict(schema_version=1, repository=source.name, integration_ref=memory_ref or header["project"]["base_ref"],
         units=chosen["outcome"]["units"], limits=dict(max_elapsed_seconds=header["settings"]["max_total_seconds"]))
+    if header.get("navigation_version", 1) >= 3:
+        request["limits"]["max_source_bytes"] = dream_discover.MAX_SELECTED_BYTES
     topic = chosen["outcome"]["topic"]
     maintenance = ("Exploratory job " + header["job_id"] + ": " + _line(chosen["outcome"]["rationale"]))[:4096]
     _store(fd, "plan-intent.json", dict(request=request, maintenance=maintenance, topic=topic))
@@ -337,14 +389,19 @@ def _line(text):
 
 
 def _purpose(header, outcome):
+    purpose = header["purpose"]
+    if "navigation_coverage" in outcome:
+        qualification = (" Navigation was selective over mutable sources; traversal does not establish coherent query absence. "
+            "Scanned and delivered material is not accepted coverage; verify claims against the selected evidence.")
+        purpose = purpose[:4096 - len(qualification)] + qualification
     value = " Exploration: " + _line(outcome["rationale"])
     if outcome["questions"]:
         value += " Important open questions (investigate and record, never assume answers): " + "; ".join(_line(q) for q in outcome["questions"])
-    remaining = 4096 - len(header["purpose"])
+    remaining = 4096 - len(purpose)
     if len(value) > remaining:
         note = " [Further discovery reasoning/questions are retained in the private job report.]"
         value = value[:max(0, remaining - len(note))] + note if remaining >= len(note) else ""
-    return header["purpose"] + value
+    return purpose + value
 
 
 def _budget(header):
@@ -470,8 +527,12 @@ def _live_sessions(config):
 
 def _sessions(config, source, header):
     memory_ref = header["project"].get("memory_ref")
+    memory_commit = dream_memory.tip(source, memory_ref) if memory_ref else None
+    if header.get("navigation_version", 1) >= 3:
+        return dream_inventory.prepare(source, config=config, header=dict(header, inventory_memory_commit=memory_commit),
+                                       live=lambda: _live_sessions(config))
     return dream_experience.sessions(source, quiet_minutes=header["settings"].get("session_quiet_minutes", 30),
-        live=_live_sessions(config), memory_commit=dream_memory.tip(source, memory_ref) if memory_ref else None, config=config)
+        live=_live_sessions(config), memory_commit=memory_commit, config=config)
 
 
 def _inspect(config, fd, header, attempt):

@@ -71,7 +71,7 @@ def test_unusable_prerequisites_reject_before_native_startup(workspace, monkeypa
 def test_budget_too_small_for_discovery_and_author_makes_no_provider_call(workspace):
     repo, _, config, _ = workspace
     native = ExploringTransport(no_selection=True)
-    with pytest.raises(dream_budget.Exhausted, match="exploration allowance"):
+    with pytest.raises(dream_budget.Exhausted, match="no unreserved discovery and author capacity"):
         explore.start(config, cwd=repo, overrides=options(max_total_calls=4), transport=native)
     assert not native.calls
 

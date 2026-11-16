@@ -1,7 +1,7 @@
 #+TITLE: Red-team review of bounded transcript navigation
 #+AUTHOR: Sue
-#+DATE: 2026-11-15
-#+STATUS: REVIEW COMPLETE -- changes required before implementation
+#+DATE: 2026-11-16
+#+STATUS: REVIEW COMPLETE -- findings addressed; full-suite verification pending
 #+OPTIONS: toc:2 num:nil
 
 * Verdict and scope
@@ -9,16 +9,17 @@
 :CUSTOM_ID: verdict
 :END:
 
-The [[file:transcript-navigation.org][navigation proposal]] is not ready for implementation: two P1 findings and one P2 finding remain open.
+The [[file:transcript-navigation.org][navigation proposal]] at =5f892c7= was not ready for implementation: the original review found two P1 findings and one P2 finding.
 P1 means a correctness or deadline guarantee is unsupported; P2 means a remaining resource path needs a concrete bound.
 An independent review agent, =/root/navigation_red_team=, inspected the design at =5f892c7687ed9e5a141ce6c92c9d41a2af6aa674= against the existing implementation and tests.
 Sue separately reproduced the three counterexamples below.
-Version 3 does not exist yet; the reproductions exercise existing components and the proposed paging semantics, rather than a new implementation.
+Version 3 did not exist at the original review; those reproductions exercise the earlier components and proposed paging semantics.
 
 The review covers source consistency, resource bounds, cursor recovery, earlier-job replay and the evidence/publication boundary.
 The [[file:../dream-transcript-navigation-ledger.org][grounding ledger]], sections 2-5, anchors the existing reader, renderer, journal and receipt contracts.
-No runtime, parser, test or configuration behavior changed, and no native dream or provider verification was launched.
-The design now records these findings as [[file:transcript-navigation.org::#red-team-gates][implementation gates]]; recording them does not resolve them.
+The original review changed documentation only and launched no native dream or provider verification.
+Source line references in the original findings refer to the reviewed commit; the resolution section links the subsequent implementation tests.
+The original findings and reproductions follow; the [[#resolution][resolution section]] records the subsequent design and implementation review.
 
 * R1: P1 -- paged completion lacks a coherent source revision
 :PROPERTIES:
@@ -169,11 +170,33 @@ for n in (1000, 2000, 4000):
     print("render timing:", len(raw), round(time.monotonic() - started, 3), flush=True)
 #+end_src
 
+* Resolution -- 2026-11-16
+:PROPERTIES:
+:CUSTOM_ID: resolution
+:END:
+
+The human authorized revision and implementation on November 16.
+The revised [[file:transcript-navigation.org::#red-team-gates][implementation gates]] choose explicitly unfrozen completion, resumed-record raw digests, isolated processing, bounded enumeration, one atomic observation/cursor envelope and frozen per-turn advice.
+New admitted units carry an explicit processing policy; older units retain their original execution path and rendering bytes.
+
+- R1 :: Version 3 completion qualifies the mutable source revision, raw receipts preserve observed-byte digests, and continuation rejects changed records before applying block indices.
+- R2 :: A killable local worker bounds parsing/rendering and terminates its subprocess group; admission and snapshots use that boundary only when the unit's processing policy requires it.
+- R3 :: New preparation uses streaming enumeration, bounded candidates/metadata and chunked tail probes, with unknown remaining counts after an incomplete traversal.
+- Recovery :: Cursor bodies, public observations and raw receipts share one checksummed publish-once envelope.
+  Saved advice and its marker bind the step/history; existing reservations and assignments prevent regeneration if both advice artifacts disappear.
+  Replay validates committed envelopes rather than recomputing a scan under fresh timing.
+
+The implementation review also found and corrected JSON-escaping and final-cursor response-size accounting, a selection-to-admission raw-byte race, subprocess cleanup, and delivery beyond an explicit read end after an omission.
+Malformed-source errors now use stable bounded public codes, and unknown actual reads remain unknown through fallback responses and aggregate coverage.
+The exact counterexamples and recovery cases are covered by [[file:../../tests/test_dream_navigation.py][navigation regressions]] and [[file:../../tests/test_dream_navigation_recovery.py][journal and publication regressions]].
+The independent reviewer reports no remaining blockers in the reviewed paths.
+The [[file:transcript-navigation.org::#verification][implementation verification section]] records test results and their limits.
+
 * Verification boundary
 
-The independent review and parent reproductions support the three findings; they do not execute the proposed version 3 acceptance matrix.
+The original independent review and parent reproductions support the three findings against the original proposal.
 The earlier author-only ledger pass and successful document exports did not establish source-revision coherence, CPU bounds or bounded enumeration.
-No runtime change is included, so this review does not claim a new pytest result or resolved implementation defects.
-Next work is a concrete revision of the implementation gates followed by another design review.
+Subsequent implementation has received independent review and targeted regression coverage; the full project suite is still running at this checkpoint.
+No live dream or provider experiment was used to establish the new protocol's acceptance.
 
 Prepared by Sue (GPT-6 Codex).

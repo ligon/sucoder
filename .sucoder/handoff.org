@@ -1,21 +1,32 @@
 #+TITLE: SuCoder consolidated on main in the canonical mirror; publication pending
-#+DATE: 2026-11-15
-#+STATUS: DESIGN REVIEWED; BLOCKERS OPEN
+#+DATE: 2026-11-16
+#+STATUS: NAVIGATION IMPLEMENTED; FULL VERIFICATION IN PROGRESS
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
 * Transcript-navigation design, 2026-11-15
 
+On 2026-11-16 the human authorized revision and implementation after the red-team review.
+The revised protocol chooses explicitly unfrozen completion, raw receipts and resumed-record hashes, isolated processing, bounded enumeration, atomic lookup envelopes and frozen per-turn advice.
+An explicit processing policy on new admitted units preserves the execution path of earlier units.
+The independent reviewer found no remaining blockers after implementation hardening; tests use synthetic evidence and fake native transports.
+The targeted navigation/recovery/configuration group passes 113 cases.
+The full suite is running on a private frozen clone at =/home/coder/.sucoder/logs/dream-implementation/2026-11-16-navigation/full-checkout=; its staged tree is =82c9b33ea32c5e18ac07a6652e0e2efa10aca33d=.
+No additional registered worktree was created.
+Historical job =9268f638ee3a4e34afc2911a714cda77= still reports =published= with native startup replaced by an exception, retaining memory =f651866=.
+All ten changed source modules pass mypy; implementation artifacts and source hashes are in the adjacent verification directory.
+
 The human requested a concrete design update after reviewing experience dream =9268f638ee3a4e34afc2911a714cda77= and Anthropic's cookbook.
 The [[file:../docs/dream/transcript-navigation.org][design amendment]] specifies bounded record reads/search, opaque continuation cursors, separate scan/delivery/accepted coverage, and automatic discovery allocation for new version 3 jobs.
 The [[file:../docs/dream-transcript-navigation-ledger.org][grounding ledger]] identifies existing machinery and replay constraints.
-Runtime and parser behavior are not yet changed; the amendment gives the implementation queue and synthetic acceptance cases.
-No additional native dream or paid verification was launched for this design task.
+The November 16 implementation adds navigation version 3 and automatic allocation for omitted/null phase limits, with explicit fixed limits and earlier contracts preserved.
+No additional native dream or paid verification was launched for this work.
 
 An independent [[file:../docs/dream/transcript-navigation-review.org][red-team review]] found two high-priority blockers and one medium-priority gap: mixed source revisions can hide search hits, rendering can outlast a deadline within one record, and inventory enumeration remains unbounded before tail probes.
 The author reproduced all three with bounded synthetic inputs.
 The [[file:../docs/dream/transcript-navigation.org::#red-team-gates][implementation gates]] also require concrete cursor-commit and deadline-stopped replay protocols.
-The proposal needs revision and another review before runtime implementation.
+Those findings have been addressed by the revised protocol, implementation and independent followup review.
+The [[file:../docs/dream/transcript-navigation.org::#verification][verification section]] records the current acceptance boundary.
 
 The completed experience dream published =f651866= on =sucoder/memory= using ten native calls in about 172 seconds.
 It qualified stale notes but failed to recover the already-recorded Python 3.6/3.9 decision after three unavailable navigation requests, motivating this amendment.

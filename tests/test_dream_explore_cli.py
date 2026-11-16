@@ -234,6 +234,8 @@ result={key:task[key] for key in ('assignment_id','input_sha256','role')}
 result.update(failures=[],action='finish',path='',query='',offset=0,start=0,end=0,
     selections=[],topic='',rationale='Fixture consumed finite non-TTY stdin and selected no evidence.',
     questions=['Which connection deserves attention in a later session?'])
+if 'cursor' in task['result_schema']['properties']:
+    result['cursor']=''
 print(json.dumps(dict(type='item.completed',item=dict(type='agent_message',text=json.dumps(result)))))
 print(json.dumps(dict(type='turn.completed',usage={})))
 ''')

@@ -243,9 +243,10 @@ Project corrections become TODO tasks with TARGET and ACCEPTANCE metadata.
 The explicit =dream issues= command exports those tasks by marker, with source-provenance disclosure gates and no automatic filing or memory write-back.
 Earlier plans retain their original editorial briefs and reconstruct unchanged.
 
-* Transcript-navigation amendment -- 2026-11-15 (proposed)
+* Transcript-navigation amendment -- 2026-11-16
 
 The human requested a concrete design update after the November 14 experience dream and comparison with Anthropic's GitHub cookbook.
 [[file:transcript-navigation.org][Bounded transcript navigation and discovery allocation]] specifies navigation version 3, record-bounded reads/search, resumable cursors and automatic discovery allocation for new jobs.
 It retains selective evidence, =claude-view-v1= admission, exact receipt coverage and independent publication review.
-The current runtime and earlier job contracts are unchanged; implementation must satisfy that amendment's acceptance cases.
+New jobs use its version 3 navigation and allocation policy; earlier job contracts remain unchanged.
+The amendment's verification section records the current test and review boundary.

@@ -35,6 +35,8 @@ class ExploringTransport:
         result.update(failures=[], action="finish", path="", query="", offset=0, start=0, end=0,
             selections=[], topic="reply-evidence", rationale="Connect native delivery evidence with the summary limitation.",
             questions=[QUESTION])
+        if "cursor" in schema["properties"]:
+            result["cursor"] = ""
         if not self.no_selection:
             step = len(task["input"]["history"])
             if step == 0:
@@ -260,7 +262,7 @@ def test_shared_budget_leaves_closeout_reserved_and_never_resets_between_jobs(wo
     native = ExploringTransport(no_selection=True)
     jobs = [explore.start(config, cwd=repo, overrides=options(max_total_calls=8), budget_path=shared,
         transport=native) for _ in range(4)]
-    with pytest.raises(dream_budget.Exhausted, match="reserved for authorship, review"):
+    with pytest.raises(dream_budget.Exhausted, match="no unreserved discovery and author capacity"):
         explore.start(config, cwd=repo, overrides=options(max_total_calls=8), budget_path=shared, transport=native)
     summary = explore.budget_status(config, Path(jobs[-1]["job_path"]))
     assert summary["reserved_calls"] == 4 and summary["remaining_calls"] == 4
@@ -268,7 +270,9 @@ def test_shared_budget_leaves_closeout_reserved_and_never_resets_between_jobs(wo
     assert {header(job["job_path"])["budget_path"] for job in jobs} == {str(shared)}
 
 
-def test_immediate_selection_cannot_spend_the_last_author_invocation(workspace, clock):
+def test_immediate_selection_cannot_spend_the_last_author_invocation(workspace, clock, monkeypatch):
+    # Version 2 prepared a zero-capacity job; version 3 rejects that at preparation.
+    monkeypatch.setattr(dream_discover, "NAVIGATION", 2)
     planned(workspace)
     repo, _, config, _ = workspace
     shared = repo.parent.parent / "shared-budget"

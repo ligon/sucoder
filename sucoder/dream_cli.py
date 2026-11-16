@@ -38,7 +38,7 @@ def explore(
     max_total_calls: Optional[int] = typer.Option(None, "--max-total-calls", min=1, help="Whole-job native invocation ceiling, including discovery and review."),
     reserve_seconds: Optional[int] = typer.Option(None, "--reserve-seconds", min=0, help="Time reserved for review, repair and finalization."),
     reserve_calls: Optional[int] = typer.Option(None, "--reserve-calls", min=0, help="Invocations reserved for review, repair and finalization."),
-    discovery_calls: Optional[int] = typer.Option(None, "--discovery-calls", min=1, help="Maximum native investigation turns before authorship."),
+    discovery_calls: Optional[int] = typer.Option(None, "--discovery-calls", min=1, help="Fixed maximum investigation turns; default auto uses half the available calls while preserving authorship and closeout."),
     discovery_bytes: Optional[int] = typer.Option(None, "--discovery-bytes", min=1, help="Maximum project-navigation bytes delivered during discovery."),
     max_total_tokens: Optional[int] = typer.Option(None, "--max-total-tokens", min=1, help="Requested hard token ceiling; current native adapters reject it before provider work."),
     max_cost_usd: Optional[str] = typer.Option(None, "--max-cost-usd", help="Requested hard dollar ceiling; current native adapters reject it before provider work."),

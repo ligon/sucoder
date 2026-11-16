@@ -2623,6 +2623,7 @@ dream:
   model: YOUR_AVAILABLE_MODEL
   max_total_seconds: 900
   max_total_calls: 40
+  max_discovery_calls: null       # auto; a positive integer selects a fixed ceiling
   memory_branch: sucoder/memory   # "" keeps candidate branches
   inject: true                    # add the memory index to each launch
   inject_bytes: 2048
@@ -2635,7 +2636,9 @@ Harness/model can inherit the existing launcher selection; an absent model retur
 When the default configuration file is absent, dream derives user and project defaults and accepts =--harness= and =--model= without creating a config file or prompting for an agent.
 An explicit =--config= path must exist; malformed existing configuration is an error.
 There is no provider/model fallback after a failure.
-Bare-launch defaults allow eight discovery turns and 128 KiB navigation delivery, reserving 30 seconds and three invocations for closeout plus one ordinary invocation for authorship.
+Bare-launch defaults allow 128 KiB navigation delivery and automatically allocate half the currently available native calls to discovery, preserving 30 seconds and three closeout calls plus one ordinary author call.
+An omitted or null =max_discovery_calls= uses that policy: fresh total allowances of 16, 32 and 40 calls yield discovery ceilings of 8, 16 and 20.
+An explicit positive integer, including eight in an existing configuration, remains a fixed phase ceiling subject to the shared wallet.
 New jobs freeze a bounded memory index, topic list and open Talk/task leads into their first discovery navigation, counting these bytes toward the navigation allowance.
 Their starting seed prefers an open memory item, then a committed file changed since the latest memory evidence, then a randomly chosen committed file or finished-session window.
 The explorer follows that lead or explains its alternative; the seed and brief version stay frozen when the job resumes.
@@ -2668,8 +2671,10 @@ Default status/budget lookup selects the latest job for the exact project path; 
 =dream budget= reports aggregate discovery/editorial usage for the shared wallet; the candidate receipt's usage describes its editorial roles.
 Current native adapters reject requested hard token/dollar caps before provider work.
 See [[file:docs/dream/exploration.org][the exploratory launch contract and verification]].
-The proposed [[file:docs/dream/transcript-navigation.org][transcript-navigation amendment]] specifies bounded session paging/search, continuation cursors and automatic discovery allocation.
-It is a design for subsequent implementation; the current default remains eight discovery turns, and =--discovery-calls= selects an explicit ceiling.
+The [[file:docs/dream/transcript-navigation.org][transcript-navigation contract]] specifies bounded session paging/search, continuation cursors and automatic discovery allocation for new version 3 jobs.
+Session search can return an empty incomplete page with a continuation; terminal =complete_unfrozen= records traversal over mutable sources and never proves query absence in a frozen whole-file revision.
+Processing timeouts and unavailable/oversized ranges are explicit, and only reviewed selected receipt ranges count as accepted coverage.
+=--discovery-calls= selects a fixed ceiling; saved jobs retain their original settings, schemas and briefs.
 
 Reviewed dreams update a dedicated memory branch in place (=dream.memory_branch=, default =sucoder/memory=).
 The branch holds only =.sucoder/wiki/= and shares no history with code branches.

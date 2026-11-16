@@ -426,7 +426,7 @@ class DreamSettings:
     max_total_calls: int = 40
     reserve_seconds: int = 30
     reserve_calls: int = 3
-    max_discovery_calls: int = 8
+    max_discovery_calls: Optional[int] = None
     max_discovery_bytes: int = 131072
     memory_branch: Optional[str] = "sucoder/memory"
     inject: bool = True
@@ -898,6 +898,8 @@ def _parse_dream(
         raise ConfigError(f"`{label}.inject_bytes` must be an integer from 1 to 16384.")
     for key in fields:
         if key in ("harness", "model", "memory_branch", "inject", "checkout"):
+            continue
+        if key == "max_discovery_calls" and values[key] is None:
             continue
         minimum = 0 if key.startswith("reserve_") else 1
         if type(values[key]) is not int or values[key] < minimum:
