@@ -1,0 +1,70 @@
+#+TITLE: Dream prompt caching prior-art ledger
+#+AUTHOR: Sue
+#+DATE: 2026-11-16
+
+* 1. Task and baseline
+
+Design provider-aware prompt caching for Claude Code and OpenAI Codex dream agents, then obtain independent red-team review.
+The baseline is local main =dc62682=; this task changes documents only.
+Grounding uses GitNexus CLI query, direct source/test inspection, local native help/version output and official provider documentation consulted on 2026-11-16.
+The query index was one documentation commit behind; named source reads establish the current code facts.
+The [[file:dream/runs/sucoder-e3.org][E3 run]] reported 482,186 input tokens and zero cached reads on all 16 calls.
+
+* 2. Existing machinery
+
+- =sucoder/dream.py:37=, =canonical= :: Sorted canonical JSON underlies persisted identity and hashes; do not change it to optimize wire ordering.
+  =tests/test_dream_roles.py::test_mutated_saved_result_cannot_substitute_for_native_trace= checks trace/result binding.
+- =sucoder/dream_roles.py:124=, =Coordinator.call= :: Freezes advice and assignments, reserves before invocation, and validates cached results against native trace bytes and build identity.
+  =test_failed_native_request_is_not_automatically_repeated=, =test_concurrent_native_coordinator_cannot_repeat_provider_work= and =test_explicit_attempt_retries_without_overwriting_failed_attempt= cover recovery boundaries.
+- =sucoder/dream_discover.py:449=, =Explorer.make_assignment= and =sucoder/dream_navigation.py:298=, =prepare= :: Discovery resends accumulated history, frozen leads and fresh advice in every semantic assignment.
+  =tests/test_dream_navigation_recovery.py::test_interrupted_envelope_publication_recovers_without_repeating_native_call= covers its observation commit point.
+- =sucoder/dream_native.py:151=, =environment=; =:172=, =command=; =:245=, =invoke= :: Fresh isolated native homes, authentication-only inheritance, strict schemas, disabled tools, bounded capture and Landlock process-tree confinement.
+  =tests/test_dream_native.py= covers kernel denial, exact stdin, environment isolation, native flags and strict trace parsing.
+  =invoke= sends canonical assignment JSON as one stdin prompt; it exposes no provider cache breakpoint API.
+- =sucoder/dream_native.py:192=, =parse_trace= :: Preserves raw native usage in the result wrapper; Claude can report cache reads/writes and Codex can report cached input.
+  Existing usage fixtures test ordinary tokens, not cross-provider normalization or cache economics.
+- =sucoder/dream_budget.py:166=, =Job.summary= :: Sums native =input_tokens= and output fields without a provider-specific definition of total input; unknown cost remains unknown.
+  =tests/test_dream_budget.py::test_reservations_and_reported_usage_survive_restart= and =test_unknown_reservation_stays_charged_and_cannot_be_reissued= anchor persistence and uncertainty.
+- =sucoder/dream_editor.py:394=, =WikiEditor.prepare= :: Separate authorship, repair and independent review with prior support and selected evidence; caching must preserve those information boundaries.
+  =tests/test_dream_editor.py= and =tests/test_dream_editorial.py= cover preservation and recorded human authority.
+- =tests/codex_app_server.py:329=, =AppServer= :: A recording fake-model harness for the real installed native binary exists.
+  Reuse its testing pattern for wire inspection; it is not a production dream transport and loads different runtime state.
+
+* 3. Definitions and conventions
+
+An assignment is a frozen semantic request, identified by its canonical bytes, input digest, role and attempt.
+A provider prompt cache reuses computed input-prefix state; it supplies neither a prior result nor evidence of successful execution.
+The existing private result cache instead replays a completed validated result without provider startup.
+Cache reads, cache writes, uncached input, total input, output and reported currency are separate quantities.
+On OpenAI's documented Responses API, input totals include cache reads/writes; on Anthropic's Messages API, =input_tokens= excludes both and total is their sum.
+Native CLI usage must be mapped from its verified event format rather than inferred from an API field's spelling.
+New provider features require an eligible request boundary as well as identical bytes; a common substring inside a single changing prompt does not establish cache eligibility.
+
+* 4. Invariants
+
+Keep exact source admission, independent review, prior-support preservation, immutable job settings, shared wall-clock/call budgets and compare-and-swap publication.
+Keep evidence and wiki text at data priority; they must never become system/developer instructions to gain caching.
+Earlier job assignments, traces, usage and receipts retain their old interpretation and replay without inference.
+Cache expiry, eviction, unavailable telemetry and a zero hit rate do not authorize another paid request or a model/account/transport switch.
+Fresh native isolation remains the default; a retained discovery process or a direct provider API adapter requires a separate reviewed change.
+Cache controls and keys are optimization hints, never evidence-admission or access-control mechanisms.
+
+* 5. Reuse decisions
+
+- Reuse :: Existing canonical identity, artifact store, role lock, native confinement, authentication staging, publication and shared wallet.
+- Extend :: A versioned request manifest binds the semantic assignment to separate instructions, data blocks, wire bytes and native settings.
+  Existing traces bind one canonical stdin blob and cannot describe separate system/user surfaces.
+- Extend :: Frozen native capability/build profiles and deterministic prompt rendering; native flags can expose a stable instruction surface without changing evidence authority.
+- New :: A common prompt plan distinguishes trusted policy, untrusted stable data, append-only observations and volatile control data.
+  Full user-history caching requires a proven native message/block adapter; field reordering alone is not such an adapter.
+- Extend :: Provider-aware usage normalization, missing-field counters and native-versus-estimated cost reporting, leaving old persisted totals unchanged.
+- Defer :: API backends, long-lived agent sessions, prewarming, speculative calls and semantic history compaction; none is necessary for the first native-prefix slice.
+
+* 6. Decisions and verification boundary
+
+The design chooses native-only delivery, an initial instruction-prefix slice for both harnesses, and an explicit gate before claiming caching of untrusted data/history.
+This is a scope decision: it gives a feasible first slice without claiming that the present one-prompt transport can cache the expensive accumulated history.
+No paid compatibility probe, live Claude run, runtime configuration, implementation or deployment is authorized by this design task.
+The design and its independent review must state which capabilities remain unverified on the installed builds.
+
+Prepared by Sue (GPT-6 Codex).
