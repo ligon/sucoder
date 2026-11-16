@@ -487,7 +487,7 @@ def _open_private_directory(path):
 
 
 def create_plan(config, mirror, sources, base, *, maintenance=None, topic=None, publication=None,
-                project_commit=None, memory_origin=None):
+                project_commit=None, memory_origin=None, inspection_deadline=None):
     """``publication=None`` derives in-place publication from the mirror's
     configured memory branch, so an explicit plan against it behaves like a
     bare dream; any other base keeps candidate publication."""
@@ -503,7 +503,8 @@ def create_plan(config, mirror, sources, base, *, maintenance=None, topic=None, 
         if len(data) > MAX_CATALOG_BYTES:
             raise DreamError("Source catalog exceeds its byte allowance")
         plan = build_plan(config, mirror, _json(data), base, maintenance=maintenance, topic=topic,
-                          publication=publication, project_commit=project_commit, memory_origin=memory_origin)
+                          publication=publication, project_commit=project_commit, memory_origin=memory_origin,
+                          inspection_deadline=inspection_deadline)
         plan_id = digest(canonical(plan))
         plan["plan_id"] = plan_id
         root = (config.log_dir or Path("~/.sucoder/logs")).expanduser().resolve() / "dream"

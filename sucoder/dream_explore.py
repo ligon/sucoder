@@ -355,7 +355,8 @@ def _plan(config, fd, header, chosen, deadline):
             value = dream.create_plan(effective, source.name, Path(header["directory"]) / "sources.json",
                 request["integration_ref"], maintenance=maintenance, topic=topic,
                 publication="in_place" if memory_ref else None,
-                project_commit=header["project"]["base_commit"], memory_origin=header.get("memory_origin"))
+                project_commit=header["project"]["base_commit"], memory_origin=header.get("memory_origin"),
+                **(dict(inspection_deadline=deadline) if header.get("navigation_version", 1) >= 3 else {}))
             path = Path(value["plan_path"])
         pointer = dict(plan_path=str(path))
         _store(fd, "plan-pointer.json", pointer)

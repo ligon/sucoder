@@ -9,7 +9,7 @@ import time
 import pytest
 
 from sucoder import dream, dream_budget, dream_explore as explore, dream_native, dream_run
-from sucoder import dream_navigation, dream_isolate
+from sucoder import dream_navigation, dream_isolate, dream_view
 from sucoder.config import ConfigError, _parse_dream
 from tests.test_dream import git, workspace  # noqa: F401
 from tests.test_dream_explore import ExploringTransport, clock, options  # noqa: F401
@@ -291,3 +291,35 @@ def test_malformed_source_is_never_counted_as_known_zero_reads(workspace, clock,
     assert coverage["raw_scanned_bytes"] is None and coverage["unknown_actual_reads"]
     assert "\u754c" not in json.dumps(native.calls[1]["input"], ensure_ascii=False)
     assert explore.status(config, job)["state"] == "no_selection"
+
+
+def test_new_plan_admission_keeps_the_existing_job_deadline(workspace, no_live, monkeypatch):
+    repo, _, config, _ = workspace
+    path = write_session(Path(os.environ["HOME"]), repo)
+    def slow(*args):
+        time.sleep(10)
+        raise AssertionError("admission outlived the job deadline")
+    monkeypatch.setattr(dream_view, "_processed", slow)
+    native = Scripted(lambda task: dict(selections=[dict(path="@sessions/" + SID, start=0, end=path.stat().st_size)]))
+    started = time.monotonic()
+    with pytest.raises(dream_budget.Exhausted, match="processing_deadline"):
+        explore.start(config, cwd=repo, overrides=options(max_total_seconds=2, reserve_seconds=0), transport=native)
+    assert time.monotonic() - started < 4
+    assert len(native.calls) == 1 and native.calls[0]["role"] == "explorer"
+
+
+def test_explicit_planning_can_use_a_shorter_inspection_deadline(workspace, tmp_path, monkeypatch):
+    repo, _, config, _ = workspace
+    path = write_session(Path(os.environ["HOME"]), repo)
+    catalog = tmp_path / "bounded-source.json"
+    catalog.write_bytes(dream.canonical(dict(schema_version=1, repository="sample", integration_ref="refs/heads/main",
+        units=[dict(unit_id="session", kind="claude-view", shareable=False, processing=dream_isolate.POLICY,
+                    locator=dict(path=str(path), thread_id=SID, byte_start=0, byte_end=path.stat().st_size))])))
+    def slow(*args):
+        time.sleep(10)
+        raise AssertionError("admission refreshed inspection time")
+    monkeypatch.setattr(dream_view, "_processed", slow)
+    started = time.monotonic()
+    with pytest.raises(dream_isolate.ProcessingError, match="processing_deadline"):
+        dream.create_plan(config, "sample", catalog, "refs/heads/main", inspection_deadline=time.monotonic() + 0.3)
+    assert time.monotonic() - started < 2
