@@ -352,8 +352,13 @@ class WikiCoordinator(dream_roles.Coordinator):
 
 
 def run(config, mirror, plan_path, harness, model, attempt=1, mode="wiki", purpose=PURPOSE, *, transport=None,
-        budget_path=None, budget_limits=None):
+        budget_path=None, budget_limits=None, prompt_profile=None, prompt_layout=None):
+    layout = prompt_layout if prompt_layout is not None else ("stable" if prompt_profile is not None else "legacy")
+    if layout not in ("legacy", "stable") or (prompt_profile is not None and layout != "stable"):
+        raise DreamError("Prompt layout must be legacy or stable and match its frozen profile")
     if mode == "notes":
+        if layout != "legacy":
+            raise DreamError("Stable prompt delivery requires wiki mode")
         with dream_run._directory(config, plan_path) as (fd, directory):
             if any(u["kind"] == dream_view.KIND for u in dream_run._load(fd, directory.name, mirror)["units"]):
                 raise DreamError("Rendered session windows require wiki mode")
@@ -367,6 +372,9 @@ def run(config, mirror, plan_path, harness, model, attempt=1, mode="wiki", purpo
     dream._text(purpose, "dream purpose")
     if type(attempt) is not int or not 1 <= attempt <= 1000000:
         raise DreamError("Invalid native attempt number")
+    if layout == "stable" and prompt_profile is None:
+        from . import dream_prompt_native
+        prompt_profile = dream_prompt_native.load_profile(config, harness, model, time.monotonic() + 15)
     with dream_run._directory(config, plan_path) as (fd, directory):
         plan = dream_run._load(fd, directory.name, mirror)
         if any(not unit["shareable"] for unit in plan["units"]):
@@ -382,21 +390,30 @@ def run(config, mirror, plan_path, harness, model, attempt=1, mode="wiki", purpo
                 budget.fail("elapsed allowance exhausted")
             deadline = min(time.monotonic() + plan["limits"]["max_elapsed_seconds"], budget.deadline())
             _, source_readers = dream_run._snapshot(config, mirror, plan, fd, deadline)
+            if transport is None and prompt_profile is not None:
+                from . import dream_prompt_native
+                transport = dream_prompt_native.Transport(prompt_profile)
             transport = transport or dream_native.Transport(harness, deadline)
-            reused = dream_progress.try_reuse(plan, fd, source_readers[mirror], harness, model,
-                                             transport.version, purpose, deadline)
+            reused = (dream_progress.try_reuse(plan, fd, source_readers[mirror], harness, model,
+                                             transport.version, purpose, deadline) if prompt_profile is None else None)
             if reused is not None:
                 return reused
             from . import dream_curate, dream_editor, dream_prefix
-            prefixes = dream_prefix.discover(plan, fd, source_readers[mirror], harness, model, transport.version, purpose, deadline)
+            prefixes = (dream_prefix.discover(plan, fd, source_readers[mirror], harness, model, transport.version, purpose, deadline)
+                        if prompt_profile is None else [])
             coordinator = dream_editor.Editor(plan, fd, harness, model, deadline, transport,
                 attempt=attempt, purpose=purpose, source=source_readers[mirror], prefixes=prefixes)
+            if prompt_profile is not None:
+                from . import dream_prompt
+                dream_prompt.attach(coordinator, prompt_profile)
             budget.attach(coordinator)
             prefix = "native-" + coordinator.run_id
             spec = dict(contract=coordinator.contract, run_id=coordinator.run_id, harness=harness, model=model,
                 native_version=coordinator.expected_version, attempt=attempt, purpose=purpose, budget=budget.descriptor())
             if prefixes:
                 spec["prefixes"] = prefixes
+            if prompt_profile is not None:
+                spec["prompt_profile"] = prompt_profile
             dream_run._store(fd, prefix + "-spec.json", canonical(spec) + b"\n")
             with dream_roles.run_lock(fd, prefix):
                 pages, receipt = coordinator.prepare()
@@ -407,8 +424,8 @@ def run(config, mirror, plan_path, harness, model, attempt=1, mode="wiki", purpo
 
 
 def restore(plan, fd, run_id, deadline):
-    spec = dream._json(dream_run._read(fd, "native-" + run_id + "-spec.json", 16384))
-    dream._object(spec, ("contract", "run_id", "harness", "model", "native_version", "attempt", "purpose"), ("prefixes", "budget"))
+    spec = dream._json(dream_run._read(fd, "native-" + run_id + "-spec.json", dream_run.MAX_PLAN_BYTES))
+    dream._object(spec, ("contract", "run_id", "harness", "model", "native_version", "attempt", "purpose"), ("prefixes", "budget", "prompt_profile"))
     from . import dream_curate, dream_author, dream_editor
     if spec["contract"] not in (CONTRACT, LEGACY_CONTRACT, dream_curate.CONTRACT, dream_author.CONTRACT, dream_editor.CONTRACT) or spec["run_id"] != run_id or spec["harness"] not in ("codex", "claude"):
         raise DreamError("Invalid wiki run specification")
@@ -426,6 +443,9 @@ def restore(plan, fd, run_id, deadline):
         dream_curate.Curator(plan, fd, spec["harness"], spec["model"], deadline, no_inference, **parameters)
         if spec["contract"] == dream_curate.CONTRACT else
         WikiCoordinator(plan, fd, spec["harness"], spec["model"], deadline, no_inference, contract=spec["contract"], **parameters))
+    if "prompt_profile" in spec:
+        from . import dream_prompt
+        dream_prompt.attach(coordinator, spec["prompt_profile"])
     from . import dream_budget
     with dream_budget.restore(spec.get("budget")) as budget:
         if budget is not None:

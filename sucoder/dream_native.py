@@ -81,7 +81,7 @@ class FilesystemBoundary:
         os.close(self.fd)
 
 
-def capture(argv, payload, cwd, env, deadline, boundary=None, limit=MAX_TRACE):
+def capture(argv, payload, cwd, env, deadline, boundary=None, limit=MAX_TRACE, *, extra_fds=()):
     """Byte-preserving stdin/stdout transport with deadlines and pipe limits.
 
     Reuses observation_process's selector/process-group pattern, adding the
@@ -96,7 +96,7 @@ def capture(argv, payload, cwd, env, deadline, boundary=None, limit=MAX_TRACE):
             child = subprocess.Popen(argv, cwd=cwd, env=env, stdin=input_stream,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
                 preexec_fn=boundary.enter if boundary else None,
-                pass_fds=(boundary.fd,) if boundary else ())
+                pass_fds=tuple(extra_fds) + ((boundary.fd,) if boundary else ()))
         except (OSError, subprocess.SubprocessError):
             raise DreamError("Native harness could not start inside its boundary", 3) from None
         streams = [bytearray(), bytearray()]

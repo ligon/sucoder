@@ -29,6 +29,7 @@ def explore(
     ctx: typer.Context,
     harness: Optional[str] = typer.Option(None, "--harness", help="Native codex/claude; otherwise use configured defaults."),
     model: Optional[str] = typer.Option(None, "--model", help="Native model; otherwise use configured defaults."),
+    prompt_layout: Optional[str] = typer.Option(None, "--prompt-layout", help="legacy (default) or stable; stable requires a certified native instruction profile."),
     purpose: Optional[str] = typer.Option(None, "--purpose", help="What the dream should help readers understand; topics remain agent-selected."),
     job_path: Optional[Path] = typer.Option(None, "--job", help="Resume this private exploratory job with its frozen settings and remaining allowance."),
     budget_path: Optional[Path] = typer.Option(None, "--budget", help="Explicit shared private budget directory for a new job."),
@@ -54,7 +55,7 @@ def explore(
             raise typer.BadParameter("Put explicit-command options after the subcommand; unused dream options: " + ", ".join(supplied))
         return
     from . import dream_explore
-    overrides = dict(harness=harness, model=model, purpose=purpose,
+    overrides = dict(harness=harness, model=model, purpose=purpose, prompt_layout=prompt_layout,
         max_total_seconds=max_total_seconds, max_total_calls=max_total_calls,
         reserve_seconds=reserve_seconds, reserve_calls=reserve_calls,
         max_discovery_calls=discovery_calls, max_discovery_bytes=discovery_bytes,
@@ -68,6 +69,19 @@ def explore(
     else:
         _data_command(ctx, "dream_job", dream_explore.start, job_path,
             overrides=overrides, budget_path=budget_path, attempt=attempt, **retry)
+
+
+@app.command("certify-cache")
+def certify_cache(
+    ctx: typer.Context,
+    harness: str = typer.Option(..., "--harness", help="Installed codex or claude build to test."),
+    model: str = typer.Option(..., "--model", help="Freeze this model name; no real inference is sent."),
+    seconds: int = typer.Option(120, "--seconds", min=1, max=120, help="Whole offline-check elapsed allowance; at most two native invocations per production variant."),
+    auth_route: Optional[str] = typer.Option(None, "--auth-route", help="Synthetic environment-api-key or native-credentials; default: observed route."),
+):
+    """Check two fresh native requests against a local fixture with dummy credentials."""
+    from . import dream_cache_certify
+    _data_command(ctx, "dream_cache_certify", dream_cache_certify.certify, harness, model, seconds=seconds, route=auth_route)
 
 
 def _detach(config, config_path, job_path=None, *, overrides=None, budget_path=None, attempt=1, retry_seconds=None):
@@ -148,6 +162,7 @@ def run(
     model: Optional[str] = typer.Option(None, "--model", help="Required for native roles; sends admitted evidence and prior wiki to this model's provider."),
     attempt: int = typer.Option(1, "--attempt", min=1, help="Explicit native attempt number; every attempt shares the persisted job budget."),
     mode: str = typer.Option("wiki", "--mode", help="Native output: wiki author/editor (default) or legacy notes."),
+    prompt_layout: Optional[str] = typer.Option(None, "--prompt-layout", help="legacy or stable; stable requires an offline-certified native profile and wiki mode."),
     purpose: str = typer.Option(dream_wiki.PURPOSE, "--purpose", show_default=False, help="What the wiki should help readers understand; wiki mode only."),
     budget_path: Optional[Path] = typer.Option(None, "--budget", help="Private persistent job-budget directory; defaults to this plan's job-budget. Share explicitly across plans."),
     max_total_seconds: Optional[int] = typer.Option(None, "--max-total-seconds", min=1, help="Immutable whole-job elapsed ceiling; defaults to the plan's elapsed limit."),
@@ -160,13 +175,13 @@ def run(
     """Prepare a candidate on a new dream branch, preserving worktree and index."""
     policy = dict(max_elapsed_seconds=max_total_seconds, max_native_calls=max_total_calls,
         reserve_seconds=reserve_seconds, reserve_calls=reserve_calls, max_total_tokens=max_total_tokens, max_cost_usd=max_cost_usd)
-    if harness == "fixture" and (budget_path is not None or any(value is not None for value in policy.values())):
+    if harness == "fixture" and (budget_path is not None or prompt_layout not in (None, "legacy") or any(value is not None for value in policy.values())):
         raise typer.BadParameter("Job budgets apply to native codex/claude execution")
     if harness == "fixture" and model is None and attempt == 1 and mode in ("wiki", "notes") and purpose == dream_wiki.PURPOSE:
         _data_command(ctx, "dream_run", dream_run.run_fixture, mirror, plan_path, harness)
     else:
         _data_command(ctx, "dream_run", dream_wiki.run, mirror, plan_path, harness, model, attempt, mode, purpose,
-            budget_path=budget_path, budget_limits=policy)
+            budget_path=budget_path, budget_limits=policy, prompt_layout=prompt_layout)
 
 
 @app.command("budget")

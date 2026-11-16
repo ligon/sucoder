@@ -445,6 +445,9 @@ class Explorer(dream_roles.Coordinator):
         if "leads" in header:
             self.brief += dream_leads.BRIEF
         self.run_id = digest(canonical([CONTRACT, plan["plan_id"], attempt, self.expected_version, self.brief, self.schema]))
+        if "prompt_profile" in header:
+            from . import dream_prompt
+            dream_prompt.attach(self, header["prompt_profile"])
 
     def make_assignment(self, role, inputs):
         value = dict(contract=CONTRACT, run_id=self.run_id, role=role, brief=self.brief, input=inputs,

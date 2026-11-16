@@ -1,4 +1,4 @@
-#+TITLE: Independent red-team review of the native prompt-caching design
+#+TITLE: Independent red-team review of native dream prompt caching
 #+AUTHOR: Sue
 #+DATE: 2026-11-16
 #+STATUS: FINDINGS ADDRESSED; BOTH FOLLOWUP REVIEWS ACCEPTED
@@ -11,6 +11,7 @@ One focused on native/provider feasibility and accounting, and one on integrity,
 The reviewed draft is commit =7c75121=; original line references below refer to that version.
 The final revised body reviewed in followup has git blob =f32c1fa941e4d208c1b2a43c268e578a8d66fb48=; status metadata and the review backlink subsequently changed.
 No live native inference or paid cache-acceptance request was run.
+The implementation followup below uses synthetic fixtures only.
 
 * Original findings and dispositions
 
@@ -98,5 +99,31 @@ No implementation, live cache hit, native memfd compatibility or monetary saving
 The author accepted all five original findings and the additional launcher finding, and incorporated their fixes.
 Both reviewers accepted the final revised design within its phased scope and found no remaining design blocker.
 Implementation must satisfy the [[file:prompt-caching.org::#gates][acceptance gates]] before enabling a profile.
+
+* Implementation followup, 2026-11-16
+
+The same integrity and provider reviewers independently inspected the implementation and exercised pure/synthetic failure cases without provider work.
+They found the following implementation gaps, which the author addressed before acceptance:
+
+- Credential copy race :: Source-account checks could both observe account A while an intervening copy staged account B.
+  The transport now derives observable identity from the actual private staged copy and rejects a different account before capture.
+  Both reviewers independently reproduced rejection using synthetic A/B credentials, including switching the source back to A before the final check.
+- Incomplete cache eligibility comparison :: A stable prefix could still include external tools, changing native instructions or an unsupported explicit-only cache mode with no eligible breakpoint.
+  Certification now checks all tool declarations, initial consecutive developer placement, exact policy delivery, cache mode, cache key, service tier, schema and other request settings.
+  Pure regressions reject late tools, assistant-role policy, nonconsecutive developer policy, explicit-only mode without a supported marker and prewarming.
+- Fixture-only schema coverage :: One reviewer policy and a small answer schema did not establish the declared production family.
+  Certification now generates all 14 current policy/schema pairs from production factories, emits schema-valid synthetic replies, requires two fresh matching captures within every pair and records allowed digests.
+  The request manifest rejects an uncovered policy or actual schema before reservation.
+- Compressed-body expansion :: Decompressing before checking the expanded size could allocate beyond the fixture bound.
+  The initial certifier rejects compressed requests before decoding and caps aggregate raw capture bytes at 4 MiB.
+- Report/read bound mismatch :: A successful report could exceed the loader's earlier 1 MiB allowance.
+  Both paths now use one 8 MiB limit, and certification checks the serialized report before publishing a usable profile.
+
+The integrity reviewer found the assignment reconstruction, envelope-before-reservation ordering, profile-bound run identity, reservation/trace checks and legacy dispatch coherent, with no path automatically repeating a reserved native request.
+The provider reviewer verified all 14 generated fixture results against actual schemas and found no remaining blocker after the eligibility, variant and boundedness fixes.
+The author also found and corrected nested object ordering that changed rendered bytes after canonical private storage; replay regressions now cover the complete stable lifecycle for both fixture adapters with native startup and authentication forbidden.
+Actual offline captures certify Claude =2.1.323= for the tested model/route and reject Codex =0.167.1= for exposed additional tools.
+The rejection remains authoritative; the implementation neither relaxes tools nor retains a native process to manufacture reuse.
+These checks establish request construction and usage mapping, not live cache hits or monetary savings.
 
 Recorded by Sue (GPT-6 Codex).

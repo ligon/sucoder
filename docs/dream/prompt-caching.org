@@ -1,7 +1,7 @@
 #+TITLE: Prompt caching for native dream agents
 #+AUTHOR: Sue
 #+DATE: 2026-11-16
-#+STATUS: DESIGN REVIEWED; IMPLEMENTATION AND NATIVE CERTIFICATION PENDING
+#+STATUS: IMPLEMENTED; CLAUDE INSTRUCTION DELIVERY CERTIFIED OFFLINE; CURRENT CODEX BUILD BLOCKED
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
 * Purpose and scope
@@ -104,8 +104,8 @@ When identity is unavailable, record =account_continuity: unverified=; an opaque
 Do not persist/hash tokens or credential-file contents, and never automatically switch authentication or billing routes.
 
 Certification distinguishes three observations: a stable application-controlled surface, a certified eligible provider prefix, and an observed live cache hit.
-Both initial instruction profiles and later block profiles require a two-request recording fake-provider test of the actual native request.
-Change assignment IDs, advice and scratch paths between the requests; verify the prefix bytes, authority, cache-affecting settings and an eligible write/lookup boundary remain reusable.
+Both initial instruction profiles and later block profiles require two fresh recording fake-provider captures for each allowed policy/schema pair.
+Change assignment IDs, advice and scratch paths between each pair's requests; verify the prefix bytes, authority, cache-affecting settings and an eligible write/lookup boundary remain reusable.
 If the build cannot expose a recording test path while preserving the production request semantics, eligibility stays unverified and no =stable= profile is certified for that build.
 Flag help, stable file bytes and a successful negative isolation test do not replace that request-level evidence.
 An actual provider hit remains a separately authorized live observation; recording tests establish request construction rather than provider cache state.
@@ -260,7 +260,7 @@ All cold calls, misses, repairs and unknown outcomes count toward the existing c
 
 1. Usage and bindings :: Add versioned normalization and delivery manifests with fake transports only.
    Establish old-job replay with provider startup forbidden, including the real published E3 job.
-2. Native instruction profiles :: Add deterministic trusted-policy rendering and mandatory two-request fake-provider wire certification for each native harness/build.
+2. Native instruction profiles :: Add deterministic trusted-policy rendering and mandatory paired fake-provider wire certification for every allowed policy/schema variant of each native harness/build.
    Retain =legacy= as the rollout default until the relevant native build passes its full negative/isolation suite.
 3. Native data/history profiles :: Certify each harness independently against actual captured requests; if unsupported, keep the visible instruction-only capability and report the missing boundary mechanism.
    No release claim of full history caching is allowed on the strength of API documentation or CLI help alone.
@@ -286,7 +286,63 @@ Required deterministic cases include:
 
 Before implementation edits, run the project-required GitNexus upstream impact analysis on changed runtime symbols and report HIGH/CRITICAL risks.
 Before a commit, run change detection; run targeted pytest and the appropriate broader project checks for the implemented slice.
-No runtime implementation or live cache test is claimed by this document.
+The design review itself claimed neither runtime implementation nor a live cache test.
 The [[file:prompt-caching-review.org][independent review record]] preserves five original findings, an additional launcher feasibility finding, their resolutions and both reviewers' final acceptance within this phased scope.
+
+* Implemented interface and acceptance, 2026-11-16
+:PROPERTIES:
+:CUSTOM_ID: implemented
+:END:
+
+The human authorized implementation after review.
+The default remains =legacy=; =dream.prompt_layout: stable= or exploratory =--prompt-layout stable= applies only to new jobs.
+An explicit wiki writer selects it with =dream run MIRROR --plan PLAN --harness HARNESS --model MODEL --prompt-layout stable=; notes mode retains legacy delivery.
+Resumed jobs use their frozen profile, not today's configuration.
+
+#+begin_example
+sucoder dream certify-cache --harness claude --model claude-sonnet-4-6
+sucoder dream --harness claude --model claude-sonnet-4-6 --prompt-layout stable
+#+end_example
+
+The first command performs offline certification only; the second launches an ordinary budgeted dream and sends its admitted evidence to the selected provider.
+Certification uses dummy authentication in fresh temporary homes, a local HTTP/WebSocket recording server and the production filesystem boundary plus a TCP restriction to the fixture port.
+Default provider ports are denied, and real credentials, transcripts and wiki contents are never seeded.
+The check allows at most 120 seconds and two native request invocations per production variant, currently 28 across 14 variants; native version probes are separate local subprocesses.
+The 14 pairs cover project/experience discovery, with/without memory leads, regular/finish-only schemas, and author/repair/reviewer policies for editorial versions 1 and 2.
+The fixture emits a schema-valid synthetic result for each actual output schema.
+It records raw synthetic requests and usage, compares the complete eligible prefix and cache settings within each pair, and rejects external tools, unsupported cache modes, compression and exceeded byte/time bounds.
+The private report is bounded to 8 MiB, with at most 4 MiB of captured request bodies.
+
+Certificates live under =<log_dir>/dream-profiles/= and bind executable fingerprints, launcher, model, authentication route, frozen command template and the policy/schema catalog.
+A successful report yields =state: certified=; =state: uncertified= is an inspected unsupported capability and creates no usable profile.
+Inspect the returned JSON state even when the diagnostic command exits successfully.
+Stable launch requires the matching successful report before creating a new exploratory job or reserving a native call.
+Each assignment must match a certified policy/schema pair; unsupported variants fail without relaxing the schema or falling back to legacy.
+Native upgrades, model/route changes and changed policy/schema catalogs require a new certificate for new jobs.
+Raw credentials and credential-file digests never enter the certificate or job.
+Before each launch, the transport validates safely observable identity from the actual staged credential copy as well as the original route, preventing a source-check/copy account-switch race.
+Unavailable principal metadata remains explicitly unverified.
+
+The installed Claude =2.1.323= passed all 28 fresh captures for =claude-sonnet-4-6= with synthetic native credentials.
+Its supplied system policy arrived at an =ephemeral= cache boundary, before changing user data and scratch-path context.
+Only the native structured-output tool was exposed.
+Its usage mapping preserved uncached input, nonzero cache reads and writes, and one final aggregate.
+The installed Codex =0.167.1= failed the first pair because the wire request still exposed additional tools despite the restriction flags.
+Its captures also show a fresh thread-specific =prompt_cache_key=; no cross-invocation reuse is claimed.
+The sealed schema descriptor reached the vendor-native executable, but that delivery observation does not override the failed capability gate.
+Current Codex jobs can explicitly retain legacy delivery; stable delivery has no automatic fallback.
+
+The runtime modules are [[file:../../sucoder/dream_prompt.py][lossless prompt plans]], [[file:../../sucoder/dream_prompt_native.py][native profiles]], [[file:../../sucoder/dream_cache_certify.py][offline certification]] and [[file:../../sucoder/dream_usage.py][usage normalization]].
+Existing canonical assignments, old result/receipt interpretation and legacy argv remain unchanged.
+New request envelopes are committed before reservation, bind exact policy/stdin/schema bytes and reconstruct the assignment during replay.
+Nested object serialization is deterministic across private canonical storage; segment order keeps current advice last.
+Stable editorial runs conservatively skip legacy progress/prefix reuse, whose manifests do not bind the new delivery contract.
+Missing or changed envelopes after assignment/reservation prevent replay and never authorize another paid request.
+
+New wallet status adds =normalized_usage= with known input/cache/output subtotals, missing-call coverage and per-role values; raw legacy usage remains available.
+Claude's native =total_cost_usd= is recorded as a native list-price estimate, while actual provider-reported cost stays unknown.
+It is not an invoice or a hard cost ceiling.
+Evidence/history block caching, actual live cache hits and measured monetary savings remain outside this acceptance result.
+The [[file:../dream-prompt-caching-ledger.org][implementation verification ledger]] records deterministic tests, historical replay, broader-suite results and private artifact locations.
 
 Prepared by Sue (GPT-6 Codex).

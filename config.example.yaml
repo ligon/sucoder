@@ -14,6 +14,7 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 # dream:
 #   harness: codex                 # codex | claude
 #   model: YOUR_AVAILABLE_MODEL
+#   prompt_layout: legacy         # stable requires dream certify-cache for this build/model/auth route
 #   max_total_seconds: 900         # discovery + authorship + review, across resume
 #   max_total_calls: 40            # native invocations, not hidden HTTP retries
 #   reserve_seconds: 30           # review/repair/finalization

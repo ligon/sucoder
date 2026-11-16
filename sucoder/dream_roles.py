@@ -132,6 +132,8 @@ class Coordinator:
             task = budget.assignment(task)
         if len(canonical(task)) > self.plan["limits"]["max_consolidation_bytes"]:
             raise DreamError("Role assignment exceeds max_consolidation_bytes", 3)
+        from . import dream_prompt
+        request = dream_prompt.freeze(self, task)
         key = self.run_id + "-" + task["assignment_id"]
         dream_run._store(self.fd, key + "-assignment.json", canonical(task) + b"\n")
         # A failed/started native request is never automatically repeated on
@@ -147,11 +149,16 @@ class Coordinator:
                 if budget is not None:
                     budget.denied(task)
                 raise DreamError("An earlier role attempt has no validated result; inspect its private trace and select a new --attempt", 3)
+            if request is not None:
+                preflight = getattr(self, "prompt_preflight", None)
+                if preflight is not None:
+                    preflight(request, self.deadline)
             if budget is not None:
-                budget.reserve(task)
+                budget.reserve(task, **(dict(request_sha256=request["sha256"]) if request is not None else {}))
             dream_run._store(self.fd, key + "-started.json", canonical(dict(state="started", assignment_id=task["assignment_id"])) + b"\n")
             result, usage, trace = self.transport(self.harness, self.model, task, self.result_schema(role),
-                                                 min(self.deadline, time.monotonic() + 180))
+                                                 min(self.deadline, time.monotonic() + 180),
+                                                 **(dict(request=request) if request is not None else {}))
             dream_run._store(self.fd, key + "-trace.json", canonical(trace) + b"\n")
             if result is None:
                 raise DreamError("Native role failed; inspect its private trace: " + key + "-trace.json", 3)
@@ -160,6 +167,7 @@ class Coordinator:
             dream_run._store(self.fd, key + "-result.json", canonical(saved) + b"\n")
         self.check_result(task, saved["result"])
         trace = dream._json(dream_run._read(self.fd, key + "-trace.json", dream_native.MAX_TRACE * 2))
+        dream_prompt.verify_trace(request, trace)
         if (digest(canonical(trace)) != saved["trace_sha256"] or trace["input_sha256"] != digest(canonical(task)) or
                 trace["harness"] != self.harness or trace["model"] != self.model or
                 trace["version"] != saved["version"] or trace["version"] != self.expected_version or trace["returncode"] != 0):

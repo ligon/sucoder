@@ -47,6 +47,18 @@ def test_partial_project_overrides_inherit_global_defaults_without_mutation(tmp_
         cfg.dream.max_total_calls = 1000
 
 
+def test_stable_prompt_layout_can_be_overridden_per_mirror(tmp_path):
+    cfg = configured(tmp_path, dict(prompt_layout="stable"), dict(prompt_layout="legacy"))
+    assert cfg.dream.prompt_layout == "stable"
+    assert cfg.mirrors["sample"].dream.prompt_layout == "legacy"
+
+
+@pytest.mark.parametrize("raw", [None, True, [], "automatic", ""])
+def test_invalid_prompt_layout_is_rejected(tmp_path, raw):
+    with pytest.raises(ConfigError, match="prompt_layout"):
+        configured(tmp_path, dict(prompt_layout=raw))
+
+
 def test_project_can_clear_configured_backend_inheritance_and_disable_reserves(tmp_path):
     cfg = configured(tmp_path, dict(harness="codex", model="global-model"),
         dict(harness=None, model=None, max_total_seconds=1, max_total_calls=1,

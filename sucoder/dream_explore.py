@@ -108,7 +108,10 @@ def _job(path):
         header = _read(fd, "job.json")
         dream._object(header, ("contract", "job_id", "directory", "created_at", "project", "settings", "purpose", "budget_path"),
                       ("mode", "navigation_version", "leads", "memory_origin", "navigation_limits", "processing",
-                       "inventory_sha256", "discovery_allocation"))
+                       "inventory_sha256", "discovery_allocation", "prompt_profile"))
+        if "prompt_profile" in header:
+            from . import dream_prompt_native
+            dream_prompt_native.validate_profile(header["prompt_profile"])
         if "leads" in header:
             dream_leads.validate(header["leads"])
         if header.get("mode", "project") not in MODES:
@@ -178,6 +181,10 @@ def prepare(config, job_path=None, *, cwd=None, overrides=None, budget_path=None
         raise DreamError("Configure dream.model (or agent_launcher.model), or supply --model; dreaming never prompts")
     dream._text(model, "configured native model")
     settings = replace(settings, harness=harness, model=model)
+    prompt_profile = None
+    if settings.prompt_layout == "stable":
+        from . import dream_prompt_native
+        prompt_profile = dream_prompt_native.load_profile(config, harness, model, time.monotonic() + 15)
     memory_ref = dream_memory.branch_ref(settings.memory_branch) if settings.memory_branch else None
     if memory_ref == "refs/heads/" + branch:
         raise DreamError("dream.memory_branch must differ from the launch branch", 3)
@@ -227,6 +234,8 @@ def prepare(config, job_path=None, *, cwd=None, overrides=None, budget_path=None
                 project_binding["memory_ref"] = memory_ref
             header = dict(contract=CONTRACT, job_id=job_id, directory=str(directory), created_at=time.time(),
                 project=project_binding, settings=frozen, purpose=purpose, budget_path=str(target), mode=mode)
+            if prompt_profile is not None:
+                header["prompt_profile"] = prompt_profile
             if dream_discover.NAVIGATION > 1:
                 # Version 1 stays implicit, so earlier headers (and their digests) are unchanged.
                 header["navigation_version"] = dream_discover.NAVIGATION
@@ -305,6 +314,9 @@ def _discovery(config, fd, header, budget, *, attempt=1, transport=None, readonl
             raise DreamError("Incomplete exploratory job; inspection never invokes inference", 3)
         native = no_inference
     else:
+        if transport is None and "prompt_profile" in header:
+            from . import dream_prompt_native
+            transport = dream_prompt_native.Transport(header["prompt_profile"])
         native = transport or dream_native.Transport(header["settings"]["harness"], deadline)
         version = native.version
         _store(fd, "native.json", dict(version=version))
@@ -419,6 +431,11 @@ def _budget(header):
 def _result(header, outcome, attempt, written=None, plan_path=None):
     common = dict(operation="dream_job", job_id=header["job_id"], job_path=header["directory"],
         project=header["project"], attempt=attempt, questions=outcome["questions"], discovery=outcome)
+    if "prompt_profile" in header:
+        profile = header["prompt_profile"]
+        common["prompt_delivery"] = dict(contract=profile["contract"], capabilities=profile["capabilities"],
+            launcher=profile["build"]["launcher"], native_version=profile["version"],
+            account_continuity=profile["authentication"]["account_continuity"])
     if written is not None:
         return dict(written, **common, plan_path=str(plan_path))
     return dict(schema_version=1, state="no_selection", rationale=outcome["rationale"], **common,
@@ -473,7 +490,8 @@ def run(config, job_path, attempt=1, *, transport=None, retry_seconds=None):
             # Keep orchestration ownership while the writer reacquires the wallet.
             written = dream_wiki.run(_binding(config, header), header["project"]["name"], plan_path,
                 header["settings"]["harness"], header["settings"]["model"], attempt, purpose=_purpose(header, outcome),
-                transport=transport, budget_path=Path(header["budget_path"]))
+                transport=transport, budget_path=Path(header["budget_path"]),
+                **(dict(prompt_profile=header["prompt_profile"]) if "prompt_profile" in header else {}))
             result = _result(header, outcome, attempt, written, plan_path)
             _store(fd, name, result)
             return result

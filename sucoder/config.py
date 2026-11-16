@@ -433,6 +433,7 @@ class DreamSettings:
     inject_bytes: int = 2048
     checkout: bool = True
     session_quiet_minutes: int = 30
+    prompt_layout: str = "legacy"
 
 
 @dataclass
@@ -874,6 +875,8 @@ def _parse_dream(
         )
     values = {key: getattr(defaults, key) for key in fields}
     values.update(raw)
+    if values["prompt_layout"] not in ("legacy", "stable"):
+        raise ConfigError(f"`{label}.prompt_layout` must be legacy or stable.")
     if values["harness"] is not None and values["harness"] not in ("codex", "claude"):
         raise ConfigError(f"`{label}.harness` must be codex, claude, or null.")
     model = values["model"]
@@ -897,7 +900,7 @@ def _parse_dream(
     if type(values["inject_bytes"]) is not int or not 1 <= values["inject_bytes"] <= 16384:
         raise ConfigError(f"`{label}.inject_bytes` must be an integer from 1 to 16384.")
     for key in fields:
-        if key in ("harness", "model", "memory_branch", "inject", "checkout"):
+        if key in ("harness", "model", "memory_branch", "inject", "checkout", "prompt_layout"):
             continue
         if key == "max_discovery_calls" and values[key] is None:
             continue

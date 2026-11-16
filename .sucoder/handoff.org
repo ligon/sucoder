@@ -1,8 +1,22 @@
 #+TITLE: SuCoder consolidated on main in the canonical mirror; publication pending
 #+DATE: 2026-11-16
-#+STATUS: CACHING DESIGN REVIEWED; IMPLEMENTATION AND PUBLICATION PENDING
+#+STATUS: CACHING IMPLEMENTED; OFFLINE CLAUDE CERTIFIED; PUBLICATION PENDING
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Prompt-caching implementation, 2026-11-16
+
+The human authorized implementation after the reviewed design.
+The new opt-in =stable= layout commits lossless policy/data/current request envelopes before native-call reservation and adds provider-specific =normalized_usage= without changing old assignment bytes or receipt interpretation.
+New profiles bind native builds, authentication routes and all 14 production policy/schema pairs; =dream certify-cache= uses two fresh synthetic captures per pair under a 120-second/28-request ceiling, no real credentials and no paid inference.
+Claude =2.1.323= passed all 28 captures for =claude-sonnet-4-6= with synthetic native credentials.
+Codex =0.167.1= remains uncertified because its requests exposed additional tools despite restriction flags; stable launch fails before reservation, without automatic fallback.
+No evidence/history caching, live cache hit or monetary saving is claimed.
+The default remains =legacy=, and no live dream, installed deployment, GitHub push or memory publication was performed for this implementation.
+Independent implementation review found and resolved staged-credential identity races, incomplete prefix eligibility checks, insufficient schema coverage and fixture/report bounds.
+The [[file:../docs/dream/prompt-caching.org::#implemented][implemented interface]] and [[file:../docs/dream/prompt-caching-review.org][review record]] describe the behavior and limits.
+Verification artifacts are under =/home/coder/.sucoder/logs/dream-cache-implementation/2026-11-16/=; final test results are recorded in the [[file:../docs/dream-prompt-caching-ledger.org][ledger]].
+Historical E3 job =877ffe18b431459ab29cd8f3d4129738= still reports =published= with native build/authentication/provider access forbidden, retaining private memory =d6a3621=.
 
 * Prompt-caching design and review, 2026-11-16
 

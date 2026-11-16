@@ -2621,6 +2621,7 @@ Configure the native model once in =~/.sucoder/config.yaml=:
 dream:
   harness: codex
   model: YOUR_AVAILABLE_MODEL
+  prompt_layout: legacy          # stable requires offline native certification
   max_total_seconds: 900
   max_total_calls: 40
   max_discovery_calls: null       # auto; a positive integer selects a fixed ceiling
@@ -2672,7 +2673,14 @@ Default status/budget lookup selects the latest job for the exact project path; 
 Current native adapters reject requested hard token/dollar caps before provider work.
 See [[file:docs/dream/exploration.org][the exploratory launch contract and verification]].
 The [[file:docs/dream/transcript-navigation.org][transcript-navigation contract]] specifies bounded session paging/search, continuation cursors and automatic discovery allocation for new version 3 jobs.
-The proposed [[file:docs/dream/prompt-caching.org][native prompt-caching design]] and its [[file:docs/dream/prompt-caching-review.org][independent review]] cover Claude/Codex prefix delivery, usage accounting and the gates for caching evidence/history; this is not an implemented configuration option.
+The opt-in [[file:docs/dream/prompt-caching.org::#implemented][stable prompt layout]] separates trusted role instructions from untrusted evidence, places current IDs/advice last, and records lossless request envelopes and provider-specific usage.
+The default =dream.prompt_layout: legacy= preserves existing delivery; =--prompt-layout stable= selects the new layout for a new exploratory job or explicit wiki =dream run=.
+First run =sucoder dream certify-cache --harness claude --model MODEL= (or =codex=) to check the installed build against a local recording fixture using synthetic credentials and no paid inference.
+The check has a 120-second ceiling and at most 28 native request invocations: two fresh captures for each production policy/schema pair.
+A successful certificate is private to the build, model, authentication route and policy/schema catalog; unavailable capabilities return =state: uncertified= and stable launch refuses them before reserving a call.
+On the checked November 16 builds, Claude =2.1.323= passed and Codex =0.167.1= failed because its wire request exposed additional tools despite restriction flags.
+This certifies instruction-prefix eligibility and usage mapping; evidence/history caching and live cache savings remain unverified.
+The [[file:docs/dream/prompt-caching-review.org][independent review]] records the design and implementation findings.
 Session search can return an empty incomplete page with a continuation; terminal =complete_unfrozen= records traversal over mutable sources and never proves query absence in a frozen whole-file revision.
 Processing timeouts and unavailable/oversized ranges are explicit, and only reviewed selected receipt ranges count as accepted coverage.
 =--discovery-calls= selects a fixed ceiling; saved jobs retain their original settings, schemas and briefs.
