@@ -1,13 +1,13 @@
 #+TITLE: Dream transcript navigation prior-art ledger
 #+AUTHOR: Sue
-#+DATE: 2026-11-15
+#+DATE: 2026-11-16
 
 * 1. Task and baseline
 
 Design bounded session navigation and explicit discovery allocation after experience job =9268f638ee3a4e34afc2911a714cda77=.
 The inspected code is =f829f7b= on the canonical checkout's =main=.
 Search tier: GitNexus CLI query and upstream impact, named source/test inspection, git history, and Anthropic's public cookbook at =ce8b2629efe8b24048b127b4c79af1e9cbab93d4=.
-The requested deliverable is a design amendment; implementation and another native dream are separate work.
+The human authorized revision and implementation on 2026-11-16; another native dream remains separate work.
 
 * 2. Existing machinery
 
@@ -62,6 +62,10 @@ No new provider request, remote transcript transport, GitHub issue access by the
   Reusing rendering semantics does not establish interruptible execution; the deadline boundary remains a design decision.
 - Extend :: Session read/search callers and complete-prefix probing with a bounded record iterator; the existing whole-prefix navigation cannot page large sessions.
 - New :: A versioned opaque continuation cursor, because a session ordinal cannot resume midway through a session or a multi-block record.
+- New :: A killable POSIX processing worker with bounded output and additional address-space headroom; byte guards and the current renderer cannot enforce CPU deadlines.
+  A versioned optional =processing= policy travels with new rendered source requests and admitted units; older units keep their execution path and bytes.
+- Extend :: The lookup artifact becomes one version 3 envelope containing the observation, raw read receipts and continuation body, so replay preserves deadline stops without reopening mutable navigation sources.
+- Extend :: Explicitly unfrozen search completion and raw digest binding for a resumed record; no existing primitive pins an immutable whole-prefix revision without reading it.
 - New :: An automatic discovery-allocation policy for new jobs; current defaults cannot distinguish a deliberate eight-call ceiling from an inherited default.
 - Extend :: Existing source/response accounting with scanned, skipped and delivered intervals, retaining receipt semantics for accepted coverage.
 - Extend :: Frozen advice with a per-attempt/step navigation-allocation record, so live-wallet decisions do not change assignment reconstruction.
@@ -69,10 +73,10 @@ No new provider request, remote transcript transport, GitHub issue access by the
 
 * 6. Open questions and verification boundary
 
-The independent [[file:dream/transcript-navigation-review.org][red-team review]] leaves three implementation gates open: coherent source-revision semantics, enforceable rendering deadlines, and bounded inventory enumeration/metadata work.
-Cursor publication and replay of deadline-stopped partial scans also need concrete recovery specifications.
-These are unresolved technical decisions; no missing human preference or additional live experiment prevents revising the proposal.
-Large-session and allocation behavior remains unimplemented and must be established by an expanded synthetic regression matrix after the design gates are resolved.
+The revised [[file:dream/transcript-navigation.org::#red-team-gates][implementation gates]] choose unfrozen completion with raw read receipts, isolated processing, bounded streaming enumeration, one atomic cursor/observation envelope and replay of committed observations.
+Per-turn markers make missing frozen advice fail closed before an assignment can change after reservation.
+These decisions still need independent review and implementation regression coverage; no additional live experiment is needed.
+Large-session and allocation behavior remains unimplemented at this grounding checkpoint.
 
 Prepared by Sue (GPT-6 Codex).
 
