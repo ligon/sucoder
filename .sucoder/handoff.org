@@ -6,6 +6,13 @@
 
 * Prompt-caching implementation, 2026-11-16
 
+Followup: the human requested delegated Codex tool-omission research.
+The [[file:../docs/dream/codex-tool-omission.org][investigation]] found an exact-model catalog override and feature controls that omit all tools in two fresh offline captures, with a sealed catalog and skill-instruction injection disabled.
+The initial prefix/settings then match except for Codex's fresh thread-specific cache key; no supported key override was found in the inspected interfaces, and empty-history resume was rejected.
+This removes 15,870 serialized declaration bytes in the synthetic fixture but is not yet integrated or certified for production caching.
+Nine synthetic request-bearing invocations and one zero-turn query used no real credentials or paid inference.
+Runtime, default configuration and the current certificate gate remain unchanged.
+
 The human authorized implementation after the reviewed design.
 The new opt-in =stable= layout commits lossless policy/data/current request envelopes before native-call reservation and adds provider-specific =normalized_usage= without changing old assignment bytes or receipt interpretation.
 New profiles bind native builds, authentication routes and all 14 production policy/schema pairs; =dream certify-cache= uses two fresh synthetic captures per pair under a 120-second/28-request ceiling, no real credentials and no paid inference.

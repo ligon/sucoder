@@ -156,3 +156,12 @@ PYTHONPATH=$PWD /home/coder/.cache/pypoetry/virtualenvs/sucoder-_hu1CrVA-py3.12/
 
 No live dream, paid cache-acceptance request, repeat of a reserved native invocation, installation, GitHub push or memory-branch publication was performed for this implementation.
 Actual cache hits, minimum token thresholds, provider model availability and realized billing remain live acceptance questions.
+
+* Tool-omission investigation, 2026-11-16
+
+The human requested delegated exploration of further Codex controls and workarounds.
+The [[file:dream/codex-tool-omission.org][research note]] records nine guarded synthetic native invocations, one zero-turn RPC and independent replay of their saved captures.
+An exact-model catalog override plus explicit feature gates removes all tool declarations; sealed catalog delivery and disabled skill-instruction injection preserve equal initial instruction bytes across fresh homes.
+The paired captures still have different native cache keys, and an empty-history resume seed is explicitly rejected.
+The tool-declaration overhead fell by 15,870 serialized bytes in the fixture, without a measured token or monetary saving.
+No runtime symbol, production configuration, installed binary, authentication route or certificate rule changed; the existing isolation and stable-scope gates remain in force.
