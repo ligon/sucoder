@@ -1,7 +1,7 @@
 #+TITLE: Bounded transcript navigation and discovery allocation
 #+AUTHOR: Sue
 #+DATE: 2026-11-16
-#+STATUS: IMPLEMENTED -- full-suite verification in progress
+#+STATUS: COMPLETE -- baseline failures distinguished
 #+OPTIONS: toc:2 num:nil
 
 * Scope and evidence
@@ -66,6 +66,7 @@ Inventory probing also stays bounded.
 Replace =dream_experience._complete='s whole-file fallback with backward 64 KiB tail probes, at most 1 MiB per file and 32 MiB across one inventory preparation, checking the preparation deadline between probes.
 New inventory preparation streams =os.scandir= entries, with at most 8,192 transcript-directory entries, 16,384 metadata operations and 1,024 retained candidate sources across the allowed directories.
 It checks the deadline before advancing enumeration and sorts only the retained bounded subset.
+The metadata counter measures explicit directory/candidate stat checks; canonical path checks and existing helper operations also remain inside the worker deadline.
 Historical-project discovery retains its separate 4,096-directory ceiling; the isolated preparation worker also bounds blocking filesystem work.
 If no complete boundary is found within the allowance, report that source as unavailable with =complete_prefix_probe_limit=; if an aggregate allowance ends, report the inventory as incomplete.
 An incomplete traversal reports an unknown number of undiscovered sources and a lower bound for already discovered but unprobed candidates; it never completes traversal merely to count what remains.
@@ -202,6 +203,8 @@ Timeout there fails before a role receives evidence or an unchecked candidate ca
 New version 3 selections carry a versioned =processing= policy in their source request and admitted unit, with the worker limits frozen explicitly.
 The source-request parser and view-unit validator accept that optional field only for rendered session evidence; request reconstruction preserves it.
 Earlier units lack the field and retain their existing admission/snapshot execution path, rather than acquiring a new five-second failure mode on replay.
+New plan admission also receives the job's existing inspection deadline; it cannot refresh that deadline after discovery.
+Explicit planning retains its earlier default inspection window unless the caller supplies a shorter deadline.
 
 Record scan/delivery counters, stop reasons, gaps and remaining cursors privately in the job outcome.
 The independent writer/reviewer receive the selected evidence and a concise coverage qualification, not a claim that the whole project or session was examined.
@@ -343,16 +346,24 @@ The review found and the implementation corrected JSON response-size/cursor acco
 Additional tests cover missing advice and marker artifacts, malformed-source error bounds, and unknown actual read accounting.
 The reviewer's 100 deterministic multi-session search-pagination probes found every expected hit exactly once; this does not establish model investigation quality.
 
-The current targeted group passes 113 cases:
+The final planning/navigation/configuration/CLI/lifecycle regression group passes all 245 cases:
 
 #+begin_src sh :eval never
 PYTHONPATH=$PWD /home/coder/.cache/pypoetry/virtualenvs/sucoder-_hu1CrVA-py3.12/bin/python \
   -m pytest -q -p no:cacheprovider \
-  tests/test_dream_navigation.py tests/test_dream_navigation_recovery.py tests/test_dream_settings.py
+  tests/test_dream.py tests/test_dream_navigation.py tests/test_dream_navigation_recovery.py \
+  tests/test_dream_settings.py tests/test_dream_experience.py tests/test_dream_explore.py \
+  tests/test_dream_leads.py tests/test_dream_explore_cli.py tests/test_dream_explore_guards.py
 #+end_src
 
-The earlier navigation/view group passed 39 cases, and the experience/explore/leads group passed 32 before the final hardening changes.
-The full project suite is running on a frozen private clone; no full-suite pass is claimed at this checkpoint.
+The earlier navigation/view group passed 39 cases; the reviewer's 100-case pagination probe also passes when rerun with seed 913.
+The full project suite on a frozen private clone collected 3,339 cases: 3,298 passed, 40 failed and one skipped in 2,314 seconds.
+Exactly 38 failures reproduce as a selected group on the unchanged runtime baseline =359d018=.
+The other two were obsolete test expectations for the cursor field and zero-capacity diagnostic; both are corrected, and their complete CLI/lifecycle files pass all 42 cases.
+After that full-suite snapshot, the deadline propagation fix and its two added cases were checked in the final 245-case group above.
+This is full-suite comparison plus final regression validation, not an unfiltered final-source full-suite pass.
+All ten changed runtime modules pass mypy and match the built verification wheel.
+The published job =9268f638...= still replays as =published= with provider startup forbidden, retaining memory =f651866=.
 Evidence, source hashes and logs are under =/home/coder/.sucoder/logs/dream-implementation/2026-11-16-navigation/=.
 All new role tests use fake Codex/Claude transports and synthetic sources; no new live dream or provider request was made for implementation verification.
 

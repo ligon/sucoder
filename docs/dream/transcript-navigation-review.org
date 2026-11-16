@@ -1,7 +1,7 @@
 #+TITLE: Red-team review of bounded transcript navigation
 #+AUTHOR: Sue
 #+DATE: 2026-11-16
-#+STATUS: REVIEW COMPLETE -- findings addressed; full-suite verification pending
+#+STATUS: REVIEW COMPLETE -- findings addressed and regression-verified
 #+OPTIONS: toc:2 num:nil
 
 * Verdict and scope
@@ -196,7 +196,8 @@ The [[file:transcript-navigation.org::#verification][implementation verification
 
 The original independent review and parent reproductions support the three findings against the original proposal.
 The earlier author-only ledger pass and successful document exports did not establish source-revision coherence, CPU bounds or bounded enumeration.
-Subsequent implementation has received independent review and targeted regression coverage; the full project suite is still running at this checkpoint.
+Subsequent implementation has received independent review and final 245-case regression coverage.
+The full-suite snapshot reports 38 reproduced baseline failures and two obsolete fixtures that were corrected and rechecked; its precise acceptance boundary is recorded in the implementation verification section.
 No live dream or provider experiment was used to establish the new protocol's acceptance.
 
 Prepared by Sue (GPT-6 Codex).

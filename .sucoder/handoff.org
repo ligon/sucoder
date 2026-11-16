@@ -1,17 +1,19 @@
 #+TITLE: SuCoder consolidated on main in the canonical mirror; publication pending
 #+DATE: 2026-11-16
-#+STATUS: NAVIGATION IMPLEMENTED; FULL VERIFICATION IN PROGRESS
+#+STATUS: NAVIGATION COMPLETE ON LOCAL MAIN; PUBLICATION PENDING
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
-* Transcript-navigation design, 2026-11-15
+* Transcript-navigation implementation, 2026-11-16
 
 On 2026-11-16 the human authorized revision and implementation after the red-team review.
 The revised protocol chooses explicitly unfrozen completion, raw receipts and resumed-record hashes, isolated processing, bounded enumeration, atomic lookup envelopes and frozen per-turn advice.
 An explicit processing policy on new admitted units preserves the execution path of earlier units.
 The independent reviewer found no remaining blockers after implementation hardening; tests use synthetic evidence and fake native transports.
-The targeted navigation/recovery/configuration group passes 113 cases.
-The full suite is running on a private frozen clone at =/home/coder/.sucoder/logs/dream-implementation/2026-11-16-navigation/full-checkout=; its staged tree is =82c9b33ea32c5e18ac07a6652e0e2efa10aca33d=.
+The final planning/navigation/configuration/CLI/lifecycle group passes all 245 cases.
+The full suite on the private frozen clone at =/home/coder/.sucoder/logs/dream-implementation/2026-11-16-navigation/full-checkout= (=82c9b33ea32c5e18ac07a6652e0e2efa10aca33d=) reports 3,298 passed, 40 failed and one skipped.
+Exactly 38 failures reproduce on unchanged base =359d018=; the other two were outdated fixtures, now corrected and passing in the final regression group.
+The final group also covers a subsequent deadline-forwarding fix and two added cases; no unfiltered final-source full-suite pass is claimed.
 No additional registered worktree was created.
 Historical job =9268f638ee3a4e34afc2911a714cda77= still reports =published= with native startup replaced by an exception, retaining memory =f651866=.
 All ten changed source modules pass mypy; implementation artifacts and source hashes are in the adjacent verification directory.
