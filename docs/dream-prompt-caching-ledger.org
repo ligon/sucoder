@@ -5,7 +5,8 @@
 * 1. Task and baseline
 
 Design provider-aware prompt caching for Claude Code and OpenAI Codex dream agents, then obtain independent red-team review.
-The baseline is local main =dc62682=; this task changes documents only.
+The design baseline is local main =dc62682=.
+After the reviewed design reached =97a3ee6=, the human authorized implementation on 2026-11-16.
 Grounding uses GitNexus CLI query, direct source/test inspection, local native help/version output and official provider documentation consulted on 2026-11-16.
 The query index was one documentation commit behind; named source reads establish the current code facts.
 The [[file:dream/runs/sucoder-e3.org][E3 run]] reported 482,186 input tokens and zero cached reads on all 16 calls.
@@ -67,7 +68,8 @@ Cache controls and keys are optimization hints, never evidence-admission or acce
 
 The reviewed design chooses native-only delivery, an initial instruction-prefix slice for both harnesses, and an explicit gate before claiming caching of untrusted data/history.
 This is a scope decision: it gives a feasible first slice without claiming that the present one-prompt transport can cache the expensive accumulated history.
-No paid compatibility probe, live Claude run, runtime configuration, implementation or deployment is authorized by this design task.
+The earlier design task authorized no implementation; the human's subsequent "Okay, let's implement" authorizes the reviewed deterministic implementation slices and native fake-provider certification.
+Live paid compatibility/cache-hit probes, live Claude runs and deployment remain separate.
 The design and its independent review must state which capabilities remain unverified on the installed builds.
 
 * Anchored design verification
@@ -82,6 +84,20 @@ The design and its independent review must state which capabilities remain unver
 - OK, section 6 :: Both independent reviewers accepted the revised phased design after followup; actual native request certification, cache hits and savings remain unverified implementation/acceptance gates.
 
 The [[file:dream/prompt-caching-review.org][review record]] preserves all six findings and their dispositions.
-No Python runtime/configuration changed and no new live dream or paid cache test ran.
+At the end of design review no Python runtime/configuration had changed and no new live dream or paid cache test had run.
+
+* Implementation grounding, 2026-11-16
+
+The implementation keeps =legacy= as the default and introduces opt-in =stable= layout only for a certified native profile.
+New prompt-plan/envelope, native-profile/delivery, offline certification and usage-normalization modules extend the existing coordinator and wallet rather than create a second publisher.
+The common role-call integration must preserve canonical assignment hashes and old saved-trace interpretation.
+Exploratory headers and editorial specs freeze the new profile so read-only status can reconstruct it without native startup.
+The native transport retains the current environment, tool and process-group restrictions; the new sealed schema path is confined to the opt-in profile.
+
+Before editing, GitNexus upstream analysis reported CRITICAL for the common role call (eight direct callers), budget summary (two), dream settings (18), wiki run (three), restore (one), and exploratory orchestration.
+The source/test inspection above establishes the relevant execution paths; large graph counts on orchestration and unresolved constructor edges are not treated as precise scope.
+The refreshed index does not resolve the parser or Typer callback by name; impact/context attempts and direct call-site inspection are recorded in =/home/coder/.sucoder/logs/dream-cache-implementation/2026-11-16/=.
+Constructor impact was also run by exact UID; UNKNOWN is not interpreted as absence of callers.
+Targeted recovery, role, budget, settings, navigation and native transport regressions will validate the integration, followed by the appropriate broader checks on a frozen clone.
 
 Prepared by Sue (GPT-6 Codex).
