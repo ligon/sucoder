@@ -1,0 +1,85 @@
+#+TITLE: C1: native Codex subscription cache check
+#+AUTHOR: Sue
+#+DATE: 2026-11-16
+#+STATUS: COMPLETED; NO CACHE READ OBSERVED
+#+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Authorization and scope
+
+The human approved a controlled two-call check through the existing subscription after discussing the [[file:../codex-tool-omission.org][tool-omission investigation]].
+The accepted bounds were two fresh native Codex invocations, no coordinator retries and a shared five-minute elapsed ceiling, using synthetic data only.
+No real transcript, wiki evidence or memory publication was included.
+This approval was an explicit exception for this check to the older handoff's default prohibition on paid inference; it did not authorize extra calls or a change to API-key billing.
+
+The source checkout was local main =e1f07decabb549d7bfd2035fcd2ced87f24b7aac=.
+The installed build was =codex-cli 0.167.1=, using its pinned vendor-native executable and the exact model =gpt-6.1-sol=.
+Authentication was =chatgpt= in native credentials, with no API key in either the parent environment or credential file.
+Original and staged observable account identity were checked before each invocation; credential values were neither printed nor hashed into the public report.
+
+* Prepared request and isolation
+
+One experiment marker and 192 coordinator-authored conditional response rules formed a new synthetic policy, reused unchanged for both calls.
+Only the final selected case and current control envelope changed; both answers were mechanically checked against their respective rules and current identifiers.
+The common policy was 27,188 UTF-8 bytes including the existing interpretation guard.
+Its digest was =d652a644201633e4e0b2f532d20e82c064bf53e62bf2c67b08c802e9bf8d9f54=.
+The requested schema and frozen model catalog were also identical across the pair.
+
+The probe reused the existing lossless prompt-plan renderer, native argv builder, sealed descriptor delivery, filesystem boundary, trace parser, schema validator, usage normalizer and persistent budget journal.
+The experimental envelope binds the assignment, plan, policy/stdin/schema/catalog digests and frozen proposal; it does not fabricate a production stable-profile certificate.
+Envelopes were stored before reservation, and every started native invocation retained its reservation.
+The catalog and output schema were passed through inherited sealed descriptors, with a fresh temporary native home and process per call.
+The catalog/feature controls omit all tools and disable changing skill-instruction injection, as established by the prior investigation.
+
+Two offline fixture invocations first validated this exact policy/schema and delivery path using dummy credentials and the local-only network boundary.
+Both produced the expected schema-bound result, exposed no tools on the captured wire, and matched the existing prefix validator except for their cache keys.
+Those offline invocations used a separate budget and consumed no subscription inference.
+The live pair then used the ordinary built-in native subscription route, without endpoint rewriting or a local credential-forwarding proxy.
+
+* Results
+
+| Native call | Selected case | Input tokens | Cached input | Reported cache writes | Output tokens | Elapsed seconds |
+|-------------+---------------+--------------+--------------+-----------------------+---------------+-----------------|
+| 1 | C031 | 12,561 | 0 | 0 | 111 | 5.327 |
+| 2 | C123 | 12,565 | 0 | 0 | 116 | 5.506 |
+| Total | | 25,126 | 0 | 0 | 227 | 10.833 |
+
+Both calls completed successfully and returned the correct synthetic answer plus the exact current assignment/input/role identifiers.
+Each native stdout contained one thread-start event, one turn-start event, one completed assistant item and one turn-completed aggregate, with no tool event.
+The complete live wallet interval was 10.95 seconds, within the 300-second bound.
+The journal restored read-only with two reserved and two completed calls.
+No third live invocation or coordinator retry was attempted; no reconnect/retry diagnostic appeared in the stored native stderr.
+The native invocation ceiling does not attest the count of hidden HTTP retries or native prewarming.
+
+The policy bytes/digest were identical, and the two native thread IDs differed.
+After the pair, executable fingerprints still matched the frozen build.
+The code checkout and private memory tip remained unchanged during the experiment; memory stayed at =d6a3621bb6095b0d02101467494543c1a4203327=.
+A subsequent refusal check with native capture replaced by an exception confirmed that rerunning the completed/expired budget cannot launch another call.
+
+* Interpretation and limits
+
+No cache read was reported by either native final aggregate, so this pair establishes no reuse of the unique synthetic prefix and no monetary or allowance saving.
+It also provides no evidence of cached boilerplate reuse: both reported read counts were zero.
+These are native-reported counters; the live provider wire was not intercepted, and the presence of underlying provider fields was not independently observed.
+In particular, a native-reported zero write count is not proof that no backend cache entry was created.
+No currency or actual subscription-credit charge was reported, and API list prices are not substituted for subscription usage.
+
+The inference that a native thread ID also supplied its wire cache key comes from same-build offline captures; the live key itself was not directly captured.
+Changing keys, backend cache policy, native counter exposure or another request property could explain the outcome.
+This two-call result does not identify the cause, rule out subscription caching generally, or establish that API-key billing is required.
+A cache miss in this pair is not sufficient grounds to relax isolation or the stable-profile certification gate.
+
+The tool-omission method remains supported by the offline request evidence and removes 15,870 serialized declaration bytes in that fixture.
+No production transport/profile/default was changed, no further real dream was launched to claim a caching benefit, and no memory generation was published.
+The most informative further live control would keep a single isolated native thread across two synthetic turns, to distinguish fresh-thread behavior from absent cache telemetry.
+That would be a separate diagnostic experiment and budget, not a silent change to production role isolation or an automatic third call here.
+
+* Private artifacts and reproducibility
+
+The experiment directory is =/home/coder/.sucoder/logs/dream-cache-live/2026-11-16/b6acd818986a47baa41f1fe6ce4bb703/=.
+It holds =proposal.json=, the frozen synthetic brief/schema/catalog, lossless request envelopes, native traces, parsed outcomes, =report.json=, =audit.json=, =refusal-check.json= and the two-call wallet.
+Its =offline/= directory retains the preliminary fixture captures and separate wallet.
+The live harness is =/home/coder/.sucoder/logs/dream-cache-live/2026-11-16/probe.py=, with SHA-256 =43a8437fe81bf48c40fa5ca57e091ba36b7ebbb37e0cc1d1afc23ad9f96bd560=.
+The saved result is reproducible by local parsing/reconstruction and wallet restoration without native startup; a new live experiment would require its own authorization and budget.
+Do not treat rerunning the completed live command as an authorized retry.
+
+Recorded by Sue (GPT-6 Codex).

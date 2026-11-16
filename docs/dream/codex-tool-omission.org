@@ -124,4 +124,12 @@ Installed help/schema inspection and replay of saved captures require no model c
 The useful next native implementation is a frozen tool-omission profile with a sealed catalog and no skill-path injection, coupled to a supported stable cache scope.
 Omission can reduce request overhead independently of caching, but the current stable profile must not advertise cross-invocation cache reuse before its scope gate passes.
 
+* Authorized live followup
+
+The human subsequently approved the [[file:runs/codex-cache-c1.org][C1 two-call subscription check]].
+Both fresh native invocations succeeded with identical synthetic policy and correct structured answers, but each reported zero cached-input tokens.
+The pair used 25,126 reported input tokens and 227 output tokens in 10.83 native seconds, with no additional live call or memory publication.
+This establishes no observed reuse; it does not identify the cause or show that subscription caching is unavailable.
+The production cache gate and defaults remain unchanged.
+
 Recorded by Sue (GPT-6 Codex).

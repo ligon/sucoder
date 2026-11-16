@@ -165,3 +165,13 @@ An exact-model catalog override plus explicit feature gates removes all tool dec
 The paired captures still have different native cache keys, and an empty-history resume seed is explicitly rejected.
 The tool-declaration overhead fell by 15,870 serialized bytes in the fixture, without a measured token or monetary saving.
 No runtime symbol, production configuration, installed binary, authentication route or certificate rule changed; the existing isolation and stable-scope gates remain in force.
+
+* Authorized subscription acceptance check C1, 2026-11-16
+
+The human approved two fresh native =gpt-6.1-sol= invocations through existing ChatGPT authentication, with synthetic data only, no coordinator retries and a five-minute shared ceiling.
+The [[file:dream/runs/codex-cache-c1.org][C1 report]] records the sealed tool-free setup, unique 27,188-byte policy, successful offline preflight and live result.
+The live pair completed in 10.95 wallet seconds, reporting 12,561 and 12,565 input tokens, zero cached-input tokens on both calls and 227 output tokens in total.
+Both answers/identifiers validated; read-only wallet restoration retained exactly two completed reservations, and a capture-forbidden refusal check prevented a repeated launch.
+No cache-hit or monetary saving is established, and neither the cause of the miss nor the necessity of API-key billing follows from this observation.
+Private artifacts are under =/home/coder/.sucoder/logs/dream-cache-live/2026-11-16/b6acd818986a47baa41f1fe6ce4bb703/=.
+Production runtime/defaults, main's source and private memory were unchanged during the experiment; no extra native call or real dream followed.

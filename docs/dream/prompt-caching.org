@@ -333,6 +333,7 @@ The sealed schema descriptor reached the vendor-native executable, but that deli
 Current Codex jobs can explicitly retain legacy delivery; stable delivery has no automatic fallback.
 The subsequent [[file:codex-tool-omission.org][delegated tool-omission investigation]] found a sealed model-catalog configuration that omits all tools and removes changing skill-path instructions.
 Its two fresh captures still differ in cache key, so that research does not enable a production stable Codex profile.
+The subsequently authorized [[file:runs/codex-cache-c1.org][C1 live subscription pair]] returned correct structured results but zero reported cached-input tokens on both calls; it establishes no observed reuse and does not identify the cause.
 
 The runtime modules are [[file:../../sucoder/dream_prompt.py][lossless prompt plans]], [[file:../../sucoder/dream_prompt_native.py][native profiles]], [[file:../../sucoder/dream_cache_certify.py][offline certification]] and [[file:../../sucoder/dream_usage.py][usage normalization]].
 Existing canonical assignments, old result/receipt interpretation and legacy argv remain unchanged.

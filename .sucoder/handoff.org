@@ -1,8 +1,19 @@
 #+TITLE: SuCoder consolidated on main in the canonical mirror; publication pending
 #+DATE: 2026-11-16
-#+STATUS: CACHING IMPLEMENTED; OFFLINE CLAUDE CERTIFIED; PUBLICATION PENDING
+#+STATUS: CACHING IMPLEMENTED; LIVE CODEX CHECK OBSERVED NO CACHE READS; PUBLICATION PENDING
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Live subscription cache check C1, 2026-11-16
+
+The human authorized two native subscription calls, no coordinator retry, synthetic data only and a five-minute ceiling.
+The [[file:../docs/dream/runs/codex-cache-c1.org][C1 report]] records two successful fresh =gpt-6.1-sol= processes with sealed tool-free configuration and an identical 27,188-byte synthetic policy.
+They reported 12,561 and 12,565 input tokens, zero cached-input tokens on both, and 227 output tokens in total; the wallet interval was 10.95 seconds.
+Both results/identifiers validated, and the persistent wallet contains exactly two completed calls.
+No additional live call, real dream, API-key switch or memory publication followed.
+The result establishes no observed cache reuse and does not identify its cause or show that subscription caching is impossible.
+Production profiles/defaults remain unchanged; private memory remains =d6a3621=.
+Artifacts are =/home/coder/.sucoder/logs/dream-cache-live/2026-11-16/b6acd818986a47baa41f1fe6ce4bb703/=.
 
 * Prompt-caching implementation, 2026-11-16
 
