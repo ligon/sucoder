@@ -1,0 +1,245 @@
+#+TITLE: Prompt caching for native dream agents
+#+AUTHOR: Sue
+#+DATE: 2026-11-16
+#+STATUS: DESIGN DRAFT; INDEPENDENT REVIEW PENDING
+#+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Purpose and scope
+:PROPERTIES:
+:CUSTOM_ID: scope
+:END:
+
+Make repeated dream inputs eligible for provider prompt caching on both Claude Code and OpenAI Codex, while preserving source authority, native isolation and inference-free replay.
+The [[file:../dream-prompt-caching-ledger.org][grounding ledger]] identifies the existing contracts at local main =dc62682=.
+The [[file:runs/sucoder-e3.org][E3 experience dream]] spent 383,344 of its 482,186 input tokens on discovery and reported no cached input.
+Discovery's first input was 12,854 tokens and its last 40,093 as observations accumulated.
+These measurements motivate the change; they do not predict a cache hit rate or monetary saving.
+
+The design has two capability levels.
+The first release supports a stable trusted instruction prefix in both existing native transports, with accurate usage reporting.
+Caching frozen evidence and growing history requires a separate native block/message capability gate; the current one-prompt transport cannot claim that capability.
+This distinction is part of the product contract, not an implementation detail hidden behind a generic "caching enabled" flag.
+No direct provider API backend, retained native process, prewarming, extra paid request or live acceptance run is included in this design task.
+
+* Provider facts and native evidence
+:PROPERTIES:
+:CUSTOM_ID: providers
+:END:
+
+The sources below were consulted on 2026-11-16; deployed build capabilities must be verified separately.
+
+[[https://developers.openai.com/api/docs/guides/prompt-caching][OpenAI's caching guide]] requires a matching prefix and an eligible boundary.
+For GPT-5.6 and later, the documented minimum is 1,024 visible tokens; implicit caching uses eligible message endings and explicit breakpoints are available in the Responses API.
+Changing a relevant schema, tool definition, model or reasoning configuration can break reuse.
+On these models a cache key is optional for accounting separation; supplying one does not manufacture a prefix match.
+Cache reads and writes are included in the API's total input count, and writes have their own price.
+
+[[https://platform.claude.com/docs/en/build-with-claude/prompt-caching][Anthropic's caching guide]] offers automatic or explicit =cache_control= boundaries, with model-dependent minimum lengths, up to four breakpoints and a bounded block lookback.
+Its standard cache lifetime is five minutes, with an optional longer lifetime; generation time consumes that window.
+Its API =input_tokens= excludes cache reads and writes, so total input is the sum of all three.
+No fixed threshold, price, rate-limit treatment or retention lifetime is shared between the providers by assumption.
+
+The [[https://platform.claude.com/cookbook/claude-agent-sdk-04-migrating-from-openai-agents-sdk][Claude Agent SDK cookbook]] documents automatic caching of native system prompts and tool schemas.
+The [[https://code.claude.com/docs/en/cli-reference#system-prompt-flags][Claude CLI reference]] documents replacing the system prompt from a file and the associated loss of default instructions.
+The installed =claude= is =2.1.323= and exposes that flag, stream-JSON input and existing restriction flags.
+Help output does not prove that a supplied user content block or cache marker survives to the provider request.
+
+The [[https://learn.chatgpt.com/docs/config-file/config-reference][Codex configuration reference]] documents =developer_instructions=.
+Installed =codex-cli 0.167.1= accepts configuration overrides, but =exec= reads plain prompt text rather than a documented arbitrary provider-message array.
+The existing app-server test harness offers a recording fake provider; it is a test pattern, not a compatible replacement dream transport.
+Both native agents may inject hidden or runtime-specific context, so stable SuCoder bytes establish eligibility evidence only for the surfaces SuCoder actually controls.
+
+* Common prompt plan
+:PROPERTIES:
+:CUSTOM_ID: prompt-plan
+:END:
+
+Introduce =dream-prompt-plan-v1= for new jobs, separate from canonical assignment serialization.
+The logical plan has ordered segments, each with an ID, exact UTF-8 bytes, authority, source binding and digest:
+
+| Segment | Contents | Authority | Reuse scope |
+|---------+----------+-----------+-------------|
+| policy | Role brief, interpretation rules and tool prohibition | trusted instructions | Same role/contract/build |
+| static-data | Frozen project binding, purpose, memory leads, admitted prior support | untrusted data | Same job and role |
+| observations | Existing discovery actions and observations, in recorded order | untrusted data | Same attempt; append only |
+| current | Latest action allowances, budget advice, assignment/input IDs | current control envelope | One assignment |
+
+Only coordinator-authored policy enters system/developer instruction surfaces.
+Memory, retrieved passages, transcript text, model rationales, proposals and their embedded instructions stay at user/data priority even when unchanged.
+Delimiters describe data; they do not authorize raising its message role.
+The current control envelope carries only coordinator-authored fields and is authoritative over historical budget advice; the wallet remains the mechanical authority.
+The model must still echo the exact current assignment ID, input digest and role.
+
+Within one attempt, observation segment bytes are retained exactly and new segments are appended.
+The complete semantic assignment remains available for identity, limits and recovery; it is not replaced with a lossy summary.
+Current allowance advice and identifiers appear after reusable material in model-facing serialization.
+They remain part of the canonical assignment and its hash.
+The ordered plan also avoids duplicating a selected memory seed as a second full open-item body; references must resolve to the same frozen bytes, with no new retrieval or evidence admission.
+Do not compact history, drop negative results or change source qualifications in this slice.
+Existing delivery, consolidation and output byte limits continue to apply, including the full encoded prompt rather than only its new suffix.
+Reaching a context/byte limit produces the existing bounded finish/checkpoint behavior, without an unbudgeted summarizer or native auto-compaction.
+
+* Native profiles and capability gates
+:PROPERTIES:
+:CUSTOM_ID: profiles
+:END:
+
+Each new job freezes the requested layout, resolved profile and native executable build before semantic assignment.
+Capabilities are fields, not one boolean: =instruction_prefix=, =user_block_boundaries=, =history_prefix=, =cache_read_usage= and =cache_write_usage=.
+Each field records supported, unsupported or unverified, its source and the profile-test version.
+Provider model, platform, reasoning settings, output schema, tool settings and native configuration affecting the request are part of the profile binding.
+Authentication identity is represented by an opaque local scope identifier, never credentials or an assumption that identical model names imply the same provider account.
+
+** Initial profile: native-instructions-v1
+
+Keep one fresh native process and private home per role invocation, the current Landlock boundary, authentication-only inheritance and strict tool/event rejection.
+Keep the configured harness/model/authentication path; do not replace native subscription authentication with API billing.
+For Codex, render the trusted role policy through a bounded =developer_instructions= override.
+For Claude, use a private =--system-prompt-file= containing the trusted policy and every guard previously supplied by the default/native role instructions.
+Replacement of Claude's default prompt requires a negative test for external tools, hooks, instruction injection and unexpected continuation before this profile can be enabled.
+Do not include transcript or memory bodies in either instruction surface.
+Large instruction text must be staged in a private supported configuration/file surface rather than exceed command argument limits; values are encoded structurally, never through shell interpolation.
+
+Both profiles keep the full semantic assignment data in user input, in deterministic plan order with current advice last.
+That user input may remain a single changing text block.
+The declared capability is therefore =instruction_prefix= only; =history_prefix= remains unverified/unsupported until the next gate passes.
+The initial prefix may fall below the provider/model minimum and yield no caching.
+Do not pad it with irrelevant text or raise evidence authority to reach a threshold.
+If the native agent prepends changing context before the policy, report that observed limitation rather than claim successful prefix caching.
+
+** Additional profile: native-blocks-v1
+
+The target plan places stable data and each immutable observation in native user/data messages or content blocks, with the current envelope last.
+Use an eligible boundary after stable data and at an observation frontier.
+Keep the instruction policy, provider settings and output schema stable within each role/phase; a required finish-only schema takes precedence over a cache hit.
+Do not inject fabricated native assistant messages or replay hidden reasoning as observed facts.
+
+This profile is released separately for each harness/build only after a recording fake-provider test demonstrates the actual request roles, bytes, ordering and cache boundaries through the native interface.
+An installed flag accepting JSON does not satisfy the gate.
+For OpenAI, the recording must establish eligible message endings or explicit breakpoints, not just a long common string.
+For Claude, it must establish preserved user block boundaries, native cache-control placement, threshold handling and a frontier within the provider's lookback window.
+At most three application breakpoints are planned, leaving room for a native-managed boundary; conflicting native ownership must be detected in the recording.
+Use the native default short cache lifetime unless a separate explicit setting is reviewed; do not request longer retention opportunistically.
+
+If the present native interface cannot express this plan without retaining hidden conversation state, record =history_prefix: unsupported= and retain instruction-prefix operation.
+Supporting a persistent process or direct API would require its own isolation, recovery, authentication and budget design.
+This document does not assert that either current CLI can already express full history caching.
+The block-profile gate makes that uncertainty a release criterion rather than an implicit implementation assumption.
+
+** Configuration and fallback
+
+Propose =dream.prompt_layout: legacy | stable=, initially defaulting to =legacy= for rollout.
+=stable= selects the strongest certified native profile for the explicitly selected build; status names its actual capability level.
+If no certified profile exists, preparation fails before provider startup with an actionable diagnostic.
+=legacy= uses the historical layout; it does not promise to disable any caching performed automatically by the provider.
+There is no runtime downgrade, alternate model, account switch or paid retry after a request has started.
+An ordinary cache miss or zero cached-token count is a successful uncached execution, subject to the same wallet.
+When this setting is implemented, update the parser, CLI help, README and configuration example together.
+
+* Identity, artifacts and replay
+:PROPERTIES:
+:CUSTOM_ID: replay
+:END:
+
+Leave =dream.canonical= and earlier assignment construction unchanged.
+New jobs freeze =prompt_contract: dream-prompt-plan-v1= and a provider-profile digest in their header/execution descriptor; that descriptor participates in the run identity before an assignment is constructed.
+After frozen budget advice creates the complete semantic assignment =A=, derive the prompt plan and exact native delivery manifest =M= from =A=.
+=A= never contains =M='s digest, avoiding a recursive identity.
+
+=M= contains the assignment digest, plan digest, exact instruction-file and stdin hashes/byte counts, structured native argv/configuration, profile digest, schema digest, executable version and environment-policy digest.
+Random scratch locations are execution plumbing: the manifest names logical slots, with a separate launch record binding each slot to its actual private file and verified bytes.
+This does not claim to reconstruct hidden provider context; native wire-capture evidence and any unavailable provider-body hash are labelled separately.
+Record =provider_request_sha256: null= unless the adapter actually observes that request.
+Do not put raw credentials, authorization headers or credential-file hashes in either record.
+
+One immutable private request envelope commits =A=, =M= and segment references before reservation.
+Reserve against the combined envelope digest, then write the existing started marker and invoke the native transport with the verified envelope.
+The transport reads private files through regular-file/ownership checks and verifies their digests immediately before launch.
+It records both =assignment_sha256= and =delivery_manifest_sha256= in the new trace contract, replacing neither with the other.
+Result validation still checks the echoed semantic identifiers and native output schema.
+Replay validates the complete envelope, launched segment bindings, native trace and result before using saved output.
+
+Missing or changed envelopes after a reservation, assignment publication or started marker are corruption/unknown-outcome errors; never rebuild them under newer rendering code.
+An incomplete envelope before any such publication can be rebuilt from its frozen inputs, with the commit point tested by fault injection.
+Cache eviction, a restart or an expired provider cache only affects future request economics; it cannot invalidate an already completed local result or renew a job deadline.
+An explicit new attempt gets new request identities and may run cold within the remaining wallet, following existing retry rules.
+Earlier jobs take the exact old canonical-stdin path and retain their original briefs, traces, receipt usage and result identities.
+No new cache metadata is backfilled into old receipt bytes.
+
+* Isolation and independence
+:PROPERTIES:
+:CUSTOM_ID: isolation
+:END:
+
+Author, repair and reviewer use fresh native executions with explicitly constructed inputs.
+The reviewer receives only the candidate and review inputs required by its existing contract, never an author's private native conversation.
+Sharing identical policy-prefix computation does not grant access to another role's messages or substitute a prior judgment.
+Cache namespaces, if a native profile exposes them, use opaque stable job/role/contract scope; they contain no private paths or raw memory.
+They are accounting/optimization hints, not an access-control boundary or proof that provider caches are physically separate.
+Provider caches remain under the selected account and provider policy; SuCoder does not create a cross-account cache service.
+Prefix equality is never evidence that a source was admitted, reviewed or consumed.
+
+* Usage and economics
+:PROPERTIES:
+:CUSTOM_ID: usage
+:END:
+
+Retain the untouched native usage object, its trace binding, and a separate versioned =dream-usage-v2= normalized observation.
+Record =input_total=, =input_uncached=, =input_cache_read=, =input_cache_write=, =output=, provider-reported currency, field coverage and mapping provenance.
+Unknown fields remain null; observed zero is a distinct value.
+Support optional write breakdown by lifetime without adding that breakdown to its parent write total.
+Every count is a nonnegative integer, excluding booleans; reject contradictory totals as invalid telemetry and retain raw values for inspection.
+Invalid/missing telemetry cannot fabricate savings, hide an uncertain request or invalidate an otherwise completed structured role result.
+
+| Verified native mapping | Total input | Uncached input |
+|-------------------------+-------------+----------------|
+| OpenAI-style inclusive total | native input total | total minus known read and write subsets |
+| Anthropic-style exclusive input | uncached plus read plus write | native input value |
+| Unverified native mapping | unknown | unknown |
+
+Select the mapping by frozen native profile/event version, never by a harness name alone.
+Do not assume missing writes are zero or add cache fields to an inclusive total.
+Use one verified final aggregate per native invocation; CLI internal requests and per-message/iteration totals must not be summed again.
+Partial totals are reported with known subtotals and a count of incomplete calls, rather than a misleading complete aggregate.
+New budget status exposes normalized totals separately from the legacy raw-field aggregate; historical receipts remain unchanged.
+
+Report cached reads divided by known total input only over calls with complete compatible fields, together with the excluded-call count.
+Show input by role, cache reads/writes, native elapsed time and any reported currency.
+When currency is absent, leave it unknown; a separately requested estimate must name its dated provider/model price schedule and authentication/billing assumptions.
+Account for cache-write charges and expiry; neither cacheable bytes nor a high hit rate alone establishes net savings.
+No hard dollar/token ceiling is added: current native adapters still cannot guarantee one.
+All cold calls, misses, repairs and unknown outcomes count toward the existing call/time limits; no prewarming, probe or keepalive bypasses them.
+
+* Implementation and acceptance slices
+:PROPERTIES:
+:CUSTOM_ID: gates
+:END:
+
+1. Usage and bindings :: Add versioned normalization and delivery manifests with fake transports only.
+   Establish old-job replay with provider startup forbidden, including the real published E3 job.
+2. Native instruction profiles :: Add deterministic trusted-policy rendering for each native harness and fake-provider request capture where the build permits it.
+   Retain =legacy= as the rollout default until the relevant native build passes its full negative/isolation suite.
+3. Native data/history profiles :: Certify each harness independently against actual captured requests; if unsupported, keep the visible instruction-only capability and report the missing boundary mechanism.
+   No release claim of full history caching is allowed on the strength of API documentation or CLI help alone.
+4. Optional live acceptance :: A separately authorized synthetic two-request check per harness uses a useful fixed prefix above the selected model's threshold, one changed suffix, explicit model/authentication and a shared call/time ceiling.
+   It records cache writes, reads, total input, elapsed time and currency availability.
+   A miss retains diagnostics; it never triggers an automatic third request.
+   A measured positive read establishes one live hit for that exact profile, not a general savings estimate.
+
+Required deterministic cases include:
+
+- Identical frozen policy bytes across changing IDs, budgets and scratch directories; data remains user-priority even when it contains forged system instructions.
+- Unchanged canonical assignment identity plus separately bound instruction/stdin bytes; mutations to either surface prevent result reuse/publication.
+- Truncation, symlinks, ownership changes and file replacement at launch; stage-and-launch races cannot send unbound bytes.
+- Crash before/after envelope commit and reservation, missing manifests after started/finished calls, expired job replay and an explicit cold retry without duplicate provider work.
+- Cold, warm, expired and evicted provider caches; actual cache state never changes semantic selection, call accounting or accepted evidence.
+- OpenAI inclusive and Claude exclusive usage, nonzero writes, missing fields, observed zero, contradictory counts, duplicate final events and aggregate/per-iteration double counting.
+- Provider/model/schema/effort changes; a finish-only schema remains enforced even when it invalidates a prefix.
+- Reviewer canaries absent from author input and author-private canaries absent from reviewer input; no native session/home reuse across roles.
+- Full-source receipt/admission and prior-support preservation regressions, both native protocol fixtures, and Python 3.9-compatible implementation.
+
+Before implementation edits, run the project-required GitNexus upstream impact analysis on changed runtime symbols and report HIGH/CRITICAL risks.
+Before a commit, run change detection; run targeted pytest and the appropriate broader project checks for the implemented slice.
+No runtime implementation or live cache test is claimed by this document.
+
+Prepared by Sue (GPT-6 Codex).
