@@ -55,6 +55,9 @@ Cache controls and keys are optimization hints, never evidence-admission or acce
 - Extend :: A versioned request manifest binds the semantic assignment to separate instructions, data blocks, wire bytes and native settings.
   Existing traces bind one canonical stdin blob and cannot describe separate system/user surfaces.
 - Extend :: Frozen native capability/build profiles and deterministic prompt rendering; native flags can expose a stable instruction surface without changing evidence authority.
+- New :: An explicitly pinned vendor-native Codex launcher for the stable profile, with wrapper-equivalent environment/argv/signals and mandatory native request-capture tests.
+  The installed Node wrapper closes extra descriptors; local probes also reject the parent-proc workaround under Landlock, so neither can deliver the sealed schema.
+- New :: Sealed memfd schema delivery and bounded inline trusted-policy argv; prelaunch file hashes cannot prevent a native pathname-reopen race.
 - New :: A common prompt plan distinguishes trusted policy, untrusted stable data, append-only observations and volatile control data.
   Full user-history caching requires a proven native message/block adapter; field reordering alone is not such an adapter.
 - Extend :: Provider-aware usage normalization, missing-field counters and native-versus-estimated cost reporting, leaving old persisted totals unchanged.
@@ -62,9 +65,23 @@ Cache controls and keys are optimization hints, never evidence-admission or acce
 
 * 6. Decisions and verification boundary
 
-The design chooses native-only delivery, an initial instruction-prefix slice for both harnesses, and an explicit gate before claiming caching of untrusted data/history.
+The reviewed design chooses native-only delivery, an initial instruction-prefix slice for both harnesses, and an explicit gate before claiming caching of untrusted data/history.
 This is a scope decision: it gives a feasible first slice without claiming that the present one-prompt transport can cache the expensive accumulated history.
 No paid compatibility probe, live Claude run, runtime configuration, implementation or deployment is authorized by this design task.
 The design and its independent review must state which capabilities remain unverified on the installed builds.
+
+* Anchored design verification
+
+- OK, sections 2 and 4 :: The common plan reuses frozen semantic assignments, wallet and result/artifact validation; exact canonical reconstruction prevents incomplete or authority-changing projections.
+- OK, sections 2 and 5 :: The delivery manifest is a justified extension because the old trace attests one canonical stdin blob, not separate native instruction/schema/user surfaces.
+  The design retains canonical serialization and dispatches old jobs to their original bytes and interpretation.
+- OK, sections 3 and 4 :: Provider-specific accounting separates inclusive from exclusive input definitions, preserves raw usage, distinguishes missing fields from observed zero and never treats a cache hit as a result or accepted evidence.
+- RESOLVED, sections 4 and 5 :: Independent review identified native policy-file reopening and incomplete assignment projection; inline policy, sealed schema and exact reconstruction address those design gaps.
+- RESOLVED, sections 2 and 5 :: A further wrapper feasibility finding required explicit native executable pinning and equivalence tests; silently skipping the wrapper is not authorized by the profile.
+  Bounded Node/Python-only probes establish descriptor survival/loss and Landlock behavior, not native-agent schema compatibility.
+- OK, section 6 :: Both independent reviewers accepted the revised phased design after followup; actual native request certification, cache hits and savings remain unverified implementation/acceptance gates.
+
+The [[file:dream/prompt-caching-review.org][review record]] preserves all six findings and their dispositions.
+No Python runtime/configuration changed and no new live dream or paid cache test ran.
 
 Prepared by Sue (GPT-6 Codex).
