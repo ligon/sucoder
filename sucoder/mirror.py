@@ -25,6 +25,7 @@ from .agent_mode import (
     SERVICE_LAUNCH_PROBE_SH, codex_remote_command, config_override,
     service_launch, service_marker,
 )
+from . import auth as auth_mod
 from .codex_state import (
     DRAIN_ACK as _STATE_DRAIN_ACK,
     DRAIN_EXITED_STATES as _STATE_DRAIN_EXITED_STATES,
@@ -101,6 +102,7 @@ from .config import (
     AgentType,
     CodexStateConfig,
     Config,
+    HarnessAuthConfig,
     MirrorSettings,
     RemoteConfig,
     sanitize_session_token,
@@ -2485,6 +2487,90 @@ class MirrorManager:
             )
         return lines[0]
 
+    def _resolve_auth_mode(self, launcher: AgentLauncher, agent_name: str) -> Optional[str]:
+        """Effective auth mode for the selected harness: per-mirror > global."""
+        for source in (launcher, self.config.agent_launcher):
+            if source is not None and agent_name in source.auth:
+                return source.auth[agent_name].mode
+        return None
+
+    def _auth_credential(self, launcher: AgentLauncher, agent_name: str, kind: str) -> str:
+        """Resolve the credentials: entry name for this harness's auth secret."""
+        name: Optional[str] = None
+        for source in (launcher, self.config.agent_launcher):
+            if source is not None and agent_name in source.auth:
+                value = getattr(source.auth[agent_name], kind)
+                if value:
+                    name = value
+                    break
+        if name is None:
+            name = {"codex": "openai", "claude": "anthropic"}[agent_name]
+        if name not in self.config.credentials:
+            raise MirrorError(
+                f"Auth mode 'apikey' for {agent_name} needs a credential named "
+                f"{name!r} under `credentials:` (set "
+                f"agent_launcher.auth.{agent_name}.apikey_credential to use another name)."
+            )
+        return name
+
+    def _codex_auth_to_apikey(self, launcher: AgentLauncher, agent_name: str) -> None:
+        """Swap codex to API-key auth: pass key | codex login --with-api-key."""
+        credential = self._auth_credential(launcher, agent_name, "apikey_credential")
+        cfg = self._launcher_auth_config(launcher, agent_name)
+        try:
+            auth_mod.codex_to_apikey(self.config, self.executor, cfg, self.logger)
+        except auth_mod.AuthError as exc:
+            raise MirrorError(str(exc)) from exc
+
+    def _launcher_auth_config(self, launcher: AgentLauncher, agent_name: str) -> "HarnessAuthConfig":
+        for source in (launcher, self.config.agent_launcher):
+            if source is not None and agent_name in source.auth:
+                return source.auth[agent_name]
+        return HarnessAuthConfig()
+
+    def _claude_stage_api_key_helper(
+        self,
+        ctx: MirrorContext,
+        launcher: AgentLauncher,
+        agent_name: str,
+    ) -> str:
+        """Stage the apiKeyHelper executable that prints the key from pass."""
+        credential = self._auth_credential(launcher, agent_name, "apikey_credential")
+        pass_entry = self.config.credentials[credential].pass_entry
+        return self._stage_api_key_helper(ctx, pass_entry)
+
+    def _stage_api_key_helper(self, ctx: MirrorContext, pass_entry: str) -> str:
+        """Write a mode-700 executable printing the key from pass; agent-owned."""
+        script = (
+            "#!/bin/sh\n"
+            "# SuCoder apiKeyHelper: print the API key from the human's pass store.\n"
+            f"exec sudo -n -u {shlex.quote(self.config.human_user)} "
+            f"pass show {shlex.quote(pass_entry)} | head -n 1\n"
+        )
+        if ctx.is_remote:
+            home = self._resolve_remote_home(ctx)
+        else:
+            home_path = self._agent_home_directory()
+            if home_path is None:
+                raise MirrorError(
+                    f"Could not resolve the home directory for agent user "
+                    f"{self.executor.agent_user!r}."
+                )
+            home = str(home_path)
+        nonce = secrets.token_hex(12)
+        path = f"{home}/.cache/sucoder/api-key-helper-{nonce}.sh"
+        self.executor.run_agent(
+            [
+                "sh", "-c",
+                'umask 077 && mkdir -p "$(dirname "$1")" && cat > "$1" && chmod 700 "$1"',
+                "sucoder-api-key-helper", path,
+            ],
+            input=script,
+            check=True,
+            capture_output=True,
+        )
+        return path
+
     def _provider_launch_environment(
         self,
         model: Optional[str],
@@ -3709,6 +3795,7 @@ class MirrorManager:
         env_override: Optional[Mapping[str, str]] = None,
         supports_inline_prompt: Optional[bool] = None,
         codex_remote_control: Optional[str] = None,
+        auth_override: Optional[str] = None,
         codex_auth: Optional[str] = None,
         codex_state_from: Optional[str] = None,
         codex_state_fresh: bool = False,
@@ -3718,11 +3805,11 @@ class MirrorManager:
     ) -> int:
         """Launch the configured agent command within the mirror working tree.
 
-        ``codex_auth`` selects how a Codex launch authenticates for this run:
-        ``chatgpt`` (default) uses codex's own ChatGPT login, ``apikey`` adds
-        ``-c preferred_auth_method="apikey"`` and stages ``OPENAI_API_KEY``
-        from the pass-backed credential named by
-        ``agent_launcher.codex_auth_credential`` (default ``openai``).
+        ``auth_override`` selects how the launch authenticates:
+        ``subscription`` (default) uses the harness's native login, ``apikey``
+        switches to a pay-as-you-go API key read from the pass store (never an
+        env var) -- codex swaps ``~/.codex/auth.json`` and claude uses an
+        ``apiKeyHelper``.  ``codex_auth`` is a deprecated alias for codex.
 
         When ``detached`` is True (used by the auto-renew loop), a remote
         agent is started in a *detached* tmux session and this returns
@@ -3803,37 +3890,46 @@ class MirrorManager:
         if remote_enabled and self._detected_agent_type != AgentType.CODEX:
             raise MirrorError("Remote control requires --harness codex (or --agent codex).")
 
-        # Codex auth switch (subscription ChatGPT login vs pay-as-you-go API
-        # key).  ``apikey`` asks codex for the apikey auth method and stages
-        # OPENAI_API_KEY through the private env file below; ``chatgpt`` (the
-        # default) leaves codex's own ~/.codex auth untouched.
-        auth_mode = codex_auth
-        if auth_mode is None and self._detected_agent_type == AgentType.CODEX:
-            auth_mode = launcher.codex_auth
-            if auth_mode is None and self.config.agent_launcher is not None:
-                auth_mode = self.config.agent_launcher.codex_auth
-        if auth_mode not in (None, "chatgpt", "apikey"):
-            raise MirrorError(f"Unknown Codex auth mode: {auth_mode!r}")
-        if auth_mode is not None and self._detected_agent_type != AgentType.CODEX:
-            raise MirrorError("Codex auth selection requires --harness codex (or --agent codex).")
-        codex_api_key: Optional[str] = None
-        if auth_mode == "apikey":
-            credential_name = launcher.codex_auth_credential
-            if credential_name is None and self.config.agent_launcher is not None:
-                credential_name = self.config.agent_launcher.codex_auth_credential
-            credential_name = credential_name or "openai"
-            if credential_name not in self.config.credentials:
-                raise MirrorError(
-                    f"Codex auth mode 'apikey' needs a credential named "
-                    f"{credential_name!r} under `credentials:` (set "
-                    f"agent_launcher.codex_auth_credential to use another name)."
-                )
-            command = [*command, "-c", config_override("preferred_auth_method", "apikey")]
-            codex_api_key = (
-                "<redacted-dry-run>"
-                if self.executor.dry_run
-                else self._read_pass_credential(credential_name)
+        # Auth switch (subscription login vs pay-as-you-go API key), resolved
+        # CLI > per-mirror > global against the selected harness.  The key stays
+        # in the human's pass store and never becomes an agent env var:
+        # codex swaps ~/.codex/auth.json (via stdin, sucoder/auth.py); claude
+        # reads it through an apiKeyHelper merged into the single --settings.
+        agent_name = self._detected_agent_type.name.lower()
+        # Deprecated codex-only alias maps onto the generic override.
+        if auth_override is None and codex_auth is not None:
+            auth_override = "apikey" if codex_auth == "apikey" else "subscription"
+        auth_mode = auth_override
+        if auth_mode is None:
+            auth_mode = self._resolve_auth_mode(launcher, agent_name)
+        if auth_mode not in (None, "subscription", "apikey"):
+            raise MirrorError(f"Unknown auth mode: {auth_mode!r}")
+        if auth_mode == "apikey" and self._detected_agent_type not in (
+            AgentType.CODEX, AgentType.CLAUDE,
+        ):
+            raise MirrorError(
+                f"Auth mode 'apikey' is only supported for codex and claude, "
+                f"not {agent_name!r}."
             )
+        self._auth_helper_path: Optional[str] = None
+        if auth_mode == "apikey":
+            if self._detected_agent_type == AgentType.CODEX:
+                if ctx.is_remote:
+                    # The swap targets the shared local ~/.codex/auth.json; a
+                    # remote target authenticates with its own CODEX_HOME.  Never
+                    # clobber the local login for a launch that won't use it.
+                    self.logger.warning(
+                        "--auth apikey is ignored for a remote codex launch; "
+                        "the target uses its own CODEX_HOME auth.  Switch auth "
+                        "on the target (sucoder auth apikey --harness codex there)."
+                    )
+                else:
+                    self._codex_auth_to_apikey(launcher, agent_name)
+                    command = [*command, "-c", config_override("preferred_auth_method", "apikey")]
+            elif self._detected_agent_type == AgentType.CLAUDE:
+                # Stage the helper; the --settings carrying it is built below,
+                # merged with any attention hooks (claude takes one --settings).
+                self._auth_helper_path = self._claude_stage_api_key_helper(ctx, launcher, agent_name)
         # The reply reader (docs/reply-from-transcript.org) finds a Claude
         # session's transcript by an id chosen here: ``--session-id`` makes
         # the path ``<config>/projects/<cwd>/<id>.jsonl`` deterministic.  Not
@@ -3845,6 +3941,13 @@ class MirrorManager:
             self._claude_session_id = str(uuid.uuid4())
             command = self._insert_after_executable(command, ["--session-id", self._claude_session_id])
         command = self._with_attention_hooks(ctx, command)
+        # When attention hooks are off, auth's apiKeyHelper has not been carried
+        # into a --settings yet; add one.  When hooks are on, it was merged above.
+        if self._auth_helper_path is not None and not any(
+            t == "--settings" or t.startswith("--settings=") for t in command
+        ):
+            merged = json.dumps({"apiKeyHelper": self._auth_helper_path}, separators=(",", ":"))
+            command = self._insert_after_executable(command, ["--settings", merged])
         # Managed Codex state (docs/codex-local-state.org): decided here, applied
         # at two points below -- the sqlite_home placeholder at the argv stage,
         # before nvm/installer wrapping, and the staged runner outermost.
@@ -3889,8 +3992,6 @@ class MirrorManager:
         # Provider-derived values are defaults. Explicit launcher/CLI
         # environment settings retain their established override precedence.
         env: Dict[str, str] = dict(provider_env)
-        if codex_api_key is not None and "OPENAI_API_KEY" not in env:
-            env["OPENAI_API_KEY"] = codex_api_key
         env.update(launcher.env or {})
         if env_override:
             env.update(env_override)
@@ -5339,6 +5440,7 @@ class MirrorManager:
         env_override: Optional[Mapping[str, str]] = None,
         supports_inline_prompt: Optional[bool] = None,
         codex_remote_control: Optional[str] = None,
+        auth_override: Optional[str] = None,
         codex_auth: Optional[str] = None,
         codex_state_from: Optional[str] = None,
         codex_state_fresh: bool = False,
@@ -5385,6 +5487,7 @@ class MirrorManager:
             env_override=env_override,
             supports_inline_prompt=supports_inline_prompt,
             codex_remote_control=codex_remote_control,
+            auth_override=auth_override,
             codex_auth=codex_auth,
             codex_state_from=codex_state_from,
             codex_state_fresh=codex_state_fresh,
@@ -5586,7 +5689,14 @@ class MirrorManager:
             if any(token == "--settings" or token.startswith("--settings=") for token in command):
                 self.logger.info("Command already passes --settings; not adding attention hooks.")
                 return command
-            return self._insert_after_executable(command, ["--settings", claude_settings_json(key)])
+            # Claude takes one --settings: merge the apiKeyHelper (when auth
+            # mode is apikey) into the attention settings.
+            extra = (
+                {"apiKeyHelper": self._auth_helper_path}
+                if getattr(self, "_auth_helper_path", None)
+                else None
+            )
+            return self._insert_after_executable(command, ["--settings", claude_settings_json(key, extra)])
         if _codex_sets_hooks(command):
             self.logger.info("Command already sets a Codex hooks override; not adding attention hooks.")
             return command
