@@ -89,12 +89,25 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 # Inspect/pair the selected owner with codex-remote-status / codex-remote-pair;
 # native codex remote-control pair addresses a different, shared daemon.
 
+# Codex auth switch (optional; ChatGPT subscription login by default).
+# When the subscription quota runs out, switch a Codex launch to
+# pay-as-you-go API billing without touching codex's own login:
+#   agent_launcher:
+#     codex_auth: apikey              # chatgpt | apikey (default: chatgpt)
+#     codex_auth_credential: openai   # `credentials:` name (default: openai)
+# apikey mode passes `-c preferred_auth_method="apikey"` to codex and stages
+# OPENAI_API_KEY from the pass entry below through the private launch
+# environment (never argv or logs). Per-launch override: --codex-auth MODE.
+# Works for terminal and remote-control launches alike.
+
 # Provider credentials (optional). Values stay in the human user's `pass`
 # store; only the pass entry name belongs in this file. The first line of
 # the entry is used as the API key. OpenRouter metadata is built in.
 # credentials:
 #   openrouter:
 #     pass: openrouter.ai/apikey
+#   openai:                          # used by agent_launcher.codex_auth: apikey
+#     pass: openai.com/apikey
 
 # Custom OpenAI-compatible providers can be described once and selected by
 # the prefix of --model (for example laboratory/my-model).

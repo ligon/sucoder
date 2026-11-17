@@ -2300,6 +2300,35 @@ Each new launch or renewal successor requires fresh pairing; clients reconnectin
 
 Log in to Codex with ChatGPT on the target first.
 Remote availability depends on account access and outbound connectivity.
+
+** Codex subscription vs API-key auth
+
+A Codex launch normally uses the ChatGPT subscription login in
+=~/.codex/auth.json=. When the subscription quota runs out, switch to
+pay-as-you-go API billing for one launch without touching that login:
+
+#+begin_src sh
+sucoder -T savio collaborate --agent codex --codex-auth apikey
+#+end_src
+
+This passes =-c preferred_auth_method="apikey"= to codex and stages
+=OPENAI_API_KEY= from a =pass=-backed credential through the private launch
+environment (never argv or logs; see [[*Provider credentials from =pass=][Provider credentials]]).
+The credential is named =openai= by default; point
+=agent_launcher.codex_auth_credential= at another =credentials:= entry to use
+a different name. To make API billing the default — for one mirror or
+globally — set:
+
+#+begin_src yaml
+credentials:
+  openai:
+    pass: openai.com/apikey
+agent_launcher:
+  codex_auth: apikey   # chatgpt | apikey
+#+end_src
+
+=--codex-auth chatgpt|apikey= overrides configuration for one launch; the
+switch works for terminal and remote-control launches alike.
 Check the selected launch, then pair it from the launcher:
 
 #+begin_src shell

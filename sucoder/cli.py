@@ -2620,6 +2620,14 @@ def _codex_remote_mode(enabled: Optional[bool], server_only: bool) -> Optional[s
     return None if enabled is None else "terminal" if enabled else "off"
 
 
+def _codex_auth_mode(mode: Optional[str]) -> Optional[str]:
+    if mode is None:
+        return None
+    if mode not in ("chatgpt", "apikey"):
+        raise typer.BadParameter("--codex-auth must be 'chatgpt' or 'apikey'.")
+    return mode
+
+
 def _tmux_launch_preamble(
     ctx: typer.Context,
     config: Config,
@@ -2793,6 +2801,14 @@ def agents_run(
         False, "--remote-control-only",
         help="Start a Codex remote-control server without the terminal UI.",
     ),
+    codex_auth: Optional[str] = typer.Option(
+        None, "--codex-auth", metavar="MODE",
+        help=(
+            "Codex authentication for this launch: chatgpt (subscription login, "
+            "the default) or apikey (pay-as-you-go API key from the pass-backed "
+            "credential named by agent_launcher.codex_auth_credential, default 'openai')."
+        ),
+    ),
     codex_state_from: Optional[str] = typer.Option(
         None, "--codex-state-from", metavar="RUN/GENERATION",
         help="Continue managed Codex state from this exact generation (slurm.codex_state).",
@@ -2867,6 +2883,7 @@ def agents_run(
             env_override=env_override,
             supports_inline_prompt=inline_prompt_flag,
             codex_remote_control=remote_mode,
+            codex_auth=_codex_auth_mode(codex_auth),
             codex_state_from=codex_state_from,
             codex_state_fresh=codex_state_fresh,
         )
@@ -2933,6 +2950,14 @@ def collaborate(
     remote_control_only: bool = typer.Option(
         False, "--remote-control-only",
         help="Start a Codex remote-control server without the terminal UI.",
+    ),
+    codex_auth: Optional[str] = typer.Option(
+        None, "--codex-auth", metavar="MODE",
+        help=(
+            "Codex authentication for this launch: chatgpt (subscription login, "
+            "the default) or apikey (pay-as-you-go API key from the pass-backed "
+            "credential named by agent_launcher.codex_auth_credential, default 'openai')."
+        ),
     ),
     codex_state_from: Optional[str] = typer.Option(
         None, "--codex-state-from", metavar="RUN/GENERATION",
@@ -3070,6 +3095,7 @@ def collaborate(
             env_override=env_override,
             supports_inline_prompt=inline_prompt_flag,
             codex_remote_control=remote_mode,
+            codex_auth=_codex_auth_mode(codex_auth),
             codex_state_from=codex_state_from,
             codex_state_fresh=codex_state_fresh,
             skip_lfs=not lfs,
