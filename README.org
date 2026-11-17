@@ -2308,14 +2308,21 @@ A launch normally uses the harness's subscription login (codex's
 switch to pay-as-you-go API billing. The API key stays in the =pass= store and
 never becomes a process environment variable:
 
-- **codex** has no per-process key channel, so SuCoder swaps the shared
-  =~/.codex/auth.json=: it pipes =pass show … | codex login --with-api-key=
-  (stdin) after backing the subscription login up to a =pass= blob or a local
-  =.bak=, so =subscription= restores it. The swap is host-global — two
-  concurrent codex sessions on one host share =auth.json= and cannot mix modes.
+- **codex** has no per-process key channel or helper hook, so SuCoder swaps the
+  agent account's =~/.codex/auth.json= directly: the key is read from the human's
+  =pass= store (as =human_user=) and written to the agent's =auth.json= (as
+  =agent_user=, mode 600) via stdin — the key crosses the account boundary once,
+  in a pipe. The prior subscription login is backed up to a =pass= blob or a
+  local =.bak= so =subscription= restores it. Because codex's only API-key
+  mechanism stores the key in its own auth file, the key necessarily persists in
+  the agent-readable =auth.json= while apikey mode is active (unlike claude,
+  where it stays transient). The swap is host-global — two concurrent codex
+  sessions on one host share =auth.json= and cannot mix modes.
 - **claude** reads the key through an =apiKeyHelper= merged into its single
   =--settings= (shared with the attention hooks), leaving OAuth on disk
-  untouched. The switch is per-launch and non-destructive.
+  untouched. The helper runs =sudo -n -u <human_user> pass show …=, so the agent
+  never holds the key as data — it streams from the human's =pass= to the claude
+  process. The switch is per-launch and non-destructive.
 
 Switch one launch with =--auth apikey=:
 
