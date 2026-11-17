@@ -29,6 +29,8 @@ def attach(coordinator, profile):
     coordinator.prompt_profile = copy.deepcopy(profile)
     coordinator.prompt_preflight = getattr(coordinator.transport, "preflight", None)
     coordinator.run_id = digest(canonical([CONTRACT, coordinator.run_id, profile]))
+    from . import dream_submission
+    dream_submission.attach(coordinator, profile.get("submission_contract"))
 
 
 def _seed_reference(static):
@@ -46,12 +48,18 @@ def _seed_reference(static):
 
 
 def plan(task, schema):
-    if (not isinstance(task, dict) or set(task) - TOP - {"budget"} or not TOP <= set(task) or
+    from . import dream_submission
+    if (not isinstance(task, dict) or set(task) - TOP - {"budget", "submission_contract"} or not TOP <= set(task) or
             not isinstance(task["input"], dict) or not isinstance(task["brief"], str) or
             task["result_schema"] != schema):
         raise DreamError("Prompt assignment has unknown, missing or inconsistent fields", 3)
     static = dict(metadata={key: copy.deepcopy(task[key]) for key in ("contract", "run_id", "role")},
                   input=copy.deepcopy(task["input"]))
+    guard = GUARD
+    if "submission_contract" in task:
+        dream_submission.validate(task["submission_contract"])
+        static["metadata"]["submission_contract"] = task["submission_contract"]
+        guard = dream_submission.GUARD
     current = {key: task[key] for key in ("assignment_id", "input_sha256", "role")}
     if "budget" in task:
         current["budget"] = copy.deepcopy(task["budget"])
@@ -63,7 +71,7 @@ def plan(task, schema):
         nav = static["input"]["navigation"]
         current["navigation"] = {key: nav.pop(key) for key in sorted(VOLATILE_NAV & nav.keys())}
     references = _seed_reference(static) if task["role"] == "explorer" else []
-    return dict(contract=CONTRACT, policy=dict(authority="instructions", brief=task["brief"], guard=GUARD),
+    return dict(contract=CONTRACT, policy=dict(authority="instructions", brief=task["brief"], guard=guard),
         static_data=dict(authority="data", value=static),
         observations=dict(authority="data", present=history_present, value=observations),
         current=dict(authority="control", value=current), text_references=references)
@@ -77,9 +85,12 @@ def reconstruct(value, schema):
 
 
 def _reconstruct(value, schema):
+    from . import dream_submission
     dream._object(value, ("contract", "policy", "static_data", "observations", "current", "text_references"))
+    submission = value["static_data"]["value"]["metadata"].get("submission_contract")
+    dream_submission.validate(submission)
     if (value["contract"] != CONTRACT or value["policy"].get("authority") != "instructions" or
-            value["policy"].get("guard") != GUARD or value["static_data"].get("authority") != "data" or
+            value["policy"].get("guard") != (GUARD if submission is None else dream_submission.GUARD) or value["static_data"].get("authority") != "data" or
             value["observations"].get("authority") != "data" or value["current"].get("authority") != "control"):
         raise DreamError("Prompt segment authority or policy differs", 3)
     static = copy.deepcopy(value["static_data"]["value"])
@@ -132,12 +143,14 @@ def render(value):
 
 
 def envelope(task, profile, schema):
-    from . import dream_prompt_native
+    from . import dream_prompt_native, dream_submission
+    if task.get("submission_contract") != profile.get("submission_contract"):
+        raise DreamError("Prompt profile and assignment have different submission contracts", 3)
     value = plan(task, schema)
     if canonical(reconstruct(value, schema)) != canonical(task):
         raise DreamError("Prompt projection does not reconstruct its assignment", 3)
     policy, stdin = render(value)
-    manifest = dream_prompt_native.manifest(profile, policy, stdin, schema)
+    manifest = dream_prompt_native.manifest(profile, policy, stdin, dream_submission.wire_schema(task))
     manifest["assignment_sha256"] = digest(canonical(task))
     result = dict(contract=ENVELOPE, assignment=task, profile=profile, plan=value, manifest=manifest)
     result["sha256"] = digest(canonical(result))

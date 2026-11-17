@@ -1,0 +1,87 @@
+#+TITLE: Coordinator-owned dream submissions
+#+AUTHOR: Sue
+#+DATE: 2026-11-17
+#+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Purpose
+
+[[file:runs/sucoder-e4.org][E4]] reached an independent reviewer, which returned an acceptance with one incorrect character in its echoed input checksum.
+The coordinator correctly rejected that response, leaving memory unchanged.
+Submission was already scripted; requiring the model to reproduce routing metadata introduced an avoidable copying failure.
+
+New default project/experience jobs freeze =coordinator-submission-v1= in their job header and carry it into the editorial specification, run identity and assignments before native-call reservation.
+The native agent returns a substantive JSON body.
+Python supplies =assignment_id=, =input_sha256= and =role= from the frozen semantic task and submits that envelope to the existing coordinator checks.
+This applies to Codex and Claude, with legacy delivery or a newly certified stable profile.
+No additional agent tool, daemon, API account or configuration setting is needed.
+
+* Protocol
+:PROPERTIES:
+:CUSTOM_ID: protocol
+:END:
+
+The [[file:../../sucoder/dream_submission.py][submission wrapper]] performs the following steps within the existing orchestration:
+
+1. Mark the semantic assignment with the frozen submission contract, then let the existing wallet attach its frozen advice and final assignment identity.
+2. Derive a closed output schema by removing the three coordinator-owned metadata fields from the semantic result schema.
+   Failure reports, findings, decisions, citations and other substantive fields retain their original schema and validation.
+3. Persist =<run>-<assignment>-submission.json= before publishing the assignment or reserving a native call.
+   It binds the contract, canonical semantic assignment digest, delivered stdin digest and actual output-schema digest.
+4. Invoke the existing confined native transport with the body schema and the instruction that Python owns reply metadata.
+   Preserve native stdout, stderr, version, usage and completion events.
+5. Validate the submission manifest, semantic task digest, exactly one final aggregate and closed body schema.
+   An agent-supplied metadata field is an unexpected field and is rejected, even if its value happens to match.
+6. Attach the frozen identifiers in Python and pass the full result through the existing semantic, citation, independent-review and publication checks.
+
+For example, a reviewer returns:
+
+#+begin_example
+{"failures":[],"verdict":"accept","findings":[],"requests":[],"task_checks":[]}
+#+end_example
+
+The wrapper adds the current assignment metadata mechanically.
+An acceptance becomes valid only after the existing coordinator validates its complete result and trace; a successful native process is not sufficient.
+The envelope records the association between the submitted input and its owned native process; it does not prove that the model examined every source correctly.
+Editorial task authority, human decisions and substantive source claims still require their existing checks.
+
+Legacy delivery sends the canonical semantic task with an added trusted guard in its brief and the body schema in its model-facing =result_schema=.
+The saved semantic task retains its complete result schema.
+Stable delivery retains lossless semantic reconstruction, changes the trusted guard and certifies the actual body schema.
+Its request envelope, delivery manifest and submission manifest bind the same stdin/schema bytes.
+
+* Replay and recovery
+:PROPERTIES:
+:CUSTOM_ID: replay
+:END:
+
+Saved semantic results contain coordinator-attached metadata, while raw native output contains the original body.
+Replay re-parses that raw output and reconstructs the envelope using the same frozen task and submission contract.
+The resulting full result and usage must equal the saved result wrapper, and its trace must still match the wallet and build identity.
+Changed body text, injected metadata or changed/missing submission manifests prevent successful replay.
+A manifest cannot be reconstructed after assignment publication, reservation or native start.
+A started request without a validated result still requires an explicit new attempt; no failure causes an automatic paid retry.
+
+Headers and specifications without the new contract retain their original interpretation, native bytes and identifier checks.
+Earlier explicit notes/reader workflows retain their original contracts.
+E4 remains incomplete and its mistyped identifier is not repaired or accepted retrospectively.
+Historical E3 still replays as published with native provider/build/authentication access forbidden.
+Legacy progress/prefix reuse is disabled for body-submission jobs until its manifests can bind this protocol.
+
+* Cache certification
+
+Per-assignment enum values for checksums would change output-schema bytes on each call.
+The current certification check includes the structured output schema in the observed eligible prefix, so constraining values this way could defeat instruction-prefix reuse.
+Body-only schemas remain stable for each role/closeout variant.
+
+The fourteen current policy/schema pairs now certify the body guard and body schemas.
+New profile keys therefore differ from the earlier echo-metadata profiles.
+Old frozen profiles remain valid for their historical jobs; new body delivery requires matching offline certification, with no relaxation or automatic fallback.
+Fresh profile loading checks the submission contract and every current policy/schema catalog entry, even if a self-consistent older profile is placed under the new cache filename.
+Offline certification uses synthetic replies and dummy credentials behind the existing local-network boundary; it does not test live editorial quality or actual cache savings.
+
+* Verification
+
+The [[file:../dream-submission-ledger.org][grounding ledger]] records the reuse decisions and verification results.
+Targeted tests cover both native interfaces, exact body/schema delivery, metadata injection, changed assignment/schema/stdin manifests, missing/duplicate completion, missing/corrupt durable manifests, no-repeat recovery and legacy checksum rejection.
+The existing dream regression tests exercise author/reviewer publication and inference-free status under the new protocol using synthetic transports.
+No new paid dream or retry of E4 is part of this implementation.

@@ -243,6 +243,10 @@ def parse_trace(raw, harness):
 
 
 def invoke(harness, model, assignment, schema, deadline, *, expected_version=None):
+    from . import dream_submission
+    if "submission_contract" in assignment and schema != assignment["result_schema"]:
+        raise DreamError("Submission schema differs from its semantic assignment", 3)
+    output_schema = dream_submission.wire_schema(assignment) if "submission_contract" in assignment else schema
     if harness not in ("codex", "claude"):
         raise DreamError("Unsupported native dream harness")
     executable = shutil.which(harness)
@@ -265,11 +269,13 @@ def invoke(harness, model, assignment, schema, deadline, *, expected_version=Non
                 raise DreamError("Native harness version probe failed", 3)
             if expected_version is not None and version.decode().strip() != expected_version:
                 raise DreamError("Native harness version changed since the run was frozen", 3)
-            Path(scratch, "result.schema.json").write_bytes(canonical(schema))
-            payload = canonical(assignment)
+            Path(scratch, "result.schema.json").write_bytes(canonical(output_schema))
+            payload = dream_submission.payload(assignment)
+            assignment_sha256 = digest(canonical(assignment))
+            submission = dream_submission.manifest(assignment)
             failure = None
             try:
-                code, stdout, stderr = capture(command(harness, executable, model, schema), payload,
+                code, stdout, stderr = capture(command(harness, executable, model, output_schema), payload,
                                                 scratch, env, deadline, boundary)
             except DreamError as exc:
                 code = None
@@ -277,9 +283,11 @@ def invoke(harness, model, assignment, schema, deadline, *, expected_version=Non
                 stderr = getattr(exc, "partial_stderr", b"")
                 failure = str(exc)
             trace = dict(harness=harness, model=model, version=version.decode().strip(),
-                         input_sha256=digest(payload), stdout=stdout.decode("utf-8"),
+                         input_sha256=assignment_sha256, stdout=stdout.decode("utf-8"),
                          stderr=stderr.decode("utf-8"), returncode=code,
                          boundary="linux-landlock-inline-v1")
+            if submission is not None:
+                trace["submission"] = submission
             if failure is not None:
                 trace["validation_error"] = failure
                 return None, None, trace
@@ -287,7 +295,7 @@ def invoke(harness, model, assignment, schema, deadline, *, expected_version=Non
                 # Return failure traces to the coordinator for private storage.
                 return None, None, trace
             try:
-                result, usage = parse_trace(stdout, harness)
+                result, usage = dream_submission.parse(assignment, trace)
             except DreamError as exc:
                 trace["validation_error"] = str(exc)
                 return None, None, trace

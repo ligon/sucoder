@@ -352,7 +352,9 @@ class WikiCoordinator(dream_roles.Coordinator):
 
 
 def run(config, mirror, plan_path, harness, model, attempt=1, mode="wiki", purpose=PURPOSE, *, transport=None,
-        budget_path=None, budget_limits=None, prompt_profile=None, prompt_layout=None):
+        budget_path=None, budget_limits=None, prompt_profile=None, prompt_layout=None, submission_contract=None):
+    from . import dream_submission
+    dream_submission.validate(submission_contract)
     layout = prompt_layout if prompt_layout is not None else ("stable" if prompt_profile is not None else "legacy")
     if layout not in ("legacy", "stable") or (prompt_profile is not None and layout != "stable"):
         raise DreamError("Prompt layout must be legacy or stable and match its frozen profile")
@@ -395,17 +397,19 @@ def run(config, mirror, plan_path, harness, model, attempt=1, mode="wiki", purpo
                 transport = dream_prompt_native.Transport(prompt_profile)
             transport = transport or dream_native.Transport(harness, deadline)
             reused = (dream_progress.try_reuse(plan, fd, source_readers[mirror], harness, model,
-                                             transport.version, purpose, deadline) if prompt_profile is None else None)
+                                             transport.version, purpose, deadline) if prompt_profile is None and submission_contract is None else None)
             if reused is not None:
                 return reused
             from . import dream_curate, dream_editor, dream_prefix
             prefixes = (dream_prefix.discover(plan, fd, source_readers[mirror], harness, model, transport.version, purpose, deadline)
-                        if prompt_profile is None else [])
+                        if prompt_profile is None and submission_contract is None else [])
             coordinator = dream_editor.Editor(plan, fd, harness, model, deadline, transport,
                 attempt=attempt, purpose=purpose, source=source_readers[mirror], prefixes=prefixes)
             if prompt_profile is not None:
                 from . import dream_prompt
                 dream_prompt.attach(coordinator, prompt_profile)
+            if submission_contract is not None:
+                dream_submission.attach(coordinator, submission_contract)
             budget.attach(coordinator)
             prefix = "native-" + coordinator.run_id
             spec = dict(contract=coordinator.contract, run_id=coordinator.run_id, harness=harness, model=model,
@@ -414,6 +418,8 @@ def run(config, mirror, plan_path, harness, model, attempt=1, mode="wiki", purpo
                 spec["prefixes"] = prefixes
             if prompt_profile is not None:
                 spec["prompt_profile"] = prompt_profile
+            if getattr(coordinator, "submission_contract", None) is not None:
+                spec["submission_contract"] = coordinator.submission_contract
             dream_run._store(fd, prefix + "-spec.json", canonical(spec) + b"\n")
             with dream_roles.run_lock(fd, prefix):
                 pages, receipt = coordinator.prepare()
@@ -425,7 +431,7 @@ def run(config, mirror, plan_path, harness, model, attempt=1, mode="wiki", purpo
 
 def restore(plan, fd, run_id, deadline):
     spec = dream._json(dream_run._read(fd, "native-" + run_id + "-spec.json", dream_run.MAX_PLAN_BYTES))
-    dream._object(spec, ("contract", "run_id", "harness", "model", "native_version", "attempt", "purpose"), ("prefixes", "budget", "prompt_profile"))
+    dream._object(spec, ("contract", "run_id", "harness", "model", "native_version", "attempt", "purpose"), ("prefixes", "budget", "prompt_profile", "submission_contract"))
     from . import dream_curate, dream_author, dream_editor
     if spec["contract"] not in (CONTRACT, LEGACY_CONTRACT, dream_curate.CONTRACT, dream_author.CONTRACT, dream_editor.CONTRACT) or spec["run_id"] != run_id or spec["harness"] not in ("codex", "claude"):
         raise DreamError("Invalid wiki run specification")
@@ -446,6 +452,9 @@ def restore(plan, fd, run_id, deadline):
     if "prompt_profile" in spec:
         from . import dream_prompt
         dream_prompt.attach(coordinator, spec["prompt_profile"])
+    if "submission_contract" in spec:
+        from . import dream_submission
+        dream_submission.attach(coordinator, spec["submission_contract"])
     from . import dream_budget
     with dream_budget.restore(spec.get("budget")) as budget:
         if budget is not None:

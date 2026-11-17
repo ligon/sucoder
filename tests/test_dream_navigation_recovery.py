@@ -15,6 +15,7 @@ from tests.test_dream import git, workspace  # noqa: F401
 from tests.test_dream_explore import ExploringTransport, clock, options  # noqa: F401
 from tests.test_dream_experience import SID, TRUTH, line, no_live, write_session  # noqa: F401
 from tests.test_dream_wiki import TOPIC, planned
+from tests.dream_submission_fixture import native_reply
 
 
 class Scripted(ExploringTransport):
@@ -39,7 +40,7 @@ class Scripted(ExploringTransport):
         trace = dict(harness=harness, model=model, version=self.version, returncode=0,
             input_sha256=dream.digest(dream.canonical(task)), stdout="\n".join(json.dumps(e) for e in events) + "\n",
             stderr="", boundary="linux-landlock-inline-v1")
-        return value, dict(native={}, currency_usd=None), trace
+        return native_reply(task, value, dict(native={}, currency_usd=None), trace)
 
 
 def read_then_finish(task):

@@ -448,6 +448,8 @@ class Explorer(dream_roles.Coordinator):
         if "prompt_profile" in header:
             from . import dream_prompt
             dream_prompt.attach(self, header["prompt_profile"])
+        from . import dream_submission
+        dream_submission.attach(self, header.get("submission_contract"))
 
     def make_assignment(self, role, inputs):
         value = dict(contract=CONTRACT, run_id=self.run_id, role=role, brief=self.brief, input=inputs,

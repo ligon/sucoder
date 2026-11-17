@@ -337,6 +337,8 @@ The subsequently authorized [[file:runs/codex-cache-c1.org][C1 live subscription
 The later ordinary [[file:runs/sucoder-e4.org][E4 experience dream]] reported 22,656 cached input tokens across three of fifteen calls through the same subscription route with legacy delivery.
 This observes some subscription cache reuse, without identifying the cached segment, explaining C1's misses or certifying the stable Codex profile.
 E4 stopped before memory publication because the reviewer mistyped its echoed input checksum, independently of caching.
+The subsequent [[file:submission.org][submission protocol]] moves assignment metadata into a Python wrapper for new jobs.
+Its body-only policy/schema pairs require new certification; historical frozen profiles and reply checks retain their old interpretation.
 
 The runtime modules are [[file:../../sucoder/dream_prompt.py][lossless prompt plans]], [[file:../../sucoder/dream_prompt_native.py][native profiles]], [[file:../../sucoder/dream_cache_certify.py][offline certification]] and [[file:../../sucoder/dream_usage.py][usage normalization]].
 Existing canonical assignments, old result/receipt interpretation and legacy argv remain unchanged.

@@ -2643,6 +2643,9 @@ An explicit positive integer, including eight in an existing configuration, rema
 New jobs freeze a bounded memory index, topic list and open Talk/task leads into their first discovery navigation, counting these bytes toward the navigation allowance.
 Their starting seed prefers an open memory item, then a committed file changed since the latest memory evidence, then a randomly chosen committed file or finished-session window.
 The explorer follows that lead or explains its alternative; the seed and brief version stay frozen when the job resumes.
+New jobs use [[file:docs/dream/submission.org][coordinator-owned submission metadata]] for discovery, authorship and independent review.
+Agents return a structured reply body; Python attaches the frozen assignment ID, input checksum and role, avoiding model copying errors in those fields.
+Raw replies and submission manifests remain bound to the assignment and wallet during replay; earlier jobs keep their original contracts.
 Earlier jobs keep their original navigation and briefs.
 All discovery, author, reviewer and repair calls share the same durable job budget.
 

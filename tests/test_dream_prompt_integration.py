@@ -19,6 +19,8 @@ from tests.test_dream_wiki import planned
 
 def certified(harness):
     value = profile(harness)
+    from sucoder import dream_submission
+    value["submission_contract"] = dream_submission.CONTRACT
     value.update(version=ExploringTransport.version, model="explicit-model")
     value["variants"] = [dict(name=row["name"], policy_sha256=dream.digest(row["policy"].encode()),
         schema_sha256=dream.digest(dream.canonical(row["schema"])), prefix_sha256="d" * 64)
@@ -46,6 +48,9 @@ class StableTransport(ExploringTransport):
             delivery_manifest_sha256=dream.digest(dream.canonical(request["manifest"])),
             usage_mapping=request["profile"]["usage_mapping"], delivery={key: request["manifest"][key]
                 for key in ("policy_sha256", "stdin_sha256", "schema_sha256", "profile_sha256")})
+        if "submission_contract" in task:
+            from sucoder import dream_submission
+            trace["submission"] = dream_submission.manifest(task, request)
         return result, usage, trace
 
 

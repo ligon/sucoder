@@ -10,6 +10,7 @@ from sucoder import dream, dream_context, dream_curate, dream_native, dream_run,
 from tests.test_dream import git, invoke, workspace  # noqa: F401
 from tests.test_dream_curate import NoopTransport, noop_plan
 from tests.test_dream_wiki import OLD, POLICY, TOPIC, planned
+from tests.dream_submission_fixture import native_reply
 
 
 def request(kind, key="", target="", query="", start=0, end=0):
@@ -29,7 +30,7 @@ def native_result(harness, model, task, result, version):
     trace = dict(harness=harness, model=model, version=version, returncode=0,
         input_sha256=dream.digest(dream.canonical(task)), stdout="\n".join(json.dumps(e) for e in events) + "\n",
         stderr="", boundary="linux-landlock-inline-v1")
-    return result, dict(native={}, currency_usd=None), trace
+    return native_reply(task, result, dict(native={}, currency_usd=None), trace)
 
 
 class ContextEditor:

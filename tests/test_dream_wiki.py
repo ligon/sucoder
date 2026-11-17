@@ -8,6 +8,7 @@ import pytest
 
 from sucoder import dream, dream_run, dream_wiki as wiki
 from tests.test_dream import git, invoke, workspace  # noqa: F401
+from tests.dream_submission_fixture import native_reply
 
 
 TOPIC = ".sucoder/wiki/topics/reply-evidence.org"
@@ -84,7 +85,7 @@ class EditorTransport:
         trace = dict(harness=harness, model=model, version=self.version, returncode=0,
                      input_sha256=dream.digest(dream.canonical(task)), stdout="\n".join(json.dumps(e) for e in events) + "\n",
                      stderr="", boundary="linux-landlock-inline-v1")
-        return result, dict(native={}, currency_usd=None), trace
+        return native_reply(task, result, dict(native={}, currency_usd=None), trace)
 
 
 @pytest.mark.parametrize("harness", ["codex", "claude"])

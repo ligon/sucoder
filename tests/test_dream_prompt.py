@@ -12,7 +12,7 @@ def profile(harness="codex"):
     file = dict(path="/usr/bin/fixture-native", sha256="a" * 64, size=1, device=1, inode=1, mtime_ns=1, ctime_ns=1)
     build = dict(harness=harness, launcher="direct-native", entry=file, native=file, environment={}, platform={})
     value = native.draft_profile(build, "fixture-model", "fixture-native-1",
-        dict(route="native-credentials", principal=None, account_continuity="unverified"))
+        dict(route="native-credentials", principal=None, account_continuity="unverified"), submission_contract=None)
     value["capabilities"]["instruction_prefix"] = "certified"
     value["variants"] = [dict(policy_sha256=dream.digest((prompt.GUARD + "Trusted policy: keep all source qualifications.").encode()),
         schema_sha256=dream.digest(dream.canonical(dict(type="object", properties={}, required=[], additionalProperties=False))),

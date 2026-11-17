@@ -12,6 +12,7 @@ from tests.test_dream import git, workspace  # noqa: F401
 from tests.test_dream_explore import ExploringTransport, clock, options  # noqa: F401
 from tests.test_dream_explore_cli import exploratory_runtime, invoke  # noqa: F401
 from tests.test_dream_wiki import TOPIC, planned
+from tests.dream_submission_fixture import native_reply
 
 SID = "6d1f0c2a-9b3e-4c5d-8e7f-0a1b2c3d4e5f"
 MEMORY = "refs/heads/sucoder/memory"
@@ -58,7 +59,7 @@ class ExperienceTransport(ExploringTransport):
         trace = dict(harness=harness, model=model, version=self.version, returncode=0,
                      input_sha256=dream.digest(dream.canonical(task)),
                      stdout="\n".join(json.dumps(e) for e in events) + "\n", stderr="", boundary="linux-landlock-inline-v1")
-        return result, dict(native={}, currency_usd=None), trace
+        return native_reply(task, result, dict(native={}, currency_usd=None), trace)
 
 
 class ReadsUntilToldTransport(ExperienceTransport):
@@ -86,7 +87,7 @@ class ReadsUntilToldTransport(ExperienceTransport):
         trace = dict(harness=harness, model=model, version=self.version, returncode=0,
                      input_sha256=dream.digest(dream.canonical(task)),
                      stdout="\n".join(json.dumps(e) for e in events) + "\n", stderr="", boundary="linux-landlock-inline-v1")
-        return result, dict(native={}, currency_usd=None), trace
+        return native_reply(task, result, dict(native={}, currency_usd=None), trace)
 
 
 @pytest.fixture

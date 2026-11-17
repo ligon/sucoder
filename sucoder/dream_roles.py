@@ -122,18 +122,20 @@ class Coordinator:
         return schema(role)
 
     def call(self, role, inputs):
+        from . import dream_submission
         budget = getattr(self, "budget", None)
         if self.invocations >= self.plan["limits"]["max_role_invocations"] or time.monotonic() >= self.deadline:
             if budget is not None and not budget.readonly and not budget.remaining():
                 budget.fail("elapsed allowance exhausted", dict(role=role, run_id=self.run_id))
             raise DreamError("Shared dream role or elapsed allowance exhausted", 3)
-        task = self.make_assignment(role, inputs)
+        task = dream_submission.assignment(self.make_assignment(role, inputs), getattr(self, "submission_contract", None))
         if budget is not None:
             task = budget.assignment(task)
         if len(canonical(task)) > self.plan["limits"]["max_consolidation_bytes"]:
             raise DreamError("Role assignment exceeds max_consolidation_bytes", 3)
         from . import dream_prompt
         request = dream_prompt.freeze(self, task)
+        dream_submission.freeze(self, task, request)
         key = self.run_id + "-" + task["assignment_id"]
         dream_run._store(self.fd, key + "-assignment.json", canonical(task) + b"\n")
         # A failed/started native request is never automatically repeated on
@@ -172,7 +174,7 @@ class Coordinator:
                 trace["harness"] != self.harness or trace["model"] != self.model or
                 trace["version"] != saved["version"] or trace["version"] != self.expected_version or trace["returncode"] != 0):
             raise DreamError("Private role trace no longer binds its assignment and result")
-        traced_result, traced_usage = dream_native.parse_trace(trace["stdout"].encode(), self.harness)
+        traced_result, traced_usage = dream_submission.parse(task, trace, request)
         if canonical(traced_result) != canonical(saved["result"]) or canonical(traced_usage) != canonical(saved["usage"]):
             raise DreamError("Stored result or usage differs from the completed native trace")
         if self.version is not None and self.version != saved["version"]:

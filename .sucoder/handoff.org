@@ -1,8 +1,30 @@
 #+TITLE: SuCoder consolidated on main in the canonical mirror; publication pending
 #+DATE: 2026-11-17
-#+STATUS: LIVE DREAM STOPPED AT REVIEWER IDENTITY; SUBSCRIPTION CACHE READS OBSERVED; PUBLICATION PENDING
+#+STATUS: SCRIPTED SUBMISSIONS IMPLEMENTED; E4 REMAINS INCOMPLETE; PUBLICATION PENDING
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Coordinator-owned submissions, 2026-11-17
+
+The human requested progress on scripted assignment submission after E4's reviewer checksum typo.
+New default project/experience jobs now freeze =coordinator-submission-v1= and ask native Codex/Claude agents for a body-only JSON reply.
+Python attaches the frozen assignment ID, input checksum and role; raw native bodies and an immutable pre-reservation submission manifest still bind the semantic task, delivered stdin and output schema.
+Replay reconstructs the envelope from the raw body, rejecting injected metadata, changed/missing manifests and missing/duplicate completion; started work is never automatically repeated.
+Earlier headers/specifications and explicit notes/reader workflows retain their original contracts.
+E3 still reports published and E4 incomplete with native entrypoints forbidden; private memory remains =d6a3621=.
+
+The [[file:../docs/dream/submission.org][protocol]] and [[file:../docs/dream-submission-ledger.org][grounding ledger]] record the design and verification.
+Fresh stable-profile loading requires the current submission contract and complete policy/schema catalog; historical frozen profiles remain replayable.
+The installed Claude passed all 28 synthetic captures for the fourteen body-schema variants, and the resulting profile loads through the stricter gate.
+Codex stable delivery remains uncertified under the existing additional-tool check; ordinary legacy delivery supports the wrapper.
+No API switch, certificate relaxation or paid retry followed.
+
+The final submission/native/cache/CLI group passes 124 tests, including 30 new submission cases; the discovery/recovery/context group passes 75.
+The broader notes/wiki/reader/budget/CLI run passed 240 with one outdated detached fixture; that fixture now obeys the body schema and passes in the final followup.
+All eight changed runtime modules pass mypy, Python 3.9 grammar and ASCII checks; Org export and file links pass.
+The unfiltered full suite was not rerun; the preceding verified unrelated Codex-state baseline is recorded in the caching ledger.
+Verification artifacts are under =/home/coder/.sucoder/logs/dream-submission/2026-11-17/=.
+All useful source and documentation are on local main; installed deployment and GitHub publication remain pending.
 
 * Live experience dream E4, 2026-11-17
 

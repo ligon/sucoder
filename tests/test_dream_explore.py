@@ -14,6 +14,7 @@ from tests.test_dream import git, workspace  # noqa: F401
 from tests.test_dream_budget import Clock
 from tests.test_dream_curate import NoopTransport
 from tests.test_dream_wiki import EditorTransport, TOPIC, planned
+from tests.dream_submission_fixture import native_reply
 
 
 QUESTION = "Should the maintainer change the timeout?"
@@ -57,7 +58,7 @@ class ExploringTransport:
         trace = dict(harness=harness, model=model, version=self.version, returncode=1 if self.fail else 0,
             input_sha256=dream.digest(dream.canonical(task)), stdout="" if self.fail else "\n".join(json.dumps(e) for e in events) + "\n",
             stderr="fixture native failure" if self.fail else "", boundary="linux-landlock-inline-v1")
-        return (None, None, trace) if self.fail else (result, dict(native={}, currency_usd=None), trace)
+        return native_reply(task, None, None, trace) if self.fail else native_reply(task, result, dict(native={}, currency_usd=None), trace)
 
 
 @pytest.fixture
@@ -184,7 +185,7 @@ class SearchingTransport(ExploringTransport):
             trace["stdout"] = "\n".join(json.dumps(event) for event in (
                 dict(type="item.completed", item=dict(type="agent_message", text=json.dumps(result))),
                 dict(type="turn.completed", usage={}))) + "\n"
-        return result, usage, trace
+        return native_reply(task, result, usage, trace)
 
 
 def test_navigation_is_frozen_per_job_so_earlier_jobs_still_replay(workspace, monkeypatch, clock):
@@ -288,7 +289,7 @@ def test_immediate_selection_cannot_spend_the_last_author_invocation(workspace, 
             trace["stdout"] = "\n".join(json.dumps(event) for event in (
                 dict(type="item.completed", item=dict(type="agent_message", text=json.dumps(result))),
                 dict(type="turn.completed", usage={}))) + "\n"
-            return result, usage, trace
+            return native_reply(task, result, usage, trace)
     native = FinishingTransport(no_selection=True)
     job = Path(prepared["job_path"])
     with pytest.raises(dream_budget.Exhausted, match="reserved for authorship, review"):

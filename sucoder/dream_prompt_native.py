@@ -119,6 +119,8 @@ def credential_identity(raw, harness):
 def validate_profile(profile):
     if not isinstance(profile, dict):
         raise DreamError("Native prompt profile must be an object", 3)
+    from . import dream_submission
+    dream_submission.validate(profile.get("submission_contract"))
     proof = profile.get("certification")
     capabilities = profile.get("capabilities")
     build = profile.get("build")
@@ -155,7 +157,7 @@ def validate_profile(profile):
         raise DreamError("Frozen native prompt profile checksum differs", 3)
 
 
-def draft_profile(build, model, version, auth):
+def draft_profile(build, model, version, auth, *, submission_contract="coordinator-submission-v1"):
     """Candidate profile for offline certification, never a published claim."""
     harness = build["harness"]
     template = dream_native.command(harness, "@native@", "@model@", {})
@@ -173,11 +175,15 @@ def draft_profile(build, model, version, auth):
         capabilities=dict(instruction_prefix="unverified", user_block_boundaries="unverified",
             history_prefix="unsupported", cache_read_usage="verified", cache_write_usage="verified"),
         usage_mapping="codex-exec-inclusive-v1" if harness == "codex" else "claude-print-exclusive-v1")
+    from . import dream_submission
+    dream_submission.validate(submission_contract)
+    if submission_contract is not None:
+        value["submission_contract"] = submission_contract
     value["sha256"] = digest(canonical(value))
     return value
 
 
-def variants():
+def variants(submission_contract="coordinator-submission-v1"):
     """Current production variants, including mandatory closeout schemas."""
     from . import dream_discover, dream_editor, dream_leads, dream_navigation, dream_prompt, dream_support
     values = []
@@ -194,6 +200,12 @@ def variants():
         for role, brief in sorted(briefs.items()):
             values.append(dict(name=role + "-editorial-" + str(editorial), policy=dream_prompt.GUARD + brief,
                 schema=dream_editor.schema(role)))
+    if submission_contract is not None:
+        from . import dream_submission
+        dream_submission.validate(submission_contract)
+        for value in values:
+            value["policy"] = dream_submission.GUARD + value["policy"][len(dream_prompt.GUARD):]
+            value["schema"] = dream_submission.schema(value["schema"])
     return values
 
 
@@ -223,6 +235,13 @@ def load_profile(config, harness, model, deadline):
     if value.get("build") != build or value.get("model") != model or value.get("authentication", {}).get("route") != auth["route"]:
         raise DreamError("Native cache certificate does not match the selected build/model/authentication route", 3)
     validate_profile(value)
+    from . import dream_submission
+    if value.get("submission_contract") != dream_submission.CONTRACT:
+        raise DreamError("Native cache profile uses an earlier submission contract; run dream certify-cache again", 3)
+    expected = [(item["name"], digest(item["policy"].encode()), digest(canonical(item["schema"]))) for item in variants()]
+    observed = [(item.get("name"), item["policy_sha256"], item["schema_sha256"]) for item in value["variants"]]
+    if observed != expected:
+        raise DreamError("Native cache profile does not cover the current submission policy/schema catalog", 3)
     fd = dream._open_private_directory(path)
     try:
         report = dream._json(dream_run._read(fd, "probe-" + value["certification"]["report_sha256"] + ".json", MAX_CERTIFICATION_BYTES))
@@ -338,10 +357,13 @@ def environment(profile, scratch):
 
 
 def invoke(profile, task, schema, request, deadline):
-    from . import dream_prompt
+    from . import dream_prompt, dream_submission
     dream_prompt.verify(request, task, profile, schema)
+    output_schema = dream_submission.wire_schema(task)
     check_live(profile, deadline)
     policy, stdin = dream_prompt.render(request["plan"])
+    assignment_sha256 = digest(canonical(task))
+    submission = dream_submission.manifest(task, request)
     harness = profile["harness"]
     with tempfile.TemporaryDirectory(prefix="sucoder-dream-role-") as scratch:
         env = environment(profile, scratch)
@@ -351,8 +373,8 @@ def invoke(profile, task, schema, request, deadline):
         try:
             boundary.allow(Path(profile["build"]["native"]["path"]), dream_native.READ)
             if harness == "codex":
-                schema_fd = sealed_schema(schema)
-            arguments = argv(profile, policy, schema, "/proc/self/fd/" + str(schema_fd))
+                schema_fd = sealed_schema(output_schema)
+            arguments = argv(profile, policy, output_schema, "/proc/self/fd/" + str(schema_fd))
             count = check_bounds(policy, arguments, env)
             started = time.monotonic()
             failure = None
@@ -363,13 +385,15 @@ def invoke(profile, task, schema, request, deadline):
                 code, stdout, stderr = None, getattr(exc, "partial_stdout", b""), getattr(exc, "partial_stderr", b"")
                 failure = str(exc)
             trace = dict(contract="native-prompt-trace-v1", harness=harness, model=profile["model"], version=profile["version"],
-                input_sha256=digest(canonical(task)), stdout=stdout.decode(), stderr=stderr.decode(), returncode=code,
-                assignment_sha256=digest(canonical(task)),
+                input_sha256=assignment_sha256, stdout=stdout.decode(), stderr=stderr.decode(), returncode=code,
+                assignment_sha256=assignment_sha256,
                 boundary="linux-landlock-inline-v1", request_sha256=request["sha256"],
                 delivery_manifest_sha256=digest(canonical(request["manifest"])), usage_mapping=profile["usage_mapping"],
                 delivery=dict(policy_sha256=digest(policy.encode()), stdin_sha256=digest(stdin),
-                    schema_sha256=digest(canonical(schema)), profile_sha256=profile["sha256"]),
+                    schema_sha256=digest(canonical(output_schema)), profile_sha256=profile["sha256"]),
                 launch=dict(argv_bytes=count, schema_fd=schema_fd, elapsed_seconds=time.monotonic() - started))
+            if submission is not None:
+                trace["submission"] = submission
             if failure is not None:
                 trace["validation_error"] = failure
             if code:
@@ -381,7 +405,7 @@ def invoke(profile, task, schema, request, deadline):
                 kind = "turn.completed" if harness == "codex" else "result"
                 if any(not isinstance(event, dict) for event in events) or sum(event.get("type") == kind for event in events) != 1:
                     raise DreamError("Native prompt trace has duplicate or missing final aggregates", 3)
-                result, usage = dream_native.parse_trace(stdout, harness)
+                result, usage = dream_submission.parse(task, trace, request)
             except DreamError as exc:
                 trace["validation_error"] = str(exc)
                 return None, None, trace
@@ -405,7 +429,8 @@ class Transport:
         # Use the same authentication-only environment without exposing it.
         with tempfile.TemporaryDirectory(prefix="sucoder-dream-preflight-") as scratch:
             env = environment(self.profile, scratch)
-            check_bounds(policy, argv(self.profile, policy, request["assignment"]["result_schema"]), env)
+            from . import dream_submission
+            check_bounds(policy, argv(self.profile, policy, dream_submission.wire_schema(request["assignment"])), env)
 
     def __call__(self, harness, model, task, schema, deadline, *, request):
         if harness != self.profile["harness"] or model != self.profile["model"]:

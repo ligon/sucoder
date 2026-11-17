@@ -108,7 +108,9 @@ def _job(path):
         header = _read(fd, "job.json")
         dream._object(header, ("contract", "job_id", "directory", "created_at", "project", "settings", "purpose", "budget_path"),
                       ("mode", "navigation_version", "leads", "memory_origin", "navigation_limits", "processing",
-                       "inventory_sha256", "discovery_allocation", "prompt_profile"))
+                       "inventory_sha256", "discovery_allocation", "prompt_profile", "submission_contract"))
+        from . import dream_submission
+        dream_submission.validate(header.get("submission_contract"))
         if "prompt_profile" in header:
             from . import dream_prompt_native
             dream_prompt_native.validate_profile(header["prompt_profile"])
@@ -234,6 +236,8 @@ def prepare(config, job_path=None, *, cwd=None, overrides=None, budget_path=None
                 project_binding["memory_ref"] = memory_ref
             header = dict(contract=CONTRACT, job_id=job_id, directory=str(directory), created_at=time.time(),
                 project=project_binding, settings=frozen, purpose=purpose, budget_path=str(target), mode=mode)
+            from . import dream_submission
+            header["submission_contract"] = dream_submission.CONTRACT
             if prompt_profile is not None:
                 header["prompt_profile"] = prompt_profile
             if dream_discover.NAVIGATION > 1:
@@ -491,6 +495,7 @@ def run(config, job_path, attempt=1, *, transport=None, retry_seconds=None):
             written = dream_wiki.run(_binding(config, header), header["project"]["name"], plan_path,
                 header["settings"]["harness"], header["settings"]["model"], attempt, purpose=_purpose(header, outcome),
                 transport=transport, budget_path=Path(header["budget_path"]),
+                submission_contract=header.get("submission_contract"),
                 **(dict(prompt_profile=header["prompt_profile"]) if "prompt_profile" in header else {}))
             result = _result(header, outcome, attempt, written, plan_path)
             _store(fd, name, result)
