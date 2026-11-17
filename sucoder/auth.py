@@ -49,8 +49,9 @@ class AuthStatus:
     detail: str
 
 
-def _codex_home() -> Path:
-    return Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
+def _agent_codex_home(config: Config) -> str:
+    """The agent account's codex home (where its auth.json lives)."""
+    return f"/home/{config.agent_user}/.codex"
 
 
 def _auth_config(config: Config, harness: str) -> HarnessAuthConfig:
@@ -102,75 +103,111 @@ def _run_pass_insert(executor: CommandExecutor, pass_entry: str, value: str) -> 
 
 # ---------------------------------------------------------------------- codex
 
+def _read_agent_auth_json(executor: CommandExecutor, agent_codex_home: str) -> Optional[str]:
+    """Read the agent's auth.json as the agent (coder), or None if absent."""
+    result = executor.run_agent(
+        ["cat", f"{agent_codex_home}/auth.json"], check=False, capture_output=True,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    return result.stdout
+
+
+def _write_agent_auth_json(executor: CommandExecutor, agent_codex_home: str, blob: str) -> None:
+    """Write the agent's auth.json (mode 600) via stdin, never argv."""
+    executor.run_agent(
+        [
+            "sh", "-c",
+            'umask 077 && mkdir -p "$(dirname "$1")" && cat > "$1" && chmod 600 "$1"',
+            "sucoder-codex-auth", f"{agent_codex_home}/auth.json",
+        ],
+        input=blob,
+        check=True,
+        capture_output=True,
+    )
+
+
 def _codex_backup_subscription(
     config: Config, executor: CommandExecutor, cfg: HarnessAuthConfig, logger: logging.Logger,
 ) -> None:
-    auth_json = _codex_home() / "auth.json"
-    if not auth_json.exists():
+    agent_home = _agent_codex_home(config)
+    blob = _read_agent_auth_json(executor, agent_home)
+    if blob is None:
         return
-    blob = auth_json.read_text(encoding="utf-8")
     sub_cred = cfg.subscription_credential or _HARNESSES["codex"][2]
     if sub_cred and sub_cred in config.credentials:
         entry = _credential_entry(config, sub_cred)
         _run_pass_insert(executor, entry, blob)
         logger.info("Backed up codex subscription auth.json to pass entry %r.", entry)
     else:
-        bak = auth_json.with_suffix(".json.sucoder-bak")
-        bak.write_text(blob, encoding="utf-8")
-        os.chmod(bak, stat.S_IRUSR | stat.S_IWUSR)
-        logger.info("Backed up codex subscription auth.json to %s.", bak)
+        executor.run_agent(
+            [
+                "sh", "-c",
+                'umask 077 && cat > "$1" && chmod 600 "$1"',
+                "sucoder-codex-auth-bak", f"{agent_home}/auth.json.sucoder-bak",
+            ],
+            input=blob,
+            check=True,
+            capture_output=True,
+        )
+        logger.info("Backed up codex subscription auth.json for the agent account.")
 
 
 def codex_to_apikey(
     config: Config, executor: CommandExecutor, cfg: HarnessAuthConfig, logger: logging.Logger,
 ) -> None:
+    """Swap codex to API-key auth.
+
+    The key is read from the human's pass store (as ligon) and written to the
+    agent account's ~/.codex/auth.json (as coder) via stdin -- the key crosses
+    the account boundary once, in a pipe, and persists only in the agent's
+    mode-600 auth.json (unavoidable: codex's only API-key mechanism stores the
+    key in its own auth file).
+    """
     _codex_backup_subscription(config, executor, cfg, logger)
     cred = cfg.apikey_credential or _HARNESSES["codex"][1]
     entry = _credential_entry(config, cred)
     key = _pass_show(executor, entry)
-    proc = subprocess.run(
-        ["codex", "login", "--with-api-key"],
-        input=key + "\n",
-        capture_output=True,
-        text=True,
-        env={**os.environ, "CODEX_HOME": str(_codex_home())},
+    blob = json.dumps({"auth_mode": "apikey", "OPENAI_API_KEY": key}, indent=2) + "\n"
+    _write_agent_auth_json(executor, _agent_codex_home(config), blob)
+    logger.info(
+        "codex now authenticates with the API key from pass entry %r "
+        "(written to the agent account's auth.json).", entry,
     )
-    if proc.returncode != 0:
-        raise AuthError(f"`codex login --with-api-key` failed: {proc.stderr.strip()}")
-    logger.info("codex now authenticates with the API key from pass entry %r.", entry)
 
 
 def codex_to_subscription(
     config: Config, executor: CommandExecutor, cfg: HarnessAuthConfig, logger: logging.Logger,
 ) -> None:
-    auth_json = _codex_home() / "auth.json"
+    agent_home = _agent_codex_home(config)
     sub_cred = cfg.subscription_credential or _HARNESSES["codex"][2]
     blob: Optional[str] = None
     if sub_cred and sub_cred in config.credentials:
         blob = _pass_show(executor, _credential_entry(config, sub_cred))
     else:
-        bak = auth_json.with_suffix(".json.sucoder-bak")
-        if bak.exists():
-            blob = bak.read_text(encoding="utf-8")
+        result = executor.run_agent(
+            ["cat", f"{agent_home}/auth.json.sucoder-bak"], check=False, capture_output=True,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            blob = result.stdout
     if not blob:
         raise AuthError(
-            "No codex subscription backup found. Run `codex login` to restore "
-            "ChatGPT authentication."
+            "No codex subscription backup found. Run `codex login` as the agent "
+            "account to restore ChatGPT authentication."
         )
-    auth_json.write_text(blob, encoding="utf-8")
-    os.chmod(auth_json, stat.S_IRUSR | stat.S_IWUSR)
-    logger.info("Restored codex subscription auth.json.")
+    _write_agent_auth_json(executor, agent_home, blob)
+    logger.info("Restored the agent account's codex subscription auth.json.")
 
 
-def codex_status(executor: CommandExecutor) -> AuthStatus:
-    try:
-        proc = subprocess.run(
-            ["codex", "login", "status"], capture_output=True, text=True,
-            env={**os.environ, "CODEX_HOME": str(_codex_home())},
-        )
-    except FileNotFoundError:
-        return AuthStatus("codex", "unknown", "codex not installed")
-    text = (proc.stdout + proc.stderr).strip()
+def codex_status(executor: CommandExecutor, config: Config) -> AuthStatus:
+    result = executor.run_agent(
+        ["codex", "login", "status"],
+        check=False, capture_output=True,
+        env={"CODEX_HOME": _agent_codex_home(config)},
+    )
+    if result.returncode != 0 and not result.stdout.strip():
+        return AuthStatus("codex", "unknown", "codex not installed or not logged in")
+    text = (result.stdout + result.stderr).strip()
     lowered = text.lower()
     if "chatgpt" in lowered:
         mode = "subscription"
@@ -211,7 +248,7 @@ def claude_status(executor: CommandExecutor) -> AuthStatus:
 
 def status(config: Config, executor: CommandExecutor, harness: str) -> AuthStatus:
     if harness == "codex":
-        return codex_status(executor)
+        return codex_status(executor, config)
     if harness == "claude":
         return claude_status(executor)
     raise AuthError(f"Unknown harness {harness!r}.")
