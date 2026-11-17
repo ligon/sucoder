@@ -1,0 +1,64 @@
+#+TITLE: Coordinator-owned dream submission ledger
+#+AUTHOR: Sue
+#+DATE: 2026-11-17
+
+* 1. Task
+
+Prevent mechanical identifier copying failures such as [[file:dream/runs/sucoder-e4.org][E4]] by scripting native reply submission.
+The baseline is local main =ea73e10=.
+New default dream jobs use a versioned body-only native reply; Python attaches the frozen assignment ID, input checksum and role.
+Existing job headers, specifications, assignments and traces retain their original interpretation.
+No paid retry or reinterpretation of E4 is part of this implementation.
+
+* 2. Existing machinery
+
+Grounding uses GitNexus CLI query/context/upstream impact, direct source and tests, and the earlier [[file:dream-prompt-caching-ledger.org][caching ledger]] and its git history.
+The index is four documentation commits behind the baseline; runtime source reads establish current behavior.
+
+- =sucoder/dream_roles.py:124=, =Coordinator.call= :: Existing scripted assignment storage, reservation, native invocation, result validation and raw-trace replay.
+  =tests/test_dream_roles.py::test_mutated_saved_result_cannot_substitute_for_native_trace= and =test_failed_native_request_is_not_automatically_repeated= cover integrity and no-repeat behavior.
+- =sucoder/dream_native.py:192=, =parse_trace=; =:245=, =invoke= :: Completed structured replies, raw usage and confined native process execution for both harnesses.
+  =tests/test_dream_native.py= tests tool rejection, completion, isolation and byte-preserving capture.
+- =sucoder/dream_prompt.py= :: Lossless semantic prompt projection, immutable request envelopes and native-delivery attestation.
+  =tests/test_dream_prompt.py= and =tests/test_dream_prompt_integration.py= cover reconstruction, corruption refusal and inference-free replay.
+- =sucoder/dream_prompt_native.py:180=, =variants=; =:340=, =invoke= :: Fourteen policy/schema pairs and sealed native delivery.
+  =tests/test_dream_cache_certify.py= covers the exact certificate gate; schema bytes are included in the eligible-prefix comparison.
+- =sucoder/dream_explore.py=, =prepare/run=; =sucoder/dream_wiki.py=, =run/restore= :: Frozen job headers and editorial specifications select old or new semantics.
+  =tests/test_dream_explore.py= and =tests/test_dream_wiki.py= cover old-contract replay and durable publication.
+
+* 3. Definitions
+
+A semantic assignment remains the canonical task used by the wallet, evidence checks and saved result identity.
+A submission contract specifies the model-facing reply schema and deterministic metadata attachment.
+A body-only reply contains substantive fields, including failures; it contains no assignment ID, input checksum or role field.
+The coordinator's transport supplies those three fields from its frozen task, never from model text.
+Raw native stdout remains unchanged and is re-parsed during replay.
+Native usage and native completion remain distinct from an accepted semantic result.
+
+* 4. Invariants
+
+Keep native isolation, tool prohibition, byte/time/call limits, independent review and compare-and-swap publication.
+Keep raw trace/result/wallet/assignment bindings; a changed body, a mismatched submission manifest or injected metadata must be rejected.
+Persist the new contract in new job headers and editorial specifications and include it in assignment/run identity before reservation.
+Old traces without that contract still require the model's exact echoed identifiers; E4 stays incomplete.
+No failure authorizes an automatic paid retry, manual hash correction or memory publication.
+Per-assignment enum values would make schemas volatile, so use a stable body schema and retain exact certificate coverage.
+Earlier cached profiles remain replayable; new profiles must certify the new body policy/schema pairs.
+
+* 5. Reuse decisions
+
+- Reuse :: Coordinator invocation, persistent wallet, artifact store, native trace parser, full semantic result validation and publication.
+- Extend :: A shared submission projection/manifest/parser wraps body-only native output with coordinator-owned metadata.
+  No such wrapper exists; current schemas require model-generated identifiers.
+- Extend :: New default project/experience job headers and their editorial specifications freeze the new contract; explicit historical notes/reader contracts remain compatible.
+- Extend :: Lossless stable prompt envelopes and the fourteen-case certifier cover the body-only schema and trusted policy without weakening certificate matching.
+- Defer :: Stateful agents, coordinator tools accessible to models, direct APIs and automatic retries; none is needed to remove metadata copying.
+
+* 6. Verification boundary
+
+GitNexus rates =Coordinator.call= CRITICAL: eight direct dependants, 29 upstream symbols and 102 affected indexed processes, including discovery, editorial and reader flows.
+Native invoke has one resolved transport caller; unresolved receiver sites make that count a lower bound.
+Targeted tests must exercise both providers, a no-metadata reply, injected metadata, altered manifests/results, missing completion, one accepted independent review, no-repeat recovery and old-contract replay.
+Check the saved E3 and E4 states with native startup forbidden.
+Use synthetic native fixtures and offline certification only; no new live inference is authorized by this implementation.
+Run the relevant dream regression groups and document the full-suite baseline and any untested boundary.
