@@ -1,8 +1,24 @@
 #+TITLE: SuCoder consolidated on main in the canonical mirror; publication pending
 #+DATE: 2026-11-17
-#+STATUS: SCRIPTED SUBMISSIONS IMPLEMENTED; E4 REMAINS INCOMPLETE; PUBLICATION PENDING
+#+STATUS: LIVE SCRIPTED DREAM E5 PUBLISHED; E4 UNCHANGED; GITHUB PUBLICATION PENDING
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Live scripted dream E5, 2026-11-17
+
+The human requested a live trial after implementation.
+Job =5600369dc0d54b2b85e4a70e08dcb9ea= ran at main =d168f36= through the existing Codex subscription, with =gpt-6.1-sol=, =legacy= delivery and the approved 32-call/1,800-second bounds.
+It published reviewed private memory =30e98aa= in 358.3 seconds using 19 calls: 16 discovery, one author, one duplicate-reference repair and one independent reviewer.
+All nineteen native replies are metadata-free bodies; Python attached the correct frozen identifiers and read-only replay reconstructed every exact saved result and usage without native access.
+No identifier mismatch, failed/uncertain call, new attempt or paid retry occurred.
+
+The published =topics/savio-dream-launch.org= distinguishes the observed November 13 Savio Landlock refusal from a current fleet-wide diagnosis, preserves the human-selected vantage command and observed startup, and keeps publication/transfer outcomes separate.
+Review accepted with one advisory about the human account's own Codex login; the advisory remains a possible page improvement.
+Only the index, new topic and new receipt changed; previous memory files and the index's earlier content were preserved, and the generated topic copy matches the published blob and is read-only.
+The run reported 434,145 input and 10,864 output tokens with zero cached input on all nineteen calls; currency is unavailable.
+The [[file:../docs/dream/runs/sucoder-e5.org][E5 report]] records the source coverage, repair, review and acceptance limits.
+The audit is under =/home/coder/.sucoder/logs/dream-reviews/2026-11-17-5600369d/=.
+No runtime edit, deployment, GitHub push or additional paid run followed; E4 remains untouched.
 
 * Coordinator-owned submissions, 2026-11-17
 
