@@ -20,6 +20,8 @@ remote-qr = ["qrcode"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.2"
+pytest-xdist = "^3.5"
+pytest-timeout = "^2.2"
 mypy = "^1.18"
 types-pyyaml = "^6.0"
 
@@ -30,6 +32,15 @@ sucoder = "sucoder.cli:app"
 python_version = "3.11"
 show_error_codes = true
 pretty = true
+
+[tool.pytest.ini_options]
+# Bound every test so a blocked subprocess (an emacs batch call or a network
+# read in the dream/pilot tests) surfaces as a failure instead of hanging the
+# run forever.  Generous enough for the slowest native-Org tests on a quiet
+# host; tighten per-test with @pytest.mark.timeout where a lower bound is known.
+timeout = 120
+# Parallelize with `pytest -n auto`; left opt-in here so a bare `pytest` stays
+# serial and reproducible for debugging.
 
 [tool.poetry-dynamic-versioning]
 enable = true
