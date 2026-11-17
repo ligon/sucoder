@@ -184,11 +184,12 @@ def hook_shell_command(key: Optional[str], *, event: Optional[str] = None,
     )
 
 
-def claude_settings(key: str) -> Dict[str, object]:
+def claude_settings(key: str, extra: Optional[Dict[str, object]] = None) -> Dict[str, object]:
     """Settings for ``claude --settings``: one command hook per event.
 
     Hooks from ``--settings`` are added to the user's and project's own;
-    they do not replace them.
+    they do not replace them.  ``extra`` (e.g. an ``apiKeyHelper``) is merged in
+    so auth and attention share Claude's single ``--settings``.
     """
     def entry(event: str) -> List[Dict[str, object]]:
         command = {"type": "command", "command": hook_shell_command(key, event=event), "timeout": 10}
@@ -196,7 +197,10 @@ def claude_settings(key: str) -> Dict[str, object]:
         if event == "Notification":
             group["matcher"] = "|".join(WAITING_TYPES)
         return [group]
-    return {"hooks": {event: entry(event) for event in CLAUDE_EVENTS}}
+    settings: Dict[str, object] = {"hooks": {event: entry(event) for event in CLAUDE_EVENTS}}
+    if extra:
+        settings.update(extra)
+    return settings
 
 
 def _toml_string(value: str) -> str:
@@ -225,8 +229,8 @@ def codex_overrides() -> List[str]:
     return args
 
 
-def claude_settings_json(key: str) -> str:
-    return json.dumps(claude_settings(key), separators=(",", ":"))
+def claude_settings_json(key: str, extra: Optional[Dict[str, object]] = None) -> str:
+    return json.dumps(claude_settings(key, extra), separators=(",", ":"))
 
 
 @dataclass

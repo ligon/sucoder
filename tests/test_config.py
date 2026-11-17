@@ -344,6 +344,135 @@ mirrors:
         load_config(config_path)
 
 
+def test_load_config_agent_launcher_codex_auth(tmp_path: Path) -> None:
+    config_path = write_config(
+        tmp_path,
+        """
+human_user: ligon
+mirror_root: ./mirrors
+mirrors:
+  sample:
+    canonical_repo: ./canonical
+    agent_launcher:
+      codex_auth: apikey
+      codex_auth_credential: work-openai
+""",
+    )
+
+    cfg = load_config(config_path)
+    launcher = cfg.mirrors["sample"].agent_launcher
+    assert launcher.codex_auth == "apikey"
+    assert launcher.codex_auth_credential == "work-openai"
+
+
+def test_load_config_rejects_unknown_codex_auth(tmp_path: Path) -> None:
+    config_path = write_config(
+        tmp_path,
+        """
+human_user: ligon
+mirror_root: ./mirrors
+mirrors:
+  sample:
+    canonical_repo: ./canonical
+    agent_launcher:
+      codex_auth: oauth
+""",
+    )
+
+    with pytest.raises(ConfigError, match="agent_launcher.codex_auth"):
+        load_config(config_path)
+
+
+def test_load_config_rejects_empty_codex_auth_credential(tmp_path: Path) -> None:
+    config_path = write_config(
+        tmp_path,
+        """
+human_user: ligon
+mirror_root: ./mirrors
+mirrors:
+  sample:
+    canonical_repo: ./canonical
+    agent_launcher:
+      codex_auth_credential: ""
+""",
+    )
+
+    with pytest.raises(ConfigError, match="agent_launcher.codex_auth_credential"):
+        load_config(config_path)
+
+
+def test_load_config_agent_launcher_auth_block(tmp_path: Path) -> None:
+    config_path = write_config(
+        tmp_path,
+        """
+human_user: ligon
+mirror_root: ./mirrors
+mirrors:
+  sample:
+    canonical_repo: ./canonical
+    agent_launcher:
+      auth:
+        codex:
+          mode: apikey
+          apikey_credential: openai
+          subscription_credential: codex-chatgpt-auth
+        claude:
+          mode: apikey
+          apikey_credential: anthropic
+""",
+    )
+
+    cfg = load_config(config_path)
+    auth = cfg.mirrors["sample"].agent_launcher.auth
+    assert auth["codex"].mode == "apikey"
+    assert auth["codex"].apikey_credential == "openai"
+    assert auth["codex"].subscription_credential == "codex-chatgpt-auth"
+    assert auth["claude"].mode == "apikey"
+    assert auth["claude"].apikey_credential == "anthropic"
+
+
+def test_load_config_deprecated_codex_auth_maps_to_auth_block(tmp_path: Path) -> None:
+    config_path = write_config(
+        tmp_path,
+        """
+human_user: ligon
+mirror_root: ./mirrors
+mirrors:
+  sample:
+    canonical_repo: ./canonical
+    agent_launcher:
+      codex_auth: apikey
+      codex_auth_credential: work-openai
+""",
+    )
+
+    cfg = load_config(config_path)
+    launcher = cfg.mirrors["sample"].agent_launcher
+    assert launcher.codex_auth == "apikey"
+    assert launcher.auth["codex"].mode == "apikey"
+    assert launcher.auth["codex"].apikey_credential == "work-openai"
+
+
+def test_load_config_rejects_unknown_auth_mode(tmp_path: Path) -> None:
+    config_path = write_config(
+        tmp_path,
+        """
+human_user: ligon
+mirror_root: ./mirrors
+mirrors:
+  sample:
+    canonical_repo: ./canonical
+    agent_launcher:
+      auth:
+        codex:
+          mode: oauth
+""",
+    )
+
+    with pytest.raises(ConfigError, match="agent_launcher.auth.codex.mode"):
+        load_config(config_path)
+
+
 def test_load_config_with_system_prompt(tmp_path: Path) -> None:
     prompt_file = tmp_path / "prompt.org"
     prompt_file.write_text("Sample\n", encoding="utf-8")

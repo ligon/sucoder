@@ -2301,6 +2301,61 @@ Each new launch or renewal successor requires fresh pairing; clients reconnectin
 
 Log in to Codex with ChatGPT on the target first.
 Remote availability depends on account access and outbound connectivity.
+
+** Subscription vs API-key auth (codex and claude)
+
+A launch normally uses the harness's subscription login (codex's
+=~/.codex/auth.json=, claude's OAuth). When the subscription quota runs out,
+switch to pay-as-you-go API billing. The API key stays in the =pass= store and
+never becomes a process environment variable:
+
+- **codex** has no per-process key channel, so SuCoder swaps the shared
+  =~/.codex/auth.json=: it pipes =pass show … | codex login --with-api-key=
+  (stdin) after backing the subscription login up to a =pass= blob or a local
+  =.bak=, so =subscription= restores it. The swap is host-global — two
+  concurrent codex sessions on one host share =auth.json= and cannot mix modes.
+- **claude** reads the key through an =apiKeyHelper= merged into its single
+  =--settings= (shared with the attention hooks), leaving OAuth on disk
+  untouched. The switch is per-launch and non-destructive.
+
+Switch one launch with =--auth apikey=:
+
+#+begin_src sh
+sucoder -T savio collaborate --agent codex --auth apikey
+sucoder -T savio collaborate --harness claude --auth apikey
+#+end_src
+
+Or switch at the command line (codex swaps =auth.json=; claude sets the
+configured default) and inspect state:
+
+#+begin_src sh
+sucoder auth apikey --harness codex
+sucoder auth subscription --harness codex
+sucoder auth status
+#+end_src
+
+To make API billing the default — for one mirror or globally — set:
+
+#+begin_src yaml
+credentials:
+  openai:
+    pass: openai.com/apikey
+  anthropic:
+    pass: anthropic.com/apikey
+agent_launcher:
+  auth:
+    codex:
+      mode: apikey                 # subscription | apikey
+      apikey_credential: openai    # credentials: name (default: openai)
+    claude:
+      mode: apikey
+      apikey_credential: anthropic # credentials: name (default: anthropic)
+#+end_src
+
+=--auth subscription|apikey= overrides configuration for one launch and works
+for terminal and remote-control codex launches alike. The deprecated flat keys
+=codex_auth= / =codex_auth_credential= (and =--codex-auth=) still map onto the
+generic codex settings. See [[*Provider credentials from =pass=][Provider credentials]].
 Check the selected launch, then pair it from the launcher:
 
 #+begin_src shell

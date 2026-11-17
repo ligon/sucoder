@@ -2363,6 +2363,86 @@ def _codex_remote_request(ctx: typer.Context, mirror: Optional[str], action: str
     return manager.codex_remote_request(manager.context_for(mirror), session.slurm_job_id or 0, action, run_dir=run_dir)
 
 
+auth_app = typer.Typer(
+    help=(
+        "Switch a harness between subscription login and pay-as-you-go API-key "
+        "auth. The API key stays in the pass store; it never becomes an env var."
+    )
+)
+app.add_typer(auth_app, name="auth")
+
+
+def _auth_executor(ctx: typer.Context):
+    config = _get_config(ctx)
+    logger = setup_logger("sucoder.auth", config.log_dir, False)
+    executor = _build_executor(config, logger, False, cli_ctx=ctx)
+    return config, executor, logger
+
+
+def _auth_harness(harness: Optional[str], ctx: typer.Context) -> str:
+    if harness is not None:
+        if harness not in ("codex", "claude"):
+            raise typer.BadParameter("--harness must be 'codex' or 'claude'.")
+        return harness
+    config = _get_config(ctx)
+    command = (config.agent_launcher.command if config.agent_launcher else None) or ["claude"]
+    name = command[0]
+    return name if name in ("codex", "claude") else "claude"
+
+
+@auth_app.command("status")
+def auth_status(
+    ctx: typer.Context,
+    harness: Optional[str] = typer.Option(None, "--harness", "-H", help="codex or claude (default: configured harness)."),
+) -> None:
+    """Show the current auth method for a harness."""
+    from . import auth as auth_mod
+
+    config, executor, _ = _auth_executor(ctx)
+    harnesses = [harness] if harness else list(auth_mod.harnesses())
+    for h in harnesses:
+        if h not in ("codex", "claude"):
+            raise typer.BadParameter("--harness must be 'codex' or 'claude'.")
+        st = auth_mod.status(config, executor, h)
+        typer.echo(f"{h}: {st.mode} ({st.detail})")
+
+
+@auth_app.command("apikey")
+def auth_apikey(
+    ctx: typer.Context,
+    harness: Optional[str] = typer.Option(None, "--harness", "-H", help="codex or claude (default: configured harness)."),
+) -> None:
+    """Switch a harness to pay-as-you-go API-key auth."""
+    from . import auth as auth_mod
+
+    config, executor, logger = _auth_executor(ctx)
+    h = _auth_harness(harness, ctx)
+    try:
+        auth_mod.to_apikey(config, executor, h, logger)
+    except auth_mod.AuthError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"{h}: switched to apikey auth.")
+
+
+@auth_app.command("subscription")
+def auth_subscription(
+    ctx: typer.Context,
+    harness: Optional[str] = typer.Option(None, "--harness", "-H", help="codex or claude (default: configured harness)."),
+) -> None:
+    """Switch a harness back to its subscription login."""
+    from . import auth as auth_mod
+
+    config, executor, logger = _auth_executor(ctx)
+    h = _auth_harness(harness, ctx)
+    try:
+        auth_mod.to_subscription(config, executor, h, logger)
+    except auth_mod.AuthError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"{h}: switched to subscription auth.")
+
+
 @app.command("codex-remote-status")
 def codex_remote_status(
     ctx: typer.Context,
@@ -2620,6 +2700,23 @@ def _codex_remote_mode(enabled: Optional[bool], server_only: bool) -> Optional[s
     return None if enabled is None else "terminal" if enabled else "off"
 
 
+def _auth_mode(mode: Optional[str], *, option: str = "--auth") -> Optional[str]:
+    if mode is None:
+        return None
+    if mode not in ("subscription", "apikey"):
+        raise typer.BadParameter(f"{option} must be 'subscription' or 'apikey'.")
+    return mode
+
+
+def _codex_auth_mode(mode: Optional[str]) -> Optional[str]:
+    """Deprecated --codex-auth alias; maps chatgpt/apikey onto the generic mode."""
+    if mode is None:
+        return None
+    if mode not in ("chatgpt", "apikey"):
+        raise typer.BadParameter("--codex-auth must be 'chatgpt' or 'apikey'.")
+    return "apikey" if mode == "apikey" else "subscription"
+
+
 def _tmux_launch_preamble(
     ctx: typer.Context,
     config: Config,
@@ -2793,6 +2890,18 @@ def agents_run(
         False, "--remote-control-only",
         help="Start a Codex remote-control server without the terminal UI.",
     ),
+    auth: Optional[str] = typer.Option(
+        None, "--auth", metavar="MODE",
+        help=(
+            "Authentication for this launch: subscription (the harness's native "
+            "login, the default) or apikey (pay-as-you-go API key from the "
+            "pass-backed credential, never an env var). Applies to codex and claude."
+        ),
+    ),
+    codex_auth: Optional[str] = typer.Option(
+        None, "--codex-auth", metavar="MODE", hidden=True,
+        help="Deprecated alias for --auth (chatgpt=subscription).",
+    ),
     codex_state_from: Optional[str] = typer.Option(
         None, "--codex-state-from", metavar="RUN/GENERATION",
         help="Continue managed Codex state from this exact generation (slurm.codex_state).",
@@ -2867,6 +2976,7 @@ def agents_run(
             env_override=env_override,
             supports_inline_prompt=inline_prompt_flag,
             codex_remote_control=remote_mode,
+            auth_override=_auth_mode(auth) or _codex_auth_mode(codex_auth),
             codex_state_from=codex_state_from,
             codex_state_fresh=codex_state_fresh,
         )
@@ -2933,6 +3043,18 @@ def collaborate(
     remote_control_only: bool = typer.Option(
         False, "--remote-control-only",
         help="Start a Codex remote-control server without the terminal UI.",
+    ),
+    auth: Optional[str] = typer.Option(
+        None, "--auth", metavar="MODE",
+        help=(
+            "Authentication for this launch: subscription (the harness's native "
+            "login, the default) or apikey (pay-as-you-go API key from the "
+            "pass-backed credential, never an env var). Applies to codex and claude."
+        ),
+    ),
+    codex_auth: Optional[str] = typer.Option(
+        None, "--codex-auth", metavar="MODE", hidden=True,
+        help="Deprecated alias for --auth (chatgpt=subscription).",
     ),
     codex_state_from: Optional[str] = typer.Option(
         None, "--codex-state-from", metavar="RUN/GENERATION",
@@ -3070,6 +3192,7 @@ def collaborate(
             env_override=env_override,
             supports_inline_prompt=inline_prompt_flag,
             codex_remote_control=remote_mode,
+            auth_override=_auth_mode(auth) or _codex_auth_mode(codex_auth),
             codex_state_from=codex_state_from,
             codex_state_fresh=codex_state_fresh,
             skip_lfs=not lfs,
