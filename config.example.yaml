@@ -89,16 +89,26 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 # Inspect/pair the selected owner with codex-remote-status / codex-remote-pair;
 # native codex remote-control pair addresses a different, shared daemon.
 
-# Codex auth switch (optional; ChatGPT subscription login by default).
-# When the subscription quota runs out, switch a Codex launch to
-# pay-as-you-go API billing without touching codex's own login:
+# Auth switch (optional; each harness's subscription login by default).
+# When a subscription quota runs out, switch codex or claude to pay-as-you-go
+# API billing. The API key stays in the `pass` store and never becomes an
+# environment variable: codex swaps ~/.codex/auth.json via stdin (the
+# subscription login is backed up so it can be restored); claude reads the key
+# through an apiKeyHelper merged into its --settings, leaving OAuth untouched.
 #   agent_launcher:
-#     codex_auth: apikey              # chatgpt | apikey (default: chatgpt)
-#     codex_auth_credential: openai   # `credentials:` name (default: openai)
-# apikey mode passes `-c preferred_auth_method="apikey"` to codex and stages
-# OPENAI_API_KEY from the pass entry below through the private launch
-# environment (never argv or logs). Per-launch override: --codex-auth MODE.
-# Works for terminal and remote-control launches alike.
+#     auth:
+#       codex:
+#         mode: apikey                    # subscription | apikey (default: subscription)
+#         apikey_credential: openai       # credentials: name (default: openai)
+#         subscription_credential: codex-chatgpt-auth  # pass entry holding the auth.json backup
+#       claude:
+#         mode: apikey
+#         apikey_credential: anthropic    # credentials: name (default: anthropic)
+# Per-launch override: --auth MODE (subscription|apikey). Switch at the command
+# line with `sucoder auth apikey|subscription --harness codex|claude`, and check
+# state with `sucoder auth status`. The codex swap is host-global (one shared
+# ~/.codex/auth.json), so two concurrent codex sessions on a host share a mode.
+# Deprecated flat keys codex_auth/codex_auth_credential still work for codex.
 
 # Provider credentials (optional). Values stay in the human user's `pass`
 # store; only the pass entry name belongs in this file. The first line of
@@ -106,8 +116,12 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 # credentials:
 #   openrouter:
 #     pass: openrouter.ai/apikey
-#   openai:                          # used by agent_launcher.codex_auth: apikey
+#   openai:                          # used by agent_launcher.auth.codex.mode: apikey
 #     pass: openai.com/apikey
+#   anthropic:                       # used by agent_launcher.auth.claude.mode: apikey
+#     pass: anthropic.com/apikey
+#   codex-chatgpt-auth:              # optional codex subscription auth.json backup
+#     pass: codex/chatgpt-auth.json
 
 # Custom OpenAI-compatible providers can be described once and selected by
 # the prefix of --model (for example laboratory/my-model).

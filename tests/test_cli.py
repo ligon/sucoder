@@ -421,8 +421,45 @@ def test_launch_commands_forward_harness_and_model(
 
 
 @pytest.mark.parametrize("subcommand, method", [("agents-run", "launch_agent"), ("collaborate", "bootstrap")])
-def test_launch_commands_forward_codex_auth(
+def test_launch_commands_forward_auth(
     tmp_path, monkeypatch, subcommand, method,
+):
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+
+    calls = []
+
+    class StubManager:
+        def context_for(self, name):
+            return SimpleNamespace(name=name)
+
+        def launch_agent(self, ctx, **kwargs):
+            calls.append(("launch_agent", ctx.name, kwargs))
+
+        def bootstrap(self, ctx, **kwargs):
+            calls.append(("bootstrap", ctx.name, kwargs))
+
+    monkeypatch.setattr(cli, "_build_manager_for_mirror", lambda *args, **kwargs: StubManager())
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "--config", str(config_path), subcommand, "sample", "--no-sync",
+            "--harness", "claude", "--auth", "apikey",
+        ],
+    )
+
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert calls[0][0] == method
+    assert calls[0][2]["auth_override"] == "apikey"
+
+
+@pytest.mark.parametrize("subcommand", ["agents-run", "collaborate"])
+def test_launch_commands_forward_deprecated_codex_auth(
+    tmp_path, monkeypatch, subcommand,
 ):
     runner = CliRunner()
     skills_dir = tmp_path / "skills"
@@ -453,11 +490,11 @@ def test_launch_commands_forward_codex_auth(
     )
 
     assert result.exit_code == 0, (result.output, result.exception)
-    assert calls[0][0] == method
-    assert calls[0][2]["codex_auth"] == "apikey"
+    # Deprecated --codex-auth maps onto the generic auth_override.
+    assert calls[0][2]["auth_override"] == "apikey"
 
 
-def test_codex_auth_rejects_unknown_mode(tmp_path, monkeypatch):
+def test_auth_rejects_unknown_mode(tmp_path, monkeypatch):
     runner = CliRunner()
     skills_dir = tmp_path / "skills"
     skills_dir.mkdir()
@@ -468,12 +505,12 @@ def test_codex_auth_rejects_unknown_mode(tmp_path, monkeypatch):
         cli.app,
         [
             "--config", str(config_path), "agents-run", "sample", "--no-sync",
-            "--harness", "codex", "--codex-auth", "oauth",
+            "--harness", "codex", "--auth", "oauth",
         ],
     )
 
     assert result.exit_code != 0
-    assert "--codex-auth must be 'chatgpt' or 'apikey'" in _plain_output(result)
+    assert "--auth must be 'subscription' or 'apikey'" in _plain_output(result)
 
 
 def test_harness_and_legacy_agent_are_mutually_exclusive(tmp_path, monkeypatch):
@@ -493,6 +530,88 @@ def test_harness_and_legacy_agent_are_mutually_exclusive(tmp_path, monkeypatch):
 
     assert result.exit_code != 0
     assert "either --harness or the legacy --agent" in _plain_output(result)
+
+
+def _stub_auth_module(monkeypatch):
+    import sucoder.auth as auth_mod
+    from sucoder.auth import AuthStatus
+
+    calls = {"status": [], "to_apikey": [], "to_subscription": []}
+    monkeypatch.setattr(
+        auth_mod, "status",
+        lambda config, executor, h: (calls["status"].append(h), AuthStatus(h, "subscription", "x"))[1],
+    )
+    monkeypatch.setattr(
+        auth_mod, "to_apikey",
+        lambda config, executor, h, logger: calls["to_apikey"].append(h),
+    )
+    monkeypatch.setattr(
+        auth_mod, "to_subscription",
+        lambda config, executor, h, logger: calls["to_subscription"].append(h),
+    )
+    return calls
+
+
+def test_auth_status_reports_both_harnesses(tmp_path, monkeypatch):
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+    calls = _stub_auth_module(monkeypatch)
+
+    result = runner.invoke(cli.app, ["--config", str(config_path), "auth", "status"])
+
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert sorted(calls["status"]) == ["claude", "codex"]
+
+
+def test_auth_apikey_uses_harness_flag(tmp_path, monkeypatch):
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+    calls = _stub_auth_module(monkeypatch)
+
+    result = runner.invoke(
+        cli.app, ["--config", str(config_path), "auth", "apikey", "--harness", "codex"],
+    )
+
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert calls["to_apikey"] == ["codex"]
+
+
+def test_auth_subscription_uses_harness_flag(tmp_path, monkeypatch):
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+    calls = _stub_auth_module(monkeypatch)
+
+    result = runner.invoke(
+        cli.app, ["--config", str(config_path), "auth", "subscription", "--harness", "claude"],
+    )
+
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert calls["to_subscription"] == ["claude"]
+
+
+def test_auth_rejects_bad_harness(tmp_path, monkeypatch):
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+    _stub_auth_module(monkeypatch)
+
+    result = runner.invoke(
+        cli.app, ["--config", str(config_path), "auth", "apikey", "--harness", "gemini"],
+    )
+
+    assert result.exit_code != 0
+    assert "--harness must be 'codex' or 'claude'" in _plain_output(result)
 
 
 def test_skills_list_reports_accessible_paths(tmp_path, monkeypatch):
