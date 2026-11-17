@@ -2525,20 +2525,13 @@ class MirrorManager:
     def _codex_auth_base_url(
         self, launcher: AgentLauncher, agent_name: str, credential: str,
     ) -> Optional[str]:
-        """Regional API endpoint for codex apikey auth, if any.
+        """Regional API endpoint for codex apikey auth, from explicit config.
 
-        Explicit ``agent_launcher.auth.codex.base_url`` wins; otherwise the first
-        path segment of the credential's pass entry is treated as the host when
-        it differs from the default api.openai.com (so a pass entry like
-        ``us.api.openai.com/apikey`` routes to the US-residency endpoint).
+        Set ``agent_launcher.auth.codex.base_url`` (e.g. for a US data-residency
+        project).  Nothing is derived from the pass entry name -- the endpoint
+        is configuration, stated once, like any custom provider's base_url.
         """
-        cfg = self._launcher_auth_config(launcher, agent_name)
-        if cfg.base_url:
-            return cfg.base_url
-        host = self.config.credentials[credential].pass_entry.split("/", 1)[0]
-        if host.endswith("api.openai.com") and host != "api.openai.com":
-            return f"https://{host}/v1"
-        return None
+        return self._launcher_auth_config(launcher, agent_name).base_url
 
     def _launcher_auth_config(self, launcher: AgentLauncher, agent_name: str) -> "HarnessAuthConfig":
         for source in (launcher, self.config.agent_launcher):
