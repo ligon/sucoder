@@ -4870,12 +4870,16 @@ def test_codex_auth_apikey_uses_configured_base_url(tmp_path, monkeypatch):
     launched = _stage_codex_apikey_launch(
         tmp_path, monkeypatch, "openai.com/apikey", auth_cfg=auth_cfg,
     )
-    assert 'model_providers.openai.base_url="https://us.api.openai.com/v1"' in launched
+    # A distinct provider is defined at the regional host and selected; the
+    # reserved built-in ``openai`` provider is never overridden.
+    assert 'model_providers.sucoder-openai.base_url="https://us.api.openai.com/v1"' in launched
+    assert 'model_provider="sucoder-openai"' in launched
+    assert not any(tok.startswith("model_providers.openai.") for tok in launched)
 
 
 def test_codex_auth_apikey_without_base_url_adds_no_override(tmp_path, monkeypatch):
     launched = _stage_codex_apikey_launch(tmp_path, monkeypatch, "us.api.openai.com/apikey")
-    assert not any("model_providers.openai.base_url" in tok for tok in launched)
+    assert not any("model_providers" in tok or tok.startswith("model_provider") for tok in launched)
 
 
 def test_codex_auth_subscription_leaves_auth_untouched(
