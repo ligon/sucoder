@@ -175,3 +175,12 @@ Both answers/identifiers validated; read-only wallet restoration retained exactl
 No cache-hit or monetary saving is established, and neither the cause of the miss nor the necessity of API-key billing follows from this observation.
 Private artifacts are under =/home/coder/.sucoder/logs/dream-cache-live/2026-11-16/b6acd818986a47baa41f1fe6ce4bb703/=.
 Production runtime/defaults, main's source and private memory were unchanged during the experiment; no extra native call or real dream followed.
+
+* Ordinary subscription dream E4, 2026-11-17
+
+The [[file:dream/runs/sucoder-e4.org][E4 experience dream]] subsequently used ordinary legacy delivery through the existing Codex subscription, retaining the approved 32-call/1,800-second limits.
+It reported 22,656 cached input tokens across three of fifteen calls, 7.43 percent of 304,977 input tokens; all fifteen supplied counters.
+This is a positive observation of subscription cache reuse, without attribution to a particular prompt segment, stable-profile certification or measured currency saving.
+It does not identify the cause of C1's cache misses.
+The job stopped before publication because the reviewer mistyped one character in its echoed input checksum; the coordinator rejected that response, and private memory remains unchanged.
+No retry, schema change or cache-gate relaxation followed.

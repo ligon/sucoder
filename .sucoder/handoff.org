@@ -1,8 +1,21 @@
 #+TITLE: SuCoder consolidated on main in the canonical mirror; publication pending
-#+DATE: 2026-11-16
-#+STATUS: CACHING IMPLEMENTED; LIVE CODEX CHECK OBSERVED NO CACHE READS; PUBLICATION PENDING
+#+DATE: 2026-11-17
+#+STATUS: LIVE DREAM STOPPED AT REVIEWER IDENTITY; SUBSCRIPTION CACHE READS OBSERVED; PUBLICATION PENDING
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Live experience dream E4, 2026-11-17
+
+The human asked why the preceding cache run had not dreamed; it had used synthetic lookup tasks, and the planned real dream had been omitted.
+Job =ba6031af25fa4c9aa950918b67169dab= then carried out that remaining step through the existing Codex subscription, with =gpt-6.1-sol=, explicit =legacy= delivery and the earlier approved 32-call/1,800-second limits.
+It stopped after 203.6 seconds and 15 calls: 13 discovery, one author and one independent reviewer.
+Discovery found the original human instruction to verify Codex hooks on the first real launch and proposed a small provenance correction while preserving the pending live checks.
+The reviewer mistyped one character in its echoed =input_sha256=; the coordinator rejected the response, and durable status remains =incomplete=.
+No accepted review, memory publication, native retry or manual correction followed; memory remains =d6a3621=.
+The ordinary legacy run reported 22,656 cached input tokens across three calls, 7.43 percent of 304,977 input tokens, demonstrating observed subscription cache reuse without certifying the stable Codex profile or identifying the cached segment.
+The [[file:../docs/dream/runs/sucoder-e4.org][E4 report]] records the evidence, failure, usage and proposed schema constraint against copying errors.
+The read-only audit under =/home/coder/.sucoder/logs/dream-reviews/2026-11-17-ba6031af/= verifies trace/wallet/assignment bindings, navigation receipts and unchanged memory with native entrypoints forbidden.
+Source runtime, installed deployment, authentication and the production cache gate remain unchanged; GitHub publication is still pending.
 
 * Live subscription cache check C1, 2026-11-16
 
