@@ -2514,13 +2514,31 @@ class MirrorManager:
         return name
 
     def _codex_auth_to_apikey(self, launcher: AgentLauncher, agent_name: str) -> None:
-        """Swap codex to API-key auth: pass key | codex login --with-api-key."""
+        """Swap codex to API-key auth: write the agent's auth.json from pass."""
         credential = self._auth_credential(launcher, agent_name, "apikey_credential")
         cfg = self._launcher_auth_config(launcher, agent_name)
         try:
             auth_mod.codex_to_apikey(self.config, self.executor, cfg, self.logger)
         except auth_mod.AuthError as exc:
             raise MirrorError(str(exc)) from exc
+
+    def _codex_auth_base_url(
+        self, launcher: AgentLauncher, agent_name: str, credential: str,
+    ) -> Optional[str]:
+        """Regional API endpoint for codex apikey auth, if any.
+
+        Explicit ``agent_launcher.auth.codex.base_url`` wins; otherwise the first
+        path segment of the credential's pass entry is treated as the host when
+        it differs from the default api.openai.com (so a pass entry like
+        ``us.api.openai.com/apikey`` routes to the US-residency endpoint).
+        """
+        cfg = self._launcher_auth_config(launcher, agent_name)
+        if cfg.base_url:
+            return cfg.base_url
+        host = self.config.credentials[credential].pass_entry.split("/", 1)[0]
+        if host.endswith("api.openai.com") and host != "api.openai.com":
+            return f"https://{host}/v1"
+        return None
 
     def _launcher_auth_config(self, launcher: AgentLauncher, agent_name: str) -> "HarnessAuthConfig":
         for source in (launcher, self.config.agent_launcher):
@@ -3926,6 +3944,17 @@ class MirrorManager:
                 else:
                     self._codex_auth_to_apikey(launcher, agent_name)
                     command = [*command, "-c", config_override("preferred_auth_method", "apikey")]
+                    credential = self._auth_credential(launcher, agent_name, "apikey_credential")
+                    base_url = self._codex_auth_base_url(launcher, agent_name, credential)
+                    if base_url:
+                        # Regional (e.g. US data-residency) project: route the
+                        # built-in openai provider at its regional host.  All
+                        # argv config overrides, never an env var.
+                        command = [
+                            *command, "-c",
+                            config_override("model_providers.openai.base_url", base_url),
+                        ]
+                        self.logger.info("Codex API-key auth using base_url %s.", base_url)
             elif self._detected_agent_type == AgentType.CLAUDE:
                 # Stage the helper; the --settings carrying it is built below,
                 # merged with any attention hooks (claude takes one --settings).

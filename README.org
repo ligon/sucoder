@@ -2362,6 +2362,28 @@ agent_launcher:
 for terminal and remote-control codex launches alike. The deprecated flat keys
 =codex_auth= / =codex_auth_credential= (and =--codex-auth=) still map onto the
 generic codex settings. See [[*Provider credentials from =pass=][Provider credentials]].
+
+*** Regional (data-residency) OpenAI projects
+
+An OpenAI project with a data-residency region (for example US) only accepts
+its API keys at a regional host such as =us.api.openai.com=; the default
+=api.openai.com= rejects them ("incorrect regional hostname"). A codex apikey
+launch routes the built-in =openai= provider at the regional host — no
+environment variable — when =agent_launcher.auth.codex.base_url= is set:
+
+#+begin_src yaml
+agent_launcher:
+  auth:
+    codex:
+      mode: apikey
+      apikey_credential: openai
+      base_url: https://us.api.openai.com/v1
+#+end_src
+
+When =base_url= is unset, SuCoder derives it from the credential's pass entry:
+a first path segment of =us.api.openai.com= (as in
+=pass: us.api.openai.com/apikey=) routes to =https://us.api.openai.com/v1=.
+No override is added for the default =api.openai.com=.
 Check the selected launch, then pair it from the launcher:
 
 #+begin_src shell

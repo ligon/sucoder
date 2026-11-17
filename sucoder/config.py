@@ -244,6 +244,7 @@ class HarnessAuthConfig:
     mode: Literal["subscription", "apikey"] = "subscription"
     apikey_credential: Optional[str] = None
     subscription_credential: Optional[str] = None
+    base_url: Optional[str] = None
 
 
 @dataclass
@@ -1448,12 +1449,18 @@ def _parse_auth(raw: Any) -> Dict[str, HarnessAuthConfig]:
                 f"`agent_launcher.auth.{harness}.subscription_credential` must be a "
                 "non-empty string when provided."
             )
+        base_url = entry.get("base_url")
+        if base_url is not None and (not isinstance(base_url, str) or not base_url.strip()):
+            raise ConfigError(
+                f"`agent_launcher.auth.{harness}.base_url` must be a non-empty string when provided."
+            )
         result[harness.strip()] = HarnessAuthConfig(
             mode=mode,
             apikey_credential=apikey_credential.strip() if apikey_credential is not None else None,
             subscription_credential=(
                 subscription_credential.strip() if subscription_credential is not None else None
             ),
+            base_url=base_url.strip() if base_url is not None else None,
         )
     return result
 

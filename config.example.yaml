@@ -101,9 +101,15 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #         mode: apikey                    # subscription | apikey (default: subscription)
 #         apikey_credential: openai       # credentials: name (default: openai)
 #         subscription_credential: codex-chatgpt-auth  # pass entry holding the auth.json backup
+#         base_url: https://us.api.openai.com/v1  # optional; see regional note below
 #       claude:
 #         mode: apikey
 #         apikey_credential: anthropic    # credentials: name (default: anthropic)
+# Regional OpenAI projects (e.g. US data residency) only accept their keys at a
+# regional host. codex apikey launches route the built-in openai provider at
+# base_url when set; if unset, the host is derived from the credential's pass
+# entry first path segment (us.api.openai.com/apikey -> https://us.api.openai.com/v1).
+# No base_url override is added for the default api.openai.com.
 # Per-launch override: --auth MODE (subscription|apikey). Switch at the command
 # line with `sucoder auth apikey|subscription --harness codex|claude`, and check
 # state with `sucoder auth status`. The codex swap is host-global (one shared
@@ -117,7 +123,7 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #   openrouter:
 #     pass: openrouter.ai/apikey
 #   openai:                          # used by agent_launcher.auth.codex.mode: apikey
-#     pass: openai.com/apikey
+#     pass: us.api.openai.com/apikey  # regional host also sets the API base_url
 #   anthropic:                       # used by agent_launcher.auth.claude.mode: apikey
 #     pass: anthropic.com/apikey
 #   codex-chatgpt-auth:              # optional codex subscription auth.json backup
