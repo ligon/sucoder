@@ -420,6 +420,62 @@ def test_launch_commands_forward_harness_and_model(
     assert calls[0][2]["model_override"] == "openrouter/deepseek/deepseek-chat"
 
 
+@pytest.mark.parametrize("subcommand, method", [("agents-run", "launch_agent"), ("collaborate", "bootstrap")])
+def test_launch_commands_forward_codex_auth(
+    tmp_path, monkeypatch, subcommand, method,
+):
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+
+    calls = []
+
+    class StubManager:
+        def context_for(self, name):
+            return SimpleNamespace(name=name)
+
+        def launch_agent(self, ctx, **kwargs):
+            calls.append(("launch_agent", ctx.name, kwargs))
+
+        def bootstrap(self, ctx, **kwargs):
+            calls.append(("bootstrap", ctx.name, kwargs))
+
+    monkeypatch.setattr(cli, "_build_manager_for_mirror", lambda *args, **kwargs: StubManager())
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "--config", str(config_path), subcommand, "sample", "--no-sync",
+            "--harness", "codex", "--codex-auth", "apikey",
+        ],
+    )
+
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert calls[0][0] == method
+    assert calls[0][2]["codex_auth"] == "apikey"
+
+
+def test_codex_auth_rejects_unknown_mode(tmp_path, monkeypatch):
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "--config", str(config_path), "agents-run", "sample", "--no-sync",
+            "--harness", "codex", "--codex-auth", "oauth",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--codex-auth must be 'chatgpt' or 'apikey'" in _plain_output(result)
+
+
 def test_harness_and_legacy_agent_are_mutually_exclusive(tmp_path, monkeypatch):
     runner = CliRunner()
     skills_dir = tmp_path / "skills"

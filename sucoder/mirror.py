@@ -3709,6 +3709,7 @@ class MirrorManager:
         env_override: Optional[Mapping[str, str]] = None,
         supports_inline_prompt: Optional[bool] = None,
         codex_remote_control: Optional[str] = None,
+        codex_auth: Optional[str] = None,
         codex_state_from: Optional[str] = None,
         codex_state_fresh: bool = False,
         codex_state_unattended: bool = False,
@@ -3716,6 +3717,12 @@ class MirrorManager:
         detached: bool = False,
     ) -> int:
         """Launch the configured agent command within the mirror working tree.
+
+        ``codex_auth`` selects how a Codex launch authenticates for this run:
+        ``chatgpt`` (default) uses codex's own ChatGPT login, ``apikey`` adds
+        ``-c preferred_auth_method="apikey"`` and stages ``OPENAI_API_KEY``
+        from the pass-backed credential named by
+        ``agent_launcher.codex_auth_credential`` (default ``openai``).
 
         When ``detached`` is True (used by the auto-renew loop), a remote
         agent is started in a *detached* tmux session and this returns
@@ -3795,6 +3802,38 @@ class MirrorManager:
         remote_enabled = remote_mode in ("terminal", "server")
         if remote_enabled and self._detected_agent_type != AgentType.CODEX:
             raise MirrorError("Remote control requires --harness codex (or --agent codex).")
+
+        # Codex auth switch (subscription ChatGPT login vs pay-as-you-go API
+        # key).  ``apikey`` asks codex for the apikey auth method and stages
+        # OPENAI_API_KEY through the private env file below; ``chatgpt`` (the
+        # default) leaves codex's own ~/.codex auth untouched.
+        auth_mode = codex_auth
+        if auth_mode is None and self._detected_agent_type == AgentType.CODEX:
+            auth_mode = launcher.codex_auth
+            if auth_mode is None and self.config.agent_launcher is not None:
+                auth_mode = self.config.agent_launcher.codex_auth
+        if auth_mode not in (None, "chatgpt", "apikey"):
+            raise MirrorError(f"Unknown Codex auth mode: {auth_mode!r}")
+        if auth_mode is not None and self._detected_agent_type != AgentType.CODEX:
+            raise MirrorError("Codex auth selection requires --harness codex (or --agent codex).")
+        codex_api_key: Optional[str] = None
+        if auth_mode == "apikey":
+            credential_name = launcher.codex_auth_credential
+            if credential_name is None and self.config.agent_launcher is not None:
+                credential_name = self.config.agent_launcher.codex_auth_credential
+            credential_name = credential_name or "openai"
+            if credential_name not in self.config.credentials:
+                raise MirrorError(
+                    f"Codex auth mode 'apikey' needs a credential named "
+                    f"{credential_name!r} under `credentials:` (set "
+                    f"agent_launcher.codex_auth_credential to use another name)."
+                )
+            command = [*command, "-c", config_override("preferred_auth_method", "apikey")]
+            codex_api_key = (
+                "<redacted-dry-run>"
+                if self.executor.dry_run
+                else self._read_pass_credential(credential_name)
+            )
         # The reply reader (docs/reply-from-transcript.org) finds a Claude
         # session's transcript by an id chosen here: ``--session-id`` makes
         # the path ``<config>/projects/<cwd>/<id>.jsonl`` deterministic.  Not
@@ -3850,6 +3889,8 @@ class MirrorManager:
         # Provider-derived values are defaults. Explicit launcher/CLI
         # environment settings retain their established override precedence.
         env: Dict[str, str] = dict(provider_env)
+        if codex_api_key is not None and "OPENAI_API_KEY" not in env:
+            env["OPENAI_API_KEY"] = codex_api_key
         env.update(launcher.env or {})
         if env_override:
             env.update(env_override)
@@ -5298,6 +5339,7 @@ class MirrorManager:
         env_override: Optional[Mapping[str, str]] = None,
         supports_inline_prompt: Optional[bool] = None,
         codex_remote_control: Optional[str] = None,
+        codex_auth: Optional[str] = None,
         codex_state_from: Optional[str] = None,
         codex_state_fresh: bool = False,
         skip_lfs: bool = True,
@@ -5343,6 +5385,7 @@ class MirrorManager:
             env_override=env_override,
             supports_inline_prompt=supports_inline_prompt,
             codex_remote_control=codex_remote_control,
+            codex_auth=codex_auth,
             codex_state_from=codex_state_from,
             codex_state_fresh=codex_state_fresh,
         )

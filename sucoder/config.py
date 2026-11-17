@@ -240,6 +240,8 @@ class AgentLauncher:
     command: List[str] = field(default_factory=lambda: ["claude"])
     model: Optional[str] = None
     codex_remote_control: Optional[Literal["off", "terminal", "server"]] = None
+    codex_auth: Optional[Literal["chatgpt", "apikey"]] = None
+    codex_auth_credential: Optional[str] = None
     env: Dict[str, str] = field(default_factory=dict)
     nvm: Optional[NvmConfig] = None
     accepts_inline_prompt: Optional[bool] = None
@@ -1310,6 +1312,20 @@ def _parse_agent_launcher(raw: Any) -> AgentLauncher:
             '`agent_launcher.codex_remote_control` must be "off", "terminal", or "server".'
         )
 
+    codex_auth = raw.get("codex_auth")
+    if codex_auth is not None and codex_auth not in ("chatgpt", "apikey"):
+        raise ConfigError(
+            '`agent_launcher.codex_auth` must be "chatgpt" or "apikey".'
+        )
+
+    codex_auth_credential = raw.get("codex_auth_credential")
+    if codex_auth_credential is not None and (
+        not isinstance(codex_auth_credential, str) or not codex_auth_credential.strip()
+    ):
+        raise ConfigError(
+            "`agent_launcher.codex_auth_credential` must be a non-empty string when provided."
+        )
+
     nvm_settings = _parse_nvm_settings(raw.get("nvm"))
 
     accepts_inline_prompt = raw.get("accepts_inline_prompt")
@@ -1356,6 +1372,8 @@ def _parse_agent_launcher(raw: Any) -> AgentLauncher:
         command=command,
         model=model.strip() if model is not None else None,
         codex_remote_control=codex_remote_control,
+        codex_auth=codex_auth,
+        codex_auth_credential=codex_auth_credential.strip() if codex_auth_credential is not None else None,
         env=dict(env_raw),
         nvm=nvm_settings,
         accepts_inline_prompt=accepts_inline_prompt,
