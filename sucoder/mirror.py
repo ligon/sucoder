@@ -3940,12 +3940,18 @@ class MirrorManager:
                     credential = self._auth_credential(launcher, agent_name, "apikey_credential")
                     base_url = self._codex_auth_base_url(launcher, agent_name, credential)
                     if base_url:
-                        # Regional (e.g. US data-residency) project: route the
-                        # built-in openai provider at its regional host.  All
-                        # argv config overrides, never an env var.
+                        # Regional (e.g. US data-residency) project.  The built-in
+                        # ``openai`` provider is reserved and cannot be overridden,
+                        # so define a distinct provider at the regional host and
+                        # select it.  All argv config overrides, never an env var.
+                        provider = "sucoder-openai"
                         command = [
-                            *command, "-c",
-                            config_override("model_providers.openai.base_url", base_url),
+                            *command,
+                            "-c", config_override(f"model_providers.{provider}.name", "OpenAI (SuCoder)"),
+                            "-c", config_override(f"model_providers.{provider}.base_url", base_url),
+                            "-c", config_override(f"model_providers.{provider}.wire_api", "responses"),
+                            "-c", config_override(f"model_providers.{provider}.env_key", "OPENAI_API_KEY"),
+                            "-c", config_override("model_provider", provider),
                         ]
                         self.logger.info("Codex API-key auth using base_url %s.", base_url)
             elif self._detected_agent_type == AgentType.CLAUDE:
