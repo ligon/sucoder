@@ -4863,24 +4863,19 @@ def _stage_codex_apikey_launch(tmp_path, monkeypatch, pass_entry, auth_cfg=None)
     return agent_calls[-1]
 
 
-def test_codex_auth_apikey_derives_regional_base_url_from_pass_entry(tmp_path, monkeypatch):
-    launched = _stage_codex_apikey_launch(tmp_path, monkeypatch, "us.api.openai.com/apikey")
+def test_codex_auth_apikey_uses_configured_base_url(tmp_path, monkeypatch):
+    from sucoder.config import HarnessAuthConfig
+
+    auth_cfg = {"codex": HarnessAuthConfig(mode="apikey", base_url="https://us.api.openai.com/v1")}
+    launched = _stage_codex_apikey_launch(
+        tmp_path, monkeypatch, "openai.com/apikey", auth_cfg=auth_cfg,
+    )
     assert 'model_providers.openai.base_url="https://us.api.openai.com/v1"' in launched
 
 
-def test_codex_auth_apikey_default_entry_adds_no_base_url(tmp_path, monkeypatch):
-    launched = _stage_codex_apikey_launch(tmp_path, monkeypatch, "openai.com/apikey")
+def test_codex_auth_apikey_without_base_url_adds_no_override(tmp_path, monkeypatch):
+    launched = _stage_codex_apikey_launch(tmp_path, monkeypatch, "us.api.openai.com/apikey")
     assert not any("model_providers.openai.base_url" in tok for tok in launched)
-
-
-def test_codex_auth_apikey_explicit_base_url_wins(tmp_path, monkeypatch):
-    from sucoder.config import HarnessAuthConfig
-
-    auth_cfg = {"codex": HarnessAuthConfig(mode="apikey", base_url="https://eu.api.openai.com/v1")}
-    launched = _stage_codex_apikey_launch(
-        tmp_path, monkeypatch, "us.api.openai.com/apikey", auth_cfg=auth_cfg,
-    )
-    assert 'model_providers.openai.base_url="https://eu.api.openai.com/v1"' in launched
 
 
 def test_codex_auth_subscription_leaves_auth_untouched(
