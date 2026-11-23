@@ -93,12 +93,44 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 # Inspect/pair the selected owner with codex-remote-status / codex-remote-pair;
 # native codex remote-control pair addresses a different, shared daemon.
 
+# Auth switch (optional; each harness's subscription login by default).
+# When a subscription quota runs out, switch codex or claude to pay-as-you-go
+# API billing. The API key stays in the `pass` store and never becomes an
+# environment variable: codex swaps ~/.codex/auth.json via stdin (the
+# subscription login is backed up so it can be restored); claude reads the key
+# through an apiKeyHelper merged into its --settings, leaving OAuth untouched.
+#   agent_launcher:
+#     auth:
+#       codex:
+#         mode: apikey                    # subscription | apikey (default: subscription)
+#         apikey_credential: openai       # credentials: name (default: openai)
+#         subscription_credential: codex-chatgpt-auth  # pass entry holding the auth.json backup
+#         base_url: https://us.api.openai.com/v1  # optional; see regional note below
+#       claude:
+#         mode: apikey
+#         apikey_credential: anthropic    # credentials: name (default: anthropic)
+# Regional OpenAI projects (e.g. US data residency) only accept their keys at a
+# regional host. The endpoint is configuration: codex apikey launches route the
+# built-in openai provider at base_url when set (an argv config override, never
+# an env var). No base_url override is added for the default api.openai.com.
+# Per-launch override: --auth MODE (subscription|apikey). Switch at the command
+# line with `sucoder auth apikey|subscription --harness codex|claude`, and check
+# state with `sucoder auth status`. The codex swap is host-global (one shared
+# ~/.codex/auth.json), so two concurrent codex sessions on a host share a mode.
+# Deprecated flat keys codex_auth/codex_auth_credential still work for codex.
+
 # Provider credentials (optional). Values stay in the human user's `pass`
 # store; only the pass entry name belongs in this file. The first line of
 # the entry is used as the API key. OpenRouter metadata is built in.
 # credentials:
 #   openrouter:
 #     pass: openrouter.ai/apikey
+#   openai:                          # used by agent_launcher.auth.codex.mode: apikey
+#     pass: openai.com/apikey
+#   anthropic:                       # used by agent_launcher.auth.claude.mode: apikey
+#     pass: anthropic.com/apikey
+#   codex-chatgpt-auth:              # optional codex subscription auth.json backup
+#     pass: codex/chatgpt-auth.json
 
 # Custom OpenAI-compatible providers can be described once and selected by
 # the prefix of --model (for example laboratory/my-model).

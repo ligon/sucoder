@@ -234,12 +234,29 @@ class ProviderConfig:
 
 
 @dataclass
+class HarnessAuthConfig:
+    """How one harness authenticates (subscription login vs pay-as-you-go key).
+
+    The API key itself stays in the human user's ``pass`` store; only the
+    ``credentials:`` entry names live here.
+    """
+
+    mode: Literal["subscription", "apikey"] = "subscription"
+    apikey_credential: Optional[str] = None
+    subscription_credential: Optional[str] = None
+    base_url: Optional[str] = None
+
+
+@dataclass
 class AgentLauncher:
     """Configuration for launching the agent process."""
 
     command: List[str] = field(default_factory=lambda: ["claude"])
     model: Optional[str] = None
     codex_remote_control: Optional[Literal["off", "terminal", "server"]] = None
+    codex_auth: Optional[Literal["chatgpt", "apikey"]] = None
+    codex_auth_credential: Optional[str] = None
+    auth: Dict[str, "HarnessAuthConfig"] = field(default_factory=dict)
     env: Dict[str, str] = field(default_factory=dict)
     nvm: Optional[NvmConfig] = None
     accepts_inline_prompt: Optional[bool] = None
@@ -1315,6 +1332,33 @@ def _parse_agent_launcher(raw: Any) -> AgentLauncher:
             '`agent_launcher.codex_remote_control` must be "off", "terminal", or "server".'
         )
 
+    codex_auth = raw.get("codex_auth")
+    if codex_auth is not None and codex_auth not in ("chatgpt", "apikey"):
+        raise ConfigError(
+            '`agent_launcher.codex_auth` must be "chatgpt" or "apikey".'
+        )
+
+    codex_auth_credential = raw.get("codex_auth_credential")
+    if codex_auth_credential is not None and (
+        not isinstance(codex_auth_credential, str) or not codex_auth_credential.strip()
+    ):
+        raise ConfigError(
+            "`agent_launcher.codex_auth_credential` must be a non-empty string when provided."
+        )
+
+    auth = _parse_auth(raw.get("auth"))
+    # Deprecated flat codex keys map onto the generic per-harness structure.
+    if codex_auth is not None:
+        codex_cfg = auth.get("codex") or HarnessAuthConfig()
+        auth["codex"] = HarnessAuthConfig(
+            mode="apikey" if codex_auth == "apikey" else "subscription",
+            apikey_credential=(
+                codex_auth_credential.strip() if codex_auth_credential is not None
+                else codex_cfg.apikey_credential
+            ),
+            subscription_credential=codex_cfg.subscription_credential,
+        )
+
     nvm_settings = _parse_nvm_settings(raw.get("nvm"))
 
     accepts_inline_prompt = raw.get("accepts_inline_prompt")
@@ -1361,6 +1405,9 @@ def _parse_agent_launcher(raw: Any) -> AgentLauncher:
         command=command,
         model=model.strip() if model is not None else None,
         codex_remote_control=codex_remote_control,
+        codex_auth=codex_auth,
+        codex_auth_credential=codex_auth_credential.strip() if codex_auth_credential is not None else None,
+        auth=auth,
         env=dict(env_raw),
         nvm=nvm_settings,
         accepts_inline_prompt=accepts_inline_prompt,
@@ -1371,6 +1418,56 @@ def _parse_agent_launcher(raw: Any) -> AgentLauncher:
         default_flags=default_flags_raw,
         flags=flag_templates,
     )
+
+
+def _parse_auth(raw: Any) -> Dict[str, HarnessAuthConfig]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ConfigError("`agent_launcher.auth` must be a mapping when provided.")
+    result: Dict[str, HarnessAuthConfig] = {}
+    for harness, entry in raw.items():
+        if not isinstance(harness, str) or not harness.strip():
+            raise ConfigError("`agent_launcher.auth` keys must be non-empty harness names.")
+        if not isinstance(entry, dict):
+            raise ConfigError(
+                f"`agent_launcher.auth.{harness}` must be a mapping when provided."
+            )
+        mode = entry.get("mode", "subscription")
+        if mode not in ("subscription", "apikey"):
+            raise ConfigError(
+                f'`agent_launcher.auth.{harness}.mode` must be "subscription" or "apikey".'
+            )
+        apikey_credential = entry.get("apikey_credential")
+        if apikey_credential is not None and (
+            not isinstance(apikey_credential, str) or not apikey_credential.strip()
+        ):
+            raise ConfigError(
+                f"`agent_launcher.auth.{harness}.apikey_credential` must be a "
+                "non-empty string when provided."
+            )
+        subscription_credential = entry.get("subscription_credential")
+        if subscription_credential is not None and (
+            not isinstance(subscription_credential, str) or not subscription_credential.strip()
+        ):
+            raise ConfigError(
+                f"`agent_launcher.auth.{harness}.subscription_credential` must be a "
+                "non-empty string when provided."
+            )
+        base_url = entry.get("base_url")
+        if base_url is not None and (not isinstance(base_url, str) or not base_url.strip()):
+            raise ConfigError(
+                f"`agent_launcher.auth.{harness}.base_url` must be a non-empty string when provided."
+            )
+        result[harness.strip()] = HarnessAuthConfig(
+            mode=mode,
+            apikey_credential=apikey_credential.strip() if apikey_credential is not None else None,
+            subscription_credential=(
+                subscription_credential.strip() if subscription_credential is not None else None
+            ),
+            base_url=base_url.strip() if base_url is not None else None,
+        )
+    return result
 
 
 def _parse_nvm_settings(raw: Any) -> Optional[NvmConfig]:

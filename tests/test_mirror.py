@@ -1,4 +1,5 @@
 import grp
+import json
 import logging
 import os
 import pwd
@@ -4393,6 +4394,7 @@ def test_bootstrap_invokes_steps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
             "'extra_args': ['--flag'], 'command_override': None, 'model_override': None, "
             "'env_override': None, "
             "'supports_inline_prompt': None, 'codex_remote_control': None, "
+            "'auth_override': None, 'codex_auth': None, "
             "'codex_state_from': None, 'codex_state_fresh': False}"
         ),
     ]
@@ -4714,6 +4716,312 @@ def test_openrouter_pass_credential_is_staged_without_argv_leak(
         assert "export KIMI_MODEL_BASE_URL=https://openrouter.ai/api/v1" in env_kwargs["input"]
         assert "export KIMI_MODEL_API_KEY=" in env_kwargs["input"]
         assert "--model" not in launched
+
+
+def _stage_auth_launch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    harness_command,
+    **launch_kwargs,
+):
+    """Launch with stubbed subprocesses; return (manager, human_calls, agent_calls)."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+    ctx.settings.agent_launcher = AgentLauncher(command=list(harness_command))
+    monkeypatch.setattr(manager, "_compose_context_prelude", lambda _ctx: "")
+
+    human_calls = []
+    agent_calls = []
+
+    def fake_run_human(args, **kwargs):
+        human_calls.append((list(args), kwargs))
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="", stderr="", returncode=0,
+        )
+
+    def fake_run_agent(args, **kwargs):
+        agent_calls.append((list(args), kwargs))
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="", stderr="", returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_human", fake_run_human)
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+
+    manager.launch_agent(ctx, sync=False, **launch_kwargs)
+    return manager, human_calls, agent_calls
+
+
+def test_codex_auth_apikey_swaps_and_injects_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    secret = "sk-openai-secret-never-log"
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+    ctx.settings.agent_launcher = AgentLauncher(command=["codex"])
+    manager.config.credentials["openai"] = CredentialConfig(pass_entry="openai.com/apikey")
+    monkeypatch.setattr(manager, "_compose_context_prelude", lambda _ctx: "")
+
+    swap_calls = []
+
+    def fake_to_apikey(config, executor, cfg, logger):
+        swap_calls.append(cfg)
+
+    monkeypatch.setattr(mirror.auth_mod, "codex_to_apikey", fake_to_apikey)
+    monkeypatch.setattr(
+        manager.executor, "run_agent",
+        lambda *a, **kw: CommandResult(
+            requested_args=list(a[0]), executed_args=list(a[0]),
+            stdout="", stderr="", returncode=0,
+        ),
+    )
+
+    agent_calls = []
+
+    def capture_run_agent(args, **kwargs):
+        agent_calls.append((list(args), kwargs))
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="", stderr="", returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", capture_run_agent)
+
+    with caplog.at_level(logging.DEBUG):
+        manager.launch_agent(ctx, sync=False, auth_override="apikey")
+
+    assert len(swap_calls) == 1
+    launched, _ = agent_calls[-1]
+    codex_index = launched.index("codex")
+    flag_index = launched.index("-c", codex_index)
+    assert launched[flag_index + 1] == 'preferred_auth_method="apikey"'
+    # No env staging of the key at all.
+    env_writers = [
+        kwargs for args, kwargs in agent_calls
+        if args[:2] == ["sh", "-c"] and args[3] == "sucoder-environment"
+    ]
+    for kwargs in env_writers:
+        assert "OPENAI_API_KEY" not in kwargs.get("input", "")
+    assert secret not in caplog.text
+
+
+def test_codex_auth_deprecated_alias_maps_to_apikey(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+    ctx.settings.agent_launcher = AgentLauncher(command=["codex"])
+    manager.config.credentials["openai"] = CredentialConfig(pass_entry="openai.com/apikey")
+    monkeypatch.setattr(manager, "_compose_context_prelude", lambda _ctx: "")
+
+    swap_calls = []
+    monkeypatch.setattr(
+        mirror.auth_mod, "codex_to_apikey",
+        lambda config, executor, cfg, logger: swap_calls.append(cfg),
+    )
+    agent_calls = []
+    monkeypatch.setattr(
+        manager.executor, "run_agent",
+        lambda *a, **kw: (agent_calls.append(list(a[0])), CommandResult(
+            requested_args=list(a[0]), executed_args=list(a[0]),
+            stdout="", stderr="", returncode=0,
+        ))[1],
+    )
+
+    manager.launch_agent(ctx, sync=False, codex_auth="apikey")
+    assert len(swap_calls) == 1
+
+
+def _stage_codex_apikey_launch(tmp_path, monkeypatch, pass_entry, auth_cfg=None):
+    """Launch codex apikey with a stubbed swap; return the launched argv."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+    ctx.settings.agent_launcher = AgentLauncher(command=["codex"], auth=auth_cfg or {})
+    manager.config.credentials["openai"] = CredentialConfig(pass_entry=pass_entry)
+    monkeypatch.setattr(manager, "_compose_context_prelude", lambda _ctx: "")
+    monkeypatch.setattr(
+        mirror.auth_mod, "codex_to_apikey", lambda config, executor, cfg, logger: None,
+    )
+    agent_calls = []
+    monkeypatch.setattr(
+        manager.executor, "run_agent",
+        lambda *a, **kw: (agent_calls.append(list(a[0])), CommandResult(
+            requested_args=list(a[0]), executed_args=list(a[0]),
+            stdout="", stderr="", returncode=0,
+        ))[1],
+    )
+    manager.launch_agent(ctx, sync=False, auth_override="apikey")
+    return agent_calls[-1]
+
+
+def test_codex_auth_apikey_uses_configured_base_url(tmp_path, monkeypatch):
+    from sucoder.config import HarnessAuthConfig
+
+    auth_cfg = {"codex": HarnessAuthConfig(mode="apikey", base_url="https://us.api.openai.com/v1")}
+    launched = _stage_codex_apikey_launch(
+        tmp_path, monkeypatch, "openai.com/apikey", auth_cfg=auth_cfg,
+    )
+    # A distinct provider is defined at the regional host and selected; the
+    # reserved built-in ``openai`` provider is never overridden.
+    assert 'model_providers.sucoder-openai.base_url="https://us.api.openai.com/v1"' in launched
+    assert 'model_provider="sucoder-openai"' in launched
+    assert not any(tok.startswith("model_providers.openai.") for tok in launched)
+
+
+def test_codex_auth_apikey_without_base_url_adds_no_override(tmp_path, monkeypatch):
+    launched = _stage_codex_apikey_launch(tmp_path, monkeypatch, "us.api.openai.com/apikey")
+    assert not any("model_providers" in tok or tok.startswith("model_provider") for tok in launched)
+
+
+def test_codex_auth_subscription_leaves_auth_untouched(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    swap_calls = []
+    monkeypatch.setattr(
+        mirror.auth_mod, "codex_to_apikey",
+        lambda config, executor, cfg, logger: swap_calls.append(cfg),
+    )
+    _, human_calls, agent_calls = _stage_auth_launch(
+        tmp_path, monkeypatch, ["codex"], auth_override="subscription",
+    )
+
+    assert swap_calls == []
+    launched, _ = agent_calls[-1]
+    assert "-c" not in launched
+
+
+def test_codex_auth_apikey_requires_a_credential(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+    ctx.settings.agent_launcher = AgentLauncher(command=["codex"])
+    monkeypatch.setattr(manager, "_compose_context_prelude", lambda _ctx: "")
+    monkeypatch.setattr(
+        manager.executor, "run_agent",
+        lambda *a, **kw: CommandResult(
+            requested_args=list(a[0]), executed_args=list(a[0]),
+            stdout="", stderr="", returncode=0,
+        ),
+    )
+
+    with pytest.raises(mirror.MirrorError, match="credential named 'openai'"):
+        manager.launch_agent(ctx, sync=False, auth_override="apikey")
+
+
+def test_claude_auth_apikey_stages_helper_and_settings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    secret = "sk-ant-secret-never-log"
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+    ctx.settings.agent_launcher = AgentLauncher(command=["claude"])
+    manager.config.credentials["anthropic"] = CredentialConfig(pass_entry="anthropic.com/apikey")
+    monkeypatch.setattr(manager, "_compose_context_prelude", lambda _ctx: "")
+
+    agent_calls = []
+
+    def capture_run_agent(args, **kwargs):
+        agent_calls.append((list(args), kwargs))
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="", stderr="", returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", capture_run_agent)
+
+    with caplog.at_level(logging.DEBUG):
+        manager.launch_agent(ctx, sync=False, auth_override="apikey")
+
+    # Helper staged via the private writer.
+    helper_writer = next(
+        (args, kwargs) for args, kwargs in agent_calls
+        if args[:2] == ["sh", "-c"] and args[3] == "sucoder-api-key-helper"
+    )
+    helper_script = helper_writer[1]["input"]
+    assert "pass show anthropic.com/apikey" in helper_script
+    helper_path = helper_writer[0][-1]
+    # The launched --settings carries the apiKeyHelper, not the key.
+    launched, _ = agent_calls[-1]
+    settings_index = launched.index("--settings")
+    settings_json = launched[settings_index + 1]
+    assert json.loads(settings_json)["apiKeyHelper"] == helper_path
+    assert secret not in " ".join(launched)
+    assert secret not in caplog.text
+    # The key is never in any env writer.
+    for args, kwargs in agent_calls:
+        if args[:2] == ["sh", "-c"] and args[3] == "sucoder-environment":
+            assert secret not in kwargs.get("input", "")
+
+
+def test_claude_auth_apikey_merges_with_attention_hooks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sucoder.config import AttentionConfig
+
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+    ctx.settings.agent_launcher = AgentLauncher(command=["claude"])
+    manager.config.credentials["anthropic"] = CredentialConfig(pass_entry="anthropic.com/apikey")
+    manager.config.attention = AttentionConfig(hooks=True)
+    monkeypatch.setattr(manager, "_compose_context_prelude", lambda _ctx: "")
+
+    agent_calls = []
+    monkeypatch.setattr(
+        manager.executor, "run_agent",
+        lambda *a, **kw: (agent_calls.append((list(a[0]), kw)), CommandResult(
+            requested_args=list(a[0]), executed_args=list(a[0]),
+            stdout="", stderr="", returncode=0,
+        ))[1],
+    )
+
+    manager.launch_agent(ctx, sync=False, auth_override="apikey")
+
+    launched, _ = agent_calls[-1]
+    settings_index = launched.index("--settings")
+    settings = json.loads(launched[settings_index + 1])
+    # One --settings carries both the helper and the attention hooks.
+    assert "apiKeyHelper" in settings
+    assert "hooks" in settings
+    assert launched.count("--settings") == 1
+
+
+def test_auth_rejected_for_unsupported_harness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+    ctx.settings.agent_launcher = AgentLauncher(command=["gemini"])
+    monkeypatch.setattr(manager, "_compose_context_prelude", lambda _ctx: "")
+    monkeypatch.setattr(
+        manager.executor, "run_agent",
+        lambda *a, **kw: CommandResult(
+            requested_args=list(a[0]), executed_args=list(a[0]),
+            stdout="", stderr="", returncode=0,
+        ),
+    )
+
+    with pytest.raises(mirror.MirrorError, match="only supported for codex and claude"):
+        manager.launch_agent(ctx, sync=False, auth_override="apikey")
 
 
 def test_environment_file_wrapper_sources_and_unlinks(tmp_path: Path) -> None:
