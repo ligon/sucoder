@@ -4,8 +4,8 @@
 
 * 1. Task and baseline
 
-Plan improvements that help an unattended dream reach useful independent review without repeated mechanical repair or expensive regeneration.
-The baseline is =17ec661= on =coder/dream-main-integration=; main is =cde76f8= and private memory is =30e98aa=.
+Revise the authoring design against the independent review, preserving existing repair capabilities and making phase continuation and resource accounting explicit.
+The review baseline is =ee23f63= on =coder/dream-main-integration=; runtime remains =60bc79c=, main =cde76f8= and private memory =30e98aa=.
 This ledger and the implementation plan authorize no runtime change, native call, memory publication or main merge.
 The [[file:dream/runs/sucoder-e6.org][E6 report]] is the measured failure case; the [[file:dream/workplan.org][accepted workplan]] preserves explanatory synthesis, open topic choice and justified no-change outcomes.
 
@@ -24,6 +24,7 @@ Implementation must run file-qualified upstream impact before editing existing s
   =tests/test_dream_editor.py::test_invalid_editorial_changes_never_publish= and =test_public_lifecycle_returned_review_supersession_archive_and_fresh_reader= cover this authority boundary.
 - =sucoder/dream_context.py:32=, =Session= :: Frozen Git blobs, bounded lookups and per-unit delivered windows.
   =tests/test_dream_context.py::test_search_snippet_does_not_authorize_editing_unseen_full_page= and =test_context_cache_corruption_fails_status_without_fetch_or_inference= prevent authority expansion and mutable context substitution.
+  =Session.payload= at line 203 already records requests, used amounts and allowances; continuation must authenticate and reconstruct its effects, including edit authority.
 - =sucoder/dream_progress.py:134=, =try_reuse= :: Reuses accepted work only after complete receipt/output/dependency checks.
   =tests/test_dream_progress.py::test_accepted_work_is_reused_without_model_calls_or_duplicate_topic= and =test_receipt_presence_without_complete_valid_proof_is_not_coverage= cover it.
   This is not an existing unreviewed-draft checkpoint protocol.
@@ -43,6 +44,7 @@ Every changed non-index anchor currently needs a reference unless covered by a v
 The author brief says explanatory sections; that wording does not fully describe the changed-anchor check applied to Talk in E6.
 The current production editor contract is =source-grounded-wiki-v5=, layered over the earlier v1-v4 contracts; do not allocate an already-used version.
 Raw completion, mechanical acceptance, independent acceptance and memory publication are distinct states.
+Wallet =completed= records native delivery, not an accepted revision; the current local =max_repairs= loop does not provide a durable logical-round state machine.
 An unreviewed draft checkpoint may save work but cannot establish accepted progress or source coverage for a future job.
 Cache reads are observations, not evidence of comparative savings; missing native usage remains unknown.
 
@@ -65,13 +67,19 @@ Certify new policy/schema/control combinations before stable production use; kee
 - Extend :: Existing typed editorial materialization and reference resolution for coordinator-owned structure and evidence handles.
 - New :: A versioned unreviewed-draft/phase checkpoint protocol; accepted receipt reuse cannot represent an unaccepted proposal safely.
 - Extend :: Repair into hash-bound typed patches, using the fully delivered draft and existing private materialization boundary.
+  Keep the general repair path for semantic/disposition changes and provide consolidation of duplicate references; neither capability may be lost to a reference-only optimization.
+- New :: Durable logical repair-round identity/outcomes, separate from charged native attempts and authenticated context-lookup continuations.
 - Extend :: Frozen role policies/profile identities for supported effort/output controls and explicit review reserves.
 - Defer :: Direct APIs, unrestricted tools, automatic paid retries, wholesale rendering rewrites and new discovery infrastructure until controlled measurements justify them.
 
 * 6. Decisions for plan review
 
 The first slice retains strict changed-anchor coverage and makes the model policy explicit, including Talk; typed citation-free containers are a later semantic design decision.
-A proposed 180-second review reserve is a pilot starting point, not a measured reviewer requirement or completion guarantee.
+A proposed 180-second/two-call review reserve is a pilot starting point, not a measured reviewer requirement or completion guarantee.
+It is protected from non-review work before each candidate review, including re-review after a semantic repair, and remains a subset of the global allowance.
+An open round can receive an explicitly authorized transport/protocol retry; a final schema-valid non-lookup reply closes the round even when its proposal is rejected.
+The first release does not grant extra semantic rounds inside an immutable job or use phase IDs to reset lookup or repair allowances.
+Pilot editorial disposition and native patch-route exercise are separate acceptance records; no-change alone cannot verify the patch path.
 Native effort/output mappings must be verified for the selected installed builds before selecting defaults; no vendor capability is assumed here.
 Controlled live allowances and private evidence selection require explicit authorization after offline preparation; this plan grants neither.
 
