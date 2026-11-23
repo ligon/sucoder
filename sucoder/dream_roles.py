@@ -158,8 +158,11 @@ class Coordinator:
             if budget is not None:
                 budget.reserve(task, **(dict(request_sha256=request["sha256"]) if request is not None else {}))
             dream_run._store(self.fd, key + "-started.json", canonical(dict(state="started", assignment_id=task["assignment_id"])) + b"\n")
+            # The wallet transport applies the shared deadline and closeout
+            # reserve; an extra fixed cap can discard otherwise bounded work.
+            deadline = self.deadline if budget is not None else min(self.deadline, time.monotonic() + 180)
             result, usage, trace = self.transport(self.harness, self.model, task, self.result_schema(role),
-                                                 min(self.deadline, time.monotonic() + 180),
+                                                 deadline,
                                                  **(dict(request=request) if request is not None else {}))
             dream_run._store(self.fd, key + "-trace.json", canonical(trace) + b"\n")
             if result is None:

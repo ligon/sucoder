@@ -33,6 +33,9 @@ Native role limits count invocations, not hidden HTTP requests.
 The existing native adapters do not expose a demonstrated complete token/dollar bound, so this slice advertises hard elapsed/call limits and rejects unsupported hard financial/token settings.
 The coordinator retains exact role results, traces and incomplete work privately when review cannot finish.
 Review/repair/consolidation may consume the reserved closeout allowance; ordinary author/extractor work stops earlier.
+Budgeted native roles use that shared deadline rather than an additional fixed three-minute cap.
+The wallet transport still shortens ordinary-work calls by the closeout reserve and clamps every call to the remaining whole-job allowance.
+Coordinators without a wallet retain the earlier 180-second fallback.
 No scheduler, automatic provider fallback, new corpus experiment or alternative Claude account is introduced.
 
 * Grounding and review

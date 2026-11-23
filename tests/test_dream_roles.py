@@ -1,12 +1,15 @@
 """Schema-bound semantic roles against disposable repositories and native traces."""
 import copy
+from contextlib import nullcontext
 import json
+import os
 from pathlib import Path
 import subprocess
+import time
 
 import pytest
 
-from sucoder import dream, dream_native, dream_roles as roles, dream_run
+from sucoder import dream, dream_budget, dream_native, dream_roles as roles, dream_run
 from tests.test_dream import git, invoke, workspace  # noqa: F401
 from tests.test_dream_transcript import catalog
 
@@ -54,6 +57,44 @@ def plan(workspace, request=None):
     result = invoke(workspace, request)
     assert result.exit_code == 0, result.output
     return json.loads(result.output)
+
+
+@pytest.mark.parametrize("harness", ["codex", "claude"])
+@pytest.mark.parametrize("budgeted,seconds,reserve,role,expected", [
+    (False, 600, 0, "extractor", 180),
+    (True, 600, 30, "extractor", 570),
+    (True, 100, 20, "extractor", 80),
+    (True, 600, 30, "consolidator", 600),
+])
+def test_role_deadline_obeys_wallet_reserve_and_unbudgeted_fallback(
+        tmp_path, harness, budgeted, seconds, reserve, role, expected):
+    frozen = dict(plan_id=dream.digest(b"deadline fixture"), repositories={}, limits=dict(
+        max_elapsed_seconds=600, max_role_invocations=4,
+        max_consolidation_bytes=131072, max_proposal_bytes=131072))
+    directory = tmp_path / "roles"
+    directory.mkdir(mode=0o700)
+    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    native, observed = Transport(), []
+
+    def record(harness, model, task, schema, deadline):
+        observed.append(deadline - time.monotonic())
+        return native(harness, model, task, schema, deadline)
+
+    record.version = native.version
+    manager = dream_budget.open_job(frozen, directory, supplied=dict(
+        max_elapsed_seconds=seconds, reserve_seconds=reserve)) if budgeted else nullcontext()
+    try:
+        with manager as wallet:
+            coordinator = roles.Coordinator(frozen, fd, harness, "fixture", time.monotonic() + 600, record)
+            if wallet is not None:
+                wallet.attach(coordinator)
+            inputs = dict(claims=[]) if role == "consolidator" else dict(evidence=dict(
+                unit_id="fixture", byte_start=0, byte_end=1, text="x"))
+            coordinator.call(role, inputs)
+    finally:
+        os.close(fd)
+    assert len(observed) == 1
+    assert expected - 2 <= observed[0] <= expected + 0.1
 
 
 @pytest.mark.parametrize("harness", ["codex", "claude"])
