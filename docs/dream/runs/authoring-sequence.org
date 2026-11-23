@@ -139,7 +139,11 @@ The source regression evidence is a 303-case targeted run (300 passing and three
 Org/ASCII/Python 3.9 grammar checks and historical E5/E6 replay also pass.
 No unfiltered current-source full-suite pass is claimed.
 
-The reviewed source change is suitable to integrate as the diagnostics milestone; these trials do not establish that the full authoring-effectiveness plan is complete.
-Local-main integration and its source-only transfer artifact are recorded in the final handoff.
+The reviewed source change is integrated on local main as the diagnostics milestone; these trials do not establish that the full authoring-effectiveness plan is complete.
+The fast-forward through =0e859fd= preserves the original source histories and includes the =b78052c= GitHub main ancestry.
+The runtime, tests and configuration match tested commit =0ff65ab=; later changes are documentation only.
+Private memory remains on its separate branch and is excluded from the main transfer artifact.
+GitHub publication and installed CLI deployment remain pending; the repository's push transport is still =no_push=.
+The final handoff records the source-only bundle location and follow-up boundaries.
 
 Recorded by Sue.

@@ -1,6 +1,6 @@
 #+TITLE: Active authoring implementation and Claude evaluation goal
 #+DATE: 2026-11-23
-#+STATUS: READY -- TRIALS EVALUATED; COMMIT REPORT AND FAST-FORWARD LOCAL MAIN
+#+STATUS: COMPLETE -- DIAGNOSTICS ON LOCAL MAIN; CLAUDE SEQUENCE EVALUATED; FOLLOW-UPS RECORDED
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
@@ -34,14 +34,18 @@ The first certification stopped at 25 captures under the same 120-second ceiling
 E5/E6 historical audits also passed before the new publications.
 No unfiltered current-source full-suite pass is claimed.
 
-Current integration task: finalize/export the report, check staged scope, commit the documentation and fast-forward local main while preserving both source histories.
-Main is still =cde76f8= at this note; GitHub main was rechecked at =b78052c= and is already an ancestor of the source candidate.
-Keep private memory out of every push and source transfer bundle.
-Prepare a source-only main bundle for the established maintainer-side transport; =ligon.pushurl=no_push= and the connected commit API cannot preserve the exact local authors/history.
+Local main was fast-forwarded from =cde76f8= through report commit =0e859fd=, preserving both source histories and the diagnostics implementation =0ff65ab=.
+The checked runtime/tests/configuration trees remain byte-identical to =0ff65ab=; only closeout documentation follows it.
+GitHub main was rechecked at =b78052c= and is an ancestor of local main.
+Private memory remains =4b529b1= and was not merged into main; the private E7 topic/receipt blobs are absent from main's object closure.
+A source-only bundle of final main is the last transfer artifact under =/home/coder/.sucoder/logs/dream-authoring-live/2026-11-23/=.
+It contains only the main ref; private memory must never be pushed.
+GitHub publication remains pending on the established maintainer-side transport: =ligon.pushurl=no_push=, and the connected commit API cannot preserve the exact local authors/history.
 The installed CLI has not been deployed; these checks and runs explicitly used the source checkout through PYTHONSAFEPATH/PYTHONPATH.
 
 Observed next priorities are evidence handles and byte-preserving edits, smaller relevant prior/support context, verified role cost controls with reviewer capacity, and explicit source/date/outcome checks for claims and question premises.
 Those follow-ups are not implemented by the diagnostics slice.
+The current diagnostics/evaluation goal is complete; no further inference is running or queued by this handoff.
 
 Sue.
 
