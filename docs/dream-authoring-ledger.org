@@ -1,0 +1,78 @@
+#+TITLE: Dream authoring effectiveness prior-art ledger
+#+AUTHOR: Sue
+#+DATE: 2026-11-23
+
+* 1. Task and baseline
+
+Plan improvements that help an unattended dream reach useful independent review without repeated mechanical repair or expensive regeneration.
+The baseline is =17ec661= on =coder/dream-main-integration=; main is =cde76f8= and private memory is =30e98aa=.
+This ledger and the implementation plan authorize no runtime change, native call, memory publication or main merge.
+The [[file:dream/runs/sucoder-e6.org][E6 report]] is the measured failure case; the [[file:dream/workplan.org][accepted workplan]] preserves explanatory synthesis, open topic choice and justified no-change outcomes.
+
+* 2. Existing machinery and tests
+
+Grounding uses git history, GitNexus CLI query, direct source and named tests.
+The concept query returned relevant test definitions but poorly ranked execution flows; no completeness or caller claim rests on those rankings.
+Implementation must run file-qualified upstream impact before editing existing symbols and detect_changes before commits.
+
+- =sucoder/dream_author.py:97=, =Author.proposal= :: Resolves a literal quote to one absolute UTF-8 position inside delivered windows; fails at the first ambiguous quote.
+  =tests/test_dream_wiki.py::test_quote_resolution_is_unique_exact_utf8_and_absolute= covers exact quotation semantics; =tests/test_dream_context.py::test_source_lookup_uses_exact_frozen_bytes_and_replays_unavailable_utf8_range= covers window delivery/replay.
+- =sucoder/dream_wiki.py:116=, =validate_proposal=; =:308=, =WikiCoordinator.prepare= :: Native Org inventory, paths/links, source references, changed-anchor coverage, bounded repair and independent review.
+  =tests/test_dream_wiki.py::test_independent_review_catches_omission_and_repairs_once= and =test_unresolved_semantic_findings_stop_after_single_repair= cover the loop.
+  Mechanical exceptions currently become a single finding with empty path.
+- =sucoder/dream_editor.py:228=, =Editor.proposal=; =sucoder/dream_editorial.py= :: Typed task actions, coordinator-written editorial history, authority checks and materialized review.
+  =tests/test_dream_editor.py::test_invalid_editorial_changes_never_publish= and =test_public_lifecycle_returned_review_supersession_archive_and_fresh_reader= cover this authority boundary.
+- =sucoder/dream_context.py:32=, =Session= :: Frozen Git blobs, bounded lookups and per-unit delivered windows.
+  =tests/test_dream_context.py::test_search_snippet_does_not_authorize_editing_unseen_full_page= and =test_context_cache_corruption_fails_status_without_fetch_or_inference= prevent authority expansion and mutable context substitution.
+- =sucoder/dream_progress.py:134=, =try_reuse= :: Reuses accepted work only after complete receipt/output/dependency checks.
+  =tests/test_dream_progress.py::test_accepted_work_is_reused_without_model_calls_or_duplicate_topic= and =test_receipt_presence_without_complete_valid_proof_is_not_coverage= cover it.
+  This is not an existing unreviewed-draft checkpoint protocol.
+- =sucoder/dream_explore.py:449=, =run= :: Replays the saved discovery choice read-only during explicit retry.
+  E6 attempt 5 reused fourteen discovery calls; it still regenerated authorship after the earlier timeout.
+- =sucoder/dream_roles.py:124=, =Coordinator.call=; =sucoder/dream_submission.py= :: Frozen assignments, body-only replies, immutable submission manifests, raw-trace replay and no automatic repetition of started work.
+  =tests/test_dream_submission.py= and the deadline cases in =tests/test_dream_roles.py= cover these bindings and bounds.
+- =sucoder/dream_budget.py=, =Job=; =sucoder/dream_retry.py= :: Durable reservations, shared deadlines/reserves and explicit retry windows.
+  =tests/test_dream_recovery.py::test_retry_window_never_replenishes_call_cap_or_its_own_deadline= and =tests/test_dream_budget.py::test_work_deadline_timeout_is_budget_exhausted_with_closeout_time_left= cover preservation of limits.
+- =sucoder/dream_prompt.py=; =sucoder/dream_prompt_native.py:186=, =variants= :: Lossless policy/data projection and complete native policy/schema certification.
+  =tests/test_dream_prompt.py::test_lossless_delivery_preserves_data_authority_and_native_schema= and =tests/test_dream_cache_certify.py::test_uncertified_policy_or_schema_is_rejected_before_reservation= cover the delivery boundary.
+
+* 3. Definitions and conventions
+
+An exact citation currently names an admitted unit and a quote occurring at exactly one absolute position in its delivered windows; the coordinator computes offsets.
+Every changed non-index anchor currently needs a reference unless covered by a verified derived editorial action.
+The author brief says explanatory sections; that wording does not fully describe the changed-anchor check applied to Talk in E6.
+The current production editor contract is =source-grounded-wiki-v5=, layered over the earlier v1-v4 contracts; do not allocate an already-used version.
+Raw completion, mechanical acceptance, independent acceptance and memory publication are distinct states.
+An unreviewed draft checkpoint may save work but cannot establish accepted progress or source coverage for a future job.
+Cache reads are observations, not evidence of comparative savings; missing native usage remains unknown.
+
+* 4. Invariants
+
+Keep explanatory prose and synthesis, uncertainty, attribution, human decisions and bounded open-ended discovery.
+Keep source admission, private evidence, tool prohibition, immutable request/trace bindings, independent semantic review and compare-and-swap publication.
+Do not turn Talk, unanchored prose or a model-supplied section type into a route for unsupported factual claims.
+Do not guess among ambiguous source positions, edit unseen pages from search snippets or promote model summaries to evidence.
+Keep old contract/policy/schema dispatch and original replay semantics; E6 must remain incomplete under its frozen contract.
+Never rewrite an old raw reply, failed reservation, manifest or result to make it acceptable under a new contract.
+Keep global call/time charges across explicit phase retries; started unknown work is never silently reissued.
+Keep dynamic evidence handles in bound request data, not volatile tool/schema enums in the cache prefix.
+Certify new policy/schema/control combinations before stable production use; keep unsupported hard token/currency requests rejected before provider work.
+
+* 5. Reuse decisions
+
+- Reuse :: Native Org inventory, existing citation checks, bounded context, submission wrappers, wallet, accepted-progress proofs and sole publisher.
+- Extend :: Mechanical validation into dependent read-only passes with bounded, located diagnostics; the present first-error exception hides independent defects.
+- Extend :: Existing typed editorial materialization and reference resolution for coordinator-owned structure and evidence handles.
+- New :: A versioned unreviewed-draft/phase checkpoint protocol; accepted receipt reuse cannot represent an unaccepted proposal safely.
+- Extend :: Repair into hash-bound typed patches, using the fully delivered draft and existing private materialization boundary.
+- Extend :: Frozen role policies/profile identities for supported effort/output controls and explicit review reserves.
+- Defer :: Direct APIs, unrestricted tools, automatic paid retries, wholesale rendering rewrites and new discovery infrastructure until controlled measurements justify them.
+
+* 6. Decisions for plan review
+
+The first slice retains strict changed-anchor coverage and makes the model policy explicit, including Talk; typed citation-free containers are a later semantic design decision.
+A proposed 180-second review reserve is a pilot starting point, not a measured reviewer requirement or completion guarantee.
+Native effort/output mappings must be verified for the selected installed builds before selecting defaults; no vendor capability is assumed here.
+Controlled live allowances and private evidence selection require explicit authorization after offline preparation; this plan grants neither.
+
+Prepared by Sue (GPT-6 Codex).
