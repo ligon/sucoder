@@ -36,6 +36,7 @@ A body-only reply contains substantive fields, including failures; it contains n
 The coordinator's transport supplies those three fields from its frozen task, never from model text.
 Raw native stdout remains unchanged and is re-parsed during replay.
 Native usage and native completion remain distinct from an accepted semantic result.
+Claude's observed =system/thinking_tokens= records carry nonnegative integer progress counters only; they supply no result, tool authority, usage aggregate or evidence.
 
 * 4. Invariants
 
@@ -46,10 +47,14 @@ Old traces without that contract still require the model's exact echoed identifi
 No failure authorizes an automatic paid retry, manual hash correction or memory publication.
 Per-assignment enum values would make schemas volatile, so use a stable body schema and retain exact certificate coverage.
 Earlier cached profiles remain replayable; new profiles must certify the new body policy/schema pairs.
+Live compatibility correction: accept only the observed thinking-progress event shape, retaining rejection of unknown system events, hooks, compaction and external tools.
+The first rejected November 23 call remains charged and preserved; any explicitly selected second attempt must share its original 32-call allowance and absolute deadline.
 
 * 5. Reuse decisions
 
 - Reuse :: Coordinator invocation, persistent wallet, artifact store, native trace parser, full semantic result validation and publication.
+- Extend :: The existing strict Claude parser needs one validated thinking-progress metadata case, found by live job =dd873557ff244bcda713a7905a4c77de= before its first result was admitted.
+  Offline synthetic replies did not emit this event; no second transport or blanket system-event allowance is needed.
 - Extend :: A shared submission projection/manifest/parser wraps body-only native output with coordinator-owned metadata.
   No such wrapper exists; current schemas require model-generated identifiers.
 - Extend :: New default project/experience job headers and their editorial specifications freeze the new contract; explicit historical notes/reader contracts remain compatible.
