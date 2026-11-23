@@ -73,7 +73,7 @@ def test_reused_progress_reports_reconciliation_after_required_output_edit(works
         wiki.run(workspace[2], "sample", Path(current["plan_path"]), "codex", "explicit-model", transport=NoCalls())
 
 
-@pytest.mark.parametrize("defect", ["coverage", "bindings", "review"])
+@pytest.mark.parametrize("defect", ["coverage", "bindings", "review", "registry"])
 def test_receipt_presence_without_complete_valid_proof_is_not_coverage(workspace, defect):
     _, run = accepted(workspace)
     repo = workspace[0]
@@ -82,6 +82,7 @@ def test_receipt_presence_without_complete_valid_proof_is_not_coverage(workspace
     if defect == "coverage": receipt["coverage"] = receipt["coverage"][:-1]
     if defect == "bindings": receipt["outputs"] = []
     if defect == "review": receipt["review"] = None
+    if defect == "registry": receipt["evidence_registry"]["sha256"] = "0" * 64
     (repo / path).write_bytes(dream.canonical(receipt) + b"\n")
     git(repo, "add", path)
     git(repo, "commit", "-qm", "Replace shared receipt metadata")

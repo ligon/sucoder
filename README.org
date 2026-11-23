@@ -2868,10 +2868,15 @@ sucoder --config ~/.sucoder/config.yaml dream budget SuCoder \
 #+end_example
 
 Native runs persist a whole-job budget before snapshotting or native startup.
-New plans and exploratory jobs freeze authoring v6, which reports independent quotation, reference and changed-anchor coverage defects together with page/target locations.
+New plans and exploratory jobs freeze authoring v7, using coordinator-managed handles for exact delivered evidence.
+Authors select a supplied handle for each citation and task-action evidence item; Python supplies literal quotes and absolute UTF-8 ranges, including when identical text occurs twice.
+Source text appears once in labeled passages, with a bounded provenance registry in context; handles grant neither additional reads nor human authority.
+Located diagnostics still report independent reference and changed-anchor coverage defects together.
 Every new or revised non-index anchor needs source references, including Talk, except unchanged sections and coordinator-verified derived editorial changes.
 Repairs still return a complete proposal and require independent review; the repair allowance is unchanged.
 Earlier jobs retain their frozen authoring contract and prompt profile on replay and explicit retries.
+Fresh stable delivery requires recertifying the current native policy/schema catalog; historical certificates remain usable for their frozen jobs.
+See [[file:docs/dream/evidence-handles.org][the evidence-handle contract]] for bounds, replay and authority checks.
 See [[file:docs/dream/authoring-plan.org::#implemented-diagnostics][the diagnostics contract and staged authoring plan]] for details and the later patch, checkpoint and resource-control work.
 The [[file:docs/dream/runs/authoring-sequence.org][Claude evaluation]] records one controlled repair, one real publication with grounding qualifications and one real job stopped by its elapsed ceiling.
 By default the plan's elapsed and role ceilings become a shared deadline and native invocation cap (normally 900 seconds and 40 invocations), including review, repairs, context-request turns, failed calls and explicit attempts.

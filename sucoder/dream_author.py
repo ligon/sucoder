@@ -38,6 +38,8 @@ def schema(role):
 
 
 class Author(dream_curate.Curator):
+    context_type = dream_context.Session
+
     def __init__(self, *args, source=None, prefixes=None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.contract, self.editing, self.source = CONTRACT, EDITING, source
@@ -60,7 +62,7 @@ class Author(dream_curate.Curator):
         if self.prefixes:
             dream_prefix.validate(self.plan, self.fd, self.prefixes, self.harness, self.model,
                 self.expected_version, self.purpose, self.deadline)
-        self.context = dream_context.Session(self.plan, self.fd, self.run_id, sources, prior, self.deadline, self.source)
+        self.context = self.context_type(self.plan, self.fd, self.run_id, sources, prior, self.deadline, self.source)
         return sources, prior
 
     def input_sources(self, sources):

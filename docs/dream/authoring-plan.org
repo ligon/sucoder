@@ -50,7 +50,8 @@ Do not introduce direct provider APIs, unrestricted tools or automatic paid retr
 :END:
 
 The [[file:../../sucoder/dream_diagnostics.py][v6 editor]] implements milestone 1 using the existing full-proposal repair and independent review.
-Fresh plans and exploratory job headers freeze an internal =authoring_version: 6=; historical absent fields select v5 without changing their original identities.
+The diagnostics slice froze =authoring_version: 6=; fresh plans now freeze v7 evidence handles as described below.
+Historical absent fields still select v5, and explicit v6 retains its original quote-based contract.
 V1-v5 policies, schemas and status replay retain their original dispatch.
 Every changed non-index anchor, including Talk, needs source references unless unchanged or covered by verified coordinator-derived editorial materialization.
 
@@ -200,6 +201,9 @@ Once started, code repair, provider work and cleanup all consume the same elapse
 Prepare authorized stage work before launch; an unattended failure records a resumable diagnostic instead of asking the human an interactive question.
 
 ** 4. Coordinator-owned evidence handles and structure
+
+The [[file:evidence-handles.org][v7 evidence-handle contract]] implements the registry and citation portion of this milestone.
+Coordinator-generated scaffolding and byte-preserving page edits remain separate work.
 
 Extend =Session= and existing reference resolution with a bounded registry of handles for exact, admitted source spans.
 Bind each handle to the source identity/hash, rendered-byte span and raw/render provenance, scoped to its frozen registry.

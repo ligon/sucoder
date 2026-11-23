@@ -59,7 +59,7 @@ class Report:
             raise InvalidProposal(self.findings)
 
 
-def references(proposal, pages, parsed, old, sources, derived_targets, windows, deadline, duplicates=(), report=None):
+def references(proposal, pages, parsed, old, sources, derived_targets, windows, deadline, duplicates=(), report=None, *, citation_resolver=None):
     """Collect only checks whose structural prerequisites have succeeded."""
     report = report if report is not None else Report()
     for path, target in duplicates:
@@ -80,6 +80,14 @@ def references(proposal, pages, parsed, old, sources, derived_targets, windows, 
             report.add("reference_empty", "Supply at least one exact source citation.", path=path, target=target)
         citations = []
         for citation in reference["citations"]:
+            if citation_resolver is not None:
+                try:
+                    citations.append(citation_resolver(citation))
+                except DreamError as exc:
+                    if exc.exit_code != 2:
+                        raise
+                    report.add("citation_handle", str(exc), path=path, target=target)
+                continue
             unit_id = citation["unit_id"]
             unit = units.get(unit_id)
             if unit is None:

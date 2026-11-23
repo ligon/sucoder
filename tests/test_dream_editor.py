@@ -1,11 +1,12 @@
 """Public editorial lifecycle, materialized review and archive retrieval."""
+from tests.dream_submission_fixture import source_text
 import copy
 import json
 from pathlib import Path
 
 import pytest
 
-from sucoder import dream, dream_diagnostics, dream_editor, dream_editorial as org, dream_reader, dream_reader_agent, dream_run, dream_wiki
+from sucoder import dream, dream_handles, dream_editor, dream_editorial as org, dream_reader, dream_reader_agent, dream_run, dream_wiki
 from tests.test_dream import git, invoke, workspace  # noqa: F401
 from tests.test_dream_context import native_result
 
@@ -57,7 +58,7 @@ def action(inputs, state="NEXT", target=TASK, *, kind="transition", authority="a
         blocker="Need the queued-input context" if state == "WAITING" else "",
         resume_when="Inspect the admitted queued-input evidence" if state == "WAITING" else "",
         destination=ARCHIVE if kind == "archive" else "", authority=authority,
-        evidence=[] if kind == "archive" else [dict(unit_id=source["unit_id"], quote=quote or source["text"])])
+        evidence=[] if kind == "archive" else [dict(unit_id=source["unit_id"], quote=quote or source_text(source))])
 
 
 class Lifecycle:
@@ -107,7 +108,7 @@ class Lifecycle:
                 pages = [dict(path=TOPIC, content=text)]
                 changes = [dict(path=TOPIC, before_sha256=old["sha256"], reason="Retain the missing queued-input qualification.")]
                 references = [dict(path=TOPIC, target="reply-proof", evidence_status="inference", citations=[
-                    dict(unit_id=inputs["sources"][0]["unit_id"], quote=inputs["sources"][0]["text"])])]
+                    dict(unit_id=inputs["sources"][0]["unit_id"], quote=source_text(inputs["sources"][0]))])]
             unchanged = task["role"] == "repair" and self.drop_after_reject
             result.update(decision="unchanged" if unchanged else "change", rationale="Record supported editorial work and preserve source scope.",
                 pages=pages, changes=changes, references=references, omissions=[], task_actions=[] if unchanged else actions)
@@ -135,7 +136,7 @@ def test_public_transition_is_materialized_independently_reviewed_and_replayed(w
     prepare(workspace)
     transport = Lifecycle("NEXT")
     plan, result = execute(workspace, "Select the correction for work", transport, harness)
-    assert result["fidelity"] == dream_diagnostics.CONTRACT
+    assert result["fidelity"] == dream_handles.CONTRACT
     assert [call["role"] for call in transport.calls] == ["author", "reviewer"]
     assert 'State "NEXT" from "TODO"' in (workspace[0] / TOPIC).read_text()
     receipt = json.loads(git(workspace[0], "show", result["candidate_commit"] + ":.sucoder/wiki/receipts/" + result["run_id"] + ".json"))
@@ -249,7 +250,7 @@ def test_assistant_or_summary_claims_do_not_become_human_authority(workspace, ac
     prepare(workspace)
     request, quote = human_request(workspace, "claude-jsonl", actor, summary=summary)
     plan = planning(workspace, "Check claimed human authority", request)
-    with pytest.raises(dream.DreamError, match="native non-summary user evidence"):
+    with pytest.raises(dream.DreamError, match="native user evidence|native non-summary user evidence"):
         dream_wiki.run(workspace[2], "sample", Path(plan["plan_path"]), "codex", "model",
             transport=Lifecycle("DONE", target=HUMAN, authority="recorded_human", quote=quote, reviewer_human=True))
     assert not git(workspace[0], "for-each-ref", "refs/heads/dream/")
@@ -280,7 +281,7 @@ def test_invalid_editorial_changes_never_publish(workspace, defect, expected):
                 result["task_actions"][0]["before_sha256"] = "0" * 64
             elif defect == "references":
                 reference = dict(path=TOPIC, target=TASK, evidence_status="inference", citations=[dict(
-                    unit_id=task["input"]["sources"][0]["unit_id"], quote=task["input"]["sources"][0]["text"])])
+                    unit_id=task["input"]["sources"][0]["unit_id"], quote=source_text(task["input"]["sources"][0]))])
                 result["references"] = [reference, copy.deepcopy(reference)]
             elif defect != "checks":
                 old = next(page for page in task["input"]["prior"] if page["path"] == TOPIC)

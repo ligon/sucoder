@@ -170,6 +170,18 @@ These are design dispositions, not proof that the proposed code exists or that a
 
 Recorded by Sue.
 
+* Evidence handles and R2 follow-up
+:PROPERTIES:
+:CUSTOM_ID: handles-review
+:END:
+
+The R2 reviewer confirmed that evidence handles can proceed independently of phase checkpoints while preserving authenticated delivery, replay and authority.
+Initial registration must follow accepted-prefix narrowing; explicit bounded lookback remains supported.
+The review requires ordered append-only reconstruction, visibility at each frozen assignment, both citation channels, bounded total expansion and frozen historical dispatch.
+The implementation pass found and corrected three defects: unavailable responses minting handles, native records joined across authority boundaries, and early unknown-handle errors hiding independent coverage findings.
+Canonical task-action receipts also need a distinct schema from both handle-only wire replies and historical quote-only actions.
+These checks belong to the [[file:evidence-handles.org][v7 contract]]; they do not complete the later R2 phase-checkpoint protocol.
+
 * Diagnostics implementation review
 :PROPERTIES:
 :CUSTOM_ID: implementation-review

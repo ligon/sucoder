@@ -154,6 +154,9 @@ class Session:
         return dict(state="incomplete" if omitted else "complete", excerpts=excerpts, omitted=omitted,
             delivered_bytes=used, searched_bytes=scanned)
 
+    def check_cached(self, response):
+        """Version-specific checks before cached responses affect accounting."""
+
     def lookup(self, request):
         if len(self.trace) >= MAX_REQUESTS:
             raise DreamError("Author context request-count allowance exhausted", 3)
@@ -167,6 +170,8 @@ class Session:
                 raise DreamError("Status cannot serve an unrecorded context request", 3) from None
         if cached is not None and not isinstance(cached, dict):
             raise DreamError("Invalid cached context response")
+        if cached is not None:
+            self.check_cached(cached)
         if cached is not None and cached.get("state") == "unavailable":
             response = cached
         else:

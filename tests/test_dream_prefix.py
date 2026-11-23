@@ -1,4 +1,5 @@
 """Accepted appends revise established topics with exact bounded delivery."""
+from tests.dream_submission_fixture import source_text
 import copy
 import json
 from pathlib import Path
@@ -72,7 +73,7 @@ class AppendEditor:
                     pages=[], changes=[], references=[], omissions=[], requests=[request("source", source["unit_id"],
                         start=boundary["byte_start"], end=boundary["byte_end"])])
             else:
-                scope = " --scope repo" if "--scope repo" in source["text"] else ""
+                scope = " --scope repo" if "--scope repo" in source_text(source) else ""
                 content = ("#+title: Deployment\n* Required command\n:PROPERTIES:\n:CUSTOM_ID: required-command\n:END:\n"
                     "The documented command requires =--dry-run" + scope + "=.\n"
                     "These are documented requirements; a successful deployment has not been observed.\n")
@@ -84,7 +85,7 @@ class AppendEditor:
                     changes.append(dict(path=dream_wiki.INDEX, before_sha256="", reason="Orient readers to the maintained topic."))
                 result.update(decision="change", rationale="Update the same semantic topic without upgrading tool reports to successful execution.",
                     pages=pages, changes=changes, omissions=[], references=[dict(path=TOPIC, target="required-command", evidence_status="inference",
-                        citations=[dict(unit_id=source["unit_id"], quote=source["text"])])])
+                        citations=[dict(unit_id=source["unit_id"], quote=source_text(source))])])
         return native_result(harness, model, task, result, self.version)
 
 
@@ -113,7 +114,7 @@ def test_appended_evidence_updates_established_topic_and_accepted_rerun_needs_no
     assert len(transport.calls) == 2
     for task in transport.calls:
         source = task["input"]["sources"][0]
-        assert source["text"].encode() == tail
+        assert source_text(source).encode() == tail
         assert source["byte_start"] == len(prefix) and source["byte_end"] == len(prefix + tail)
         assert source["boundary_pending_calls"][0]["call_id"] == "boundary"
         assert source["current_pending_calls"] == [] and source["current_orphan_results"] == []
@@ -243,7 +244,7 @@ def test_targeted_repair_uses_existing_transcript_without_any_new_session(worksp
     transport = AppendEditor()
     result = dream_wiki.run(workspace[2], "sample", Path(current["plan_path"]), "codex", "model", transport=transport)
     source = transport.calls[0]["input"]["sources"][0]
-    assert source["text"].encode() == prefix and source["byte_start"] == 0
+    assert source_text(source).encode() == prefix and source["byte_start"] == 0
     assert "accepted_prefix" not in source
     assert "requires =--dry-run=" in git(workspace[0], "show", result["candidate_commit"] + ":" + TOPIC)
 
@@ -264,7 +265,7 @@ def test_private_append_noop_never_establishes_shared_prefix_coverage(workspace)
     transport = NoopAppend()
     repeated = dream_wiki.run(workspace[2], "sample", Path(fresh["plan_path"]), "codex", "model", transport=transport)
     assert repeated["state"] == "unchanged" and len(transport.calls) == 2
-    assert transport.calls[0]["input"]["sources"][0]["text"].encode() == tail
+    assert source_text(transport.calls[0]["input"]["sources"][0]).encode() == tail
     proof = transport.calls[0]["input"]["sources"][0]["accepted_prefix"]
     assert proof["receipt"]["run_id"] == initial["run_id"] and proof["byte_end"] == len(prefix)
 

@@ -8,7 +8,7 @@ import pytest
 from sucoder import dream, dream_curate, dream_run, dream_wiki
 from tests.test_dream import git, invoke, workspace  # noqa: F401
 from tests.test_dream_wiki import EditorTransport, TOPIC, planned
-from tests.dream_submission_fixture import native_reply
+from tests.dream_submission_fixture import native_reply, source_text
 
 
 def noop_plan(workspace, *, empty=False):
@@ -46,9 +46,9 @@ class NoopTransport(EditorTransport):
                 pages=[], changes=[], references=[], omissions=[])
             if self.defect == "reason": result["rationale"] = ""
             if self.defect == "edits": result["pages"] = [dict(path=dream_wiki.INDEX, content="A stealth edit")]
-        if task["contract"] in ("source-grounded-wiki-v4", "source-grounded-wiki-v5", "source-grounded-wiki-v6"):
+        if task["contract"] in ("source-grounded-wiki-v4", "source-grounded-wiki-v5", "source-grounded-wiki-v6", "source-grounded-wiki-v7"):
             result["requests"] = []
-        if task["contract"] in ("source-grounded-wiki-v5", "source-grounded-wiki-v6"):
+        if task["contract"] in ("source-grounded-wiki-v5", "source-grounded-wiki-v6", "source-grounded-wiki-v7"):
             result["task_checks" if task["role"] == "reviewer" else "task_actions"] = []
         if harness == "codex":
             events = [dict(type="item.completed", item=dict(type="agent_message", text=json.dumps(result))), dict(type="turn.completed", usage={})]
@@ -72,7 +72,7 @@ def test_reviewed_noop_has_private_coverage_no_candidate_and_cached_replay(works
     assert result["candidate_commit"] is result["candidate_ref"] is None
     assert result["integration"]["state"] == "no_changes_proposed"
     assert [t["role"] for t in transport.calls] == ["author", "reviewer"]
-    assert all(t["input"]["sources"][0]["text"] == "First qualification.\r\nSecond: caf\u00e9.\n" for t in transport.calls)
+    assert all(source_text(t["input"]["sources"][0]) == "First qualification.\r\nSecond: caf\u00e9.\n" for t in transport.calls)
     assert len(result["coverage"]) == 1
     assert before == (git(repo, "show-ref"), git(repo, "status", "--porcelain"), (repo / ".git/index").read_bytes())
     assert dream_run.status(workspace[2], "sample", path)["state"] == "unchanged"
@@ -89,7 +89,7 @@ def test_independent_review_can_reject_noop_and_obtain_correction(workspace):
     assert "assertion is not proof" in git(workspace[0], "show", result["candidate_commit"] + ":" + TOPIC)
     receipt = json.loads(git(workspace[0], "show", result["candidate_commit"] + ":.sucoder/wiki/receipts/" + result["run_id"] + ".json"))
     assert receipt["decision"] == "change"
-    assert receipt["contract"] == "source-grounded-wiki-v6"
+    assert receipt["contract"] == "source-grounded-wiki-v7"
 
 
 @pytest.mark.parametrize("defect", ["reason", "edits"])

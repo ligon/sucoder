@@ -8,8 +8,12 @@ import pytest
 
 from sucoder import dream, dream_diagnostics as diag, dream_editor, dream_run, dream_wiki as wiki
 from tests.test_dream import workspace  # noqa: F401
-from tests.test_dream_wiki import EditorTransport, POLICY, TOPIC, planned
+from tests.test_dream_wiki import EditorTransport, POLICY, TOPIC, planned as current_plan
 from tests.test_dream_prompt import profile
+
+
+def planned(workspace):
+    return current_plan(workspace, authoring_version=6)
 
 
 def case():
@@ -181,7 +185,7 @@ def test_historical_job_without_editorial_plan_keeps_v5(workspace):
     prepared = dream_explore.prepare(workspace[2], cwd=workspace[0], overrides=options())
     directory = Path(prepared["job_path"])
     header = json.loads((directory / "job.json").read_bytes())
-    assert header.pop("authoring_version") == 6
+    assert header.pop("authoring_version") == 7
     # Construct the pre-v6 frozen header fixture before any provider work.
     (directory / "job.json").write_bytes(dream.canonical(header) + b"\n")
     (directory / "identity.json").write_bytes(dream.canonical(dict(sha256=dream.digest(dream.canonical(header)))) + b"\n")
