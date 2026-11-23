@@ -1,8 +1,58 @@
-#+TITLE: SuCoder consolidated on main in the canonical mirror; publication pending
-#+DATE: 2026-11-17
-#+STATUS: LIVE SCRIPTED DREAM E5 PUBLISHED; E4 UNCHANGED; GITHUB PUBLICATION PENDING
+#+TITLE: Claude trial blocked on login; main integration awaits live acceptance
+#+DATE: 2026-11-23
+#+STATUS: CLAUDE E6 INCOMPLETE; COMPATIBILITY FIX PREPARED; MAIN UNCHANGED
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Claude live trial and integration candidate, 2026-11-23
+
+The human requested another Claude dreaming session and conditioned merging on its success.
+Job =dd873557ff244bcda713a7905a4c77de= uses the existing Claude subscription, =claude-sonnet-4-6=, certified =stable= layout and the earlier 32-call/1,800-second bounds at source/evidence pin =cde76f8=.
+It remains =incomplete= after three failed reservations, with no admitted discovery result, selected evidence, editorial review or memory publication.
+Private memory remains =30e98aa7dfd5182ed73a820d94ffb053cfa11449=.
+
+The first call returned a valid body-only discovery reply but exposed previously unhandled =system/thinking_tokens= metadata in native Claude =2.1.323=.
+The prepared correction validates only that inert progress shape, preserving unknown-system, compaction, hook, external-tool and incomplete-result rejection.
+It passes all 55 focused parser/usage/certificate tests and the changed runtime module passes mypy, ASCII and Python 3.9 grammar checks.
+An explicit second attempt imported the original checkout ahead of =PYTHONPATH= and repeated the parser failure; that was Sue's launch error.
+The third attempt verified the corrected runtime import, then failed authentication before reporting token usage.
+The coder account reports =loggedIn: false=; the human has been asked to refresh it using =claude auth login=.
+No further inference runs while that request is pending.
+The original absolute deadline elapsed at 2026-11-23 15:18:04 UTC; login refresh alone does not extend that time allowance.
+
+The [[file:../docs/dream/runs/sucoder-e6.org][E6 report]] records all three attempts and the read-only audit.
+The audit verifies both earlier replies with the corrected parser, but preserves all failed journal entries and checks that every job file is unchanged with native entrypoints forbidden.
+The second reply reports 1,523 cache-read tokens through the subscription route; two calls do not establish comparative savings.
+Private audit/import/bounds/test artifacts are under =/home/coder/.sucoder/logs/dream-claude-live/2026-11-23/=.
+
+The original mirror's main remains =cde76f8=.
+The source correction is committed as =253a103= on =coder/claude-dream-validation= in that private directory's =integration= clone, after grounding commit =64e4ffe=.
+GitHub main independently advanced to =b78052c=; read-only fetch updated =ligon/main= and revealed 41 local and 14 upstream commits beyond their common base.
+The =merge-checkout= clone's =coder/dream-main-integration= branch preserves both histories in clean integration commit =56afd5f=; this is a candidate branch, not a main update.
+Its four-worker full suite reports 3,434 passed, 53 failed and one skipped: all 38 prior Codex-state failures, five native Org timeouts under upstream's new 120-second limit, and ten parallel Slurm timer collisions.
+All ten timer cases pass serially on unchanged candidate source; eight reproduce in parallel on unchanged upstream main and the other two vary.
+The shared node/job-42 timer lock explains the fixture collision; timer code and tests are byte-identical to upstream.
+All five native Org cases pass on unchanged source with two workers and a 300-second test ceiling, in 447.03 seconds; individual cases take 121.85 to 172.88 seconds.
+No unfiltered full-suite pass or unrelated test-policy change is claimed.
+GitNexus marks the upstream integration CRITICAL: 116 indexed symbols and 37 execution flows, principally authentication and launch paths.
+The successful-Claude-run merge condition remains unmet; no main update or GitHub write occurred.
+These are disposable clones outside the registered worktree set; the canonical mirror still has one registered worktree.
+The candidate branch is imported and checked out in the canonical mirror so this handoff and the correction are directly available, while its =main= ref remains =cde76f8=.
+
+Next operational step: the human refreshes the coder subscription login and explicitly requests a new bounded time window.
+Then verify =claude auth status --json= without printing credentials, and use explicit attempt 4 of the same job; its cumulative ceiling remains 32, with three reservations already consumed.
+The following is a prepared command for a newly authorized 1,800-second window from the canonical mirror on the fixed candidate branch; it has not been run.
+
+#+begin_src sh :eval never
+PYTHONSAFEPATH=1 PYTHONPATH=$PWD \
+  /home/coder/.cache/pypoetry/virtualenvs/sucoder-_hu1CrVA-py3.12/bin/python \
+  -c 'from sucoder.cli import app; app()' dream \
+  --job dd873557ff244bcda713a7905a4c77de \
+  --attempt 4 --retry-seconds 1800 --detach
+#+end_src
+
+Audit any completed discovery, review and memory publication before advancing main.
+Recheck upstream main before integration; preserve both source histories and keep =sucoder/memory= private.
 
 * Live scripted dream E5, 2026-11-17
 

@@ -1,0 +1,114 @@
+#+TITLE: Claude stable-layout trial stopped before discovery
+#+AUTHOR: Sue
+#+DATE: 2026-11-23
+#+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Outcome
+
+The human requested another Claude dream and made merging the work to main conditional on a successful session.
+Experience job =dd873557ff244bcda713a7905a4c77de= remains =incomplete= after three failed native-call reservations.
+No discovery result was admitted, no source selection or editorial review occurred, and private memory remains =30e98aa7dfd5182ed73a820d94ffb053cfa11449=.
+The failures found a native trace compatibility gap and then an authentication blocker; this is not a successful dreaming acceptance run.
+
+The first Claude process returned a valid body-only discovery action, but the strict parser rejected its =system/thinking_tokens= progress records.
+An explicit retry repeated that failure because the launcher imported the original checkout ahead of the fixed clone on =PYTHONPATH=.
+That was Sue's launch error.
+The third attempt verified the corrected import path, then Claude returned =Failed to authenticate: OAuth session expired and could not be refreshed=.
+The account's subsequent =claude auth status --json= reported =loggedIn: false= and =authMethod: none=.
+Further inference stopped while awaiting the human's subscription login refresh.
+The original deadline elapsed at 15:18:04 UTC without another invocation; login refresh alone does not extend the time allowance.
+
+* Setup and attempts
+
+The job uses the existing Claude subscription route, =claude-sonnet-4-6=, native Claude =2.1.323= and the certified opt-in =stable= prompt layout.
+Committed project evidence and the initial runtime were pinned to local main =cde76f8ed74d1381dbbc9b0aacea4d287d679a80=.
+The header freezes =coordinator-submission-v1= and automatic discovery allocation 16.
+The shared ceiling is 32 native calls and 1,800 seconds, starting at 2026-11-23 14:48:04 UTC with an original absolute deadline of 15:18:04 UTC.
+Explicit attempts retain the same call wallet; their shorter deadlines precede the original deadline.
+No token or currency ceiling is claimed.
+
+#+begin_src sh :eval never
+PYTHONPATH=$PWD \
+  /home/coder/.cache/pypoetry/virtualenvs/sucoder-_hu1CrVA-py3.12/bin/python \
+  -c 'from sucoder.cli import app; app()' dream \
+  --harness claude --model claude-sonnet-4-6 --prompt-layout stable \
+  --max-total-seconds 1800 --max-total-calls 32 --detach
+#+end_src
+
+This records the initial launch, not authorization for another run.
+The two explicit retries used the existing job and an operator-selected shorter time allowance; no started assignment was automatically repeated.
+The third parent and child import probes set =PYTHONSAFEPATH= to =1= and point =PYTHONPATH= to the fixed disposable clone, verifying the exact module path and SHA-256 before native invocation.
+Its runtime is =253a10353a587a3d05c2dec8a961fcb52039261e=; committed project evidence remains pinned to =cde76f8=.
+The runtime module SHA-256 is =79d8d88cb9cacd4d78b619ca85e5b6d114523ae34a7e6ac34819dc65448cfbd8=.
+No account switch, API-key route, certificate relaxation or manual repair of failed results followed.
+
+* Compatibility correction
+
+The live native version emits inert progress metadata that the synthetic certificate captures did not produce.
+The correction accepts only =system/thinking_tokens= records with the observed field names and required nonnegative integer progress counters.
+Booleans, missing counters, negative values and unexpected fields are rejected.
+Progress records cannot supply a result or usage, authorize a tool, replace completed structured output or admit evidence.
+Unknown system events, compaction, hooks and external tools retain their rejection paths.
+The [[file:../../dream-submission-ledger.org][submission ledger]] records the existing machinery and invariants reused by this correction.
+
+All 55 focused native-parser, usage and certificate tests pass, including nine new progress-event cases.
+The changed runtime module passes mypy, ASCII and Python 3.9 grammar checks.
+GitNexus upstream analysis rates =parse_trace= CRITICAL because discovery, editorial, replay and accounting callers share it.
+The final parser/test diff is limited to those two files; precommit detection reported three indexed symbols and no resolved affected processes, which does not negate the broader caller risk.
+
+* Cache and usage observation
+
+Offline parsing of the preserved first two replies reports 12,268 total input tokens: six uncached, 10,739 cache-write and 1,523 cache-read tokens, plus 1,028 output tokens.
+The second reply reports all 1,523 cached-read tokens, establishing observed cache reuse through this Claude subscription route.
+These two uncontrolled calls do not identify the cached segment, establish repeatability or show comparative savings.
+Claude's =total_cost_usd= sums to 0.0803289 dollars at native list estimates; it is not an invoice or a measured subscription charge.
+The authentication failure reports zero input, output and cache tokens and a zero native estimate.
+
+The durable wallet correctly retains three failed calls rather than replacing them with the newly parsed offline results.
+Its failed-call accounting has incomplete usage coverage; the counters above are a separate read-only recovery from final native aggregates, not accepted-result telemetry.
+
+* Read-only audit and merge boundary
+
+Private artifacts are under =/home/coder/.sucoder/logs/dream-jobs/dd873557ff244bcda713a7905a4c77de/= and =/home/coder/.sucoder/logs/dream-claude-live/2026-11-23/=.
+The latter contains =audit.py=, =audit.json=, =status.json=, parser tests, import proofs and retry bounds.
+The audit forbids native provider/build/authentication entrypoints, checks raw trace, wallet, task and submission-manifest bindings, and verifies that every job file remains byte-identical.
+Both earlier replies reconstruct valid body-only =list @sessions= submissions with the fixed parser, while their failed journal entries remain untouched.
+No saved result, selected evidence, reviewed candidate or memory publication is manufactured from that offline check.
+
+#+begin_src sh :eval never
+PYTHONSAFEPATH=1 \
+  PYTHONPATH=/home/coder/.sucoder/logs/dream-claude-live/2026-11-23/integration \
+  /home/coder/.cache/pypoetry/virtualenvs/sucoder-_hu1CrVA-py3.12/bin/python \
+  /home/coder/.sucoder/logs/dream-claude-live/2026-11-23/audit.py
+#+end_src
+
+GitHub main advanced independently to =b78052c2044889b0218ceba9d193e067f98c4669=.
+The existing 41 local commits, the compatibility correction and those 14 upstream commits merge without conflicts in a separate validation clone.
+GitNexus rates the upstream integration CRITICAL: 116 indexed symbols and 37 execution flows, principally authentication and agent launch paths.
+The combined full suite reports 3,434 passed, 53 failed and one skipped in 1,507.66 seconds.
+Every one of the 38 previously verified Codex-state failure IDs reproduces; 28 explicitly report unavailable user namespaces, while the remaining failures retain the recorded Codex-state baseline classification.
+The fifteen additional failures comprise five native Org tests stopped at upstream's new 120-second per-test limit and ten Slurm timer cases run concurrently.
+All ten timer cases pass on the unchanged candidate when run serially.
+Eight also fail in a parallel replay on unchanged upstream =b78052c=; the other two vary between the runs.
+Source inspection identifies their shared =/tmp/sucoder-$UID/timers/<scope>/<node>-42/run.lock=: fixtures vary their temporary homes but retain the same node, job and timer scope.
+The timer runtime and tests are byte-identical to upstream; this trial changes neither their implementation nor their fixture isolation.
+All five timeout cases pass on unchanged candidate source with two workers and a 300-second per-test ceiling; that focused replay takes 447.03 seconds.
+Their individual durations range from 121.85 to 172.88 seconds, each exceeding the full run's 120-second limit.
+This is not an unfiltered full-suite pass, and no unrelated namespace, timer or test-timeout policy change is bundled with the trace correction.
+Main remains =cde76f8= and the human's successful-Claude-run condition for merging has not been met.
+The memory branch remains private.
+The canonical mirror checks out =coder/dream-main-integration= to make this handoff and the prepared correction directly available; its =main= ref remains unchanged.
+
+The integration suite uses upstream's locked pytest-xdist and pytest-timeout versions from an isolated dependency directory, without changing the installed environment.
+The runtime merge was fixed before the suite started; committing that unchanged runtime tree during the run preserves the candidate at =56afd5f=.
+The run report and handoff were written while tests ran; no runtime or test source was edited during the suite.
+The exact failed IDs, prior-baseline comparison and focused followups are saved as =merged-comparison.json=, =upstream-timer.xml=, =serial-timer.xml= and =slow-followup.xml= in the private verification directory.
+
+#+begin_src sh :eval never
+PYTHONPATH=$PWD:/home/coder/.sucoder/logs/dream-claude-live/2026-11-23/test-deps \
+  /home/coder/.cache/pypoetry/virtualenvs/sucoder-_hu1CrVA-py3.12/bin/python \
+  -m pytest -q -n 4 -p no:cacheprovider --tb=short \
+  --junitxml=/home/coder/.sucoder/logs/dream-claude-live/2026-11-23/merged-full-suite.xml
+#+end_src
+
+Recorded by Sue (GPT-6 Codex).
