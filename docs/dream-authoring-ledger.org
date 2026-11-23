@@ -4,9 +4,9 @@
 
 * 1. Task and baseline
 
-Revise the authoring design against the independent review, preserving existing repair capabilities and making phase continuation and resource accounting explicit.
-The review baseline is =ee23f63= on =coder/dream-main-integration=; runtime remains =60bc79c=, main =cde76f8= and private memory =30e98aa=.
-This ledger and the implementation plan authorize no runtime change, native call, memory publication or main merge.
+Implement coordinator-managed evidence handles after reviewing their interaction with R2's context authority and accounting requirements.
+The current source baseline is clean local main =dd15432=, with v6 runtime =0ff65ab= and private memory =4b529b1=.
+The human authorized proceeding with implementation; no new live run or elapsed-window extension is included.
 The human subsequently set an active goal to implement reviewed changes, conduct a Claude dream sequence and evaluate concrete documentation improvements; that user instruction supplies the expanded authorization.
 Work remains staged, and every native run must receive prepared, recorded limits without reopening E6's expired window.
 The [[file:dream/runs/sucoder-e6.org][E6 report]] is the measured failure case; the [[file:dream/workplan.org][accepted workplan]] preserves explanatory synthesis, open topic choice and justified no-change outcomes.
@@ -86,6 +86,26 @@ Native effort/output mappings must be verified for the selected installed builds
 Controlled live allowances and private evidence selection require explicit authorization after offline preparation; this plan grants neither.
 
 Prepared by Sue (GPT-6 Codex).
+
+** Evidence-handle implementation scope
+
+Use a new =source-grounded-wiki-v7= editor and generic handle-string citation schema; keep v1-v6 replay and schemas unchanged.
+Reuse Session's authenticated lookup replay, counters and authority rather than implementing phase checkpoints in this slice.
+Build initial handles only after =dream_prefix.views= has set delivered windows; full internally retained source bytes do not grant handles.
+An authenticated bounded lookback may add handles for the returned prefix bytes, as the existing prefix lookup test permits.
+Use a bounded append-only registry with a run/source/provenance namespace and exact absolute UTF-8 spans; repeated text at different positions remains distinguishable.
+Deliver initial text once in labeled passages and retain readable exact quotes, byte ranges and registry proofs in receipts.
+Lookup text remains in the existing authenticated response, with handle metadata in context; registry metadata carries no extra source text.
+The registry cannot grant full-page edit permission or human authority, and semantic review remains necessary.
+Bound entries, individual spans, serialized registry and expanded citation bytes; fail rather than silently omit handle coverage.
+Preserve general semantic/disposition repair and typed task authority, resolving action evidence through the same registry.
+New jobs freeze version 7; absent historical versions still select v5 and explicit v6 remains v6.
+Fresh stable delivery requires the new policy/schema catalog to be certified; no certificate relaxation or native run is part of implementation.
+
+GitNexus concept query returns the expected Author and input_sources symbols, but file/name and explicit UID impact lookups currently return UNKNOWN for every requested production target.
+Direct source search identifies planner/header reconstruction, wiki run/restore/status, prefix/progress reuse and native profile catalog as the dispatch surface.
+Prior impact identified these entrypoints as HIGH/CRITICAL; retain that conservative risk and historical replay tests rather than interpreting UNKNOWN as zero callers.
+Existing tested exact-byte citation checks, whole-candidate review and sole publisher remain the validation path (sections 2-5).
 
 * 7. Diagnostics implementation slice
 
