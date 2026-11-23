@@ -1,0 +1,145 @@
+#+TITLE: Claude authoring diagnostics sequence: A1, E7 and E8
+#+AUTHOR: Sue
+#+DATE: 2026-11-23
+#+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Scope and runtime
+:PROPERTIES:
+:CUSTOM_ID: scope
+:END:
+
+The human requested implementation after review, a Claude dream sequence and evaluation of concrete documentation improvements.
+The implemented slice is [[file:../authoring-plan.org::#implemented-diagnostics][v6 diagnostics]] at =0ff65ab4c4fdad0af2e469c5914a15b399355650=, with the existing full-proposal repair and independent review.
+The [[file:../authoring-review.org::#implementation-review][implementation review]] and [[file:../../dream-authoring-ledger.org][ledger]] record the source checks and compatibility corrections.
+Patch/checkpoint protocols, logical repair rounds, role cost controls and protected reviewer capacity remain separate milestones.
+
+All three runs use =claude-sonnet-4-6= through the coder account's existing Max login, Claude Code =2.1.330= and the certified stable layout.
+This differs from E6's =2.1.323= native build; the selected evidence and purposes also differ.
+The sequence establishes examples and operational observations, not causal token savings or a controlled provider comparison.
+It uses the source checkout with =PYTHONSAFEPATH=1= and =PYTHONPATH= pointing at the mirror; it does not establish an updated installed CLI.
+Bounds count native invocations and wall time; no hard token or currency cap is available.
+E6's expired window and saved results remain unchanged.
+
+* A1: controlled full-proposal repair
+:PROPERTIES:
+:CUSTOM_ID: controlled-repair
+:END:
+
+A disposable repository contains explicitly synthetic startup/publication observations.
+The initial invalid draft is a test fixture, not a claimed native author's output.
+Its report identifies an ambiguous quotation and an uncited Talk anchor together.
+One genuine native general repair replaces the ambiguous quote and adds the Talk reference; mechanical validation passes and independent review accepts.
+The reviewer adds one advisory about the interpretive word "separately" in publication-not-observed prose.
+Publication is disabled throughout; this validates the repair path and contributes no real documentation improvement.
+
+The frozen ceiling is six native calls and 1,200 seconds.
+Actual use is two completed calls: repair 29.38 seconds and reviewer 38.18 seconds.
+Reported normalized usage is 10,448 input tokens, comprising 10,442 cache writes, six uncached and zero reads, plus 4,631 output tokens.
+The read-only audit verifies both metadata-free replies against frozen assignments, prompt/submission manifests, raw traces, saved results and wallet entries, with provider/build/authentication access forbidden.
+All job files remain unchanged and the synthetic repository retains only its original main ref.
+Preparation errors were corrected before the native budget began and are preserved separately.
+
+* E7: experience dream
+:PROPERTIES:
+:CUSTOM_ID: e7
+:END:
+
+Job =0b8b41194c844a46b2b93953afb724fb= uses the original 32-call/1,800-second window, with no retry or extension.
+Fourteen explorer calls select two rendered windows from an earlier SuCoder session, totaling 3,886 admitted bytes.
+The sources contain the human's choice of node pinning plus removal of a silent flag drop, and one seven-test result followed by a proposed ablation/full-suite command.
+They do not contain that command's result, a complete implementation diff or a merge/operational acceptance record.
+
+The author returns four nonliteral quotations: Markdown backticks or JSON escaping from the source are missing.
+V6 reports all four with their paths, targets and source units in one batch.
+The single full-proposal repair corrects all four; independent review accepts without findings.
+The job publishes private memory =4b529b148462152330eac7f5fc33519cc4520f28= from =30e98aa7dfd5182ed73a820d94ffb053cfa11449=, using seventeen completed calls and about 1,572.7 seconds to the durable result.
+Only the index, new =.sucoder/wiki/topics/confined-node.org= and receipt change; prior topic files remain unchanged.
+
+The new page adds a useful distinction absent from the earlier wiki: a new job pinned to a named node differs from adoption of an existing allocation, and the recorded human request selected the former.
+It also preserves the need for =collaborate= in the command and leaves later outcomes open.
+This is a concrete decision-record improvement, with source-reviewed potential for readers; no downstream reader task was run.
+
+Root's separate check found accuracy limits that the independent reviewer missed.
+The implementation section states implementation and associates the seven-test result with a later proposed filter more firmly than the selected windows establish.
+The branch-specific Talk questions also use a branch name absent from those windows.
+These statements need qualification or additional admitted evidence; publication alone does not establish complete semantic fidelity.
+The private answer key was frozen from the original source windows before root read the author draft.
+
+Role measurements show why completing mechanics is only one part of effectiveness.
+Discovery takes 623.61 seconds, authorship 211.53, repair 651.92 and review 72.93.
+The repair reports 38,941 thinking tokens within 42,410 output tokens while retaining the prose and correcting citations.
+The whole job reports 330,883 normalized input tokens (302,213 writes, 28,616 reads and 54 uncached) and 77,336 output tokens.
+Its author input contains about 36 KB of prior-page data and 17 KB of inherited support metadata, compared with about 6.5 KB of source data including metadata.
+Those components recur in repair and review; the measured counts do not identify comparative savings from a different prompt layout.
+
+The read-only E7 audit replays all seventeen exact bodies, prompt projections, manifests, traces, saved usage and wallet bindings with native entrypoints forbidden.
+It verifies published status, preserves all 250 job files and checks the prior wiki blobs and private-memory ancestry.
+
+* E8: committed-project dream
+:PROPERTIES:
+:CUSTOM_ID: e8
+:END:
+
+Job =948b59a59a90418abfe0d33683ecaaed= uses the same source commit, model, subscription route and stable layout, with =--explore= and its own 32-call/1,800-second ceiling.
+Its broad purpose is source-grounded reader understanding and correction of stale companion-wiki knowledge; topic choice remains open.
+Sixteen discovery calls select five committed ranges about hook acceptance, the later E5 publication and worktree archival.
+The author requests the full existing confined-node page before editing it.
+The private source key distinguishes the original vantage process from E5's later publication, the human-account login qualification, pending live hook checks and what the selected archive excerpt actually establishes.
+
+The final author proposal needs five mechanical corrections: two nonliteral quotations and three missing references on changed Savio-launch anchors.
+Although its rationale says those sections were preserved verbatim, their subtree hashes changed.
+The single repair reaches the elapsed deadline without a validated final result.
+No reviewer runs and no candidate or memory update is published; private memory remains =4b529b1=.
+The worker records =budget_exhausted=, with nineteen reservations: eighteen completed and one failed, no uncertain reservations, and no retry window.
+The failed repair's usage is unknown and remains charged.
+
+Discovery takes 440.14 seconds, the two author calls 1,085.02 seconds and the timed-out repair 264.34 seconds.
+The final author call alone reports 47,671 thinking tokens within 52,928 output tokens and takes 965.34 seconds.
+Known completed-call subtotals are 333,569 input tokens (306,438 writes, 27,074 reads and 57 uncached) and 81,758 output tokens.
+One call is missing from every token subtotal; these are not whole-job totals.
+
+E8 delivers no accepted documentation improvement.
+The private draft tries to resolve historical branch and publication questions, but also exceeds its sources: the selected cleanup excerpt does not name the specific confined-node branch, and the E5 record concerns a later publication rather than proof of the earlier vantage process's outcome.
+Its dated handoff excerpts also do not establish current global deployment/publication state merely because the file was committed later.
+These are evaluation findings, not an independent reviewer verdict; E8 never reached that stage.
+The read-only audit verifies all completed bodies and the failed budget trace, preserves all 275 job files and confirms no memory publication.
+
+* What the sequence establishes
+:PROPERTIES:
+:CUSTOM_ID: takeaway
+:END:
+
+Complete diagnostics work: A1 fixes ambiguity plus missing coverage together, and E7 fixes four quotation-format errors in its one allowed repair.
+One of the two real dreams produces a useful decision-record addition; the other produces no accepted change.
+The result is progress on mechanical reliability, with continuing cost and semantic-fidelity limits.
+Independent acceptance did not catch all of E7's unsupported implications.
+There is no evidence here of downstream reader-task improvement or causal cache/token savings.
+
+The observed next priorities are:
+
+- Coordinator-supplied evidence handles and edits that retain untouched page bytes, reducing literal-copy and full-page regeneration work.
+- Smaller relevant prior context and compact inherited-support delivery, preserving the qualifications needed for the task.
+- Verified role effort/output controls and reviewer-specific time/call protection inside the existing global ceilings.
+- Explicit source checks for implementation/test/publication claims and question premises, including parent headings/dates and the distinction between discovery guidance and admitted evidence.
+
+These priorities refine the next implementation scope; the deferred patch/checkpoint protocols are not claimed as implemented or live-tested.
+All three experiments stay within their recorded limits without another paid retry or a time extension.
+There are 38 live native reservations across the sequence: 37 completed and one failed.
+Known aggregate usage is 674,900 input and 163,725 output tokens, with usage for the failed call missing.
+Both real jobs retain auditable status/proof records under their original contracts; E6 remains incomplete and untouched.
+
+* Artifacts and verification boundary
+:PROPERTIES:
+:CUSTOM_ID: artifacts
+:END:
+
+Private experiment code, raw native artifacts, source keys and read-only audit reports are under =/home/coder/.sucoder/logs/dream-authoring-live/2026-11-23/= and the two named =dream-jobs/= directories.
+The relevant scripts are =pilot.py=, =audit-pilot.py= and =audit-real.py=; no raw session transcript or authentication artifact belongs in the source report or a GitHub push.
+The source regression evidence is a 303-case targeted run (300 passing and three corrected fixture/assertion cases), a passing 26-case follow-up, separate six-case bounds and one-case historical-header checks, normal mypy on eleven modules and stricter checking of the new module.
+Org/ASCII/Python 3.9 grammar checks and historical E5/E6 replay also pass.
+No unfiltered current-source full-suite pass is claimed.
+
+The reviewed source change is suitable to integrate as the diagnostics milestone; these trials do not establish that the full authoring-effectiveness plan is complete.
+Local-main integration and its source-only transfer artifact are recorded in the final handoff.
+
+Recorded by Sue.

@@ -126,4 +126,9 @@ Artifacts are =diagnostics-final.xml=, =diagnostics-followup.xml=, =diagnostics-
 The current source also replays E5 as published and E6 as incomplete with native provider/build/authentication entrypoints forbidden, unchanged job files and memory unchanged.
 Fresh copies of those read-only audits are under =/home/coder/.sucoder/logs/dream-authoring-live/2026-11-23/historical-e5/= and =historical-e6/=.
 The final index refresh uses =--skip-agents-md --index-only=; staged scope must be checked before committing.
-Live pilot/real-dream outcomes remain pending and must be recorded separately from offline acceptance.
+The [[file:dream/runs/authoring-sequence.org][Claude sequence report]] separates live outcomes from offline acceptance.
+A1 passes with two native calls and publication disabled.
+E7 fixes four nonliteral quotes in one repair and publishes private memory =4b529b1= after seventeen completed calls; root's independent source check also records wording/grounding limitations missed by its reviewer.
+E8 uses nineteen reservations, including a timed-out repair with unknown usage, and publishes nothing before its original thirty-minute ceiling expires.
+Both real-job audits forbid provider/build/authentication access, replay exact completed bodies and wallet bindings, preserve all job files and confirm their different publication outcomes.
+No new elapsed window, native retry, token/dollar-cap claim or legacy-artifact rewrite followed.

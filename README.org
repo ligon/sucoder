@@ -2873,6 +2873,7 @@ Every new or revised non-index anchor needs source references, including Talk, e
 Repairs still return a complete proposal and require independent review; the repair allowance is unchanged.
 Earlier jobs retain their frozen authoring contract and prompt profile on replay and explicit retries.
 See [[file:docs/dream/authoring-plan.org::#implemented-diagnostics][the diagnostics contract and staged authoring plan]] for details and the later patch, checkpoint and resource-control work.
+The [[file:docs/dream/runs/authoring-sequence.org][Claude evaluation]] records one controlled repair, one real publication with grounding qualifications and one real job stopped by its elapsed ceiling.
 By default the plan's elapsed and role ceilings become a shared deadline and native invocation cap (normally 900 seconds and 40 invocations), including review, repairs, context-request turns, failed calls and explicit attempts.
 Elapsed time includes idle time between restarts; restarting a process or selecting =--attempt 2= does not replenish the budget.
 An exploratory job can receive an explicit =--retry-seconds= window as described above; this is recorded separately from the original policy and never adds native calls.

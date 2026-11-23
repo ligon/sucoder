@@ -69,6 +69,9 @@ Same-attempt delivery layout/profile changes reject before provider work; explic
 The [[file:authoring-review.org::#implementation-review][implementation review]] records the link-report and historical-dispatch corrections.
 Patch modes, authenticated phase checkpoints, durable logical repair rounds and protected reviewer capacity remain later milestones.
 The Claude validation sequence exercises full-proposal repair and evaluates real wiki outcomes; it must not be presented as verification of those deferred protocols.
+The [[file:runs/authoring-sequence.org::#takeaway][A1/E7/E8 evaluation]] confirms complete mechanical reporting while exposing expensive literal-copy repair, repeated prior context and source-grounding gaps.
+One real dream publishes a useful decision record with accuracy qualifications; the other reaches its elapsed cap without review or publication.
+Use those observations to scope the next milestone; they do not establish completion of the broader first release or causal token savings.
 
 * Dependency-ordered implementation
 :PROPERTIES:

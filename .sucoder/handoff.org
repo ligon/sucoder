@@ -1,35 +1,49 @@
 #+TITLE: Active authoring implementation and Claude evaluation goal
 #+DATE: 2026-11-23
-#+STATUS: READY -- DIAGNOSTICS IMPLEMENTED; FINISH CHECKS THEN EVALUATE CLAUDE DREAMS
+#+STATUS: READY -- TRIALS EVALUATED; COMMIT REPORT AND FAST-FORWARD LOCAL MAIN
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
 * Active implementation/evaluation goal, 2026-11-23
 
-The human set the active goal: "After review, implement changes and conduct a sequence of dreams using claude. Evaluate these dreams in terms of whether they deliver concrete improvements in documentation, etc."
-The revised [[file:../docs/dream/authoring-plan.org][design]] is committed at =8d255ca=; all three focused reviewers found no remaining blocker in their scopes, recorded in the [[file:../docs/dream/authoring-review.org::#follow-up][follow-up]].
-Proceed with the recommended diagnostics-first implementation using the current full repair path, unless the human answers the pending scope preference differently.
-The larger patch/checkpoint/resource protocols remain separate milestones and must not be claimed as implemented by the diagnostics slice.
+The human requested implementation after review, a Claude dream sequence and evaluation of concrete documentation improvements.
+The diagnostics-first slice is committed at =0ff65ab4c4fdad0af2e469c5914a15b399355650= on =coder/dream-main-integration=.
+It preserves v1-v5 replay, freezes new jobs to v6 and retains full-proposal repair and independent review.
+Patch/checkpoint protocols, logical repair rounds, role cost controls and protected reviewer capacity remain separate milestones.
+The [[file:../docs/dream/runs/authoring-sequence.org][sequence report]] records the evidence and limitations.
 
-The v6 diagnostics implementation preserves v1-v5 policy/schema defaults, collects located post-inventory/reference findings together and retains general repair.
-New plans and job headers freeze their authoring version; older absent fields retain v5, including jobs without an editorial plan yet.
-Frozen delivery checks reject same-attempt layout/profile substitution and allow explicit new attempts to reuse the single historical profile.
-Reviewers found no remaining scoped blocker after those corrections.
-The fifteen-file targeted run passed 300 cases and exposed three fixture/assertion errors; those are corrected and all 26 follow-up cases pass, including the complete diagnostics module and semantic/no-change/authority witnesses.
-The six-case bounds group and separate historical-header handoff case also pass; no unfiltered full-suite pass is claimed.
-The eleven runtime modules pass normal mypy, ASCII and Python 3.9 grammar checks; the new module also passes checking of untyped bodies.
-Org exports pass, and the current Claude 2.1.330 build passed all 28 offline policy/schema captures on the quiet-host certification retry.
-The first certification stopped at 25 captures under its original 120-second ceiling; it remains recorded as unsuccessful.
-E5/E6 historical audits pass with provider/build/authentication access forbidden, unchanged job files and memory still at =30e98aa=.
-The additional historical-header handoff test passes; the preliminary broader run had one corrected test-fixture defect and two short native-Org deadlines.
-Perform the staged GitNexus scope check and commit before live evaluation.
-Then use a recorded fixed-evidence Claude validation case (at most six calls/twenty minutes), followed by two fresh real SuCoder dreams (at most 32 calls/thirty minutes each), evaluating accepted documentation changes and source-grounded usefulness.
-These operational bounds stage the human's newly authorized sequence; prepare source/profile/authentication and freeze each job's limits before starting its clock.
-Keep the existing subscription/model route unless explicitly changed, retain every failed/unknown reservation and do not reopen E6's expired window or rewrite its artifacts.
-No native evaluation job has started under the new goal yet.
-Prepared private validation code and the held-out rubric live under =/home/coder/.sucoder/logs/dream-authoring-live/2026-11-23/=; =pilot.py= has separate prepare/run commands and never calls a publisher.
-Run its prepare step only after the implementation commit so the recorded source runtime is the actual tested commit.
-Main and private memory remain unchanged at this handoff update; retain the conditional successful-real-trial/source-verification gate before merging main.
+All native evaluation is finished; no job is running and no retry or elapsed-window extension was granted.
+All runs used the same source commit, Claude Code 2.1.330, =claude-sonnet-4-6=, the coder Max login and stable delivery.
+The native build differs from E6's 2.1.323, so no controlled cost comparison is claimed.
+
+- A1: a test-origin synthetic draft with ambiguous quotation and missing Talk coverage was repaired together by one genuine Claude full-proposal repair, then independently accepted. Two calls under six calls/twenty minutes; publication disabled.
+- E7: job =0b8b41194c844a46b2b93953afb724fb= published private memory =4b529b148462152330eac7f5fc33519cc4520f28= after seventeen completed calls under its original 32-call/thirty-minute limit. One repair corrected four quotation-format errors. The new confined-node decision record is useful, but root found implementation/test wording and branch premises stronger than its admitted fragments establish; its reviewer accepted without findings.
+- E8: job =948b59a59a90418abfe0d33683ecaaed= used committed-project evidence. Nineteen reservations comprise eighteen completed calls and one timed-out repair. The author required five mechanical corrections; no reviewer ran, no candidate was created and memory remained =4b529b1=. The worker records budget_exhausted; read-only status is incomplete. Failed-call usage is unknown and remains charged.
+
+Private audits under =/home/coder/.sucoder/logs/dream-authoring-live/2026-11-23/= forbid provider/build/authentication access, replay exact completed bodies and prompt/submission/trace/wallet bindings, preserve all job files and verify each publication outcome.
+The failed E8 trace is in =budget/trace-000018.json=; the budget raises before the ordinary role trace/result is written, so their absence is not a lost completed result.
+The source-quality keys were frozen without reading the author outputs, outside native construction inputs.
+The sequence uses 38 live reservations, with 37 completed and one failed.
+Known token subtotals exclude that failed call; no hard token/currency cap or invoice claim is made.
+E6 remains incomplete with its original artifacts and expired window unchanged.
+
+The source checks are complete: the fifteen-file run passed 300 cases with three fixture/assertion errors, all corrected in a passing 26-case follow-up; the bounds group passes six and historical pre-plan handoff one.
+All eleven runtime modules pass normal mypy, ASCII and Python 3.9 grammar checks; the new module also passes checking of untyped bodies.
+Org exports and the complete 28-capture quiet-host Claude certification pass.
+The first certification stopped at 25 captures under the same 120-second ceiling and remains recorded as unsuccessful.
+E5/E6 historical audits also passed before the new publications.
+No unfiltered current-source full-suite pass is claimed.
+
+Current integration task: finalize/export the report, check staged scope, commit the documentation and fast-forward local main while preserving both source histories.
+Main is still =cde76f8= at this note; GitHub main was rechecked at =b78052c= and is already an ancestor of the source candidate.
+Keep private memory out of every push and source transfer bundle.
+Prepare a source-only main bundle for the established maintainer-side transport; =ligon.pushurl=no_push= and the connected commit API cannot preserve the exact local authors/history.
+The installed CLI has not been deployed; these checks and runs explicitly used the source checkout through PYTHONSAFEPATH/PYTHONPATH.
+
+Observed next priorities are evidence handles and byte-preserving edits, smaller relevant prior/support context, verified role cost controls with reviewer capacity, and explicit source/date/outcome checks for claims and question premises.
+Those follow-ups are not implemented by the diagnostics slice.
+
+Sue.
 
 * Authoring design red-team review, 2026-11-23
 
