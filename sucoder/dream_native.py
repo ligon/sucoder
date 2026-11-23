@@ -198,8 +198,15 @@ def parse_trace(raw, harness):
         if harness == "claude":
             if event.get("type") not in ("system", "assistant", "user", "result", "rate_limit_event"):
                 raise DreamError("Unknown Claude native trace event")
-            if event.get("type") == "system" and event.get("subtype") not in ("init", "ui_invalidate"):
-                raise DreamError("Unexpected Claude system event, hook or compaction")
+            if event.get("type") == "system":
+                if event.get("subtype") == "thinking_tokens":
+                    # Submission ledger, sections 3-4: progress is inert metadata.
+                    fields = {"type", "subtype", "estimated_tokens", "estimated_tokens_delta", "session_id", "uuid"}
+                    if (set(event) - fields or any(type(event.get(key)) is not int or event[key] < 0
+                            for key in ("estimated_tokens", "estimated_tokens_delta"))):
+                        raise DreamError("Invalid Claude thinking-progress metadata")
+                elif event.get("subtype") not in ("init", "ui_invalidate"):
+                    raise DreamError("Unexpected Claude system event, hook or compaction")
             if event.get("type") == "assistant":
                 message = event.get("message")
                 if not isinstance(message, dict) or not isinstance(message.get("content"), list):

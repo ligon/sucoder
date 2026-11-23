@@ -128,6 +128,33 @@ def test_claude_structured_output_is_internal_but_external_tools_are_rejected():
         native.parse_trace(jsonl(dict(type="assistant", message=dict(content=[dict(type="tool_use", name="Bash")]))), "claude")
 
 
+def test_claude_thinking_progress_preserves_completed_result_and_usage():
+    final = dict(type="result", subtype="success", is_error=False, structured_output=dict(answer="checked"),
+        usage=dict(input_tokens=3, cache_creation_input_tokens=6130, cache_read_input_tokens=0, output_tokens=516),
+        total_cost_usd=.044529)
+    progress = dict(type="system", subtype="thinking_tokens", estimated_tokens=50, estimated_tokens_delta=50,
+        session_id="fixture-session", uuid="fixture-event")
+    assert native.parse_trace(jsonl(progress, final), "claude") == native.parse_trace(jsonl(final), "claude")
+    with pytest.raises(dream.DreamError, match="no completed"):
+        native.parse_trace(jsonl(progress), "claude")
+    with pytest.raises(dream.DreamError, match="attempted a tool"):
+        native.parse_trace(jsonl(progress, dict(type="assistant", message=dict(content=[dict(type="tool_use", name="Bash")]))), "claude")
+
+
+@pytest.mark.parametrize("mutation", [dict(estimated_tokens=-1), dict(estimated_tokens=True),
+    dict(estimated_tokens_delta=None), dict(tool_name="Bash")])
+def test_claude_thinking_progress_rejects_malformed_or_action_fields(mutation):
+    event = dict(type="system", subtype="thinking_tokens", estimated_tokens=50, estimated_tokens_delta=50)
+    with pytest.raises(dream.DreamError, match="thinking-progress"):
+        native.parse_trace(jsonl(dict(event, **mutation)), "claude")
+
+
+@pytest.mark.parametrize("subtype", ["compact_boundary", "hook_started", "permission_request", "unknown"])
+def test_claude_other_system_events_still_reject(subtype):
+    with pytest.raises(dream.DreamError, match="Unexpected Claude system"):
+        native.parse_trace(jsonl(dict(type="system", subtype=subtype)), "claude")
+
+
 @pytest.mark.parametrize("harness", ["codex", "claude"])
 def test_exit_without_completed_structured_result_is_not_success(harness):
     with pytest.raises(dream.DreamError):
