@@ -69,11 +69,11 @@ class EditorTransport:
                 references=[dict(path=TOPIC, target="reply-proof", evidence_status="inference", citations=[
                     dict(unit_id=s["unit_id"], quote=s["text"]) for s in inputs["sources"]])],
                 omissions=[])
-        if task["contract"] in ("source-grounded-wiki-v3", "source-grounded-wiki-v4", "source-grounded-wiki-v5") and task["role"] != "reviewer":
+        if task["contract"] in ("source-grounded-wiki-v3", "source-grounded-wiki-v4", "source-grounded-wiki-v5", "source-grounded-wiki-v6") and task["role"] != "reviewer":
             result.update(decision="change", rationale="Correct unsupported memory and connect the two necessary sources.")
-        if task["contract"] in ("source-grounded-wiki-v4", "source-grounded-wiki-v5"):
+        if task["contract"] in ("source-grounded-wiki-v4", "source-grounded-wiki-v5", "source-grounded-wiki-v6"):
             result["requests"] = []
-        if task["contract"] == "source-grounded-wiki-v5":
+        if task["contract"] in ("source-grounded-wiki-v5", "source-grounded-wiki-v6"):
             result["task_checks" if task["role"] == "reviewer" else "task_actions"] = []
         if self.mutate:
             self.mutate(task, result)
@@ -112,7 +112,7 @@ def test_corrects_existing_topic_and_combines_sources_preserving_human_task(work
     assert len(transport.calls) == 2
     assert dream_run.status(workspace[2], "sample", Path(plan["plan_path"]))["state"] == "candidate_ready"
     receipt = json.loads(git(repo, "show", result["candidate_commit"] + ":.sucoder/wiki/receipts/" + result["run_id"] + ".json"))
-    assert receipt["contract"] == "source-grounded-wiki-v5"
+    assert receipt["contract"] == "source-grounded-wiki-v6"
     assert len(receipt["references"][0]["citations"]) == 2
     assert all(b["rule"] == "file-utf8-v1" for b in receipt["outputs"])
 
@@ -170,7 +170,7 @@ def test_cli_defaults_to_editor_and_binds_operator_purpose(workspace, monkeypatc
     result = command(workspace, "run", plan, "--harness", "codex", "--model", "explicit-model",
                      "--purpose", "Explain how reply evidence differs from historical summaries.")
     assert result.exit_code == 0, result.output
-    assert json.loads(result.output)["fidelity"] == "source-grounded-wiki-v5"
+    assert json.loads(result.output)["fidelity"] == "source-grounded-wiki-v6"
     assert transport.calls[0]["input"]["purpose"] == "Explain how reply evidence differs from historical summaries."
     status = command(workspace, "status", plan)
     assert status.exit_code == 0, status.output

@@ -1,6 +1,6 @@
 #+TITLE: Active authoring implementation and Claude evaluation goal
 #+DATE: 2026-11-23
-#+STATUS: READY -- REVISED DESIGN CLEARED; IMPLEMENT DIAGNOSTICS THEN EVALUATE CLAUDE DREAMS
+#+STATUS: READY -- DIAGNOSTICS IMPLEMENTED; FINISH CHECKS THEN EVALUATE CLAUDE DREAMS
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
@@ -11,11 +11,24 @@ The revised [[file:../docs/dream/authoring-plan.org][design]] is committed at =8
 Proceed with the recommended diagnostics-first implementation using the current full repair path, unless the human answers the pending scope preference differently.
 The larger patch/checkpoint/resource protocols remain separate milestones and must not be claimed as implemented by the diagnostics slice.
 
-Next: inspect the existing editor/validator/version dispatch, run upstream impact before symbol edits, implement a versioned complete-diagnostics contract while preserving v1-v5 replay, and run targeted/offline checks.
+The v6 diagnostics implementation preserves v1-v5 policy/schema defaults, collects located post-inventory/reference findings together and retains general repair.
+New plans and job headers freeze their authoring version; older absent fields retain v5, including jobs without an editorial plan yet.
+Frozen delivery checks reject same-attempt layout/profile substitution and allow explicit new attempts to reuse the single historical profile.
+Reviewers found no remaining scoped blocker after those corrections.
+The fifteen-file targeted run passed 300 cases and exposed three fixture/assertion errors; those are corrected and all 26 follow-up cases pass, including the complete diagnostics module and semantic/no-change/authority witnesses.
+The six-case bounds group and separate historical-header handoff case also pass; no unfiltered full-suite pass is claimed.
+The eleven runtime modules pass normal mypy, ASCII and Python 3.9 grammar checks; the new module also passes checking of untyped bodies.
+Org exports pass, and the current Claude 2.1.330 build passed all 28 offline policy/schema captures on the quiet-host certification retry.
+The first certification stopped at 25 captures under its original 120-second ceiling; it remains recorded as unsuccessful.
+E5/E6 historical audits pass with provider/build/authentication access forbidden, unchanged job files and memory still at =30e98aa=.
+The additional historical-header handoff test passes; the preliminary broader run had one corrected test-fixture defect and two short native-Org deadlines.
+Perform the staged GitNexus scope check and commit before live evaluation.
 Then use a recorded fixed-evidence Claude validation case (at most six calls/twenty minutes), followed by two fresh real SuCoder dreams (at most 32 calls/thirty minutes each), evaluating accepted documentation changes and source-grounded usefulness.
 These operational bounds stage the human's newly authorized sequence; prepare source/profile/authentication and freeze each job's limits before starting its clock.
 Keep the existing subscription/model route unless explicitly changed, retain every failed/unknown reservation and do not reopen E6's expired window or rewrite its artifacts.
 No native evaluation job has started under the new goal yet.
+Prepared private validation code and the held-out rubric live under =/home/coder/.sucoder/logs/dream-authoring-live/2026-11-23/=; =pilot.py= has separate prepare/run commands and never calls a publisher.
+Run its prepare step only after the implementation commit so the recorded source runtime is the actual tested commit.
 Main and private memory remain unchanged at this handoff update; retain the conditional successful-real-trial/source-verification gate before merging main.
 
 * Authoring design red-team review, 2026-11-23

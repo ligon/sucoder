@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from sucoder import dream, dream_editor, dream_run, dream_support, dream_wiki
+from sucoder import dream, dream_diagnostics, dream_editor, dream_run, dream_support, dream_wiki
 from tests.test_dream import git, workspace  # noqa: F401
 from tests.test_dream_memory import MEMORY, memory_plan
 from tests.test_dream_wiki import EditorTransport, TOPIC
@@ -100,7 +100,7 @@ def test_plan_prepared_before_editorial_amendment_replays_unchanged(workspace, m
     assert "editorial_version" not in plan and "prior_support" not in plan
     native = EditorTransport()
     result = dream_wiki.run(workspace[2], "sample", Path(plan["plan_path"]), "codex", "fixture", transport=native)
-    assert all(task["brief"] == dream_editor.BRIEFS[task["role"]] for task in native.calls)
+    assert all(task["brief"] == dream_diagnostics.BRIEFS[task["role"]] for task in native.calls)
     monkeypatch.setattr(dream_support, "VERSION", 2)
     assert dream_wiki.run(workspace[2], "sample", Path(plan["plan_path"]), "codex", "fixture", transport=native) == result
     assert dream_run.status(workspace[2], "sample", Path(plan["plan_path"]))["state"] == "published"
@@ -112,7 +112,7 @@ def test_new_policy_does_not_skip_review_based_on_an_older_policy_receipt(worksp
     from tests.test_dream_curate import NoopTransport
     with monkeypatch.context() as previous:
         previous.setattr(dream_support, "VERSION", 1)
-        previous.setattr(dream_editor, "Editor", dream_author.Author)
+        previous.setattr(dream_diagnostics, "Editor", dream_author.Author)
         before = memory_plan(workspace)
         dream_wiki.run(workspace[2], "sample", Path(before["plan_path"]), "codex", "fixture", transport=EditorTransport())
     after = next_plan(workspace, maintenance=None)

@@ -108,7 +108,9 @@ def _job(path):
         header = _read(fd, "job.json")
         dream._object(header, ("contract", "job_id", "directory", "created_at", "project", "settings", "purpose", "budget_path"),
                       ("mode", "navigation_version", "leads", "memory_origin", "navigation_limits", "processing",
-                       "inventory_sha256", "discovery_allocation", "prompt_profile", "submission_contract"))
+                       "inventory_sha256", "discovery_allocation", "prompt_profile", "submission_contract", "authoring_version"))
+        if "authoring_version" in header and (type(header["authoring_version"]) is not int or header["authoring_version"] != 6):
+            raise DreamError("Invalid frozen authoring version", 3)
         from . import dream_submission
         dream_submission.validate(header.get("submission_contract"))
         if "prompt_profile" in header:
@@ -235,7 +237,8 @@ def prepare(config, job_path=None, *, cwd=None, overrides=None, budget_path=None
             if memory_ref:
                 project_binding["memory_ref"] = memory_ref
             header = dict(contract=CONTRACT, job_id=job_id, directory=str(directory), created_at=time.time(),
-                project=project_binding, settings=frozen, purpose=purpose, budget_path=str(target), mode=mode)
+                project=project_binding, settings=frozen, purpose=purpose, budget_path=str(target), mode=mode,
+                authoring_version=6)
             from . import dream_submission
             header["submission_contract"] = dream_submission.CONTRACT
             if prompt_profile is not None:
@@ -372,6 +375,7 @@ def _plan(config, fd, header, chosen, deadline):
                 request["integration_ref"], maintenance=maintenance, topic=topic,
                 publication="in_place" if memory_ref else None,
                 project_commit=header["project"]["base_commit"], memory_origin=header.get("memory_origin"),
+                authoring_version=header.get("authoring_version", 5),
                 **(dict(inspection_deadline=deadline) if header.get("navigation_version", 1) >= 3 else {}))
             path = Path(value["plan_path"])
         pointer = dict(plan_path=str(path))
@@ -383,7 +387,8 @@ def _plan(config, fd, header, chosen, deadline):
             bound = plan["integration_ref"] == memory_ref and dream_run.in_place_plan(plan)
         else:
             bound = plan["base_commit"] == header["project"]["base_commit"]
-        if (not bound or plan.get("memory_origin") != header.get("memory_origin") or plan["maintenance"] != maintenance or
+        if (not bound or plan.get("authoring_version", 5) != header.get("authoring_version", 5) or
+                plan.get("memory_origin") != header.get("memory_origin") or plan["maintenance"] != maintenance or
                 plan["topic"] != topic or len(plan["units"]) != len(request["units"])):
             raise DreamError("Saved exploratory plan differs from the handoff intent", 3)
         for unit, proposed in zip(plan["units"], request["units"]):

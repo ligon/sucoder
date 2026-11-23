@@ -169,3 +169,23 @@ The effectiveness reviewer also requested a metadata cleanup to reflect the acti
 These are design dispositions, not proof that the proposed code exists or that a native trial succeeds.
 
 Recorded by Sue.
+
+* Diagnostics implementation review
+:PROPERTIES:
+:CUSTOM_ID: implementation-review
+:END:
+
+The implementation is restricted to milestone 1: a v6 editor with complete located mechanical findings and the existing full-proposal repair.
+Contract review reproduced an independent broken-link error masking ambiguous-quote and missing-Talk findings; the shared post-inventory report now exposes all three together.
+Recovery review found that unconditionally choosing v6 could bypass an old attempt's identity, and that changed delivery profiles could create another identity inside the same attempt.
+New plan/job authoring-version pins, historical reconstruction and unconditional frozen delivery checks address those paths.
+An explicit new attempt can reuse the single compatible historical stable profile without replacing the earlier artifacts.
+Both reviewers' follow-up source passes found no remaining blocker in their scopes.
+Root's fifteen-file regression run passed 300 cases and exposed three fixture/assertion errors; all were corrected and the 26-case follow-up group passes, including the complete diagnostics module and semantic/no-change/authority witnesses.
+The [[file:../dream-authoring-ledger.org][ledger]] records exact outcomes, artifact locations and the absence of an unfiltered full-suite pass.
+
+The effectiveness reviewer found no policy blocker to diagnostics-first.
+Its evaluation requires separate records for the genuine native full-repair route, real-dream disposition and concrete documentation benefit.
+The private reader-quality rubric remains outside author construction inputs, and usefulness must be checked against original admitted evidence and the pinned prior wiki.
+No-change remains legitimate but contributes no new documentation improvement.
+This sequence makes no causal token-savings claim and does not implement the later patch, checkpoint or protected-review protocols.

@@ -331,9 +331,7 @@ class Editor(dream_author.Author):
                 raise DreamError("Authored change differs from its frozen page")
         changes = [dict(path=path, before_sha256=digest(base[path].encode()) if path in base else "",
             reason=old_changes[path]["reason"] if path in old_changes else "Coordinator materialized validated editorial history/archive/link changes.") for path in sorted(pages)]
-        refs = {(reference["path"], reference["target"]): dict(reference, citations=list(reference["citations"])) for reference in proposal["references"]}
-        if len(refs) != len(proposal["references"]):
-            raise DreamError("Duplicate authored explanatory-section reference")
+        refs = self.reference_map(proposal["references"])
         destinations = {(move["source"], target): move["destination"] for move in self.moves for target in move["targets"]}
         for action in proposal["task_actions"]:
             if not action["evidence"]:
@@ -372,6 +370,12 @@ class Editor(dream_author.Author):
     def validate(self, proposal, prior, sources):
         return wiki.validate_proposal(self.plan, proposal, self.validation_prior, sources, self.deadline,
             wiki.LEGACY_CONTRACT, **self.permissions)
+
+    def reference_map(self, references):
+        refs = {(reference["path"], reference["target"]): dict(reference, citations=list(reference["citations"])) for reference in references}
+        if len(refs) != len(references):
+            raise DreamError("Duplicate authored explanatory-section reference")
+        return refs
 
     def review_candidate(self, proposal, pages):
         return dict(self.materialized, editorial_moves=self.moves)

@@ -44,6 +44,32 @@ Do not increase the repair count merely to compensate for incomplete diagnostics
 Reuse existing source admission, native Org inventory, context lookups, typed editorial materialization, submission wrappers, shared wallet and sole publisher.
 Do not introduce direct provider APIs, unrestricted tools or automatic paid retries for this work.
 
+* Implemented diagnostics slice
+:PROPERTIES:
+:CUSTOM_ID: implemented-diagnostics
+:END:
+
+The [[file:../../sucoder/dream_diagnostics.py][v6 editor]] implements milestone 1 using the existing full-proposal repair and independent review.
+Fresh plans and exploratory job headers freeze an internal =authoring_version: 6=; historical absent fields select v5 without changing their original identities.
+V1-v5 policies, schemas and status replay retain their original dispatch.
+Every changed non-index anchor, including Talk, needs source references unless unchanged or covered by verified coordinator-derived editorial materialization.
+
+After native Org inventory succeeds, independent keyword/link/retained-anchor/reachability findings share a report with citation, reference, coverage and omission findings.
+Quotation matching deduplicates absolute positions across overlapping delivered windows and computes UTF-8 offsets only for a unique exact match.
+Ambiguity reports at least two positions, without choosing one or exposing undelivered context.
+Invalid paths/pages/dispositions, malformed inventory and editorial-authority prerequisites block dependent validation explicitly.
+Operational failures retain their separate stop path.
+
+The report contains at most 32 blocking findings with stable codes and bounded path/target/unit locations.
+Finding overflow or shortened location fields produces =diagnostics_incomplete=; shortened locations also carry =location_truncated=.
+An incomplete report cannot pass validation.
+No repair allowance is added, and no proposal publishes before whole-candidate independent acceptance.
+Same-attempt delivery layout/profile changes reject before provider work; explicit new attempts may reuse their single compatible historical profile.
+
+The [[file:authoring-review.org::#implementation-review][implementation review]] records the link-report and historical-dispatch corrections.
+Patch modes, authenticated phase checkpoints, durable logical repair rounds and protected reviewer capacity remain later milestones.
+The Claude validation sequence exercises full-proposal repair and evaluates real wiki outcomes; it must not be presented as verification of those deferred protocols.
+
 * Dependency-ordered implementation
 :PROPERTIES:
 :CUSTOM_ID: sequence

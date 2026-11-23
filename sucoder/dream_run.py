@@ -103,7 +103,9 @@ def _plan_shape(plan):
         dream._object(plan, ("schema_version", "operation", "state", "repository", "repository_uuid",
             "integration_ref", "base_commit", "repositories", "units", "prior_wiki", "maintenance", "topic",
             "limits", "work", "coverage", "usage", "execution", "candidate_commit", "candidate_ref", "integration", "plan_id"),
-            ("publication", "project", "editorial_version", "prior_support", "memory_origin"))
+            ("publication", "project", "editorial_version", "prior_support", "memory_origin", "authoring_version"))
+        if "authoring_version" in plan and (type(plan["authoring_version"]) is not int or plan["authoring_version"] != 6):
+            raise DreamError("Invalid frozen authoring version")
         if "editorial_version" in plan or "prior_support" in plan:
             from . import dream_support
             if (type(plan.get("editorial_version")) is not int or plan.get("editorial_version") != 2 or
@@ -221,7 +223,8 @@ def _validate(config, mirror, plan, deadline, *, pinned=False):
             prior_policy=plan["prior_wiki"].get("selection", {}).get("contract", "all-active-v1"),
             publication=plan.get("publication"), pinned_base=plan["base_commit"] if pinned else None,
             project_commit=plan["project"]["commit"] if "project" in plan else None,
-            editorial_version=plan.get("editorial_version", 1), memory_origin=plan.get("memory_origin"))
+            editorial_version=plan.get("editorial_version", 1), memory_origin=plan.get("memory_origin"),
+            authoring_version=plan.get("authoring_version", 5))
         # A provisional UUID is a frozen proposal, not a newly accepted registry.
         # Rebuilding the plan generates a fresh proposal; retain only the old UUID.
         for name, repository in current["repositories"].items():
@@ -637,7 +640,7 @@ def status(config, mirror, plan_path, run_id=None):
                     raise DreamError("Shared-progress specification differs from its storage identity")
                 from . import dream_progress
                 return dream_progress.restore(config, mirror, plan, fd, spec, deadline)
-            if spec.get("contract") in ("source-grounded-wiki-v3", "source-grounded-wiki-v4", "source-grounded-wiki-v5"):
+            if spec.get("contract") in ("source-grounded-wiki-v3", "source-grounded-wiki-v4", "source-grounded-wiki-v5", "source-grounded-wiki-v6"):
                 try:
                     marker = dream._json(_read(fd, "native-" + run_id + "-unchanged.json", MAX_PLAN_BYTES))
                 except FileNotFoundError:
@@ -655,7 +658,7 @@ def status(config, mirror, plan_path, run_id=None):
         # mutable local run record as evidence of shared accepted progress.
         if native:
             spec = dream._json(_read(fd, "native-" + run_id + "-spec.json", 16384))
-            if spec.get("contract") in ("source-grounded-wiki-v1", "source-grounded-wiki-v2", "source-grounded-wiki-v3", "source-grounded-wiki-v4", "source-grounded-wiki-v5"):
+            if spec.get("contract") in ("source-grounded-wiki-v1", "source-grounded-wiki-v2", "source-grounded-wiki-v3", "source-grounded-wiki-v4", "source-grounded-wiki-v5", "source-grounded-wiki-v6"):
                 from . import dream_wiki
                 expected = dream_wiki.restore(plan, fd, run_id, deadline)
             else:

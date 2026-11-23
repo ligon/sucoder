@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from sucoder import dream, dream_editor, dream_editorial as org, dream_reader, dream_reader_agent, dream_run, dream_wiki
+from sucoder import dream, dream_diagnostics, dream_editor, dream_editorial as org, dream_reader, dream_reader_agent, dream_run, dream_wiki
 from tests.test_dream import git, invoke, workspace  # noqa: F401
 from tests.test_dream_context import native_result
 
@@ -135,7 +135,7 @@ def test_public_transition_is_materialized_independently_reviewed_and_replayed(w
     prepare(workspace)
     transport = Lifecycle("NEXT")
     plan, result = execute(workspace, "Select the correction for work", transport, harness)
-    assert result["fidelity"] == dream_editor.CONTRACT
+    assert result["fidelity"] == dream_diagnostics.CONTRACT
     assert [call["role"] for call in transport.calls] == ["author", "reviewer"]
     assert 'State "NEXT" from "TODO"' in (workspace[0] / TOPIC).read_text()
     receipt = json.loads(git(workspace[0], "show", result["candidate_commit"] + ":.sucoder/wiki/receipts/" + result["run_id"] + ".json"))
@@ -267,7 +267,7 @@ def test_accept_verdict_with_failed_authority_check_cannot_publish_completion(wo
 
 @pytest.mark.parametrize("defect,expected", [("hash", "existing frozen task"), ("state", "preserve existing task"),
     ("human_flag", "preserve existing task"), ("unanchored", "stable CUSTOM_ID"), ("checks", "exactly one check"),
-    ("references", "Duplicate authored")])
+    ("references", "reference_duplicate")])
 def test_invalid_editorial_changes_never_publish(workspace, defect, expected):
     prepare(workspace)
     class Defective(Lifecycle):

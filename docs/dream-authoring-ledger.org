@@ -101,3 +101,29 @@ Upstream impact on the runtime baseline reports HIGH for Author.proposal (two di
 Run, restore and status dispatch are CRITICAL (seven, two and eight direct dependants respectively); accepted-progress envelope and prefix matching are also CRITICAL with three direct dependants each.
 The CLI counts broad execution flows, including unrelated dispatch entrypoints; use targeted tests and historical replay to assess the actual changed contract branches.
 Two catalog/no-change symbols were absent from the initial index; refresh and repeat their impact checks before editing them.
+
+The refreshed index still omits =variants= and =record_unchanged=; direct references identify profile key/loading/certification and the wiki run's unchanged branch as their callers.
+Record this as unknown index coverage, not zero impact.
+The version pin extends =build_plan=, =create_plan=, =_plan_shape=, =_validate= and exploratory =_job=, =prepare= and =_plan=.
+Impact marks the planners and reconstruction/job entrypoints CRITICAL (two/seven/two/six/three direct dependants), plan shape HIGH (one), and exploratory plan handoff LOW (one).
+
+Implementation review found and corrected two compatibility gaps before live use.
+Independent parsed-page link errors now share the bounded reference report.
+Fresh plans/job headers freeze =authoring_version: 6=; historical absent fields select v5 without changing their reconstructed hashes.
+Same-attempt delivery layout/profile changes are rejected before provider work, while an explicit new attempt can reuse its single compatible historical certificate.
+Historical status continues dispatching by the original saved contract.
+
+The first offline Claude certification reached 25 of 28 captures before its unchanged 120-second ceiling while regression tests were active.
+The quieter-host rerun completed all 28 captures and certified the fourteen v6 production policy/schema variants with dummy credentials and no paid inference.
+The new module passes mypy with untyped bodies checked; all eleven changed runtime modules pass the project's normal mypy check, ASCII and Python 3.9 grammar checks.
+An exploratory stricter check across the older modules also reports errors in their untyped paths; no repository-wide strict type-check pass is claimed.
+The fifteen-file targeted regression run completed 303 cases: 300 passed and three test-fixture/assertion cases failed.
+Two new v5 fixtures used =main= where the planner requires =refs/heads/main=; the older duplicate-reference assertion expected its previous first-error wording.
+After those corrections, the complete diagnostics module, all six invalid-editorial cases and three semantic/no-change/authority witnesses pass all 26 follow-up cases.
+The new clipping/overflow/window/source/deadline group separately passes six cases; the historical pre-plan job handoff separately passes one.
+No additional runtime defect was found in that regression run; no unfiltered repository-wide pass is claimed.
+Artifacts are =diagnostics-final.xml=, =diagnostics-followup.xml=, =diagnostics-bounds.log= and =diagnostics-historical-header.log= under =/home/coder/.sucoder/logs/dream-claude-live/2026-11-23/=.
+The current source also replays E5 as published and E6 as incomplete with native provider/build/authentication entrypoints forbidden, unchanged job files and memory unchanged.
+Fresh copies of those read-only audits are under =/home/coder/.sucoder/logs/dream-authoring-live/2026-11-23/historical-e5/= and =historical-e6/=.
+The final index refresh uses =--skip-agents-md --index-only=; staged scope must be checked before committing.
+Live pilot/real-dream outcomes remain pending and must be recorded separately from offline acceptance.
