@@ -49,6 +49,11 @@ Per-assignment enum values would make schemas volatile, so use a stable body sch
 Earlier cached profiles remain replayable; new profiles must certify the new body policy/schema pairs.
 Live compatibility correction: accept only the observed thinking-progress event shape, retaining rejection of unknown system events, hooks, compaction and external tools.
 The first rejected November 23 call remains charged and preserved; any explicitly selected second attempt must share its original 32-call allowance and absolute deadline.
+The human subsequently authorized a fresh 1,800-second window for the same wallet, which retains all earlier reservations.
+Its first editorial author exhausted =Coordinator.call='s separate hardcoded 180-second transport cap despite substantial whole-job allowance remaining.
+Reuse =Job.transport= and =Job.deadline(task)= for budgeted calls: they already enforce the shared deadline and ordinary-work closeout reserve.
+Retain the 180-second fallback for coordinators without a wallet, frozen results and explicit retry/no-repeat behavior.
+An explicit new attempt replays the saved discovery selection without native access; it need not spend another fourteen discovery calls or extend the approved window.
 
 * 5. Reuse decisions
 
