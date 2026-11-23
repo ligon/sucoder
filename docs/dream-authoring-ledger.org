@@ -7,7 +7,8 @@
 Implement coordinator-managed evidence handles after reviewing their interaction with R2's context authority and accounting requirements.
 The current source baseline is clean local main =dd15432=, with v6 runtime =0ff65ab= and private memory =4b529b1=.
 The human authorized proceeding with implementation; no new live run or elapsed-window extension is included.
-The human subsequently set an active goal to implement reviewed changes, conduct a Claude dream sequence and evaluate concrete documentation improvements; that user instruction supplies the expanded authorization.
+The preceding diagnostics implementation and Claude evaluation goal is complete.
+The current instruction authorizes evidence-handle implementation after the latest review findings.
 Work remains staged, and every native run must receive prepared, recorded limits without reopening E6's expired window.
 The [[file:dream/runs/sucoder-e6.org][E6 report]] is the measured failure case; the [[file:dream/workplan.org][accepted workplan]] preserves explanatory synthesis, open topic choice and justified no-change outcomes.
 
@@ -38,13 +39,18 @@ Implementation must run file-qualified upstream impact before editing existing s
   =tests/test_dream_recovery.py::test_retry_window_never_replenishes_call_cap_or_its_own_deadline= and =tests/test_dream_budget.py::test_work_deadline_timeout_is_budget_exhausted_with_closeout_time_left= cover preservation of limits.
 - =sucoder/dream_prompt.py=; =sucoder/dream_prompt_native.py:186=, =variants= :: Lossless policy/data projection and complete native policy/schema certification.
   =tests/test_dream_prompt.py::test_lossless_delivery_preserves_data_authority_and_native_schema= and =tests/test_dream_cache_certify.py::test_uncertified_policy_or_schema_is_rejected_before_launch= cover the delivery boundary.
+- =sucoder/dream_handles.py=, =Registry= and =Session= :: V7 indexes exact delivered spans after prefix projection and reconstructs them through the existing lookup replay.
+  =tests/test_dream_handles.py::test_prefix_lookback_is_explicit_and_replays_without_new_allowances= and the cached-unavailable injection cases cover visibility and accounting.
+  Native message-body boundaries reuse the literal/JSON forms recognized by =Editor._human_source=; the existing authority predicate remains decisive.
 
 * 3. Definitions and conventions
 
-An exact citation currently names an admitted unit and a quote occurring at exactly one absolute position in its delivered windows; the coordinator computes offsets.
+V1 validates explicit citation ranges and exact quotes.
+V2-v6 resolve an admitted-unit/quote pair at one unique source position, with v4-v6 restricting the search to delivered windows; the coordinator computes offsets.
+V7 selects a namespaced handle for one exact delivered span; Python resolves its quote and offsets without a uniqueness search.
 Every changed non-index anchor currently needs a reference unless covered by a verified derived editorial action.
-The author brief says explanatory sections; that wording does not fully describe the changed-anchor check applied to Talk in E6.
-The current production editor contract is =source-grounded-wiki-v5=, layered over the earlier v1-v4 contracts; do not allocate an already-used version.
+V6 and v7 briefs explicitly include Talk in changed-anchor coverage; E6's v5 wording was less explicit.
+The current production contract is =source-grounded-wiki-v7=, layered over v6 diagnostics and v5 editorial actions; earlier versions remain frozen.
 Raw completion, mechanical acceptance, independent acceptance and memory publication are distinct states.
 Wallet =completed= records native delivery, not an accepted revision; the current local =max_repairs= loop does not provide a durable logical-round state machine.
 An unreviewed draft checkpoint may save work but cannot establish accepted progress or source coverage for a future job.
@@ -152,3 +158,31 @@ E7 fixes four nonliteral quotes in one repair and publishes private memory =4b52
 E8 uses nineteen reservations, including a timed-out repair with unknown usage, and publishes nothing before its original thirty-minute ceiling expires.
 Both real-job audits forbid provider/build/authentication access, replay exact completed bodies and wallet bindings, preserve all job files and confirm their different publication outcomes.
 No new elapsed window, native retry, token/dollar-cap claim or legacy-artifact rewrite followed.
+
+* 8. Evidence-handle verification
+
+Implementation =fbc6d14= is on local main after the scoped grounding commit =15bffb2=.
+The latest recovery reviewer found no remaining blocker, including after the final paragraph/deadline and native-context projection checks.
+The registry retains pending/orphan/ambiguous native-call summaries without duplicating raw records or restoring withheld prefix content.
+Malformed cached unavailable responses are rejected before accounting or prompt delivery; historical contexts retain their no-op validation hook.
+Canonical v7 action receipts have their own schema and a bounded consistency check for registry digest, entries, quotes and ranges.
+This does not authenticate an unreviewed checkpoint or implement phase recovery.
+
+The completed sixteen-module run reports 256 passed and four failed in =final-regression.xml=.
+Two failures were stale fixture assumptions about source text/briefs; two long lifecycle cases exceeded pytest's 300-second ceiling with four workers.
+The final handle, support, correction, unattended and pilot fixture group passes all 48 cases with two workers (=followup.xml=).
+Both lifecycle cases pass serially under the same 300-second ceiling (=lifecycle-serial.xml=).
+The registry-only boundary group also passes twelve cases, including unavailable-cache payload/negative/bool counter tampering and replay without replenishing request/source allowances.
+All twelve runtime modules pass normal mypy, ASCII and Python 3.9 grammar checks; the new module passes checking of untyped bodies.
+Org exports pass; no unfiltered repository-wide pass is claimed.
+
+Claude Code 2.1.330 certifies the fourteen new production policy/schema variants in 28 offline captures using dummy credentials and no paid inference.
+The new profile loads against the current catalog; Codex's existing uncertified stable gate remains in force.
+Read-only E7/E8 replay preserves their published/incomplete states, all 250/275 saved job files and private memory =4b529b1=, with native/build/authentication access forbidden.
+Verification artifacts and the source hash manifest are under =/home/coder/.sucoder/logs/dream-handles/2026-11-23/=.
+
+GitNexus was refreshed with =--skip-agents-md --index-only= and staged scope checked before commit.
+The context lookup impact is CRITICAL with 335 direct and 39 depth-two indexed dependants, including six unresolved receiver sites; generic-name flows overstate the two direct registry-delivery callers.
+The final staged check reports the expected context hooks, new registry/editor and version-dispatch/test surface, with broad unrelated flow names rather than an asserted complete call graph.
+Ledger verification is OK against sections 2-5: exact-byte checks, native authority, source admission, lookup accounting, full repair/review and publication remain reused; the new registry supplies selection/provenance mechanics.
+Installed deployment, GitHub publication and a bounded live effectiveness trial remain separate steps.
