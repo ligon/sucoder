@@ -181,6 +181,9 @@ The review requires ordered append-only reconstruction, visibility at each froze
 The implementation pass found and corrected three defects: unavailable responses minting handles, native records joined across authority boundaries, and early unknown-handle errors hiding independent coverage findings.
 Canonical task-action receipts also need a distinct schema from both handle-only wire replies and historical quote-only actions.
 These checks belong to the [[file:evidence-handles.org][v7 contract]]; they do not complete the later R2 phase-checkpoint protocol.
+The final source follow-up found no remaining scoped blocker.
+The 48-case final feature/fixture group and both serial lifecycle reruns pass; the ledger records the earlier regression failures and their resolutions.
+All 28 offline Claude certification captures pass; live quality and token savings remain unmeasured.
 
 * Diagnostics implementation review
 :PROPERTIES:

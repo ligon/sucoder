@@ -1,10 +1,37 @@
-#+TITLE: Active authoring implementation and Claude evaluation goal
+#+TITLE: Evidence handles implementation
 #+DATE: 2026-11-23
-#+STATUS: COMPLETE -- DIAGNOSTICS ON LOCAL MAIN; CLAUDE SEQUENCE EVALUATED; FOLLOW-UPS RECORDED
+#+STATUS: COMPLETE -- REVIEWED V7 ON LOCAL MAIN; OFFLINE CHECKS AND CERTIFICATION COMPLETE
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
-* Active implementation/evaluation goal, 2026-11-23
+* Evidence handles after latest review, 2026-11-23
+
+The human requested review of the most recent findings and proceeding with implementation.
+The v7 handle slice is committed on local main at =fbc6d14= after grounding commit =15bffb2=.
+The [[file:../docs/dream/evidence-handles.org][contract]] and [[file:../docs/dream/authoring-review.org::#handles-review][review record]] describe the implementation and resolved findings.
+Initial handles follow accepted-prefix projection; bounded authenticated lookback may add exact delivered spans.
+Python resolves private copies of reference and action citations, retaining immutable native replies, exact readable receipts, full repair and independent review.
+The latest reviewer found no remaining scoped blocker after cached-unavailable accounting, native authority boundaries, combined diagnostics and receipt-format corrections.
+Phase checkpoints, logical repair rounds, protected reviewer capacity and byte-preserving edits remain separate work.
+
+The sixteen-module run reports 256 passes and four failures: two stale fixture expectations and two lifecycle cases exceeding the 300-second test ceiling with four workers.
+The corrected fixture and final feature/adaptor group passes all 48 cases with two workers.
+Both lifecycle cases pass serially under the same 300-second ceiling; no runtime allowance was raised.
+All twelve runtime modules pass mypy, ASCII and Python 3.9 grammar checks; the new module also passes checking of untyped bodies.
+Org exports pass, and no unfiltered full-suite pass is claimed.
+Claude Code 2.1.330 passes all 28 offline captures for fourteen current policy/schema variants, using dummy credentials and no paid inference; the resulting profile loads successfully.
+Read-only current-source replay of E7 and E8 preserves all 250/275 job files, their published/incomplete states and memory =4b529b1=, with native/build/authentication entrypoints forbidden.
+Artifacts are under =/home/coder/.sucoder/logs/dream-handles/2026-11-23/=.
+The source-only =sucoder-main-source.bundle= there is the transfer artifact for this closeout; it contains main only, never private memory.
+No new live dream, paid inference, memory publication, deployment or GitHub write has occurred.
+Historical completed/expired job artifacts and private memory remain unchanged.
+The installed CLI remains older; a later bounded trial must use the checked source runner or an explicit deployment.
+GitHub publication remains on the maintainer-side transport because =ligon.pushurl=no_push=.
+No additional inference is running or queued.
+
+Sue.
+
+* Completed authoring implementation/evaluation goal, 2026-11-23
 
 The human requested implementation after review, a Claude dream sequence and evaluation of concrete documentation improvements.
 The diagnostics-first slice is committed at =0ff65ab4c4fdad0af2e469c5914a15b399355650= on =coder/dream-main-integration=.
