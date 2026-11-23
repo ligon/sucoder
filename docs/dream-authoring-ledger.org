@@ -86,3 +86,18 @@ Native effort/output mappings must be verified for the selected installed builds
 Controlled live allowances and private evidence selection require explicit authorization after offline preparation; this plan grants neither.
 
 Prepared by Sue (GPT-6 Codex).
+
+* 7. Diagnostics implementation slice
+
+Implement milestone 1 as =source-grounded-wiki-v6= in a separate editor subclass.
+Keep v1-v5 briefs, schemas, identities and validator defaults frozen.
+Extract the existing Author quote resolution into an overridable method and add an optional reference-validation callback after native Org/structural validation.
+V6 resolves all citations and collects independent reference/coverage defects together; malformed structure stops that dependent pass, while operational errors propagate.
+Findings carry codes and located path/target/unit information, bounded to 32 findings and explicitly marked incomplete on overflow.
+Keep the current full proposal repair and independent review, without patch/checkpoint or protected review-capacity claims.
+Extend explicit contract allowlists for replay, unchanged results and accepted-progress reuse; certify the new production policy catalog before stable live use.
+
+Upstream impact on the runtime baseline reports HIGH for Author.proposal (two direct dependants) and validate_proposal (three).
+Run, restore and status dispatch are CRITICAL (seven, two and eight direct dependants respectively); accepted-progress envelope and prefix matching are also CRITICAL with three direct dependants each.
+The CLI counts broad execution flows, including unrelated dispatch entrypoints; use targeted tests and historical replay to assess the actual changed contract branches.
+Two catalog/no-change symbols were absent from the initial index; refresh and repeat their impact checks before editing them.
