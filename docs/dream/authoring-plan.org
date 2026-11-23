@@ -1,0 +1,178 @@
+#+TITLE: Plan for effective dream authoring and repair
+#+AUTHOR: Sue
+#+DATE: 2026-11-23
+#+STATUS: PROPOSED -- planning only; no new native run authorized
+#+PROPERTY: header-args :eval never-export :tangle no
+
+* Objective and measured starting point
+:PROPERTIES:
+:CUSTOM_ID: objective
+:END:
+
+Help unattended dreams turn admitted evidence into useful, independently reviewed explanations with fewer mechanical failures and less repeated model work.
+Preserve open topic choice, explanatory synthesis, attribution, source fallback and a justified reviewed no-change outcome from the [[file:workplan.org::#accepted-synthesis][accepted operating mode]].
+Success is useful reviewed understanding, not the number of pages written or a relaxed publication gate.
+The [[file:../dream-authoring-ledger.org][grounding ledger]] identifies the existing machinery and invariants; implementation must cite its sections 2-5.
+
+[[file:runs/sucoder-e6.org][E6]] completed fourteen discovery calls, an author and a repair, but never reached independent review.
+The first diagnostic exposed an ambiguous quotation; repairing it exposed a second defect, an uncited Talk anchor.
+The author and repair took 688 seconds together and separately reported 28,484 thinking tokens in total.
+Discovery consumed 252,386 input tokens across fourteen calls to select two windows totaling 14,557 rendered bytes.
+These are diagnostic observations from one topic, not a controlled provider comparison or a claim that every discovery step was unnecessary.
+
+The parser and budgeted-role deadline corrections already exist on =coder/dream-main-integration= and have their recorded checks.
+This plan adds no runtime changes, deployment, native inference, memory publication or authorization to merge main.
+The failed E6 artifacts and current private memory remain unchanged.
+
+* Scope and decisions
+:PROPERTIES:
+:CUSTOM_ID: scope
+:END:
+
+The first release comprises complete mechanical diagnostics and bounded repair patches with explicit stage recovery.
+Supported role controls and a review reserve are prepared before its controlled live pilot.
+Evidence handles, broader coordinator rendering and discovery compaction follow as measured improvements, rather than prerequisites for fixing the immediate failure.
+
+For the first release, keep the existing strict changed-anchor coverage rule and explicitly describe it in the author/repair policies, including Talk.
+Do not exempt an arbitrary Talk subtree or a model-declared section type from evidence requirements.
+Later typed, coordinator-generated empty containers may have derived provenance, while factual premises inside questions still need support.
+That later semantic change needs its own versioned design and adversarial cases.
+
+Do not increase the repair count merely to compensate for incomplete diagnostics.
+Reuse existing source admission, native Org inventory, context lookups, typed editorial materialization, submission wrappers, shared wallet and sole publisher.
+Do not introduce direct provider APIs, unrestricted tools or automatic paid retries for this work.
+
+* Dependency-ordered implementation
+:PROPERTIES:
+:CUSTOM_ID: sequence
+:END:
+
+** 1. Complete diagnostics and an explicit authoring contract
+
+Extend =Author.proposal= and =validate_proposal= into dependent, read-only validation passes using the existing Org inventory and citation checks.
+Collect independent citation, reference and coverage defects in one bounded report.
+Run dependent checks only when their prerequisites are valid: an unparseable page must not generate invented missing-anchor errors.
+Keep operational failures such as deadline expiry, isolation failure or corrupted artifacts distinct from model-repairable proposal defects.
+
+An internal diagnostic carries a stable code, page path, target, source unit and the relevant match count or missing requirement.
+Candidate source positions/snippets must remain inside already delivered windows and existing byte limits.
+Render actionable findings through the versioned role contract; never fall back to an empty path and a generic first-error string when location is known.
+If the finding cap is reached, mark the report incomplete explicitly; truncation cannot be treated as a successful full validation.
+
+Use a synthetic E6-shaped fixture: one cited unit contains a quotation at two different offsets, and a new Talk anchor has no reference.
+The initial report must identify both defects together, and one corrected repair must reach the independent-review stage.
+Also cover overlapping windows containing the same absolute position, UTF-8 offsets, unknown units, malformed pages and diagnostic-size bounds.
+
+Introduce a new authoring contract for changed policies/behavior, allocating the next unused version; production currently uses v5, not v2.
+Preserve the original v1-v5 policy/schema/validator dispatch for historical replay.
+Do not change E6's stored result, failed artifacts or disposition by replaying it under new rules.
+
+** 2. Bounded repair patches and stage recovery
+
+Start with reference-only operations: replace a citation and add a missing section reference against the hash of the current private draft/reference set.
+The coordinator freezes that base hash in the repair assignment/manifest; the model returns only patch operations and reasons, without copying a checksum.
+Use delivered target handles to identify the affected reference or section instead of regenerating every changed page.
+Resolve and materialize it in Python using the existing private editor boundary, then run full mechanical validation and show the entire materialized candidate to independent review.
+The first patch contract cannot change prose, remove qualifications, modify human tasks or touch unrelated pages.
+Any later section-text operations require an explicit operation vocabulary, frozen base hashes and the existing fully-delivered-page rule.
+
+Record a versioned draft checkpoint containing the parent assignment/result/trace proofs, source/window identities, prior-wiki hashes, profile/contract identity and draft/materialization hashes.
+Treat it as unreviewed work, never as accepted progress or a publication receipt.
+An explicit repair/review phase retry may consume that checked draft without calling the author again.
+It receives its own frozen assignment and stage-attempt identity and retains its parent lineage; old replies and identifiers are not rewritten to appear new.
+Every native attempt remains charged to the same applicable wallet and deadline.
+Stage IDs must not silently restart automatic repair loops or replenish call, time or repair allowances.
+Changed evidence, prior wiki, model/policy or draft hashes require explicit reconciliation, not guessed compatibility.
+
+Acceptance cases cover stale patch bases, out-of-scope operations, altered parent traces, interrupted stage publication, replay with native entrypoints forbidden and exact preservation of unrelated draft bytes.
+On the E6-shaped fixture, the author is called once; an explicit failed-repair recovery calls only repair and then review, with every reservation retained.
+
+** 3. Role cost controls and review capacity
+
+Measure each role separately: input/cache/output counters and their coverage, reported thinking counters, latency, mechanical findings, repeated work and final disposition.
+Freeze supported effort/output settings before reservation and bind them to native profile and request identity.
+Verify actual native request behavior for each supported installed build; do not assume equivalent vendor enums, honored CLI flags or enforceable token ceilings.
+Keep requested hard token/currency bounds rejected when the adapter cannot guarantee them.
+An output-length target is guidance unless a verified adapter enforces it.
+
+Start the pilot with a short single-topic draft target and lower supported effort for discovery/mechanical repair, retaining enough reasoning for independent semantic review.
+Use a proposed 180-second closeout reserve for fresh pilot policies, then tune from measured reviewer latency; it is not a completion guarantee.
+The current closeout pool is shared by repair and review, so merely enlarging it does not protect reviewer time from a long repair.
+Design an explicit review-only portion in the versioned shared-wallet policy, which repairs cannot consume before review starts; preserve old budget semantics for old jobs.
+Expose phase allowances in frozen policy/advice instead of adding another undocumented per-role cutoff.
+Existing jobs retain their frozen reserves and bounds.
+New configuration must update =README.org=, =config.example.yaml= and parser/preflight tests together.
+Unsupported explicitly requested controls fail before provider work, without a silent model, account or delivery-mode switch.
+
+Before a new window starts, finish source/profile validation, offline checks and operator setup.
+Once started, code repair, provider work and cleanup all consume the same elapsed allowance; the clock is not paused for debugging.
+Prepare authorized stage work before launch; an unattended failure records a resumable diagnostic instead of asking the human an interactive question.
+
+** 4. Coordinator-owned evidence handles and structure
+
+Extend =Session= and existing reference resolution with a bounded registry of handles for exact, admitted source spans.
+Bind each handle to the source identity/hash, rendered-byte span and raw/render provenance, scoped to its frozen registry.
+The model selects a handle; Python resolves the literal source position without guessing among repeated quotations.
+References still express evidence status, and independent review still judges semantic support.
+
+Deliver handle catalogs as untrusted request data using the existing lossless prompt projection.
+Keep dynamic handle values out of cache-sensitive tool/schema enums.
+Reject stale, fabricated, undelivered and cross-registry handles; preserve the existing quote contract for old jobs.
+
+Extend typed editorial materialization for generated IDs, links and index entries where it already owns the mechanics.
+Preserve human anchors, prose, task authority and history; generated scaffolding is reviewed as part of the whole candidate.
+Do not replace explanatory writing with a claim inventory or add a second renderer/publisher that bypasses existing checks.
+
+** 5. Smaller discovery inputs with retained freedom
+
+Profile where discovery repeatedly delivers unchanged source or history before choosing a compaction policy.
+Prefer bounded searches and targeted decision/test/commit/handoff windows when their marginal value exceeds another sequential read.
+Allow earlier finish when enough evidence supports a worthwhile topic, while preserving contradictory evidence and open-ended selection.
+Do not turn partial coverage into a claim that a repository contains nothing else worth investigating.
+
+If a compact research note is introduced, label it as model-produced navigation aid, retain evidence handles and unknowns, and keep the original receipts/windows available through bounded lookup.
+It cannot replace source evidence or gain instruction priority.
+Compare context/input changes on pinned tasks before attributing savings to prompt caching or compaction.
+
+* Verification and rollout gates
+:PROPERTIES:
+:CUSTOM_ID: gates
+:END:
+
+Before implementation, review the contract, patch vocabulary, phase identities and checkpoint trust boundary.
+Run file-qualified GitNexus upstream impact before symbol edits, report critical risks, and detect_changes before each commit.
+Use small change sets in the order above; the first implementation starts with milestone 1.
+
+Offline acceptance requires the two-defect fixture, bounded located diagnostics, one complete repair, full-candidate independent review, immutable phase lineage and all rejection cases above.
+Use synthetic evidence in committed tests; real E6 transcripts and rejected drafts remain private.
+Historical E3/E5 published status and E4/E6 incomplete status must replay under their original contracts with native provider/build/authentication entrypoints forbidden.
+Tampered manifests, missing artifacts, tool use, unsupported authority, stale bases and budget exhaustion must still prevent publication.
+
+Changed native policy/schema/control combinations require complete offline certification for stable delivery.
+If the catalog grows, update documented synthetic request ceilings explicitly; do not skip variants or relax the prefix/tool gates.
+Keep Codex's current stable gate intact until its own profile passes; synthetic two-harness tests do not establish live stable support.
+
+After milestones 1-2 and the budget/control preflight from milestone 3, propose one fixed-evidence Claude pilot in a disposable clone: at most six native calls and twenty minutes, with no real memory publication.
+Those are proposed ceilings, not authorization; private E6 evidence reuse must be explicit, and native token/currency hard caps are not promised.
+Only after that pilot passes should a separately authorized fresh open-discovery session assess the complete unattended path.
+A useful reviewed publication or justified independently reviewed no-change outcome can pass; mechanical failure or unchecked novelty cannot.
+The existing conditional main merge remains pending a successful real trial and source verification.
+
+Evaluate review reached, review/publication disposition, preserved essential qualifications and downstream reader use before optimizing token counts.
+Then compare per-stage calls, latency, input/output, cache coverage and repeated work on pinned evidence/model/build/route with unchanged limits.
+Report missing usage and uncontrolled comparisons explicitly; one successful run does not establish a general quality or cost improvement.
+
+* First implementation definition of done
+:PROPERTIES:
+:CUSTOM_ID: first-slice
+:END:
+
+- The new contract explicitly states the same coverage requirements the validator enforces.
+- One diagnostic report names both the ambiguous quote and uncited Talk target in the synthetic E6-shaped proposal.
+- One synthetic correction reaches independent review, with no guard removed and no second hidden defect withheld from the report.
+- Structural/dependency failures and diagnostic truncation remain distinguishable from a complete report.
+- Existing frozen contracts and E6's incomplete state replay unchanged, without native startup or artifact mutation.
+- Targeted proposal/context/editorial/submission tests, static checks and bounded offline profile certification pass as applicable.
+- No live trial, memory publication or main merge occurs under the planning request.
+
+Prepared by Sue (GPT-6 Codex).

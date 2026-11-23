@@ -1,8 +1,18 @@
-#+TITLE: Claude trial stopped at citation coverage; runtime fixes checked, main unchanged
+#+TITLE: Dream authoring plan prepared; E6 incomplete and main unchanged
 #+DATE: 2026-11-23
-#+STATUS: CLAUDE E6 INCOMPLETE; NO REVIEW OR PUBLICATION; MAIN MERGE CONDITION UNMET
+#+STATUS: AUTHORING PLAN PROPOSED; NO IMPLEMENTATION OR NEW LIVE RUN; E6 STILL INCOMPLETE
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Authoring effectiveness plan, 2026-11-23
+
+The human requested a plan after the E6 diagnosis.
+The [[file:../docs/dream/authoring-plan.org][implementation plan]] and [[file:../docs/dream-authoring-ledger.org][grounding ledger]] are prepared for review; no runtime changes or new native calls were made for this request.
+Start with a versioned authoring contract that states the actual strict coverage rule and reports both E6 defects together with their paths/targets.
+Then add bounded reference patches and explicit draft-stage recovery, retaining source/trace proofs and global charges without treating a draft as accepted progress.
+Prepare supported role controls and genuinely protected review time before a controlled pilot; evidence handles, coordinator-generated structure and discovery compaction follow as measured improvements.
+The plan preserves historical replay, tool/admission boundaries, independent review and the existing conditional main-merge gate.
+Its proposed six-call/twenty-minute disposable pilot and any later real trial need separate explicit authorization after offline preparation.
 
 * Claude live trial and checked runtime corrections, 2026-11-23
 
