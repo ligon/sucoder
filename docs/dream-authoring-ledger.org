@@ -7,6 +7,8 @@
 Revise the authoring design against the independent review, preserving existing repair capabilities and making phase continuation and resource accounting explicit.
 The review baseline is =ee23f63= on =coder/dream-main-integration=; runtime remains =60bc79c=, main =cde76f8= and private memory =30e98aa=.
 This ledger and the implementation plan authorize no runtime change, native call, memory publication or main merge.
+The human subsequently set an active goal to implement reviewed changes, conduct a Claude dream sequence and evaluate concrete documentation improvements; that user instruction supplies the expanded authorization.
+Work remains staged, and every native run must receive prepared, recorded limits without reopening E6's expired window.
 The [[file:dream/runs/sucoder-e6.org][E6 report]] is the measured failure case; the [[file:dream/workplan.org][accepted workplan]] preserves explanatory synthesis, open topic choice and justified no-change outcomes.
 
 * 2. Existing machinery and tests
