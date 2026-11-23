@@ -34,7 +34,7 @@ Implementation must run file-qualified upstream impact before editing existing s
 - =sucoder/dream_budget.py=, =Job=; =sucoder/dream_retry.py= :: Durable reservations, shared deadlines/reserves and explicit retry windows.
   =tests/test_dream_recovery.py::test_retry_window_never_replenishes_call_cap_or_its_own_deadline= and =tests/test_dream_budget.py::test_work_deadline_timeout_is_budget_exhausted_with_closeout_time_left= cover preservation of limits.
 - =sucoder/dream_prompt.py=; =sucoder/dream_prompt_native.py:186=, =variants= :: Lossless policy/data projection and complete native policy/schema certification.
-  =tests/test_dream_prompt.py::test_lossless_delivery_preserves_data_authority_and_native_schema= and =tests/test_dream_cache_certify.py::test_uncertified_policy_or_schema_is_rejected_before_reservation= cover the delivery boundary.
+  =tests/test_dream_prompt.py::test_lossless_delivery_preserves_data_authority_and_native_schema= and =tests/test_dream_cache_certify.py::test_uncertified_policy_or_schema_is_rejected_before_launch= cover the delivery boundary.
 
 * 3. Definitions and conventions
 
