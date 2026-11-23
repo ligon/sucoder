@@ -1,7 +1,7 @@
 #+TITLE: Plan for effective dream authoring and repair
 #+AUTHOR: Sue
 #+DATE: 2026-11-23
-#+STATUS: PROPOSED -- planning only; no new native run authorized
+#+STATUS: REVIEWED -- revisions required; no implementation or native run authorized
 #+PROPERTY: header-args :eval never-export :tangle no
 
 * Objective and measured starting point
@@ -174,5 +174,13 @@ Report missing usage and uncontrolled comparisons explicitly; one successful run
 - Existing frozen contracts and E6's incomplete state replay unchanged, without native startup or artifact mutation.
 - Targeted proposal/context/editorial/submission tests, static checks and bounded offline profile certification pass as applicable.
 - No live trial, memory publication or main merge occurs under the planning request.
+
+* Red-team review
+:PROPERTIES:
+:CUSTOM_ID: review
+:END:
+
+The [[file:authoring-review.org][independent review]] found three high-priority first-release design gaps, two pre-pilot requirements and one advisory evaluation refinement.
+The substantive plan above remains the reviewed =51513c4= design; findings are open pending a design revision.
 
 Prepared by Sue (GPT-6 Codex).

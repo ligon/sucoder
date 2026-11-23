@@ -1,8 +1,18 @@
-#+TITLE: Dream authoring plan prepared; E6 incomplete and main unchanged
+#+TITLE: Dream authoring red-team review complete; design revisions open
 #+DATE: 2026-11-23
-#+STATUS: AUTHORING PLAN PROPOSED; NO IMPLEMENTATION OR NEW LIVE RUN; E6 STILL INCOMPLETE
+#+STATUS: AUTHORING DESIGN REVIEWED; THREE HIGH-PRIORITY GAPS OPEN; E6 STILL INCOMPLETE
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Authoring design red-team review, 2026-11-23
+
+The human requested a red-team review of the =51513c4= authoring design.
+Three independent review contexts covered contract/correctness, recovery/accounting and effectiveness/evaluation; Sue checked and consolidated their source/test evidence in the [[file:../docs/dream/authoring-review.org][review record]].
+Three high-priority revisions remain: preserve existing semantic/disposition and duplicate-reference repairs, restore authenticated context authority/accounting on phase continuation, and distinguish logical repair rounds from native attempts.
+Before pilot sign-off, protect reviewer call capacity as well as time and require actual patch-route coverage independently of a legitimate no-change disposition.
+A small held-out semantic/reader quality floor is an advisory refinement before effort/length changes.
+The review found no blocker to milestone 1 as a separate diagnostics slice, but the full first release needs revision.
+Only review status/links were added to the plan; its substantive requirements are unchanged and no runtime implementation, dreaming call, main update or memory publication occurred.
 
 * Authoring effectiveness plan, 2026-11-23
 
