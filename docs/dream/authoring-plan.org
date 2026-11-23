@@ -1,7 +1,7 @@
 #+TITLE: Plan for effective dream authoring and repair
 #+AUTHOR: Sue
 #+DATE: 2026-11-23
-#+STATUS: REVISED -- focused re-review pending; implementation/evaluation goal active
+#+STATUS: REVIEWED -- diagnostics implementation next; broader protocols staged
 #+PROPERTY: header-args :eval never-export :tangle no
 
 * Objective and measured starting point
@@ -250,7 +250,7 @@ Report missing usage and uncontrolled comparisons explicitly; one successful run
 - Structural/dependency failures and diagnostic truncation remain distinguishable from a complete report.
 - Existing frozen contracts and E6's incomplete state replay unchanged, without native startup or artifact mutation.
 - Targeted proposal/context/editorial/submission tests, static checks and bounded offline profile certification pass as applicable.
-- No live trial, memory publication or main merge occurs under the planning request.
+- Design edits do not launch a live job or merge main; authorized implementation/evaluation is prepared and recorded separately.
 
 * Red-team review
 :PROPERTIES:
@@ -258,7 +258,7 @@ Report missing usage and uncontrolled comparisons explicitly; one successful run
 :END:
 
 The [[file:authoring-review.org][initial review]] covers =51513c4=.
-The revised routing, context, round-accounting, review-capacity, pilot-coverage and quality-floor rules above address R1-R6 and are awaiting a focused independent re-review.
+All three focused reviewers found no remaining design blocker in their assigned scopes at =8d255ca=; the [[file:authoring-review.org::#follow-up][follow-up record]] retains their findings and implementation boundary tests.
 The immediate implementation remains milestone 1; later protocols are separate deliverables and do not weaken historical replay or publication gates.
 
 Prepared by Sue (GPT-6 Codex).

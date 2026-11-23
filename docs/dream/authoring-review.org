@@ -1,7 +1,7 @@
 #+TITLE: Red-team review of the dream authoring plan
 #+AUTHOR: Sue
 #+DATE: 2026-11-23
-#+STATUS: REVIEW COMPLETE -- THREE HIGH-PRIORITY DESIGN REVISIONS OPEN
+#+STATUS: FOLLOW-UP COMPLETE -- NO REMAINING REPORTED DESIGN BLOCKERS AT 8D255CA
 #+PROPERTY: header-args :eval never-export :tangle no
 
 * Scope and verdict
@@ -16,11 +16,11 @@ Evidence combines source/test inspection with three existing baseline convergenc
 All three passed in 32.45 seconds: missing-flag repair, rejected-no-change correction and failed-authority correction.
 They establish abilities the new contract must retain; the proposed protocol remains unimplemented.
 
-Revise the full first release before implementing it as specified.
-R1-R3 are high-priority protocol/design gaps; R4-R5 must be resolved before claiming the pilot passes; R6 is advisory before evaluating lower-cost role policies.
+The initial verdict required revision before implementing the full first release as specified.
+R1-R3 were high-priority protocol/design gaps; R4-R5 were pre-pilot requirements and R6 an advisory quality-floor refinement.
 No blocker was found to milestone 1 as an independent, versioned diagnostics slice under its existing acceptance checks.
 That assessment does not authorize runtime work or native calls under this review request.
-The plan's substantive requirements have not been revised; only review status and links have been added.
+The subsequent substantive revision and focused re-review are recorded below; the original findings retain their =51513c4= context.
 
 * Findings
 
@@ -148,9 +148,24 @@ The six-call/twenty-minute allowance is a reasonable proposed smoke-test ceiling
 
 * Disposition
 
-R1-R3 remain open before the full first release; R4-R5 remain open before pilot sign-off.
-R6 is recorded as an evaluation refinement before changing effort/length defaults or claiming improved effectiveness.
-The review does not revise the substantive design, implement code, run dreaming or change main/private memory.
-The next design update should resolve each finding explicitly and retain the corresponding regression/evaluation cases.
+The original review left R1-R3 open for the full release, R4-R5 open for pilot sign-off and R6 as an evaluation refinement.
+The follow-up closes those design findings at the reviewed revision; implementation and live effectiveness remain unverified by design review.
+
+* Focused follow-up at 8d255ca
+:PROPERTIES:
+:CUSTOM_ID: follow-up
+:END:
+
+All three reviewers returned no remaining blocker within their original scopes.
+The revised design preserves general repair and duplicate consolidation, authenticates context continuation, separates logical repair rounds from native attempts, protects reviewer calls/time across review cycles, separates native route exercise from editorial disposition and freezes a held-out source-grounded quality floor.
+The diagnostics-only contract is independently implementable and measurable with the existing full repair and whole-run explicit-attempt semantics.
+It cannot advertise unimplemented patch/checkpoint or review-reservation protocols.
+
+Retain two explicit implementation boundary tests for the later recovery work.
+A schema-valid final reply with nonempty failures closes its logical round even when =Coordinator.check_result= raises before result.json is saved; authenticated raw-return proofs must establish closure.
+Two continuations from one older checkpoint share the same context scope and round state, and cannot regain lookup allowances or dispatch after a final reply closes the round.
+
+The effectiveness reviewer also requested a metadata cleanup to reflect the active implementation/evaluation goal; that does not change the reviewed protocol.
+These are design dispositions, not proof that the proposed code exists or that a native trial succeeds.
 
 Recorded by Sue.

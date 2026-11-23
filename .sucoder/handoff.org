@@ -1,8 +1,22 @@
-#+TITLE: Dream authoring red-team review complete; design revisions open
+#+TITLE: Active authoring implementation and Claude evaluation goal
 #+DATE: 2026-11-23
-#+STATUS: AUTHORING DESIGN REVIEWED; THREE HIGH-PRIORITY GAPS OPEN; E6 STILL INCOMPLETE
+#+STATUS: READY -- REVISED DESIGN CLEARED; IMPLEMENT DIAGNOSTICS THEN EVALUATE CLAUDE DREAMS
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Active implementation/evaluation goal, 2026-11-23
+
+The human set the active goal: "After review, implement changes and conduct a sequence of dreams using claude. Evaluate these dreams in terms of whether they deliver concrete improvements in documentation, etc."
+The revised [[file:../docs/dream/authoring-plan.org][design]] is committed at =8d255ca=; all three focused reviewers found no remaining blocker in their scopes, recorded in the [[file:../docs/dream/authoring-review.org::#follow-up][follow-up]].
+Proceed with the recommended diagnostics-first implementation using the current full repair path, unless the human answers the pending scope preference differently.
+The larger patch/checkpoint/resource protocols remain separate milestones and must not be claimed as implemented by the diagnostics slice.
+
+Next: inspect the existing editor/validator/version dispatch, run upstream impact before symbol edits, implement a versioned complete-diagnostics contract while preserving v1-v5 replay, and run targeted/offline checks.
+Then use a recorded fixed-evidence Claude validation case (at most six calls/twenty minutes), followed by two fresh real SuCoder dreams (at most 32 calls/thirty minutes each), evaluating accepted documentation changes and source-grounded usefulness.
+These operational bounds stage the human's newly authorized sequence; prepare source/profile/authentication and freeze each job's limits before starting its clock.
+Keep the existing subscription/model route unless explicitly changed, retain every failed/unknown reservation and do not reopen E6's expired window or rewrite its artifacts.
+No native evaluation job has started under the new goal yet.
+Main and private memory remain unchanged at this handoff update; retain the conditional successful-real-trial/source-verification gate before merging main.
 
 * Authoring design red-team review, 2026-11-23
 
