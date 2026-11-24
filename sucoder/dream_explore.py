@@ -109,7 +109,7 @@ def _job(path):
         dream._object(header, ("contract", "job_id", "directory", "created_at", "project", "settings", "purpose", "budget_path"),
                       ("mode", "navigation_version", "leads", "memory_origin", "navigation_limits", "processing",
                        "inventory_sha256", "discovery_allocation", "prompt_profile", "submission_contract", "authoring_version"))
-        if "authoring_version" in header and (type(header["authoring_version"]) is not int or header["authoring_version"] not in (6, 7)):
+        if "authoring_version" in header and (type(header["authoring_version"]) is not int or header["authoring_version"] not in (6, 7, 8)):
             raise DreamError("Invalid frozen authoring version", 3)
         from . import dream_submission
         dream_submission.validate(header.get("submission_contract"))
@@ -238,7 +238,7 @@ def prepare(config, job_path=None, *, cwd=None, overrides=None, budget_path=None
                 project_binding["memory_ref"] = memory_ref
             header = dict(contract=CONTRACT, job_id=job_id, directory=str(directory), created_at=time.time(),
                 project=project_binding, settings=frozen, purpose=purpose, budget_path=str(target), mode=mode,
-                authoring_version=7)
+                authoring_version=8)
             from . import dream_submission
             header["submission_contract"] = dream_submission.CONTRACT
             if prompt_profile is not None:

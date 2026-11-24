@@ -11,7 +11,11 @@ import pytest
 from sucoder import dream, dream_context, dream_diagnostics as diag, dream_editor, dream_handles as handles, dream_progress, dream_run, dream_transcript, dream_wiki as wiki
 from tests.test_dream import git, workspace  # noqa: F401
 from tests.test_dream_context import request
-from tests.test_dream_wiki import EditorTransport, POLICY, TOPIC, planned
+from tests.test_dream_wiki import EditorTransport, POLICY, TOPIC, planned as current_plan
+
+
+def planned(workspace):
+    return current_plan(workspace, authoring_version=7)
 
 
 def unit(text="same\n\nsame\n\n", origin=17):

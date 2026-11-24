@@ -185,7 +185,7 @@ def test_historical_job_without_editorial_plan_keeps_v5(workspace):
     prepared = dream_explore.prepare(workspace[2], cwd=workspace[0], overrides=options())
     directory = Path(prepared["job_path"])
     header = json.loads((directory / "job.json").read_bytes())
-    assert header.pop("authoring_version") == 7
+    assert header.pop("authoring_version") == 8
     # Construct the pre-v6 frozen header fixture before any provider work.
     (directory / "job.json").write_bytes(dream.canonical(header) + b"\n")
     (directory / "identity.json").write_bytes(dream.canonical(dict(sha256=dream.digest(dream.canonical(header)))) + b"\n")

@@ -301,7 +301,7 @@ def _prior_wiki(source, base, limits, *, topic=None, units=(), policy="all-activ
 
 def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, inspection_deadline=None,
                prior_policy="bounded-prior-v1", publication=None, pinned_base=None, project_commit=None, editorial_version=None,
-               memory_origin=None, authoring_version=7):
+               memory_origin=None, authoring_version=8):
     """Freeze selections, never imply inference or shared completion.
 
     ``publication="in_place"`` (essay-alignment S1) records that a reviewed
@@ -434,9 +434,9 @@ def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, i
         plan["prior_support"] = dream_support.collect(target, prior["files"], identity["repository_uuid"])
     elif editorial_version != 1:
         raise DreamError("Unsupported editorial plan version")
-    if type(authoring_version) is not int or authoring_version not in (5, 6, 7):
+    if type(authoring_version) is not int or authoring_version not in (5, 6, 7, 8):
         raise DreamError("Unsupported authoring plan version")
-    if authoring_version in (6, 7):
+    if authoring_version in (6, 7, 8):
         plan["authoring_version"] = authoring_version
     if project_commit is not None:
         project = project_files(target, project_commit)
@@ -491,7 +491,7 @@ def _open_private_directory(path):
 
 
 def create_plan(config, mirror, sources, base, *, maintenance=None, topic=None, publication=None,
-                project_commit=None, memory_origin=None, inspection_deadline=None, authoring_version=7):
+                project_commit=None, memory_origin=None, inspection_deadline=None, authoring_version=8):
     """``publication=None`` derives in-place publication from the mirror's
     configured memory branch, so an explicit plan against it behaves like a
     bare dream; any other base keeps candidate publication."""

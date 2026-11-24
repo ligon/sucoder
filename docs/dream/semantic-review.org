@@ -1,0 +1,76 @@
+#+TITLE: Dream semantic review gate
+#+AUTHOR: Sue
+#+DATE: 2026-11-24
+
+* Failure and scope
+:PROPERTIES:
+:CUSTOM_ID: purpose
+:END:
+
+In [[file:runs/sucoder-e9.org][E9]], exact evidence handles and mechanical checks passed, and the native reviewer accepted a draft whose publication was subsequently withdrawn.
+The draft collapsed distinct failure causes, generalized one host report, converted an unknown transfer outcome to a negative claim, lost process linkage and omitted a table's project identity.
+Its index introduced an unsupported causal summary.
+Exact quotations cannot establish that the prose preserves their meaning.
+
+Fresh plans and exploratory headers select =authoring_version: 8= and =source-grounded-wiki-v8=.
+V8 extends the existing reviewer and full-proposal repair loop; source admission, context accounting, human authority, native isolation, call/time ceilings and compare-and-swap publication remain the existing machinery.
+The [[file:../dream-authoring-ledger.org][grounding ledger]] records reuse decisions and deferred work.
+V1-v7 policies, schemas and replay remain frozen; absent historical version fields still select v5.
+
+* Coordinator-generated review units
+:PROPERTIES:
+:CUSTOM_ID: units
+:END:
+
+After mechanical acceptance, the coordinator supplies =candidate.review_gate=.
+Its namespace binds the run identity, complete materialized proposal, frozen prior hashes and output bytes.
+Each changed output has one unit with path, before/after SHA-256 and a unified diff, including the index and coordinator-generated pages.
+The diff exposes deleted caveats alongside added claims; the reviewer still receives the full candidate, delivered sources, prior context and inherited support.
+No-change has one explicit disposition unit and still requires review for useful omissions or necessary repairs.
+
+The frozen bounds are 128 units, 128 KiB of total diff text and 256 KiB of serialized manifest.
+Exhaustion fails explicitly; no page or diff is silently omitted.
+Dynamic identifiers remain bound request data, preserving stable policy/schema prefixes for supported prompt caching.
+The manifest is navigation and binding metadata, not evidence for its own claims.
+
+* Required judgments
+:PROPERTIES:
+:CUSTOM_ID: checks
+:END:
+
+The reviewer returns exactly one =page_checks= row per current unit.
+Every row contains these checks, each with status =pass=, =fail= or =uncertain=, a concrete reason and optional delivered evidence handles:
+
+- Support :: Check the actual evidence for new factual assertions and preserve reported versus demonstrated status.
+- Scope :: Preserve project, host, sample and experiment boundaries.
+- Time :: Preserve dates and distinguish proposals, historical reports and current state.
+- Causality :: Check causes independently rather than assigning one cause to several different failures.
+- Outcomes :: Unknown is not nonoccurrence, failure or completion; aggregate outcomes need linkage to establish a particular process's result.
+- Attribution :: Preserve speakers, projects and table-row provenance; verify any claimed recovery of omitted detail from prose.
+- Preservation :: Inspect removed uncertainty, caveats, counterexamples and useful detail.
+- Summary :: Independently check index blurbs, titles, summaries and tables against the underlying evidence and detailed pages.
+
+Missing, duplicate or stale rows, blank reasons, undelivered handles and any failed or uncertain judgment create blocking findings regardless of an accepting overall verdict or advisory findings.
+Lookup-only replies require an empty matrix; final checks follow context delivery.
+Repair receives these findings through the existing loop and must submit a complete proposal for another independent review.
+No extra semantic rounds or calls are granted.
+
+Receipts retain the manifest and final review.
+Shared reuse validates bounded manifest integrity, identifiers, output hashes, coverage and the complete passing matrix; malformed shared metadata supplies no coverage.
+Status reconstructs the same assignments and proof without inference.
+Fresh v8 plans cannot reuse v1-v7 acceptance as proof of this gate; historical plans retain their original behavior.
+New stable delivery requires certifying the current native policy/schema catalog.
+
+* Acceptance and limits
+:PROPERTIES:
+:CUSTOM_ID: acceptance
+:END:
+
+Offline tests establish coverage, binding, blocking decisions, repair and replay; they cannot show that a model judges support correctly.
+A reviewer may still mark an unsupported claim as passing.
+Publication-disabled calibration must therefore test the withdrawn E9 draft and a corrected proposal without exposing expected answers in their assignments.
+Private historical job files remain immutable; calibration has its own recorded allowance and cannot reopen E9's wallet.
+No new memory-publishing trial is justified by schema validation alone.
+
+This slice does not introduce a second model vote, byte-preserving patches, durable phase checkpoints or reserved reviewer budgets.
+It makes the required review visible and enforceable, while leaving semantic effectiveness an empirical question.

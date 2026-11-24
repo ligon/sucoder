@@ -7,7 +7,8 @@
 :CUSTOM_ID: contract
 :END:
 
-New plans and exploratory headers freeze =authoring_version: 7= and =source-grounded-wiki-v7=.
+V7 introduced =authoring_version: 7= and =source-grounded-wiki-v7=.
+Fresh plans now select [[file:semantic-review.org][v8 semantic review]], retaining the handle machinery described here.
 The author and repair select evidence with ={"handle":"ev-...-1"}= in =references[].citations= and =task_actions[].evidence=.
 Python supplies the exact quotation and absolute UTF-8 offsets; repeated text at different source positions has distinct handles.
 V1-v6 briefs, schemas, identities and replay remain frozen; absent historical version fields still select v5.

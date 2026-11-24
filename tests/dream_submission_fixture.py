@@ -9,13 +9,19 @@ def source_text(source):
 
 
 def handle_reply(task, result):
-    """Adapt old semantic fakes to selecting the supplied v7 passages."""
-    if task["contract"] != "source-grounded-wiki-v7" or result is None:
+    """Adapt old semantic fakes to supplied handles and explicit review checks."""
+    if task["contract"] not in ("source-grounded-wiki-v7", "source-grounded-wiki-v8") or result is None:
         return
     result.setdefault("requests", [])
     reviewer = task["role"] == "reviewer"
     result.setdefault("task_checks" if reviewer else "task_actions", [])
     if reviewer:
+        if task["contract"] == "source-grounded-wiki-v8":
+            from sucoder import dream_review
+            rows = [] if result.get("verdict") == "lookup" else [dict(unit_id=unit["unit_id"],
+                **{name: dict(status="pass", reason="Fixture checks the supplied source and frozen prior.", evidence=[])
+                   for name in dream_review.CATEGORIES}) for unit in task["input"]["candidate"]["review_gate"]["units"]]
+            result.setdefault("page_checks", rows)
         return
     result.setdefault("decision", "change")
     result.setdefault("rationale", "Apply the source-grounded fixture correction.")
@@ -36,7 +42,7 @@ def handle_reply(task, result):
 
 def native_reply(task, result, usage, trace, request=None):
     handle_reply(task, result)
-    if "submission_contract" not in task and task["contract"] != "source-grounded-wiki-v7":
+    if "submission_contract" not in task and task["contract"] not in ("source-grounded-wiki-v7", "source-grounded-wiki-v8"):
         return result, usage, trace
     if "submission_contract" in task:
         trace["submission"] = dream_submission.manifest(task, request)
