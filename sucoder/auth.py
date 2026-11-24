@@ -127,12 +127,34 @@ def _write_agent_auth_json(executor: CommandExecutor, agent_codex_home: str, blo
     )
 
 
+def _is_codex_subscription(blob: str) -> bool:
+    """Whether an auth.json blob holds a subscription login, not an API key.
+
+    Backing up whatever is present would let a second switch to apikey replace
+    the only copy of the subscription login with the API key itself.
+    """
+    try:
+        data = json.loads(blob)
+    except ValueError:
+        return False
+    return (
+        isinstance(data, dict)
+        and data.get("auth_mode", "chatgpt") != "apikey"
+        and bool(data.get("tokens"))
+    )
+
+
 def _codex_backup_subscription(
     config: Config, executor: CommandExecutor, cfg: HarnessAuthConfig, logger: logging.Logger,
 ) -> None:
     agent_home = _agent_codex_home(config)
     blob = _read_agent_auth_json(executor, agent_home)
     if blob is None:
+        return
+    if not _is_codex_subscription(blob):
+        logger.info(
+            "codex is not logged in to a subscription; keeping any existing backup."
+        )
         return
     sub_cred = cfg.subscription_credential or _HARNESSES["codex"][2]
     if sub_cred and sub_cred in config.credentials:
@@ -193,6 +215,12 @@ def codex_to_subscription(
     if not blob:
         raise AuthError(
             "No codex subscription backup found. Run `codex login` as the agent "
+            "account to restore ChatGPT authentication."
+        )
+    if not _is_codex_subscription(blob):
+        raise AuthError(
+            "The codex subscription backup holds no subscription login (it may be "
+            "an API key); nothing was changed. Run `codex login` as the agent "
             "account to restore ChatGPT authentication."
         )
     _write_agent_auth_json(executor, agent_home, blob)

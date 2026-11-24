@@ -172,6 +172,52 @@ def test_codex_to_subscription_restores_from_pass(tmp_path):
     assert executor.agent_writes[f"{_AGENT_HOME}/auth.json"] == '{"tokens": "sub"}'
 
 
+_APIKEY_BLOB = json.dumps({"auth_mode": "apikey", "OPENAI_API_KEY": "sk-old"})
+
+
+@pytest.mark.parametrize("blob", [
+    _APIKEY_BLOB, '{"OPENAI_API_KEY": "sk-old"}', '{"auth_mode": "chatgpt", "tokens": null}',
+    '{"auth_mode": "apikey", "tokens": {"access_token": "stale"}}', "[]", "not json",
+])
+def test_codex_second_apikey_switch_keeps_subscription_backup(tmp_path, blob):
+    config = _make_config(tmp_path, openai="openai.com/apikey")
+    executor = _FakeExecutor(
+        {"openai.com/apikey": "sk-new"},
+        agent_files={
+            f"{_AGENT_HOME}/auth.json": blob,
+            f"{_AGENT_HOME}/auth.json.sucoder-bak": '{"tokens": "sub"}',
+        },
+    )
+    auth.codex_to_apikey(config, executor, HarnessAuthConfig(mode="apikey", apikey_credential="openai"),
+                         logging.getLogger("test"))
+    assert executor.agent_files[f"{_AGENT_HOME}/auth.json.sucoder-bak"] == '{"tokens": "sub"}'
+    assert json.loads(executor.agent_files[f"{_AGENT_HOME}/auth.json"])["OPENAI_API_KEY"] == "sk-new"
+
+
+def test_codex_second_apikey_switch_keeps_pass_backup(tmp_path, monkeypatch):
+    config = _make_config(
+        tmp_path, openai="openai.com/apikey", **{"codex-chatgpt-auth": "codex/chatgpt-auth.json"}
+    )
+    executor = _FakeExecutor(
+        {"openai.com/apikey": "sk-new"}, agent_files={f"{_AGENT_HOME}/auth.json": _APIKEY_BLOB},
+    )
+    monkeypatch.setattr(auth, "_run_pass_insert", lambda *a: pytest.fail("overwrote pass backup"))
+    cfg = HarnessAuthConfig(
+        mode="apikey", apikey_credential="openai", subscription_credential="codex-chatgpt-auth",
+    )
+    auth.codex_to_apikey(config, executor, cfg, logging.getLogger("test"))
+
+
+def test_codex_to_subscription_refuses_apikey_backup(tmp_path):
+    current = '{"tokens": "current"}'
+    executor = _FakeExecutor(agent_files={
+        f"{_AGENT_HOME}/auth.json": current, f"{_AGENT_HOME}/auth.json.sucoder-bak": _APIKEY_BLOB,
+    })
+    with pytest.raises(auth.AuthError, match="holds no subscription login"):
+        auth.codex_to_subscription(_make_config(tmp_path), executor, HarnessAuthConfig(), logging.getLogger("test"))
+    assert executor.agent_files[f"{_AGENT_HOME}/auth.json"] == current
+
+
 def test_codex_to_subscription_without_backup_raises(tmp_path):
     config = _make_config(tmp_path)
     executor = _FakeExecutor()
