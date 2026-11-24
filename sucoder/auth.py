@@ -227,6 +227,34 @@ def codex_to_subscription(
     logger.info("Restored the agent account's codex subscription auth.json.")
 
 
+def _is_codex_apikey(blob: str) -> bool:
+    """Whether an auth.json blob authenticates with an API key."""
+    try:
+        data = json.loads(blob)
+    except ValueError:
+        return False
+    if not isinstance(data, dict) or _is_codex_subscription(blob):
+        return False
+    return data.get("auth_mode") == "apikey" or bool(data.get("OPENAI_API_KEY"))
+
+
+def codex_ensure_subscription(
+    config: Config, executor: CommandExecutor, cfg: HarnessAuthConfig, logger: logging.Logger,
+) -> bool:
+    """Undo an earlier API-key switch; return whether a login was restored.
+
+    The switch rewrites the shared auth.json and outlives the launch that made
+    it, so a later subscription launch would otherwise keep billing the key.
+    Anything but an API key (a login, no file, an unknown form) is left alone.
+    Raises AuthError when a key is in place and no login can be restored.
+    """
+    blob = _read_agent_auth_json(executor, _agent_codex_home(config))
+    if blob is None or not _is_codex_apikey(blob):
+        return False
+    codex_to_subscription(config, executor, cfg, logger)
+    return True
+
+
 def codex_status(executor: CommandExecutor, config: Config) -> AuthStatus:
     result = executor.run_agent(
         ["codex", "login", "status"],

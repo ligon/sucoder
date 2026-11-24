@@ -2522,6 +2522,27 @@ class MirrorManager:
         except auth_mod.AuthError as exc:
             raise MirrorError(str(exc)) from exc
 
+    def _codex_auth_to_subscription(
+        self, launcher: AgentLauncher, agent_name: str, *, explicit: bool,
+    ) -> None:
+        """Restore the subscription login if an earlier launch left an API key.
+
+        An explicit ``--auth subscription`` that cannot be honored fails rather
+        than bill the key.  A configured mode (``subscription`` is the parsed
+        default of an ``auth.codex`` block) only warns, so an account that has
+        only ever used its own API key still launches.
+        """
+        cfg = self._launcher_auth_config(launcher, agent_name)
+        try:
+            auth_mod.codex_ensure_subscription(self.config, self.executor, cfg, self.logger)
+        except auth_mod.AuthError as exc:
+            if explicit:
+                raise MirrorError(str(exc)) from exc
+            self.logger.warning(
+                "codex is configured for subscription auth but will use the API "
+                "key in the agent's auth.json: %s", exc,
+            )
+
     def _codex_auth_base_url(
         self, launcher: AgentLauncher, agent_name: str, credential: str,
     ) -> Optional[str]:
@@ -3923,6 +3944,14 @@ class MirrorManager:
                 f"not {agent_name!r}."
             )
         self._auth_helper_path: Optional[str] = None
+        if (
+            auth_mode == "subscription"
+            and self._detected_agent_type == AgentType.CODEX
+            and not ctx.is_remote  # a remote target has its own CODEX_HOME
+        ):
+            self._codex_auth_to_subscription(
+                launcher, agent_name, explicit=auth_override is not None,
+            )
         if auth_mode == "apikey":
             if self._detected_agent_type == AgentType.CODEX:
                 if ctx.is_remote:

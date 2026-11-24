@@ -2359,7 +2359,16 @@ agent_launcher:
 #+end_src
 
 =--auth subscription|apikey= overrides configuration for one launch and works
-for terminal and remote-control codex launches alike. The deprecated flat keys
+for terminal and remote-control codex launches alike. For codex, though, the
+file the launch rewrites is shared: after =--auth apikey= the key stays in
+=auth.json= until something restores the login. A local codex launch whose mode
+is =subscription= (from =--auth= or =agent_launcher.auth.codex=) does so when it
+finds an API key there, so =sucoder auth apikey= lasts only until the next such
+launch. Where no mode is configured, launches leave =auth.json= as they find it.
+If no login can be restored, =--auth subscription= fails and a configured mode
+warns and launches with the key. Do not mix modes in concurrent sessions.
+
+The deprecated flat keys
 =codex_auth= / =codex_auth_credential= (and =--codex-auth=) still map onto the
 generic codex settings. See [[*Provider credentials from =pass=][Provider credentials]].
 
