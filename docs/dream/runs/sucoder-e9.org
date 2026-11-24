@@ -1,0 +1,145 @@
+#+TITLE: SuCoder E9: evidence handles work, publication fails the source-quality check
+#+AUTHOR: Sue
+#+DATE: 2026-11-24
+
+* Result
+:PROPERTIES:
+:CUSTOM_ID: result
+:END:
+
+E9 completed eight native calls and published private memory =602ba351= in 845.32 seconds under its original 32-call/1,800-second ceiling.
+All submitted evidence handles resolved without quotation or identifier errors.
+One mechanical repair was still needed for an uncited changed section.
+The independent reviewer accepted with three advisory findings.
+
+The separate root source check rejected substantive claims in the publication.
+An additive operator revert, =fb695456=, restores exactly the previously reviewed =4b529b1= tree while retaining =602ba351= as its parent.
+The generated read-only wiki copy was refreshed from that restored tree.
+E9 and all its native evidence remain in history; no new model call was used for withdrawal.
+No documentation improvement from this publication remains active.
+
+* Runtime and allowance
+:PROPERTIES:
+:CUSTOM_ID: runtime
+:END:
+
+The runtime and project evidence were both pinned to local main =4c568669c6f2d6afe6527c563eb4b73dfa2eb243=, containing the reviewed v7 implementation =fbc6d14=.
+The root-owned system installation was unavailable for replacement by coder.
+A source-only bundle was cloned into the account-owned, detached release at =/home/coder/.local/share/sucoder/releases/4c568669c6f2d6afe6527c563eb4b73dfa2eb243/src=.
+The local command =/home/coder/bin/sucoder-v7= uses that frozen source and the existing Python 3.12 Poetry environment, with =PYTHONSAFEPATH=1= and its explicit release =PYTHONPATH=.
+Its version banner is =0+g4c56866=; the source-only bundle has no version-tag refs.
+The ordinary system wrapper and its root-owned relay target remain the preceding installation.
+
+Claude Code =2.1.330=, =claude-sonnet-4-6=, the coder Max subscription and the certified =stable= layout were used.
+The current fourteen-policy profile loaded before launch.
+The first local helper incorrectly supplied =--no-agent-sudo= before =dream=, which accepts only =--config= there; argument validation rejected it before job creation.
+The helper was corrected before the actual allowance began, and the failed invocation logs were preserved.
+
+The durable job is =07f2f7d6c1834d53896e52e181edf9dd=.
+It ran in project mode with the same open purpose as E8, a fixed sixteen-call discovery ceiling, 128 KiB navigation delivery and the existing thirty-second/three-call closeout reserves.
+All phases shared one 32-call/1,800-second wallet.
+There was no native retry, new elapsed window, account switch or extra inference after publication.
+Twenty-four calls remained unused; hard token/currency caps were not asserted.
+
+* Selection and mechanical behavior
+:PROPERTIES:
+:CUSTOM_ID: mechanics
+:END:
+
+Discovery finished after five calls, selecting only the complete 94-line =.sucoder/handoffs/2026-11-14-dream-directions.org= note, 8,712 bytes.
+That source is dated November 14 and explicitly marked PROPOSED.
+Its introduction says nothing there is decided and the human picks the direction.
+It reports historical launches, limitations and possible next work; it is not a fresh operational survey.
+
+The author received twenty-one labeled passages and a 4,624-byte registry.
+Its initial prior wiki contained 25,291 text bytes, with another 16,132 bytes of receipt-backed prior support.
+Those prior inputs still outweighed the selected source and its annotation overhead.
+Handles remove literal quotation selection from the author; they do not make the input context smaller by themselves.
+
+The author rewrote =topics/savio-dream-launch.org= and its index entry.
+Its only mechanical finding was =reference_missing= for =launch-traps=.
+The section's displayed source-location discussion had merely changed typographic quotation marks to ASCII, but the resulting bytes differed and therefore required a reference under the strict changed-anchor rule.
+The repair supplied references and returned the full proposal; independent review then ran.
+This is an observed remaining cost of full-page editing, which byte-preserving section edits could address separately.
+
+| Role     | Calls | Native seconds | Input tokens | Output tokens | Reported thinking |
+|----------+-------+----------------+--------------+---------------+-------------------|
+| Explorer |     5 |         130.88 |       43,647 |         7,202 |             4,801 |
+| Author   |     1 |         364.77 |       29,816 |        20,489 |            15,897 |
+| Repair   |     1 |         223.77 |       34,118 |        13,276 |             8,858 |
+| Reviewer |     1 |         112.86 |       35,767 |         5,792 |             5,191 |
+
+The eight completed calls report 143,348 total input tokens, comprising 136,560 cache writes, 6,764 cache reads and 24 uncached input tokens, plus 46,759 output tokens.
+Reported thinking totals 34,747; it is not added again to the output total.
+All eight calls have usage counters, and cache reads represent 4.72 percent of reported input.
+Provider-reported currency is unavailable; the CLI's price estimate is not a subscription invoice.
+Different discovery choices, evidence and prior context prevent a causal savings comparison with E7 or E8.
+
+* Source-quality rejection
+:PROPERTIES:
+:CUSTOM_ID: quality
+:END:
+
+A generic reader rubric was frozen before launch.
+A source-specific key was frozen after evidence selection and before inspection of author output, outside all native construction inputs.
+Root checked the publication against the original source and pinned prior wiki.
+
+- Refusal causes :: The index says Rocky 8's absence of Landlock refused all four attempts. The source lists four distinct causes: missing configuration, NFS locking, the inventory bound and then Landlock. It does not establish a common Landlock cause.
+- Fleet scope :: The page weakens its prior explicit distinction between one delivered probe and fleet-wide/current state. A dated agent OS attribution supplies no node-by-node kernel inventory, despite the new strong fleet-wide presumption.
+- Transfer outcome :: The page asserts that Savio memory transfer has not occurred. The source only records an unresolved November 14 question; it establishes neither a negative outcome then nor current status.
+- Process linkage :: Aggregate reports that some runs published do not identify the particular earlier observed vantage process as one of those completed runs. The prior explicit qualification was removed.
+- Project identity :: The new table drops the project column and its Run 6 paragraph does not name SuCoder. The reviewer called this an advisory loss compensated by prose, but the relevant prose does not supply that identity.
+
+The reviewer instead emphasized two omitted historical patterns, a lost file-location detail and the table layout.
+It returned no blocking findings.
+Thus exact citation provenance and a successful independent-review call did not establish a sound correction.
+The new dated run table has potential navigational value, but the publication as a whole fails the frozen quality check.
+
+* Withdrawal and evidence
+:PROPERTIES:
+:CUSTOM_ID: evidence
+:END:
+
+The [[file:../essay-alignment.org][memory contract]] records later reverts as new commits on top of the generation.
+Root used a compare-and-swap ref transaction requiring memory to remain at =602ba351=, and created =fb695456= with exactly the =4b529b1= tree and =602ba351= as parent.
+The source-quality findings are recorded in the operator commit message; no fabricated native rejection or review was added.
+The original job still reports its historical published outcome, as the contract specifies for an ancestor of a later revert.
+Use the withdrawal record to distinguish that publication event from currently active contents.
+
+Read-only replay before and after withdrawal forbids native/build/authentication access.
+It verifies all eight raw bodies, frozen assignments, prompt/submission manifests, traces, usage and exact handle/quotation/range bindings, preserving all 130 job files.
+The pinned runtime's source hashes remain unchanged.
+Only the wiki index, Savio page and new receipt were changed by the original publication; the operator revert restores the entire earlier tree.
+
+Artifacts are under =/home/coder/.sucoder/logs/dream-handles-live/2026-11-24/=:
+
+- =launch-manifest.json= and =e9-launch-2.json= record the actual pinned launch.
+- =reader-rubric.json= and =e9-answer-key.json= record the held-out checks.
+- =e9-audit.json= and =e9-audit-after-withdrawal.json= verify the original event and immutable proofs.
+- =e9-quality.json=, =e9-withdrawal.json= and =post-withdrawal-status.json= distinguish root rejection, withdrawal and historical status.
+- =proposed-savio-dream-launch.org= and =proposed-savio-correction.patch= retain an unreviewed, unpublished correction proposal with the useful run table and restored qualifications.
+
+The read-only audit can be repeated with a fresh output filename:
+
+#+begin_example
+PYTHONSAFEPATH=1 \
+PYTHONPATH=/home/coder/.local/share/sucoder/releases/4c568669c6f2d6afe6527c563eb4b73dfa2eb243/src \
+/home/coder/.cache/pypoetry/virtualenvs/sucoder-_hu1CrVA-py3.12/bin/python \
+  /home/coder/.sucoder/logs/dream-handles-live/2026-11-24/audit-e9.py \
+  --output /home/coder/.sucoder/logs/dream-handles-live/2026-11-24/audit-new.json
+#+end_example
+
+* What this trial establishes
+:PROPERTIES:
+:CUSTOM_ID: takeaway
+:END:
+
+V7 handles worked in a real author/repair/review sequence without literal-copy or handle failures.
+Full-page formatting changes still consumed the single repair round.
+The more consequential failure is semantic: the reviewer accepted strengthened scope, unsupported negative outcome and lost provenance distinctions despite the prior page and dated source being available.
+No new wiki improvement from this run remains active after withdrawal.
+
+The next design priority is a blocking check of claim changes, especially removed qualifications, causal aggregation, negative outcomes and index summaries.
+Coordinator-supplied before/after section differences can focus that review while retaining the full candidate and evidence.
+Byte-preserving edits remain a separate way to avoid repair work on untouched prose.
+Further cost or caching claims require a controlled evaluation after the source-quality gate succeeds.

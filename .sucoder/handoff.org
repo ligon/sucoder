@@ -1,10 +1,43 @@
-#+TITLE: Evidence handles implementation
-#+DATE: 2026-11-23
-#+STATUS: COMPLETE -- REVIEWED V7 ON LOCAL MAIN; OFFLINE CHECKS AND CERTIFICATION COMPLETE
+#+TITLE: V7 live trial E9: publication withdrawn after source-quality check
+#+DATE: 2026-11-24
+#+STATUS: COMPLETE -- PINNED LOCAL RUNTIME STAGED; E9 QUALITY-REJECTED AND WITHDRAWN
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
-* Evidence handles after latest review, 2026-11-23
+* V7 live trial E9, 2026-11-24
+
+The human said "Okay, let's go" after the reviewed v7 implementation and proposal for deployment/live validation.
+The [[file:../docs/dream/runs/sucoder-e9.org][E9 report]] records the result and limitations.
+A source-only frozen release at =/home/coder/.local/share/sucoder/releases/4c568669c6f2d6afe6527c563eb4b73dfa2eb243/src= is available through =/home/coder/bin/sucoder-v7=.
+It uses the existing Poetry interpreter, explicit release PYTHONPATH and PYTHONSAFEPATH.
+The default root-owned system installation and relay target remain older; no privileged install was attempted.
+Use =sucoder-v7 dream ...= for the pinned implementation.
+
+Job =07f2f7d6c1834d53896e52e181edf9dd= used Claude Code 2.1.330, =claude-sonnet-4-6=, the coder Max subscription and stable delivery against project/runtime =4c56866=.
+Its original ceiling was 32 calls/1,800 seconds, with thirty seconds and three calls for closeout.
+It completed eight calls in 845.32 seconds: five discovery, one author, one mechanical repair and one independent reviewer.
+All handles resolved; the repair was needed only because typographic quote changes in the otherwise unchanged launch-traps section triggered strict changed-anchor coverage.
+The reviewer accepted with three advisories and published private memory =602ba351e092520bb65b17d953d4f348ba12699b=.
+
+Root's frozen source-quality check rejected the publication: it made Landlock the cause of four differently caused refusals, strengthened fleet-wide/current claims, asserted an unobserved negative transfer outcome, weakened the particular-process qualification and lost Run 6's explicit SuCoder identity.
+An additive operator revert =fb6954565c4eeccec1b712602c3e7e3092353b8d= restores exactly the prior =4b529b1= tree with =602ba351= retained as its parent.
+The read-only wiki copy has been refreshed and matches that restored tree.
+The original job still reports its historical published event, as the memory contract specifies after a later revert; do not mistake that for current acceptance of its contents.
+All 130 job files, raw native replies and publication evidence remain unchanged.
+No additional inference, native retry or elapsed-window extension occurred; 24 calls remained unused.
+
+Artifacts are under =/home/coder/.sucoder/logs/dream-handles-live/2026-11-24/=.
+Read-only audits before and after withdrawal forbid native/build/authentication access and verify assignment, submission, trace, usage, registry and exact citation bindings.
+An unreviewed, unpublished correction proposal retains the useful dated run table with restored source qualifications.
+The run reports 143,348 input tokens, 6,764 cache reads and 46,759 output tokens; this is not a controlled savings comparison or a billing statement.
+No new documentation improvement from E9 remains active.
+The next priority is a blocking source-quality check for claim changes and index summaries; byte-preserving edits remain useful for avoiding mechanical repair work.
+No native job or follow-up inference is running or queued.
+Private memory must never be pushed; GitHub publication remains on the existing maintainer-side transport.
+
+Sue.
+
+* Completed evidence handles implementation, 2026-11-23
 
 The human requested review of the most recent findings and proceeding with implementation.
 The v7 handle slice is committed on local main at =fbc6d14= after grounding commit =15bffb2=.
