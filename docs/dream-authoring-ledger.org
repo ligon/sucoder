@@ -186,3 +186,19 @@ The context lookup impact is CRITICAL with 335 direct and 39 depth-two indexed d
 The final staged check reports the expected context hooks, new registry/editor and version-dispatch/test surface, with broad unrelated flow names rather than an asserted complete call graph.
 Ledger verification is OK against sections 2-5: exact-byte checks, native authority, source admission, lookup accounting, full repair/review and publication remain reused; the new registry supplies selection/provenance mechanics.
 Installed deployment, GitHub publication and a bounded live effectiveness trial remain separate steps.
+
+* 9. E9 live disposition
+
+The human authorized proceeding on November 24.
+An account-owned, detached =4c56866= runtime is available as =sucoder-v7=; the root-owned default installation was not replaced.
+The [[file:dream/runs/sucoder-e9.org][E9 report]] records eight completed Claude calls within the original 32-call/1,800-second allowance, with no handle/quotation failures.
+One full-proposal repair addressed changed-anchor coverage caused by typographic quote normalization.
+The reviewer accepted with three advisories, but the frozen root check found blocking scope, causality, negative-outcome and provenance losses.
+
+Private publication =602ba351= was withdrawn by additive operator revert =fb695456=, restoring exactly the =4b529b1= tree and retaining the original publication as parent.
+This is an operator withdrawal of new claims, not a fabricated native review or a reset behind the generation.
+All 130 job files and raw replies remain unchanged; the generated wiki copy matches the restored tree.
+No new documentation improvement remains active, and the correction proposal is unreviewed and unpublished.
+Native/build/authentication-forbidden replay passes before and after withdrawal; runtime source hashes remain unchanged.
+The trial is finished with eight calls consumed and no additional inference queued.
+Evidence handles have one real mechanical-route witness, while semantic publication quality remains unresolved.
