@@ -1,16 +1,16 @@
 #+TITLE: Dream authoring effectiveness prior-art ledger
 #+AUTHOR: Sue
-#+DATE: 2026-11-23
+#+DATE: 2026-11-24
 
 * 1. Task and baseline
 
-Implement coordinator-managed evidence handles after reviewing their interaction with R2's context authority and accounting requirements.
-The current source baseline is clean local main =dd15432=, with v6 runtime =0ff65ab= and private memory =4b529b1=.
-The human authorized proceeding with implementation; no new live run or elapsed-window extension is included.
-The preceding diagnostics implementation and Claude evaluation goal is complete.
-The current instruction authorizes evidence-handle implementation after the latest review findings.
-Work remains staged, and every native run must receive prepared, recorded limits without reopening E6's expired window.
-The [[file:dream/runs/sucoder-e6.org][E6 report]] is the measured failure case; the [[file:dream/workplan.org][accepted workplan]] preserves explanatory synthesis, open topic choice and justified no-change outcomes.
+Strengthen independent semantic review after E9 passed mechanical checks but published unsupported scope, causality, negative outcomes and provenance losses.
+The baseline is clean local main =9913af7=, with v7 runtime =4c56866= and private memory =fb695456= restoring the prior reviewed tree.
+The human authorized continuing implementation and verification.
+Reuse the existing full-proposal repair/review loop and sole publisher; introduce a frozen v8 contract with coordinator-generated page differences and explicit per-page semantic checks, including the index.
+Older contracts and their raw replies remain unchanged.
+Offline tests precede a publication-disabled calibration against the withdrawn E9 draft and a corrected proposal; this is not another memory-publishing run or an extension of E9's expired allowance.
+The [[file:dream/runs/sucoder-e9.org][E9 report]] supplies the measured failure cases; the [[file:dream/workplan.org][accepted workplan]] preserves explanatory synthesis, open topic choice and justified no-change outcomes.
 
 * 2. Existing machinery and tests
 
@@ -50,7 +50,7 @@ V2-v6 resolve an admitted-unit/quote pair at one unique source position, with v4
 V7 selects a namespaced handle for one exact delivered span; Python resolves its quote and offsets without a uniqueness search.
 Every changed non-index anchor currently needs a reference unless covered by a verified derived editorial action.
 V6 and v7 briefs explicitly include Talk in changed-anchor coverage; E6's v5 wording was less explicit.
-The current production contract is =source-grounded-wiki-v7=, layered over v6 diagnostics and v5 editorial actions; earlier versions remain frozen.
+The implemented production contract at this baseline is =source-grounded-wiki-v7=, layered over v6 diagnostics and v5 editorial actions; earlier versions remain frozen.
 Raw completion, mechanical acceptance, independent acceptance and memory publication are distinct states.
 Wallet =completed= records native delivery, not an accepted revision; the current local =max_repairs= loop does not provide a durable logical-round state machine.
 An unreviewed draft checkpoint may save work but cannot establish accepted progress or source coverage for a future job.
@@ -78,6 +78,10 @@ Certify new policy/schema/control combinations before stable production use; kee
   Keep the general repair path for semantic/disposition changes and provide consolidation of duplicate references; neither capability may be lost to a reference-only optimization.
 - New :: Durable logical repair-round identity/outcomes, separate from charged native attempts and authenticated context-lookup continuations.
 - Extend :: Frozen role policies/profile identities for supported effort/output controls and explicit review reserves.
+- Extend :: The existing reviewer candidate hook with bounded, coordinator-generated before/after page differences, binding every changed output including index and generated pages.
+- New :: A v8 per-page review matrix for support, scope, time, causality, outcomes, attribution, preservation and summary; the existing verdict/findings schema cannot require these checks.
+  Missing, duplicate, stale, uncertain or failed checks block publication, even alongside an accepting verdict.
+  Handles remain optional exact-source pointers, not semantic proof; live calibration is required before claiming this catches E9.
 - Defer :: Direct APIs, unrestricted tools, automatic paid retries, wholesale rendering rewrites and new discovery infrastructure until controlled measurements justify them.
 
 * 6. Decisions for plan review
@@ -92,6 +96,17 @@ Native effort/output mappings must be verified for the selected installed builds
 Controlled live allowances and private evidence selection require explicit authorization after offline preparation; this plan grants neither.
 
 Prepared by Sue (GPT-6 Codex).
+
+** Semantic review implementation scope
+
+New plans freeze version 8; absent historical versions still select v5, and explicit v6/v7 keep their schemas, policies and replay.
+Fresh v8 plans cannot reuse earlier accepted receipts as evidence of the new review gate.
+The review manifest binds the materialized proposal, frozen prior hashes and run identity, with bounded deterministic diffs and identifiers in request data.
+No-change receives an explicit disposition unit; lookup continuations cannot supply final checks prematurely.
+Review rejection uses the existing repair allowance without adding calls, resetting context counters or introducing another publisher.
+Receipt validation and reconstruction must reject malformed or inconsistent gate proofs without making unrelated corrupt receipts fatal to discovery.
+Native calibration uses a fresh recorded allowance, private fixtures and publication disabled; E9 artifacts remain immutable.
+Byte-preserving patches, durable phase recovery, additional reviewer roles and reserved review budgets remain deferred.
 
 ** Evidence-handle implementation scope
 
