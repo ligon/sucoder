@@ -71,6 +71,7 @@ A reviewer may still mark an unsupported claim as passing.
 Publication-disabled calibration must therefore test the withdrawn E9 draft and a corrected proposal without exposing expected answers in their assignments.
 Private historical job files remain immutable; calibration has its own recorded allowance and cannot reopen E9's wallet.
 No new memory-publishing trial is justified by schema validation alone.
+The [[file:runs/review-calibration.org][native calibration]] records both the known-draft rejection and remaining false passing judgments.
 
 This slice does not introduce a second model vote, byte-preserving patches, durable phase checkpoints or reserved reviewer budgets.
 It makes the required review visible and enforceable, while leaving semantic effectiveness an empirical question.

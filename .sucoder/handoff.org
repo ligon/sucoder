@@ -1,10 +1,40 @@
-#+TITLE: V7 live trial E9: publication withdrawn after source-quality check
+#+TITLE: V8 semantic review implemented; native calibration remains partial
 #+DATE: 2026-11-24
-#+STATUS: COMPLETE -- PINNED LOCAL RUNTIME STAGED; E9 QUALITY-REJECTED AND WITHDRAWN
+#+STATUS: COMPLETE -- V8 ON LOCAL MAIN; CALIBRATION PARTIAL; NO NEW MEMORY PUBLICATION
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
-* V7 live trial E9, 2026-11-24
+* V8 semantic review gate, 2026-11-24
+
+The human said "Carry on" after E9 exposed the failed semantic acceptance gate.
+Implementation =533b58e= is on local main; the [[file:../docs/dream/semantic-review.org][contract]] and [[file:../docs/dream/runs/review-calibration.org][calibration report]] describe its scope and limits.
+Fresh plans freeze v8, with bounded coordinator-generated differences for every changed output including the index, and mandatory per-page checks for support, scope, time, causality, outcomes, attribution, preservation and summaries.
+Missing, stale, failed or uncertain judgments block acceptance; old v1-v7 replay stays frozen and fresh v8 work cannot reuse older acceptance as proof of this gate.
+The implementation reuses exact handles, context authority/accounting, the full repair/review loop and the sole publisher.
+
+The regression run passes 198 cases.
+After final context/proof fixes, 41 gate/context cases and 20 reuse/support/Claude lifecycle cases pass.
+Mypy, ASCII/Python 3.9 grammar and Org exports pass; no unfiltered full-suite pass is claimed.
+Read-only E7/E8/E9 replay forbids native/build/authentication access and preserves all 250/275/130 job files.
+The new fourteen-variant Claude Code 2.1.330 catalog certifies in 28 offline captures using dummy credentials.
+
+A publication-disabled native calibration used a fresh ceiling of four calls/600 seconds on the coder subscription with =claude-sonnet-4-6=.
+It rejected the withdrawn draft and accepted the operator correction; the third, seeded regression timed out at the original deadline and remains unknown.
+Two invocations completed and one failed; no fourth call, retry or extension occurred.
+The reviewer still falsely passed topic-level scope, negative-outcome, process-linkage and project-identity judgments, so matrix completion does not establish semantic correctness.
+Both completed invocations also retried StructuredOutput internally after exceeding 512-character reason limits, increasing work inside each charged native invocation.
+
+Artifacts are under =/home/coder/.sucoder/logs/dream-review-gate/2026-11-24/=.
+The source-only =sucoder-main-source.bundle= there is the maintainer-side transfer artifact; it contains main only, never private memory.
+The final read-only audit verifies exact completed replies/manifests, unchanged =533b58e= runtime bytes and unchanged E9 artifacts and memory =fb695456=.
+The default installed CLI and =sucoder-v7= release remain older; this work is committed source, not a privileged installation.
+No native job or further inference is running or queued, and no new memory publication occurred.
+Next work is claim-focused review plus bounded concise output without the observed schema-retry penalty, in a new contract preserving v8; another full publication trial should follow that calibration.
+GitHub publication still uses maintainer-side transport because =ligon.pushurl=no_push=; private memory must never be pushed.
+
+Sue.
+
+* Previous v7 live trial E9, 2026-11-24
 
 The human said "Okay, let's go" after the reviewed v7 implementation and proposal for deployment/live validation.
 The [[file:../docs/dream/runs/sucoder-e9.org][E9 report]] records the result and limitations.
