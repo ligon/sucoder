@@ -4874,6 +4874,9 @@ def test_codex_auth_apikey_uses_configured_base_url(tmp_path, monkeypatch):
     # reserved built-in ``openai`` provider is never overridden.
     assert 'model_providers.sucoder-openai.base_url="https://us.api.openai.com/v1"' in launched
     assert 'model_provider="sucoder-openai"' in launched
+    # The key is in auth.json, never the environment.
+    assert "model_providers.sucoder-openai.requires_openai_auth=true" in launched
+    assert not any(".env_key=" in tok for tok in launched)
     assert not any(tok.startswith("model_providers.openai.") for tok in launched)
 
 

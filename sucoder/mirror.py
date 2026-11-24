@@ -3979,7 +3979,10 @@ class MirrorManager:
                             "-c", config_override(f"model_providers.{provider}.name", "OpenAI (SuCoder)"),
                             "-c", config_override(f"model_providers.{provider}.base_url", base_url),
                             "-c", config_override(f"model_providers.{provider}.wire_api", "responses"),
-                            "-c", config_override(f"model_providers.{provider}.env_key", "OPENAI_API_KEY"),
+                            # Authenticate from auth.json, where the swap put the
+                            # key.  env_key would require OPENAI_API_KEY in the
+                            # environment, which SuCoder never sets.
+                            "-c", f"model_providers.{provider}.requires_openai_auth=true",
                             "-c", config_override("model_provider", provider),
                         ]
                         self.logger.info("Codex API-key auth using base_url %s.", base_url)
