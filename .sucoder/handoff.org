@@ -6,6 +6,9 @@
 
 * Completed twelve-session goal, 2026-11-25
 
+Start with the [[file:handoffs/2026-11-25-dream-twelve.org][dated closeout handoff]] for the implementation queue, relevant source/tests, runtime selection, evidence and source transport.
+This current section and that note supersede operational statements in the historical sections below.
+
 The user requested: "test with repeated dreams, identifying problems as the process goes along and either repairing or filing an issue. Repeat 12 times."
 All twelve fresh substantive launches now have terminal independently audited outcomes, six project and six experience sessions.
 The [[file:../docs/dream/runs/twelve-session-campaign.org][campaign report]] records every session, the [[file:../docs/dream-twelve-ledger.org][grounding ledger]] the source invariants, and the authoritative private record is =/home/coder/.sucoder/logs/dream-twelve/2026-11-25/campaign.json=.
@@ -45,9 +48,10 @@ The next priorities are deterministic clipping and relevant memory/provenance se
 Any rendering correction must preserve frozen claude-view-v1 replay, and native-visible contract changes keep the certification boundary.
 
 All source work is on local main. Never push private memory or bundle private-only objects.
-The source-only transfer is =/home/coder/.sucoder/logs/dream-twelve/2026-11-25/closeout/main-source.bundle=; =source-release.json= records the exact main head, bundle hash and exclusion audit.
+The campaign source-only transfer at =/home/coder/.sucoder/logs/dream-twelve/2026-11-25/closeout/main-source.bundle= covers =b749d02= and remains unchanged.
+The updated main transfer including the completed handoff is =closeout/handoff-source/main-source.bundle= under the same campaign root; its =source-release.json= records the exact head, hash and exclusion audit.
 GitHub source publication uses maintainer-side transport because =ligon.pushurl=no_push=; no default installation is changed here.
-The authoritative final verification is =closeout/completion-audit.json= in that directory.
+The authoritative campaign verification is =closeout/completion-audit.json= in that directory, bound to =b749d02=; the documentation-only handoff update is checked separately in =closeout/handoff-source/handoff-verification.json=.
 If that file is absent, finish documentation/transport verification before marking the goal complete; do not start more inference.
 
 Sue.

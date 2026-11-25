@@ -1,0 +1,109 @@
+#+TITLE: Dream campaign closeout and continuation
+#+AUTHOR: Sue
+#+DATE: 2026-11-25
+#+STATUS: HANDOFF COMPLETE -- CAMPAIGN FINISHED; FOLLOW-UP ISSUES OPEN
+#+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Current state
+
+The user requested twelve repeated dreams, identifying problems along the way and either repairing or filing them.
+That goal is complete: twelve fresh substantive launches have terminal independently audited outcomes, six project and six experience runs.
+The [[file:../../docs/dream/runs/twelve-session-campaign.org][campaign report]] is the session-by-session record; the [[file:../../docs/dream-twelve-ledger.org][grounding ledger]] records source reuse, invariants and verification.
+
+- Workspace :: =/home/coder/mirrors/SuCoder=, branch =main=; one registered worktree at handoff.
+- Campaign closeout source :: =b749d0255ab5e2d8954839f2611a51f49bf23d56=, before this documentation-only handoff update.
+- Trial runtimes :: Sessions 1-2 use frozen v8 at =dbc79a5=; sessions 3-12 use frozen v9 at =206368041f8b3a104d92ff7dc66ea492ed53e060=.
+  The project commit is recorded separately for each job and includes evolving completed-result documentation.
+- Interpreter :: =/home/coder/.cache/pypoetry/virtualenvs/sucoder-_hu1CrVA-py3.12/bin/python=.
+- Frozen v9 source :: =/home/coder/.sucoder/logs/dream-twelve/2026-11-25/runtimes/206368041f8b3a104d92ff7dc66ea492ed53e060/src=.
+  Source-run commands explicitly set =PYTHONPATH= to the intended checkout and =PYTHONSAFEPATH=1= rather than relying on the older editable/default installation.
+- Native execution :: Claude Code 2.1.330, =claude-sonnet-4-6=, existing coder subscription and certified stable delivery.
+  The default installed CLI remains older; the trials explicitly use pinned source through the existing Poetry interpreter.
+- Process state :: No original campaign worker remains live, and no further session is queued.
+  Do not schedule a thirteenth session or resume session 12 as part of this handoff.
+
+* Results and limits
+
+Five publications are retained with precision advisories (sessions 1, 3, 7, 9 and 10); one result is reviewed unchanged (4).
+Four publications are rejected and withdrawn additively (2, 5, 8 and 11), one attempt stops after independent review requests revision (6), and the final attempt stops during authorship (12).
+These are twelve tested outcomes, not twelve successful publications or twelve completed model reviews.
+
+The 175 native invocations comprise 174 completed and one failed.
+Every job retains its original 32-call/1,800-second wallet, including a 600-second/three-call closeout reserve; no attempt or elapsed allowance is replenished.
+The failed author's final usage is unknown and remains charged.
+Native invocation counts do not measure hidden HTTP/model retries, and no hard token/currency ceiling or controlled savings comparison is claimed.
+
+The main correctness problem is unsupported synthesis passing complete review matrices: process identities, verification scope and a dependency assigned to an uninspected attach path.
+The final author failure is different: 502.48 seconds produce no completed proposal before the ordinary-work cutoff, leaving no candidate for the protected reviewer capacity.
+The experiment is adaptive and does not establish a held-out quality rate.
+
+* Changes already implemented
+
+- =2063680= :: [[file:../../sucoder/dream_concise.py][The v9 correction]] requests concise review reasons and uses the established general text allowance instead of v8's unusually tight 512-character field limit.
+  It retains the cumulative reply-byte bound, full repair/review, old policy/schema/run identities and read-only replay.
+  This does not fix semantic false passes or native JSON-parsing retries.
+- =05dcce3= :: [[file:../../sucoder/reply_probe.py][The reply-probe module docstring]] now describes the existing bare-reply fallback.
+  Behavior is unchanged; the broader tagged/bare policy and first-match intent remain open in [[https://github.com/ligon/sucoder/issues/109][issue 109]].
+
+* Suggested implementation order
+
+These are filed follow-ups, not changes already implemented by the campaign.
+Start with offline reproductions and the existing machinery; do not change the frozen trial runtimes or old job artifacts.
+
+1. [[https://github.com/ligon/sucoder/issues/119][Issue 119: zero-tail clipping]] :: [[file:../../sucoder/dream_view.py][dream_view.py]], with [[file:../../tests/test_dream_view.py][the renderer tests]].
+   =data[-0:]= retains the whole input: a synthetic 1,000-byte body expands to 1,330 bytes and reports a negative omission count.
+   Introduce a replay-compatible correction; changing v1 output in place would invalidate old render maps, evidence digests and handles.
+2. Relevant memory and provenance :: [[https://github.com/ligon/sucoder/issues/112][Issue 112]] covers discovery's inability to retrieve omitted Talk text; [[https://github.com/ligon/sucoder/issues/115][issue 115]] covers a known seed page omitted from author context; [[https://github.com/ligon/sucoder/issues/118][issue 118]] covers unrelated receipts filling the prior-support allowance.
+   Start with [[file:../../sucoder/dream_leads.py][dream_leads.py]], [[file:../../sucoder/dream_prior.py][dream_prior.py]], [[file:../../sucoder/dream_context.py][dream_context.py]] and [[file:../../sucoder/dream_support.py][dream_support.py]], using their corresponding tests.
+   The support-order reproduction includes selected-page provenance under the unchanged 16,384-byte limit; do not merely enlarge every prompt.
+   A section lookup uses key =confined-node= with target =node-bug= and returns =editable=false=; the same key with an empty target supplies the full page and grants edit authority.
+   Session 11 verifies that boundary; =topics/confined-node= was an unavailable request in session 7 and is not the demonstrated canonical key.
+3. [[https://github.com/ligon/sucoder/issues/108][Issue 108: individual changed claims]] :: [[file:../../docs/dream/semantic-review.org][The semantic-review contract]] and [[file:../../sucoder/dream_review.py][dream_review.py]].
+   Keep index summaries in scope and distinguish source inspection, historical reports, execution and human decisions.
+   A conditional explanation of an uninspected path can still invent a false dependency.
+   Preserve the correctly blocked session-6 case as well as the false-pass examples; unrelated rejection must not count as detecting every seeded defect.
+4. Bounded authoring and smaller edits :: [[https://github.com/ligon/sucoder/issues/120][Issue 120]], [[file:../../docs/dream/authoring-plan.org][the authoring plan]] and [[file:../../docs/dream/authoring-review.org][its review]].
+   Retain the reviewer reserve and distinguish unreviewed draft progress from accepted memory.
+   Related costs are quote-only repairs ([[https://github.com/ligon/sucoder/issues/113][113]]), reference-only repairs ([[https://github.com/ligon/sucoder/issues/114][114]]), inspection-history growth ([[https://github.com/ligon/sucoder/issues/116][116]]) and invalid native StructuredOutput JSON ([[https://github.com/ligon/sucoder/issues/117][117]]).
+
+Also retain the TARGET line-coordinate requirement and pre-publication validation gap in [[https://github.com/ligon/sucoder/issues/111][issue 111]].
+Repeated lead selection is recorded in [[https://github.com/ligon/sucoder/issues/93][issue 93]]; seven visits to one topic do not by themselves reproduce its original missing-memory defect or prove an RNG bug.
+Native-visible policy/schema changes must retain the existing certification and frozen-job compatibility boundaries.
+
+* Private memory and evidence
+
+Current =sucoder/memory= is =70851cc6bdaea7e6854ab06f24d00b3a4843f670=, whose tree exactly restores the accepted =26335ccb= state after session 11.
+The rejected session-11 generation =5f3726c2= remains its parent; all four withdrawals preserve the rejected generation and immutable native history.
+The twenty-file =.sucoder/wiki/= directory is an exact read-only copy, not an editable source checkout.
+Native status retains historical published events after withdrawals; it does not establish current acceptance of those contents.
+Never push private memory or include private-only objects in source transport.
+
+The durable private root is =/home/coder/.sucoder/logs/dream-twelve/2026-11-25/=.
+=campaign.json= has all job IDs, paths, outcomes and issue/repair dispositions.
+Per-session =run-NN-quality.json=, pinned audits, file manifests, source checks and withdrawal records preserve the independent decisions.
+The 2,611 job files and 45 initial admitted source units authenticate; selected raw spans and session-11 lookups are also verified.
+The original =closeout/completion-audit.json= and =closeout/source-release.json= describe the completed campaign at =b749d02= and remain historical evidence after this handoff commit.
+
+* Validation and source transfer
+
+Recorded checks: 135 regression passes plus one Org timeout that passes on its exact serial follow-up; seven new concise-review cases pass, protocol tests pass 68, and reply-probe tests pass 40.
+All seven initial source-test failures reconcile with later passes.
+Mypy, ASCII/Python 3.9 grammar and Org exports pass; no unfiltered final-source full-suite pass is claimed.
+The quiet-host native catalog passes 28 offline captures for fourteen variants; the earlier certification deadline failure is preserved.
+
+For a read-only continuity check of these completed jobs:
+
+#+begin_example
+python3 /home/coder/.sucoder/logs/dream-twelve/2026-11-25/audit-campaign.py
+#+end_example
+
+That command creates a new private audit report and performs no inference; its structural success is not a replacement for the recorded semantic audits.
+Do not rerun exclusive-output audit helpers with an existing label or overwrite their evidence.
+
+All source work and this handoff are committed on local =main=.
+GitHub source publication still needs maintainer transport because =ligon.pushurl=no_push=; the default installation is unchanged.
+The updated source-only transfer is =closeout/handoff-source/main-source.bundle= under the private root above.
+Its =source-release.json= records the exact handoff commit, hash and private-object exclusion; =handoff-verification.json= records this documentation-only closeout.
+The earlier campaign bundle remains at =closeout/main-source.bundle= for =b749d02= and is not overwritten.
+
+Sue.
