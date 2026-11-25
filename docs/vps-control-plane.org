@@ -156,6 +156,7 @@ Account numbers stay out of this note; the repository is public.
 - =mosh-server= needs UDP 60000--61000.
 - =unattended-upgrades=.
 - SuCoder's own separation holds on the box: =coder= cannot read =ligon='s =~/.ssh= or =pass= store, and the only sudo path is the =relay= rule from =config.example.yaml=.
+- Laptop agents reach vantage only as =coder=, never as =ubuntu= or =ligon=, through a key in a root-owned file (the 2026-11-25 entry under "Install SuCoder and the harnesses").
 - No laptop secret lives on vantage.
 After a first =rsync= of =~/.ssh=, =~/.gnupg= and =~/.password-store= the set was pruned on 2026-10-30, before the first daily snapshot, to what the launcher uses: the BRC certificate key pair minted on vantage itself, which covers every hop including the login nodes and DTN; a vantage-only passphrase-less ed25519 key for rsync.net and Bitbucket, registered there and nowhere else; GitHub over HTTPS through =gh='s credential helper, so no GitHub key exists on the box; a vantage-only passphrase-less GPG key with a =pass= store holding the single entry the config names; and =known_hosts= trimmed to the six hosts in use.
 The laptop's seven GPG secret keys, eighteen store entries, the 2009 RSA key that BRC's =authorized_keys= lists, the passphrase-protected =id_ed25519= and the root key for the =hhsurveys= droplet were removed; every one of them is revocable or re-copyable from the laptop, and none is needed because the certificate and the per-service keys do the work.
@@ -208,7 +209,7 @@ Before anything else, run =claude login= and one =claude -p= call, and the Codex
 
 Built 2026-10-30 in the human's existing VPC: =i-0eed4281dde86c8a0=, =t4g.large=, =us-west-2a=, AMI =ami-0dcf79589cb11e193= (Ubuntu 24.04 arm64), hostname =vantage=, address 32.184.189.233, named =vantage.ligonresearch.org= in the DreamHost zone.
 Root =vol-074b1f20eb1d3696d= (30 GB) and data =vol-0e4ce3a7b0f16e5df= (100 GB, mounted at =/home= by UUID with =nofail=), both encrypted =gp3= tagged =Backup: daily=; security group =sg-01a2746e6ad50bb43=; instance profile =sucoder-control-plane= carrying =AmazonSSMManagedInstanceCore=; snapshot policy =policy-085b24772d9431952= (daily at 09:00 UTC, keep 14); EBS default encryption switched on for the region; IMDSv2 required; termination and stop protection on.
-The authorized key is coder's =hhsurveys_droplet= key at the human's direction, and =cloud-init= installed tmux, mosh, bubblewrap, git, fail2ban and unattended-upgrades.
+The authorized key was coder's =hhsurveys_droplet= key at the human's direction (withdrawn 2026-11-25, see below), and =cloud-init= installed tmux, mosh, bubblewrap, git, fail2ban and unattended-upgrades.
 Two things the CLI refused on the way: the instance profile is not usable for about ten seconds after creation, so =run-instances= needs a retry, and a snapshot policy description may contain only letters, digits, space, underscore and hyphen.
 The savings plan still waits for the measurement week.
 
@@ -220,6 +221,11 @@ Graviton is the same architecture, so the laptop's versions and install methods 
 Record the installed versions; =sucoder doctor= reports the tool floors.
 
 Done 2026-10-30: =ligon= created with passwordless sudo and the same authorized key, =ubuntu= kept as the break-glass account; Node 22.23.4 arm64 into =/usr/local= with its checksum verified, Codex 0.164.0 by =npm -g=, Claude Code 2.1.314 by the native installer for =ligon= and for =coder=; =make create-agent-user= and then the remaining =env-setup= targets as =ligon=.
+Withdrawn 2026-11-25: the same key sits passphrase-less in the laptop's =coder= account, so any agent there could log in as =ubuntu=, and by this record as =ligon= with passwordless sudo.
+The human reports removing it from both accounts' =authorized_keys=; no agent has tested that.
+Laptop agents now log in as =coder= with their own =sucoder_control_plane= key.
+That key is listed in the root-owned =/etc/ssh/authorized_keys.d/coder= with =restrict,pty=, which a =Match User coder= block in =/etc/ssh/sshd_config.d/50-coder-keys.conf= names as =AuthorizedKeysFile=, so an agent on vantage cannot add a key for itself; deleting the file revokes the access.
+=sshd= ignores =~coder/.ssh/authorized_keys= while that block is in place.
 Ubuntu 24.04 refuses =pip install .= outside a virtual environment, so =sucoder= (2026.7.1.dev360+gc09d361) lives in a root-owned venv at =/opt/sucoder= linked from =/usr/local/bin/sucoder=, the laptop's shape (issue 52), and =coder='s =~/bin/sucoder= is the same thin wrapper as on the laptop.
 GitNexus 1.6.12 is installed systemwide under =/usr/local=; both =ligon= and =coder= passed version, repository-indexing and symbol-context checks using disposable repositories, and the human's upstream-impact check found the expected caller.
 =/home/ligon= is =2750 ligon:coder= as on the laptop, so the agent can traverse to the group-readable =~/.sucoder=.
