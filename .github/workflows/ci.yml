@@ -30,6 +30,14 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Install Emacs
+        # The dream tests run `emacs --batch`.  The docs job explains why the
+        # Chrome apt source goes first.
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq emacs-nox
+
       - name: Install Poetry
         run: pip install poetry
 
