@@ -1,13 +1,13 @@
-#+TITLE: Twelve-session dream campaign: 10 of 12 audited
+#+TITLE: Twelve-session dream campaign: 11 of 12 audited
 #+DATE: 2026-11-25
-#+STATUS: READY -- USER GOAL ACTIVE; TWO SESSIONS REMAIN
+#+STATUS: READY -- USER GOAL ACTIVE; ONE SESSION REMAINS
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
 * Active twelve-session goal, 2026-11-25
 
 The user set the goal: "test with repeated dreams, identifying problems as the process goes along and either repairing or filing an issue. Repeat 12 times."
-The goal remains active; do not redefine completion as the ten sessions already audited or count old probes toward the twelve.
+The goal remains active; do not redefine completion as the eleven sessions already audited or count old probes toward the twelve.
 The [[file:../docs/dream/runs/twelve-session-campaign.org][campaign report]] and [[file:../docs/dream-twelve-ledger.org][grounding ledger]] describe the method and current verification.
 The authoritative private progress record is =/home/coder/.sucoder/logs/dream-twelve/2026-11-25/campaign.json=.
 It enumerates all twelve sessions, paired project/experience modes, pinned runtimes, job IDs, process identities, quality checks and repair/issue dispositions.
@@ -115,11 +115,19 @@ Issue 118 is filed after exact read-only reproduction: unrelated attention prove
 The operator's equal-blob/function comparison is not evidence that this provenance was delivered to the author; the issue 108 note is clarified accordingly.
 Issue 116 tracks repeated inspection history and issue 112 the failed full-page read with 1,626 omitted preview bytes.
 The header remains outside the bundle and no editorial lookback occurs. Author/reviewer take 240.84/61.45 seconds; pinned read-only status preserves all 145 job files and the exporter finds zero tasks/drafts.
-Sessions 1-10 are audited; all six project sessions are done. Never substitute an old job or replenish an elapsed wallet.
-Session 11 is live: experience job =06050a0fcc104754bd6cae60553ccd92=, PID 1218455, on v9 runtime =2063680=, project =b0c49b7= and accepted memory =26335ccb=.
-Use =poll.py 11= to verify its command line and recorded start ticks; retain its original 32-call/1,800-second allowance and 600-second/three-call reserve.
-Session 12 remains planned, also experience mode.
-Both still require terminal, independently audited outcomes; the private campaign record supersedes this checkpoint.
+Session 11, experience job =06050a0fcc104754bd6cae60553ccd92=, is terminal and audited on v9 runtime =2063680= and project =b0c49b7=.
+Fourteen discovery calls, three author calls and reviewer complete. Both Git spans, the rendered payload and 37,723-byte raw span validate.
+The missing seed page fits within the 31,354/65,536-byte initial selection; a 1,673-byte non-editable section lookup is followed by a full authenticated 4,798-byte editable page. Issue 115 records the gap and positive authority recovery.
+The candidate preserves human/test caveats but invents an attach dependency on the launch-only confined_node key, repeated in the index. The pinned attach handler actually joins by job ID through srun --overlap and explicitly notes --node is ignored.
+All sixteen native review checks pass without findings; issue 108 receives this material architectural false pass and the narrower one-session/unfrozen search advisory.
+Sue rejects =5f3726c2= and withdraws it with expected-old additive =70851cc6bdaea7e6854ab06f24d00b3a4843f670=, exactly restoring the accepted =26335ccb= tree and retaining the rejected commit as parent.
+The twenty-file managed copy is current; both read-only audits preserve all 264 job files, and the exporter finds zero tasks/drafts.
+Issue 119 is filed for zero-tail transcript clipping: a synthetic 1,000-byte tool body expands to 1,330 bytes with a negative 300-byte omission marker because data[-0:] retains the whole body. A fix must preserve frozen claude-view-v1 replay; no renderer change is made here.
+All eighteen invocations use one StructuredOutput attempt. Author calls take 129.28/186.76/326.04 seconds and reviewer 132.79 seconds.
+Sessions 1-11 are audited; all six project and five experience sessions are done. Never substitute an old job or replenish an elapsed wallet.
+No campaign native worker is live. Session 12 remains planned, experience mode.
+Launch it with the existing private =launch.py 12= after this checkpoint is committed and main is clean.
+Its terminal independent audit and the final full-scope completion audit remain required; the private campaign record supersedes this checkpoint.
 
 All source work belongs on local main; never push private memory.
 The user-facing installed CLI remains older, so launch each dream from its explicitly pinned runtime source with the existing Poetry interpreter and correct PYTHONPATH/PYTHONSAFEPATH.
