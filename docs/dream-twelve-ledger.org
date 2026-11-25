@@ -1,0 +1,64 @@
+#+TITLE: Twelve-dream campaign prior-art ledger
+#+AUTHOR: Sue
+#+DATE: 2026-11-25
+
+* 1. Task
+
+Run twelve new end-to-end SuCoder dreams, inspect each terminal result against its sources, and repair or file each discovered problem before proceeding.
+The source baseline is =dbc79a5= and private memory starts at =fb695456=.
+The active campaign record is =/home/coder/.sucoder/logs/dream-twelve/2026-11-25/campaign.json=.
+Each session has a fresh 32-invocation/1,800-second wallet, including a 600-second/three-call closeout reserve.
+Paired project and experience runs exercise both paths, six of each; setup refusals without meaningful native work are not counted as completed dreams.
+The user explicitly authorized repeated live tests and repair or issue filing; historical no-inference notes and expired jobs do not limit this new sequence or replenish old wallets.
+
+* 2. Existing machinery
+
+Grounding uses the existing authoring ledger, GitNexus CLI, direct source/caller inspection and tests.
+
+- =sucoder/dream_explore.py=, =prepare=, =run=, =status= :: Existing durable jobs, frozen choices, native phases and read-only reconstruction.
+  =tests/test_dream_explore.py= and =tests/test_dream_recovery.py= cover replay and interruption.
+- =sucoder/dream_cli.py=, =_detach= :: Existing detached launch with account-owned logs and returned process identity.
+  =tests/test_dream_unattended.py= covers the launch boundary.
+- =sucoder/dream_budget.py=, =Job= :: Existing per-job ceilings, reservations and deadline enforcement.
+  =tests/test_dream_budget.py= covers accounting; native invocations are not hidden model/API turns.
+- =sucoder/dream_roles.py:182=, =Coordinator.call= :: Existing cumulative canonical reply bytes stop at the plan's =max_proposal_bytes=; default is 128 KiB.
+  Reuse this overall bound when relaxing individual v9 reason fields.
+- =sucoder/dream_review.py:46=, =schema=; =:110=, =check_receipt=; =Editor.prepare= :: V8 page matrix, manifest/proof and general repair/review.
+  =tests/test_dream_review.py= covers matrix, proof, no-change and context behavior.
+- =sucoder/dream_prompt_native.py= :: Frozen variant/profile selection and offline certification.
+  =tests/test_dream_cache_certify.py= prevents uncertified policy/schema use.
+- =sucoder/dream_progress.py=, =envelope= :: Accepted-review dispatch and receipt reuse; versions must select their own schema and policy.
+  =tests/test_dream_progress.py= covers reuse without paid calls.
+
+* 3. Definitions
+
+Twelve means twelve fresh substantive dream sessions, each with a terminal, independently audited outcome and an explicit disposition for its problems.
+It does not mean twelve publications, twelve synthetic reviewer probes or twelve repetitions of a setup failure.
+Native acceptance, a published event, source-quality acceptance and a later operator withdrawal are separate observations.
+A live matching process remains running even when status says incomplete; a polling timeout does not authorize restarting it.
+The pinned runtime and pinned project commit are recorded separately, along with the before/after memory commits.
+
+* 4. Invariants
+
+Private memory is never pushed or bundled into public source.
+Do not rewrite historical jobs, raw replies or failed reservations; an unsafe new publication is withdrawn additively with an expected-old ref update.
+Keep existing source admission, lookup authority/accounting, human decisions, sole publisher and overall call/time/byte bounds.
+Keep v1-v8 schemas, policies, run identities and replay behavior frozen while introducing a new contract.
+Campaign evidence and source-quality expectations stay outside native inputs.
+
+* 5. Reuse decisions
+
+- Reuse :: Durable detached CLI jobs, persistent budgets, frozen source snapshots, stable native profiles and read-only status.
+- Extend :: V8 receipt validation with a default-preserving schema hook, so v9 can reuse the same bounded proof and full review/repair implementation.
+- New :: A v9 policy/schema that requests concise reasons and uses the established 8,192-character text field instead of the v8 512-character reason limit.
+  Actual v8 native traces show that 595-936-character reasons caused extra StructuredOutput generations; issue 107 records the evidence.
+- Reuse :: Existing cumulative =max_proposal_bytes= enforcement rather than introducing another overlapping response counter or configuration knob.
+- File :: Issue 108 tracks unsupported claim changes falsely passing whole-page checks; this output-efficiency fix does not solve semantic coverage.
+
+* 6. Open decisions
+
+No new human decision is required to run the authorized sequence or make this bounded compatibility-preserving fix.
+Keep semantic claim scrutiny and broader phase/patch recovery out of the reason-limit correction; evaluate their failures during the twelve sessions and repair or file them explicitly.
+Certify the new native catalog before a v9 live session; retain the pinned v8 baseline for the already-running first dream.
+
+Prepared by Sue (GPT-6 Codex).
