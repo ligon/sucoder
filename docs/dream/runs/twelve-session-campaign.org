@@ -1,7 +1,7 @@
 #+TITLE: Twelve-session SuCoder dream campaign
 #+AUTHOR: Sue
 #+DATE: 2026-11-25
-#+STATUS: ACTIVE -- 2 OF 12 SESSIONS AUDITED
+#+STATUS: ACTIVE -- 3 OF 12 SESSIONS AUDITED
 
 * Scope and method
 :PROPERTIES:
@@ -30,7 +30,7 @@ The [[file:../../dream-twelve-ledger.org][grounding ledger]] identifies reused m
 |---------+------------+---------------+-----------------------+-------------|
 |       1 | project    | published     | accepted with advisory |          16 |
 |       2 | project    | published     | rejected / withdrawn  |          15 |
-|       3 | experience | running       | pending               |             |
+|       3 | experience | published     | accepted with advisory |          18 |
 |       4 | experience | planned       | pending               |             |
 |       5 | project    | planned       | pending               |             |
 |       6 | project    | planned       | pending               |             |
@@ -98,10 +98,33 @@ These are targeted checks, not an unfiltered whole-repository pass or a live v9 
 :CUSTOM_ID: session-3
 :END:
 
-Job =a762e09131924e0c8fedc3d2ffdff797= runs from committed v9 source =2063680= against the same project commit and accepted memory =89ae1878=.
-The source-only runtime bundle excludes private memory objects.
+Job =a762e09131924e0c8fedc3d2ffdff797= uses committed v9 runtime/project =2063680= and starting memory =89ae1878=.
+Its source-only runtime bundle excludes private memory objects.
 The normal experience purpose remains open-ended and carries the explicit line-coordinate clarification recorded after session 2.
-The worker is live at this checkpoint; publication and independent source-quality acceptance remain pending.
+Sixteen discovery calls select five committed-source excerpts; no transcript window is selected after partial session searches.
+One author and one reviewer complete without coordinator repair, for eighteen completed invocations and private publication =399fe5275a3b21032d89664abc2b6bc3c5c36a9f=.
+
+The page adds a supported distinction between the main function's =budget= spec field/process alarm and the reader's attribution window.
+It preserves historical attribution, the conditional screen explanation and the absence of a supplied human policy ruling.
+A module-docstring follow-up is explicitly unverified in the admitted window; the author creates no correction-task target for it.
+Sue retains the generation with precision advisories recorded in [[https://github.com/ligon/sucoder/issues/108][issue 108]]: preserve the SIGALRM guard in general advice and describe aggregation of both found replies without implying an arrival-order observation or later waiting.
+The native preservation reason calls =PROBE_BUDGET_SECONDS= incorrect, but the caller defines and supplies that constant; the new field description is a clarification.
+The index and four other topics remain byte-identical.
+
+The author takes 346.15 native seconds and the reviewer 69.53 seconds.
+Each uses exactly one StructuredOutput attempt with no validation errors; all eight reviewer reasons are 112-321 characters.
+[[https://github.com/ligon/sucoder/issues/107][Issue 107]] receives this first full live-v9 observation; the separate 936-character test establishes the relaxed allowance.
+Different evidence, outputs and prompt contracts prevent treating these timings as a controlled savings comparison.
+All eighteen usage records are complete: 355,785 input tokens, including 55,580 cache reads and 300,150 cache writes, and 52,571 output tokens; these are native telemetry rather than subscription billing.
+
+Pinned-v9 read-only status preserves all 263 job files and memory while forbidding native/build/authentication access.
+The existing correction exporter finds zero tasks and drafts, with no native/GitHub access or mutations; there is no new TARGET case from which to infer a coordinate fix.
+Independent inspection confirms the small module-status docstring gap and corrects it in maintained source, describing the existing bare-reply behavior without deciding the broader policy question in [[https://github.com/ligon/sucoder/issues/109][issue 109]].
+
+All three jobs received the same random Talk seed from five visible topic leads, with no omitted pages, and followed it.
+[[https://github.com/ligon/sucoder/issues/93][Issue 93]] records that observation separately from its original missing-memory defect.
+The two project commits differ by a ledger addition and the third job is an experience run on v9; this is not its controlled same-commit acceptance pair.
+Random lead repetition and usefulness remain observations for the remaining nine sessions.
 
 * Reproducibility and continuation
 :PROPERTIES:

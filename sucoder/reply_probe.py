@@ -18,7 +18,8 @@ below and, as a last resort for finding a configuration directory, the
 The pure half (the adapters, the shared reader, identification over a given
 directory tree) is what the tests import; ``main`` is the remote entry point.
 
-Statuses: ``replied`` (a tagged reply in assistant text, or a mailbox file),
+Statuses: ``replied`` (a tagged reply in assistant text, a bare ``REPLY:`` in
+assistant text before another input intervenes, or a mailbox file),
 ``seen`` (delivered, no reply yet; ``turn_ended`` when the agent's turn has
 ended since), ``queued`` (Claude queue entry only), ``absent`` (read past the
 send, no delivery), ``ambiguous`` (several transcripts hold a delivery),

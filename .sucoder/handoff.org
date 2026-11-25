@@ -1,13 +1,13 @@
-#+TITLE: Twelve-session dream campaign: 2 of 12 audited
+#+TITLE: Twelve-session dream campaign: 3 of 12 audited
 #+DATE: 2026-11-25
-#+STATUS: READY -- USER GOAL ACTIVE; TEN SESSIONS REMAIN
+#+STATUS: READY -- USER GOAL ACTIVE; NINE SESSIONS REMAIN
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
 * Active twelve-session goal, 2026-11-25
 
 The user set the goal: "test with repeated dreams, identifying problems as the process goes along and either repairing or filing an issue. Repeat 12 times."
-The goal remains active; do not redefine completion as the two sessions already finished or count old probes toward the twelve.
+The goal remains active; do not redefine completion as the three sessions already finished or count old probes toward the twelve.
 The [[file:../docs/dream/runs/twelve-session-campaign.org][campaign report]] and [[file:../docs/dream-twelve-ledger.org][grounding ledger]] describe the method and current verification.
 The authoritative private progress record is =/home/coder/.sucoder/logs/dream-twelve/2026-11-25/campaign.json=.
 It enumerates all twelve sessions, paired project/experience modes, pinned runtimes, job IDs, process identities, quality checks and repair/issue dispositions.
@@ -19,7 +19,7 @@ Do not restart merely because status says incomplete or an observation times out
 
 Session 1, job =64226805b1de4988b60d3934359799f6=, finished with sixteen completed calls (fourteen explorer, author, reviewer) under pinned v8 runtime/project =dbc79a5=.
 It followed the existing transcript-reply policy question and updated that topic, preserving earlier qualifications.
-Private memory is now =ec39fb7387f8ac72e235e2edfb84db7681a609a1=; Sue accepted it with a precision advisory and no blocking finding.
+Session 1 advanced private memory to =ec39fb7387f8ac72e235e2edfb84db7681a609a1=; Sue accepted it with a precision advisory and no blocking finding.
 The independent bare-reply fixture passes, and [[https://github.com/ligon/sucoder/issues/109][issue 109]] records the maintainer policy/documentation gap.
 [[https://github.com/ligon/sucoder/issues/107][Issue 107]] records the reproduced 512-character reason retry; [[https://github.com/ligon/sucoder/issues/108][issue 108]] tracks semantic false passes and receives the narrower wording advisory.
 Pinned-v8 and working-v9 read-only replay both preserve all 237 job files and memory, with native/build/authentication access forbidden.
@@ -39,11 +39,18 @@ Native status remains its historical published event; the independent campaign v
 Future campaign purposes explicitly clarify that TARGET coordinates are one-based source lines, never citation byte offsets; this is a workflow mitigation, not the missing deterministic validator.
 The v9 correction is committed on local main at =206368041f8b3a104d92ff7dc66ea492ed53e060=.
 A source-only bundle and detached release clone under the campaign's =runtimes/206368041f8b3a104d92ff7dc66ea492ed53e060/= contain main only; private memory objects are absent.
-Session 3 is a genuine experience dream, job =a762e09131924e0c8fedc3d2ffdff797=, running from that release and project commit against starting memory =89ae1878=.
-Its recorded process is PID 1148366; use =poll.py 3= to check both command line and process start ticks before drawing a lifecycle conclusion.
+Session 3, job =a762e09131924e0c8fedc3d2ffdff797=, is terminal and audited: sixteen discovery calls, one author and one reviewer, all completed on that v9 runtime/project against memory =89ae1878=.
+Sue retains publication =399fe5275a3b21032d89664abc2b6bc3c5c36a9f= with precision advisories recorded in issue 108; this is now the accepted private memory tip.
+It distinguishes the probe budget from the reply-attribution window and preserves the historical and unresolved policy qualifications.
+Author and reviewer each use one StructuredOutput attempt without schema errors; the reviewer takes 69.53 seconds and all reasons are 112-321 characters.
+Issue 107 receives this first full live-v9 observation, without a controlled savings claim.
+Read-only replay preserves all 263 job files and memory; the existing exporter finds zero tasks or drafts, so this run does not exercise a new TARGET.
+Independent inspection confirms the module status docstring's omission of the existing bare-reply fallback; this checkpoint corrects that description without changing behavior or resolving issue 109's policy question.
+All three jobs received the same random Talk seed from five visible topics; issue 93 records the repetition separately from its original missing-memory defect.
 The private =launch.py NUMBER= submits exactly one planned fresh session, preserves the normal mode purpose plus the TARGET-unit clarification and refuses automatic restarts.
-Sessions 1 and 2 are terminal and audited; do not resume them or reuse their elapsed allowances.
-Sessions 4-12 remain planned.
+Sessions 1-3 are terminal and audited; do not resume them or reuse their elapsed allowances.
+At this checkpoint no campaign worker is live; commit the source/status correction, then launch session 4 as another experience dream from the pinned v9 release.
+Sessions 4-12 remain planned; the private campaign record supersedes this point-in-time launch state.
 
 All source work belongs on local main; never push private memory.
 The user-facing installed CLI remains older, so launch each dream from its explicitly pinned runtime source with the existing Poetry interpreter and correct PYTHONPATH/PYTHONSAFEPATH.
