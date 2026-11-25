@@ -37,9 +37,13 @@ It published =aea4fe1=, but its two new correction tasks used byte offsets as li
 An expected-old additive withdrawal =89ae1878b56d2f91edd063c826835936f4401d63= restores exactly the =ec39fb7= tree, retains =aea4fe1= as parent and preserves all 223 job files.
 Native status remains its historical published event; the independent campaign verdict is rejected/withdrawn.
 Future campaign purposes explicitly clarify that TARGET coordinates are one-based source lines, never citation byte offsets; this is a workflow mitigation, not the missing deterministic validator.
-Commit and pin the checked v9 source, then launch session 3 as a genuine experience dream to exercise the reason-limit correction.
-The first session is terminal and audited; do not resume it or reuse its elapsed allowance.
-No native worker is currently running in this campaign; sessions 3-12 remain planned.
+The v9 correction is committed on local main at =206368041f8b3a104d92ff7dc66ea492ed53e060=.
+A source-only bundle and detached release clone under the campaign's =runtimes/206368041f8b3a104d92ff7dc66ea492ed53e060/= contain main only; private memory objects are absent.
+Session 3 is a genuine experience dream, job =a762e09131924e0c8fedc3d2ffdff797=, running from that release and project commit against starting memory =89ae1878=.
+Its recorded process is PID 1148366; use =poll.py 3= to check both command line and process start ticks before drawing a lifecycle conclusion.
+The private =launch.py NUMBER= submits exactly one planned fresh session, preserves the normal mode purpose plus the TARGET-unit clarification and refuses automatic restarts.
+Sessions 1 and 2 are terminal and audited; do not resume them or reuse their elapsed allowances.
+Sessions 4-12 remain planned.
 
 All source work belongs on local main; never push private memory.
 The user-facing installed CLI remains older, so launch each dream from its explicitly pinned runtime source with the existing Poetry interpreter and correct PYTHONPATH/PYTHONSAFEPATH.

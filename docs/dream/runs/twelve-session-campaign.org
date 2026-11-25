@@ -30,7 +30,7 @@ The [[file:../../dream-twelve-ledger.org][grounding ledger]] identifies reused m
 |---------+------------+---------------+-----------------------+-------------|
 |       1 | project    | published     | accepted with advisory |          16 |
 |       2 | project    | published     | rejected / withdrawn  |          15 |
-|       3 | experience | planned       | pending               |             |
+|       3 | experience | running       | pending               |             |
 |       4 | experience | planned       | pending               |             |
 |       5 | project    | planned       | pending               |             |
 |       6 | project    | planned       | pending               |             |
@@ -93,6 +93,16 @@ The correction's regression run passes 135 cases with one native Org replay time
 The separate prompt/cache/submission group passes all 68 cases, and mypy/source checks pass.
 These are targeted checks, not an unfiltered whole-repository pass or a live v9 quality result.
 
+* Session 3: first v9 experience run
+:PROPERTIES:
+:CUSTOM_ID: session-3
+:END:
+
+Job =a762e09131924e0c8fedc3d2ffdff797= runs from committed v9 source =2063680= against the same project commit and accepted memory =89ae1878=.
+The source-only runtime bundle excludes private memory objects.
+The normal experience purpose remains open-ended and carries the explicit line-coordinate clarification recorded after session 2.
+The worker is live at this checkpoint; publication and independent source-quality acceptance remain pending.
+
 * Reproducibility and continuation
 :PROPERTIES:
 :CUSTOM_ID: artifacts
@@ -100,6 +110,7 @@ These are targeted checks, not an unfiltered whole-repository pass or a live v9 
 
 The durable private record is =/home/coder/.sucoder/logs/dream-twelve/2026-11-25/campaign.json=.
 It records all twelve intended sessions, exact job/runtime paths, process identities, per-session outcomes, source-quality decisions and problem dispositions.
+=launch.py NUMBER= submits one planned fresh session from its verified pinned release and refuses automatic restarts.
 =poll.py NUMBER= verifies the actual worker process and reports immutable job artifacts without restarting it.
 =audit-status.py NUMBER --label LABEL= reconstructs status with native/build/authentication access forbidden and checks unchanged job files and memory.
 An observed timeout or status saying incomplete does not establish that a live worker stopped.
