@@ -116,8 +116,9 @@ The operator's equal-blob/function comparison is not evidence that this provenan
 Issue 116 tracks repeated inspection history and issue 112 the failed full-page read with 1,626 omitted preview bytes.
 The header remains outside the bundle and no editorial lookback occurs. Author/reviewer take 240.84/61.45 seconds; pinned read-only status preserves all 145 job files and the exporter finds zero tasks/drafts.
 Sessions 1-10 are audited; all six project sessions are done. Never substitute an old job or replenish an elapsed wallet.
-No campaign native worker is live. Sessions 11-12 remain planned, both experience mode.
-Launch session 11 with the existing private =launch.py 11= after this checkpoint is committed and main is clean.
+Session 11 is live: experience job =06050a0fcc104754bd6cae60553ccd92=, PID 1218455, on v9 runtime =2063680=, project =b0c49b7= and accepted memory =26335ccb=.
+Use =poll.py 11= to verify its command line and recorded start ticks; retain its original 32-call/1,800-second allowance and 600-second/three-call reserve.
+Session 12 remains planned, also experience mode.
 Both still require terminal, independently audited outcomes; the private campaign record supersedes this checkpoint.
 
 All source work belongs on local main; never push private memory.
