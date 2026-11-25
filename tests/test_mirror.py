@@ -4433,6 +4433,15 @@ def test_detect_agent_type_gemini() -> None:
     assert _detect_agent_type(["/opt/gemini"]) == AgentType.GEMINI
 
 
+def test_detect_agent_type_agy() -> None:
+    """The Antigravity CLI is its own harness, not a Gemini alias."""
+    from sucoder.config import AgentType
+    from sucoder.mirror import _detect_agent_type
+
+    assert _detect_agent_type(["agy"]) == AgentType.AGY
+    assert _detect_agent_type(["/usr/local/bin/agy"]) == AgentType.AGY
+
+
 def test_detect_agent_type_aider() -> None:
     """Test that Aider is treated as an independent harness."""
     from sucoder.config import AgentType
@@ -5414,6 +5423,133 @@ def test_launch_agent_gemini_uses_prompt_interactive(tmp_path: Path, monkeypatch
     prompt_content = cmd[pi_idx + 1]
     assert "SYSTEM PROMPT" in prompt_content
     assert "Test system prompt" in prompt_content
+
+
+def test_launch_agent_agy_uses_its_own_flags(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """agy takes none of Gemini's --yolo / --include-directories."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+    extra_dir = tmp_path / "extra"
+    ctx.settings.agent_launcher = AgentLauncher(
+        command=["agy"], launch_mode="subprocess", writable_dirs=[extra_dir],
+    )
+    prompt_file = tmp_path / "prompt.org"
+    prompt_file.write_text("Test system prompt", encoding="utf-8")
+    manager.config.system_prompt = prompt_file
+
+    calls = []
+
+    def fake_run_agent(args, **kwargs):
+        calls.append(list(args))
+        return CommandResult(
+            requested_args=list(args), executed_args=list(args),
+            stdout="", stderr="", returncode=0,
+        )
+
+    monkeypatch.setattr(manager.executor, "run_agent", fake_run_agent)
+
+    manager.launch_agent(ctx, sync=False, model_override="some-model")
+
+    cmd = calls[-1]
+    assert cmd[0] == "agy"
+    assert "--dangerously-skip-permissions" in cmd
+    assert cmd[cmd.index("--model") + 1] == "some-model"
+    assert cmd[cmd.index("--add-dir") + 1] == str(extra_dir)
+    prompt = cmd[cmd.index("--prompt-interactive") + 1]
+    assert "Test system prompt" in prompt
+    assert "--yolo" not in cmd
+    assert "--include-directories" not in cmd
+    trusted = json.loads(cmd[cmd.index("--settings") + 1])["trustedWorkspaces"]
+    assert str(ctx.mirror_path) in trusted
+
+
+def test_remote_agy_launch_carries_the_trust_sentinel(tmp_path: Path) -> None:
+    from sucoder.mirror import _AGY_TRUST_SENTINEL
+
+    argv = _agy_trust(tmp_path, ["agy", "--dangerously-skip-permissions"], remote=True)
+    assert argv[argv.index("--settings") + 1] == _AGY_TRUST_SENTINEL
+
+
+def _agy_trust(tmp_path: Path, command: list, *, remote: bool = False) -> list:
+    from sucoder.config import AgentType
+
+    manager = build_manager(tmp_path)
+    manager._detected_agent_type = AgentType.AGY if command[0] == "agy" else AgentType.CLAUDE
+    ctx = types.SimpleNamespace(is_remote=remote)
+    return manager._with_agy_workspace_trust(ctx, command, tmp_path)
+
+
+def test_agy_trusts_the_launch_directory_for_the_session(tmp_path: Path) -> None:
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    manager = build_manager(tmp_path)
+    from sucoder.config import AgentType
+    manager._detected_agent_type = AgentType.AGY
+    argv = manager._with_agy_workspace_trust(
+        types.SimpleNamespace(is_remote=False), ["agy", "--dangerously-skip-permissions"], link,
+    )
+    settings = json.loads(argv[argv.index("--settings") + 1])
+    assert settings == {"trustedWorkspaces": [str(link), str(real.resolve())]}
+
+
+@pytest.mark.parametrize("command", [
+    ["agy"],  # no skip-permissions: the dialog may be a real gate
+    ["agy", "--dangerously-skip-permissions", "--settings", "mine.json"],
+    ["agy", "--dangerously-skip-permissions", "--settings=mine.json"],
+    ["claude", "--dangerously-skip-permissions"],
+])
+def test_agy_trust_is_left_alone(tmp_path: Path, command: list) -> None:
+    assert _agy_trust(tmp_path, command) == command
+
+
+@pytest.mark.parametrize("wrap", ["plain", "nvm", "environment"])
+def test_remote_agy_trust_expands_in_the_launch_directory(tmp_path: Path, wrap: str) -> None:
+    """The remote command names the directory its own shell runs in."""
+    from sucoder.mirror import _AGY_TRUST_SENTINEL
+
+    root = tmp_path / "manager"
+    root.mkdir()
+    manager = build_manager(root)
+    (tmp_path / "bin").mkdir()
+    fake = tmp_path / "bin" / "agy"
+    fake.write_text('#!/bin/sh\nprintf "%s" "$2" > "$HOME/settings.json"\n', encoding="utf-8")
+    fake.chmod(0o755)
+    command = [str(fake), "--settings", _AGY_TRUST_SENTINEL]
+    if wrap == "nvm":
+        nvm = tmp_path / "nvm"
+        nvm.mkdir()
+        (nvm / "nvm.sh").write_text("nvm() { :; }\n", encoding="utf-8")
+        command = manager._wrap_with_nvm(
+            command, AgentLauncher(nvm=NvmConfig(version="22", dir=nvm)),
+        )
+    elif wrap == "environment":
+        env_file = tmp_path / "env.sh"
+        env_file.write_text("X=1\n", encoding="utf-8")
+        command = manager._wrap_with_environment_file(command, str(env_file))
+    rendered = manager._build_remote_agent_cmd_str(
+        manager.context_for("sample"), command, remote_prelude_text=None, prelude_sentinel="unused",
+    )
+    rendered = rendered[: -len("; exec bash -l")]  # no login shell in the test
+    work = tmp_path / "local job" / "clone"
+    work.mkdir(parents=True)
+    subprocess.run(
+        ["bash", "-c", rendered], cwd=work, stdin=subprocess.DEVNULL,
+        capture_output=True, check=True, env={**os.environ, "HOME": str(tmp_path)},
+    )
+    # Through a file: nvm's login shell may print a banner on stdout.
+    settings = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+    assert settings["trustedWorkspaces"] == [str(work), str(work.resolve())]
+
+
+def test_launch_mode_default_for_agy(tmp_path: Path) -> None:
+    """agy opens /dev/tty itself, so it defaults to exec like Gemini."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    ctx.settings.agent_launcher = AgentLauncher(command=["agy"])
+    assert manager._get_effective_launch_mode(["agy"], ctx.settings.agent_launcher) == "exec"
 
 
 def test_launch_mode_default_for_gemini(tmp_path: Path) -> None:

@@ -535,7 +535,7 @@ def statuses_from_cache(payload: Dict[str, object]) -> List[Status]:
 UNTRACKED = "untracked"
 
 # Harness executables a launch can start (mirror the harness profiles).
-AGENT_COMMANDS = frozenset({"claude", "codex", "gemini", "aider", "opencode", "goose", "kimi"})
+AGENT_COMMANDS = frozenset({"claude", "codex", "agy", "gemini", "aider", "opencode", "goose", "kimi"})
 
 
 @dataclass(frozen=True)

@@ -2821,6 +2821,7 @@ class MirrorManager:
         batch job starts.
         """
         agent_cmd_str = f"{shlex.join(command)}; exec bash -l"
+        agent_cmd_str = agent_cmd_str.replace(_AGY_TRUST_SENTINEL, _AGY_TRUST_SHELL)
         launch = getattr(self, "_service_launch", None)
         if launch is not None:
             agent_cmd_str = service_marker(launch) + agent_cmd_str
@@ -4057,6 +4058,7 @@ class MirrorManager:
             command = self._apply_agent_flag_templates(
                 command, ctx, launcher, templates, model=model_for_flag,
             )
+            command = self._with_agy_workspace_trust(ctx, command, launch_cwd)
         # The runner's pre-launch thread/resume pass (issue 46) needs a bare
         # app-server on the same executable and placeholder, taken here before
         # later flags shift the placeholder and nvm wraps it like the command.
@@ -5685,6 +5687,39 @@ class MirrorManager:
         if not rendered.strip():
             return []
         return shlex.split(rendered)
+
+    def _with_agy_workspace_trust(
+        self, ctx: MirrorContext, command: List[str], launch_cwd: Path,
+    ) -> List[str]:
+        """Trust the launch directory for this agy session.
+
+        agy asks about every folder it has not seen, parents notwithstanding.
+        With ``--dangerously-skip-permissions`` the dialog protects nothing:
+        the prompt and its tool calls run while it is unanswered.
+        ``--settings`` answers it for this session and is never saved.  Skipped
+        without that flag, where the dialog may be a real gate, and when the
+        operator passes their own ``--settings``.
+
+        A remote launch directory can be a node-local clone whose path is only
+        known on the node, so the remote argv carries a sentinel that
+        ``_build_remote_agent_cmd_str`` turns into a shell expansion.
+        """
+        if self._detected_agent_type != AgentType.AGY:
+            return command
+        if "--dangerously-skip-permissions" not in command:
+            return command
+        if any(t in ("--settings", "-settings") or t.startswith(("--settings=", "-settings="))
+               for t in command):
+            self.logger.info("Command already passes --settings; not adding workspace trust.")
+            return command
+        if ctx.is_remote:
+            settings = _AGY_TRUST_SENTINEL
+        else:
+            # agy matches the logical path; the physical one covers a shell
+            # that resolved a symlink on the way.
+            paths = list(dict.fromkeys([str(launch_cwd), str(launch_cwd.resolve())]))
+            settings = json.dumps({"trustedWorkspaces": paths}, separators=(",", ":"))
+        return self._insert_after_executable(command, ["--settings", settings])
 
     def _with_attention_hooks(self, ctx: MirrorContext, command: List[str]) -> List[str]:
         """Add status-record hooks to a Claude or Codex launch when ``attention.hooks``.
@@ -7683,7 +7718,7 @@ If you find issues, describe each one clearly with the filename and specific con
         if not command:
             return False
         executable = Path(command[0]).name
-        return executable in {"codex", "coder", "claude", "gemini"}
+        return executable in {"codex", "coder", "claude", "gemini", "agy"}
 
     @staticmethod
     def _default_skills_catalog_path() -> Optional[Path]:
@@ -8071,7 +8106,7 @@ If you find issues, describe each one clearly with the filename and specific con
             return f"codex read {display}"
         if agent_type == AgentType.CLAUDE:
             return f"Read tool: {display}"
-        if agent_type == AgentType.GEMINI:
+        if agent_type in (AgentType.GEMINI, AgentType.AGY):
             return f"read {display}"
         return f"load {display}"
 
@@ -8548,6 +8583,13 @@ def _claude_session_chosen(command: Sequence[str]) -> bool:
     return False
 
 
+# The argv stand-in for agy's workspace trust on a remote launch, and the
+# expansion the agent's own shell evaluates in the launch directory.  The
+# expansion holds no single quote, so it survives nvm's nested quoting.
+_AGY_TRUST_SENTINEL = "__SUCODER_AGY_TRUST_LAUNCH_DIRECTORY__"
+_AGY_TRUST_SHELL = r'''"{\"trustedWorkspaces\":[\"$PWD\",\"$(pwd -P)\"]}"'''
+
+
 def _detect_agent_type(command: Sequence[str]) -> AgentType:
     """Detect agent type from command executable."""
     if not command:
@@ -8559,6 +8601,8 @@ def _detect_agent_type(command: Sequence[str]) -> AgentType:
         return AgentType.CODEX
     if executable == "gemini":
         return AgentType.GEMINI
+    if executable == "agy":
+        return AgentType.AGY
     if executable == "aider":
         return AgentType.AIDER
     if executable == "opencode":

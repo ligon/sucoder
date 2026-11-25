@@ -5,7 +5,7 @@
 * Project Overview
 Unix user and group permissions have been battle-tested for over fifty years.  When you bring on a new collaborator you give them their own account, set group read on shared files, and let the filesystem enforce the boundaries.  Why should an AI coding agent be any different?
 
-=sucoder= treats an LLM agent (running through a harness such as Codex, Claude, Gemini, Aider, OpenCode, Goose, or Kimi) as a collaborator with its own unix account.  The human's canonical repository is group-readable but not group-writable; the agent works in a sandboxed mirror clone where it has full write access.  No custom container runtimes, no bespoke sandboxing daemons---just =chown=, =chmod=, and =git=.
+=sucoder= treats an LLM agent (running through a harness such as Codex, Claude, Antigravity, Gemini, Aider, OpenCode, Goose, or Kimi) as a collaborator with its own unix account.  The human's canonical repository is group-readable but not group-writable; the agent works in a sandboxed mirror clone where it has full write access.  No custom container runtimes, no bespoke sandboxing daemons---just =chown=, =chmod=, and =git=.
 
 * Quick Start
 
@@ -17,7 +17,7 @@ cd ~/Projects/my-project  # any git repo
 sucoder collaborate --harness claude
 #+end_src
 
-No config file needed.  =sucoder= detects the git repo, mirrors it under =/var/tmp/coder-mirrors/=, and launches Claude (the default harness).  Use =--harness/-H= to pick a different harness (=codex=, =gemini=, =aider=, =opencode=, =goose=, or =kimi=), and =--model/-m= to choose its LLM independently.  The old =--agent/-a= spelling remains a compatibility alias for =--harness=.  Add =--task fix-login= to start on a dedicated branch.
+No config file needed.  =sucoder= detects the git repo, mirrors it under =/var/tmp/coder-mirrors/=, and launches Claude (the default harness).  Use =--harness/-H= to pick a different harness (=codex=, =agy=, =gemini=, =aider=, =opencode=, =goose=, or =kimi=), and =--model/-m= to choose its LLM independently.  The old =--agent/-a= spelling remains a compatibility alias for =--harness=.  Add =--task fix-login= to start on a dedicated branch.
 
 For example, the same Aider harness can run models from different providers:
 
@@ -104,7 +104,7 @@ For multi-repo setups, skills, and system prompts, see [[*Configuration][Configu
 - sudo
 - make (optional; you can run the setup commands by hand)
 - bash
-- At least one supported harness CLI on the agent user's PATH: =claude=, =codex=, =gemini=, =aider=, =opencode=, =goose=, or =kimi=
+- At least one supported harness CLI on the agent user's PATH: =claude=, =codex=, =agy=, =gemini=, =aider=, =opencode=, =goose=, or =kimi=
 
 ** Installing on a cluster account
 
@@ -163,7 +163,7 @@ If the mirror does not exist under =/var/tmp/coder-mirrors/<repo>/=, clone it fr
 - With =--task fix-login=: create a branch =coder/fix-login-<timestamp>= in the mirror, based on the default base branch (or =--base=).
 
 ** 5. Compose the agent launch command /auto/
-Detect the harness type (Claude, Codex, Gemini, Aider, OpenCode, Goose, Kimi) from the command name and inject the appropriate flags: model, write-access (=--dangerously-skip-permissions=, =--sandbox danger-full-access=, =--yolo=, =--yes-always=, =--auto=), writable directories, skills paths, and system prompt.  Aider receives the composed context through a private read-only file so it remains interactive.  Kimi receives a private custom-agent file which includes its native base prompt before the SuCoder context; other harnesses use their native prompt flag or trailing text.
+Detect the harness type (Claude, Codex, Antigravity, Gemini, Aider, OpenCode, Goose, Kimi) from the command name and inject the appropriate flags: model, write-access (=--dangerously-skip-permissions=, =--sandbox danger-full-access=, =--yolo=, =--yes-always=, =--auto=), writable directories, skills paths, and system prompt.  Aider receives the composed context through a private read-only file so it remains interactive.  Kimi receives a private custom-agent file which includes its native base prompt before the SuCoder context; other harnesses use their native prompt flag or trailing text.
 
 ** 6. Launch the agent /human/
 The agent process starts inside the mirror working tree.  From here, *you are talking to the agent*.  It has full write access to the mirror but cannot write to your canonical repo.  The agent commits its work to the task branch.
@@ -332,7 +332,7 @@ Configuration is stored in YAML (default =~/.sucoder/config.yaml=).  To set it u
    #+end_src
 2. Update =~/.sucoder/config.yaml= so that:
    - =human_user= matches your login (for example =ligon=).
-   - =agent_user= and =agent_group= match the agent Unix account (default =coder=).  This is a shared account used by any supported agent (Codex, Claude Code, Gemini CLI, etc.)---it is not tied to a specific agent binary.
+   - =agent_user= and =agent_group= match the agent Unix account (default =coder=).  This is a shared account used by any supported agent (Codex, Claude Code, Antigravity CLI, etc.)---it is not tied to a specific agent binary.
    - =mirror_root= points to the directory where agent mirrors will live.
    - =mirrors.<name>.canonical_repo= points at the human-owned repository.
 3. Ensure the agent can read (but not write) the configuration directory and file.
@@ -2067,7 +2067,7 @@ mirrors:
       # Harness executable and optional default model can be configured independently.
       command: [aider]
       model: openrouter/deepseek/deepseek-chat
-      # Alternatives: [opencode], [goose, run, --interactive], or [kimi].
+      # Alternatives: [agy], [opencode], [goose, run, --interactive], or [kimi].
       # Remote Codex service: [codex, remote-control] (start is normalized to foreground).
       # Optional: map generic intents to agent-specific flags
       needs_yolo: true
@@ -2094,6 +2094,7 @@ per-mirror > global > profile > UNKNOWN.
 |----------+------------------+------------------------------------------------------+-------------------------------+----------------------+---------------+---------------------|
 | Claude   | --model {model}  | --dangerously-skip-permissions                       | --add-dir {path}              | --system-prompt      | (none)        | --mcp-config {path} |
 | Codex    | --model {model}  | --sandbox danger-full-access --ask-for-approval never| (none)                        | trailing text        | (none)        | (none)              |
+| Agy      | --model {model}  | --dangerously-skip-permissions                       | --add-dir {path}              | --prompt-interactive | (none)        | native config       |
 | Gemini   | --model {model}  | --yolo                                               | --include-directories {path}  | --prompt-interactive | (none)        | (none)              |
 | Aider    | --model {model}  | --yes-always                                         | (none)                        | (none)               | --read {path} | (none)              |
 | OpenCode | --model {model}  | --auto                                               | (none)                        | --prompt             | (none)        | native config       |
@@ -2105,6 +2106,17 @@ means OpenCode, Goose, and Kimi do not need a =skills= flag.  Goose launches as
 =goose run --interactive= so the injected =--text= context is processed before
 the interactive session begins.  Kimi's generated custom-agent file includes
 =${base_prompt}= so its native tools and skills remain available.
+
+=agy= is the Antigravity CLI, Google's successor to the Gemini CLI.
+It has its own profile because it rejects Gemini's =--yolo= and =--include-directories=.
+When both are on =PATH=, auto-detection considers only =agy=; =gemini= remains a supported harness when selected explicitly (=--harness=, =$SUCODER_AGENT=, =~/.sucoder/agent= or =agent_launcher.command=), for the accounts that Google still serves through it.
+A saved =gemini= in =~/.sucoder/agent= therefore stays in force until it is changed.
+The Gemini CLI's login is not enough: sign in once as the agent user by running =agy=, which over SSH prints a URL and asks for the code it returns.
+Without a D-Bus session bus the token is kept in =~/.gemini/antigravity-cli/antigravity-oauth-token=, so hosts sharing a home directory share the login.
+agy asks once per folder whether to trust it, and trusting a parent does not cover its subfolders, so a new mirror or node-local clone would show that dialog on first launch.
+With =--dangerously-skip-permissions= the dialog gates nothing: agy 1.5.16 submitted the injected context and ran tool calls while it was still unanswered.
+SuCoder therefore trusts the launch directory for that session with =--settings=, which agy does not save; it leaves the dialog alone when that flag is absent or the command already passes =--settings=.
+MCP servers belong in agy's own configuration (=~/.gemini/config/mcp_config.json=, or =.agents/mcp_config.json= in the repository).
 
 If you change any defaults, update =AGENT_PROFILES= in =sucoder/config.py= alongside the
 README so the documentation stays in sync.
@@ -2186,15 +2198,15 @@ The core =sucoder= workflow (mirror, sync, permissions, branch management) is
 fully agent-agnostic.  The table below summarises where agents differ in
 features that =sucoder= can exploit.
 
-| Capability                   | Claude                          | Codex                          | Gemini                  | Aider                 | OpenCode       | Goose                     | Kimi                   |
-|------------------------------+---------------------------------+--------------------------------+-------------------------+-----------------------+----------------+---------------------------+------------------------|
-| Native =--worktree= flag     | Yes (=claude --worktree NAME=) | No                             | No                      | No                    | No             | No                        | No                     |
-| Subagent worktree isolation  | Yes (=isolation: worktree=)    | No                             | No                      | No                    | No             | No                        | No                     |
-| Session resume               | Yes (=claude --resume=)        | Yes                            | Yes                     | Chat history support  | Yes            | Yes (=--resume=)          | Yes (=--session=)      |
-| System prompt mechanism      | =--system-prompt=               | Trailing text                  | =--prompt-interactive=  | Private =--read= file | =--prompt=     | =run --interactive --text= | Private =--agent-file=|
-| Write-access flag            | =--dangerously-skip-permissions=| =--sandbox danger-full-access= | =--yolo=                | =--yes-always=        | =--auto=       | Native policy             | =--auto=               |
-| TTY requirement              | Works with subprocess           | Works with subprocess          | Requires =exec= (TTY)   | Works with subprocess | Subprocess     | Subprocess                | Subprocess             |
-| Default harness              | *Yes*                           | Supported                      | Supported               | Supported             | Supported      | Supported                 | Supported              |
+| Capability                   | Claude                          | Codex                          | Agy                              | Gemini                  | Aider                 | OpenCode       | Goose                     | Kimi                   |
+|------------------------------+---------------------------------+--------------------------------+----------------------------------+-------------------------+-----------------------+----------------+---------------------------+------------------------|
+| Native =--worktree= flag     | Yes (=claude --worktree NAME=) | No                             | No                               | No                      | No                    | No             | No                        | No                     |
+| Subagent worktree isolation  | Yes (=isolation: worktree=)    | No                             | Unverified                       | No                      | No                    | No             | No                        | No                     |
+| Session resume               | Yes (=claude --resume=)        | Yes                            | Yes (=--conversation=)           | Yes                     | Chat history support  | Yes            | Yes (=--resume=)          | Yes (=--session=)      |
+| System prompt mechanism      | =--system-prompt=               | Trailing text                  | =--prompt-interactive=           | =--prompt-interactive=  | Private =--read= file | =--prompt=     | =run --interactive --text= | Private =--agent-file=|
+| Write-access flag            | =--dangerously-skip-permissions=| =--sandbox danger-full-access= | =--dangerously-skip-permissions= | =--yolo=                | =--yes-always=        | =--auto=       | Native policy             | =--auto=               |
+| TTY requirement              | Works with subprocess           | Works with subprocess          | Requires =exec= (TTY)            | Requires =exec= (TTY)   | Works with subprocess | Subprocess     | Subprocess                | Subprocess             |
+| Default harness              | *Yes*                           | Supported                      | Supported                        | Supported               | Supported             | Supported      | Supported                 | Supported              |
 
 Agents without native =--worktree= support can still use git worktrees
 manually.  The agent just needs to run =git worktree add= inside the mirror;

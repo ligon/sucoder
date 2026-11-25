@@ -298,6 +298,7 @@ mirrors:
     agent_launcher:
       # Harness and model are independent. The default harness is claude.
       # command: [opencode]
+      # Antigravity CLI (Google's successor to the Gemini CLI): [agy]
       # Goose's interactive entry point is: [goose, run, --interactive]
       # Native Kimi Code CLI: [kimi]
       # Disposable Happier/Claude pilot: docs/happier-pilot.org.
