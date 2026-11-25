@@ -136,6 +136,11 @@ It uses the same frozen v9 runtime =2063680=, project =05dcce3= with the small s
 The original fresh 32-invocation/1,800-second allowance and 600-second/three-call closeout reserve apply.
 A terminal result and independent source-quality decision remain pending.
 
+A completed discovery lookup reproduces the unavailable memory-page read from session 3.
+[[https://github.com/ligon/sucoder/issues/112][Issue 112]] records the bounded retrieval gap: the frozen Talk preview contains 2,048 bytes and omits 1,144 more, including the newer module-docstring follow-up.
+The full memory page is 11,995 bytes, but its displayed path cannot be read through the explorer's project inventory.
+This limits access to omitted follow-up context; the eventual usefulness or publication outcome of session 4 is still unknown at this checkpoint.
+
 * Reproducibility and continuation
 :PROPERTIES:
 :CUSTOM_ID: artifacts

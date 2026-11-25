@@ -52,6 +52,9 @@ Sessions 1-3 are terminal and audited; do not resume them or reuse their elapsed
 The source/status correction is committed at =05dcce3da97dc483889f19a343d7359af0c89671=; all forty reply-probe tests pass and the module AST apart from its docstring is unchanged.
 Session 4 is now live: experience job =6a799c0066104346aa5862d1111ef658=, PID 1157811, using pinned runtime =2063680=, project =05dcce3= and accepted memory =399fe527=.
 Use =poll.py 4= to verify its command line and recorded process start ticks before any lifecycle decision.
+Issue 112 is filed for a reproduced discovery limitation: the memory Talk preview clips newer follow-up text, while reading the named full memory page is unavailable through the pinned project inventory.
+The private =run-04-memory-lead-gap.json= records exact preview sizes and immutable failed lookup hashes from sessions 3 and 4; this does not claim a terminal session-4 outcome.
+The private =audit-campaign.py= checks audited-record continuity and unchanged historical job bytes; it is not a substitute for the final direct semantic and problem-disposition audit.
 The private progress record and launch artifacts bind this new allowance; never substitute an old job or replenish an elapsed wallet.
 Sessions 5-12 remain planned; session 4 plus those eight still require terminal, independently audited outcomes.
 
