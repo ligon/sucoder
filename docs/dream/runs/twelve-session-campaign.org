@@ -1,7 +1,7 @@
 #+TITLE: Twelve-session SuCoder dream campaign
 #+AUTHOR: Sue
 #+DATE: 2026-11-25
-#+STATUS: ACTIVE -- 11 OF 12 SESSIONS AUDITED
+#+STATUS: COMPLETE -- 12 TERMINAL OUTCOMES AUDITED
 
 * Scope and method
 :PROPERTIES:
@@ -22,6 +22,55 @@ An unsafe publication is withdrawn additively; memory is never pushed to a publi
 Each identified problem must have a repair or filed-issue disposition.
 The [[file:../../dream-twelve-ledger.org][grounding ledger]] identifies reused machinery and invariants.
 
+* Results and follow-up
+:PROPERTIES:
+:CUSTOM_ID: results
+:END:
+
+All twelve fresh sessions are terminal and independently audited, six in each mode.
+The definition in the grounding ledger counts substantive failed attempts as tested outcomes; it does not require twelve publications.
+Session 6 stops after independent review requests revision; session 12 stops during authorship and has no reviewed proposal.
+Neither is a setup refusal, and neither is reported as a successful publication.
+
+| Independent outcome                | Sessions     | Count |
+|------------------------------------+--------------+-------|
+| Retained with precision advisories | 1, 3, 7, 9, 10 |     5 |
+| Reviewed unchanged                 | 4            |     1 |
+| Published, rejected and withdrawn  | 2, 5, 8, 11  |     4 |
+| Blocked by independent model review | 6           |     1 |
+| Author ordinary-work budget failure | 12          |     1 |
+
+There are 175 charged native invocations: 174 completed and one failed.
+The saved traces contain 178 StructuredOutput attempts across the completed work; native invocations are not counts of hidden HTTP/model retries.
+Known telemetry totals are 3,076,553 input tokens (398,136 cache reads, 2,677,891 cache writes and 526 uncached) and 583,737 output tokens.
+The final failed author's usage is unknown and excluded from these subtotals; they are not a subscription billing statement or controlled savings comparison.
+Seven sessions revisit the reply-policy topic; the other five visit node pinning twice and Savio launch, hook validation and attention once each.
+This is selection evidence under an adaptive sequence, not an RNG-malfunction diagnosis or a held-out novelty benchmark.
+
+The v9 reason-format correction and the small module-docstring correction are on local main.
+The remaining problems have filed-issue dispositions:
+
+| Issue | Disposition | Finding |
+|-------+-------------+---------|
+| [[https://github.com/ligon/sucoder/issues/93][93]] | existing issue updated | Repeated leads despite visible memory; distinguish this from the original missing-memory defect. |
+| [[https://github.com/ligon/sucoder/issues/107][107]] | local correction; issue open | V9 concise reasons and the existing general field allowance preserve v8 replay and the cumulative byte bound. |
+| [[https://github.com/ligon/sucoder/issues/108][108]] | filed and extended | Complete page matrices still pass unsupported identity, verification-scope and architectural-dependency claims. |
+| [[https://github.com/ligon/sucoder/issues/109][109]] | description corrected; policy open | Existing bare-reply behavior and first-match priority need a maintained contract and human policy decision. |
+| [[https://github.com/ligon/sucoder/issues/111][111]] | filed; workflow mitigation | Byte spans can be published as line TARGETs; the existing exporter withholds them. |
+| [[https://github.com/ligon/sucoder/issues/112][112]] | filed | Discovery cannot retrieve later questions omitted from bounded memory previews. |
+| [[https://github.com/ligon/sucoder/issues/113][113]] | filed | Quote-only page normalization triggers expensive full repairs. |
+| [[https://github.com/ligon/sucoder/issues/114][114]] | filed | Reference-only repairs re-emit identical full page bytes. |
+| [[https://github.com/ligon/sucoder/issues/115][115]] | filed; recovery verified | A known seed page can be omitted despite capacity; bounded full-page lookup restores edit authority. |
+| [[https://github.com/ligon/sucoder/issues/116][116]] | filed | Repeated verification provenance grows explanatory prose; distinguish mixed useful updates from pure churn. |
+| [[https://github.com/ligon/sucoder/issues/117][117]] | filed | Invalid native StructuredOutput JSON causes internal generations within one charged invocation. |
+| [[https://github.com/ligon/sucoder/issues/118][118]] | filed; same-bound reproduction | Unrelated support records fill the byte allowance before selected-page provenance. |
+| [[https://github.com/ligon/sucoder/issues/119][119]] | filed; pure-function reproduction | Zero-tail clipping retains and duplicates full tool-call input, with negative omission metadata. |
+| [[https://github.com/ligon/sucoder/issues/120][120]] | filed | Ordinary authorship time can expire without a recoverable proposal despite protected closeout capacity. |
+
+Before another live campaign, prioritize the deterministic clipping defect and memory/provenance selection gaps, then bounded draft progress and claim-focused review.
+A clipping fix must preserve frozen v1 rendering; metadata/output changes must retain old replay and the existing certification boundary.
+Increasing time or cache retention alone would not establish correctness or a completion-rate improvement.
+
 * Progress
 :PROPERTIES:
 :CUSTOM_ID: progress
@@ -40,7 +89,7 @@ The [[file:../../dream-twelve-ledger.org][grounding ledger]] identifies reused m
 |       9 | project    | published     | accepted with advisory |          14 |
 |      10 | project    | published     | accepted with advisory |           9 |
 |      11 | experience | published     | rejected / withdrawn  |          18 |
-|      12 | experience | running       | pending               |             |
+|      12 | experience | incomplete    | author budget failure |          14 |
 
 * Session 1: follow a recorded reply-policy question
 :PROPERTIES:
@@ -386,9 +435,55 @@ One fresh experience session remains; the campaign is not complete.
 :CUSTOM_ID: session-12
 :END:
 
-Job =1b9dfe6d4fe5422eb7d21d80bba5454d= is live at this checkpoint.
-It uses v9 runtime =2063680=, project =7e74abb= and accepted memory =70851cc6=, with the normal experience purpose and original fresh allowance.
-Terminal status and independent acceptance remain pending; launching the twelfth job does not complete the campaign.
+Job =1b9dfe6d4fe5422eb7d21d80bba5454d= uses v9 runtime =2063680=, project =7e74abb= and starting memory =70851cc6=.
+Thirteen discovery calls complete and select three Git excerpts (6,431 bytes): the committed CI runner/matrix, dated hook-acceptance documentation and the November 14 staleness report.
+All three spans independently match their pinned Git bytes and hashes.
+The author receives the full attention page and its prior-support records initially; no lookup is required.
+
+The first author invocation runs for 502.48 seconds, then stops at the original ordinary-work deadline while the 600-second closeout reserve remains protected.
+Its saved trace has 394 system events (392 thinking-progress records plus initialization/invalidation), no assistant text and no StructuredOutput proposal.
+There is no completed author result, independent model review, candidate publication or new correction task.
+Read-only status says =incomplete=; the attempt-1 failure marker says =budget_exhausted= and the matching worker has exited.
+This is a fresh substantive failed test outcome, not a setup refusal or a reviewed wiki result.
+No retry, replacement session, extension or further native invocation is made.
+
+[[https://github.com/ligon/sucoder/issues/120][Issue 120]] records bounded authorship without recoverable proposal progress, while preserving the correct guard and reviewer reserve.
+The canonical assignment is 92,364 bytes; that is not a measured provider-token count or exact wire-prompt size, and its size is not established as the cause of failure.
+The failed invocation remains charged and its final token/currency usage is unknown.
+The thirteen completed calls report 166,501 input tokens and 32,750 output tokens; these known subtotals exclude the failed author call.
+This is not an observed JSON-parsing retry; no StructuredOutput attempt is saved in the failed trace.
+
+Memory remains exactly =70851cc6bdaea7e6854ab06f24d00b3a4843f670=, whose tree retains session 10's accepted state after the session-11 withdrawal.
+Pinned read-only status forbids native/build/authentication access and preserves all 210 job files and memory.
+There is no new candidate/task export to inspect.
+All twelve sessions now have terminal independently audited outcomes, including their failures.
+
+* Final verification and limits
+:PROPERTIES:
+:CUSTOM_ID: final-verification
+:END:
+
+The direct closeout check verifies twelve unique post-campaign-start job identities, the intended six/six modes, pinned project/runtime identities, original 32-call/1,800-second wallets, single attempts and no extensions.
+All actual terminal artifacts and recorded native end estimates are inside their original whole-job deadlines.
+No campaign worker or new native Claude process remains; an unrelated older Claude session is left alone.
+
+All 2,611 job files still match their saved manifests.
+The 43 admitted Git units and two rendered-session units authenticate against their frozen payloads; both selected raw transcript spans also match their recorded hashes.
+The two full-page/section lookups in session 11 authenticate against its frozen memory page and preserve the edit-authority distinction.
+The current twenty-file managed copy is exact and read-only at =70851cc6=; private memory is never pushed or included in the source transfer.
+Native published status remains a historical event after an operator withdrawal and must not be used as current source-quality acceptance.
+
+The v9 source regression records 135 passes and one Org timeout; that exact case passes serially under unchanged limits.
+All seven new concise-review cases pass, the protocol group passes 68, and the reply-probe group passes 40.
+The seven initial source-test failures are individually reconciled with later passing results.
+Ten runtime files pass mypy, the new module passes untyped-body checking, and nineteen changed/new Python files pass current ASCII/Python 3.9 grammar checks.
+The module AST apart from its status docstring is unchanged by the small description correction.
+The quiet-host fourteen-variant certificate passes 28 captures; the earlier deadline failure remains recorded, and genuine v8 read-only replay remains intact.
+No unfiltered final-source full-suite pass or controlled live savings comparison is claimed.
+
+The source runtime is pinned separately from each project's changing documentation commit.
+Completed results may enter later source inputs; private prospective quality expectations and raw evidence stay outside them.
+The sequence therefore tests operation and exposes concrete failures, without establishing a general quality rate or independent held-out performance.
 
 * Reproducibility and continuation
 :PROPERTIES:
@@ -403,3 +498,8 @@ It records all twelve intended sessions, exact job/runtime paths, process identi
 An observed timeout or status saying incomplete does not establish that a live worker stopped.
 Native invocations, internal schema retries and unknown failed-call usage are recorded separately.
 Private raw evidence and source-quality expectations remain outside model inputs and this public source report.
+
+The final closeout records are under =closeout/= in that private directory: =core-audit.json=, =issue-snapshots.json=, =source-release.json= and =completion-audit.json=.
+The latest-main-only transfer is =closeout/main-source.bundle=; its manifest records the exact head, hash and exclusion of private-only memory objects.
+Source is committed on local main; the configured GitHub push remains disabled and maintainer-side transport is required.
+No further live dream is authorized by this twelve-session campaign.

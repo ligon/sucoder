@@ -1,143 +1,54 @@
-#+TITLE: Twelve-session dream campaign: 11 of 12 audited
+#+TITLE: Twelve-session dream campaign: twelve audited
 #+DATE: 2026-11-25
-#+STATUS: READY -- USER GOAL ACTIVE; ONE SESSION REMAINS
+#+STATUS: COMPLETE -- TWELVE TERMINAL TEST OUTCOMES AUDITED
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
-* Active twelve-session goal, 2026-11-25
+* Completed twelve-session goal, 2026-11-25
 
-The user set the goal: "test with repeated dreams, identifying problems as the process goes along and either repairing or filing an issue. Repeat 12 times."
-The goal remains active; do not redefine completion as the eleven sessions already audited or count old probes toward the twelve.
-The [[file:../docs/dream/runs/twelve-session-campaign.org][campaign report]] and [[file:../docs/dream-twelve-ledger.org][grounding ledger]] describe the method and current verification.
-The authoritative private progress record is =/home/coder/.sucoder/logs/dream-twelve/2026-11-25/campaign.json=.
-It enumerates all twelve sessions, paired project/experience modes, pinned runtimes, job IDs, process identities, quality checks and repair/issue dispositions.
+The user requested: "test with repeated dreams, identifying problems as the process goes along and either repairing or filing an issue. Repeat 12 times."
+All twelve fresh substantive launches now have terminal independently audited outcomes, six project and six experience sessions.
+The [[file:../docs/dream/runs/twelve-session-campaign.org][campaign report]] records every session, the [[file:../docs/dream-twelve-ledger.org][grounding ledger]] the source invariants, and the authoritative private record is =/home/coder/.sucoder/logs/dream-twelve/2026-11-25/campaign.json=.
+Do not restart an old job, replenish an elapsed allowance or run a thirteenth session under this goal.
 
-Each fresh session has 32 native invocations/1,800 seconds, with 600 seconds and three calls reserved for closeout.
-Use the existing coder Claude subscription, =claude-sonnet-4-6= and certified stable delivery; no hard token/currency ceiling is available.
-This explicit new user goal authorizes the sequence and repairs/issue filing; historical no-inference notes and expired wallets remain historical.
-Do not restart merely because status says incomplete or an observation times out: verify the matching process or terminal artifacts first.
+Five publications are retained with precision advisories (sessions 1, 3, 7, 9 and 10), one is reviewed unchanged (4), four are withdrawn additively (2, 5, 8 and 11), one stops after independent review requests revision (6), and one stops during authorship (12).
+These are twelve tested outcomes, not twelve successful publications or twelve completed model reviews.
+There are 175 native invocations, 174 completed and one failed; the failed author's usage is unknown and remains charged.
+No original wallet is extended; all use 32 calls/1,800 seconds with 600 seconds/three calls protected for closeout.
+Native invocations are not hidden model/API retry counts, and no hard token/currency ceiling or billing amount is claimed.
 
-Session 1, job =64226805b1de4988b60d3934359799f6=, finished with sixteen completed calls (fourteen explorer, author, reviewer) under pinned v8 runtime/project =dbc79a5=.
-It followed the existing transcript-reply policy question and updated that topic, preserving earlier qualifications.
-Session 1 advanced private memory to =ec39fb7387f8ac72e235e2edfb84db7681a609a1=; Sue accepted it with a precision advisory and no blocking finding.
-The independent bare-reply fixture passes, and [[https://github.com/ligon/sucoder/issues/109][issue 109]] records the maintainer policy/documentation gap.
-[[https://github.com/ligon/sucoder/issues/107][Issue 107]] records the reproduced 512-character reason retry; [[https://github.com/ligon/sucoder/issues/108][issue 108]] tracks semantic false passes and receives the narrower wording advisory.
-Pinned-v8 and working-v9 read-only replay both preserve all 237 job files and memory, with native/build/authentication access forbidden.
+Session 12, job =1b9dfe6d4fe5422eb7d21d80bba5454d=, uses runtime =2063680=, project =7e74abb= and authoring v9.
+Thirteen discovery calls complete; its author runs for 502.48 seconds and hits the original ordinary-work cutoff with no StructuredOutput proposal, assistant text, candidate or independent review.
+The failure marker is budget_exhausted, read-only status is incomplete, and the matching worker is gone.
+It is a substantive terminal failed test, not a setup refusal or reviewed wiki result.
+Issue 120 records the missing bounded draft progress; preserve the reviewer reserve rather than silently extending time or repeating a started call.
+The 210 job files remain unchanged, and memory does not advance.
 
-A v9 concise-output correction is verified in the canonical source; it preserves all v8 policies/schemas and replay identities.
-It reuses the existing cumulative =max_proposal_bytes= bound, adds concise-output guidance and relaxes only the new reason fields to the existing general text allowance.
-The initial targeted run exposed and fixed a native-version variable shadow and two overly specific test-message assertions.
-The broader corrected run passes 135 cases with one native Org replay timeout; that exact test passes serially under unchanged limits.
-The prompt/cache/submission group passes all 68 cases; ten runtime files pass mypy and the new module passes untyped-body checking.
-The first v9 offline certification attempt hit its unchanged 120-second ceiling while tests were active; the quieter retry passes all 28 captures for fourteen variants under the same ceiling.
-The new certified profile is =23bdeddfe5732927a72350f3d8692098013aa7e0df91d035617e9a7f7722c09a=; the older v8 profile remains intact.
-Session 2, job =ae034039a8d842e4a74023c8e28d9efe=, is terminal and audited: fifteen completed calls on v8, project source =c6ceaae= and starting memory =ec39fb7=.
-It published =aea4fe1=, but its two new correction tasks used byte offsets as line TARGETs in an 811-line file; the existing read-only exporter withholds both tasks.
-[[https://github.com/ligon/sucoder/issues/111][Issue 111]] records this new mechanical validation gap.
-An expected-old additive withdrawal =89ae1878b56d2f91edd063c826835936f4401d63= restores exactly the =ec39fb7= tree, retains =aea4fe1= as parent and preserves all 223 job files.
-Native status remains its historical published event; the independent campaign verdict is rejected/withdrawn.
-Future campaign purposes explicitly clarify that TARGET coordinates are one-based source lines, never citation byte offsets; this is a workflow mitigation, not the missing deterministic validator.
-The v9 correction is committed on local main at =206368041f8b3a104d92ff7dc66ea492ed53e060=.
-A source-only bundle and detached release clone under the campaign's =runtimes/206368041f8b3a104d92ff7dc66ea492ed53e060/= contain main only; private memory objects are absent.
-Session 3, job =a762e09131924e0c8fedc3d2ffdff797=, is terminal and audited: sixteen discovery calls, one author and one reviewer, all completed on that v9 runtime/project against memory =89ae1878=.
-Sue retains publication =399fe5275a3b21032d89664abc2b6bc3c5c36a9f= with precision advisories recorded in issue 108; this is the accepted tip at the end of session 3.
-It distinguishes the probe budget from the reply-attribution window and preserves the historical and unresolved policy qualifications.
-Author and reviewer each use one StructuredOutput attempt without schema errors; the reviewer takes 69.53 seconds and all reasons are 112-321 characters.
-Issue 107 receives this first full live-v9 observation, without a controlled savings claim.
-Read-only replay preserves all 263 job files and memory; the existing exporter finds zero tasks or drafts, so this run does not exercise a new TARGET.
-Independent inspection confirms the module status docstring's omission of the existing bare-reply fallback; this checkpoint corrects that description without changing behavior or resolving issue 109's policy question.
-All three jobs received the same random Talk seed from five visible topics; issue 93 records the repetition separately from its original missing-memory defect.
-The private =launch.py NUMBER= submits exactly one planned fresh session, preserves the normal mode purpose plus the TARGET-unit clarification and refuses automatic restarts.
-Fresh launches are now serialized by a private campaign lock; a lock-contention check leaves the campaign unchanged and makes zero native calls.
-Sessions 1-3 are terminal and audited; do not resume them or reuse their elapsed allowances.
-The source/status correction is committed at =05dcce3da97dc483889f19a343d7359af0c89671=; all forty reply-probe tests pass and the module AST apart from its docstring is unchanged.
-Session 4, experience job =6a799c0066104346aa5862d1111ef658=, is terminal and independently audited: fourteen completed calls, with a reviewed unchanged decision and accepted safe no-op.
-It uses pinned runtime =2063680= and project =05dcce3=; memory remains exactly =399fe527= and no new candidate, page or task is produced.
-The author avoids another inspection note without new substance.
-Author and reviewer take 132.43/69.47 seconds and each use one StructuredOutput attempt; this session has no internal schema retry.
-Read-only v9 no-op replay preserves all 211 job files and memory with native/build/authentication access forbidden.
-Issue 112 is filed for a reproduced discovery limitation: the 2,048-byte memory Talk preview omits 1,144 bytes, including the fourth and fifth questions, while the named full page cannot be read through the project inventory.
-The explorer explicitly asks what those omitted questions are; the writer sees the full page but requests no lookback, so the already-committed docstring correction is not verified or pruned from memory.
-The private =run-04-memory-lead-gap.json= records exact sizes and immutable failed lookup hashes from sessions 3 and 4; =run-04-quality.json= records the no-op's limits.
-The first four jobs received the same random Talk seed from five visible leads; issue 93 records this without a missing-memory or RNG-malfunction claim.
-The private =audit-campaign.py= checks audited-record continuity and unchanged historical job bytes; it is not a substitute for the final direct semantic and problem-disposition audit.
-Session 5, project job =3e2f9f3ab2694ba1a19b0eec349a2715=, is terminal and audited: six discovery calls, author, one mechanical repair and reviewer, all completed on runtime =2063680= and project =55d7abc=.
-It selects the Savio launch topic and publishes =796a7947=, but equates the earlier menu choice "started 2" with a later table's run 2 without an identity link.
-The page and index assert an unobserved negative publication outcome and close the old question; all sixteen native review checks pass with one unrelated advisory.
-Issue 108 records this material v9 semantic false pass.
-Sue rejects the generation and withdraws it with expected-old additive commit =b9539d6e7220e72dc02aa6e04d68fde9539d8ea4=, whose tree exactly restores =399fe527= while retaining =796a7947= as parent.
-This restores the accepted tree at the end of session 5; the managed copy is refreshed and all 144 job files remain unchanged before and after withdrawal.
-Native status remains the historical published event; root's verdict is rejected/withdrawn.
-Issue 113 is filed for two quote-only changes that consumed a full 299.04-second repair; the strict citation check correctly detected changed section bytes.
-Author and reviewer take 423.96/150.61 seconds, and all three editorial roles use one StructuredOutput attempt.
-The private =run-05-source-checklist.json= predates the native final result; =run-05-quality.json=, =run-05-withdrawal.json= and both pinned audits preserve the source-quality and rollback evidence.
-No new tasks or drafts are found by the read-only exporter at the rejected commit.
-Session 6, project job =628ab3b8b9434a75a0ea4dd9f3be03f7=, is a stopped, independently audited attempt on runtime =2063680= and project =3a0a2cb=.
-Thirteen discovery calls, author, one mechanical repair and reviewer all complete; the reviewer requests revision for three unsupported peripheral claims and marks topic support uncertain.
-Publication is correctly blocked; no candidate/result commit is produced, and accepted memory remains =b9539d6e=.
-The worker has exited and =failure-000001.json= records the terminal attempt; status calls the job =incomplete=, which must not be mistaken for a live worker or automatically resumed.
-It counts as one fresh substantive tested session: all four phases ran before the recorded review failure; setup refusals and unaudited partial jobs still do not count.
-Read-only status preserves all 231 job files and memory with native/build/authentication access forbidden.
-Issue 114 is filed for the 138.02-second reference repair, which chooses between conflicting labels while re-emitting 10,444 identical page bytes; issue 108 records the successful uncertainty block and issue 112 the repeated unavailable memory read.
-Author/reviewer durations are 466.47/221.91 seconds, each editorial role uses one StructuredOutput attempt, and the longest reason is 475 characters (valid under both v8 and v9).
-The private =run-06-quality.json=, =run-06.proposal.patch= and pinned audit bind the safe rejection; =audit-campaign.py= requires the terminal failure marker and absent matching worker before counting an incomplete-state attempt.
-Session 7, experience job =730b6d2abdff4e548c0ffa39c0962783=, is terminal and audited on runtime =2063680= and project =29ad10f=.
-Twelve discovery calls, two author calls and one reviewer complete; an exact rendered tool-result window shows =19f8352= and =ee9f4f0= on local main.
-Both frozen source payloads and the raw session span validate; an independent check confirms the two-parent merge and reachability from the pinned project main.
-Sue retains the index-only publication =daa1cc7ea8b2207c75d9cced59c7982dbaad3d4d= with coherence and search-scope advisories; this is now the accepted memory tip.
-The seed topic stays unchanged because its 4,798 bytes were omitted from the 28,974-byte initial selection despite a 65,536-byte allowance; a topic lookup using =topics/confined-node= returns unavailable.
-Issue 115 records this author-context selection gap. The writer respects full-page authority, so the index's corrected merge status is ahead of the old topic's still-open question.
-Keep no-handoff-found wording scoped to the limited material; it does not prove global absence. Old partial node-test evidence and the human's pin-node decision remain unchanged in the topic.
-Read-only status preserves all 224 job files and memory; the exporter finds zero tasks/drafts. Author calls take 38.34/166.58 seconds and reviewer 70.55 seconds, all with one StructuredOutput attempt.
-Session 8, experience job =6c220960ada24f27822e4fc16bfc7460=, is terminal and audited on v9 runtime =2063680= and project =874f847=.
-Fifteen explorer calls, author and reviewer complete; the only explanatory edit appends another inspected commit and claims narrow source windows confirm descriptions throughout the page.
-The reviewer passes all eight checks without findings, but the bundle does not recheck the adapter/identity machinery or historical transcript/test descriptions.
-Sue rejects this unsupported whole-page confirmation, preserving all five open questions and avoiding a claim that the older facts are false.
-Issue 108 receives the scope false pass; issue 116 is filed for verification-only explanatory churn.
-Expected-old additive withdrawal =00bc4e53b7f3749000198c3cd37711f93ffd971f= restores exactly the =daa1cc7e= tree, including session 7's retained index change, with rejected =c237bd28= as parent.
-The eighteen-file managed copy is current; both pinned audits preserve all 249 job files and the exporter finds zero tasks/drafts.
-Author/reviewer take 223.78/53.23 seconds, each one StructuredOutput attempt; the private quality/source/withdrawal records bind this disposition.
-Session 9, project job =391d70d401d0485aade0542b64205a6b=, is terminal and audited on v9 runtime =2063680= and project =dbbde56=.
-Twelve discovery calls select four Git windows (2,723 bytes), followed by author and reviewer, for fourteen completed invocations.
-Sue retains publication =25d256222f732ff448a63e2c34ae9ee88f2944e8= with precision advisories: the tagged-reply leading-non-word prefix is directly supported and independently checked in four cases; all five policy questions remain open.
-Its inspection wording should identify only the rechecked descriptions, not imply fresh verification of omitted material in linked sections; the review preservation reason also incorrectly says all questions are verbatim when question 2 is expanded.
-Issue 108 receives these narrower advisories; issue 116 distinguishes the repeated inspection-history component from the supported new regex fact.
-The corrected header is read during discovery but absent from the final bundle, and there is no editorial lookback; the old header follow-up stays unresolved in admitted evidence.
-The author takes 487.57 seconds and two StructuredOutput attempts after a 15,719-byte argument fails JSON parsing; issue 117 records this distinct retry without guessing its cause or per-attempt cost.
-The reviewer takes 60.36 seconds and one StructuredOutput attempt.
-Pinned read-only status preserves all 210 job files and memory; the managed copy matches the retained commit and the exporter finds zero tasks/drafts.
-Session 10, project job =dfa4c9bfec314654ac0c604aedbf5b54=, is terminal and audited on v9 runtime =2063680= and project =949106c=.
-Seven discovery calls, author and reviewer complete; all nine invocations have one StructuredOutput attempt.
-Sue retains =26335ccb1e33dbb873d844c356bd63cc308f4c79= with a precision advisory: first matching bare candidates persist while later tagged replies can supersede them.
-Four independent synthetic cases confirm priority; issue 109 receives the design-intent question and issue 108 the wording advisory.
-The original five questions remain open, a sixth is added, and index/other topics are unchanged.
-Issue 118 is filed after exact read-only reproduction: unrelated attention provenance fills 16,132 of 16,384 bytes, omitting the selected reply page's matching receipt. Priority ordering includes both pages in 16,097 bytes under the same collector/limit, with no native calls or job changes.
-The operator's equal-blob/function comparison is not evidence that this provenance was delivered to the author; the issue 108 note is clarified accordingly.
-Issue 116 tracks repeated inspection history and issue 112 the failed full-page read with 1,626 omitted preview bytes.
-The header remains outside the bundle and no editorial lookback occurs. Author/reviewer take 240.84/61.45 seconds; pinned read-only status preserves all 145 job files and the exporter finds zero tasks/drafts.
-Session 11, experience job =06050a0fcc104754bd6cae60553ccd92=, is terminal and audited on v9 runtime =2063680= and project =b0c49b7=.
-Fourteen discovery calls, three author calls and reviewer complete. Both Git spans, the rendered payload and 37,723-byte raw span validate.
-The missing seed page fits within the 31,354/65,536-byte initial selection; a 1,673-byte non-editable section lookup is followed by a full authenticated 4,798-byte editable page. Issue 115 records the gap and positive authority recovery.
-The candidate preserves human/test caveats but invents an attach dependency on the launch-only confined_node key, repeated in the index. The pinned attach handler actually joins by job ID through srun --overlap and explicitly notes --node is ignored.
-All sixteen native review checks pass without findings; issue 108 receives this material architectural false pass and the narrower one-session/unfrozen search advisory.
-Sue rejects =5f3726c2= and withdraws it with expected-old additive =70851cc6bdaea7e6854ab06f24d00b3a4843f670=, exactly restoring the accepted =26335ccb= tree and retaining the rejected commit as parent.
-The twenty-file managed copy is current; both read-only audits preserve all 264 job files, and the exporter finds zero tasks/drafts.
-Issue 119 is filed for zero-tail transcript clipping: a synthetic 1,000-byte tool body expands to 1,330 bytes with a negative 300-byte omission marker because data[-0:] retains the whole body. A fix must preserve frozen claude-view-v1 replay; no renderer change is made here.
-All eighteen invocations use one StructuredOutput attempt. Author calls take 129.28/186.76/326.04 seconds and reviewer 132.79 seconds.
-Sessions 1-11 are audited; all six project and five experience sessions are done. Never substitute an old job or replenish an elapsed wallet.
-Session 12 is live: experience job =1b9dfe6d4fe5422eb7d21d80bba5454d=, PID 1228297, on v9 runtime =2063680=, project =7e74abb= and accepted memory =70851cc6=.
-Use =poll.py 12= to verify its command line and recorded start ticks; retain its original 32-call/1,800-second allowance and 600-second/three-call reserve.
-No further native session is planned. Launching job twelve is not completion.
-Its terminal independent audit and the final full-scope completion audit remain required; the private campaign record supersedes this checkpoint.
+Current private memory is =70851cc6bdaea7e6854ab06f24d00b3a4843f670=, restoring exactly the accepted =26335ccb= tree after session 11.
+Session 11's rejected =5f3726c2= remains its parent; the twenty-file managed copy is exact and read-only.
+Native receipts/status retain their historical published events after later withdrawals.
+All 2,611 job files and 45 admitted source units authenticate against their saved manifests/hashes; raw transcript spans and session-11 lookups are also checked.
+No campaign workers or new native Claude processes remain; the older unrelated Claude process is not touched.
 
-After session 12, finish its exact source/quality/issue disposition and run the campaign continuity check across all twelve.
-The completion audit must also verify all problem URLs/repairs, actual original wallet bounds with no extensions, absent campaign workers and the current managed memory copy.
-The private =source-validation-evidence-review.json= reconciles all seven initial source-test failures with later passing cases; the recorded targeted validation is not an unfiltered full-suite pass.
-Update the grounding ledger's historical section 7 and append the final verification in a standalone commit.
-Create and verify a latest-main-only source bundle, excluding private memory objects; only then mark the goal complete.
+The local v9 reason correction is =206368041f8b3a104d92ff7dc66ea492ed53e060=; the module status-docstring correction is =05dcce3da97dc483889f19a343d7359af0c89671=.
+The source regression records 135 passes plus an Org timeout that passes serially under unchanged limits; all seven new cases pass, protocol tests pass 68, and reply-probe tests pass 40.
+All seven initial source-test failures reconcile with later passing cases. Mypy, current ASCII/Python 3.9 grammar and Org exports pass; no unfiltered final-source full-suite pass is claimed.
+The quiet-host native catalog passes 28 offline captures for fourteen variants, while the earlier certification deadline failure remains recorded.
+Both v8 and v9 pinned runtimes remain byte-identical; old native jobs replay without provider/build/authentication access.
+The installed CLI remains older: these trials use explicitly pinned source and the existing Poetry interpreter, not a privileged deployment.
 
-All source work belongs on local main; never push private memory.
-The user-facing installed CLI remains older, so launch each dream from its explicitly pinned runtime source with the existing Poetry interpreter and correct PYTHONPATH/PYTHONSAFEPATH.
+Every identified problem has a repair or filed-issue disposition, verified in the private closeout issue snapshots.
+Issues 107 and 109 have the local corrections above; their broader/publication conditions remain open.
+Issues 108, 111-120 and existing issue 93 record semantic false passes, invalid targets, retrieval/context gaps, costly rewrites, JSON retries, provenance starvation, zero-tail clipping and bounded authorship failure.
+The final report distinguishes each disposition; filing is not a claim that the underlying runtime defect is fixed.
+The next priorities are deterministic clipping and relevant memory/provenance selection, then bounded draft progress and claim-focused review.
+Any rendering correction must preserve frozen claude-view-v1 replay, and native-visible contract changes keep the certification boundary.
+
+All source work is on local main. Never push private memory or bundle private-only objects.
+The source-only transfer is =/home/coder/.sucoder/logs/dream-twelve/2026-11-25/closeout/main-source.bundle=; =source-release.json= records the exact main head, bundle hash and exclusion audit.
+GitHub source publication uses maintainer-side transport because =ligon.pushurl=no_push=; no default installation is changed here.
+The authoritative final verification is =closeout/completion-audit.json= in that directory.
+If that file is absent, finish documentation/transport verification before marking the goal complete; do not start more inference.
 
 Sue.
 
