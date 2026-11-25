@@ -14,6 +14,7 @@ Paired project and experience sessions exercise both paths, six of each.
 Each uses a pinned source runtime, Claude Code's existing subscription, =claude-sonnet-4-6= and certified stable delivery.
 Per-session ceilings are 32 native invocations and 1,800 seconds, including a 600-second/three-call closeout reserve.
 No token/currency ceiling or fixed whole-campaign currency amount is guaranteed.
+Later runs can read committed summaries of completed results; this is an adaptive operational sequence.
 
 Before the next session, Sue checks every changed page against admitted evidence and prior memory, including attribution, dates, qualifications, outcomes, index summaries and human decisions.
 Native acceptance, private publication, independent source-quality acceptance and an operator withdrawal remain separate observations.
@@ -35,7 +36,7 @@ The [[file:../../dream-twelve-ledger.org][grounding ledger]] identifies reused m
 |       5 | project    | published     | rejected / withdrawn  |           9 |
 |       6 | project    | incomplete    | safe rejection        |          16 |
 |       7 | experience | published     | accepted with advisory |          15 |
-|       8 | experience | planned       | pending               |             |
+|       8 | experience | running       | pending               |             |
 |       9 | project    | planned       | pending               |             |
 |      10 | project    | planned       | pending               |             |
 |      11 | experience | planned       | pending               |             |
@@ -252,6 +253,15 @@ All fifteen usage records are complete: 246,310 input tokens and 35,233 output t
 Pinned read-only status preserves all 224 job files and memory with native/build/authentication access forbidden.
 The existing exporter finds zero tasks/drafts without native/GitHub access or mutation.
 Five sessions remain: two project and three experience runs.
+
+* Session 8: second experience follow-up
+:PROPERTIES:
+:CUSTOM_ID: session-8
+:END:
+
+Job =6c220960ada24f27822e4fc16bfc7460= is live at this checkpoint.
+It uses v9 runtime =2063680=, project =874f847= and accepted memory =daa1cc7e=, with the normal experience purpose and original fresh allowance.
+Terminal status and independent acceptance remain pending.
 
 * Reproducibility and continuation
 :PROPERTIES:

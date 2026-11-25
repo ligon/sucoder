@@ -89,9 +89,11 @@ The seed topic stays unchanged because its 4,798 bytes were omitted from the 28,
 Issue 115 records this author-context selection gap. The writer respects full-page authority, so the index's corrected merge status is ahead of the old topic's still-open question.
 Keep no-handoff-found wording scoped to the limited material; it does not prove global absence. Old partial node-test evidence and the human's pin-node decision remain unchanged in the topic.
 Read-only status preserves all 224 job files and memory; the exporter finds zero tasks/drafts. Author calls take 38.34/166.58 seconds and reviewer 70.55 seconds, all with one StructuredOutput attempt.
-At this checkpoint no campaign worker is live. Commit this report, then launch session 8 as a fresh experience dream using pinned v9 and accepted memory =daa1cc7e=.
+Session 8 is now live: experience job =6c220960ada24f27822e4fc16bfc7460=, PID 1193475, using v9 runtime =2063680=, project =874f847= and accepted memory =daa1cc7e=.
+Use =poll.py 8= to verify its command line and recorded start ticks; retain its original 32-call/1,800-second allowance and 600-second/three-call closeout reserve.
 Sessions 1-7 are audited; never substitute an old job or replenish an elapsed wallet.
-Sessions 8-12 remain planned and still require terminal, independently audited outcomes.
+Session 8 is running; sessions 9-12 remain planned.
+All five still require terminal, independently audited outcomes.
 The private campaign record supersedes this point-in-time launch state.
 
 All source work belongs on local main; never push private memory.
