@@ -29,6 +29,10 @@ Grounding uses the existing authoring ledger, GitNexus CLI, direct source/caller
   =tests/test_dream_cache_certify.py= prevents uncertified policy/schema use.
 - =sucoder/dream_progress.py=, =envelope= :: Accepted-review dispatch and receipt reuse; versions must select their own schema and policy.
   =tests/test_dream_progress.py= covers reuse without paid calls.
+- =sucoder/dream_support.py=, =collect= :: Existing receipt-backed support and its 16,384-byte allowance.
+  The session-10 ordering reproduction reuses this collector and limit; no production selection policy is changed.
+- =sucoder/dream_view.py=, =render=, =replay= and =_clip= :: Existing frozen v1 session rendering and authenticated raw ranges.
+  The session-11 zero-tail reproduction uses the existing function; a correction must preserve those v1 output/map digests.
 
 * 3. Definitions
 
@@ -66,6 +70,9 @@ Prepared by Sue (GPT-6 Codex).
 
 * 7. Concise-review correction verification
 
+This section records the pre-session-3 checkpoint at source =2063680=; its live-progress statements below are historical.
+The final campaign verification follows in section 8.
+
 The new v9 module retains the v8 manifest, blocking matrix, registry and full repair/review path while relaxing only review-reason field length and adding concise-output guidance.
 V8's optional receipt-schema hook defaults to its original validator, and its saved policy/schema data and run identities remain unchanged.
 The existing cumulative result-byte counter remains decisive; a test with individually valid long reasons exceeds that counter and creates no candidate.
@@ -86,3 +93,46 @@ Issue 107 remains open until the corrected path is observed in the live sequence
 
 The twelve-session goal is still active: one session is independently audited, the second is live and ten more are planned.
 Private authoritative progress and raw evidence remain in the campaign directory; sanitized completed results appear in the campaign report.
+
+* 8. Final anchored verification, 2026-11-25
+
+All twelve new substantive launches are terminal and independently audited, six in each mode.
+The [[file:dream/runs/twelve-session-campaign.org::#results][final campaign report]] records five retained publications with precision advisories, one reviewed unchanged result, four additive withdrawals, one attempt blocked after independent review and one author-stage budget failure.
+The last case completes thirteen discovery calls and runs a real author invocation for 502.48 seconds before the ordinary-work guard stops it without a proposal or reviewer.
+It is counted as a failed tested outcome under section 3, not as a setup refusal, successful publication or completed model review.
+No thirteenth session, old-wallet replenishment or coordinator-level retry of a started invocation is used.
+
+Sections 2-5 remain the implementation boundary: the existing launch, admission, authority, wallet, review and sole-publisher machinery is reused.
+All 175 native invocations remain charged (174 complete, one failed); failed-author usage is unknown.
+Each original wallet remains 32 calls/1,800 seconds with the 600-second/three-call closeout reserve, one attempt and no extension.
+All terminal artifacts are within their original whole-job deadlines; the final failure preserves the reserve instead of consuming it for unchecked publication.
+
+The direct source/artifact check authenticates all 43 Git and two rendered-session units, their selected raw spans, and the session-11 section/full-page lookup boundary.
+All 2,611 job files match their recorded manifests, both pinned runtime checkouts remain unchanged, and no campaign worker or new native Claude process remains.
+The twenty-file managed memory copy matches =70851cc6= exactly and is read-only.
+That commit restores the accepted =26335ccb= tree after session 11 while retaining the rejected generation as parent.
+The original published receipts remain historical facts; operator acceptance and later withdrawals remain separate.
+
+The code correction at =2063680= preserves v8 policy/schema/run identities and the established cumulative byte allowance.
+The regression records 135 passes plus one Org timeout; its exact serial follow-up passes under unchanged limits.
+All seven new concise-review cases pass, including preservation of a 936-character reason and rejection under the old v8 schema; all seven initial source-test failures map to later passing results.
+The protocol group passes 68 cases and the description-only reply correction at =05dcce3= passes forty reply-probe cases.
+Apart from that module status docstring, the runtime/test/configuration tree remains unchanged since =2063680=.
+Mypy passes ten runtime modules, the new module passes untyped-body checking, and nineteen changed/new Python files pass current ASCII/Python 3.9 grammar checks.
+The quiet-host fourteen-variant catalog passes 28 offline captures; the earlier failed certificate and genuine v8 replay artifacts are preserved.
+No unfiltered final-source full-suite pass is claimed.
+
+Every completed v9 independent reviewer in the sequence uses one StructuredOutput attempt, but that is not a controlled savings result or a guarantee about future calls.
+The session-3 explorer and session-9 author separately retry invalid JSON, and the final failed author has no saved StructuredOutput result or complete usage.
+The source correction therefore addresses the reason-field failure without claiming that all native-generation retries or semantic false passes are solved.
+
+All problem dispositions have been checked against existing GitHub issue snapshots: existing issue 93 and issues 107-109, 111-120.
+The output-efficiency fix and module-docstring correction are local source changes; the remaining semantic, target-coordinate, retrieval, context-selection, provenance, clipping and draft-progress problems remain explicitly filed.
+The zero-tail rendering defect and prior-support ordering case have no-native reproductions under unchanged bounds.
+Their corrections must preserve old renderer/job replay and certification boundaries; neither production behavior is silently changed during this campaign.
+This satisfies the user's repair-or-file requirement without treating filing as proof that each defect is fixed.
+
+Anchored verification against sections 2-5 is OK for the completed task: scope, twelve-outcome definition, bounded reuse, immutable evidence, authority and separate publication/acceptance are preserved.
+The private =closeout/core-audit.json= and =closeout/issue-snapshots.json= contain the direct checks and issue evidence.
+The latest-main-only transfer and its object-exclusion verification are recorded separately in =closeout/source-release.json=; private memory must never be pushed or bundled into source transport.
+The final completion audit is recorded in =closeout/completion-audit.json= before the goal is marked complete.
