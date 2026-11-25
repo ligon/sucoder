@@ -44,7 +44,8 @@ Private memory is never pushed or bundled into public source.
 Do not rewrite historical jobs, raw replies or failed reservations; an unsafe new publication is withdrawn additively with an expected-old ref update.
 Keep existing source admission, lookup authority/accounting, human decisions, sole publisher and overall call/time/byte bounds.
 Keep v1-v8 schemas, policies, run identities and replay behavior frozen while introducing a new contract.
-Campaign evidence and source-quality expectations stay outside native inputs.
+Private raw campaign evidence and prospective source-quality expectations stay outside native inputs.
+Sanitized completed results may enter source documentation; reading that feedback is not an independent held-out evaluation.
 
 * 5. Reuse decisions
 
@@ -62,3 +63,26 @@ Keep semantic claim scrutiny and broader phase/patch recovery out of the reason-
 Certify the new native catalog before a v9 live session; retain the pinned v8 baseline for the already-running first dream.
 
 Prepared by Sue (GPT-6 Codex).
+
+* 7. Concise-review correction verification
+
+The new v9 module retains the v8 manifest, blocking matrix, registry and full repair/review path while relaxing only review-reason field length and adding concise-output guidance.
+V8's optional receipt-schema hook defaults to its original validator, and its saved policy/schema data and run identities remain unchanged.
+The existing cumulative result-byte counter remains decisive; a test with individually valid long reasons exceeds that counter and creates no candidate.
+No new configuration, response truncation, publisher, lookup allowance, native call allowance or retry was introduced.
+Anchored verification is OK against sections 2-5 for reuse, definitions, byte bounds and compatibility.
+
+The 136-case regression run passes 135 cases and hits one native Org inventory timeout during v7 status replay.
+That exact test passes serially in 39.26 seconds under unchanged runtime and pytest limits; do not describe the original parallel run as wholly green.
+All seven new concise-review cases pass in the corrected run, including exact preservation of a 936-character reason, legacy-v8 rejection of that reason and current no-inference replay.
+The prompt/profile/submission group passes all 68 cases.
+Ten runtime files pass normal mypy; the new module passes untyped-body checking; all eighteen changed/new Python files pass ASCII and Python 3.9 grammar checks.
+
+The first offline certificate stops at sixteen captures/seventeen invocations under the original 120-second ceiling while tests are running.
+Its failed report remains intact; after the suite stops, the new fourteen-variant catalog passes 28 captures under the same ceiling, with dummy credentials and no paid inference.
+Both pinned v8 and current v9 code independently replay genuine session 1 with all 237 job files and memory unchanged and native/build/authentication access forbidden.
+No v9 live session has yet run; session 2 continues on the previously certified v8 runtime.
+Issue 107 remains open until the corrected path is observed in the live sequence and source publication is reconciled.
+
+The twelve-session goal is still active: one session is independently audited, the second is live and ten more are planned.
+Private authoritative progress and raw evidence remain in the campaign directory; sanitized completed results appear in the campaign report.
