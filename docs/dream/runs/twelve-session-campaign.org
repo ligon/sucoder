@@ -31,7 +31,7 @@ The [[file:../../dream-twelve-ledger.org][grounding ledger]] identifies reused m
 |       1 | project    | published     | accepted with advisory |          16 |
 |       2 | project    | published     | rejected / withdrawn  |          15 |
 |       3 | experience | published     | accepted with advisory |          18 |
-|       4 | experience | planned       | pending               |             |
+|       4 | experience | running       | pending               |             |
 |       5 | project    | planned       | pending               |             |
 |       6 | project    | planned       | pending               |             |
 |       7 | experience | planned       | pending               |             |
@@ -125,6 +125,16 @@ All three jobs received the same random Talk seed from five visible topic leads,
 [[https://github.com/ligon/sucoder/issues/93][Issue 93]] records that observation separately from its original missing-memory defect.
 The two project commits differ by a ledger addition and the third job is an experience run on v9; this is not its controlled same-commit acceptance pair.
 Random lead repetition and usefulness remain observations for the remaining nine sessions.
+
+* Session 4: second v9 experience run
+:PROPERTIES:
+:CUSTOM_ID: session-4
+:END:
+
+Job =6a799c0066104346aa5862d1111ef658= is live at this checkpoint.
+It uses the same frozen v9 runtime =2063680=, project =05dcce3= with the small status-docstring correction, and independently retained memory =399fe527=.
+The original fresh 32-invocation/1,800-second allowance and 600-second/three-call closeout reserve apply.
+A terminal result and independent source-quality decision remain pending.
 
 * Reproducibility and continuation
 :PROPERTIES:
