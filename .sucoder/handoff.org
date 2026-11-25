@@ -1,13 +1,13 @@
-#+TITLE: Twelve-session dream campaign: 4 of 12 audited
+#+TITLE: Twelve-session dream campaign: 5 of 12 audited
 #+DATE: 2026-11-25
-#+STATUS: READY -- USER GOAL ACTIVE; EIGHT SESSIONS REMAIN
+#+STATUS: READY -- USER GOAL ACTIVE; SEVEN SESSIONS REMAIN
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
 * Active twelve-session goal, 2026-11-25
 
 The user set the goal: "test with repeated dreams, identifying problems as the process goes along and either repairing or filing an issue. Repeat 12 times."
-The goal remains active; do not redefine completion as the four sessions already finished or count old probes toward the twelve.
+The goal remains active; do not redefine completion as the five sessions already finished or count old probes toward the twelve.
 The [[file:../docs/dream/runs/twelve-session-campaign.org][campaign report]] and [[file:../docs/dream-twelve-ledger.org][grounding ledger]] describe the method and current verification.
 The authoritative private progress record is =/home/coder/.sucoder/logs/dream-twelve/2026-11-25/campaign.json=.
 It enumerates all twelve sessions, paired project/experience modes, pinned runtimes, job IDs, process identities, quality checks and repair/issue dispositions.
@@ -40,7 +40,7 @@ Future campaign purposes explicitly clarify that TARGET coordinates are one-base
 The v9 correction is committed on local main at =206368041f8b3a104d92ff7dc66ea492ed53e060=.
 A source-only bundle and detached release clone under the campaign's =runtimes/206368041f8b3a104d92ff7dc66ea492ed53e060/= contain main only; private memory objects are absent.
 Session 3, job =a762e09131924e0c8fedc3d2ffdff797=, is terminal and audited: sixteen discovery calls, one author and one reviewer, all completed on that v9 runtime/project against memory =89ae1878=.
-Sue retains publication =399fe5275a3b21032d89664abc2b6bc3c5c36a9f= with precision advisories recorded in issue 108; this is now the accepted private memory tip.
+Sue retains publication =399fe5275a3b21032d89664abc2b6bc3c5c36a9f= with precision advisories recorded in issue 108; this is the accepted tip at the end of session 3.
 It distinguishes the probe budget from the reply-attribution window and preserves the historical and unresolved policy qualifications.
 Author and reviewer each use one StructuredOutput attempt without schema errors; the reviewer takes 69.53 seconds and all reasons are 112-321 characters.
 Issue 107 receives this first full live-v9 observation, without a controlled savings claim.
@@ -60,10 +60,20 @@ The explorer explicitly asks what those omitted questions are; the writer sees t
 The private =run-04-memory-lead-gap.json= records exact sizes and immutable failed lookup hashes from sessions 3 and 4; =run-04-quality.json= records the no-op's limits.
 The first four jobs received the same random Talk seed from five visible leads; issue 93 records this without a missing-memory or RNG-malfunction claim.
 The private =audit-campaign.py= checks audited-record continuity and unchanged historical job bytes; it is not a substitute for the final direct semantic and problem-disposition audit.
-Session 5 is now live: project job =3e2f9f3ab2694ba1a19b0eec349a2715=, PID 1164177, pinned runtime =2063680= and project =55d7abc=, starting from accepted memory =399fe527=.
-Use =poll.py 5= to verify its command line and recorded start ticks; retain its original 32-call/1,800-second allowance and 600-second/three-call closeout reserve.
-Sessions 1-4 are terminal; never substitute an old job or replenish an elapsed wallet.
-Session 5 is running and sessions 6-12 remain planned; all eight still require terminal, independently audited outcomes.
+Session 5, project job =3e2f9f3ab2694ba1a19b0eec349a2715=, is terminal and audited: six discovery calls, author, one mechanical repair and reviewer, all completed on runtime =2063680= and project =55d7abc=.
+It selects the Savio launch topic and publishes =796a7947=, but equates the earlier menu choice "started 2" with a later table's run 2 without an identity link.
+The page and index assert an unobserved negative publication outcome and close the old question; all sixteen native review checks pass with one unrelated advisory.
+Issue 108 records this material v9 semantic false pass.
+Sue rejects the generation and withdraws it with expected-old additive commit =b9539d6e7220e72dc02aa6e04d68fde9539d8ea4=, whose tree exactly restores =399fe527= while retaining =796a7947= as parent.
+This is now the accepted memory tip; the managed copy is refreshed and all 144 job files remain unchanged before and after withdrawal.
+Native status remains the historical published event; root's verdict is rejected/withdrawn.
+Issue 113 is filed for two quote-only changes that consumed a full 299.04-second repair; the strict citation check correctly detected changed section bytes.
+Author and reviewer take 423.96/150.61 seconds, and all three editorial roles use one StructuredOutput attempt.
+The private =run-05-source-checklist.json= predates the native final result; =run-05-quality.json=, =run-05-withdrawal.json= and both pinned audits preserve the source-quality and rollback evidence.
+No new tasks or drafts are found by the read-only exporter at the rejected commit.
+At this checkpoint no campaign worker is live. Commit the updated report, then launch session 6 as a fresh project dream from the pinned v9 runtime and accepted memory =b9539d6e=.
+Sessions 1-5 are terminal; never substitute an old job or replenish an elapsed wallet.
+Sessions 6-12 remain planned and require terminal, independently audited outcomes.
 The private campaign record supersedes this point-in-time launch state.
 
 All source work belongs on local main; never push private memory.
