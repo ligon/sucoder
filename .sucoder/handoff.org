@@ -1,13 +1,13 @@
-#+TITLE: Twelve-session dream campaign: 6 of 12 audited
+#+TITLE: Twelve-session dream campaign: 7 of 12 audited
 #+DATE: 2026-11-25
-#+STATUS: READY -- USER GOAL ACTIVE; SIX SESSIONS REMAIN
+#+STATUS: READY -- USER GOAL ACTIVE; FIVE SESSIONS REMAIN
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
 * Active twelve-session goal, 2026-11-25
 
 The user set the goal: "test with repeated dreams, identifying problems as the process goes along and either repairing or filing an issue. Repeat 12 times."
-The goal remains active; do not redefine completion as the six sessions already audited or count old probes toward the twelve.
+The goal remains active; do not redefine completion as the seven sessions already audited or count old probes toward the twelve.
 The [[file:../docs/dream/runs/twelve-session-campaign.org][campaign report]] and [[file:../docs/dream-twelve-ledger.org][grounding ledger]] describe the method and current verification.
 The authoritative private progress record is =/home/coder/.sucoder/logs/dream-twelve/2026-11-25/campaign.json=.
 It enumerates all twelve sessions, paired project/experience modes, pinned runtimes, job IDs, process identities, quality checks and repair/issue dispositions.
@@ -66,7 +66,7 @@ It selects the Savio launch topic and publishes =796a7947=, but equates the earl
 The page and index assert an unobserved negative publication outcome and close the old question; all sixteen native review checks pass with one unrelated advisory.
 Issue 108 records this material v9 semantic false pass.
 Sue rejects the generation and withdraws it with expected-old additive commit =b9539d6e7220e72dc02aa6e04d68fde9539d8ea4=, whose tree exactly restores =399fe527= while retaining =796a7947= as parent.
-This is now the accepted memory tip; the managed copy is refreshed and all 144 job files remain unchanged before and after withdrawal.
+This restores the accepted tree at the end of session 5; the managed copy is refreshed and all 144 job files remain unchanged before and after withdrawal.
 Native status remains the historical published event; root's verdict is rejected/withdrawn.
 Issue 113 is filed for two quote-only changes that consumed a full 299.04-second repair; the strict citation check correctly detected changed section bytes.
 Author and reviewer take 423.96/150.61 seconds, and all three editorial roles use one StructuredOutput attempt.
@@ -81,11 +81,17 @@ Read-only status preserves all 231 job files and memory with native/build/authen
 Issue 114 is filed for the 138.02-second reference repair, which chooses between conflicting labels while re-emitting 10,444 identical page bytes; issue 108 records the successful uncertainty block and issue 112 the repeated unavailable memory read.
 Author/reviewer durations are 466.47/221.91 seconds, each editorial role uses one StructuredOutput attempt, and the longest reason is 475 characters (valid under both v8 and v9).
 The private =run-06-quality.json=, =run-06.proposal.patch= and pinned audit bind the safe rejection; =audit-campaign.py= requires the terminal failure marker and absent matching worker before counting an incomplete-state attempt.
-Session 7 is now live: experience job =730b6d2abdff4e548c0ffa39c0962783=, PID 1185564, using pinned v9 runtime =2063680=, project =29ad10f= and accepted memory =b9539d6e=.
-Use =poll.py 7= to verify its command line and recorded start ticks; its original 32-call/1,800-second allowance and 600-second/three-call closeout reserve apply.
-Sessions 1-6 are audited; never substitute an old job or replenish an elapsed wallet.
-Session 7 is running; sessions 8-12 remain planned.
-All six still require terminal, independently audited outcomes.
+Session 7, experience job =730b6d2abdff4e548c0ffa39c0962783=, is terminal and audited on runtime =2063680= and project =29ad10f=.
+Twelve discovery calls, two author calls and one reviewer complete; an exact rendered tool-result window shows =19f8352= and =ee9f4f0= on local main.
+Both frozen source payloads and the raw session span validate; an independent check confirms the two-parent merge and reachability from the pinned project main.
+Sue retains the index-only publication =daa1cc7ea8b2207c75d9cced59c7982dbaad3d4d= with coherence and search-scope advisories; this is now the accepted memory tip.
+The seed topic stays unchanged because its 4,798 bytes were omitted from the 28,974-byte initial selection despite a 65,536-byte allowance; a topic lookup using =topics/confined-node= returns unavailable.
+Issue 115 records this author-context selection gap. The writer respects full-page authority, so the index's corrected merge status is ahead of the old topic's still-open question.
+Keep no-handoff-found wording scoped to the limited material; it does not prove global absence. Old partial node-test evidence and the human's pin-node decision remain unchanged in the topic.
+Read-only status preserves all 224 job files and memory; the exporter finds zero tasks/drafts. Author calls take 38.34/166.58 seconds and reviewer 70.55 seconds, all with one StructuredOutput attempt.
+At this checkpoint no campaign worker is live. Commit this report, then launch session 8 as a fresh experience dream using pinned v9 and accepted memory =daa1cc7e=.
+Sessions 1-7 are audited; never substitute an old job or replenish an elapsed wallet.
+Sessions 8-12 remain planned and still require terminal, independently audited outcomes.
 The private campaign record supersedes this point-in-time launch state.
 
 All source work belongs on local main; never push private memory.

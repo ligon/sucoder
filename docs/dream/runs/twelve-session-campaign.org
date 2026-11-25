@@ -1,7 +1,7 @@
 #+TITLE: Twelve-session SuCoder dream campaign
 #+AUTHOR: Sue
 #+DATE: 2026-11-25
-#+STATUS: ACTIVE -- 6 OF 12 SESSIONS AUDITED
+#+STATUS: ACTIVE -- 7 OF 12 SESSIONS AUDITED
 
 * Scope and method
 :PROPERTIES:
@@ -34,7 +34,7 @@ The [[file:../../dream-twelve-ledger.org][grounding ledger]] identifies reused m
 |       4 | experience | unchanged     | accepted no-op        |          14 |
 |       5 | project    | published     | rejected / withdrawn  |           9 |
 |       6 | project    | incomplete    | safe rejection        |          16 |
-|       7 | experience | running       | pending               |             |
+|       7 | experience | published     | accepted with advisory |          15 |
 |       8 | experience | planned       | pending               |             |
 |       9 | project    | planned       | pending               |             |
 |      10 | project    | planned       | pending               |             |
@@ -229,8 +229,29 @@ Six further sessions remain: two project and four experience runs.
 :CUSTOM_ID: session-7
 :END:
 
-Job =730b6d2abdff4e548c0ffa39c0962783= is live at this checkpoint, using v9 runtime =2063680=, project =29ad10f= and accepted memory =b9539d6e=.
-The normal experience purpose and original fresh allowance apply; terminal status and independent acceptance remain pending.
+Job =730b6d2abdff4e548c0ffa39c0962783= uses v9 runtime =2063680=, project =29ad10f= and starting memory =b9539d6e=.
+Twelve discovery calls select one rendered session window and the issue-90 confined-launch ledger, followed by two author calls and one reviewer.
+The session window's tool result visibly lists implementation =ee9f4f0= and merge =19f8352= on local =main=.
+The admitted rendered payload is 2,537 bytes from a 21,728-byte raw span; the commit lines remain visible despite other tool-text clipping.
+Both frozen evidence files match their hashes, and the raw span independently matches its expected digest.
+An independent Git check confirms the two-parent merge and reachability of both commits from the pinned project main.
+This supports closing the index's commit/merge question without inferring remote publication, full-suite node tests, attach handling or real Slurm acceptance.
+
+The author receives four other active topics plus index/settings, 28,974 bytes of a 65,536-byte prior allowance, while the known 4,798-byte confined-node seed page is omitted as =unselected_active_topic=.
+A topic request using key =topics/confined-node= returns unavailable; the writer respects the full-page authority rule and updates only the index.
+[[https://github.com/ligon/sucoder/issues/115][Issue 115]] records the initial selection gap, separately from discovery access in issue 112.
+The reviewer accepts with an advisory that the old topic's merge question remains stale.
+
+Sue retains publication =daa1cc7ea8b2207c75d9cced59c7982dbaad3d4d= with that coherence advisory and a search-scope qualification: the no-handoff-found sentence should be read only as a limited inspection report, not proof of global absence.
+The ledger's tmux test results are kept separate from node-pinning evidence; the original topic's seven-filtered-test account and human decision remain byte-identical.
+Only the index and new receipt change; no task actions or correction drafts are produced.
+
+The author lookup and final author calls take 38.34 and 166.58 seconds; reviewer time is 70.55 seconds.
+Each editorial invocation uses one StructuredOutput attempt.
+All fifteen usage records are complete: 246,310 input tokens and 35,233 output tokens; no controlled savings estimate is inferred.
+Pinned read-only status preserves all 224 job files and memory with native/build/authentication access forbidden.
+The existing exporter finds zero tasks/drafts without native/GitHub access or mutation.
+Five sessions remain: two project and three experience runs.
 
 * Reproducibility and continuation
 :PROPERTIES:
