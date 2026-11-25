@@ -34,7 +34,7 @@ The [[file:../../dream-twelve-ledger.org][grounding ledger]] identifies reused m
 |       4 | experience | unchanged     | accepted no-op        |          14 |
 |       5 | project    | published     | rejected / withdrawn  |           9 |
 |       6 | project    | incomplete    | safe rejection        |          16 |
-|       7 | experience | planned       | pending               |             |
+|       7 | experience | running       | pending               |             |
 |       8 | experience | planned       | pending               |             |
 |       9 | project    | planned       | pending               |             |
 |      10 | project    | planned       | pending               |             |
@@ -223,6 +223,14 @@ Author, repair and reviewer durations are 466.47, 138.02 and 221.91 native secon
 Each uses one StructuredOutput attempt; the longest reviewer reason is 475 characters and validates against both v8 and v9 schemas.
 All sixteen usage records are complete: 248,580 input tokens and 62,142 output tokens; no savings estimate or native-format guarantee is inferred.
 Six further sessions remain: two project and four experience runs.
+
+* Session 7: experience follow-up
+:PROPERTIES:
+:CUSTOM_ID: session-7
+:END:
+
+Job =730b6d2abdff4e548c0ffa39c0962783= is live at this checkpoint, using v9 runtime =2063680=, project =29ad10f= and accepted memory =b9539d6e=.
+The normal experience purpose and original fresh allowance apply; terminal status and independent acceptance remain pending.
 
 * Reproducibility and continuation
 :PROPERTIES:

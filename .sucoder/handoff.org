@@ -81,9 +81,11 @@ Read-only status preserves all 231 job files and memory with native/build/authen
 Issue 114 is filed for the 138.02-second reference repair, which chooses between conflicting labels while re-emitting 10,444 identical page bytes; issue 108 records the successful uncertainty block and issue 112 the repeated unavailable memory read.
 Author/reviewer durations are 466.47/221.91 seconds, each editorial role uses one StructuredOutput attempt, and the longest reason is 475 characters (valid under both v8 and v9).
 The private =run-06-quality.json=, =run-06.proposal.patch= and pinned audit bind the safe rejection; =audit-campaign.py= requires the terminal failure marker and absent matching worker before counting an incomplete-state attempt.
-At this checkpoint no campaign worker is live. Commit this report, then launch session 7 as a fresh experience dream with the pinned v9 runtime and accepted memory =b9539d6e=.
+Session 7 is now live: experience job =730b6d2abdff4e548c0ffa39c0962783=, PID 1185564, using pinned v9 runtime =2063680=, project =29ad10f= and accepted memory =b9539d6e=.
+Use =poll.py 7= to verify its command line and recorded start ticks; its original 32-call/1,800-second allowance and 600-second/three-call closeout reserve apply.
 Sessions 1-6 are audited; never substitute an old job or replenish an elapsed wallet.
-Sessions 7-12 remain planned and still require terminal, independently audited outcomes.
+Session 7 is running; sessions 8-12 remain planned.
+All six still require terminal, independently audited outcomes.
 The private campaign record supersedes this point-in-time launch state.
 
 All source work belongs on local main; never push private memory.
