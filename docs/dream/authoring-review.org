@@ -1,0 +1,206 @@
+#+TITLE: Red-team review of the dream authoring plan
+#+AUTHOR: Sue
+#+DATE: 2026-11-23
+#+STATUS: FOLLOW-UP COMPLETE -- NO REMAINING REPORTED DESIGN BLOCKERS AT 8D255CA
+#+PROPERTY: header-args :eval never-export :tangle no
+
+* Scope and verdict
+:PROPERTIES:
+:CUSTOM_ID: verdict
+:END:
+
+Three independent review contexts examined the [[file:authoring-plan.org][authoring plan]] at =51513c4= against its [[file:../dream-authoring-ledger.org][grounding ledger]], current source, regression tests and E3/E5/E6 reports.
+They focused respectively on contract/correctness, recovery/accounting and effectiveness/evaluation.
+Sue checked the cited source and consolidated overlapping findings below.
+Evidence combines source/test inspection with three existing baseline convergence tests using synthetic transports.
+All three passed in 32.45 seconds: missing-flag repair, rejected-no-change correction and failed-authority correction.
+They establish abilities the new contract must retain; the proposed protocol remains unimplemented.
+
+The initial verdict required revision before implementing the full first release as specified.
+R1-R3 were high-priority protocol/design gaps; R4-R5 were pre-pilot requirements and R6 an advisory quality-floor refinement.
+No blocker was found to milestone 1 as an independent, versioned diagnostics slice under its existing acceptance checks.
+That assessment does not authorize runtime work or native calls under this review request.
+The subsequent substantive revision and focused re-review are recorded below; the original findings retain their =51513c4= context.
+
+* Findings
+
+** R1 HIGH -- Preserve the existing repair capabilities and route findings explicitly
+:PROPERTIES:
+:CUSTOM_ID: repair-contract
+:END:
+
+The [[file:authoring-plan.org::#sequence][initial patch vocabulary]] (=docs/dream/authoring-plan.org:72=) permits replacing a citation and adding a reference, while prohibiting prose and task changes.
+The existing [[file:../../sucoder/dream_wiki.py][repair loop]] (=sucoder/dream_wiki.py:320=) serves both mechanical failures and independent-review findings.
+The narrow vocabulary therefore cannot replace that loop's general repair contract.
+This combines overlapping findings from the contract and effectiveness reviewers.
+
+Concrete regressions include restoring the omitted =--session-id <uuid>= qualification, producing supported prose after a reviewer rejects an unchanged decision, and withdrawing a proposed unsupported task completion.
+Those paths are exercised by [[file:../../tests/test_dream_wiki.py][the missing-flag repair]] (=tests/test_dream_wiki.py:120=), [[file:../../tests/test_dream_curate.py][rejected-no-change correction]] (=tests/test_dream_curate.py:83=) and [[file:../../tests/test_dream_editor.py][failed-authority correction]] (=tests/test_dream_editor.py:258=).
+Even within reference-only mechanics, neither proposed operation can consolidate duplicate references to one page/target while retaining their different necessary citations.
+That was the actual repaired defect in both [[file:runs/sucoder-e3.org][E3]] (=docs/dream/runs/sucoder-e3.org:76=) and [[file:runs/sucoder-e5.org][E5]] (=docs/dream/runs/sucoder-e5.org:72=), and duplicate references remain rejected by [[file:../../sucoder/dream_wiki.py][the validator]] (=sucoder/dream_wiki.py:228=).
+
+Required revision: distinguish reference-patch repair from semantic/disposition repair and retain an explicitly bounded route for the latter.
+Complete the reference operation vocabulary or route unsupported reference changes through the retained general repair path.
+The coordinator must choose the route using trusted findings and the frozen policy; a model cannot obtain wider edit authority by requesting a fallback.
+Both routes share the existing allowances and require whole-candidate re-review.
+An intentionally unsupported finding needs a durable terminal disposition before another futile model call.
+
+Acceptance: retain all three existing convergence cases, plus duplicate-reference consolidation that preserves both source citations.
+Prove reference patches cannot modify prose/tasks, fallback retains human/source constraints, and route changes do not grant another automatic repair or bypass review.
+
+** R2 HIGH -- A resumed phase must restore context authority and accounting
+:PROPERTIES:
+:CUSTOM_ID: checkpoint-context
+:END:
+
+The [[file:authoring-plan.org::#sequence][checkpoint inventory]] (=docs/dream/authoring-plan.org:79=) names parent proofs and source/window identities, but does not explicitly require restoration of accumulated lookup state and its resource/authority semantics.
+A new [[file:../../sucoder/dream_context.py][Session]] (=sucoder/dream_context.py:33=) initializes request history, byte/search counters and delivered windows.
+The current session also distinguishes a search snippet from a fully delivered page that may be edited.
+
+A phase implementation could verify the old draft and then construct a fresh session: the next repair would receive a fresh lookup allowance, or a previously delivered supporting window would disappear from validation.
+Restoring all inventory pages as editable instead would grant authority never established by full-page delivery.
+This is a requirement for the new phase boundary, not a finding that current recovery already leaks data.
+
+Required revision: authenticate and reconstruct the existing [[file:../../sucoder/dream_context.py][Session.payload]] (=sucoder/dream_context.py:203=) and lookup transcript, including used/request allowances, exact windows, full-page deliveries and archive context.
+Derive counters and edit authority from the verified responses rather than creating a second independent counter store.
+Freeze the intended allowance scope explicitly; a continuation must not gain a new context grant merely by acquiring a new stage ID.
+
+Acceptance: exhaust lookup/byte allowances before checkpointing and verify they stay exhausted on continuation.
+Retain authority for a verified full-page delivery, reject snippet-only editing, and replay accumulated context without fresh retrieval or native startup.
+
+** R3 HIGH -- Define a logical repair round separately from native attempts
+:PROPERTIES:
+:CUSTOM_ID: repair-accounting
+:END:
+
+The [[file:authoring-plan.org::#sequence][recovery promise]] (=docs/dream/authoring-plan.org:84=) allows another repair after a failed repair, while the preceding rule forbids replenishing repair allowances.
+The term failed repair currently covers different states.
+The wallet records [[file:../../sucoder/dream_budget.py][native completion]] (=sucoder/dream_budget.py:335=) before proposal/mechanical/independent acceptance; E6's final repair was completed at that layer and still failed citation coverage.
+The [[file:../../sucoder/dream_wiki.py][max_repairs loop]] (=sucoder/dream_wiki.py:320=) is not a persistent logical-round state machine.
+
+With one allowed repair, a completed but mechanically rejected revision has used the existing revision opportunity.
+Allowing another revision under a fresh stage ID could evade that limit; forbidding every failed native attempt would instead defeat the proposed transport-failure recovery.
+The distinction cannot be inferred from the wallet's completed/failed label alone.
+
+Required revision: specify a durable logical-round identity, consumption point and outcome, separately from each charged native attempt.
+Define the permitted explicit retry transitions for denied startup, unknown/provider failure, a completed body, mechanical rejection and semantic revision.
+Any retry remains separately reserved and charged; unknown work is not silently repeated.
+If the semantic repair allowance is spent, stop unless a separately defined, recorded authorization permits additional work.
+
+Acceptance: contrast transport failure with completed-but-rejected repair, restart each state and attempt to fork stage IDs.
+Verify no fork obtains an extra revision opportunity, all native reservations remain charged and the terminal disposition is stable under replay.
+
+** R4 MEDIUM -- Protect reviewer calls as well as reviewer time
+:PROPERTIES:
+:CUSTOM_ID: review-capacity
+:END:
+
+This is a pre-pilot requirement, not a blocker to milestone 1.
+The [[file:authoring-plan.org::#sequence][review-only reserve proposal]] (=docs/dream/authoring-plan.org:99=) is expressed primarily in seconds.
+The existing [[file:../../sucoder/dream_budget.py][closeout call pool]] (=sucoder/dream_budget.py:228=) is shared, and [[file:../../sucoder/dream_author.py][reviewer lookups]] (=sucoder/dream_author.py:74=) require another native response before the final judgment.
+Repair/lookups can therefore exhaust native calls while protected wall time still remains.
+
+Required revision: define protected call and elapsed capacity, including the final verdict and bounded reviewer lookup behavior.
+Specify what happens when further context cannot fit; insufficient evidence must not turn into acceptance or an implicit allowance extension.
+Reuse the shared wallet and explicitly version any new policy.
+
+Acceptance: leave ample time but few calls, and prove repair cannot spend the protected reviewer calls.
+Exercise a reviewer lookup near exhaustion and verify the final decision capacity or a durable bounded stop is preserved.
+
+** R5 MEDIUM -- Separate valid editorial disposition from pilot route coverage
+:PROPERTIES:
+:CUSTOM_ID: pilot-coverage
+:END:
+
+This is a rollout gate; reviewed no-change remains a valid dreaming outcome.
+The [[file:authoring-plan.org::#gates][fixed-evidence pilot]] (=docs/dream/authoring-plan.org:155=) and [[file:authoring-plan.org::#gates][pass condition]] (=docs/dream/authoring-plan.org:158=) currently allow a no-change result to stand in for evidence that the new native patch path works.
+Existing [[file:../../tests/test_dream_curate.py][no-change execution]] (=tests/test_dream_curate.py:65=) uses only author and reviewer calls.
+Both pilots could legitimately return no-change while no native model ever produces a patch or exercises its materialization.
+
+Required revision: record feature-exercise evidence separately from editorial disposition.
+Require an actual native patch response to materialize into a complete candidate and reach independent review before marking that route verified.
+Keep deterministic crash/checkpoint recovery tests offline if their boundary is explicit.
+If the approved pilot does not exercise the route, report it unverified; do not force novelty, alter old native artifacts or extend approved calls to manufacture coverage.
+
+Acceptance: a no-change run passes its editorial disposition but leaves patch coverage unverified.
+A separately planned, properly bound native patch case supplies the missing route evidence under its approved limits.
+
+** R6 MEDIUM, advisory -- Freeze a small semantic quality floor before reducing cost
+:PROPERTIES:
+:CUSTOM_ID: quality-floor
+:END:
+
+This need not block milestone 1.
+The [[file:authoring-plan.org::#sequence][effort/length experiment]] (=docs/dream/authoring-plan.org:98=) proposes cheaper, shorter work, but [[file:authoring-plan.org::#gates][quality evaluation]] (=docs/dream/authoring-plan.org:161=) does not yet name the critical qualifications or reader questions that must survive.
+A fluent shorter page could obtain reviewer acceptance while losing a distinction a later reader needs, such as local merge versus observed GitHub publication.
+
+Required refinement before effectiveness claims: freeze a few source-grounded qualifications and held-out reader questions before construction, with the judging rubric outside the builder context.
+Reuse the [[file:workplan.org][existing fresh-reader/source-fallback approach]] (=docs/dream/workplan.org:174=) and [[file:workplan.org][reader evaluation work]] (=docs/dream/workplan.org:266=), rather than adding a large evaluation system.
+Compare cost only after those checks pass, preserving the plan's warning against generalizing from one run.
+
+* Constraints already handled
+
+The plan preserves source admission, bounded lookup, immutable raw replies, independent full-candidate review and sole publication authority.
+It gives Talk no blanket citation exemption, keeps unreviewed drafts distinct from accepted progress, and retains historical contract dispatch and E6's incomplete disposition.
+Dynamic evidence handles remain request data, while changed native policy/schema/control combinations require certification.
+No API/account switch or automatic unknown-work retry is proposed.
+The six-call/twenty-minute allowance is a reasonable proposed smoke-test ceiling, not observed reviewer latency or authorization to run it.
+
+* Disposition
+
+The original review left R1-R3 open for the full release, R4-R5 open for pilot sign-off and R6 as an evaluation refinement.
+The follow-up closes those design findings at the reviewed revision; implementation and live effectiveness remain unverified by design review.
+
+* Focused follow-up at 8d255ca
+:PROPERTIES:
+:CUSTOM_ID: follow-up
+:END:
+
+All three reviewers returned no remaining blocker within their original scopes.
+The revised design preserves general repair and duplicate consolidation, authenticates context continuation, separates logical repair rounds from native attempts, protects reviewer calls/time across review cycles, separates native route exercise from editorial disposition and freezes a held-out source-grounded quality floor.
+The diagnostics-only contract is independently implementable and measurable with the existing full repair and whole-run explicit-attempt semantics.
+It cannot advertise unimplemented patch/checkpoint or review-reservation protocols.
+
+Retain two explicit implementation boundary tests for the later recovery work.
+A schema-valid final reply with nonempty failures closes its logical round even when =Coordinator.check_result= raises before result.json is saved; authenticated raw-return proofs must establish closure.
+Two continuations from one older checkpoint share the same context scope and round state, and cannot regain lookup allowances or dispatch after a final reply closes the round.
+
+The effectiveness reviewer also requested a metadata cleanup to reflect the active implementation/evaluation goal; that does not change the reviewed protocol.
+These are design dispositions, not proof that the proposed code exists or that a native trial succeeds.
+
+Recorded by Sue.
+
+* Evidence handles and R2 follow-up
+:PROPERTIES:
+:CUSTOM_ID: handles-review
+:END:
+
+The R2 reviewer confirmed that evidence handles can proceed independently of phase checkpoints while preserving authenticated delivery, replay and authority.
+Initial registration must follow accepted-prefix narrowing; explicit bounded lookback remains supported.
+The review requires ordered append-only reconstruction, visibility at each frozen assignment, both citation channels, bounded total expansion and frozen historical dispatch.
+The implementation pass found and corrected three defects: unavailable responses minting handles, native records joined across authority boundaries, and early unknown-handle errors hiding independent coverage findings.
+Canonical task-action receipts also need a distinct schema from both handle-only wire replies and historical quote-only actions.
+These checks belong to the [[file:evidence-handles.org][v7 contract]]; they do not complete the later R2 phase-checkpoint protocol.
+The final source follow-up found no remaining scoped blocker.
+The 48-case final feature/fixture group and both serial lifecycle reruns pass; the ledger records the earlier regression failures and their resolutions.
+All 28 offline Claude certification captures pass; live quality and token savings remain unmeasured.
+
+* Diagnostics implementation review
+:PROPERTIES:
+:CUSTOM_ID: implementation-review
+:END:
+
+The implementation is restricted to milestone 1: a v6 editor with complete located mechanical findings and the existing full-proposal repair.
+Contract review reproduced an independent broken-link error masking ambiguous-quote and missing-Talk findings; the shared post-inventory report now exposes all three together.
+Recovery review found that unconditionally choosing v6 could bypass an old attempt's identity, and that changed delivery profiles could create another identity inside the same attempt.
+New plan/job authoring-version pins, historical reconstruction and unconditional frozen delivery checks address those paths.
+An explicit new attempt can reuse the single compatible historical stable profile without replacing the earlier artifacts.
+Both reviewers' follow-up source passes found no remaining blocker in their scopes.
+Root's fifteen-file regression run passed 300 cases and exposed three fixture/assertion errors; all were corrected and the 26-case follow-up group passes, including the complete diagnostics module and semantic/no-change/authority witnesses.
+The [[file:../dream-authoring-ledger.org][ledger]] records exact outcomes, artifact locations and the absence of an unfiltered full-suite pass.
+
+The effectiveness reviewer found no policy blocker to diagnostics-first.
+Its evaluation requires separate records for the genuine native full-repair route, real-dream disposition and concrete documentation benefit.
+The private reader-quality rubric remains outside author construction inputs, and usefulness must be checked against original admitted evidence and the pinned prior wiki.
+No-change remains legitimate but contributes no new documentation improvement.
+This sequence makes no causal token-savings claim and does not implement the later patch, checkpoint or protected-review protocols.

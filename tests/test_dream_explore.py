@@ -14,6 +14,7 @@ from tests.test_dream import git, workspace  # noqa: F401
 from tests.test_dream_budget import Clock
 from tests.test_dream_curate import NoopTransport
 from tests.test_dream_wiki import EditorTransport, TOPIC, planned
+from tests.dream_submission_fixture import native_reply
 
 
 QUESTION = "Should the maintainer change the timeout?"
@@ -35,6 +36,8 @@ class ExploringTransport:
         result.update(failures=[], action="finish", path="", query="", offset=0, start=0, end=0,
             selections=[], topic="reply-evidence", rationale="Connect native delivery evidence with the summary limitation.",
             questions=[QUESTION])
+        if "cursor" in schema["properties"]:
+            result["cursor"] = ""
         if not self.no_selection:
             step = len(task["input"]["history"])
             if step == 0:
@@ -55,7 +58,7 @@ class ExploringTransport:
         trace = dict(harness=harness, model=model, version=self.version, returncode=1 if self.fail else 0,
             input_sha256=dream.digest(dream.canonical(task)), stdout="" if self.fail else "\n".join(json.dumps(e) for e in events) + "\n",
             stderr="fixture native failure" if self.fail else "", boundary="linux-landlock-inline-v1")
-        return (None, None, trace) if self.fail else (result, dict(native={}, currency_usd=None), trace)
+        return native_reply(task, None, None, trace) if self.fail else native_reply(task, result, dict(native={}, currency_usd=None), trace)
 
 
 @pytest.fixture
@@ -182,7 +185,7 @@ class SearchingTransport(ExploringTransport):
             trace["stdout"] = "\n".join(json.dumps(event) for event in (
                 dict(type="item.completed", item=dict(type="agent_message", text=json.dumps(result))),
                 dict(type="turn.completed", usage={}))) + "\n"
-        return result, usage, trace
+        return native_reply(task, result, usage, trace)
 
 
 def test_navigation_is_frozen_per_job_so_earlier_jobs_still_replay(workspace, monkeypatch, clock):
@@ -260,7 +263,7 @@ def test_shared_budget_leaves_closeout_reserved_and_never_resets_between_jobs(wo
     native = ExploringTransport(no_selection=True)
     jobs = [explore.start(config, cwd=repo, overrides=options(max_total_calls=8), budget_path=shared,
         transport=native) for _ in range(4)]
-    with pytest.raises(dream_budget.Exhausted, match="reserved for authorship, review"):
+    with pytest.raises(dream_budget.Exhausted, match="no unreserved discovery and author capacity"):
         explore.start(config, cwd=repo, overrides=options(max_total_calls=8), budget_path=shared, transport=native)
     summary = explore.budget_status(config, Path(jobs[-1]["job_path"]))
     assert summary["reserved_calls"] == 4 and summary["remaining_calls"] == 4
@@ -268,7 +271,9 @@ def test_shared_budget_leaves_closeout_reserved_and_never_resets_between_jobs(wo
     assert {header(job["job_path"])["budget_path"] for job in jobs} == {str(shared)}
 
 
-def test_immediate_selection_cannot_spend_the_last_author_invocation(workspace, clock):
+def test_immediate_selection_cannot_spend_the_last_author_invocation(workspace, clock, monkeypatch):
+    # Version 2 prepared a zero-capacity job; version 3 rejects that at preparation.
+    monkeypatch.setattr(dream_discover, "NAVIGATION", 2)
     planned(workspace)
     repo, _, config, _ = workspace
     shared = repo.parent.parent / "shared-budget"
@@ -284,7 +289,7 @@ def test_immediate_selection_cannot_spend_the_last_author_invocation(workspace, 
             trace["stdout"] = "\n".join(json.dumps(event) for event in (
                 dict(type="item.completed", item=dict(type="agent_message", text=json.dumps(result))),
                 dict(type="turn.completed", usage={}))) + "\n"
-            return result, usage, trace
+            return native_reply(task, result, usage, trace)
     native = FinishingTransport(no_selection=True)
     job = Path(prepared["job_path"])
     with pytest.raises(dream_budget.Exhausted, match="reserved for authorship, review"):

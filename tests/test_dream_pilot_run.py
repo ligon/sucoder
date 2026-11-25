@@ -8,6 +8,7 @@ import pytest
 
 from scripts import dream_pilot_prepare as preparation, dream_pilot_run as pilot
 from sucoder import dream, dream_wiki
+from tests.dream_submission_fixture import native_reply, source_text
 
 
 def limits():
@@ -19,7 +20,7 @@ def questions(sources):
     return [dict(id="q" + str(index + 1), category=kind, question="Fixture question " + str(index + 1),
         rubric=[dict(id="criterion-1", criterion="Retains the fixture qualification"), dict(id="criterion-2", criterion="Distinguishes static evidence")],
         critical_errors=["Invented executed result"],
-        support=[dict(unit_id=source["unit_id"], quote=source["text"].splitlines()[0]) for source in sources[:2]])
+        support=[dict(unit_id=source["unit_id"], quote=source_text(source).splitlines()[0]) for source in sources[:2]])
         for index, kind in enumerate(("lookup", "lookup", "synthesis", "synthesis", "caveat", "caveat"))]
 
 
@@ -46,7 +47,7 @@ class Transport:
             path = ".sucoder/wiki/topics/companion.org"
             old = {item["path"]: item["content"] for item in inputs["prior"]}
             content = "#+title: Fixture companion\n* Knowledge\n:PROPERTIES:\n:CUSTOM_ID: knowledge\n:END:\n"
-            content += "\n".join(source["text"].splitlines()[0] for source in inputs["sources"]) + "\n"
+            content += "\n".join(source_text(source).splitlines()[0] for source in inputs["sources"]) + "\n"
             targets = ["knowledge"]
             if "seeded-evaluation-error" in old.get(path, ""):
                 content += "* Corrected working rule\n:PROPERTIES:\n:CUSTOM_ID: seeded-evaluation-error\n:END:\nPreserve the static fixture qualification.\n"
@@ -54,7 +55,7 @@ class Transport:
             pages = {path: content, dream_wiki.INDEX: "#+title: Fixture\n[[file:topics/companion.org::#knowledge][Knowledge]]\n"}
             result.update(decision="change", rationale="Fixture source-grounded revision", pages=[dict(path=key, content=value) for key, value in pages.items()],
                 changes=[dict(path=key, before_sha256=dream.digest(old[key].encode()) if key in old else "", reason="Fixture revision") for key in pages],
-                references=[dict(path=path, target=target, evidence_status="inference", citations=[dict(unit_id=source["unit_id"], quote=source["text"].splitlines()[0]) for source in inputs["sources"]]) for target in targets],
+                references=[dict(path=path, target=target, evidence_status="inference", citations=[dict(unit_id=source["unit_id"], quote=source_text(source).splitlines()[0]) for source in inputs["sources"]]) for target in targets],
                 omissions=[], requests=[], task_actions=[])
         else:
             kinds = {entry["request"]["kind"] for entry in inputs["retrievals"]}
@@ -72,7 +73,7 @@ class Transport:
             input_sha256=dream.digest(dream.canonical(task)), stdout="\n".join(json.dumps(event) for event in events) + "\n",
             stderr="", boundary="linux-landlock-inline-v1")
         usage = dict(native=dict(input_tokens=100, output_tokens=10), currency_usd=None)
-        return result, usage, trace
+        return native_reply(task, result, usage, trace)
 
 
 def test_budget_reserves_before_failure_and_never_repeats(tmp_path):

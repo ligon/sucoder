@@ -24,7 +24,7 @@ def test_existing_constructors_and_configurations_keep_usable_defaults(tmp_path)
     assert cfg.dream == cfg.mirrors["sample"].dream == cfg.mirrors["other"].dream == expected
     assert (expected.max_total_seconds, expected.max_total_calls) == (900, 40)
     assert (expected.reserve_seconds, expected.reserve_calls) == (30, 3)
-    assert (expected.max_discovery_calls, expected.max_discovery_bytes) == (8, 131072)
+    assert (expected.max_discovery_calls, expected.max_discovery_bytes) == (None, 131072)
     assert expected.harness is expected.model is None
     assert Config("fixture").dream == expected
     direct = MirrorSettings("sample", Path("/project"), "sample", BranchPrefixes())
@@ -42,9 +42,21 @@ def test_partial_project_overrides_inherit_global_defaults_without_mutation(tmp_
         max_total_seconds=1200, max_total_calls=24, reserve_calls=4,
         max_discovery_calls=5, reserve_seconds=90)
     assert cfg.mirrors["other"].dream == cfg.dream
-    assert cfg.dream.reserve_seconds == 30 and cfg.dream.max_discovery_calls == 8
+    assert cfg.dream.reserve_seconds == 30 and cfg.dream.max_discovery_calls is None
     with pytest.raises(FrozenInstanceError):
         cfg.dream.max_total_calls = 1000
+
+
+def test_stable_prompt_layout_can_be_overridden_per_mirror(tmp_path):
+    cfg = configured(tmp_path, dict(prompt_layout="stable"), dict(prompt_layout="legacy"))
+    assert cfg.dream.prompt_layout == "stable"
+    assert cfg.mirrors["sample"].dream.prompt_layout == "legacy"
+
+
+@pytest.mark.parametrize("raw", [None, True, [], "automatic", ""])
+def test_invalid_prompt_layout_is_rejected(tmp_path, raw):
+    with pytest.raises(ConfigError, match="prompt_layout"):
+        configured(tmp_path, dict(prompt_layout=raw))
 
 
 def test_project_can_clear_configured_backend_inheritance_and_disable_reserves(tmp_path):
@@ -125,3 +137,9 @@ def test_claude_backend_and_exact_call_reserve_are_supported(tmp_path):
         max_total_calls=3, reserve_calls=3))
     assert cfg.dream.harness == "claude"
     assert cfg.dream.max_total_calls == cfg.dream.reserve_calls == 3
+
+
+def test_project_null_restores_auto_without_changing_a_global_fixed_limit(tmp_path):
+    cfg = configured(tmp_path, dict(max_discovery_calls=8), dict(max_discovery_calls=None))
+    assert cfg.dream.max_discovery_calls == cfg.mirrors["other"].dream.max_discovery_calls == 8
+    assert cfg.mirrors["sample"].dream.max_discovery_calls is None

@@ -1,0 +1,258 @@
+#+TITLE: Dream authoring effectiveness prior-art ledger
+#+AUTHOR: Sue
+#+DATE: 2026-11-24
+
+* 1. Task and baseline
+
+Strengthen independent semantic review after E9 passed mechanical checks but published unsupported scope, causality, negative outcomes and provenance losses.
+The baseline is clean local main =9913af7=, with v7 runtime =4c56866= and private memory =fb695456= restoring the prior reviewed tree.
+The human authorized continuing implementation and verification.
+The v8 implementation is now committed at =533b58e=, and =2f2f95b= records the partial native calibration.
+Reuse the existing full-proposal repair/review loop and sole publisher; introduce a frozen v8 contract with coordinator-generated page differences and explicit per-page semantic checks, including the index.
+Older contracts and their raw replies remain unchanged.
+Offline tests precede a publication-disabled calibration against the withdrawn E9 draft and a corrected proposal; this is not another memory-publishing run or an extension of E9's expired allowance.
+The [[file:dream/runs/sucoder-e9.org][E9 report]] supplies the measured failure cases; the [[file:dream/workplan.org][accepted workplan]] preserves explanatory synthesis, open topic choice and justified no-change outcomes.
+
+* 2. Existing machinery and tests
+
+Grounding uses git history, GitNexus CLI query, direct source and named tests.
+The concept query returned relevant test definitions but poorly ranked execution flows; no completeness or caller claim rests on those rankings.
+Implementation must run file-qualified upstream impact before editing existing symbols and detect_changes before commits.
+
+- =sucoder/dream_author.py:97=, =Author.proposal= :: Resolves a literal quote to one absolute UTF-8 position inside delivered windows; fails at the first ambiguous quote.
+  =tests/test_dream_wiki.py::test_quote_resolution_is_unique_exact_utf8_and_absolute= covers exact quotation semantics; =tests/test_dream_context.py::test_source_lookup_uses_exact_frozen_bytes_and_replays_unavailable_utf8_range= covers window delivery/replay.
+- =sucoder/dream_wiki.py:116=, =validate_proposal=; =:308=, =WikiCoordinator.prepare= :: Native Org inventory, paths/links, source references, changed-anchor coverage, bounded repair and independent review.
+  =tests/test_dream_wiki.py::test_independent_review_catches_omission_and_repairs_once= and =test_unresolved_semantic_findings_stop_after_single_repair= cover the loop.
+  Mechanical exceptions currently become a single finding with empty path.
+- =sucoder/dream_editor.py:228=, =Editor.proposal=; =sucoder/dream_editorial.py= :: Typed task actions, coordinator-written editorial history, authority checks and materialized review.
+  =tests/test_dream_editor.py::test_invalid_editorial_changes_never_publish= and =test_public_lifecycle_returned_review_supersession_archive_and_fresh_reader= cover this authority boundary.
+- =sucoder/dream_context.py:32=, =Session= :: Frozen Git blobs, bounded lookups and per-unit delivered windows.
+  =tests/test_dream_context.py::test_search_snippet_does_not_authorize_editing_unseen_full_page= and =test_context_cache_corruption_fails_status_without_fetch_or_inference= prevent authority expansion and mutable context substitution.
+  =Session.payload= at line 203 already records requests, used amounts and allowances; continuation must authenticate and reconstruct its effects, including edit authority.
+- =sucoder/dream_progress.py:134=, =try_reuse= :: Reuses accepted work only after complete receipt/output/dependency checks.
+  =tests/test_dream_progress.py::test_accepted_work_is_reused_without_model_calls_or_duplicate_topic= and =test_receipt_presence_without_complete_valid_proof_is_not_coverage= cover it.
+  This is not an existing unreviewed-draft checkpoint protocol.
+- =sucoder/dream_explore.py:449=, =run= :: Replays the saved discovery choice read-only during explicit retry.
+  E6 attempt 5 reused fourteen discovery calls; it still regenerated authorship after the earlier timeout.
+- =sucoder/dream_roles.py:124=, =Coordinator.call=; =sucoder/dream_submission.py= :: Frozen assignments, body-only replies, immutable submission manifests, raw-trace replay and no automatic repetition of started work.
+  =tests/test_dream_submission.py= and the deadline cases in =tests/test_dream_roles.py= cover these bindings and bounds.
+- =sucoder/dream_budget.py=, =Job=; =sucoder/dream_retry.py= :: Durable reservations, shared deadlines/reserves and explicit retry windows.
+  =tests/test_dream_recovery.py::test_retry_window_never_replenishes_call_cap_or_its_own_deadline= and =tests/test_dream_budget.py::test_work_deadline_timeout_is_budget_exhausted_with_closeout_time_left= cover preservation of limits.
+- =sucoder/dream_prompt.py=; =sucoder/dream_prompt_native.py:186=, =variants= :: Lossless policy/data projection and complete native policy/schema certification.
+  =tests/test_dream_prompt.py::test_lossless_delivery_preserves_data_authority_and_native_schema= and =tests/test_dream_cache_certify.py::test_uncertified_policy_or_schema_is_rejected_before_launch= cover the delivery boundary.
+- =sucoder/dream_handles.py=, =Registry= and =Session= :: V7 indexes exact delivered spans after prefix projection and reconstructs them through the existing lookup replay.
+  =tests/test_dream_handles.py::test_prefix_lookback_is_explicit_and_replays_without_new_allowances= and the cached-unavailable injection cases cover visibility and accounting.
+  Native message-body boundaries reuse the literal/JSON forms recognized by =Editor._human_source=; the existing authority predicate remains decisive.
+- =sucoder/dream_review.py:60=, =manifest=; =:87=, =findings=; =:110=, =check_receipt= :: V8 binds bounded output differences and checks explicit per-page reviewer judgments through the existing editor loop.
+  =tests/test_dream_review.py= covers index rejection despite an accepting verdict, stale/duplicate/missing rows, uncertain checks, proof corruption, no-change, frozen lookup dependencies, repair and read-only replay.
+
+* 3. Definitions and conventions
+
+V1 validates explicit citation ranges and exact quotes.
+V2-v6 resolve an admitted-unit/quote pair at one unique source position, with v4-v6 restricting the search to delivered windows; the coordinator computes offsets.
+V7 selects a namespaced handle for one exact delivered span; Python resolves its quote and offsets without a uniqueness search.
+Every changed non-index anchor currently needs a reference unless covered by a verified derived editorial action.
+V6 and v7 briefs explicitly include Talk in changed-anchor coverage; E6's v5 wording was less explicit.
+The implemented production contract is =source-grounded-wiki-v8=, layered over v7 handles, v6 diagnostics and v5 editorial actions; earlier versions remain frozen.
+V8 requires one row for each changed output, including the index and generated pages, or one no-change disposition row.
+Each row checks support, scope, time, causality, outcomes, attribution, preservation and summary, with no missing, stale, failed or uncertain judgments accepted.
+Passing is a model judgment, not proof of semantic correctness; the native calibration still finds false passing judgments.
+Raw completion, mechanical acceptance, independent acceptance and memory publication are distinct states.
+Wallet =completed= records native delivery, not an accepted revision; the current local =max_repairs= loop does not provide a durable logical-round state machine.
+An unreviewed draft checkpoint may save work but cannot establish accepted progress or source coverage for a future job.
+Cache reads are observations, not evidence of comparative savings; missing native usage remains unknown.
+
+* 4. Invariants
+
+Keep explanatory prose and synthesis, uncertainty, attribution, human decisions and bounded open-ended discovery.
+Keep source admission, private evidence, tool prohibition, immutable request/trace bindings, independent semantic review and compare-and-swap publication.
+Do not turn Talk, unanchored prose or a model-supplied section type into a route for unsupported factual claims.
+Do not guess among ambiguous source positions, edit unseen pages from search snippets or promote model summaries to evidence.
+Keep old contract/policy/schema dispatch and original replay semantics; E6 must remain incomplete under its frozen contract.
+Never rewrite an old raw reply, failed reservation, manifest or result to make it acceptable under a new contract.
+Keep global call/time charges across explicit phase retries; started unknown work is never silently reissued.
+Keep dynamic evidence handles in bound request data, not volatile tool/schema enums in the cache prefix.
+Use Session's actual frozen prior after authenticated lookups, not a stale duplicate authority map; later reviewer dependencies may extend a no-change footprint without rewriting its disposition unit.
+Fresh v8 accepted-progress discovery cannot use v1-v7 acceptance as proof that the new gate ran.
+Certify new policy/schema/control combinations before stable production use; keep unsupported hard token/currency requests rejected before provider work.
+
+* 5. Reuse decisions
+
+- Reuse :: Native Org inventory, existing citation checks, bounded context, submission wrappers, wallet, accepted-progress proofs and sole publisher.
+- Extend :: Mechanical validation into dependent read-only passes with bounded, located diagnostics; the present first-error exception hides independent defects.
+- Extend :: Existing typed editorial materialization and reference resolution for coordinator-owned structure and evidence handles.
+- New :: A versioned unreviewed-draft/phase checkpoint protocol; accepted receipt reuse cannot represent an unaccepted proposal safely.
+- Extend :: Repair into hash-bound typed patches, using the fully delivered draft and existing private materialization boundary.
+  Keep the general repair path for semantic/disposition changes and provide consolidation of duplicate references; neither capability may be lost to a reference-only optimization.
+- New :: Durable logical repair-round identity/outcomes, separate from charged native attempts and authenticated context-lookup continuations.
+- Extend :: Frozen role policies/profile identities for supported effort/output controls and explicit review reserves.
+- Extend :: The existing reviewer candidate hook with bounded, coordinator-generated before/after page differences, binding every changed output including index and generated pages.
+- New :: A v8 per-page review matrix for support, scope, time, causality, outcomes, attribution, preservation and summary; the existing verdict/findings schema cannot require these checks.
+  Missing, duplicate, stale, uncertain or failed checks block publication, even alongside an accepting verdict.
+  Handles remain optional exact-source pointers, not semantic proof; live calibration is required before claiming this catches E9.
+- Defer :: Direct APIs, unrestricted tools, automatic paid retries, wholesale rendering rewrites and new discovery infrastructure until controlled measurements justify them.
+
+* 6. Decisions for plan review
+
+The first slice retains strict changed-anchor coverage and makes the model policy explicit, including Talk; typed citation-free containers are a later semantic design decision.
+A proposed 180-second/two-call review reserve is a pilot starting point, not a measured reviewer requirement or completion guarantee.
+It is protected from non-review work before each candidate review, including re-review after a semantic repair, and remains a subset of the global allowance.
+An open round can receive an explicitly authorized transport/protocol retry; a final schema-valid non-lookup reply closes the round even when its proposal is rejected.
+The first release does not grant extra semantic rounds inside an immutable job or use phase IDs to reset lookup or repair allowances.
+Pilot editorial disposition and native patch-route exercise are separate acceptance records; no-change alone cannot verify the patch path.
+Native effort/output mappings must be verified for the selected installed builds before selecting defaults; no vendor capability is assumed here.
+Controlled live allowances and private evidence selection require explicit authorization after offline preparation; this plan grants neither.
+
+Prepared by Sue (GPT-6 Codex).
+
+** Semantic review implementation scope
+
+New plans freeze version 8; absent historical versions still select v5, and explicit v6/v7 keep their schemas, policies and replay.
+Fresh v8 plans cannot reuse earlier accepted receipts as evidence of the new review gate.
+The review manifest binds the materialized proposal, frozen prior hashes and run identity, with bounded deterministic diffs and identifiers in request data.
+No-change receives an explicit disposition unit; lookup continuations cannot supply final checks prematurely.
+Review rejection uses the existing repair allowance without adding calls, resetting context counters or introducing another publisher.
+Receipt validation and reconstruction must reject malformed or inconsistent gate proofs without making unrelated corrupt receipts fatal to discovery.
+Native calibration uses a fresh recorded allowance, private fixtures and publication disabled; E9 artifacts remain immutable.
+Byte-preserving patches, durable phase recovery, additional reviewer roles and reserved review budgets remain deferred.
+The completed calibration used its own four-call/600-second wallet and no publisher; it does not authorize another native invocation or extend E9.
+
+** Evidence-handle implementation scope
+
+Use a new =source-grounded-wiki-v7= editor and generic handle-string citation schema; keep v1-v6 replay and schemas unchanged.
+Reuse Session's authenticated lookup replay, counters and authority rather than implementing phase checkpoints in this slice.
+Build initial handles only after =dream_prefix.views= has set delivered windows; full internally retained source bytes do not grant handles.
+An authenticated bounded lookback may add handles for the returned prefix bytes, as the existing prefix lookup test permits.
+Use a bounded append-only registry with a run/source/provenance namespace and exact absolute UTF-8 spans; repeated text at different positions remains distinguishable.
+Deliver initial text once in labeled passages and retain readable exact quotes, byte ranges and registry proofs in receipts.
+Lookup text remains in the existing authenticated response, with handle metadata in context; registry metadata carries no extra source text.
+The registry cannot grant full-page edit permission or human authority, and semantic review remains necessary.
+Bound entries, individual spans, serialized registry and expanded citation bytes; fail rather than silently omit handle coverage.
+Preserve general semantic/disposition repair and typed task authority, resolving action evidence through the same registry.
+New jobs freeze version 7; absent historical versions still select v5 and explicit v6 remains v6.
+Fresh stable delivery requires the new policy/schema catalog to be certified; no certificate relaxation or native run is part of implementation.
+
+GitNexus concept query returns the expected Author and input_sources symbols, but file/name and explicit UID impact lookups currently return UNKNOWN for every requested production target.
+Direct source search identifies planner/header reconstruction, wiki run/restore/status, prefix/progress reuse and native profile catalog as the dispatch surface.
+Prior impact identified these entrypoints as HIGH/CRITICAL; retain that conservative risk and historical replay tests rather than interpreting UNKNOWN as zero callers.
+Existing tested exact-byte citation checks, whole-candidate review and sole publisher remain the validation path (sections 2-5).
+
+* 7. Diagnostics implementation slice
+
+Implement milestone 1 as =source-grounded-wiki-v6= in a separate editor subclass.
+Keep v1-v5 briefs, schemas, identities and validator defaults frozen.
+Extract the existing Author quote resolution into an overridable method and add an optional reference-validation callback after native Org/structural validation.
+V6 resolves all citations and collects independent reference/coverage defects together; malformed structure stops that dependent pass, while operational errors propagate.
+Findings carry codes and located path/target/unit information, bounded to 32 findings and explicitly marked incomplete on overflow.
+Keep the current full proposal repair and independent review, without patch/checkpoint or protected review-capacity claims.
+Extend explicit contract allowlists for replay, unchanged results and accepted-progress reuse; certify the new production policy catalog before stable live use.
+
+Upstream impact on the runtime baseline reports HIGH for Author.proposal (two direct dependants) and validate_proposal (three).
+Run, restore and status dispatch are CRITICAL (seven, two and eight direct dependants respectively); accepted-progress envelope and prefix matching are also CRITICAL with three direct dependants each.
+The CLI counts broad execution flows, including unrelated dispatch entrypoints; use targeted tests and historical replay to assess the actual changed contract branches.
+Two catalog/no-change symbols were absent from the initial index; refresh and repeat their impact checks before editing them.
+
+The refreshed index still omits =variants= and =record_unchanged=; direct references identify profile key/loading/certification and the wiki run's unchanged branch as their callers.
+Record this as unknown index coverage, not zero impact.
+The version pin extends =build_plan=, =create_plan=, =_plan_shape=, =_validate= and exploratory =_job=, =prepare= and =_plan=.
+Impact marks the planners and reconstruction/job entrypoints CRITICAL (two/seven/two/six/three direct dependants), plan shape HIGH (one), and exploratory plan handoff LOW (one).
+
+Implementation review found and corrected two compatibility gaps before live use.
+Independent parsed-page link errors now share the bounded reference report.
+Fresh plans/job headers freeze =authoring_version: 6=; historical absent fields select v5 without changing their reconstructed hashes.
+Same-attempt delivery layout/profile changes are rejected before provider work, while an explicit new attempt can reuse its single compatible historical certificate.
+Historical status continues dispatching by the original saved contract.
+
+The first offline Claude certification reached 25 of 28 captures before its unchanged 120-second ceiling while regression tests were active.
+The quieter-host rerun completed all 28 captures and certified the fourteen v6 production policy/schema variants with dummy credentials and no paid inference.
+The new module passes mypy with untyped bodies checked; all eleven changed runtime modules pass the project's normal mypy check, ASCII and Python 3.9 grammar checks.
+An exploratory stricter check across the older modules also reports errors in their untyped paths; no repository-wide strict type-check pass is claimed.
+The fifteen-file targeted regression run completed 303 cases: 300 passed and three test-fixture/assertion cases failed.
+Two new v5 fixtures used =main= where the planner requires =refs/heads/main=; the older duplicate-reference assertion expected its previous first-error wording.
+After those corrections, the complete diagnostics module, all six invalid-editorial cases and three semantic/no-change/authority witnesses pass all 26 follow-up cases.
+The new clipping/overflow/window/source/deadline group separately passes six cases; the historical pre-plan job handoff separately passes one.
+No additional runtime defect was found in that regression run; no unfiltered repository-wide pass is claimed.
+Artifacts are =diagnostics-final.xml=, =diagnostics-followup.xml=, =diagnostics-bounds.log= and =diagnostics-historical-header.log= under =/home/coder/.sucoder/logs/dream-claude-live/2026-11-23/=.
+The current source also replays E5 as published and E6 as incomplete with native provider/build/authentication entrypoints forbidden, unchanged job files and memory unchanged.
+Fresh copies of those read-only audits are under =/home/coder/.sucoder/logs/dream-authoring-live/2026-11-23/historical-e5/= and =historical-e6/=.
+The final index refresh uses =--skip-agents-md --index-only=; staged scope must be checked before committing.
+The [[file:dream/runs/authoring-sequence.org][Claude sequence report]] separates live outcomes from offline acceptance.
+A1 passes with two native calls and publication disabled.
+E7 fixes four nonliteral quotes in one repair and publishes private memory =4b529b1= after seventeen completed calls; root's independent source check also records wording/grounding limitations missed by its reviewer.
+E8 uses nineteen reservations, including a timed-out repair with unknown usage, and publishes nothing before its original thirty-minute ceiling expires.
+Both real-job audits forbid provider/build/authentication access, replay exact completed bodies and wallet bindings, preserve all job files and confirm their different publication outcomes.
+No new elapsed window, native retry, token/dollar-cap claim or legacy-artifact rewrite followed.
+
+* 8. Evidence-handle verification
+
+Implementation =fbc6d14= is on local main after the scoped grounding commit =15bffb2=.
+The latest recovery reviewer found no remaining blocker, including after the final paragraph/deadline and native-context projection checks.
+The registry retains pending/orphan/ambiguous native-call summaries without duplicating raw records or restoring withheld prefix content.
+Malformed cached unavailable responses are rejected before accounting or prompt delivery; historical contexts retain their no-op validation hook.
+Canonical v7 action receipts have their own schema and a bounded consistency check for registry digest, entries, quotes and ranges.
+This does not authenticate an unreviewed checkpoint or implement phase recovery.
+
+The completed sixteen-module run reports 256 passed and four failed in =final-regression.xml=.
+Two failures were stale fixture assumptions about source text/briefs; two long lifecycle cases exceeded pytest's 300-second ceiling with four workers.
+The final handle, support, correction, unattended and pilot fixture group passes all 48 cases with two workers (=followup.xml=).
+Both lifecycle cases pass serially under the same 300-second ceiling (=lifecycle-serial.xml=).
+The registry-only boundary group also passes twelve cases, including unavailable-cache payload/negative/bool counter tampering and replay without replenishing request/source allowances.
+All twelve runtime modules pass normal mypy, ASCII and Python 3.9 grammar checks; the new module passes checking of untyped bodies.
+Org exports pass; no unfiltered repository-wide pass is claimed.
+
+Claude Code 2.1.330 certifies the fourteen new production policy/schema variants in 28 offline captures using dummy credentials and no paid inference.
+The new profile loads against the current catalog; Codex's existing uncertified stable gate remains in force.
+Read-only E7/E8 replay preserves their published/incomplete states, all 250/275 saved job files and private memory =4b529b1=, with native/build/authentication access forbidden.
+Verification artifacts and the source hash manifest are under =/home/coder/.sucoder/logs/dream-handles/2026-11-23/=.
+
+GitNexus was refreshed with =--skip-agents-md --index-only= and staged scope checked before commit.
+The context lookup impact is CRITICAL with 335 direct and 39 depth-two indexed dependants, including six unresolved receiver sites; generic-name flows overstate the two direct registry-delivery callers.
+The final staged check reports the expected context hooks, new registry/editor and version-dispatch/test surface, with broad unrelated flow names rather than an asserted complete call graph.
+Ledger verification is OK against sections 2-5: exact-byte checks, native authority, source admission, lookup accounting, full repair/review and publication remain reused; the new registry supplies selection/provenance mechanics.
+Installed deployment, GitHub publication and a bounded live effectiveness trial remain separate steps.
+
+* 9. E9 live disposition
+
+The human authorized proceeding on November 24.
+An account-owned, detached =4c56866= runtime is available as =sucoder-v7=; the root-owned default installation was not replaced.
+The [[file:dream/runs/sucoder-e9.org][E9 report]] records eight completed Claude calls within the original 32-call/1,800-second allowance, with no handle/quotation failures.
+One full-proposal repair addressed changed-anchor coverage caused by typographic quote normalization.
+The reviewer accepted with three advisories, but the frozen root check found blocking scope, causality, negative-outcome and provenance losses.
+
+Private publication =602ba351= was withdrawn by additive operator revert =fb695456=, restoring exactly the =4b529b1= tree and retaining the original publication as parent.
+This is an operator withdrawal of new claims, not a fabricated native review or a reset behind the generation.
+All 130 job files and raw replies remain unchanged; the generated wiki copy matches the restored tree.
+No new documentation improvement remains active, and the correction proposal is unreviewed and unpublished.
+Native/build/authentication-forbidden replay passes before and after withdrawal; runtime source hashes remain unchanged.
+The trial is finished with eight calls consumed and no additional inference queued.
+Evidence handles have one real mechanical-route witness, while semantic publication quality remains unresolved.
+
+* 10. Semantic review verification
+
+Implementation =533b58e= and the [[file:dream/runs/review-calibration.org][partial native calibration]] are on local main.
+The gate reuses exact handle resolution, context counters/authority, action validation, full-proposal repair and sole publication (sections 2-5).
+Its bounded manifest adds one explicit row per changed output including index/settings/archive outputs, with deterministic before/after differences and hashes.
+The final proof checks all rows, delivered handles, frozen prior/output bindings and the no-change footprint, while preserving lookup continuations and older contracts.
+No new phase checkpoint, repair round, paid retry, source admission or human authority was added.
+Anchored verification is OK against sections 2-5 for reuse, definitions, bounds and replay; model truthfulness is outside those mechanical guarantees.
+
+The twelve-module regression run passes 198 cases.
+After the final context/prior-proof adjustments, 41 gate/context cases and 20 reuse/support/Claude lifecycle cases pass.
+Nine runtime files pass mypy, including untyped-body checking of the new module; ASCII/Python 3.9 grammar and Org exports pass.
+GitNexus was refreshed with =--skip-agents-md --index-only=; staged detection reports the expected 21-file/21-symbol surface and medium indexed risk, without claiming a complete call graph.
+The initial file-qualified impact queries returned UNKNOWN; direct dispatch inspection retained the conservative planner/reuse risk rather than treating this as zero impact.
+Read-only E7/E8/E9 replay preserves all 250/275/130 files and historical outcomes with native/build/authentication access forbidden.
+
+Claude Code 2.1.330 certifies fourteen new production variants in 28 offline captures using dummy credentials.
+The separate four-call/600-second calibration consumes three reservations: two completed reviews and one failed invocation at the original elapsed boundary.
+It rejects the withdrawn E9 draft and accepts the operator correction; the seeded regression remains unknown.
+The reviewer still misses topic scope/current-state, negative transfer, process linkage and project identity, despite passing those page checks.
+Both completed invocations internally retry StructuredOutput after exceeding 512-character reason limits; native reservations do not count hidden model turns.
+This is partial effectiveness evidence, not a semantic-quality pass or comparative savings result.
+
+The final native/authentication-forbidden audit replays both completed replies and deterministic manifests and confirms exact =533b58e= runtime bytes, unchanged E9 files and unchanged restored memory =fb695456=.
+Artifacts are under =/home/coder/.sucoder/logs/dream-review-gate/2026-11-24/=; no new memory publication or further inference is queued.
+The next contract should make claim-level scrutiny visible and avoid the observed reason-bound retry penalty, then receive its own calibration before another full publication trial.
+Existing v8 semantics and raw evidence must remain frozen during that follow-up.
+
+Verified by Sue (GPT-6 Codex).

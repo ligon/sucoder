@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections import Counter
 from pathlib import PurePosixPath
+import os
 import posixpath
 import subprocess
 import time
@@ -113,12 +114,16 @@ def prior_bundle(plan, fd):
     return files
 
 
-def validate_proposal(plan, proposal, prior, sources, deadline, contract=CONTRACT, *, approved_tasks=None, archive_paths=(), derived_targets=()):
+def validate_proposal(plan, proposal, prior, sources, deadline, contract=CONTRACT, *, approved_tasks=None, archive_paths=(), derived_targets=(), reference_validator=None, report_issue=None):
     """Check edit scope, source ranges, retained anchors/tasks and wiki links.
 
     Human meaning and salience are reviewed separately against this full input.
     No claim that these mechanical checks prove semantic fidelity is made.
     """
+    def reject(message, *, path, target="", code="structure_invalid"):
+        if report_issue is None:
+            raise DreamError(message)
+        report_issue(code, message, path=path, target=target)
     pages = {}
     existing = {item["path"] for item in plan.get("prior_wiki", {}).get("files", [])}
     for page in proposal["pages"]:
@@ -157,14 +162,17 @@ def validate_proposal(plan, proposal, prior, sources, deadline, contract=CONTRAC
         # prose-only editor. Existing shared settings may be included by path.
         for keyword in parsed[path]["keywords"]:
             if keyword["key"] in ("INCLUDE", "BIND", "CALL", "MACRO", "PROPERTY"):
-                raise DreamError("Authored wiki contains an active inclusion/configuration directive")
+                reject("Authored wiki contains an active inclusion/configuration directive", path=path)
             if keyword["key"] == "SETUPFILE":
                 target = str(PurePosixPath(path).parent / keyword["value"].strip())
                 if posixpath.normpath(target) != SETTINGS_PATH:
-                    raise DreamError("Wiki SETUPFILE must name the checked-in wiki settings")
+                    reject("Wiki SETUPFILE must name the checked-in wiki settings", path=path)
         if path in old:
             if not set(old[path]["targets"]) <= set(parsed[path]["targets"]):
-                raise DreamError("An existing anchor disappeared; retain a forwarding anchor")
+                if report_issue is None:
+                    raise DreamError("An existing anchor disappeared; retain a forwarding anchor")
+                for target in sorted(set(old[path]["targets"]) - set(parsed[path]["targets"])):
+                    reject("An existing anchor disappeared; retain a forwarding anchor", path=path, target=target)
             old_tasks = Counter(h["sha256"] for h in old[path]["headings"] if h["state"])
             new_tasks = Counter(h["sha256"] for h in parsed[path]["headings"] if h["state"])
             approved = Counter((approved_tasks or {}).get(path, []))
@@ -180,24 +188,27 @@ def validate_proposal(plan, proposal, prior, sources, deadline, contract=CONTRAC
             kind, destination, search = link["type"], link["path"], link["search"]
             if kind == "custom-id":
                 if destination not in details["targets"]:
-                    raise DreamError("Missing local wiki target")
+                    reject("Missing local wiki target", path=path, target=destination, code="link_invalid")
             elif kind == "file":
                 if link["raw_path"].startswith(("/", "~")):
-                    raise DreamError("Wiki file links must be repository-relative, not home/absolute paths")
+                    reject("Wiki file links must be repository-relative, not home/absolute paths", path=path, code="link_invalid")
+                    continue
                 # The Org normalizer clamps at the root, so one ../ too many would pass as a
                 # project path while the link itself leaves the project tree.
                 climbed = posixpath.normpath(posixpath.join(posixpath.dirname(path), link["raw_path"]))
                 if climbed == ".." or climbed.startswith("../"):
-                    raise DreamError("Wiki file link climbs above the project root: " + link["raw_path"])
+                    reject("Wiki file link climbs above the project root: " + link["raw_path"], path=path, code="link_invalid")
+                    continue
                 if destination.startswith(".sucoder/wiki/"):
                     if destination not in parsed:
                         key = (kind, link["raw_path"], destination, search)
                         if destination in existing and retained_links[key]:
                             retained_links[key] -= 1
                             continue  # Preserve the original frozen external link.
-                        raise DreamError("Wiki links to an unavailable page or unselected archive")
+                        reject("Wiki links to an unavailable page or unselected archive", path=path, code="link_invalid")
+                        continue
                     if search and (not search.startswith("#") or search[1:] not in parsed[destination]["targets"]):
-                        raise DreamError("Wiki file link has an unsupported or missing target")
+                        reject("Wiki file link has an unsupported or missing target", path=path, target=search, code="link_invalid")
                 elif destination in project:
                     continue
                 elif not any(s.get("repository") == plan["repository"] and s.get("path") == destination for s in sources):
@@ -208,10 +219,10 @@ def validate_proposal(plan, proposal, prior, sources, deadline, contract=CONTRAC
                     if retained_links[key]:
                         retained_links[key] -= 1
                         continue
-                    raise DreamError("Wiki file link is outside the admitted source set" +
-                                     (" and the project" if project else "") + ": " + destination)
+                    reject("Wiki file link is outside the admitted source set" +
+                           (" and the project" if project else "") + ": " + destination, path=path, code="link_invalid")
             elif kind not in ("http", "https"):
-                raise DreamError("Unsupported wiki link type: " + kind)
+                reject("Unsupported wiki link type: " + kind, path=path, code="link_invalid")
     reachable, pending = {INDEX}, [INDEX]
     while pending:
         current = pending.pop()
@@ -221,7 +232,13 @@ def validate_proposal(plan, proposal, prior, sources, deadline, contract=CONTRAC
                 reachable.add(destination)
                 pending.append(destination)
     if any(path.startswith(".sucoder/wiki/topics/") and path not in reachable for path in pages):
-        raise DreamError("A changed topic is unreachable from the companion index")
+        if report_issue is None:
+            raise DreamError("A changed topic is unreachable from the companion index")
+        for path in sorted(pages):
+            if path.startswith(".sucoder/wiki/topics/") and path not in reachable:
+                reject("A changed topic is unreachable from the companion index", path=path, code="topic_unreachable")
+    if reference_validator is not None:
+        return pages, parsed, reference_validator(proposal, pages, parsed, old, sources, derived_targets)
     by_id = {s["unit_id"]: s for s in sources}
     references = {}
     resolved = []
@@ -323,7 +340,7 @@ class WikiCoordinator(dream_roles.Coordinator):
             except DreamError as exc:
                 if exc.exit_code != 2:
                     raise
-                findings = [dict(severity="blocking", path="", message=str(exc))]
+                findings = getattr(exc, "findings", None) or [dict(severity="blocking", path="", message=str(exc))]
             else:
                 review = self.call("reviewer", dict(inputs, candidate=self.review_candidate(proposal, pages)))
                 findings = self.review_findings(review, proposal)
@@ -351,9 +368,51 @@ class WikiCoordinator(dream_roles.Coordinator):
         return pages, receipt
 
 
+def frozen_profile(config, plan, fd, harness, model, attempt, purpose, layout, requested):
+    """Resume the original stable profile, rather than adopt today's policy."""
+    from . import dream_prompt_native
+    profiles, historical = [], []
+    for name in sorted(os.listdir(fd)):
+        if not name.startswith("native-") or not name.endswith("-spec.json"):
+            continue
+        spec = dream._json(dream_run._read(fd, name, dream_run.MAX_PLAN_BYTES))
+        if (spec.get("harness"), spec.get("model"), spec.get("purpose")) != (harness, model, purpose):
+            continue
+        profile = spec.get("prompt_profile")
+        if profile is not None:
+            dream_prompt_native.validate_profile(profile)
+        if spec.get("attempt") == attempt:
+            profiles.append(profile)
+        elif profile is not None:
+            historical.append(profile)
+    if profiles:
+        if len({digest(canonical(profile)) for profile in profiles}) != 1:
+            raise DreamError("Existing attempt has ambiguous frozen prompt profiles", 3)
+        profile = profiles[0]
+        if layout != ("legacy" if profile is None else "stable") or (requested is not None and canonical(requested) != canonical(profile)):
+            raise DreamError("Existing attempt has a different frozen prompt layout/profile; select a new explicit attempt", 3)
+        return profile
+    if layout == "legacy" or requested is not None:
+        return requested
+    if historical:
+        if len({digest(canonical(profile)) for profile in historical}) != 1:
+            raise DreamError("Historical prompt profiles are ambiguous; supply the intended frozen profile explicitly", 3)
+        return historical[0]
+    if plan.get("authoring_version", 5) != 9:
+        raise DreamError("Historical stable plan requires its frozen prompt profile", 3)
+    return dream_prompt_native.load_profile(config, harness, model, time.monotonic() + 15)
+
+
 def run(config, mirror, plan_path, harness, model, attempt=1, mode="wiki", purpose=PURPOSE, *, transport=None,
-        budget_path=None, budget_limits=None):
+        budget_path=None, budget_limits=None, prompt_profile=None, prompt_layout=None, submission_contract=None):
+    from . import dream_submission
+    dream_submission.validate(submission_contract)
+    layout = prompt_layout if prompt_layout is not None else ("stable" if prompt_profile is not None else "legacy")
+    if layout not in ("legacy", "stable") or (prompt_profile is not None and layout != "stable"):
+        raise DreamError("Prompt layout must be legacy or stable and match its frozen profile")
     if mode == "notes":
+        if layout != "legacy":
+            raise DreamError("Stable prompt delivery requires wiki mode")
         with dream_run._directory(config, plan_path) as (fd, directory):
             if any(u["kind"] == dream_view.KIND for u in dream_run._load(fd, directory.name, mirror)["units"]):
                 raise DreamError("Rendered session windows require wiki mode")
@@ -369,6 +428,7 @@ def run(config, mirror, plan_path, harness, model, attempt=1, mode="wiki", purpo
         raise DreamError("Invalid native attempt number")
     with dream_run._directory(config, plan_path) as (fd, directory):
         plan = dream_run._load(fd, directory.name, mirror)
+        prompt_profile = frozen_profile(config, plan, fd, harness, model, attempt, purpose, layout, prompt_profile)
         if any(not unit["shareable"] for unit in plan["units"]):
             raise DreamError("Wiki publication requires shareable sources")
         if any(name != mirror and item["provisional"] for name, item in plan["repositories"].items()):
@@ -382,21 +442,35 @@ def run(config, mirror, plan_path, harness, model, attempt=1, mode="wiki", purpo
                 budget.fail("elapsed allowance exhausted")
             deadline = min(time.monotonic() + plan["limits"]["max_elapsed_seconds"], budget.deadline())
             _, source_readers = dream_run._snapshot(config, mirror, plan, fd, deadline)
+            if transport is None and prompt_profile is not None:
+                from . import dream_prompt_native
+                transport = dream_prompt_native.Transport(prompt_profile)
             transport = transport or dream_native.Transport(harness, deadline)
-            reused = dream_progress.try_reuse(plan, fd, source_readers[mirror], harness, model,
-                                             transport.version, purpose, deadline)
+            reused = (dream_progress.try_reuse(plan, fd, source_readers[mirror], harness, model,
+                                             transport.version, purpose, deadline) if prompt_profile is None and submission_contract is None else None)
             if reused is not None:
                 return reused
-            from . import dream_curate, dream_editor, dream_prefix
-            prefixes = dream_prefix.discover(plan, fd, source_readers[mirror], harness, model, transport.version, purpose, deadline)
-            coordinator = dream_editor.Editor(plan, fd, harness, model, deadline, transport,
+            from . import dream_curate, dream_editor, dream_diagnostics, dream_handles, dream_review, dream_concise, dream_prefix
+            prefixes = (dream_prefix.discover(plan, fd, source_readers[mirror], harness, model, transport.version, purpose, deadline)
+                        if prompt_profile is None and submission_contract is None else [])
+            editor = {9: dream_concise.Editor, 8: dream_review.Editor, 7: dream_handles.Editor, 6: dream_diagnostics.Editor, 5: dream_editor.Editor}[plan.get("authoring_version", 5)]
+            coordinator = editor(plan, fd, harness, model, deadline, transport,
                 attempt=attempt, purpose=purpose, source=source_readers[mirror], prefixes=prefixes)
+            if prompt_profile is not None:
+                from . import dream_prompt
+                dream_prompt.attach(coordinator, prompt_profile)
+            if submission_contract is not None:
+                dream_submission.attach(coordinator, submission_contract)
             budget.attach(coordinator)
             prefix = "native-" + coordinator.run_id
             spec = dict(contract=coordinator.contract, run_id=coordinator.run_id, harness=harness, model=model,
                 native_version=coordinator.expected_version, attempt=attempt, purpose=purpose, budget=budget.descriptor())
             if prefixes:
                 spec["prefixes"] = prefixes
+            if prompt_profile is not None:
+                spec["prompt_profile"] = prompt_profile
+            if getattr(coordinator, "submission_contract", None) is not None:
+                spec["submission_contract"] = coordinator.submission_contract
             dream_run._store(fd, prefix + "-spec.json", canonical(spec) + b"\n")
             with dream_roles.run_lock(fd, prefix):
                 pages, receipt = coordinator.prepare()
@@ -407,25 +481,39 @@ def run(config, mirror, plan_path, harness, model, attempt=1, mode="wiki", purpo
 
 
 def restore(plan, fd, run_id, deadline):
-    spec = dream._json(dream_run._read(fd, "native-" + run_id + "-spec.json", 16384))
-    dream._object(spec, ("contract", "run_id", "harness", "model", "native_version", "attempt", "purpose"), ("prefixes", "budget"))
-    from . import dream_curate, dream_author, dream_editor
-    if spec["contract"] not in (CONTRACT, LEGACY_CONTRACT, dream_curate.CONTRACT, dream_author.CONTRACT, dream_editor.CONTRACT) or spec["run_id"] != run_id or spec["harness"] not in ("codex", "claude"):
+    spec = dream._json(dream_run._read(fd, "native-" + run_id + "-spec.json", dream_run.MAX_PLAN_BYTES))
+    dream._object(spec, ("contract", "run_id", "harness", "model", "native_version", "attempt", "purpose"), ("prefixes", "budget", "prompt_profile", "submission_contract"))
+    from . import dream_curate, dream_author, dream_editor, dream_diagnostics, dream_handles, dream_review, dream_concise
+    if spec["contract"] not in (CONTRACT, LEGACY_CONTRACT, dream_curate.CONTRACT, dream_author.CONTRACT, dream_editor.CONTRACT, dream_diagnostics.CONTRACT, dream_handles.CONTRACT, dream_review.CONTRACT, dream_concise.CONTRACT) or spec["run_id"] != run_id or spec["harness"] not in ("codex", "claude"):
         raise DreamError("Invalid wiki run specification")
     def no_inference(*args):
         raise DreamError("Wiki run is incomplete; status never invokes inference", 3)
     parameters = dict(native_version=spec["native_version"], attempt=spec["attempt"], purpose=spec["purpose"])
     if "prefixes" in spec:
-        if spec["contract"] not in (dream_author.CONTRACT, dream_editor.CONTRACT) or not spec["prefixes"]:
-            raise DreamError("Prefix manifests require a nonempty v4/v5 run")
+        if spec["contract"] not in (dream_author.CONTRACT, dream_editor.CONTRACT, dream_diagnostics.CONTRACT, dream_handles.CONTRACT, dream_review.CONTRACT, dream_concise.CONTRACT) or not spec["prefixes"]:
+            raise DreamError("Prefix manifests require a nonempty v4/v5/v6/v7/v8/v9 run")
         parameters["prefixes"] = spec["prefixes"]
-    coordinator = (dream_editor.Editor(plan, fd, spec["harness"], spec["model"], deadline, no_inference, **parameters)
+    coordinator = (dream_concise.Editor(plan, fd, spec["harness"], spec["model"], deadline, no_inference, **parameters)
+        if spec["contract"] == dream_concise.CONTRACT else
+        dream_review.Editor(plan, fd, spec["harness"], spec["model"], deadline, no_inference, **parameters)
+        if spec["contract"] == dream_review.CONTRACT else
+        dream_handles.Editor(plan, fd, spec["harness"], spec["model"], deadline, no_inference, **parameters)
+        if spec["contract"] == dream_handles.CONTRACT else
+        dream_diagnostics.Editor(plan, fd, spec["harness"], spec["model"], deadline, no_inference, **parameters)
+        if spec["contract"] == dream_diagnostics.CONTRACT else
+        dream_editor.Editor(plan, fd, spec["harness"], spec["model"], deadline, no_inference, **parameters)
         if spec["contract"] == dream_editor.CONTRACT else
         dream_author.Author(plan, fd, spec["harness"], spec["model"], deadline, no_inference, **parameters)
         if spec["contract"] == dream_author.CONTRACT else
         dream_curate.Curator(plan, fd, spec["harness"], spec["model"], deadline, no_inference, **parameters)
         if spec["contract"] == dream_curate.CONTRACT else
         WikiCoordinator(plan, fd, spec["harness"], spec["model"], deadline, no_inference, contract=spec["contract"], **parameters))
+    if "prompt_profile" in spec:
+        from . import dream_prompt
+        dream_prompt.attach(coordinator, spec["prompt_profile"])
+    if "submission_contract" in spec:
+        from . import dream_submission
+        dream_submission.attach(coordinator, spec["submission_contract"])
     from . import dream_budget
     with dream_budget.restore(spec.get("budget")) as budget:
         if budget is not None:

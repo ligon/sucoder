@@ -122,16 +122,20 @@ class Coordinator:
         return schema(role)
 
     def call(self, role, inputs):
+        from . import dream_submission
         budget = getattr(self, "budget", None)
         if self.invocations >= self.plan["limits"]["max_role_invocations"] or time.monotonic() >= self.deadline:
             if budget is not None and not budget.readonly and not budget.remaining():
                 budget.fail("elapsed allowance exhausted", dict(role=role, run_id=self.run_id))
             raise DreamError("Shared dream role or elapsed allowance exhausted", 3)
-        task = self.make_assignment(role, inputs)
+        task = dream_submission.assignment(self.make_assignment(role, inputs), getattr(self, "submission_contract", None))
         if budget is not None:
             task = budget.assignment(task)
         if len(canonical(task)) > self.plan["limits"]["max_consolidation_bytes"]:
             raise DreamError("Role assignment exceeds max_consolidation_bytes", 3)
+        from . import dream_prompt
+        request = dream_prompt.freeze(self, task)
+        dream_submission.freeze(self, task, request)
         key = self.run_id + "-" + task["assignment_id"]
         dream_run._store(self.fd, key + "-assignment.json", canonical(task) + b"\n")
         # A failed/started native request is never automatically repeated on
@@ -147,11 +151,19 @@ class Coordinator:
                 if budget is not None:
                     budget.denied(task)
                 raise DreamError("An earlier role attempt has no validated result; inspect its private trace and select a new --attempt", 3)
+            if request is not None:
+                preflight = getattr(self, "prompt_preflight", None)
+                if preflight is not None:
+                    preflight(request, self.deadline)
             if budget is not None:
-                budget.reserve(task)
+                budget.reserve(task, **(dict(request_sha256=request["sha256"]) if request is not None else {}))
             dream_run._store(self.fd, key + "-started.json", canonical(dict(state="started", assignment_id=task["assignment_id"])) + b"\n")
+            # The wallet transport applies the shared deadline and closeout
+            # reserve; an extra fixed cap can discard otherwise bounded work.
+            deadline = self.deadline if budget is not None else min(self.deadline, time.monotonic() + 180)
             result, usage, trace = self.transport(self.harness, self.model, task, self.result_schema(role),
-                                                 min(self.deadline, time.monotonic() + 180))
+                                                 deadline,
+                                                 **(dict(request=request) if request is not None else {}))
             dream_run._store(self.fd, key + "-trace.json", canonical(trace) + b"\n")
             if result is None:
                 raise DreamError("Native role failed; inspect its private trace: " + key + "-trace.json", 3)
@@ -160,11 +172,12 @@ class Coordinator:
             dream_run._store(self.fd, key + "-result.json", canonical(saved) + b"\n")
         self.check_result(task, saved["result"])
         trace = dream._json(dream_run._read(self.fd, key + "-trace.json", dream_native.MAX_TRACE * 2))
+        dream_prompt.verify_trace(request, trace)
         if (digest(canonical(trace)) != saved["trace_sha256"] or trace["input_sha256"] != digest(canonical(task)) or
                 trace["harness"] != self.harness or trace["model"] != self.model or
                 trace["version"] != saved["version"] or trace["version"] != self.expected_version or trace["returncode"] != 0):
             raise DreamError("Private role trace no longer binds its assignment and result")
-        traced_result, traced_usage = dream_native.parse_trace(trace["stdout"].encode(), self.harness)
+        traced_result, traced_usage = dream_submission.parse(task, trace, request)
         if canonical(traced_result) != canonical(saved["result"]) or canonical(traced_usage) != canonical(saved["usage"]):
             raise DreamError("Stored result or usage differs from the completed native trace")
         if self.version is not None and self.version != saved["version"]:

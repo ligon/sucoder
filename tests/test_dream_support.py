@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from sucoder import dream, dream_editor, dream_run, dream_support, dream_wiki
+from sucoder import dream, dream_concise, dream_editor, dream_run, dream_support, dream_wiki
+from tests.dream_submission_fixture import source_text
 from tests.test_dream import git, workspace  # noqa: F401
 from tests.test_dream_memory import MEMORY, memory_plan
 from tests.test_dream_wiki import EditorTransport, TOPIC
@@ -51,7 +52,7 @@ def test_narrower_generation_receives_and_keeps_previous_support(workspace):
     def preserve(task, result):
         if task["role"] == "author":
             inputs = task["input"]
-            assert "--session-id" not in next(u["text"] for u in inputs["sources"] if u["unit_id"] == "evidence-b")
+            assert "--session-id" not in next(source_text(u) for u in inputs["sources"] if u["unit_id"] == "evidence-b")
             assert any(row["target"] == "reply-proof" for row in inputs["prior_support"])
             assert "a narrower current evidence selection is not a reason to erase" in task["brief"]
             assert "previously_admitted_not_reread" in json.dumps(inputs["prior_support"])
@@ -100,7 +101,7 @@ def test_plan_prepared_before_editorial_amendment_replays_unchanged(workspace, m
     assert "editorial_version" not in plan and "prior_support" not in plan
     native = EditorTransport()
     result = dream_wiki.run(workspace[2], "sample", Path(plan["plan_path"]), "codex", "fixture", transport=native)
-    assert all(task["brief"] == dream_editor.BRIEFS[task["role"]] for task in native.calls)
+    assert all(task["brief"] == dream_concise.BRIEFS[task["role"]] for task in native.calls)
     monkeypatch.setattr(dream_support, "VERSION", 2)
     assert dream_wiki.run(workspace[2], "sample", Path(plan["plan_path"]), "codex", "fixture", transport=native) == result
     assert dream_run.status(workspace[2], "sample", Path(plan["plan_path"]))["state"] == "published"
@@ -113,7 +114,8 @@ def test_new_policy_does_not_skip_review_based_on_an_older_policy_receipt(worksp
     with monkeypatch.context() as previous:
         previous.setattr(dream_support, "VERSION", 1)
         previous.setattr(dream_editor, "Editor", dream_author.Author)
-        before = memory_plan(workspace)
+        memory_plan(workspace)
+        before = dream.create_plan(workspace[2], "sample", workspace[1].parent / "memory-sources.json", MEMORY, authoring_version=5)
         dream_wiki.run(workspace[2], "sample", Path(before["plan_path"]), "codex", "fixture", transport=EditorTransport())
     after = next_plan(workspace, maintenance=None)
     native = NoopTransport()

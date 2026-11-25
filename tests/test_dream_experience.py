@@ -7,11 +7,12 @@ import time
 
 import pytest
 
-from sucoder import dream, dream_discover, dream_experience, dream_explore as explore, dream_view, dream_leads
+from sucoder import dream, dream_discover, dream_experience, dream_explore as explore, dream_view, dream_leads, dream_navigation
 from tests.test_dream import git, workspace  # noqa: F401
 from tests.test_dream_explore import ExploringTransport, clock, options  # noqa: F401
 from tests.test_dream_explore_cli import exploratory_runtime, invoke  # noqa: F401
 from tests.test_dream_wiki import TOPIC, planned
+from tests.dream_submission_fixture import native_reply
 
 SID = "6d1f0c2a-9b3e-4c5d-8e7f-0a1b2c3d4e5f"
 MEMORY = "refs/heads/sucoder/memory"
@@ -43,6 +44,8 @@ class ExperienceTransport(ExploringTransport):
         result = {key: task[key] for key in ("assignment_id", "input_sha256", "role")}
         result.update(failures=[], action="finish", path="", query="", offset=0, start=0, end=0, selections=[],
                       topic="reply-evidence", rationale="Check the reply note against what the session saw.", questions=[])
+        if "cursor" in schema["properties"]:
+            result["cursor"] = ""
         if step == 0:
             result.update(action="list", path="@sessions")
         elif step == 1:
@@ -56,7 +59,7 @@ class ExperienceTransport(ExploringTransport):
         trace = dict(harness=harness, model=model, version=self.version, returncode=0,
                      input_sha256=dream.digest(dream.canonical(task)),
                      stdout="\n".join(json.dumps(e) for e in events) + "\n", stderr="", boundary="linux-landlock-inline-v1")
-        return result, dict(native={}, currency_usd=None), trace
+        return native_reply(task, result, dict(native={}, currency_usd=None), trace)
 
 
 class ReadsUntilToldTransport(ExperienceTransport):
@@ -77,12 +80,14 @@ class ReadsUntilToldTransport(ExperienceTransport):
         result.update(failures=[], action="list" if experience and step == 0 else "read", path=path,
                       query="", offset=0, start=0, end=0, selections=[], topic="reply-evidence",
                       rationale="Keep checking the evidence.", questions=[])
+        if "cursor" in schema["properties"]:
+            result["cursor"] = ""
         events = [dict(type="item.completed", item=dict(type="agent_message", text=json.dumps(result))),
                   dict(type="turn.completed", usage={})]
         trace = dict(harness=harness, model=model, version=self.version, returncode=0,
                      input_sha256=dream.digest(dream.canonical(task)),
                      stdout="\n".join(json.dumps(e) for e in events) + "\n", stderr="", boundary="linux-landlock-inline-v1")
-        return result, dict(native={}, currency_usd=None), trace
+        return native_reply(task, result, dict(native={}, currency_usd=None), trace)
 
 
 @pytest.fixture
@@ -94,7 +99,8 @@ def inventory(workspace, home, **kwargs):
     repo, _, config, _ = workspace
     source = dream.GitSource(config, "sample", time.monotonic() + 30)
     rows = dream_experience.sessions(source, home=home, **kwargs)
-    return dream_discover.Inventory(source, git(repo, "rev-parse", "HEAD"), sessions=rows), rows
+    # These window fixtures preserve the historical version 2 contract.
+    return dream_discover.Inventory(source, git(repo, "rev-parse", "HEAD"), sessions=rows, navigation=2), rows
 
 
 def test_a_dream_corrects_a_wrong_note_from_what_the_session_saw(workspace, clock, no_live):
@@ -107,7 +113,7 @@ def test_a_dream_corrects_a_wrong_note_from_what_the_session_saw(workspace, cloc
     job = json.loads((Path(result["job_path"]) / "job.json").read_bytes())
     assert job["mode"] == "experience" and job["purpose"].startswith(explore.EXPERIENCE_PURPOSE)
     explorer = [t for t in native.calls if t["role"] == "explorer"]
-    assert explorer[0]["brief"] == dream_discover.EXPERIENCE_BRIEF + dream_leads.BRIEF
+    assert explorer[0]["brief"] == dream_discover.EXPERIENCE_BRIEF + dream_navigation.BRIEF + dream_leads.BRIEF
     assert explorer[0]["input"]["navigation"]["sessions"] == 1
     listing = explorer[1]["input"]["history"][0]["observation"]
     assert listing["entries"][0]["state"] == "finished" and listing["entries"][0]["consumed"] == []
@@ -133,11 +139,12 @@ def test_the_last_discovery_call_offers_only_finish(workspace, clock, no_live, m
     result = explore.start(config, cwd=repo, transport=native, overrides=options(mode=mode))
     assert result["state"] == "published"
     navigations = [t["input"]["navigation"] for t in native.calls if t["role"] == "explorer"]
-    assert len(navigations) == config.dream.max_discovery_calls
+    frozen = json.loads((Path(result["job_path"]) / "job.json").read_bytes())
+    assert len(navigations) == frozen["settings"]["max_discovery_calls"]
     assert navigations[-1]["actions"] == ["finish"] and navigations[-1]["remaining_discovery_calls"] == 1
     assert all(n["actions"] == ["list", "read", "search", "finish"] for n in navigations[:-1])
     brief = native.calls[0]["brief"]
-    assert brief == (dream_discover.EXPERIENCE_BRIEF if mode == "experience" else dream_discover.BRIEF) + dream_leads.BRIEF
+    assert brief == (dream_discover.EXPERIENCE_BRIEF if mode == "experience" else dream_discover.BRIEF) + dream_navigation.BRIEF + dream_leads.BRIEF
     assert dream_discover.TURN_RULES in brief
 
 
@@ -203,7 +210,7 @@ def test_project_mode_keeps_open_exploration_without_sessions(workspace, clock, 
     job = Path(result["job_path"])
     header = json.loads((job / "job.json").read_bytes())
     assert header["mode"] == "project" and header["purpose"] == explore.dream_wiki.PURPOSE
-    assert native.calls[0]["brief"] == dream_discover.BRIEF + dream_leads.BRIEF
+    assert native.calls[0]["brief"] == dream_discover.BRIEF + dream_navigation.BRIEF + dream_leads.BRIEF
     assert "sessions" not in json.loads((job / "inventory.json").read_bytes())
     with pytest.raises(dream.DreamError, match="immutable"):
         explore.prepare(config, job, overrides=dict(mode="experience"))

@@ -1,0 +1,297 @@
+#+TITLE: Plan for effective dream authoring and repair
+#+AUTHOR: Sue
+#+DATE: 2026-11-23
+#+STATUS: REVIEWED -- diagnostics implementation next; broader protocols staged
+#+PROPERTY: header-args :eval never-export :tangle no
+
+* Objective and measured starting point
+:PROPERTIES:
+:CUSTOM_ID: objective
+:END:
+
+Help unattended dreams turn admitted evidence into useful, independently reviewed explanations with fewer mechanical failures and less repeated model work.
+Preserve open topic choice, explanatory synthesis, attribution, source fallback and a justified reviewed no-change outcome from the [[file:workplan.org::#accepted-synthesis][accepted operating mode]].
+Success is useful reviewed understanding, not the number of pages written or a relaxed publication gate.
+The [[file:../dream-authoring-ledger.org][grounding ledger]] identifies the existing machinery and invariants; implementation must cite its sections 2-5.
+
+[[file:runs/sucoder-e6.org][E6]] completed fourteen discovery calls, an author and a repair, but never reached independent review.
+The first diagnostic exposed an ambiguous quotation; repairing it exposed a second defect, an uncited Talk anchor.
+The author and repair took 688 seconds together and separately reported 28,484 thinking tokens in total.
+Discovery consumed 252,386 input tokens across fourteen calls to select two windows totaling 14,557 rendered bytes.
+These are diagnostic observations from one topic, not a controlled provider comparison or a claim that every discovery step was unnecessary.
+
+The parser and budgeted-role deadline corrections already exist on =coder/dream-main-integration= and have their recorded checks.
+The human's active goal now requests implementation after review, a Claude dream sequence and evaluation of concrete documentation improvements.
+This design revision changes documentation only; native execution must use prepared, recorded bounds and preserve the existing conditional main-merge gate.
+The failed E6 artifacts and current private memory remain unchanged.
+
+* Scope and decisions
+:PROPERTIES:
+:CUSTOM_ID: scope
+:END:
+
+The first implementation slice is complete mechanical diagnostics using the existing general repair path; it can be evaluated independently.
+The broader first release adds bounded reference patches and explicit stage recovery while retaining general repair for semantic/disposition changes.
+Supported role controls and a review reserve are prepared before its controlled live pilot.
+Evidence handles, broader coordinator rendering and discovery compaction follow as measured improvements, rather than prerequisites for fixing the immediate failure.
+
+For the first release, keep the existing strict changed-anchor coverage rule and explicitly describe it in the author/repair policies, including Talk.
+Do not exempt an arbitrary Talk subtree or a model-declared section type from evidence requirements.
+Later typed, coordinator-generated empty containers may have derived provenance, while factual premises inside questions still need support.
+That later semantic change needs its own versioned design and adversarial cases.
+
+Do not increase the repair count merely to compensate for incomplete diagnostics.
+Reuse existing source admission, native Org inventory, context lookups, typed editorial materialization, submission wrappers, shared wallet and sole publisher.
+Do not introduce direct provider APIs, unrestricted tools or automatic paid retries for this work.
+
+* Implemented diagnostics slice
+:PROPERTIES:
+:CUSTOM_ID: implemented-diagnostics
+:END:
+
+The [[file:../../sucoder/dream_diagnostics.py][v6 editor]] implements milestone 1 using the existing full-proposal repair and independent review.
+The diagnostics slice froze =authoring_version: 6=; v7 added evidence handles, and fresh plans now freeze [[file:semantic-review.org][v8 semantic review]].
+Historical absent fields still select v5, and explicit v6 retains its original quote-based contract.
+V1-v5 policies, schemas and status replay retain their original dispatch.
+Every changed non-index anchor, including Talk, needs source references unless unchanged or covered by verified coordinator-derived editorial materialization.
+
+After native Org inventory succeeds, independent keyword/link/retained-anchor/reachability findings share a report with citation, reference, coverage and omission findings.
+Quotation matching deduplicates absolute positions across overlapping delivered windows and computes UTF-8 offsets only for a unique exact match.
+Ambiguity reports at least two positions, without choosing one or exposing undelivered context.
+Invalid paths/pages/dispositions, malformed inventory and editorial-authority prerequisites block dependent validation explicitly.
+Operational failures retain their separate stop path.
+
+The report contains at most 32 blocking findings with stable codes and bounded path/target/unit locations.
+Finding overflow or shortened location fields produces =diagnostics_incomplete=; shortened locations also carry =location_truncated=.
+An incomplete report cannot pass validation.
+No repair allowance is added, and no proposal publishes before whole-candidate independent acceptance.
+Same-attempt delivery layout/profile changes reject before provider work; explicit new attempts may reuse their single compatible historical profile.
+
+The [[file:authoring-review.org::#implementation-review][implementation review]] records the link-report and historical-dispatch corrections.
+Patch modes, authenticated phase checkpoints, durable logical repair rounds and protected reviewer capacity remain later milestones.
+The Claude validation sequence exercises full-proposal repair and evaluates real wiki outcomes; it must not be presented as verification of those deferred protocols.
+The [[file:runs/authoring-sequence.org::#takeaway][A1/E7/E8 evaluation]] confirms complete mechanical reporting while exposing expensive literal-copy repair, repeated prior context and source-grounding gaps.
+One real dream publishes a useful decision record with accuracy qualifications; the other reaches its elapsed cap without review or publication.
+Use those observations to scope the next milestone; they do not establish completion of the broader first release or causal token savings.
+
+* Dependency-ordered implementation
+:PROPERTIES:
+:CUSTOM_ID: sequence
+:END:
+
+** 1. Complete diagnostics and an explicit authoring contract
+
+Extend =Author.proposal= and =validate_proposal= into dependent, read-only validation passes using the existing Org inventory and citation checks.
+Collect independent citation, reference and coverage defects in one bounded report.
+Run dependent checks only when their prerequisites are valid: an unparseable page must not generate invented missing-anchor errors.
+Keep operational failures such as deadline expiry, isolation failure or corrupted artifacts distinct from model-repairable proposal defects.
+
+An internal diagnostic carries a stable code, page path, target, source unit and the relevant match count or missing requirement.
+Candidate source positions/snippets must remain inside already delivered windows and existing byte limits.
+Render actionable findings through the versioned role contract; never fall back to an empty path and a generic first-error string when location is known.
+If the finding cap is reached, mark the report incomplete explicitly; truncation cannot be treated as a successful full validation.
+
+Use a synthetic E6-shaped fixture: one cited unit contains a quotation at two different offsets, and a new Talk anchor has no reference.
+The initial report must identify both defects together, and one corrected repair must reach the independent-review stage.
+Also cover overlapping windows containing the same absolute position, UTF-8 offsets, unknown units, malformed pages and diagnostic-size bounds.
+
+Introduce a new authoring contract for changed policies/behavior, allocating the next unused version; production currently uses v5, not v2.
+The diagnostics-only contract retains the existing whole-run explicit-attempt semantics and general repair path.
+Later patch/checkpoint and review-reservation protocols receive their own frozen versions and feature records; implementing diagnostics must not advertise those later capabilities.
+Preserve the original v1-v5 policy/schema/validator dispatch for historical replay.
+Do not change E6's stored result, failed artifacts or disposition by replaying it under new rules.
+
+** 2. Bounded repair patches and stage recovery
+
+*** Repair routing and operation scope (R1)
+:PROPERTIES:
+:CUSTOM_ID: repair-routing
+:END:
+
+The coordinator selects and freezes a repair mode before reservation from the complete known finding set and policy.
+The reference mode supports replacing one citation, adding a missing reference and merging a duplicate page/target reference group.
+Merge retains the union of necessary citations and requires compatible evidence-status labels; incompatible labels or overlapping operations route to general repair instead of guessing a disposition.
+All patch targets resolve against one frozen full-proposal base, including page texts, references, changes, omissions, decisions and editorial actions.
+The coordinator owns its hash and target handles; the model returns operations/reasons without copying a checksum.
+Candidate target handles are distinct from the later source-evidence handles in milestone 4.
+
+The reference mode cannot change prose, decisions, editorial actions, human tasks or unrelated pages.
+The existing bounded general repair mode remains available for semantic reviewer findings, rejected no-change decisions, withdrawal of unsupported actions and other corrections outside the patch vocabulary.
+Known mixed findings route to general repair before spending a patch call.
+A model request or invalid patch cannot widen the frozen mode; an unhandled correction stops durably rather than granting a second call or edit scope.
+Both modes share the same logical repair-round allowance, wallet and mandatory whole-candidate review.
+Reference patches materialize atomically in the existing private editor boundary; general repair retains its current source, full-page, authority and history checks.
+
+Acceptance retains missing-command-flag repair, rejected-no-change correction, withdrawal of unsupported task completion and duplicate-reference consolidation preserving both necessary citations.
+It also rejects stale bases, fabricated targets, overlapping operations and attempts to change prose/tasks through reference mode.
+
+*** Authenticated context continuation (R2)
+:PROPERTIES:
+:CUSTOM_ID: context-continuation
+:END:
+
+Record a versioned unreviewed checkpoint with parent assignment/result/trace proofs, the complete proposal/materialization hashes, source/window identities, prior-wiki hashes, profile/contract identity and frozen editorial materialization parameters.
+Authenticate the existing Session.payload and cached lookup transcript and replay their effects into a single context_scope_id for the draft lineage.
+Reconstruct request count, prior/extra-source/search usage, unavailable responses, exact delivered-window union, full active-page edit permissions and separate read-only archive context.
+Derive those values from verified responses/frozen blobs and check recorded totals; do not trust counters copied from a draft or create a second counter store.
+Initial allowances and their scope stay frozen across author, repair, review and phase retries; a new stage ID grants no new context budget.
+Status/continuation performs no fresh retrieval and creates no missing historical context artifact.
+
+Only an actual fully delivered active page grants edit authority; a search snippet, inventory hash or full archive response does not.
+Every later lookup still passes the existing request, byte, UTF-8 and admission checks.
+Changed sources, prior wiki, model/policy, materialization parameters or missing proof require explicit reconciliation; continuation does not silently adopt them.
+The checkpoint remains unreviewed work, never accepted progress or a publication receipt.
+
+Acceptance exhausts lookup/byte allowances before checkpointing and confirms they remain exhausted on continuation.
+It retains verified full-page permissions, rejects snippet-only editing, checks archive separation and reproduces context state without provider or live lookup access.
+
+*** Logical rounds and native attempts (R3)
+:PROPERTIES:
+:CUSTOM_ID: repair-rounds
+:END:
+
+Allocate a logical repair round under the existing exclusive locks before its first native reservation, consuming one slot from the frozen max_repairs ceiling for that draft lineage.
+Its coordinator-owned ID binds the lineage/index, base proposal, finding set, mode and contract; each native attempt has a separate immutable assignment/reservation.
+Record the allocation and reservation linkage durably before dispatch; partial/missing proof fails closed and does not imply that no provider work occurred.
+Every reservation remains charged, including denied, failed and unknown outcomes; neither stage forks nor replay creates credits.
+
+An allocated round stays open while awaiting a final repair reply.
+A valid lookup-only reply may advance authenticated context within that round, consuming native calls and lookup allowances without allocating another semantic round.
+Lookup replies cannot contain edits; the base proposal, findings and repair mode do not change during the round.
+An explicit authorized transport/protocol retry may continue the same open round after denied startup, unknown/provider failure or a reply rejected before final role-schema validation; it creates a new charged native attempt and never rewrites the earlier trace.
+There is no automatic repetition of unknown work.
+
+A schema-valid final non-lookup reply closes the round, including a reported inability to finish, mechanically invalid proposal or later semantic rejection.
+Native wallet completed is therefore distinct from round closed, mechanically valid, reviewed accepted and published.
+Derive closure from linked raw-return/result proofs during replay, not merely a checkpoint's state flag; a crash after final return cannot make the round available again.
+If the frozen semantic-round ceiling is spent, stop with an explicit disposition; the first release does not support granting more rounds inside an immutable job.
+A separately authorized fresh plan may start new work with declared lineage, but continuation cannot manufacture that authorization or reset its existing wallet.
+
+An explicit phase continuation reuses the checked draft and context without another author call, and restores the durable round state before choosing work.
+Tests contrast an open-round transport retry with a completed-but-rejected repair at max_repairs=1, including crash/fork races and a final return whose checkpoint update was interrupted.
+The former calls only a new repair attempt and review after success; the latter cannot obtain another semantic round through a new stage ID.
+
+** 3. Role cost controls and review capacity
+
+Measure each role separately: input/cache/output counters and their coverage, reported thinking counters, latency, mechanical findings, repeated work and final disposition.
+Freeze supported effort/output settings before reservation and bind them to native profile and request identity.
+Verify actual native request behavior for each supported installed build; do not assume equivalent vendor enums, honored CLI flags or enforceable token ceilings.
+Keep requested hard token/currency bounds rejected when the adapter cannot guarantee them.
+An output-length target is guidance unless a verified adapter enforces it.
+
+Start the pilot with a short single-topic draft target and lower supported effort for discovery/mechanical repair, retaining enough reasoning for independent semantic review.
+Use a proposed review-only minimum of 180 seconds and two native calls for fresh pilot policies, then tune from measured reviewer latency; this is not a completion guarantee.
+This tranche is a subset of the global time/call balance, not an extra allowance or independent clock.
+Non-review work, including repair after a reviewer requests revision, must leave the frozen capacity for the next whole-candidate review.
+The same protection applies before every review cycle, not just the first; re-establishing a reservation grants no credits to a depleted wallet.
+Insufficient pre-review capacity stops durably before another provider dispatch.
+
+The pilot review policy permits at most one native lookup turn, leaving a final-verdict call; each requested context operation also consumes its existing context allowance.
+When that turn allowance is used or only one native call remains, freeze a certified final-only review schema without lookup.
+Insufficient evidence then requires a blocking revision/incomplete disposition, not invented acceptance or a call extension.
+Preserve the global deadline and old wallet semantics for old jobs, and certify the normal/final-only policy/schema variants before stable use.
+Tests cover ample time with few calls, reviewer lookup near exhaustion, transport failure, and revise -> repair -> re-review without consuming the next review's capacity.
+Expose phase allowances in frozen policy/advice instead of adding another undocumented per-role cutoff.
+Existing jobs retain their frozen reserves and bounds.
+New configuration must update =README.org=, =config.example.yaml= and parser/preflight tests together.
+Unsupported explicitly requested controls fail before provider work, without a silent model, account or delivery-mode switch.
+
+Before a new window starts, finish source/profile validation, offline checks and operator setup.
+Once started, code repair, provider work and cleanup all consume the same elapsed allowance; the clock is not paused for debugging.
+Prepare authorized stage work before launch; an unattended failure records a resumable diagnostic instead of asking the human an interactive question.
+
+** 4. Coordinator-owned evidence handles and structure
+
+The [[file:evidence-handles.org][v7 evidence-handle contract]] implements the registry and citation portion of this milestone.
+Coordinator-generated scaffolding and byte-preserving page edits remain separate work.
+
+Extend =Session= and existing reference resolution with a bounded registry of handles for exact, admitted source spans.
+Bind each handle to the source identity/hash, rendered-byte span and raw/render provenance, scoped to its frozen registry.
+The model selects a handle; Python resolves the literal source position without guessing among repeated quotations.
+References still express evidence status, and independent review still judges semantic support.
+
+Deliver handle catalogs as untrusted request data using the existing lossless prompt projection.
+Keep dynamic handle values out of cache-sensitive tool/schema enums.
+Reject stale, fabricated, undelivered and cross-registry handles; preserve the existing quote contract for old jobs.
+
+Extend typed editorial materialization for generated IDs, links and index entries where it already owns the mechanics.
+Preserve human anchors, prose, task authority and history; generated scaffolding is reviewed as part of the whole candidate.
+Do not replace explanatory writing with a claim inventory or add a second renderer/publisher that bypasses existing checks.
+
+** 5. Smaller discovery inputs with retained freedom
+
+Profile where discovery repeatedly delivers unchanged source or history before choosing a compaction policy.
+Prefer bounded searches and targeted decision/test/commit/handoff windows when their marginal value exceeds another sequential read.
+Allow earlier finish when enough evidence supports a worthwhile topic, while preserving contradictory evidence and open-ended selection.
+Do not turn partial coverage into a claim that a repository contains nothing else worth investigating.
+
+If a compact research note is introduced, label it as model-produced navigation aid, retain evidence handles and unknowns, and keep the original receipts/windows available through bounded lookup.
+It cannot replace source evidence or gain instruction priority.
+Compare context/input changes on pinned tasks before attributing savings to prompt caching or compaction.
+
+* Verification and rollout gates
+:PROPERTIES:
+:CUSTOM_ID: gates
+:END:
+
+Before implementation, review the contract, patch vocabulary, phase identities and checkpoint trust boundary.
+Run file-qualified GitNexus upstream impact before symbol edits, report critical risks, and detect_changes before each commit.
+Use small change sets in the order above; the first implementation starts with milestone 1.
+
+Offline acceptance requires the two-defect fixture, bounded located diagnostics, one complete repair, full-candidate independent review, immutable phase lineage and all rejection cases above.
+Use synthetic evidence in committed tests; real E6 transcripts and rejected drafts remain private.
+Historical E3/E5 published status and E4/E6 incomplete status must replay under their original contracts with native provider/build/authentication entrypoints forbidden.
+Tampered manifests, missing artifacts, tool use, unsupported authority, stale bases and budget exhaustion must still prevent publication.
+
+Changed native policy/schema/control combinations require complete offline certification for stable delivery.
+If the catalog grows, update documented synthetic request ceilings explicitly; do not skip variants or relax the prefix/tool gates.
+Keep Codex's current stable gate intact until its own profile passes; synthetic two-harness tests do not establish live stable support.
+
+Record editorial disposition, feature-route coverage, recovery evidence and semantic-quality checks separately.
+A reviewed no-change result is valid editorially but cannot verify a patch/repair route that was not exercised.
+Diagnostics alone can first be evaluated with the existing full-proposal repair path; that experiment makes no claim about unimplemented patch or checkpoint support.
+
+For the broader release, prepare a synthetic fixed-evidence repair exercise in a disposable clone under a ceiling of six native calls and twenty minutes, with publication disabled.
+Its intentionally defective draft has explicit fixture origin and frozen source/base proofs; it is not a fabricated native author reply and cannot enter production checkpoint/accepted-progress reuse.
+The test driver uses the same validator, materializer, budget and genuine native repair/reviewer calls, without a second publisher or a way to submit fixture-origin data for real publication.
+Require a nonempty native patch that corrects the intended defect, full materialization and independent review; otherwise patch-route coverage remains unverified.
+Crash/checkpoint recovery may be verified offline with synthetic transports if recorded separately.
+Do not edit old native artifacts, force novelty in a real dream or extend approved calls to manufacture feature coverage.
+
+The active human goal authorizes implementation and a Claude evaluation sequence after review.
+Before each live job, record its exact prepared source/profile, admitted data, call ceiling and elapsed allowance; do not reopen E6's expired window or silently change its frozen policy.
+Use fixed-evidence validation first, then fresh real SuCoder sessions to assess the complete unattended path and concrete wiki changes.
+Native token/currency hard caps are not promised, and the existing conditional main merge still requires a successful real trial and source verification.
+
+Before lowering effort or length, freeze two to four applicable source-grounded qualifications and a small held-out reader question set outside construction inputs.
+Cases must distinguish local merge from observed remote publication, preserve source-required command flags and human authority, and retain uncertainty about unobserved outcomes where applicable.
+Use direct source evidence as the answer key, not an earlier generated draft; keep the judging rubric out of author/repair context.
+Reuse existing fresh-reader/source-fallback machinery, with any native evaluation calls declared in their own bounds before execution.
+Treat a failed quality floor as a failed effectiveness comparison even if prose is cheaper and the model reviewer accepts it.
+Evaluate review reached, review/publication disposition, preserved qualifications and downstream reader use before optimizing token counts.
+Then compare per-stage calls, latency, input/output, cache coverage and repeated work on pinned evidence/model/build/route with unchanged limits.
+Report missing usage and uncontrolled comparisons explicitly; one successful run does not establish a general quality or cost improvement.
+
+* First implementation definition of done
+:PROPERTIES:
+:CUSTOM_ID: first-slice
+:END:
+
+- The new contract explicitly states the same coverage requirements the validator enforces.
+- One diagnostic report names both the ambiguous quote and uncited Talk target in the synthetic E6-shaped proposal.
+- One synthetic correction reaches independent review, with no guard removed and no second hidden defect withheld from the report.
+- Structural/dependency failures and diagnostic truncation remain distinguishable from a complete report.
+- Existing frozen contracts and E6's incomplete state replay unchanged, without native startup or artifact mutation.
+- Targeted proposal/context/editorial/submission tests, static checks and bounded offline profile certification pass as applicable.
+- Design edits do not launch a live job or merge main; authorized implementation/evaluation is prepared and recorded separately.
+
+* Red-team review
+:PROPERTIES:
+:CUSTOM_ID: review
+:END:
+
+The [[file:authoring-review.org][initial review]] covers =51513c4=.
+All three focused reviewers found no remaining design blocker in their assigned scopes at =8d255ca=; the [[file:authoring-review.org::#follow-up][follow-up record]] retains their findings and implementation boundary tests.
+The immediate implementation remains milestone 1; later protocols are separate deliverables and do not weaken historical replay or publication gates.
+
+Prepared by Sue (GPT-6 Codex).

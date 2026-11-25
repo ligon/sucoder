@@ -1,0 +1,186 @@
+#+TITLE: Dream prompt caching prior-art ledger
+#+AUTHOR: Sue
+#+DATE: 2026-11-16
+
+* 1. Task and baseline
+
+Design provider-aware prompt caching for Claude Code and OpenAI Codex dream agents, then obtain independent red-team review.
+The design baseline is local main =dc62682=.
+After the reviewed design reached =97a3ee6=, the human authorized implementation on 2026-11-16.
+Grounding uses GitNexus CLI query, direct source/test inspection, local native help/version output and official provider documentation consulted on 2026-11-16.
+The query index was one documentation commit behind; named source reads establish the current code facts.
+The [[file:dream/runs/sucoder-e3.org][E3 run]] reported 482,186 input tokens and zero cached reads on all 16 calls.
+
+* 2. Existing machinery
+
+- =sucoder/dream.py:37=, =canonical= :: Sorted canonical JSON underlies persisted identity and hashes; do not change it to optimize wire ordering.
+  =tests/test_dream_roles.py::test_mutated_saved_result_cannot_substitute_for_native_trace= checks trace/result binding.
+- =sucoder/dream_roles.py:124=, =Coordinator.call= :: Freezes advice and assignments, reserves before invocation, and validates cached results against native trace bytes and build identity.
+  =test_failed_native_request_is_not_automatically_repeated=, =test_concurrent_native_coordinator_cannot_repeat_provider_work= and =test_explicit_attempt_retries_without_overwriting_failed_attempt= cover recovery boundaries.
+- =sucoder/dream_discover.py:449=, =Explorer.make_assignment= and =sucoder/dream_navigation.py:298=, =prepare= :: Discovery resends accumulated history, frozen leads and fresh advice in every semantic assignment.
+  =tests/test_dream_navigation_recovery.py::test_interrupted_envelope_publication_recovers_without_repeating_native_call= covers its observation commit point.
+- =sucoder/dream_native.py:151=, =environment=; =:172=, =command=; =:245=, =invoke= :: Fresh isolated native homes, authentication-only inheritance, strict schemas, disabled tools, bounded capture and Landlock process-tree confinement.
+  =tests/test_dream_native.py= covers kernel denial, exact stdin, environment isolation, native flags and strict trace parsing.
+  =invoke= sends canonical assignment JSON as one stdin prompt; it exposes no provider cache breakpoint API.
+- =sucoder/dream_native.py:192=, =parse_trace= :: Preserves raw native usage in the result wrapper; Claude can report cache reads/writes and Codex can report cached input.
+  Existing usage fixtures test ordinary tokens, not cross-provider normalization or cache economics.
+- =sucoder/dream_budget.py:166=, =Job.summary= :: Sums native =input_tokens= and output fields without a provider-specific definition of total input; unknown cost remains unknown.
+  =tests/test_dream_budget.py::test_reservations_and_reported_usage_survive_restart= and =test_unknown_reservation_stays_charged_and_cannot_be_reissued= anchor persistence and uncertainty.
+- =sucoder/dream_editor.py:394=, =WikiEditor.prepare= :: Separate authorship, repair and independent review with prior support and selected evidence; caching must preserve those information boundaries.
+  =tests/test_dream_editor.py= and =tests/test_dream_editorial.py= cover preservation and recorded human authority.
+- =tests/codex_app_server.py:329=, =AppServer= :: A recording fake-model harness for the real installed native binary exists.
+  Reuse its testing pattern for wire inspection; it is not a production dream transport and loads different runtime state.
+
+* 3. Definitions and conventions
+
+An assignment is a frozen semantic request, identified by its canonical bytes, input digest, role and attempt.
+A provider prompt cache reuses computed input-prefix state; it supplies neither a prior result nor evidence of successful execution.
+The existing private result cache instead replays a completed validated result without provider startup.
+Cache reads, cache writes, uncached input, total input, output and reported currency are separate quantities.
+On OpenAI's documented Responses API, input totals include cache reads/writes; on Anthropic's Messages API, =input_tokens= excludes both and total is their sum.
+Native CLI usage must be mapped from its verified event format rather than inferred from an API field's spelling.
+New provider features require an eligible request boundary as well as identical bytes; a common substring inside a single changing prompt does not establish cache eligibility.
+
+* 4. Invariants
+
+Keep exact source admission, independent review, prior-support preservation, immutable job settings, shared wall-clock/call budgets and compare-and-swap publication.
+Keep evidence and wiki text at data priority; they must never become system/developer instructions to gain caching.
+Earlier job assignments, traces, usage and receipts retain their old interpretation and replay without inference.
+Cache expiry, eviction, unavailable telemetry and a zero hit rate do not authorize another paid request or a model/account/transport switch.
+Fresh native isolation remains the default; a retained discovery process or a direct provider API adapter requires a separate reviewed change.
+Cache controls and keys are optimization hints, never evidence-admission or access-control mechanisms.
+
+* 5. Reuse decisions
+
+- Reuse :: Existing canonical identity, artifact store, role lock, native confinement, authentication staging, publication and shared wallet.
+- Extend :: A versioned request manifest binds the semantic assignment to separate instructions, data blocks, wire bytes and native settings.
+  Existing traces bind one canonical stdin blob and cannot describe separate system/user surfaces.
+- Extend :: Frozen native capability/build profiles and deterministic prompt rendering; native flags can expose a stable instruction surface without changing evidence authority.
+- New :: An explicitly pinned vendor-native Codex launcher for the stable profile, with wrapper-equivalent environment/argv/signals and mandatory native request-capture tests.
+  The installed Node wrapper closes extra descriptors; local probes also reject the parent-proc workaround under Landlock, so neither can deliver the sealed schema.
+- New :: Sealed memfd schema delivery and bounded inline trusted-policy argv; prelaunch file hashes cannot prevent a native pathname-reopen race.
+- New :: A common prompt plan distinguishes trusted policy, untrusted stable data, append-only observations and volatile control data.
+  Full user-history caching requires a proven native message/block adapter; field reordering alone is not such an adapter.
+- Extend :: Provider-aware usage normalization, missing-field counters and native-versus-estimated cost reporting, leaving old persisted totals unchanged.
+- Defer :: API backends, long-lived agent sessions, prewarming, speculative calls and semantic history compaction; none is necessary for the first native-prefix slice.
+
+* 6. Decisions and verification boundary
+
+The reviewed design chooses native-only delivery, an initial instruction-prefix slice for both harnesses, and an explicit gate before claiming caching of untrusted data/history.
+This is a scope decision: it gives a feasible first slice without claiming that the present one-prompt transport can cache the expensive accumulated history.
+The earlier design task authorized no implementation; the human's subsequent "Okay, let's implement" authorizes the reviewed deterministic implementation slices and native fake-provider certification.
+Live paid compatibility/cache-hit probes, live Claude runs and deployment remain separate.
+The design and its independent review must state which capabilities remain unverified on the installed builds.
+
+* Anchored design verification
+
+- OK, sections 2 and 4 :: The common plan reuses frozen semantic assignments, wallet and result/artifact validation; exact canonical reconstruction prevents incomplete or authority-changing projections.
+- OK, sections 2 and 5 :: The delivery manifest is a justified extension because the old trace attests one canonical stdin blob, not separate native instruction/schema/user surfaces.
+  The design retains canonical serialization and dispatches old jobs to their original bytes and interpretation.
+- OK, sections 3 and 4 :: Provider-specific accounting separates inclusive from exclusive input definitions, preserves raw usage, distinguishes missing fields from observed zero and never treats a cache hit as a result or accepted evidence.
+- RESOLVED, sections 4 and 5 :: Independent review identified native policy-file reopening and incomplete assignment projection; inline policy, sealed schema and exact reconstruction address those design gaps.
+- RESOLVED, sections 2 and 5 :: A further wrapper feasibility finding required explicit native executable pinning and equivalence tests; silently skipping the wrapper is not authorized by the profile.
+  Bounded Node/Python-only probes establish descriptor survival/loss and Landlock behavior, not native-agent schema compatibility.
+- OK, section 6 :: Both independent reviewers accepted the revised phased design after followup; actual native request certification, cache hits and savings remain unverified implementation/acceptance gates.
+
+The [[file:dream/prompt-caching-review.org][review record]] preserves all six findings and their dispositions.
+At the end of design review no Python runtime/configuration had changed and no new live dream or paid cache test had run.
+
+* Implementation grounding, 2026-11-16
+
+The implementation keeps =legacy= as the default and introduces opt-in =stable= layout only for a certified native profile.
+New prompt-plan/envelope, native-profile/delivery, offline certification and usage-normalization modules extend the existing coordinator and wallet rather than create a second publisher.
+The common role-call integration must preserve canonical assignment hashes and old saved-trace interpretation.
+Exploratory headers and editorial specs freeze the new profile so read-only status can reconstruct it without native startup.
+The native transport retains the current environment, tool and process-group restrictions; the new sealed schema path is confined to the opt-in profile.
+
+Before editing, GitNexus upstream analysis reported CRITICAL for the common role call (eight direct callers), budget summary (two), dream settings (18), wiki run (three), restore (one), and exploratory orchestration.
+The source/test inspection above establishes the relevant execution paths; large graph counts on orchestration and unresolved constructor edges are not treated as precise scope.
+The refreshed index does not resolve the parser or Typer callback by name; impact/context attempts and direct call-site inspection are recorded in =/home/coder/.sucoder/logs/dream-cache-implementation/2026-11-16/=.
+Constructor impact was also run by exact UID; UNKNOWN is not interpreted as absence of callers.
+Targeted recovery, role, budget, settings, navigation and native transport regressions will validate the integration, followed by the appropriate broader checks on a frozen clone.
+
+Prepared by Sue (GPT-6 Codex).
+
+* Anchored implementation verification, 2026-11-16
+
+Implementation =3d3f42d= preserves the machinery in sections 2-5 and adds four modules: =dream_prompt=, =dream_prompt_native=, =dream_cache_certify= and =dream_usage=.
+The implementation review and [[file:dream/prompt-caching.org::#implemented][operating interface]] distinguish offline native delivery from live cache acceptance.
+All commands below use the checkout on =PYTHONPATH=; the installed launcher was not updated.
+
+- OK, sections 2 and 4 :: The 62 caching-specific tests cover exact reconstruction, authority separation, deterministic storage/re-rendering, request corruption, schema variants, both provider usage definitions, missing counters and list-price estimates.
+  Stable role lifecycles for both fixture adapters reserve six calls, restore the shared wallet and replay with native build/authentication/provider access forbidden.
+  The native-delivery fixture reads the exact sealed schema descriptor, rejects writes, checks actual inline policy/stdin and retains a trace for duplicate final aggregates.
+- OK, sections 2 and 5 :: Missing/corrupt envelopes prevent saved-result reuse; failed native work cannot repeat its reservation.
+  The staged-account A/B regression rejects copied account B even if the original credential file is restored to A before the last source check.
+  Explicit API-key staging does not copy competing subscription credentials.
+- OK, sections 3 and 4 :: The production catalog contains 14 policy/schema pairs, including forced finish and editorial-version-2 support policy.
+  All generated fixture replies validate against their actual schemas.
+  Uncovered variants, unsupported cache modes, broken developer blocks, tools, compression and oversized captures/profiles are rejected before they can yield a usable certificate or request.
+- OK, section 5 :: Installed Claude =2.1.323= passed 28 fresh native captures for =claude-sonnet-4-6= and synthetic native credentials; loading the resulting certificate with the current build/route also passed.
+  Principal continuity is =unverified= for that route, not inferred from a local profile key.
+  Codex =0.167.1= failed after the first two captures for exposed additional tools; no usable stable Codex profile was published.
+  The same captures show changing per-thread cache keys.
+- OK, sections 2 and 5 :: Published E3 job =877ffe18b431459ab29cd8f3d4129738= replays with native startup, profile resolution and authentication access forbidden, retaining private memory =d6a3621bb6095b0d02101467494543c1a4203327=.
+  The check took 9.93 seconds and wrote only its private audit result.
+- OK, section 6 :: Independent implementation followups found no remaining blocker after correcting staged authentication, complete cache eligibility comparison, production variant coverage and fixture/report byte limits.
+  The [[file:dream/prompt-caching-review.org][review record]] preserves the findings and dispositions.
+
+The initial role/budget/exploration/wiki/settings group passed 169 cases.
+The wider native/role/settings/navigation-recovery/editorial group passed 223 cases.
+The final cache-specific source group passed 62 cases; after the final artifact-bound alignment, the 23 certificate/lifecycle cases passed again, and the certificate module's 14 cases passed with its additional oversized-profile assertion.
+All 12 changed source modules pass mypy and parse under Python 3.9's grammar; no Python 3.9 runtime test is claimed.
+All three caching Org documents export to HTML with Babel disabled.
+The wheel includes byte-identical copies of the changed runtime modules.
+
+The unfiltered suite on frozen normal clone =d7c08c8416577e90e84ce61985bbe95103818889= completed in 2,586.92 seconds: 3,363 passed, 38 failed and one skipped.
+All 38 failed test IDs exactly match the prior verified failures on unchanged base =359d018= in the Codex app-server/state/runner tests; there are no additional failures and no missing baseline failures.
+The comparison uses the preceding navigation verification's =full-comparison.json= and is reproducible with =compare-suite.py= in this verification directory.
+The snapshot precedes final trace naming/digest attestation, malformed-prefix diagnostics and artifact-bound refinements in four runtime modules; the final focused groups above cover those changes.
+No unfiltered final-source full-suite pass is claimed.
+=suite-source.json=, =suite-final-delta.json=, =full-suite.xml= and =full-comparison.json= preserve the source boundary and exact test-ID comparison.
+The final implementation is on local main, with one registered worktree and private memory unchanged.
+
+Verification artifacts are private under =/home/coder/.sucoder/logs/dream-cache-implementation/2026-11-16/=:
+=cache-final.xml=, =bounds-final.xml=, =mypy-final.txt=, =package-check.json=, =historical-replay.json=, =certificate-load.json= and =final-source.json=.
+=full-variants/dream-profiles/= retains the successful Claude report/profile and failed Codex report, with synthetic requests and usage.
+The initial unauthenticated endpoint experiment ignored an environment URL override and received 401 from the default endpoint; no inference ran.
+The committed certifier uses explicit native endpoint configuration and a kernel restriction to the local fixture port, with dummy credentials only.
+
+Reproduce the final focused checks from the mirror root:
+
+#+begin_example
+PYTHONPATH=$PWD /home/coder/.cache/pypoetry/virtualenvs/sucoder-_hu1CrVA-py3.12/bin/python -m pytest -q -p no:cacheprovider tests/test_dream_cache_certify.py tests/test_dream_prompt.py tests/test_dream_usage.py tests/test_dream_prompt_integration.py
+PYTHONPATH=$PWD /home/coder/.cache/pypoetry/virtualenvs/sucoder-_hu1CrVA-py3.12/bin/python -c 'from sucoder.cli import app; app()' dream certify-cache --harness claude --model claude-sonnet-4-6
+#+end_example
+
+No live dream, paid cache-acceptance request, repeat of a reserved native invocation, installation, GitHub push or memory-branch publication was performed for this implementation.
+Actual cache hits, minimum token thresholds, provider model availability and realized billing remain live acceptance questions.
+
+* Tool-omission investigation, 2026-11-16
+
+The human requested delegated exploration of further Codex controls and workarounds.
+The [[file:dream/codex-tool-omission.org][research note]] records nine guarded synthetic native invocations, one zero-turn RPC and independent replay of their saved captures.
+An exact-model catalog override plus explicit feature gates removes all tool declarations; sealed catalog delivery and disabled skill-instruction injection preserve equal initial instruction bytes across fresh homes.
+The paired captures still have different native cache keys, and an empty-history resume seed is explicitly rejected.
+The tool-declaration overhead fell by 15,870 serialized bytes in the fixture, without a measured token or monetary saving.
+No runtime symbol, production configuration, installed binary, authentication route or certificate rule changed; the existing isolation and stable-scope gates remain in force.
+
+* Authorized subscription acceptance check C1, 2026-11-16
+
+The human approved two fresh native =gpt-6.1-sol= invocations through existing ChatGPT authentication, with synthetic data only, no coordinator retries and a five-minute shared ceiling.
+The [[file:dream/runs/codex-cache-c1.org][C1 report]] records the sealed tool-free setup, unique 27,188-byte policy, successful offline preflight and live result.
+The live pair completed in 10.95 wallet seconds, reporting 12,561 and 12,565 input tokens, zero cached-input tokens on both calls and 227 output tokens in total.
+Both answers/identifiers validated; read-only wallet restoration retained exactly two completed reservations, and a capture-forbidden refusal check prevented a repeated launch.
+No cache-hit or monetary saving is established, and neither the cause of the miss nor the necessity of API-key billing follows from this observation.
+Private artifacts are under =/home/coder/.sucoder/logs/dream-cache-live/2026-11-16/b6acd818986a47baa41f1fe6ce4bb703/=.
+Production runtime/defaults, main's source and private memory were unchanged during the experiment; no extra native call or real dream followed.
+
+* Ordinary subscription dream E4, 2026-11-17
+
+The [[file:dream/runs/sucoder-e4.org][E4 experience dream]] subsequently used ordinary legacy delivery through the existing Codex subscription, retaining the approved 32-call/1,800-second limits.
+It reported 22,656 cached input tokens across three of fifteen calls, 7.43 percent of 304,977 input tokens; all fifteen supplied counters.
+This is a positive observation of subscription cache reuse, without attribution to a particular prompt segment, stable-profile certification or measured currency saving.
+It does not identify the cause of C1's cache misses.
+The job stopped before publication because the reviewer mistyped one character in its echoed input checksum; the coordinator rejected that response, and private memory remains unchanged.
+No retry, schema change or cache-gate relaxation followed.

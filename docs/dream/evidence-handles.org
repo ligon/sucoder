@@ -1,0 +1,64 @@
+#+TITLE: Dream evidence handles
+#+AUTHOR: Sue
+#+DATE: 2026-11-23
+
+* Contract
+:PROPERTIES:
+:CUSTOM_ID: contract
+:END:
+
+V7 introduced =authoring_version: 7= and =source-grounded-wiki-v7=.
+Fresh plans now select [[file:semantic-review.org][v8 semantic review]], retaining the handle machinery described here.
+The author and repair select evidence with ={"handle":"ev-...-1"}= in =references[].citations= and =task_actions[].evidence=.
+Python supplies the exact quotation and absolute UTF-8 offsets; repeated text at different source positions has distinct handles.
+V1-v6 briefs, schemas, identities and replay remain frozen; absent historical version fields still select v5.
+
+Initial source bundles contain ordered =passages= with a handle and text instead of a duplicated whole-source text field.
+Joining passage text recovers the exact delivered bytes, including whitespace, CRLF and escaping.
+The context registry records source units, ranges, hashes and provenance without repeating their text.
+Existing lookup responses retain their exact authenticated text and read IDs; their delivered source spans acquire handles in the registry.
+Dynamic handles are untrusted request data and never schema enums or policy text in the cache prefix.
+
+* Delivery, bounds and replay
+:PROPERTIES:
+:CUSTOM_ID: delivery
+:END:
+
+The namespace binds the frozen run and source identities, hashes and raw/render provenance.
+Initial minting runs after accepted-prefix projection, so internally retained prefix bytes receive no initial handles.
+An explicit bounded source lookup may admit exactly its returned prefix bytes.
+Lookup responses must be complete/incomplete source deliveries with matching exact bytes, hashes and recorded windows; unavailable responses cannot mint handles.
+Replaying the existing authenticated lookup sequence reconstructs the same append-only registry in order, without fresh retrieval or native startup.
+An earlier reply cannot use a handle that becomes visible only after a later lookup.
+
+Segmentation preserves rendered/native record boundaries, native message-body boundaries and paragraphs, splitting longer passages at UTF-8 boundaries.
+The frozen policy permits at most 2,048 entries, 2,048 bytes per span, 512 KiB of serialized registry and 256 KiB of aggregate canonical citation expansion.
+Repeated uses count toward expansion, including task evidence copied into materialized references.
+Existing assignment/output and lookup limits also apply; exhaustion fails explicitly without silently dropping evidence or widening spans.
+Overlapping deliveries deduplicate identical absolute spans and never renumber existing handles.
+
+The registry is derived state, not a new read allowance or counter store.
+Session request, byte/search counters, editable full active pages and read-only archive context retain their existing semantics across author, repair, review and ordinary replay.
+This addresses the applicable invariants of [[file:authoring-review.org::#checkpoint-context][R2]]; authenticated phase checkpoints and durable logical repair rounds remain unimplemented.
+
+* Authority and review
+:PROPERTIES:
+:CUSTOM_ID: authority
+:END:
+
+A valid handle proves delivered provenance, not support for the proposed explanation.
+Native user, agent, summary and sidechain boundaries retain their existing human-authority checks, including for typed editorial actions.
+Maintained decision records still require the independent reviewer to verify the human attribution.
+Tool-result associations remain explicitly unestablished where the admitted source does not establish them.
+The policy asks reviewers to distinguish proposals, reports, observed outcomes, dates and current status; it cannot mechanically prove those meanings.
+
+The model's saved reply stays unchanged; Python resolves a private copy for materialization and whole-candidate review.
+Unknown handle findings join the located reference/coverage pass, so an independently uncited Talk section remains visible in the same repair.
+General full-proposal repair, justified no-change, task history and independent review remain in force.
+Receipts retain readable quotes/ranges and the complete context registry, plus a compact registry proof.
+Accepted-progress reuse checks the registry digest/proof and canonical citation bindings; malformed metadata supplies no coverage.
+That consistency check does not authenticate an unreviewed phase checkpoint.
+Fresh stable production use requires certification of the new policy/schema catalog; no automatic fallback changes account, provider or layout.
+
+The [[file:../dream-authoring-ledger.org][grounding ledger]] identifies the reused machinery and verification record.
+Offline acceptance does not establish live token savings or documentation quality.

@@ -1,0 +1,98 @@
+#+TITLE: First live dream with coordinator-owned submissions
+#+AUTHOR: Sue
+#+DATE: 2026-11-17
+#+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Result
+
+Experience job =5600369dc0d54b2b85e4a70e08dcb9ea= published reviewed private memory generation =30e98aa7dfd5182ed73a820d94ffb053cfa11449=.
+It completed in 358.3 seconds using 19 of the 32 allowed native calls: 16 discovery, one author, one mechanical repair and one independent reviewer.
+The reviewer accepted with one advisory finding and no blocking findings.
+All nineteen calls completed; none failed or remained uncertain.
+No extra attempt or paid retry followed.
+
+All nineteen raw native replies are body-only JSON: none contains =assignment_id=, =input_sha256= or =role= at the root.
+The [[file:../submission.org][submission wrapper]] supplied those fields from the frozen tasks, and the read-only audit reconstructed every exact saved semantic result and usage from its raw trace.
+There were no identifier mismatches.
+This is one successful live acceptance observation of the new submission protocol; it does not establish that all future model or editorial failures are eliminated.
+The rejected [[file:sucoder-e4.org][E4]] response was not repaired or reused.
+
+* Setup
+
+The human requested a new live trial after implementation.
+The run retained the existing Codex subscription route, =gpt-6.1-sol=, explicit =legacy= delivery and the approved 32-call/1,800-second bounds.
+Source code and committed project evidence were pinned to local main =d168f36795228595304737fd9611a04da6c15420= in the canonical coder mirror.
+The native version was =codex-cli 0.167.1=.
+Memory began at =d6a3621bb6095b0d02101467494543c1a4203327=.
+The frozen header records =submission_contract: coordinator-submission-v1= and automatic discovery allocation 16.
+
+#+begin_src sh :eval never
+PYTHONPATH=$PWD \
+  /home/coder/.cache/pypoetry/virtualenvs/sucoder-_hu1CrVA-py3.12/bin/python \
+  -c 'from sucoder.cli import app; app()' dream \
+  --harness codex --model gpt-6.1-sol --prompt-layout legacy \
+  --max-total-seconds 1800 --max-total-calls 32 --detach
+#+end_src
+
+This records the completed run; it does not authorize another launch.
+No API-key switch or stable-profile gate relaxation was involved.
+
+* Investigation and published lesson
+
+The explorer began with the existing Codex hook-validation Talk item.
+Its searches found historical experiments and repeated expectations, without establishing subsequent live-hook acceptance.
+It then followed the November 14 directions handoff into the Savio dream-launch episode and found direct operational evidence worth preserving as a new topic.
+
+Discovery used nine searches and six reads, then the mandatory finish-only sixteenth turn.
+The inventory enumerated three finished sessions completely.
+There were no unavailable navigation responses, processing errors or reported gaps.
+Navigation delivered 57,603 bytes and recorded 68,899,762 raw scan bytes; scans overlap and do not represent unique transcript coverage.
+
+The four selected units comprise two committed file ranges and two session windows, totaling 14,076 admitted rendered/UTF-8 bytes.
+The session windows contain 10,355 rendered bytes from 98,694 raw bytes.
+The published =topics/savio-dream-launch.org= explains:
+
+- A dated Savio launch was rejected by the Landlock ABI check; the clipped probe does not establish a current fleet-wide diagnosis.
+- The human selected a vantage checkout fallback, and process output corroborates startup of the dream and its Codex child.
+- Startup does not establish eventual publication or transfer of that memory to Savio.
+- Executable dependencies and the boundary's allowed paths matter; a failed installed-module search does not establish that an inventory fix was absent.
+
+The page preserves the historical command and its attribution, links maintained source and handoff material, and keeps unresolved operational questions under Talk.
+The constructor-specific discussion of allowed paths does not assert that all home-directory executables are categorically prohibited.
+The independent reviewer accepted with an advisory to preserve the prerequisite of a Codex login on the human's account: the host probe checked =coder= credentials, while the observed fallback launch ran as =ligon=.
+That advisory remains a possible improvement to the accepted page.
+
+Publication added the new topic and receipt and appended its entry to the index.
+All prior wiki files except the index remain byte-identical, and the index retains its complete previous content as a prefix.
+The mirror's generated topic copy matches the published blob and is read-only.
+The memory branch remains private and was not pushed.
+
+* Remaining editorial and efficiency costs
+
+The coordinator rejected the author's duplicate reference to an explanatory section.
+One repair consolidated the reference, after which independent review accepted the candidate.
+This recurring citation-shape cost is separate from the now-scripted submission metadata.
+
+Native usage reports 434,145 input and 10,864 output tokens, including the repair and review.
+Discovery accounts for 328,782 input tokens.
+All nineteen calls provide cached-input counters, and all report zero cached input; currency is unavailable for every call.
+The earlier E4 cache reads and this run's misses are uncontrolled observations with different prompts and editorial work; they do not identify a cause or establish comparative cost savings.
+
+* Read-only audit
+
+Private job artifacts are under =/home/coder/.sucoder/logs/dream-jobs/5600369dc0d54b2b85e4a70e08dcb9ea/=.
+The audit is =/home/coder/.sucoder/logs/dream-reviews/2026-11-17-5600369d/audit.py=, with =status.json= and =review.json= alongside it.
+It runs status with native provider/build/authentication entrypoints replaced by exceptions, verifies every raw body and its frozen submission/assignment/schema/stdin bindings against the wallet and saved result, and re-hashes lookup receipts and selected raw session ranges.
+It checks preservation of prior memory, the index prefix and the generated read-only checkout.
+No audit step invokes a provider or repeats native work.
+
+#+begin_src sh :eval never
+PYTHONPATH=$PWD \
+  /home/coder/.cache/pypoetry/virtualenvs/sucoder-_hu1CrVA-py3.12/bin/python \
+  /home/coder/.sucoder/logs/dream-reviews/2026-11-17-5600369d/audit.py
+#+end_src
+
+No runtime edit or installed deployment followed the run.
+The report is on local main; private memory publication remains separate from GitHub publication.
+
+Recorded by Sue (GPT-6 Codex).

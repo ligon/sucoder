@@ -14,11 +14,13 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 # dream:
 #   harness: codex                 # codex | claude
 #   model: YOUR_AVAILABLE_MODEL
+#   prompt_layout: legacy         # stable requires dream certify-cache for this build/model/auth route
 #   max_total_seconds: 900         # discovery + authorship + review, across resume
 #   max_total_calls: 40            # native invocations, not hidden HTTP retries
 #   reserve_seconds: 30           # review/repair/finalization
 #   reserve_calls: 3
-#   max_discovery_calls: 8         # also leaves one author call beyond closeout
+#   max_discovery_calls: null      # auto: half the available calls, preserving author/closeout
+#                                  # a positive integer fixes the phase ceiling (e.g. 8)
 #   max_discovery_bytes: 131072    # bounded navigation delivery; selected evidence <= 64 KiB
 #   memory_branch: sucoder/memory  # wiki-only branch reviewed dreams update in place;
 #                                  # "" keeps dream/<run> candidates for a human merge
@@ -103,9 +105,14 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #         mode: apikey                    # subscription | apikey (default: subscription)
 #         apikey_credential: openai       # credentials: name (default: openai)
 #         subscription_credential: codex-chatgpt-auth  # pass entry holding the auth.json backup
+#         base_url: https://us.api.openai.com/v1  # optional; see regional note below
 #       claude:
 #         mode: apikey
 #         apikey_credential: anthropic    # credentials: name (default: anthropic)
+# Regional OpenAI projects (e.g. US data residency) only accept their keys at a
+# regional host. The endpoint is configuration: codex apikey launches route the
+# built-in openai provider at base_url when set (an argv config override, never
+# an env var). No base_url override is added for the default api.openai.com.
 # Per-launch override: --auth MODE (subscription|apikey). Switch at the command
 # line with `sucoder auth apikey|subscription --harness codex|claude`, and check
 # state with `sucoder auth status`. The codex swap is host-global (one shared

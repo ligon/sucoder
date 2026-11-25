@@ -2309,14 +2309,21 @@ A launch normally uses the harness's subscription login (codex's
 switch to pay-as-you-go API billing. The API key stays in the =pass= store and
 never becomes a process environment variable:
 
-- **codex** has no per-process key channel, so SuCoder swaps the shared
-  =~/.codex/auth.json=: it pipes =pass show … | codex login --with-api-key=
-  (stdin) after backing the subscription login up to a =pass= blob or a local
-  =.bak=, so =subscription= restores it. The swap is host-global — two
-  concurrent codex sessions on one host share =auth.json= and cannot mix modes.
+- **codex** has no per-process key channel or helper hook, so SuCoder swaps the
+  agent account's =~/.codex/auth.json= directly: the key is read from the human's
+  =pass= store (as =human_user=) and written to the agent's =auth.json= (as
+  =agent_user=, mode 600) via stdin — the key crosses the account boundary once,
+  in a pipe. The prior subscription login is backed up to a =pass= blob or a
+  local =.bak= so =subscription= restores it. Because codex's only API-key
+  mechanism stores the key in its own auth file, the key necessarily persists in
+  the agent-readable =auth.json= while apikey mode is active (unlike claude,
+  where it stays transient). The swap is host-global — two concurrent codex
+  sessions on one host share =auth.json= and cannot mix modes.
 - **claude** reads the key through an =apiKeyHelper= merged into its single
   =--settings= (shared with the attention hooks), leaving OAuth on disk
-  untouched. The switch is per-launch and non-destructive.
+  untouched. The helper runs =sudo -n -u <human_user> pass show …=, so the agent
+  never holds the key as data — it streams from the human's =pass= to the claude
+  process. The switch is per-launch and non-destructive.
 
 Switch one launch with =--auth apikey=:
 
@@ -2356,6 +2363,26 @@ agent_launcher:
 for terminal and remote-control codex launches alike. The deprecated flat keys
 =codex_auth= / =codex_auth_credential= (and =--codex-auth=) still map onto the
 generic codex settings. See [[*Provider credentials from =pass=][Provider credentials]].
+
+*** Regional (data-residency) OpenAI projects
+
+An OpenAI project with a data-residency region (for example US) only accepts
+its API keys at a regional host such as =us.api.openai.com=; the default
+=api.openai.com= rejects them ("incorrect regional hostname"). The endpoint is
+configuration: set =agent_launcher.auth.codex.base_url= and a codex apikey
+launch routes the built-in =openai= provider at that host — an argv config
+override, never an environment variable:
+
+#+begin_src yaml
+agent_launcher:
+  auth:
+    codex:
+      mode: apikey
+      apikey_credential: openai
+      base_url: https://us.api.openai.com/v1
+#+end_src
+
+No override is added when =base_url= is unset (the default =api.openai.com=).
 Check the selected launch, then pair it from the launcher:
 
 #+begin_src shell
@@ -2676,8 +2703,10 @@ Configure the native model once in =~/.sucoder/config.yaml=:
 dream:
   harness: codex
   model: YOUR_AVAILABLE_MODEL
+  prompt_layout: legacy          # stable requires offline native certification
   max_total_seconds: 900
   max_total_calls: 40
+  max_discovery_calls: null       # auto; a positive integer selects a fixed ceiling
   memory_branch: sucoder/memory   # "" keeps candidate branches
   inject: true                    # add the memory index to each launch
   inject_bytes: 2048
@@ -2690,10 +2719,15 @@ Harness/model can inherit the existing launcher selection; an absent model retur
 When the default configuration file is absent, dream derives user and project defaults and accepts =--harness= and =--model= without creating a config file or prompting for an agent.
 An explicit =--config= path must exist; malformed existing configuration is an error.
 There is no provider/model fallback after a failure.
-Bare-launch defaults allow eight discovery turns and 128 KiB navigation delivery, reserving 30 seconds and three invocations for closeout plus one ordinary invocation for authorship.
+Bare-launch defaults allow 128 KiB navigation delivery and automatically allocate half the currently available native calls to discovery, preserving 30 seconds and three closeout calls plus one ordinary author call.
+An omitted or null =max_discovery_calls= uses that policy: fresh total allowances of 16, 32 and 40 calls yield discovery ceilings of 8, 16 and 20.
+An explicit positive integer, including eight in an existing configuration, remains a fixed phase ceiling subject to the shared wallet.
 New jobs freeze a bounded memory index, topic list and open Talk/task leads into their first discovery navigation, counting these bytes toward the navigation allowance.
 Their starting seed prefers an open memory item, then a committed file changed since the latest memory evidence, then a randomly chosen committed file or finished-session window.
 The explorer follows that lead or explains its alternative; the seed and brief version stay frozen when the job resumes.
+New jobs use [[file:docs/dream/submission.org][coordinator-owned submission metadata]] for discovery, authorship and independent review.
+Agents return a structured reply body; Python attaches the frozen assignment ID, input checksum and role, avoiding model copying errors in those fields.
+Raw replies and submission manifests remain bound to the assignment and wallet during replay; earlier jobs keep their original contracts.
 Earlier jobs keep their original navigation and briefs.
 All discovery, author, reviewer and repair calls share the same durable job budget.
 
@@ -2723,6 +2757,18 @@ Default status/budget lookup selects the latest job for the exact project path; 
 =dream budget= reports aggregate discovery/editorial usage for the shared wallet; the candidate receipt's usage describes its editorial roles.
 Current native adapters reject requested hard token/dollar caps before provider work.
 See [[file:docs/dream/exploration.org][the exploratory launch contract and verification]].
+The [[file:docs/dream/transcript-navigation.org][transcript-navigation contract]] specifies bounded session paging/search, continuation cursors and automatic discovery allocation for new version 3 jobs.
+The opt-in [[file:docs/dream/prompt-caching.org::#implemented][stable prompt layout]] separates trusted role instructions from untrusted evidence, places current IDs/advice last, and records lossless request envelopes and provider-specific usage.
+The default =dream.prompt_layout: legacy= preserves existing delivery; =--prompt-layout stable= selects the new layout for a new exploratory job or explicit wiki =dream run=.
+First run =sucoder dream certify-cache --harness claude --model MODEL= (or =codex=) to check the installed build against a local recording fixture using synthetic credentials and no paid inference.
+The check has a 120-second ceiling and at most 28 native request invocations: two fresh captures for each production policy/schema pair.
+A successful certificate is private to the build, model, authentication route and policy/schema catalog; unavailable capabilities return =state: uncertified= and stable launch refuses them before reserving a call.
+On the checked November 16 builds, Claude =2.1.323= passed and Codex =0.167.1= failed because its wire request exposed additional tools despite restriction flags.
+This certifies instruction-prefix eligibility and usage mapping; evidence/history caching and live cache savings remain unverified.
+The [[file:docs/dream/prompt-caching-review.org][independent review]] records the design and implementation findings.
+Session search can return an empty incomplete page with a continuation; terminal =complete_unfrozen= records traversal over mutable sources and never proves query absence in a frozen whole-file revision.
+Processing timeouts and unavailable/oversized ranges are explicit, and only reviewed selected receipt ranges count as accepted coverage.
+=--discovery-calls= selects a fixed ceiling; saved jobs retain their original settings, schemas and briefs.
 
 Reviewed dreams update a dedicated memory branch in place (=dream.memory_branch=, default =sucoder/memory=).
 The branch holds only =.sucoder/wiki/= and shares no history with code branches.
@@ -2822,6 +2868,27 @@ sucoder --config ~/.sucoder/config.yaml dream budget SuCoder \
 #+end_example
 
 Native runs persist a whole-job budget before snapshotting or native startup.
+New plans and exploratory jobs freeze authoring v9, retaining coordinator-managed handles and the v8 semantic review matrix.
+Authors select a supplied handle for each citation and task-action evidence item; Python supplies literal quotes and absolute UTF-8 ranges, including when identical text occurs twice.
+Source text appears once in labeled passages, with a bounded provenance registry in context; handles grant neither additional reads nor human authority.
+Located diagnostics still report independent reference and changed-anchor coverage defects together.
+Every new or revised non-index anchor needs source references, including Talk, except unchanged sections and coordinator-verified derived editorial changes.
+Repairs still return a complete proposal and require independent review; the repair allowance is unchanged.
+Earlier jobs retain their frozen authoring contract and prompt profile on replay and explicit retries.
+Fresh stable delivery requires recertifying the current native policy/schema catalog; historical certificates remain usable for their frozen jobs.
+See [[file:docs/dream/evidence-handles.org][the evidence-handle contract]] for bounds, replay and authority checks.
+V8 also supplies a coordinator-generated diff for every changed output, including the index, and requires explicit reviewer judgments on support, scope, time, causality, outcomes, attribution, preservation and summaries.
+Missing, stale, failed or uncertain judgments block publication even with an accepting overall verdict.
+These judgments remain model assessments; the [[file:docs/dream/semantic-review.org][semantic review contract]] distinguishes mechanical enforcement from measured reviewer quality.
+Fresh work reuses accepted receipts only under its own frozen authoring contract.
+V9 asks for one short sentence per review reason and uses the existing general text allowance, avoiding v8's 512-character per-reason constraint.
+The plan's existing cumulative =max_proposal_bytes= ceiling still bounds all replies; raw reasons are not truncated.
+V1-v8 schemas, policies and replay remain frozen.
+See [[file:docs/dream/authoring-plan.org::#implemented-diagnostics][the diagnostics contract and staged authoring plan]] for details and the later patch, checkpoint and resource-control work.
+The [[file:docs/dream/runs/authoring-sequence.org][Claude evaluation]] records one controlled repair, one real publication with grounding qualifications and one real job stopped by its elapsed ceiling.
+The [[file:docs/dream/runs/sucoder-e9.org][first v7 live trial]] resolves handles successfully but fails the root source-quality check after reviewer acceptance; its publication was withdrawn with an additive revert.
+The [[file:docs/dream/runs/review-calibration.org][v8 reviewer calibration]] blocks that draft and accepts an operator correction, while still missing several topic-level overclaims; a completed matrix is not semantic proof.
+The [[file:docs/dream/runs/twelve-session-campaign.org][twelve-session campaign]] records subsequent live results and the fixes/issues they produce.
 By default the plan's elapsed and role ceilings become a shared deadline and native invocation cap (normally 900 seconds and 40 invocations), including review, repairs, context-request turns, failed calls and explicit attempts.
 Elapsed time includes idle time between restarts; restarting a process or selecting =--attempt 2= does not replenish the budget.
 An exploratory job can receive an explicit =--retry-seconds= window as described above; this is recorded separately from the original policy and never adds native calls.

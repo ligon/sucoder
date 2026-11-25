@@ -244,6 +244,7 @@ class HarnessAuthConfig:
     mode: Literal["subscription", "apikey"] = "subscription"
     apikey_credential: Optional[str] = None
     subscription_credential: Optional[str] = None
+    base_url: Optional[str] = None
 
 
 @dataclass
@@ -442,13 +443,14 @@ class DreamSettings:
     max_total_calls: int = 40
     reserve_seconds: int = 30
     reserve_calls: int = 3
-    max_discovery_calls: int = 8
+    max_discovery_calls: Optional[int] = None
     max_discovery_bytes: int = 131072
     memory_branch: Optional[str] = "sucoder/memory"
     inject: bool = True
     inject_bytes: int = 2048
     checkout: bool = True
     session_quiet_minutes: int = 30
+    prompt_layout: str = "legacy"
 
 
 @dataclass
@@ -890,6 +892,8 @@ def _parse_dream(
         )
     values = {key: getattr(defaults, key) for key in fields}
     values.update(raw)
+    if values["prompt_layout"] not in ("legacy", "stable"):
+        raise ConfigError(f"`{label}.prompt_layout` must be legacy or stable.")
     if values["harness"] is not None and values["harness"] not in ("codex", "claude"):
         raise ConfigError(f"`{label}.harness` must be codex, claude, or null.")
     model = values["model"]
@@ -913,7 +917,9 @@ def _parse_dream(
     if type(values["inject_bytes"]) is not int or not 1 <= values["inject_bytes"] <= 16384:
         raise ConfigError(f"`{label}.inject_bytes` must be an integer from 1 to 16384.")
     for key in fields:
-        if key in ("harness", "model", "memory_branch", "inject", "checkout"):
+        if key in ("harness", "model", "memory_branch", "inject", "checkout", "prompt_layout"):
+            continue
+        if key == "max_discovery_calls" and values[key] is None:
             continue
         minimum = 0 if key.startswith("reserve_") else 1
         if type(values[key]) is not int or values[key] < minimum:
@@ -1448,12 +1454,18 @@ def _parse_auth(raw: Any) -> Dict[str, HarnessAuthConfig]:
                 f"`agent_launcher.auth.{harness}.subscription_credential` must be a "
                 "non-empty string when provided."
             )
+        base_url = entry.get("base_url")
+        if base_url is not None and (not isinstance(base_url, str) or not base_url.strip()):
+            raise ConfigError(
+                f"`agent_launcher.auth.{harness}.base_url` must be a non-empty string when provided."
+            )
         result[harness.strip()] = HarnessAuthConfig(
             mode=mode,
             apikey_credential=apikey_credential.strip() if apikey_credential is not None else None,
             subscription_credential=(
                 subscription_credential.strip() if subscription_credential is not None else None
             ),
+            base_url=base_url.strip() if base_url is not None else None,
         )
     return result
 

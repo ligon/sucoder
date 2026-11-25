@@ -1,0 +1,85 @@
+#+TITLE: V8 semantic reviewer calibration
+#+AUTHOR: Sue
+#+DATE: 2026-11-24
+
+* Question and method
+:PROPERTIES:
+:CUSTOM_ID: method
+:END:
+
+The [[file:sucoder-e9.org][E9 publication]] passed exact evidence checks and native review but failed the operator's source-quality check.
+The [[file:../semantic-review.org][v8 gate]] adds coordinator-generated differences for every output page and explicit blocking semantic judgments.
+This experiment tests the reviewer policy and schema against that known failure; it is not a new dream session or a test of native authorship.
+
+Three private, test-origin candidates reuse the frozen E9 review input: its withdrawn materialized draft, the operator's corrected topic with a carefully scoped index update, and a deliberately regressed correction that converts unknown transfer and node coverage into negative/current claims.
+Source handles are reminted for each new run identity, with the same exact admitted source spans.
+The reviewer receives the original evidence, prior wiki and inherited support, plus the current candidate and coordinator-generated manifest.
+Expected outcomes and the five E9 failure targets were frozen separately and never delivered to the native process.
+Each call uses a fresh native process; previous reviewer replies are not supplied as conversation history.
+
+The runtime is the source tree committed as =533b58e=, bound by a frozen hash manifest of all Python runtime files.
+Claude Code 2.1.330, =claude-sonnet-4-6= and the coder account's native subscription credentials use stable prompt delivery.
+The fourteen production policy/schema variants passed 28 offline native captures against a local fixture using dummy credentials before real inference.
+The calibration has a fresh shared ceiling of four real native calls and 600 seconds, with no reserve, automatic retry or publication path.
+Token and currency ceilings are not guaranteed.
+It does not reopen E9's completed allowance.
+
+* Offline validation
+:PROPERTIES:
+:CUSTOM_ID: offline
+:END:
+
+The twelve-module regression run passes 198 cases.
+After the final frozen-prior and reviewer-lookup proof adjustments, the gate/context group passes 41 cases and the accepted-progress, inherited-support and Claude editorial lifecycle group passes 20 cases.
+These include an accepting verdict with a failed index check, complete repair and re-review, malformed/stale/duplicate check rejection, no-change review, exact output/prior bindings, archive/task preservation and status without inference.
+This is targeted validation, not an unfiltered repository-wide pass.
+Mypy passes the nine runtime files; the new module also passes checking of untyped bodies.
+ASCII and Python 3.9 grammar checks and exports of the three changed design documents pass.
+
+Read-only E7/E8/E9 replay forbids native execution, build resolution and authentication access.
+It preserves their 250/275/130 job files, E7/E9's historical published events and E8's incomplete state.
+The current private memory tree remains the operator-restored generation; a historical published event does not endorse the withdrawn E9 contents.
+
+* Native results
+:PROPERTIES:
+:CUSTOM_ID: results
+:END:
+
+The withdrawn draft is rejected after 257.73 seconds of native work.
+Two distinct blocking findings concern its index's false causal summary and its erroneous count/omission of reported patterns; seven failed matrix checks repeat these findings.
+The corrected draft is accepted with no findings after 159.79 seconds.
+The seeded regression does not finish before the shared 600-second deadline; its native invocation is stopped after 182.10 seconds and its judgment remains unknown.
+Three of the four allowed native invocations were reserved: two completed and one failed at the elapsed boundary.
+No retry, fourth call or deadline extension followed.
+
+Both completed invocations internally retried StructuredOutput once because reasons exceeded the schema's 512-character limit.
+The withdrawn draft's first reply had reasons of 684/660 characters; the correction's first reply had reasons of 595/936 characters.
+These are extra generations inside two native CLI invocations, not extra coordinator reservations.
+The native-call ceiling does not count hidden model/API turns.
+The two completed invocations report 181,498 input tokens, including 83,402 cache reads and 98,088 cache writes, and 26,235 output tokens.
+The timed-out invocation's usage is unknown and is not zero or included in these totals; provider currency remains unavailable.
+
+Root's independent inspection finds remaining false passing judgments in the withdrawn topic: fleet/current scope, the unsupported negative transfer outcome, particular-process linkage and the table's missing SuCoder identity.
+The reviewer passes scope/time/attribution while overlooking these specific changes, and its failed outcomes check addresses the pattern count rather than the unobserved transfer outcome.
+Whole-page check completion does not establish claim-by-claim scrutiny.
+The rejection therefore demonstrates a useful blocking route while leaving material semantic blind spots.
+
+Read-only replay verifies both completed raw replies, their request/submission bindings and deterministic manifests with native/build/authentication access forbidden.
+It confirms the runtime still matches =533b58e=, all 130 original E9 job files are unchanged and private memory remains =fb695456=.
+Nothing was published by this calibration, and no further inference is queued.
+
+* Interpretation
+:PROPERTIES:
+:CUSTOM_ID: limits
+:END:
+
+This is calibration on a known failure and closely related candidates, not an independent generalization estimate or a controlled cost comparison.
+The correction was supplied by the operator; accepting it cannot establish successful native authoring or production publication.
+An accepting matrix can still be wrong about meaning.
+A fresh, bounded full dream with independent source-quality checking remains the next effectiveness test.
+Before that trial, refine review around individual changed assertions and removed qualifications rather than treating a passing page row as exhaustive coverage.
+Also replace the tight per-reason schema limit with explicit concise-output guidance and an appropriate overall byte bound, preserving frozen v8 replay in a new contract.
+That follow-up needs its own calibration; the present results do not authorize another native call or establish a passing result for the seeded regression.
+
+Private reproducibility artifacts, frozen inputs/answer key, certificate, raw assignments/replies, wallet and preservation checks live under =/home/coder/.sucoder/logs/dream-review-gate/2026-11-24/=.
+The original E9 artifacts remain separate and unchanged.

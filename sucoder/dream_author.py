@@ -38,6 +38,8 @@ def schema(role):
 
 
 class Author(dream_curate.Curator):
+    context_type = dream_context.Session
+
     def __init__(self, *args, source=None, prefixes=None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.contract, self.editing, self.source = CONTRACT, EDITING, source
@@ -60,7 +62,7 @@ class Author(dream_curate.Curator):
         if self.prefixes:
             dream_prefix.validate(self.plan, self.fd, self.prefixes, self.harness, self.model,
                 self.expected_version, self.purpose, self.deadline)
-        self.context = dream_context.Session(self.plan, self.fd, self.run_id, sources, prior, self.deadline, self.source)
+        self.context = self.context_type(self.plan, self.fd, self.run_id, sources, prior, self.deadline, self.source)
         return sources, prior
 
     def input_sources(self, sources):
@@ -99,9 +101,16 @@ class Author(dream_curate.Curator):
             return super().proposal(proposal, prior, sources)
         if not proposal["rationale"].strip():
             raise DreamError("A curation decision needs a reason")
+        references = self.resolve_references(proposal["references"], sources)
+        pages, parsed, resolved = self.validate(dict(proposal, references=references),
+            dict(prior, **self.context.archives), sources)
+        self.accepted_proposal = proposal
+        return pages, parsed, resolved
+
+    def resolve_references(self, values, sources):
         units = {unit["unit_id"]: unit for unit in sources}
         references = []
-        for reference in proposal["references"]:
+        for reference in values:
             citations = []
             for citation in reference["citations"]:
                 unit = units.get(citation["unit_id"])
@@ -123,10 +132,7 @@ class Author(dream_curate.Curator):
                 start = positions.pop()
                 citations.append(dict(citation, byte_start=start, byte_end=start + len(quote)))
             references.append(dict(reference, citations=citations))
-        pages, parsed, resolved = self.validate(dict(proposal, references=references),
-            dict(prior, **self.context.archives), sources)
-        self.accepted_proposal = proposal
-        return pages, parsed, resolved
+        return references
 
     def validate(self, proposal, prior, sources):
         return wiki.validate_proposal(self.plan, proposal, prior, sources, self.deadline, wiki.LEGACY_CONTRACT)

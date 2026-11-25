@@ -1,0 +1,135 @@
+#+TITLE: Codex tool omission and native cache scope
+#+AUTHOR: Sue
+#+DATE: 2026-11-16
+#+STATUS: OFFLINE INVESTIGATION; CURRENT CERTIFICATE GATE RETAINED
+#+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Question and evidence boundary
+
+The human requested a delegated investigation after the initial stable-profile implementation rejected Codex's additional tools.
+The prior [[file:prompt-caching.org::#implemented][implementation acceptance]] tested the existing disabling flags and the direct vendor-native launcher, not every native tool-selection mechanism.
+The [[file:../dream-prompt-caching-ledger.org][grounding ledger]] records the coordinator, isolation, replay and certification contracts reused here.
+One investigator explored native controls; an independent integrity reviewer assessed workarounds.
+No production configuration, native installation, authentication route or certificate rule was changed.
+
+All dynamic probes use synthetic credentials and the existing local recording server, filesystem boundary and TCP fixture-port restriction.
+They preserve the exact requested model =gpt-6.1-sol= and built-in OpenAI/native-credentials route in the fixture.
+No real transcript, memory or credential is sent, and no paid inference is performed.
+Successful synthetic replies prove native request construction, not provider model availability or a live cache hit.
+
+* Tool declarations can be removed
+
+The installed Codex =0.167.1= model metadata selects =tool_mode: code_mode_only= for =gpt-6.1-sol=.
+The initial feature switches therefore did not exhaust the mechanisms selecting the model-facing tool surface.
+The [[https://learn.chatgpt.com/docs/config-file/config-reference][official configuration reference]] documents a local =model_catalog_json= and nested Code Mode controls; installed schema/help and actual captured requests establish the build-specific behavior below.
+
+The investigator copied the selected model's catalog row and changed these fields, retaining its model slug and other metadata:
+
+#+begin_example
+tool_mode: standard
+node_repl_disabled: true
+experimental_supported_tools: []
+apply_patch_tool_type: null
+#+end_example
+
+These are changed fields within a complete existing catalog row, not a complete replacement catalog.
+The probe combines them with explicit controls for goals, user questions, asynchronous messages, sleep, multi-agent tools, Code Mode and host fallback.
+Nested =features.code_mode.enabled=false= and =features.code_mode_host.enabled=false= avoid relying on the earlier boolean-only flags.
+=features.code_mode_host.disable_in_process_fallback=true= also disables the fallback host path.
+The successful probe removes the old =--disable code_mode= and =--disable code_mode_host= entries and uses these configuration overrides instead:
+
+#+begin_example
+features.default_mode_request_user_input = false
+tools.experimental_request_user_input.enabled = false
+features.send_message_to_user_async = false
+features.sleep_tool.enabled = false
+features.multi_agent_v2.enabled = false
+features.code_mode_only = false
+features.code_mode.enabled = false
+features.code_mode_host.enabled = false
+features.code_mode_host.disable_in_process_fallback = true
+features.goals = false
+skills.include_instructions = false
+#+end_example
+
+The [[https://learn.chatgpt.com/docs/config-schema.json][official configuration schema]] supplies controls not all listed in the prose reference.
+The full executable probe and exact control lists remain in the private artifact directory below.
+
+| Probe | Observed native request |
+|-------+-------------------------|
+| Nested Code Mode/host switches alone | Five original tools remain |
+| Additional question/clock/multi-agent controls | exec and wait remain |
+| Standard catalog mode, disabled node repl and empty experimental tool list | exec/wait disappear; patch and goal tools remain |
+| Add disabled goals and null patch-tool type | No tools in two fresh captures |
+| Seal the catalog and disable skill instruction injection | No tools; identical eligible instruction prefix except cache key |
+| Disable Responses Lite as well | No tools; fresh cache keys still differ |
+
+The tool-free captures returned exit code zero without the earlier native startup error.
+The parent independently replayed their saved stdout through the existing native trace parser and actual fixture schema validator; both passed.
+Against the same-policy nested-disable baseline, the serialized =additional_tools= items shrank from 15,870 bytes to zero.
+This is request-byte evidence, not measured token or billing savings; the fixture's usage counters are synthetic constants.
+Catalog delivery through an inherited sealed =/proc/self/fd/N= descriptor worked under the existing Landlock filesystem boundary.
+This establishes a native tool-omission method without changing provider or model, rather than proving that declarations are harmless.
+
+* Separate cache blockers
+
+The first tool-free pair still injected a skills block containing each invocation's fresh temporary-home path before the first user message.
+=skills.include_instructions=false= removed that changing instruction text.
+With a sealed catalog and skill instructions disabled, each capture passes the existing prefix validator individually; their paired normalized prefix/settings differ only in =prompt_cache_key=.
+Codex supplies a fresh thread-specific key for each invocation.
+Disabling Responses Lite did not change that behavior.
+
+The [[https://developers.openai.com/api/docs/guides/prompt-caching][OpenAI caching guide]] distinguishes automatic routing from separate cache-accounting/reuse groups and advises stable keys within a group.
+An unchanged instruction prefix alone therefore does not establish useful cross-invocation reuse under these changing keys.
+The installed root/exec help and normal/experimental thread-start schemas expose no documented fresh-thread-ID or cache-key selector in the inspected surfaces.
+This is a bounded observation about those surfaces, not proof that no native workaround exists.
+
+The investigator also checked the installed =thread/resume= interface.
+Its inline history field is explicitly marked unstable and Cloud-only; its path mode does not honor a requested new thread ID, and it has no ephemeral field.
+A synthetic zero-turn RPC with a fixed UUID and =history: []= returned error =-32600=, =history must not be empty=, with zero provider requests.
+That rejects the proposed strictly empty inline-history seed workaround; no actual conversation was resumed and no nonempty seed was fabricated.
+No production use of the unsupported history interface is recommended.
+
+* Workaround assessment
+
+Tool-free requests are a conservative isolation requirement of the current dream profile, not an inherent requirement of provider prompt caching.
+Stable tool declarations can be part of a cached prefix.
+The [[https://developers.openai.com/api/docs/guides/function-calling#tool-choice][Responses tool-choice API]] also distinguishes declaration from call selection, including =tool_choice: none=.
+That API capability does not establish that the native CLI exposes an equivalent control.
+
+Merely permitting the captured declarations in the current certificate is insufficient.
+=functions.exec= advertises nested patch, goal and resource operations plus dynamically discoverable tools; it is not established to be inert.
+The current trace parser rejects tool events after native capture, which protects publication but cannot undo earlier effects.
+Any profile allowing such declarations would need mechanical denial before dispatch, active synthetic attempts against every direct/nested tool, and binding of host configuration and fallback behavior.
+Physical omission remains preferable to this larger proof obligation.
+
+A local request-rewriting proxy is not a shortcut: it introduces credential forwarding, HTTP/WebSocket filtering and a second request representation while leaving native dispatch to control.
+A direct Responses API adapter could omit tools and control cache boundaries, but would be a separate backend and an explicit authentication/billing choice, not automatic fallback from native credentials.
+For immediate operation, the already certified Claude instruction profile or explicitly selected legacy Codex delivery remains available.
+
+* Reproducibility and next integration gate
+
+Private artifacts are =/home/coder/.sucoder/logs/dream-cache-implementation/2026-11-16/tool-omission/=.
+=probe.py= contains the guarded invocations; =catalog-empty-a.json= and =catalog-empty-b.json= record omission; =sealed-no-skills-a.json= and =sealed-no-skills-b.json= record the stable instruction surfaces and remaining key difference.
+The directory also contains installed protocol/help output and the consulted official schema.
+The writable-catalog probes are diagnostic only; production integration must freeze catalog bytes/digest and use sealed delivery.
+Any adoption must extend the frozen profile and manifest, cover all production policy/schema pairs, retain fresh role isolation and pass the current cache-scope comparison.
+The runtime stays unchanged until that complete gate succeeds.
+
+The bounded investigation used nine synthetic request-bearing native invocations and one zero-turn app-server query.
+Installed help/schema inspection and replay of saved captures require no model calls.
+=sealed-no-lite-a.json= and =sealed-no-lite-b.json= preserve the failed transport-toggle attempt; =empty-history-rpc.json= records the rejected zero-turn seed.
+=parent-validation.json= records the independent parser/schema check, equal prefix except key, and declaration-byte comparison.
+=findings.json= records the investigator's final summary, including fourteen static help/schema/feature CLI launches that sent no model request.
+The useful next native implementation is a frozen tool-omission profile with a sealed catalog and no skill-path injection, coupled to a supported stable cache scope.
+Omission can reduce request overhead independently of caching, but the current stable profile must not advertise cross-invocation cache reuse before its scope gate passes.
+
+* Authorized live followup
+
+The human subsequently approved the [[file:runs/codex-cache-c1.org][C1 two-call subscription check]].
+Both fresh native invocations succeeded with identical synthetic policy and correct structured answers, but each reported zero cached-input tokens.
+The pair used 25,126 reported input tokens and 227 output tokens in 10.83 native seconds, with no additional live call or memory publication.
+This establishes no observed reuse; it does not identify the cause or show that subscription caching is unavailable.
+The production cache gate and defaults remain unchanged.
+
+Recorded by Sue (GPT-6 Codex).

@@ -301,7 +301,7 @@ def _prior_wiki(source, base, limits, *, topic=None, units=(), policy="all-activ
 
 def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, inspection_deadline=None,
                prior_policy="bounded-prior-v1", publication=None, pinned_base=None, project_commit=None, editorial_version=None,
-               memory_origin=None):
+               memory_origin=None, authoring_version=9):
     """Freeze selections, never imply inference or shared completion.
 
     ``publication="in_place"`` (essay-alignment S1) records that a reviewed
@@ -337,7 +337,16 @@ def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, i
         raise DreamError("Source request requires between one and max_units units")
     seen = set()
     for unit in units:
-        _object(unit, ("unit_id", "kind", "locator", "shareable"))
+        _object(unit, ("unit_id", "kind", "locator", "shareable"), ("processing", "expected_raw_sha256"))
+        if "expected_raw_sha256" in unit and (unit["kind"] != dream_view.KIND or
+                not isinstance(unit["expected_raw_sha256"], str) or
+                not re.fullmatch(r"[0-9a-f]{64}", unit["expected_raw_sha256"])):
+            raise DreamError("Expected raw digest requires rendered session evidence and SHA-256")
+        if "processing" in unit:
+            from . import dream_isolate
+            if unit["kind"] != dream_view.KIND:
+                raise DreamError("A processing policy requires rendered session evidence")
+            dream_isolate.validate(unit["processing"])
         uid = _text(unit["unit_id"], "unit_id")
         if uid in seen:
             raise DreamError("Duplicate unit_id: " + uid)
@@ -425,6 +434,10 @@ def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, i
         plan["prior_support"] = dream_support.collect(target, prior["files"], identity["repository_uuid"])
     elif editorial_version != 1:
         raise DreamError("Unsupported editorial plan version")
+    if type(authoring_version) is not int or authoring_version not in (5, 6, 7, 8, 9):
+        raise DreamError("Unsupported authoring plan version")
+    if authoring_version in (6, 7, 8, 9):
+        plan["authoring_version"] = authoring_version
     if project_commit is not None:
         project = project_files(target, project_commit)
         if project is not None:
@@ -478,7 +491,7 @@ def _open_private_directory(path):
 
 
 def create_plan(config, mirror, sources, base, *, maintenance=None, topic=None, publication=None,
-                project_commit=None, memory_origin=None):
+                project_commit=None, memory_origin=None, inspection_deadline=None, authoring_version=9):
     """``publication=None`` derives in-place publication from the mirror's
     configured memory branch, so an explicit plan against it behaves like a
     bare dream; any other base keeps candidate publication."""
@@ -494,7 +507,8 @@ def create_plan(config, mirror, sources, base, *, maintenance=None, topic=None, 
         if len(data) > MAX_CATALOG_BYTES:
             raise DreamError("Source catalog exceeds its byte allowance")
         plan = build_plan(config, mirror, _json(data), base, maintenance=maintenance, topic=topic,
-                          publication=publication, project_commit=project_commit, memory_origin=memory_origin)
+                          publication=publication, project_commit=project_commit, memory_origin=memory_origin,
+                          inspection_deadline=inspection_deadline, authoring_version=authoring_version)
         plan_id = digest(canonical(plan))
         plan["plan_id"] = plan_id
         root = (config.log_dir or Path("~/.sucoder/logs")).expanduser().resolve() / "dream"

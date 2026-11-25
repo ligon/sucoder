@@ -169,31 +169,62 @@ def render(raw, thread_id, byte_start):
 
 def admit(unit, repository, identity, limits, deadline):
     locator = unit["locator"]
-    raw = read_range(locator, deadline)
-    text, mapping = render(raw, locator["thread_id"], locator["byte_start"])
+    if "processing" in unit:
+        from . import dream_isolate
+        value = dream_isolate.run(lambda: _processed(locator, deadline), deadline, unit["processing"])
+        text, mapping, raw_digest = value["text"], value["mapping"], value["raw_sha256"]
+    else:
+        raw = read_range(locator, deadline)
+        text, mapping = render(raw, locator["thread_id"], locator["byte_start"])
+        raw_digest = digest(raw)
+    if "expected_raw_sha256" in unit and unit["expected_raw_sha256"] != raw_digest:
+        raise DreamError("Session window bytes differ from the frozen discovery selection", 3)
     data = text.encode()
     if len(data) > limits.max_source_bytes:
         raise DreamError("Rendered session window exceeds max_source_bytes; select a narrower window")
-    return dict(unit_id=unit["unit_id"], kind=KIND, shareable=unit["shareable"],
+    result = dict(unit_id=unit["unit_id"], kind=KIND, shareable=unit["shareable"],
                 source_id=digest(canonical([identity["repository_uuid"], KIND, locator["thread_id"]])),
                 repository=repository, repository_uuid=identity["repository_uuid"],
                 path=locator["path"], thread_id=locator["thread_id"],
-                raw=dict(byte_start=locator["byte_start"], byte_end=locator["byte_end"], sha256=digest(raw)),
+                raw=dict(byte_start=locator["byte_start"], byte_end=locator["byte_end"], sha256=raw_digest),
                 render=dict(contract=CONTRACT, sha256=digest(canonical(mapping)), blocks=len(mapping["blocks"]),
                             dropped_records=mapping["dropped_records"], redactions=mapping["redactions"]),
                 byte_start=0, byte_end=len(data), bytes=len(data), sha256=digest(data),
                 chunks=_chunks(data, 0, limits.chunk_bytes,
                                (limits.max_role_invocations - 1 - limits.max_repairs) // 2))
+    if "processing" in unit:
+        result["processing"] = unit["processing"]
+    return result
+
+
+def _processed(locator, deadline):
+    """Run only inside a bounded worker for explicitly versioned units."""
+    raw = read_range(locator, deadline)
+    text, mapping = render(raw, locator["thread_id"], locator["byte_start"])
+    return dict(text=text, mapping=mapping, raw_sha256=digest(raw))
 
 
 def request_unit(unit):
-    return dict(unit_id=unit["unit_id"], kind=KIND, shareable=unit["shareable"],
+    result = dict(unit_id=unit["unit_id"], kind=KIND, shareable=unit["shareable"],
                 locator=dict(path=unit["path"], thread_id=unit["thread_id"],
                              byte_start=unit["raw"]["byte_start"], byte_end=unit["raw"]["byte_end"]))
+    if "processing" in unit:
+        result["processing"] = unit["processing"]
+        result["expected_raw_sha256"] = unit["raw"]["sha256"]
+    return result
 
 
 def snapshot(unit, deadline):
     """Re-read and re-render a frozen window; both digests must reproduce."""
+    if "processing" in unit:
+        from . import dream_isolate
+        value = dream_isolate.run(lambda: _processed(request_unit(unit)["locator"], deadline),
+                                  deadline, unit["processing"])
+        if value["raw_sha256"] != unit["raw"]["sha256"]:
+            raise DreamError("Session window bytes differ from the frozen selection", 3)
+        if digest(canonical(value["mapping"])) != unit["render"]["sha256"]:
+            raise DreamError("Session window rendering differs from the frozen plan", 3)
+        return value["text"].encode(), value["mapping"]
     raw = read_range(request_unit(unit)["locator"], deadline)
     if digest(raw) != unit["raw"]["sha256"]:
         raise DreamError("Session window bytes differ from the frozen selection", 3)
@@ -206,7 +237,10 @@ def snapshot(unit, deadline):
 def shape(unit, limits):
     """Persisted-plan schema check for a view unit (dream_run._plan_shape)."""
     _object(unit, ("unit_id", "kind", "shareable", "source_id", "repository", "repository_uuid", "path",
-                   "thread_id", "raw", "render", "byte_start", "byte_end", "bytes", "sha256", "chunks"))
+                   "thread_id", "raw", "render", "byte_start", "byte_end", "bytes", "sha256", "chunks"), ("processing",))
+    if "processing" in unit:
+        from . import dream_isolate
+        dream_isolate.validate(unit["processing"])
     _object(unit["raw"], ("byte_start", "byte_end", "sha256"))
     _object(unit["render"], ("contract", "sha256", "blocks", "dropped_records", "redactions"))
     if (type(unit["shareable"]) is not bool or unit["byte_start"] != 0 or unit["render"]["contract"] != CONTRACT or

@@ -4840,6 +4840,48 @@ def test_codex_auth_deprecated_alias_maps_to_apikey(
     assert len(swap_calls) == 1
 
 
+def _stage_codex_apikey_launch(tmp_path, monkeypatch, pass_entry, auth_cfg=None):
+    """Launch codex apikey with a stubbed swap; return the launched argv."""
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+    ctx.settings.agent_launcher = AgentLauncher(command=["codex"], auth=auth_cfg or {})
+    manager.config.credentials["openai"] = CredentialConfig(pass_entry=pass_entry)
+    monkeypatch.setattr(manager, "_compose_context_prelude", lambda _ctx: "")
+    monkeypatch.setattr(
+        mirror.auth_mod, "codex_to_apikey", lambda config, executor, cfg, logger: None,
+    )
+    agent_calls = []
+    monkeypatch.setattr(
+        manager.executor, "run_agent",
+        lambda *a, **kw: (agent_calls.append(list(a[0])), CommandResult(
+            requested_args=list(a[0]), executed_args=list(a[0]),
+            stdout="", stderr="", returncode=0,
+        ))[1],
+    )
+    manager.launch_agent(ctx, sync=False, auth_override="apikey")
+    return agent_calls[-1]
+
+
+def test_codex_auth_apikey_uses_configured_base_url(tmp_path, monkeypatch):
+    from sucoder.config import HarnessAuthConfig
+
+    auth_cfg = {"codex": HarnessAuthConfig(mode="apikey", base_url="https://us.api.openai.com/v1")}
+    launched = _stage_codex_apikey_launch(
+        tmp_path, monkeypatch, "openai.com/apikey", auth_cfg=auth_cfg,
+    )
+    # A distinct provider is defined at the regional host and selected; the
+    # reserved built-in ``openai`` provider is never overridden.
+    assert 'model_providers.sucoder-openai.base_url="https://us.api.openai.com/v1"' in launched
+    assert 'model_provider="sucoder-openai"' in launched
+    assert not any(tok.startswith("model_providers.openai.") for tok in launched)
+
+
+def test_codex_auth_apikey_without_base_url_adds_no_override(tmp_path, monkeypatch):
+    launched = _stage_codex_apikey_launch(tmp_path, monkeypatch, "us.api.openai.com/apikey")
+    assert not any("model_providers" in tok or tok.startswith("model_provider") for tok in launched)
+
+
 def test_codex_auth_subscription_leaves_auth_untouched(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

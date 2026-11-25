@@ -1,0 +1,120 @@
+#+TITLE: Coordinator-owned dream submission ledger
+#+AUTHOR: Sue
+#+DATE: 2026-11-17
+
+* 1. Task
+
+Prevent mechanical identifier copying failures such as [[file:dream/runs/sucoder-e4.org][E4]] by scripting native reply submission.
+The baseline is local main =ea73e10=.
+Implementation is committed on local main as =875169e=.
+New default dream jobs use a versioned body-only native reply; Python attaches the frozen assignment ID, input checksum and role.
+Existing job headers, specifications, assignments and traces retain their original interpretation.
+No paid retry or reinterpretation of E4 is part of this implementation.
+
+* 2. Existing machinery
+
+Grounding uses GitNexus CLI query/context/upstream impact, direct source and tests, and the earlier [[file:dream-prompt-caching-ledger.org][caching ledger]] and its git history.
+The initial index was four documentation commits behind the baseline; runtime source reads established the code facts.
+The index was refreshed after implementation with =--skip-agents-md --index-only=.
+
+- =sucoder/dream_roles.py:124=, =Coordinator.call= :: Existing scripted assignment storage, reservation, native invocation, result validation and raw-trace replay.
+  =tests/test_dream_roles.py::test_mutated_saved_result_cannot_substitute_for_native_trace= and =test_failed_native_request_is_not_automatically_repeated= cover integrity and no-repeat behavior.
+- =sucoder/dream_native.py:192=, =parse_trace=; =:245=, =invoke= :: Completed structured replies, raw usage and confined native process execution for both harnesses.
+  =tests/test_dream_native.py= tests tool rejection, completion, isolation and byte-preserving capture.
+- =sucoder/dream_prompt.py= :: Lossless semantic prompt projection, immutable request envelopes and native-delivery attestation.
+  =tests/test_dream_prompt.py= and =tests/test_dream_prompt_integration.py= cover reconstruction, corruption refusal and inference-free replay.
+- =sucoder/dream_prompt_native.py=, =variants/invoke/load_profile= :: Fourteen policy/schema pairs, sealed native delivery and strict current-catalog loading for fresh jobs.
+  =tests/test_dream_cache_certify.py= covers the exact certificate gate; schema bytes are included in the eligible-prefix comparison.
+- =sucoder/dream_explore.py=, =prepare/run=; =sucoder/dream_wiki.py=, =run/restore= :: Frozen job headers and editorial specifications select old or new semantics.
+  =tests/test_dream_explore.py= and =tests/test_dream_wiki.py= cover old-contract replay and durable publication.
+
+* 3. Definitions
+
+A semantic assignment remains the canonical task used by the wallet, evidence checks and saved result identity.
+A submission contract specifies the model-facing reply schema and deterministic metadata attachment.
+A body-only reply contains substantive fields, including failures; it contains no assignment ID, input checksum or role field.
+The coordinator's transport supplies those three fields from its frozen task, never from model text.
+Raw native stdout remains unchanged and is re-parsed during replay.
+Native usage and native completion remain distinct from an accepted semantic result.
+Claude's observed =system/thinking_tokens= records carry nonnegative integer progress counters only; they supply no result, tool authority, usage aggregate or evidence.
+
+* 4. Invariants
+
+Keep native isolation, tool prohibition, byte/time/call limits, independent review and compare-and-swap publication.
+Keep raw trace/result/wallet/assignment bindings; a changed body, a mismatched submission manifest or injected metadata must be rejected.
+Persist the new contract in new job headers and editorial specifications and include it in assignment/run identity before reservation.
+Old traces without that contract still require the model's exact echoed identifiers; E4 stays incomplete.
+No failure authorizes an automatic paid retry, manual hash correction or memory publication.
+Per-assignment enum values would make schemas volatile, so use a stable body schema and retain exact certificate coverage.
+Earlier cached profiles remain replayable; new profiles must certify the new body policy/schema pairs.
+Live compatibility correction: accept only the observed thinking-progress event shape, retaining rejection of unknown system events, hooks, compaction and external tools.
+The first rejected November 23 call remains charged and preserved; any explicitly selected second attempt must share its original 32-call allowance and absolute deadline.
+The human subsequently authorized a fresh 1,800-second window for the same wallet, which retains all earlier reservations.
+Its first editorial author exhausted =Coordinator.call='s separate hardcoded 180-second transport cap despite substantial whole-job allowance remaining.
+Reuse =Job.transport= and =Job.deadline(task)= for budgeted calls: they already enforce the shared deadline and ordinary-work closeout reserve.
+Retain the 180-second fallback for coordinators without a wallet, frozen results and explicit retry/no-repeat behavior.
+An explicit new attempt replays the saved discovery selection without native access; it need not spend another fourteen discovery calls or extend the approved window.
+
+* 5. Reuse decisions
+
+- Reuse :: Coordinator invocation, persistent wallet, artifact store, native trace parser, full semantic result validation and publication.
+- Extend :: The existing strict Claude parser needs one validated thinking-progress metadata case, found by live job =dd873557ff244bcda713a7905a4c77de= before its first result was admitted.
+  Offline synthetic replies did not emit this event; no second transport or blanket system-event allowance is needed.
+- Extend :: A shared submission projection/manifest/parser wraps body-only native output with coordinator-owned metadata.
+  No such wrapper exists; current schemas require model-generated identifiers.
+- Extend :: New default project/experience job headers and their editorial specifications freeze the new contract; explicit historical notes/reader contracts remain compatible.
+- Extend :: Lossless stable prompt envelopes and the fourteen-case certifier cover the body-only schema and trusted policy without weakening certificate matching.
+- Defer :: Stateful agents, coordinator tools accessible to models, direct APIs and automatic retries; none is needed to remove metadata copying.
+
+* 6. Verification boundary
+
+GitNexus rates =Coordinator.call= CRITICAL: eight direct dependants, 29 upstream symbols and 102 affected indexed processes, including discovery, editorial and reader flows.
+Native invoke has one resolved transport caller; unresolved receiver sites make that count a lower bound.
+Final precommit detection reports 23 changed files and 49 symbols, with CRITICAL risk and 429 indexed affected processes.
+Source inspection limits runtime edits to eight dream modules; the graph's broad/unresolved receiver edges are not a precise count of operational callers.
+All tests used synthetic transports or bounded local native fixtures; no paid inference, new dream, API-key switch or E4 retry ran for this implementation.
+
+** Anchored verification
+
+- OK, sections 2 and 5 :: The wrapper reuses =dream_native.parse_trace=, =dream_roles.validate_schema=, the existing coordinator, wallet and artifact store.
+  It creates no second publisher, evidence-admission path or retry loop.
+- OK, sections 3 and 4 :: New replies omit only the three coordinator-owned metadata fields; full semantic results are reconstructed from raw bodies and frozen tasks.
+  Injected metadata, changed manifests, missing/duplicate aggregates, altered results and failed-request repetition are rejected.
+- OK, section 4 :: E3 remains =published= at memory =d6a3621= and E4 remains =incomplete= with native provider/build/authentication entrypoints replaced by exceptions.
+  Explicit legacy checksum mismatches still fail; no historical identity is repaired.
+- RESOLVED, section 4 :: Review found that dispatch digests should be pinned before capture, rather than recomputed after it.
+  Both native transports now pin them first; a parent-task mutation regression test proves rejection while preserving the dispatched digests.
+- RESOLVED, sections 4 and 5 :: A self-consistent older profile placed under a new profile filename could otherwise select the earlier contract.
+  Fresh loading now requires the current submission contract and all current catalog entries; frozen historical profiles remain replayable.
+
+** Checks and acceptance limits
+
+The final submission/native/cache/CLI followup passes all 124 tests, including 30 new submission cases.
+The discovery/recovery/context group passes 75 tests.
+The broader notes/wiki/reader/budget/CLI run passed 240 and failed one detached fixture that still emitted the old reply format.
+That fixture now follows the actual output schema and passes in the final followup, which also covers the dispatch-pinning and profile-loader refinements made after the broader run's source was loaded.
+No unfiltered full-suite pass on final source is claimed.
+The preceding full-suite result and its 38 unrelated Codex-state baseline failures remain documented in the [[file:dream-prompt-caching-ledger.org][caching ledger]].
+
+All eight changed runtime modules pass the project's =mypy --follow-imports=silent= invocation, Python 3.9 grammar and ASCII checks.
+Org HTML export with Babel disabled, new file links and =git diff --check= pass.
+Installed Claude =2.1.323= passed all 28 offline captures for the fourteen new body-schema variants, and the resulting certificate loads through the stricter current-catalog gate.
+Codex =0.167.1= remains uncertified for stable delivery because the existing tool check rejects additional declarations; the gate was preserved.
+These native observations establish local interface/certificate compatibility, not live editorial quality, cache hits or savings under the new protocol.
+
+Private artifacts are under =/home/coder/.sucoder/logs/dream-submission/2026-11-17/=:
+=verification.json= binds runtime hashes and the staged implementation tree; =implementation.patch= records that tree's changes.
+=final-followup.xml=, =final-submission.xml= and =regression.xml= retain exact test IDs/results, including the corrected earlier failure.
+=historical-status.json=, =certification.json= and =precommit-changes.txt= record the replay, native and scope checks.
+The change's code and documentation are on local main; private memory, installed deployment and remotes are unchanged.
+
+Reproduce the final followup from the mirror root:
+
+#+begin_src sh :eval never :tangle no
+PYTHONPATH=$PWD \
+  /home/coder/.cache/pypoetry/virtualenvs/sucoder-_hu1CrVA-py3.12/bin/python \
+  -m pytest -q -p no:cacheprovider \
+  tests/test_dream_submission.py tests/test_dream_native.py \
+  tests/test_dream_prompt.py tests/test_dream_prompt_integration.py \
+  tests/test_dream_cache_certify.py tests/test_dream_explore_cli.py
+#+end_src

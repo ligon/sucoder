@@ -109,7 +109,10 @@ class Job:
         for name in reservations:
             reservation = _read(fd, name)
             dream._object(reservation, ("job_id", "policy_sha256", "assignment_id", "base_assignment_id",
-                "run_id", "role", "reserved_at", "assignment_bytes", "submitted_sha256"))
+                "run_id", "role", "reserved_at", "assignment_bytes", "submitted_sha256"), ("request_sha256",))
+            if "request_sha256" in reservation and (not isinstance(reservation["request_sha256"], str) or
+                    not re.fullmatch(r"[0-9a-f]{64}", reservation["request_sha256"])):
+                raise DreamError("Invalid prompt-envelope reservation binding", 3)
             if (any(not isinstance(reservation[k], str) or not re.fullmatch(r"[0-9a-f]{64}", reservation[k])
                     for k in ("assignment_id", "base_assignment_id", "submitted_sha256")) or
                     type(reservation["assignment_bytes"]) is not int or reservation["assignment_bytes"] <= 0 or
@@ -123,7 +126,7 @@ class Job:
             returned = name.replace("reservation-", "returned-", 1)
             if returned in names:
                 row = _read(fd, returned)
-                dream._object(row, ("reservation", "state", "usage"), ("elapsed_seconds", "error", "trace_sha256", "reason"))
+                dream._object(row, ("reservation", "state", "usage"), ("elapsed_seconds", "error", "trace_sha256", "reason", "usage_v2"))
                 if row.get("reservation") != reservation or row.get("state") not in ("completed", "failed", "uncertain", "denied_before_provider"):
                     raise DreamError("Dream budget return differs from its reservation", 3)
                 if row["usage"] is not None and not isinstance(row["usage"], dict):
@@ -132,12 +135,17 @@ class Job:
                     from . import dream_native
                     trace = dream._json(dream_run._read(fd, name.replace("reservation-", "trace-", 1), dream_native.MAX_TRACE * 2))
                     if (row.get("trace_sha256") != digest(canonical(trace)) or
-                            trace.get("input_sha256") != reservation["submitted_sha256"]):
+                            trace.get("input_sha256") != reservation["submitted_sha256"] or
+                            trace.get("request_sha256") != reservation.get("request_sha256")):
                         raise DreamError("Budget native trace binding changed", 3)
                     if row["state"] == "completed":
                         _, traced_usage = dream_native.parse_trace(trace["stdout"].encode(), trace["harness"])
                         if traced_usage != row["usage"]:
                             raise DreamError("Budget usage differs from its native trace", 3)
+                    if "request_sha256" in reservation:
+                        from . import dream_usage
+                        if row.get("usage_v2") != dream_usage.normalize(row["usage"], trace.get("usage_mapping")):
+                            raise DreamError("Normalized usage differs from the native trace mapping", 3)
             else:
                 row = dict(reservation=reservation, state="uncertain", usage=None)
             self.calls.append(row)
@@ -189,7 +197,7 @@ class Job:
             totals["reported_cost_usd"] = str(cost)
         left = self.remaining()
         cap = self.header["limits"]["max_native_calls"]
-        return dict(schema_version=1, operation="dream_budget", contract=CONTRACT, job_id=self.header["job_id"],
+        result = dict(schema_version=1, operation="dream_budget", contract=CONTRACT, job_id=self.header["job_id"],
             directory=str(self.path), state="budget_exhausted" if not left or len(self.calls) >= cap else "available",
             limits=self.header["limits"], started_at=self.header["started"]["wall"], deadline=self.clock_header()["deadline"],
             retry_windows=self.retry_windows,
@@ -198,6 +206,10 @@ class Job:
                 for state in ("completed", "failed", "uncertain", "denied_before_provider")},
             usage=totals, hard_token_ceiling_supported=False, hard_currency_ceiling_supported=False,
             note="Native invocation counts include reserved/unknown outcomes, not hidden HTTP retries. Native-reported tokens/currency may be incomplete; unknown usage is never zero.")
+        if any("request_sha256" in row["reservation"] for row in self.calls):
+            from . import dream_usage
+            result["normalized_usage"] = dream_usage.aggregate(self.calls)
+        return result
 
     def fail(self, reason, task=None):
         report = self.summary()
@@ -269,7 +281,7 @@ class Job:
             raise DreamError("Frozen budget advice changed after its native reservation", 3)
         return value
 
-    def reserve(self, task):
+    def reserve(self, task, *, request_sha256=None):
         self.check(task)
         if task["assignment_id"] not in self.tasks:
             raise DreamError("Native request lacks frozen budget advice", 3)
@@ -279,6 +291,8 @@ class Job:
             assignment_id=task["assignment_id"], base_assignment_id=self.tasks[task["assignment_id"]],
             run_id=task["run_id"], role=task["role"], reserved_at=_clock()["wall"], assignment_bytes=len(canonical(task)),
             submitted_sha256=digest(canonical(task)))
+        if request_sha256 is not None:
+            record["request_sha256"] = request_sha256
         _store(self.fd, "reservation-" + str(len(self.calls)).zfill(6) + ".json", record)
         self.calls.append(dict(reservation=record, state="uncertain", usage=None))
 
@@ -292,11 +306,13 @@ class Job:
         class Scoped:
             version = getattr(native, "version", "budget-replay")
 
-            def __call__(self, harness, model, task, schema, deadline):
+            def __call__(self, harness, model, task, schema, deadline, *, request=None):
                 index = next((i for i, row in enumerate(job.calls) if row["reservation"]["assignment_id"] == task["assignment_id"]), None)
                 if job.readonly or index is None:
                     raise DreamError("Native invocation has no writable job reservation", 3)
                 row = job.calls[index]
+                if (request or {}).get("sha256") != row["reservation"].get("request_sha256"):
+                    raise DreamError("Native prompt envelope differs from its reservation", 3)
                 with job.invoke_lock:
                     if task["assignment_id"] in job.invoked:
                         raise DreamError("A reserved provider request cannot be silently repeated", 3)
@@ -309,7 +325,8 @@ class Job:
                     job.fail(row["reason"], task)
                 started = time.monotonic()
                 try:
-                    result, usage, trace = native(harness, model, task, schema, min(deadline, job.deadline(task)))
+                    result, usage, trace = native(harness, model, task, schema, min(deadline, job.deadline(task)),
+                        **(dict(request=request) if request is not None else {}))
                 except BaseException as exc:
                     row.update(state="uncertain", elapsed_seconds=time.monotonic() - started, error=type(exc).__name__)
                     _store(job.fd, "returned-" + key + ".json", row)
@@ -317,6 +334,9 @@ class Job:
                 dream_run._store(job.fd, "trace-" + key + ".json", canonical(trace) + b"\n")
                 row.update(state="completed" if result is not None else "failed", usage=usage,
                     elapsed_seconds=time.monotonic() - started, trace_sha256=digest(canonical(trace)))
+                if request is not None:
+                    from . import dream_usage
+                    row["usage_v2"] = dream_usage.normalize(usage, trace.get("usage_mapping"))
                 _store(job.fd, "returned-" + key + ".json", row)
                 if not job.remaining():
                     job.fail("elapsed allowance exhausted during native work", task)

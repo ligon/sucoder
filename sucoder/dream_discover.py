@@ -4,7 +4,7 @@ from __future__ import annotations
 import fnmatch
 import re
 
-from . import dream, dream_budget, dream_roles, dream_run, dream_view, dream_leads
+from . import dream, dream_budget, dream_roles, dream_run, dream_view, dream_leads, dream_navigation
 from .dream import DreamError, canonical, digest
 
 
@@ -24,7 +24,7 @@ MAX_INVENTORY_BYTES = 16 * 1024 * 1024
 # country.py lacked a function it defines.  2: a file path names that file, a
 # path naming nothing is "no_such_path", and one git grep at the pinned commit
 # finds the matching files, so files without a match are never read.
-NAVIGATION = 2
+NAVIGATION = 3
 # Both briefs end with the turn rules the first live experience dreams (2026-11-12)
 # showed were missing: an explorer spent its last call on a read expecting a later
 # finish turn, and another put unverified caveats in failures, which rejects the job.
@@ -80,6 +80,7 @@ SCHEMA = dream_roles.object_schema(dict(
     path=TEXT, query=TEXT, offset=NUMBER, start=NUMBER, end=NUMBER,
     selections=dream_roles.array_schema(dream_roles.object_schema(dict(path=TEXT, start=NUMBER, end=NUMBER)), 6),
     topic=TEXT, rationale=TEXT, questions=dream_roles.array_schema(TEXT, 8)))
+SCHEMA_V3 = dream_roles.object_schema(dict(SCHEMA["properties"], cursor=TEXT))
 
 
 class Inventory:
@@ -90,7 +91,7 @@ class Inventory:
     size, so an inspection replay reproduces its lookups after a resumed
     session grows.
     """
-    def __init__(self, source, commit, sessions=None, navigation=None):
+    def __init__(self, source, commit, sessions=None, navigation=None, *, limits=None, processing=None, session_coverage=None):
         self.source, self.commit = source, commit
         self.navigation = NAVIGATION if navigation is None else navigation
         raw = source.git("ls-tree", "-r", "-l", "-z", commit, limit=MAX_INVENTORY_BYTES)
@@ -116,8 +117,13 @@ class Inventory:
         self.manifest = dict(commit=commit, files=list(self.files.values()), omitted=self.omitted)
         if sessions is not None:
             self.manifest["sessions"] = list(sessions)
+        self.session_coverage = session_coverage or dict(state="complete")
+        if self.navigation >= 3 and sessions is not None:
+            self.manifest["session_coverage"] = self.session_coverage
         if len(canonical(self.manifest)) > MAX_INVENTORY_BYTES:
             raise DreamError("Project inventory exceeds its bounded metadata allowance", 3)
+        if self.navigation >= 3:
+            self.navigator = dream_navigation.Navigation(self, limits, processing)
 
     def notes(self):
         return [name for name in self.files if any(fnmatch.fnmatchcase(name, p) for p in NOTES)][:64]
@@ -132,6 +138,8 @@ class Inventory:
 
     def _window(self, row, start, end, cap):
         """Complete-line raw window [lo, hi) of a pinned session and its exact rendering."""
+        if self.navigation >= 3:
+            return self.navigator.window(row, start, end, cap)
         raw = dream_view.read_range(dict(path=row["path"], thread_id=row["thread_id"], byte_start=0,
                                          byte_end=row["bytes"]), self.source.deadline)
         starts = [0] + [m.end() for m in re.finditer(b"\n", raw)]
@@ -188,6 +196,9 @@ class Inventory:
                     raise DreamError("Selected evidence exceeds 65536 bytes; select narrower windows or line ranges")
                 units.append(dict(unit_id="explored-" + str(number + 1), kind=dream_view.KIND, shareable=True,
                                   locator=dict(path=row["path"], thread_id=row["thread_id"], byte_start=lo, byte_end=hi)))
+                if self.navigation >= 3:
+                    units[-1]["processing"] = self.navigator.processing
+                    units[-1]["expected_raw_sha256"] = self.navigator.last_window["raw_sha256"]
                 continue
             raw = self.raw(path)
             lines = raw.split(b"\n")
@@ -210,6 +221,12 @@ class Inventory:
 
     def lookup(self, request, remaining):
         path, action = request["path"], request["action"]
+        if self.navigation >= 3:
+            invalid = self.navigator.validate(request)
+            if invalid is not None:
+                return invalid
+            if path == SESSIONS or path.startswith(SESSIONS + "/"):
+                return self.navigator.lookup(request, remaining, getattr(self.navigator, "producer", "local"))
         if path:
             dream._path(path)
         cap = min(16384, remaining)
@@ -417,22 +434,35 @@ class Explorer(dream_roles.Coordinator):
         super().__init__(plan, fd, settings["harness"], settings["model"], deadline, transport,
             native_version=version, attempt=attempt)
         self.header, self.inventory, self.cap = header, inventory, cap
+        self.attempt = attempt
+        self.schema = SCHEMA_V3 if header.get("navigation_version", 1) >= 3 else SCHEMA
+        self.turn_schema = self.schema
         self.experience = header.get("mode") == "experience"
         self.brief = EXPERIENCE_BRIEF if self.experience else BRIEF
+        if header.get("navigation_version", 1) >= 3:
+            self.brief += dream_navigation.BRIEF
+            self.inventory.navigator.bind(header)
         if "leads" in header:
             self.brief += dream_leads.BRIEF
-        self.run_id = digest(canonical([CONTRACT, plan["plan_id"], attempt, self.expected_version, self.brief, SCHEMA]))
+        self.run_id = digest(canonical([CONTRACT, plan["plan_id"], attempt, self.expected_version, self.brief, self.schema]))
+        if "prompt_profile" in header:
+            from . import dream_prompt
+            dream_prompt.attach(self, header["prompt_profile"])
+        from . import dream_submission
+        dream_submission.attach(self, header.get("submission_contract"))
 
     def make_assignment(self, role, inputs):
         value = dict(contract=CONTRACT, run_id=self.run_id, role=role, brief=self.brief, input=inputs,
-            input_sha256=digest(canonical(inputs)), result_schema=SCHEMA)
+            input_sha256=digest(canonical(inputs)), result_schema=self.result_schema(role))
         value["assignment_id"] = digest(canonical(value))
         return value
 
     def result_schema(self, role):
-        return SCHEMA
+        return self.turn_schema
 
     def prepare(self):
+        if self.header.get("navigation_version", 1) >= 3:
+            return dream_navigation.prepare(self)
         history: list[dict] = []
         used = len(canonical(self.header["leads"])) if "leads" in self.header else 0
         for step in range(self.cap):

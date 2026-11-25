@@ -1,8 +1,402 @@
-#+TITLE: SuCoder consolidated on main in the canonical mirror; publication pending
-#+DATE: 2026-11-14
-#+STATUS: COMPLETE
+#+TITLE: Twelve-session dream campaign: twelve audited
+#+DATE: 2026-11-25
+#+STATUS: COMPLETE -- TWELVE TERMINAL TEST OUTCOMES AUDITED
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Completed twelve-session goal, 2026-11-25
+
+Start with the [[file:handoffs/2026-11-25-dream-twelve.org][dated closeout handoff]] for the implementation queue, relevant source/tests, runtime selection, evidence and source transport.
+This current section and that note supersede operational statements in the historical sections below.
+
+The user requested: "test with repeated dreams, identifying problems as the process goes along and either repairing or filing an issue. Repeat 12 times."
+All twelve fresh substantive launches now have terminal independently audited outcomes, six project and six experience sessions.
+The [[file:../docs/dream/runs/twelve-session-campaign.org][campaign report]] records every session, the [[file:../docs/dream-twelve-ledger.org][grounding ledger]] the source invariants, and the authoritative private record is =/home/coder/.sucoder/logs/dream-twelve/2026-11-25/campaign.json=.
+Do not restart an old job, replenish an elapsed allowance or run a thirteenth session under this goal.
+
+Five publications are retained with precision advisories (sessions 1, 3, 7, 9 and 10), one is reviewed unchanged (4), four are withdrawn additively (2, 5, 8 and 11), one stops after independent review requests revision (6), and one stops during authorship (12).
+These are twelve tested outcomes, not twelve successful publications or twelve completed model reviews.
+There are 175 native invocations, 174 completed and one failed; the failed author's usage is unknown and remains charged.
+No original wallet is extended; all use 32 calls/1,800 seconds with 600 seconds/three calls protected for closeout.
+Native invocations are not hidden model/API retry counts, and no hard token/currency ceiling or billing amount is claimed.
+
+Session 12, job =1b9dfe6d4fe5422eb7d21d80bba5454d=, uses runtime =2063680=, project =7e74abb= and authoring v9.
+Thirteen discovery calls complete; its author runs for 502.48 seconds and hits the original ordinary-work cutoff with no StructuredOutput proposal, assistant text, candidate or independent review.
+The failure marker is budget_exhausted, read-only status is incomplete, and the matching worker is gone.
+It is a substantive terminal failed test, not a setup refusal or reviewed wiki result.
+Issue 120 records the missing bounded draft progress; preserve the reviewer reserve rather than silently extending time or repeating a started call.
+The 210 job files remain unchanged, and memory does not advance.
+
+Current private memory is =70851cc6bdaea7e6854ab06f24d00b3a4843f670=, restoring exactly the accepted =26335ccb= tree after session 11.
+Session 11's rejected =5f3726c2= remains its parent; the twenty-file managed copy is exact and read-only.
+Native receipts/status retain their historical published events after later withdrawals.
+All 2,611 job files and 45 admitted source units authenticate against their saved manifests/hashes; raw transcript spans and session-11 lookups are also checked.
+No campaign workers or new native Claude processes remain; the older unrelated Claude process is not touched.
+
+The local v9 reason correction is =206368041f8b3a104d92ff7dc66ea492ed53e060=; the module status-docstring correction is =05dcce3da97dc483889f19a343d7359af0c89671=.
+The source regression records 135 passes plus an Org timeout that passes serially under unchanged limits; all seven new cases pass, protocol tests pass 68, and reply-probe tests pass 40.
+All seven initial source-test failures reconcile with later passing cases. Mypy, current ASCII/Python 3.9 grammar and Org exports pass; no unfiltered final-source full-suite pass is claimed.
+The quiet-host native catalog passes 28 offline captures for fourteen variants, while the earlier certification deadline failure remains recorded.
+Both v8 and v9 pinned runtimes remain byte-identical; old native jobs replay without provider/build/authentication access.
+The installed CLI remains older: these trials use explicitly pinned source and the existing Poetry interpreter, not a privileged deployment.
+
+Every identified problem has a repair or filed-issue disposition, verified in the private closeout issue snapshots.
+Issues 107 and 109 have the local corrections above; their broader/publication conditions remain open.
+Issues 108, 111-120 and existing issue 93 record semantic false passes, invalid targets, retrieval/context gaps, costly rewrites, JSON retries, provenance starvation, zero-tail clipping and bounded authorship failure.
+The final report distinguishes each disposition; filing is not a claim that the underlying runtime defect is fixed.
+The next priorities are deterministic clipping and relevant memory/provenance selection, then bounded draft progress and claim-focused review.
+Any rendering correction must preserve frozen claude-view-v1 replay, and native-visible contract changes keep the certification boundary.
+
+All source work is on local main. Never push private memory or bundle private-only objects.
+The campaign source-only transfer at =/home/coder/.sucoder/logs/dream-twelve/2026-11-25/closeout/main-source.bundle= covers =b749d02= and remains unchanged.
+The updated main transfer including the completed handoff is =closeout/handoff-source/main-source.bundle= under the same campaign root; its =source-release.json= records the exact head, hash and exclusion audit.
+GitHub source publication uses maintainer-side transport because =ligon.pushurl=no_push=; no default installation is changed here.
+The authoritative campaign verification is =closeout/completion-audit.json= in that directory, bound to =b749d02=; the documentation-only handoff update is checked separately in =closeout/handoff-source/handoff-verification.json=.
+If that file is absent, finish documentation/transport verification before marking the goal complete; do not start more inference.
+
+Sue.
+
+* Previous v8 semantic review gate, 2026-11-24
+
+The human said "Carry on" after E9 exposed the failed semantic acceptance gate.
+Implementation =533b58e= is on local main; the [[file:../docs/dream/semantic-review.org][contract]] and [[file:../docs/dream/runs/review-calibration.org][calibration report]] describe its scope and limits.
+Fresh plans freeze v8, with bounded coordinator-generated differences for every changed output including the index, and mandatory per-page checks for support, scope, time, causality, outcomes, attribution, preservation and summaries.
+Missing, stale, failed or uncertain judgments block acceptance; old v1-v7 replay stays frozen and fresh v8 work cannot reuse older acceptance as proof of this gate.
+The implementation reuses exact handles, context authority/accounting, the full repair/review loop and the sole publisher.
+
+The regression run passes 198 cases.
+After final context/proof fixes, 41 gate/context cases and 20 reuse/support/Claude lifecycle cases pass.
+Mypy, ASCII/Python 3.9 grammar and Org exports pass; no unfiltered full-suite pass is claimed.
+Read-only E7/E8/E9 replay forbids native/build/authentication access and preserves all 250/275/130 job files.
+The new fourteen-variant Claude Code 2.1.330 catalog certifies in 28 offline captures using dummy credentials.
+
+A publication-disabled native calibration used a fresh ceiling of four calls/600 seconds on the coder subscription with =claude-sonnet-4-6=.
+It rejected the withdrawn draft and accepted the operator correction; the third, seeded regression timed out at the original deadline and remains unknown.
+Two invocations completed and one failed; no fourth call, retry or extension occurred.
+The reviewer still falsely passed topic-level scope, negative-outcome, process-linkage and project-identity judgments, so matrix completion does not establish semantic correctness.
+Both completed invocations also retried StructuredOutput internally after exceeding 512-character reason limits, increasing work inside each charged native invocation.
+
+Artifacts are under =/home/coder/.sucoder/logs/dream-review-gate/2026-11-24/=.
+The source-only =sucoder-main-source.bundle= there is the maintainer-side transfer artifact; it contains main only, never private memory.
+The final read-only audit verifies exact completed replies/manifests, unchanged =533b58e= runtime bytes and unchanged E9 artifacts and memory =fb695456=.
+The default installed CLI and =sucoder-v7= release remain older; this work is committed source, not a privileged installation.
+No native job or further inference is running or queued, and no new memory publication occurred.
+Next work is claim-focused review plus bounded concise output without the observed schema-retry penalty, in a new contract preserving v8; another full publication trial should follow that calibration.
+GitHub publication still uses maintainer-side transport because =ligon.pushurl=no_push=; private memory must never be pushed.
+
+Sue.
+
+* Previous v7 live trial E9, 2026-11-24
+
+The human said "Okay, let's go" after the reviewed v7 implementation and proposal for deployment/live validation.
+The [[file:../docs/dream/runs/sucoder-e9.org][E9 report]] records the result and limitations.
+A source-only frozen release at =/home/coder/.local/share/sucoder/releases/4c568669c6f2d6afe6527c563eb4b73dfa2eb243/src= is available through =/home/coder/bin/sucoder-v7=.
+It uses the existing Poetry interpreter, explicit release PYTHONPATH and PYTHONSAFEPATH.
+The default root-owned system installation and relay target remain older; no privileged install was attempted.
+Use =sucoder-v7 dream ...= for the pinned implementation.
+
+Job =07f2f7d6c1834d53896e52e181edf9dd= used Claude Code 2.1.330, =claude-sonnet-4-6=, the coder Max subscription and stable delivery against project/runtime =4c56866=.
+Its original ceiling was 32 calls/1,800 seconds, with thirty seconds and three calls for closeout.
+It completed eight calls in 845.32 seconds: five discovery, one author, one mechanical repair and one independent reviewer.
+All handles resolved; the repair was needed only because typographic quote changes in the otherwise unchanged launch-traps section triggered strict changed-anchor coverage.
+The reviewer accepted with three advisories and published private memory =602ba351e092520bb65b17d953d4f348ba12699b=.
+
+Root's frozen source-quality check rejected the publication: it made Landlock the cause of four differently caused refusals, strengthened fleet-wide/current claims, asserted an unobserved negative transfer outcome, weakened the particular-process qualification and lost Run 6's explicit SuCoder identity.
+An additive operator revert =fb6954565c4eeccec1b712602c3e7e3092353b8d= restores exactly the prior =4b529b1= tree with =602ba351= retained as its parent.
+The read-only wiki copy has been refreshed and matches that restored tree.
+The original job still reports its historical published event, as the memory contract specifies after a later revert; do not mistake that for current acceptance of its contents.
+All 130 job files, raw native replies and publication evidence remain unchanged.
+No additional inference, native retry or elapsed-window extension occurred; 24 calls remained unused.
+
+Artifacts are under =/home/coder/.sucoder/logs/dream-handles-live/2026-11-24/=.
+Read-only audits before and after withdrawal forbid native/build/authentication access and verify assignment, submission, trace, usage, registry and exact citation bindings.
+An unreviewed, unpublished correction proposal retains the useful dated run table with restored source qualifications.
+The run reports 143,348 input tokens, 6,764 cache reads and 46,759 output tokens; this is not a controlled savings comparison or a billing statement.
+No new documentation improvement from E9 remains active.
+The next priority is a blocking source-quality check for claim changes and index summaries; byte-preserving edits remain useful for avoiding mechanical repair work.
+No native job or follow-up inference is running or queued.
+Private memory must never be pushed; GitHub publication remains on the existing maintainer-side transport.
+
+Sue.
+
+* Completed evidence handles implementation, 2026-11-23
+
+The human requested review of the most recent findings and proceeding with implementation.
+The v7 handle slice is committed on local main at =fbc6d14= after grounding commit =15bffb2=.
+The [[file:../docs/dream/evidence-handles.org][contract]] and [[file:../docs/dream/authoring-review.org::#handles-review][review record]] describe the implementation and resolved findings.
+Initial handles follow accepted-prefix projection; bounded authenticated lookback may add exact delivered spans.
+Python resolves private copies of reference and action citations, retaining immutable native replies, exact readable receipts, full repair and independent review.
+The latest reviewer found no remaining scoped blocker after cached-unavailable accounting, native authority boundaries, combined diagnostics and receipt-format corrections.
+Phase checkpoints, logical repair rounds, protected reviewer capacity and byte-preserving edits remain separate work.
+
+The sixteen-module run reports 256 passes and four failures: two stale fixture expectations and two lifecycle cases exceeding the 300-second test ceiling with four workers.
+The corrected fixture and final feature/adaptor group passes all 48 cases with two workers.
+Both lifecycle cases pass serially under the same 300-second ceiling; no runtime allowance was raised.
+All twelve runtime modules pass mypy, ASCII and Python 3.9 grammar checks; the new module also passes checking of untyped bodies.
+Org exports pass, and no unfiltered full-suite pass is claimed.
+Claude Code 2.1.330 passes all 28 offline captures for fourteen current policy/schema variants, using dummy credentials and no paid inference; the resulting profile loads successfully.
+Read-only current-source replay of E7 and E8 preserves all 250/275 job files, their published/incomplete states and memory =4b529b1=, with native/build/authentication entrypoints forbidden.
+Artifacts are under =/home/coder/.sucoder/logs/dream-handles/2026-11-23/=.
+The source-only =sucoder-main-source.bundle= there is the transfer artifact for this closeout; it contains main only, never private memory.
+No new live dream, paid inference, memory publication, deployment or GitHub write has occurred.
+Historical completed/expired job artifacts and private memory remain unchanged.
+The installed CLI remains older; a later bounded trial must use the checked source runner or an explicit deployment.
+GitHub publication remains on the maintainer-side transport because =ligon.pushurl=no_push=.
+No additional inference is running or queued.
+
+Sue.
+
+* Completed authoring implementation/evaluation goal, 2026-11-23
+
+The human requested implementation after review, a Claude dream sequence and evaluation of concrete documentation improvements.
+The diagnostics-first slice is committed at =0ff65ab4c4fdad0af2e469c5914a15b399355650= on =coder/dream-main-integration=.
+It preserves v1-v5 replay, freezes new jobs to v6 and retains full-proposal repair and independent review.
+Patch/checkpoint protocols, logical repair rounds, role cost controls and protected reviewer capacity remain separate milestones.
+The [[file:../docs/dream/runs/authoring-sequence.org][sequence report]] records the evidence and limitations.
+
+All native evaluation is finished; no job is running and no retry or elapsed-window extension was granted.
+All runs used the same source commit, Claude Code 2.1.330, =claude-sonnet-4-6=, the coder Max login and stable delivery.
+The native build differs from E6's 2.1.323, so no controlled cost comparison is claimed.
+
+- A1: a test-origin synthetic draft with ambiguous quotation and missing Talk coverage was repaired together by one genuine Claude full-proposal repair, then independently accepted. Two calls under six calls/twenty minutes; publication disabled.
+- E7: job =0b8b41194c844a46b2b93953afb724fb= published private memory =4b529b148462152330eac7f5fc33519cc4520f28= after seventeen completed calls under its original 32-call/thirty-minute limit. One repair corrected four quotation-format errors. The new confined-node decision record is useful, but root found implementation/test wording and branch premises stronger than its admitted fragments establish; its reviewer accepted without findings.
+- E8: job =948b59a59a90418abfe0d33683ecaaed= used committed-project evidence. Nineteen reservations comprise eighteen completed calls and one timed-out repair. The author required five mechanical corrections; no reviewer ran, no candidate was created and memory remained =4b529b1=. The worker records budget_exhausted; read-only status is incomplete. Failed-call usage is unknown and remains charged.
+
+Private audits under =/home/coder/.sucoder/logs/dream-authoring-live/2026-11-23/= forbid provider/build/authentication access, replay exact completed bodies and prompt/submission/trace/wallet bindings, preserve all job files and verify each publication outcome.
+The failed E8 trace is in =budget/trace-000018.json=; the budget raises before the ordinary role trace/result is written, so their absence is not a lost completed result.
+The source-quality keys were frozen without reading the author outputs, outside native construction inputs.
+The sequence uses 38 live reservations, with 37 completed and one failed.
+Known token subtotals exclude that failed call; no hard token/currency cap or invoice claim is made.
+E6 remains incomplete with its original artifacts and expired window unchanged.
+
+The source checks are complete: the fifteen-file run passed 300 cases with three fixture/assertion errors, all corrected in a passing 26-case follow-up; the bounds group passes six and historical pre-plan handoff one.
+All eleven runtime modules pass normal mypy, ASCII and Python 3.9 grammar checks; the new module also passes checking of untyped bodies.
+Org exports and the complete 28-capture quiet-host Claude certification pass.
+The first certification stopped at 25 captures under the same 120-second ceiling and remains recorded as unsuccessful.
+E5/E6 historical audits also passed before the new publications.
+No unfiltered current-source full-suite pass is claimed.
+
+Local main was fast-forwarded from =cde76f8= through report commit =0e859fd=, preserving both source histories and the diagnostics implementation =0ff65ab=.
+The checked runtime/tests/configuration trees remain byte-identical to =0ff65ab=; only closeout documentation follows it.
+GitHub main was rechecked at =b78052c= and is an ancestor of local main.
+Private memory remains =4b529b1= and was not merged into main; the private E7 topic/receipt blobs are absent from main's object closure.
+A source-only bundle of final main is the last transfer artifact under =/home/coder/.sucoder/logs/dream-authoring-live/2026-11-23/=.
+It contains only the main ref; private memory must never be pushed.
+GitHub publication remains pending on the established maintainer-side transport: =ligon.pushurl=no_push=, and the connected commit API cannot preserve the exact local authors/history.
+The installed CLI has not been deployed; these checks and runs explicitly used the source checkout through PYTHONSAFEPATH/PYTHONPATH.
+
+Observed next priorities are evidence handles and byte-preserving edits, smaller relevant prior/support context, verified role cost controls with reviewer capacity, and explicit source/date/outcome checks for claims and question premises.
+Those follow-ups are not implemented by the diagnostics slice.
+The current diagnostics/evaluation goal is complete; no further inference is running or queued by this handoff.
+
+Sue.
+
+* Authoring design red-team review, 2026-11-23
+
+The human requested a red-team review of the =51513c4= authoring design.
+Three independent review contexts covered contract/correctness, recovery/accounting and effectiveness/evaluation; Sue checked and consolidated their source/test evidence in the [[file:../docs/dream/authoring-review.org][review record]].
+Three high-priority revisions remain: preserve existing semantic/disposition and duplicate-reference repairs, restore authenticated context authority/accounting on phase continuation, and distinguish logical repair rounds from native attempts.
+Before pilot sign-off, protect reviewer call capacity as well as time and require actual patch-route coverage independently of a legitimate no-change disposition.
+A small held-out semantic/reader quality floor is an advisory refinement before effort/length changes.
+The review found no blocker to milestone 1 as a separate diagnostics slice, but the full first release needs revision.
+Only review status/links were added to the plan; its substantive requirements are unchanged and no runtime implementation, dreaming call, main update or memory publication occurred.
+
+* Authoring effectiveness plan, 2026-11-23
+
+The human requested a plan after the E6 diagnosis.
+The [[file:../docs/dream/authoring-plan.org][implementation plan]] and [[file:../docs/dream-authoring-ledger.org][grounding ledger]] are prepared for review; no runtime changes or new native calls were made for this request.
+Start with a versioned authoring contract that states the actual strict coverage rule and reports both E6 defects together with their paths/targets.
+Then add bounded reference patches and explicit draft-stage recovery, retaining source/trace proofs and global charges without treating a draft as accepted progress.
+Prepare supported role controls and genuinely protected review time before a controlled pilot; evidence handles, coordinator-generated structure and discovery compaction follow as measured improvements.
+The plan preserves historical replay, tool/admission boundaries, independent review and the existing conditional main-merge gate.
+Its proposed six-call/twenty-minute disposable pilot and any later real trial need separate explicit authorization after offline preparation.
+
+* Claude live trial and checked runtime corrections, 2026-11-23
+
+The human requested a Claude dream and made merging conditional on its success.
+Job =dd873557ff244bcda713a7905a4c77de= is =incomplete= after twenty reservations: fourteen discovery calls, an author and a repair completed; four earlier calls failed.
+The repaired draft failed mechanical citation coverage, so no independent reviewer was called and no memory was published.
+Private memory remains =30e98aa7dfd5182ed73a820d94ffb053cfa11449= and main remains =cde76f8=.
+The canonical mirror checks out the clean =coder/dream-main-integration= candidate branch.
+No further inference is running.
+
+The coder account's Claude Max login was refreshed and matched the frozen native profile.
+The human explicitly approved a fresh 1,800-second window under the original cumulative 32-call ceiling, from 16:07:15 to 16:37:15 UTC.
+Attempt 4 completed fourteen discovery calls, then its author exhausted a separate hardcoded 180-second role cap.
+A tested correction lets budgeted roles use the shared deadline and closeout reserve, preserving the earlier cap for unbudgeted callers.
+Explicit attempt 5 reused the saved discovery without new explorer calls or a time extension.
+Its author completed in 439.57 seconds and repair in 248.57 seconds; the last native return was 1,762.50 seconds into the renewed window.
+All failed reservations remain charged and preserved.
+Twelve calls remain under the original ceiling, but the time window has elapsed; another native attempt requires a fresh time allowance.
+
+Discovery selected two previously unread transcript windows about confined =collaborate --node= pinning, totaling 14,557 rendered bytes.
+The author used a =merge-outcome= quotation that occurs twice in those windows.
+The repair made the quotations unique but left the proposed =talk= section without a source reference.
+The remaining improvement is to report all independent citation/anchor errors together, with paths and targets, so one repair can address both defects.
+The author/repair's reported thinking counters and latency also warrant bounded effort/output controls before another run.
+Neither improvement was implemented; the rejected drafts remain private diagnostic material.
+
+The [[file:../docs/dream/runs/sucoder-e6.org][E6 report]] records all attempts, usage and acceptance limits.
+The private =audit-run.py= and =final-audit.json= are under =/home/coder/.sucoder/logs/dream-claude-live/2026-11-23/=.
+The read-only audit forbids native startup, verifies all sixteen metadata-free completed replies against frozen assignments, requests, manifests, traces and wallet entries, re-hashes navigation/source receipts and checks that every job file and private memory remain unchanged.
+There are no uncertain reservations or new identity-copying failures.
+Completed calls report 365,585 normalized input tokens, including 54,295 cache reads, and 59,385 output tokens; the timed-out author's usage is unknown.
+These counters establish subscription cache activity, not comparative savings or complete whole-job usage.
+
+The inert thinking-progress parser correction is =253a103=, after grounding =64e4ffe=; its 55 focused parser/usage/certificate cases pass.
+The deadline correction is =60bc79c=, after grounding =26b7962=; its eight new cases and final role/budget/native/submission/reader group pass all 120 tests.
+Both runtime modules pass mypy, ASCII and Python 3.9 grammar checks.
+GitNexus marks =Coordinator.call= CRITICAL, with eight direct dependants and 21 upstream symbols at depth two; the final scope check matches the expected coordinator changes.
+The canonical index was refreshed with =--skip-agents-md --index-only=.
+
+The candidate preserves both source histories in integration commit =56afd5f=, including GitHub main =b78052c=, all fourteen upstream commits and the 41 earlier local commits.
+The earlier runtime merge's full suite reports 3,434 passed, 53 failed and one skipped: all 38 prior Codex-state failures, five 120-second Org timeouts and ten parallel timer-lock collisions.
+All ten timer cases pass serially; the five slow cases pass with two workers and a 300-second test ceiling.
+The later deadline correction has the final 120-case verification; no unfiltered final-source full-suite pass is claimed.
+No main update, GitHub write, installed deployment or additional native retry followed.
+The original mirror still has one registered worktree; validation clones remain outside that worktree set under the private log directory.
+
+* Live scripted dream E5, 2026-11-17
+
+The human requested a live trial after implementation.
+Job =5600369dc0d54b2b85e4a70e08dcb9ea= ran at main =d168f36= through the existing Codex subscription, with =gpt-6.1-sol=, =legacy= delivery and the approved 32-call/1,800-second bounds.
+It published reviewed private memory =30e98aa= in 358.3 seconds using 19 calls: 16 discovery, one author, one duplicate-reference repair and one independent reviewer.
+All nineteen native replies are metadata-free bodies; Python attached the correct frozen identifiers and read-only replay reconstructed every exact saved result and usage without native access.
+No identifier mismatch, failed/uncertain call, new attempt or paid retry occurred.
+
+The published =topics/savio-dream-launch.org= distinguishes the observed November 13 Savio Landlock refusal from a current fleet-wide diagnosis, preserves the human-selected vantage command and observed startup, and keeps publication/transfer outcomes separate.
+Review accepted with one advisory about the human account's own Codex login; the advisory remains a possible page improvement.
+Only the index, new topic and new receipt changed; previous memory files and the index's earlier content were preserved, and the generated topic copy matches the published blob and is read-only.
+The run reported 434,145 input and 10,864 output tokens with zero cached input on all nineteen calls; currency is unavailable.
+The [[file:../docs/dream/runs/sucoder-e5.org][E5 report]] records the source coverage, repair, review and acceptance limits.
+The audit is under =/home/coder/.sucoder/logs/dream-reviews/2026-11-17-5600369d/=.
+No runtime edit, deployment, GitHub push or additional paid run followed; E4 remains untouched.
+
+* Coordinator-owned submissions, 2026-11-17
+
+The human requested progress on scripted assignment submission after E4's reviewer checksum typo.
+New default project/experience jobs now freeze =coordinator-submission-v1= and ask native Codex/Claude agents for a body-only JSON reply.
+Python attaches the frozen assignment ID, input checksum and role; raw native bodies and an immutable pre-reservation submission manifest still bind the semantic task, delivered stdin and output schema.
+Replay reconstructs the envelope from the raw body, rejecting injected metadata, changed/missing manifests and missing/duplicate completion; started work is never automatically repeated.
+Earlier headers/specifications and explicit notes/reader workflows retain their original contracts.
+E3 still reports published and E4 incomplete with native entrypoints forbidden; private memory remains =d6a3621=.
+
+The [[file:../docs/dream/submission.org][protocol]] and [[file:../docs/dream-submission-ledger.org][grounding ledger]] record the design and verification.
+Fresh stable-profile loading requires the current submission contract and complete policy/schema catalog; historical frozen profiles remain replayable.
+The installed Claude passed all 28 synthetic captures for the fourteen body-schema variants, and the resulting profile loads through the stricter gate.
+Codex stable delivery remains uncertified under the existing additional-tool check; ordinary legacy delivery supports the wrapper.
+No API switch, certificate relaxation or paid retry followed.
+
+The final submission/native/cache/CLI group passes 124 tests, including 30 new submission cases; the discovery/recovery/context group passes 75.
+The broader notes/wiki/reader/budget/CLI run passed 240 with one outdated detached fixture; that fixture now obeys the body schema and passes in the final followup.
+All eight changed runtime modules pass mypy, Python 3.9 grammar and ASCII checks; Org export and file links pass.
+The unfiltered full suite was not rerun; the preceding verified unrelated Codex-state baseline is recorded in the caching ledger.
+Verification artifacts are under =/home/coder/.sucoder/logs/dream-submission/2026-11-17/=.
+All useful source and documentation are on local main; installed deployment and GitHub publication remain pending.
+
+* Live experience dream E4, 2026-11-17
+
+The human asked why the preceding cache run had not dreamed; it had used synthetic lookup tasks, and the planned real dream had been omitted.
+Job =ba6031af25fa4c9aa950918b67169dab= then carried out that remaining step through the existing Codex subscription, with =gpt-6.1-sol=, explicit =legacy= delivery and the earlier approved 32-call/1,800-second limits.
+It stopped after 203.6 seconds and 15 calls: 13 discovery, one author and one independent reviewer.
+Discovery found the original human instruction to verify Codex hooks on the first real launch and proposed a small provenance correction while preserving the pending live checks.
+The reviewer mistyped one character in its echoed =input_sha256=; the coordinator rejected the response, and durable status remains =incomplete=.
+No accepted review, memory publication, native retry or manual correction followed; memory remains =d6a3621=.
+The ordinary legacy run reported 22,656 cached input tokens across three calls, 7.43 percent of 304,977 input tokens, demonstrating observed subscription cache reuse without certifying the stable Codex profile or identifying the cached segment.
+The [[file:../docs/dream/runs/sucoder-e4.org][E4 report]] records the evidence, failure, usage and proposed schema constraint against copying errors.
+The read-only audit under =/home/coder/.sucoder/logs/dream-reviews/2026-11-17-ba6031af/= verifies trace/wallet/assignment bindings, navigation receipts and unchanged memory with native entrypoints forbidden.
+Source runtime, installed deployment, authentication and the production cache gate remain unchanged; GitHub publication is still pending.
+
+* Live subscription cache check C1, 2026-11-16
+
+The human authorized two native subscription calls, no coordinator retry, synthetic data only and a five-minute ceiling.
+The [[file:../docs/dream/runs/codex-cache-c1.org][C1 report]] records two successful fresh =gpt-6.1-sol= processes with sealed tool-free configuration and an identical 27,188-byte synthetic policy.
+They reported 12,561 and 12,565 input tokens, zero cached-input tokens on both, and 227 output tokens in total; the wallet interval was 10.95 seconds.
+Both results/identifiers validated, and the persistent wallet contains exactly two completed calls.
+No additional live call, real dream, API-key switch or memory publication followed.
+The result establishes no observed cache reuse and does not identify its cause or show that subscription caching is impossible.
+Production profiles/defaults remain unchanged; private memory remains =d6a3621=.
+Artifacts are =/home/coder/.sucoder/logs/dream-cache-live/2026-11-16/b6acd818986a47baa41f1fe6ce4bb703/=.
+
+* Prompt-caching implementation, 2026-11-16
+
+Followup: the human requested delegated Codex tool-omission research.
+The [[file:../docs/dream/codex-tool-omission.org][investigation]] found an exact-model catalog override and feature controls that omit all tools in two fresh offline captures, with a sealed catalog and skill-instruction injection disabled.
+The initial prefix/settings then match except for Codex's fresh thread-specific cache key; no supported key override was found in the inspected interfaces, and empty-history resume was rejected.
+This removes 15,870 serialized declaration bytes in the synthetic fixture but is not yet integrated or certified for production caching.
+Nine synthetic request-bearing invocations and one zero-turn query used no real credentials or paid inference.
+Runtime, default configuration and the current certificate gate remain unchanged.
+
+The human authorized implementation after the reviewed design.
+The new opt-in =stable= layout commits lossless policy/data/current request envelopes before native-call reservation and adds provider-specific =normalized_usage= without changing old assignment bytes or receipt interpretation.
+New profiles bind native builds, authentication routes and all 14 production policy/schema pairs; =dream certify-cache= uses two fresh synthetic captures per pair under a 120-second/28-request ceiling, no real credentials and no paid inference.
+Claude =2.1.323= passed all 28 captures for =claude-sonnet-4-6= with synthetic native credentials.
+Codex =0.167.1= remains uncertified because its requests exposed additional tools despite restriction flags; stable launch fails before reservation, without automatic fallback.
+No evidence/history caching, live cache hit or monetary saving is claimed.
+The default remains =legacy=, and no live dream, installed deployment, GitHub push or memory publication was performed for this implementation.
+Independent implementation review found and resolved staged-credential identity races, incomplete prefix eligibility checks, insufficient schema coverage and fixture/report bounds.
+The [[file:../docs/dream/prompt-caching.org::#implemented][implemented interface]] and [[file:../docs/dream/prompt-caching-review.org][review record]] describe the behavior and limits.
+Verification artifacts are under =/home/coder/.sucoder/logs/dream-cache-implementation/2026-11-16/=; final test results are recorded in the [[file:../docs/dream-prompt-caching-ledger.org][ledger]].
+Historical E3 job =877ffe18b431459ab29cd8f3d4129738= still reports =published= with native build/authentication/provider access forbidden, retaining private memory =d6a3621=.
+Implementation =3d3f42d= is committed on local main; the final cache group passes 62 tests, the wider role/native/editorial group 223, and the final artifact-bound followup 23.
+The frozen-source full suite reports 3,363 passed, 38 failed and one skipped; every failed test ID matches the previously verified Codex state baseline, with no additional failures.
+The ledger records the final-source refinements covered by focused tests after that full-suite snapshot; no unfiltered final-source full-suite pass is claimed.
+
+* Prompt-caching design and review, 2026-11-16
+
+The human requested a design for Claude/OpenAI prompt caching followed by red-team review.
+The [[file:../docs/dream/prompt-caching.org][design]] separates semantic assignment identity from model-facing policy/data/control segments, preserves evidence at data priority, and normalizes provider-specific usage without rewriting historical receipts.
+It targets initial native instruction-prefix profiles; caching evidence/history remains gated on actual native message/boundary certification.
+Two independent reviewers raised five original findings and an additional installed-launcher incompatibility, all addressed in the [[file:../docs/dream/prompt-caching-review.org][review record]].
+Their final followups found no remaining design blocker within the phased scope.
+The revised contract requires lossless assignment reconstruction, exact inline policy delivery, a sealed schema descriptor and an explicitly pinned wrapper-equivalent vendor-native Codex launcher.
+Synthetic Node/Python probes verified that the Node wrapper drops extra descriptors, the parent-proc workaround is denied under Landlock, and direct inherited schema access succeeds under the unchanged boundary.
+The probe and results are =/home/coder/.sucoder/logs/dream-cache-design/2026-11-16/=.
+No runtime change, native cache certification, live cache hit or monetary saving is claimed; no live dream or paid cache test ran for this design work.
+The [[file:../docs/dream-prompt-caching-ledger.org][grounding ledger]] records the reuse decisions and remaining implementation gates.
+
+* Live navigation dream, 2026-11-16
+
+The human requested another experience session after implementation, retaining the approved 1,800 seconds, 32 native calls and Codex =gpt-6.1-sol=.
+Job =877ffe18b431459ab29cd8f3d4129738= ran at local main =cdb4a8c= and published reviewed memory =d6a3621= in 319.5 seconds using 16 calls: 13 discovery, one author, one mechanical-reference repair and one independent reviewer.
+Automatic discovery resolved to 16 calls; the explorer finished voluntarily before that ceiling.
+It followed two search continuations and read a small window beyond byte 20 million in the previously inaccessible 20.6 MB transcript, with no unavailable/invalid navigation responses or processing errors.
+The correction distinguishes human approval of removing 3.6 while retaining 3.9 compatibility from Sue's later issue-comment interpretation; no separate human reconsideration of dropping 3.9 is established by this selection.
+The prior private review's attribution of that comment to the human was too strong.
+Lookup/receipt source hashes and preservation of unrelated memory passed the post-run audit.
+The [[file:../docs/dream/runs/sucoder-e3.org][E3 report]] records the selection, token usage, remaining efficiency concerns and live acceptance limits.
+Private audit artifacts are under =/home/coder/.sucoder/logs/dream-reviews/2026-11-16-877ffe18/=.
+No second dream or provider retry followed; the memory branch remains private.
+
+* Transcript-navigation implementation, 2026-11-16
+
+On 2026-11-16 the human authorized revision and implementation after the red-team review.
+The revised protocol chooses explicitly unfrozen completion, raw receipts and resumed-record hashes, isolated processing, bounded enumeration, atomic lookup envelopes and frozen per-turn advice.
+An explicit processing policy on new admitted units preserves the execution path of earlier units.
+The independent reviewer found no remaining blockers after implementation hardening; tests use synthetic evidence and fake native transports.
+The final planning/navigation/configuration/CLI/lifecycle group passes all 245 cases.
+The full suite on the private frozen clone at =/home/coder/.sucoder/logs/dream-implementation/2026-11-16-navigation/full-checkout= (=82c9b33ea32c5e18ac07a6652e0e2efa10aca33d=) reports 3,298 passed, 40 failed and one skipped.
+Exactly 38 failures reproduce on unchanged base =359d018=; the other two were outdated fixtures, now corrected and passing in the final regression group.
+The final group also covers a subsequent deadline-forwarding fix and two added cases; no unfiltered final-source full-suite pass is claimed.
+No additional registered worktree was created.
+Historical job =9268f638ee3a4e34afc2911a714cda77= still reports =published= with native startup replaced by an exception, retaining memory =f651866=.
+All ten changed source modules pass mypy; implementation artifacts and source hashes are in the adjacent verification directory.
+
+The human requested a concrete design update after reviewing experience dream =9268f638ee3a4e34afc2911a714cda77= and Anthropic's cookbook.
+The [[file:../docs/dream/transcript-navigation.org][design amendment]] specifies bounded record reads/search, opaque continuation cursors, separate scan/delivery/accepted coverage, and automatic discovery allocation for new version 3 jobs.
+The [[file:../docs/dream-transcript-navigation-ledger.org][grounding ledger]] identifies existing machinery and replay constraints.
+The November 16 implementation adds navigation version 3 and automatic allocation for omitted/null phase limits, with explicit fixed limits and earlier contracts preserved.
+No additional native dream or paid verification was launched for this work.
+
+An independent [[file:../docs/dream/transcript-navigation-review.org][red-team review]] found two high-priority blockers and one medium-priority gap: mixed source revisions can hide search hits, rendering can outlast a deadline within one record, and inventory enumeration remains unbounded before tail probes.
+The author reproduced all three with bounded synthetic inputs.
+The [[file:../docs/dream/transcript-navigation.org::#red-team-gates][implementation gates]] also require concrete cursor-commit and deadline-stopped replay protocols.
+Those findings have been addressed by the revised protocol, implementation and independent followup review.
+The [[file:../docs/dream/transcript-navigation.org::#verification][verification section]] records the current acceptance boundary.
+
+The completed experience dream published =f651866= on =sucoder/memory= using ten native calls in about 172 seconds.
+It qualified stale notes but failed to recover the already-recorded Python 3.6/3.9 decision after three unavailable navigation requests, motivating this amendment.
+The private review is =/home/coder/.sucoder/logs/dream-reviews/2026-11-15-9268f638/review.json=.
 
 * Canonical checkout, 2026-11-14
 

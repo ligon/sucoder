@@ -230,10 +230,15 @@ assert payload and sys.stdin.buffer.read()==b''
 assert not any(os.isatty(fd) for fd in (0,1,2))
 task=json.loads(payload)
 assert task['role']=='explorer'
-result={key:task[key] for key in ('assignment_id','input_sha256','role')}
+schema=json.load(open(sys.argv[sys.argv.index('--output-schema')+1]))
+assert schema==task['result_schema']
+assert not set(('assignment_id','input_sha256','role')) & set(schema['properties'])
+result={}
 result.update(failures=[],action='finish',path='',query='',offset=0,start=0,end=0,
     selections=[],topic='',rationale='Fixture consumed finite non-TTY stdin and selected no evidence.',
     questions=['Which connection deserves attention in a later session?'])
+if 'cursor' in task['result_schema']['properties']:
+    result['cursor']=''
 print(json.dumps(dict(type='item.completed',item=dict(type='agent_message',text=json.dumps(result)))))
 print(json.dumps(dict(type='turn.completed',usage={})))
 ''')
@@ -284,6 +289,7 @@ print(json.dumps(dict(type='turn.completed',usage={})))
     assert "finite non-TTY stdin" in completed["rationale"]
     assert completed["questions"] == ["Which connection deserves attention in a later session?"]
     header = json.loads((job / "job.json").read_text())
+    assert header["submission_contract"] == "coordinator-submission-v1"
     assert header["project"]["path"] == str(workspace[0])
     assert header["settings"]["model"] == "fixture-model" and header["settings"]["max_total_seconds"] == 20
     assert len(list((job / "budget").glob("reservation-*.json"))) == 1

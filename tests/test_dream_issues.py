@@ -11,6 +11,7 @@ from sucoder import cli, dream, dream_issues, dream_memory, dream_wiki
 from tests.test_dream import git, workspace  # noqa: F401
 from tests.test_dream_memory import MEMORY, memory_plan, source
 from tests.test_dream_wiki import EditorTransport, TOPIC
+from tests.dream_submission_fixture import source_text
 
 
 CUSTOM = "correct-summary"
@@ -27,7 +28,7 @@ def reviewed(workspace):
             ":TARGET: evidence-a.org:1-1\n:ACCEPTANCE: Say that summaries do not prove replies.\n:END:\n"
             "Correct the documented claim using the native delivery evidence.\n")
         result["references"].append(dict(path=TOPIC, target=CUSTOM, evidence_status="inference",
-            citations=[dict(unit_id=u["unit_id"], quote=u["text"]) for u in task["input"]["sources"]]))
+            citations=[dict(unit_id=u["unit_id"], quote=source_text(u)) for u in task["input"]["sources"]]))
     result = dream_wiki.run(workspace[2], "sample", Path(plan["plan_path"]), "codex", "fixture",
         transport=EditorTransport(mutate=correction))
     assert result["state"] == "published"

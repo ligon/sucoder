@@ -12,6 +12,7 @@ from typer.testing import CliRunner
 from sucoder import cli, dream_native, dream_reader
 from tests.test_dream import git, workspace  # noqa: F401
 from tests.test_dream_wiki import EditorTransport, POLICY, TOPIC, planned
+from tests.dream_submission_fixture import source_text
 
 
 QUESTION = (
@@ -58,7 +59,7 @@ def test_headless_cli_records_human_question_and_finishes_independent_work(works
         result["pages"][0]["content"] = content.replace(POLICY, "** Talk :editorial:\n" + QUESTION + "\n" + POLICY, 1)
         source = next(s for s in task["input"]["sources"] if s["unit_id"] == "evidence-b")
         result["references"].append(dict(path=TOPIC, target="open-launch-question", evidence_status="inference",
-            citations=[dict(unit_id=source["unit_id"], quote=source["text"])]))
+            citations=[dict(unit_id=source["unit_id"], quote=source_text(source))]))
 
     transport = EditorTransport(mutate=record_question)
     monkeypatch.setattr(dream_native, "Transport", lambda *args, **kwargs: transport)

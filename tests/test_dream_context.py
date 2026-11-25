@@ -10,6 +10,7 @@ from sucoder import dream, dream_context, dream_curate, dream_native, dream_run,
 from tests.test_dream import git, invoke, workspace  # noqa: F401
 from tests.test_dream_curate import NoopTransport, noop_plan
 from tests.test_dream_wiki import OLD, POLICY, TOPIC, planned
+from tests.dream_submission_fixture import native_reply, source_text
 
 
 def request(kind, key="", target="", query="", start=0, end=0):
@@ -17,7 +18,7 @@ def request(kind, key="", target="", query="", start=0, end=0):
 
 
 def native_result(harness, model, task, result, version):
-    if task["contract"] == "source-grounded-wiki-v5":
+    if task["contract"] in ("source-grounded-wiki-v5", "source-grounded-wiki-v6", "source-grounded-wiki-v7", "source-grounded-wiki-v8", "source-grounded-wiki-v9"):
         result.setdefault("task_checks" if task["role"] == "reviewer" else "task_actions", [])
     if harness == "codex":
         events = [dict(type="item.completed", item=dict(type="agent_message", text=json.dumps(result))),
@@ -29,7 +30,7 @@ def native_result(harness, model, task, result, version):
     trace = dict(harness=harness, model=model, version=version, returncode=0,
         input_sha256=dream.digest(dream.canonical(task)), stdout="\n".join(json.dumps(e) for e in events) + "\n",
         stderr="", boundary="linux-landlock-inline-v1")
-    return result, dict(native={}, currency_usd=None), trace
+    return native_reply(task, result, dict(native={}, currency_usd=None), trace)
 
 
 class ContextEditor:
@@ -68,7 +69,7 @@ class ContextEditor:
                     changes=[dict(path=TOPIC, before_sha256=prior["page_sha256"] if prior else dream.digest(OLD.encode()), reason="Correct false memory"),
                         dict(path=dream_wiki.INDEX, before_sha256=dream.digest(next(page["content"] for page in inputs["prior"] if page["path"] == dream_wiki.INDEX).encode()), reason="Add topic")],
                     references=[dict(path=TOPIC, target="reply-proof", evidence_status="inference",
-                        citations=[dict(unit_id=unit["unit_id"], quote=unit["text"]) for unit in inputs["sources"]])])
+                        citations=[dict(unit_id=unit["unit_id"], quote=source_text(unit)) for unit in inputs["sources"]])])
         return native_result(harness, model, task, result, self.version)
 
 

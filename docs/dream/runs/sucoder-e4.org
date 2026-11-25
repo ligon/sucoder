@@ -1,0 +1,94 @@
+#+TITLE: Live experience dream stopped at reviewer identity validation
+#+AUTHOR: Sue
+#+DATE: 2026-11-17
+#+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Result
+
+Experience job =ba6031af25fa4c9aa950918b67169dab= stopped after 203.6 seconds and 15 native calls: 13 discovery, one author and one independent reviewer.
+The reviewer changed one character in its echoed =input_sha256=, so the coordinator rejected the response before accepting the review or publishing memory.
+Durable status is =incomplete=; the worker reported =rejected=.
+Private memory remains =d6a3621bb6095b0d02101467494543c1a4203327=.
+No native retry, new attempt or manual acceptance followed.
+
+Unlike the preceding synthetic [[file:codex-cache-c1.org][C1 cache pair]], this was a real dream over finished project sessions and notes.
+It also reported 22,656 cached input tokens across three discovery calls, 7.43 percent of its 304,977 input tokens.
+This observes cache reuse through the existing subscription route with ordinary legacy delivery; API-key billing was not required.
+The cached segment is unknown, and this observation does not certify the new stable Codex profile or establish a monetary saving.
+
+* Setup
+
+The earlier approved real-dream limits were retained: Codex =gpt-6.1-sol=, 32 native calls and 1,800 seconds, including independent review.
+The source checkout and committed project evidence were pinned to local main =fd32754f8a79c1019c983392b054af70ed41b902= in the canonical coder mirror.
+The native build was =codex-cli 0.167.1=, using existing ChatGPT authentication and explicit =legacy= prompt delivery.
+Automatic discovery resolved to 16 calls; the explorer finished on its thirteenth call.
+
+#+begin_src sh :eval never
+PYTHONPATH=$PWD \
+  /home/coder/.cache/pypoetry/virtualenvs/sucoder-_hu1CrVA-py3.12/bin/python \
+  -c 'from sucoder.cli import app; app()' dream \
+  --harness codex --model gpt-6.1-sol --prompt-layout legacy \
+  --max-total-seconds 1800 --max-total-calls 32 --detach
+#+end_src
+
+This records the stopped run; it does not authorize another launch.
+The preceding C1 experiment used synthetic lookup tasks and did not initiate dreaming.
+The real dream planned after that experiment had been omitted; this run carried out that remaining step.
+
+* Investigation and proposed correction
+
+The explorer followed the existing Codex hook-validation Talk item, using eight searches and four reads before finishing.
+The inventory enumerated three finished sessions completely.
+Searches first found retrospective quotations, then reached the original exchange in session =b3206283-b721-4288-8d4e-591943dffdac=.
+There were no unavailable navigation responses, processing errors or reported gaps.
+The job delivered 43,743 navigation bytes and recorded 57,318,106 raw scan bytes; scans overlap and do not imply unique coverage.
+
+The selected evidence comprises one session window and two committed documentation ranges, totaling 10,282 admitted rendered/UTF-8 bytes.
+The session window contains 6,343 rendered bytes from 36,654 raw bytes.
+Original tool output shows =SessionStart= and =UserPromptSubmit= in disposable-home records.
+Sue then offered a real-model test or verification on the first real launch, and the human answered: "Yes to idle synthesis; verify on first real launch".
+
+The author proposed adding that explicit human choice to =topics/codex-hook-validation.org= while preserving the four pending operational checks.
+It also proposed an open question about the scope of the attention documentation's Esc/no-=Stop= wording.
+These are private proposals; the run did not establish later live-hook acceptance or publish either change.
+The useful discovery was a small provenance correction to an existing topic, rather than broad new coverage of recent work.
+
+* Why publication stopped
+
+The reviewer's raw response says =accept= with no findings, but its =input_sha256= differs from the frozen assignment at zero-based character offset 55: it returned =d= where =c= was required.
+Both values have 64 characters and the same first twelve characters, explaining the identical abbreviated values in the worker's diagnostic.
+Its role and assignment ID match.
+The native process completed successfully, but the invalid identity means its verdict is not an accepted independent review.
+The coordinator correctly stopped rather than accepting that verdict, correcting the returned identifier or repeating the paid call.
+All 15 wallet reservations are marked native =completed=; that transport state does not mean editorial validation succeeded.
+The job stopped with 17 calls still available, so exhaustion was not the cause.
+
+A targeted next improvement would constrain =assignment_id= and =input_sha256= to their expected values in each call's output schema, retaining the coordinator's independent validation.
+That would address this avoidable copying failure without weakening the binding check.
+Any such change must preserve the stable-delivery schema/certification contract; it was not implemented during this run.
+
+* Usage and read-only audit
+
+Native usage reports 304,977 input and 5,823 output tokens, including the rejected reviewer response.
+Discovery accounts for 241,907 input tokens, 79.3 percent of the total.
+Calls 5, 9 and 11 each report 7,552 cached input tokens; the other twelve report zero.
+All fifteen calls supply cached-input counters, and all report zero native cache-write tokens.
+Those write counters do not prove that no backend cache writes occurred.
+Currency is unavailable for every call.
+The low overall cache-read fraction leaves repeated context as an efficiency concern; this uncontrolled run does not identify which prompt segment was reused or why C1 missed.
+
+Private assignments, selected evidence, native traces and the persistent wallet are under =/home/coder/.sucoder/logs/dream-jobs/ba6031af25fa4c9aa950918b67169dab/=.
+The audit is =/home/coder/.sucoder/logs/dream-reviews/2026-11-17-ba6031af/audit.py=, with checked =status.json= and =review.json= alongside it.
+It reads status with native provider/build/authentication entrypoints replaced by exceptions, verifies all fifteen trace/assignment/wallet/usage bindings, checks lookup envelopes against discovery history, re-hashes raw receipts and selected session ranges, and confirms the unchanged memory ref.
+It reproduces the single reviewer identifier mismatch without invoking a provider.
+
+#+begin_src sh :eval never
+PYTHONPATH=$PWD \
+  /home/coder/.cache/pypoetry/virtualenvs/sucoder-_hu1CrVA-py3.12/bin/python \
+  /home/coder/.sucoder/logs/dream-reviews/2026-11-17-ba6031af/audit.py
+#+end_src
+
+No runtime code, production cache gate, installed deployment or authentication route changed.
+The report and handoff are on local main; nothing was pushed.
+
+Recorded by Sue (GPT-6 Codex).

@@ -2514,13 +2514,24 @@ class MirrorManager:
         return name
 
     def _codex_auth_to_apikey(self, launcher: AgentLauncher, agent_name: str) -> None:
-        """Swap codex to API-key auth: pass key | codex login --with-api-key."""
+        """Swap codex to API-key auth: write the agent's auth.json from pass."""
         credential = self._auth_credential(launcher, agent_name, "apikey_credential")
         cfg = self._launcher_auth_config(launcher, agent_name)
         try:
             auth_mod.codex_to_apikey(self.config, self.executor, cfg, self.logger)
         except auth_mod.AuthError as exc:
             raise MirrorError(str(exc)) from exc
+
+    def _codex_auth_base_url(
+        self, launcher: AgentLauncher, agent_name: str, credential: str,
+    ) -> Optional[str]:
+        """Regional API endpoint for codex apikey auth, from explicit config.
+
+        Set ``agent_launcher.auth.codex.base_url`` (e.g. for a US data-residency
+        project).  Nothing is derived from the pass entry name -- the endpoint
+        is configuration, stated once, like any custom provider's base_url.
+        """
+        return self._launcher_auth_config(launcher, agent_name).base_url
 
     def _launcher_auth_config(self, launcher: AgentLauncher, agent_name: str) -> "HarnessAuthConfig":
         for source in (launcher, self.config.agent_launcher):
@@ -3928,6 +3939,23 @@ class MirrorManager:
                 else:
                     self._codex_auth_to_apikey(launcher, agent_name)
                     command = [*command, "-c", config_override("preferred_auth_method", "apikey")]
+                    credential = self._auth_credential(launcher, agent_name, "apikey_credential")
+                    base_url = self._codex_auth_base_url(launcher, agent_name, credential)
+                    if base_url:
+                        # Regional (e.g. US data-residency) project.  The built-in
+                        # ``openai`` provider is reserved and cannot be overridden,
+                        # so define a distinct provider at the regional host and
+                        # select it.  All argv config overrides, never an env var.
+                        provider = "sucoder-openai"
+                        command = [
+                            *command,
+                            "-c", config_override(f"model_providers.{provider}.name", "OpenAI (SuCoder)"),
+                            "-c", config_override(f"model_providers.{provider}.base_url", base_url),
+                            "-c", config_override(f"model_providers.{provider}.wire_api", "responses"),
+                            "-c", config_override(f"model_providers.{provider}.env_key", "OPENAI_API_KEY"),
+                            "-c", config_override("model_provider", provider),
+                        ]
+                        self.logger.info("Codex API-key auth using base_url %s.", base_url)
             elif self._detected_agent_type == AgentType.CLAUDE:
                 # Stage the helper; the --settings carrying it is built below,
                 # merged with any attention hooks (claude takes one --settings).

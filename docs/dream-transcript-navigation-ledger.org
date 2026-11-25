@@ -1,0 +1,122 @@
+#+TITLE: Dream transcript navigation prior-art ledger
+#+AUTHOR: Sue
+#+DATE: 2026-11-16
+
+* 1. Task and baseline
+
+Implement bounded session navigation and explicit discovery allocation after experience job =9268f638ee3a4e34afc2911a714cda77=.
+The grounding baseline is =f829f7b= on the canonical checkout's =main=; existing-machinery line references below identify that baseline unless an implemented extension is named.
+Search tier: GitNexus CLI query and upstream impact, named source/test inspection, git history, and Anthropic's public cookbook at =ce8b2629efe8b24048b127b4c79af1e9cbab93d4=.
+The human authorized revision and implementation on 2026-11-16; another native dream remains separate work.
+The implementation commits are =edb94c2= and the deadline propagation correction =7fe996f=.
+
+* 2. Existing machinery
+
+- =sucoder/dream_view.py:62=, =read_range= :: Already seeks to an explicit complete-line range and limits its span to =MAX_RAW_BYTES=, 16 MiB.
+  Reuse for admitted evidence; =test_windows_must_be_complete_lines_of_one_session= and =test_a_changed_window_is_refused_before_any_role_call= in =tests/test_dream_view.py= cover identity, boundaries and changed bytes.
+- =sucoder/dream_view.py:138=, =render= :: Deterministic redacted rendering, raw record offsets, role/provenance mapping and explicit tool-output omissions.
+  =test_rendering_keeps_conversation_clips_tools_drops_thinking_and_redacts= and =test_user_attribution_only_for_main_thread_user_blocks= cover these definitions.
+  Neither =render= nor =redact= at =:51= has an interruptible deadline; unmatched private-key markers reproduce superlinear processing below the raw-byte limit.
+- =sucoder/dream_discover.py:133=, =Inventory._window= :: Reads the entire pinned session before finding the requested window.
+  =tests/test_dream_experience.py:144= tests record alignment and appended bytes, and =:166= tests a first record longer than the request.
+  Neither fixture has a session larger than 16 MiB.
+- =sucoder/dream_discover.py:356=, =Inventory._session_lookup= :: Session search also reads the full pinned session; its integer offset advances by session rather than within a session.
+  The window/alignment fixture includes search, but does not establish resumable search inside a large session.
+- =sucoder/dream_discover.py:211=, =Inventory.lookup= :: Already caps each encoded navigation response at 16 KiB or the remaining delivery allowance.
+  =Explorer.prepare= at =:435= charges the encoded observations and memory leads against cumulative navigation delivery, and forces the final discovery call to finish.
+  Its replay check at =:468-472= compares serialized rendered observations, not raw transcript digests; raw checks begin with =dream_view.admit= at =:170= and =snapshot= at =:195=.
+- =sucoder/dream_experience.py:57=, =_complete= :: Pins the last complete JSONL line, with a final whole-file read fallback that also needs a bound.
+  Session discovery, quiet/live exclusions and consumed ranges are tested in =tests/test_dream_view.py=, =tests/test_dream_experience.py= and =tests/test_dream_job_sessions.py=.
+  =sessions= at =:89= eagerly sorts all directory entries before transcript probes; probe-byte bounds alone do not bound this work.
+- =sucoder/dream_explore.py:134=, =prepare= and =:243=, =_discovery= :: Freeze navigation version, settings, inventory, native assignments and lookup observations.
+  =test_navigation_is_frozen_per_job_so_earlier_jobs_still_replay= in =tests/test_dream_explore.py:188= anchors earlier-version replay.
+- =sucoder/dream_budget.py:239=, =Job.assignment= :: Freezes remaining-budget advice and validates its binding on replay; reservations and unknown outcomes stay charged.
+  =tests/test_dream_explore.py:257= and =:271= cover shared budgets and author capacity; =tests/test_dream_budget.py= covers durable limits and expiry.
+- =sucoder/config.py:429= :: At the grounding baseline, =max_discovery_calls= defaulted to integer 8 independently of the overall call ceiling.
+  That baseline accepted positive integers only.
+  The implemented field accepts omitted/null automatic allocation or an explicit fixed positive integer, covered by =tests/test_dream_settings.py= and the actual-wallet cases in =tests/test_dream_navigation_recovery.py=.
+
+Implemented extensions, with current source references:
+
+- =sucoder/dream_session_scan.py:28=, =Reader= :: Shared chunked record framing, alignment and raw read receipts; =normalize= at =:153= retains selected raw digests, and =page= at =:206= preserves bounded continuation.
+  =tests/test_dream_navigation.py= covers large sources, record/block cursors, rewrites, exact JSON response caps, range ends and gaps.
+- =sucoder/dream_isolate.py:103=, =run= :: Killable local processing with time, address-space and output limits, subprocess-group cleanup and bounded stable errors.
+  The external-timeout worker and descendant tests cover termination/reaping; admission/snapshot tests preserve successful rendering bytes and legacy execution.
+- =sucoder/dream_inventory.py:42=, =collect= :: Bounded streaming candidates/metadata and 64 KiB tail probes; =prepare= at =:154= applies the processing boundary.
+  Inventory regressions cover expired deadlines, invalid names, candidate/metadata/aggregate read ceilings and unavailable complete-prefix probes.
+- =sucoder/dream_navigation.py:182=, =turn= and =:244=, =observe= :: Frozen advice and atomic observation/cursor/receipt envelopes.
+  Recovery tests remove/corrupt artifacts and interrupt publication before/after its commit point without repeating provider work.
+- =sucoder/dream_explore.py:145=, =prepare= :: Resolves allocation against the actual shared wallet and freezes inventory/resources; =_plan= at =:326= preserves the combined 64 KiB admission limit.
+  Both fake native protocols publish a receipt for a selected decision after 16 MiB and replay their saved pages after expiry.
+
+* 3. Definitions and conventions
+
+Session ranges are half-open raw byte offsets, as =read_range= states: =[byte_start, byte_end)=.
+Project-file reads instead use inclusive one-based line numbers.
+An eligible session is a scoped finished session pinned at its last complete line; filename discovery does not establish arbitrary transcript admission.
+=claude-view-v1= is the admitted rendering of a complete-line raw range, with raw and rendered digests; it is not the original raw tool output.
+Accepted session consumption comes from published receipt ranges, not navigation or an analyzer's completion claim.
+The selected-evidence allowance is six units and 65,536 rendered/UTF-8 bytes; navigation delivery defaults to 131,072 bytes.
+Public response bytes use canonical JSON encoding, including escaped text, metadata and cursors.
+The inventory metadata counter counts explicit directory/candidate stat checks; canonical path checks and existing Git/historical helpers also remain inside the processing deadline.
+Version 3 search completion is explicitly unfrozen; it does not establish query absence in a coherent source revision.
+Unknown actual reads remain unknown, with known bytes and frozen upper bounds reported separately.
+Native-call limits include discovery finish, authorship, review and repairs; hidden provider HTTP retries are outside that unit.
+
+* 4. Invariants
+
+Earlier job headers, briefs, schemas, assignments and lookup observations must reconstruct unchanged.
+The 16 MiB admitted-range guard remains a range bound, never a whole-session eligibility test.
+Keep scoped discovery, canonical regular-file access, native identity checks, redaction, complete records and rejection of changed selected bytes.
+New selected session requests retain =expected_raw_sha256= through admission; a rewrite cannot replace their normalized bytes or enlarge the 65,536-byte selection allowance.
+Appends after the pinned end do not enter an existing job's evidence.
+Prefix length and session identity do not establish a frozen content revision across pages.
+New resource guarantees must cover CPU, enumeration and metadata work as well as raw I/O and model delivery.
+Only admitted and independently reviewed evidence can support publication; scanned and delivered ranges have different meanings.
+Closeout reserves and author capacity survive discovery, shared-wallet use and explicit retries.
+No new provider request, remote transcript transport, GitHub issue access by the dream, or private-memory publication is authorized by this design task.
+
+* 5. Reuse decisions
+
+- Reuse :: Existing range admission, rendering bytes, redaction semantics, attribution map, receipt consumption, role transport, lookup journal and whole-job wallet.
+  Reusing rendering semantics does not establish interruptible execution; the deadline boundary remains a design decision.
+- Extend :: Session read/search callers and complete-prefix probing with a bounded record iterator; the existing whole-prefix navigation cannot page large sessions.
+- New :: A versioned opaque continuation cursor, because a session ordinal cannot resume midway through a session or a multi-block record.
+- New :: A killable POSIX processing worker with bounded output and additional address-space headroom; byte guards and the current renderer cannot enforce CPU deadlines.
+  A versioned optional =processing= policy travels with new rendered source requests and admitted units; older units keep their execution path and bytes.
+- Extend :: The lookup artifact becomes one version 3 envelope containing the observation, raw read receipts and continuation body, so replay preserves deadline stops without reopening mutable navigation sources.
+- Extend :: Explicitly unfrozen search completion and raw digest binding for a resumed record; no existing primitive pins an immutable whole-prefix revision without reading it.
+- New :: An automatic discovery-allocation policy for new jobs; current defaults cannot distinguish a deliberate eight-call ceiling from an inherited default.
+- Extend :: Existing source/response accounting with scanned, skipped and delivered intervals, retaining receipt semantics for accepted coverage.
+- Extend :: Frozen advice with a per-attempt/step navigation-allocation record, so live-wallet decisions do not change assignment reconstruction.
+- Extend :: The planner's existing inspection deadline through an optional =create_plan= keyword for new jobs, preventing admission from refreshing the shared deadline while preserving earlier defaults.
+- Preserve :: The current =claude-view-v1= bytes for the same admitted range; a renderer change would require its own contract migration.
+
+* 6. Open questions and verification boundary
+
+The revised [[file:dream/transcript-navigation.org::#red-team-gates][implementation gates]] are implemented and have received independent review and adversarial regression coverage.
+Reservations and published assignments protect missing advice even if its turn marker also disappears.
+The final planning/navigation/recovery/configuration/CLI/lifecycle group passes all 245 cases.
+The full-suite snapshot reports 3,298 passed, 40 failed and one skipped; 38 failures reproduce exactly on unchanged code, and two obsolete fixtures were corrected and rechecked.
+The final deadline correction and its two cases are covered by the final regression group; an unfiltered final-source full-suite pass is not claimed.
+No unresolved implementation decision or additional live experiment remains within this task.
+
+Prepared by Sue (GPT-6 Codex).
+
+* Anchored implementation verification
+
+- OK, sections 2 and 5 :: Reuse preserves admitted range reads, rendered bytes, redaction/attribution, receipt consumption, role transports and the shared wallet.
+  Existing session-ordinal/whole-prefix helpers cannot provide the new bounded iterator, cursor or processing isolation, so those helpers are justified extensions.
+- OK, section 3 :: Half-open raw offsets, inclusive file lines, six units and 64 KiB rendered/UTF-8 selection remain distinct from canonical JSON navigation delivery.
+- OK, section 4 :: Earlier schemas/briefs and replay stay on their historical path; the optional processing policy versions new unit execution.
+  The published real job =9268f638...= replays as =published= with native startup forbidden and memory =f651866= unchanged.
+- RESOLVED, sections 2 and 4 :: Rendered legacy replay is no longer described as raw-byte validation.
+  New raw receipts, selected-byte admission checks and explicitly unfrozen completion address the source-revision limitation.
+- RESOLVED, sections 2 and 4 :: Isolated processing and bounded streaming inventory cover the CPU and enumeration paths missed by byte guards alone.
+- RESOLVED, sections 4 and 5 :: One checksummed envelope commits observation/cursor/receipts; saved advice/history and artifact-corruption tests establish recovery without changed paid assignments.
+- OK, section 6 :: Automatic allocation and positive fixed overrides are synchronized across the parser, CLI help, README and configuration example.
+
+All ten changed source modules pass the project's mypy convention and appear byte-identically in the verification wheel.
+The 245-case final regression group and 100 deterministic pagination probes (seed 913) support the implemented gates.
+The full-suite comparison distinguishes reproduced baseline failures from the two corrected fixtures; no live provider experiment is an acceptance requirement.
+Document export and link checks validate presentation separately from runtime behavior.

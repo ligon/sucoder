@@ -1,0 +1,375 @@
+#+TITLE: Bounded transcript navigation and discovery allocation
+#+AUTHOR: Sue
+#+DATE: 2026-11-16
+#+STATUS: COMPLETE -- baseline failures distinguished
+#+OPTIONS: toc:2 num:nil
+
+* Scope and evidence
+:PROPERTIES:
+:CUSTOM_ID: scope
+:END:
+
+This amendment specifies version 3 session reads, session search and discovery allocation.
+It extends the [[file:essay-alignment.org::#experience][experience charter]] and the [[file:budget.org][durable budget contract]], grounded in the [[file:../dream-transcript-navigation-ledger.org][navigation ledger]], sections 2-5.
+New jobs use bounded session navigation and automatic discovery allocation when configuration omits the phase limit or sets it to null.
+Earlier jobs retain their original navigation, settings, schemas, briefs and replay behavior.
+The original failure and review below motivate the implementation; the final verification section records its acceptance boundary.
+
+Experience job =9268f638ee3a4e34afc2911a714cda77= ran against =f829f7b= with 1,800 seconds and 32 native calls.
+It published a reviewed memory correction in about 172 seconds using ten calls: eight explorer calls, one author and one reviewer.
+Two navigation requests failed because their callers read a 20,604,616-byte session in full before applying a smaller window or a search, exceeding the range reader's 16 MiB limit.
+A third supplied start/end bounds to session search, which rejects them.
+The explorer's independent eight-turn ceiling remained in force despite the larger overall allowance.
+
+Anthropic's [[https://github.com/anthropics/claude-cookbooks/blob/ce8b2629efe8b24048b127b4c79af1e9cbab93d4/managed_agents/example_data/memory_distill/prompts/analyzer_system.md#L26][analyzer prompt]] asks each analyzer to page through its assigned transcript in full.
+Its [[https://github.com/anthropics/claude-cookbooks/blob/ce8b2629efe8b24048b127b4c79af1e9cbab93d4/managed_agents/memory_distill_utils.py#L1600][preflight]] bounds batch size and estimated spending, with a separate hosted session spending ceiling.
+The cookbook's exporter materializes session events, and its [[https://github.com/anthropics/claude-cookbooks/blob/ce8b2629efe8b24048b127b4c79af1e9cbab93d4/managed_agents/memory_distill_utils.py#L1350][coverage check]] identifies completed analyzer assignments rather than proving every byte was read.
+SuCoder adopts explicit paging and separately visible allowances while retaining selective evidence, exact receipts and independent publication review.
+Per-transcript analyzer fan-out, mandatory reading of every transcript, Codex discovery and a new financial estimator remain outside this amendment.
+
+* Decisions and resource bounds
+:PROPERTIES:
+:CUSTOM_ID: bounds
+:END:
+
+New jobs use navigation version 3; earlier versions retain their existing behavior.
+A shared record iterator serves new session read, search and selection-boundary operations.
+It opens a canonical regular source through the existing no-follow helper, seeks to the relevant offset, and reads in chunks of at most 64 KiB.
+It never calls =read()= without a size or reads the whole pinned prefix to satisfy a small lookup.
+
+- Pinned end :: The last complete line recorded in the inventory remains the upper boundary; appended bytes do not enter that job.
+- Alignment allowance :: At most 64 KiB for boundary probes and forward alignment to the next complete record per lookup, with a resumable cursor if the boundary is farther away.
+- Raw work allowance :: At most 16 MiB of record scanning per lookup, including records discarded because they are oversized or produce no rendered text.
+  Alignment is counted separately, so a lookup's raw I/O is bounded by 16 MiB plus 64 KiB.
+- Record buffer :: At most 16 MiB for one complete JSONL record.
+  A larger record is skipped incrementally with its omission reported; it is never loaded into an unbounded buffer or presented as examined evidence.
+- Processing work :: At most 4,096 records and eight sessions per lookup, in addition to the raw-byte allowance.
+  Navigation and selection normalization run in isolated POSIX worker processes with at most five seconds or the remaining shared deadline, whichever is smaller.
+  A worker has 256 MiB of additional address-space headroom and at most 2 MiB of private response data.
+  Parsing, rendering and redaction are inside that boundary; the parent terminates the worker's process group and reaps its leader on completion or failure.
+  Each worker starts a new session; its alarm also terminates that group, covering Git descendants if the coordinator disappears.
+- Response allowance :: Keep the existing maximum of 16 KiB of canonical response bytes, reduced by the remaining navigation-delivery allowance.
+  Text, metadata, errors and cursors all count.
+- Selected evidence :: Keep six units and 65,536 rendered/UTF-8 bytes in total, and the existing 16 MiB raw-span limit for an admitted session unit.
+  Selection normalization applies the iterator's bound per unit, with at most six units per finish attempt; existing admission/snapshot I/O retains its separate explicit range bound.
+- Whole job :: Keep the persistent elapsed/native-call ceilings, closeout reserves and explicit retry rules.
+  Native adapters still cannot guarantee a hard dollar or token ceiling.
+
+Raw scanning and model delivery are separate counters.
+For session lookups the job records bytes read from the raw source, their intervals/hashes, complete-record omissions and actual response bytes.
+Project lookups retain version 2's bounded Git blob/search accounting; these counters do not audit physical Git-pack or filesystem I/O.
+New read/search work is bounded by its request count times the per-lookup I/O allowance, plus the separately bounded selection normalizations at finish, all within the shared deadline.
+Cached inspection/revalidation has its existing separate bounded inspection deadline, makes no provider call and does not replenish the writer wallet.
+It reports its own reads rather than pretending they were new model delivery.
+
+Inventory probing also stays bounded.
+Replace =dream_experience._complete='s whole-file fallback with backward 64 KiB tail probes, at most 1 MiB per file and 32 MiB across one inventory preparation, checking the preparation deadline between probes.
+New inventory preparation streams =os.scandir= entries, with at most 8,192 transcript-directory entries, 16,384 metadata operations and 1,024 retained candidate sources across the allowed directories.
+It checks the deadline before advancing enumeration and sorts only the retained bounded subset.
+The metadata counter measures explicit directory/candidate stat checks; canonical path checks and existing helper operations also remain inside the worker deadline.
+Historical-project discovery retains its separate 4,096-directory ceiling; the isolated preparation worker also bounds blocking filesystem work.
+If no complete boundary is found within the allowance, report that source as unavailable with =complete_prefix_probe_limit=; if an aggregate allowance ends, report the inventory as incomplete.
+An incomplete traversal reports an unknown number of undiscovered sources and a lower bound for already discovered but unprobed candidates; it never completes traversal merely to count what remains.
+Neither case establishes that the session is empty or examined.
+These resource constants are frozen in new job headers so upgrades cannot change an existing job's limits.
+
+* Read and search protocol
+:PROPERTIES:
+:CUSTOM_ID: protocol
+:END:
+
+Keep the action names =list=, =read=, =search= and =finish=.
+Version 3 adds an always-present string =cursor= to the explorer result schema; an empty string starts an operation.
+Project-file reads remain inclusive one-based line ranges, and project navigation keeps version 2's committed =git grep= semantics.
+
+** Session reads
+
+An initial =read= names =@sessions/ID=, sets =offset= to zero and =query= to an empty string, and uses half-open raw =start/end= bounds.
+An =end= of zero means fill a page within the pinned end and the raw/response allowances.
+After aligning start forward, include complete records only.
+Retain the existing first-record expansion when a requested end cuts through that record, provided it fits the raw work and response allowances.
+This preserves useful handling of the earlier 143 KB attachment case.
+Report the actual interval and any expansion explicitly.
+
+A response that fills its allowance returns =state: incomplete= and =next_cursor=.
+To continue, repeat its path and action with that cursor and zero start/end/offset fields.
+The cursor retains the original range end.
+If a complete record fits the raw allowance but its rendered content cannot fit a response, return =range_too_large= with the skip cursor and the record's interval, without partially delivering its user/assistant text.
+Response fit is measured with canonical JSON escaping, not just the text's UTF-8 length.
+An oversized raw record advances through bounded skip operations until its end is found; those operations remain explicitly incomplete.
+The returned skip position is navigation, not evidence of what the skipped record said.
+Skipping or aligning past an explicit range end terminates that read; it cannot move first-record expansion to a later record outside the requested range.
+
+** Session search
+
+An initial =search= names =@sessions= or =@sessions/ID=, supplies a nonempty literal query, and sets start/end/offset to zero.
+Search uses the same record iterator and the same deterministic rendered blocks and redaction rules as reading.
+It returns at most one snippet per matching rendered block, preserving the existing first-occurrence semantics within a block.
+Matches in clipped or redacted-away content are outside this search surface.
+
+Stop at the first raw-work, response or deadline boundary.
+Return =next_cursor= even when the page contains no matches.
+Resume within the current session before advancing to another; ordinary byte/record paging through a large session does not abort traversal of later sessions.
+A killed processing worker is the exception: it terminates that lookup with an explicitly unsearched remaining scope and unknown actual read counts.
+It does not mint a continuation for progress the parent cannot verify; a later charged turn may query another session by ID.
+If a response fills halfway through the blocks of one record, the continuation identifies the next block so it neither loses nor duplicates a match.
+Literal matching spans raw I/O chunks within a rendered block; it does not join different rendered blocks into a synthetic match.
+If scanning stops inside an otherwise admissible record after earlier records were processed, resume from that record's start and re-read it within the next operation's allowance.
+The incomplete fragment is not a searched block or a permanent omission.
+
+Return terminal =complete_unfrozen= only after the requested pinned search scope ends with no unavailable or skipped ranges.
+If the scan ends with gaps, return terminal =complete_with_gaps= and their reasons, retaining the unfrozen-source qualification.
+Both states mean traversal of the rendered search surface ended, not that a coherent immutable revision was searched.
+Files can change between pages without changing session identity or prefix length; an empty result never proves query absence in any complete source revision.
+Standard redaction, clipping and metadata omissions remain reported separately from additional unavailable or oversized-record gaps.
+Neither state means that a human or model verified every claim in the session.
+
+** Cursors and invalid requests
+
+A cursor is a coordinator-issued opaque token resolving to private persisted state.
+Its payload binds the job and inventory digest, navigation version, operation, scope/path, literal query, session identity/order, pinned end, raw record position, intra-record block position and any alignment/oversized-record skip state.
+When continuation resumes a record whose rendered blocks were already processed, it also binds that record's raw SHA-256 and rejects a changed record before applying its block index.
+It cannot authorize another path, query, job or range outside the pinned prefix.
+The cursor body includes its producing assignment, the digest of its raw read receipts and the digest of the public observation before adding =next_cursor=; its opaque token is SHA-256 of the canonical body.
+Persist the body, raw read receipts and bounded public observation in one =lookup-ASSIGNMENT.json= envelope through the existing publish-once artifact helper.
+Every envelope, including terminal and finish-selection envelopes without a cursor, carries a checksum over its full canonical contents excluding that checksum.
+Successor history and the final chosen outcome bind the committed envelope checksum, so changing saved observations cannot retain the original assignment chain.
+Replay verifies both the complete-envelope checksum and the cursor's pre-token observation digest.
+That single atomic publication is the commit point, before any successor assignment can consume the observation.
+Earlier envelopes in the same history resolve tokens; tokens cannot name arbitrary artifacts or files.
+If publication is interrupted, a writable run may recompute an unpublished lookup only when no successor turn exists; read-only inspection fails on a missing envelope.
+After publication, resume and inspection validate the envelope's job/inventory/request/history binding and reuse its saved observation and cursor.
+They do not rerun a deadline-stopped scan with a fresh deadline or silently revalidate it against today's mutable bytes.
+Private raw receipts record actual read intervals and hashes; a terminated worker reports unknown actual reads with the frozen upper bound, never a fabricated zero.
+Every incomplete response either advances its logical cursor or returns a terminal typed reason; it cannot send the agent back to the same unsuccessful operation indefinitely.
+
+The action-specific fields of an initial search and one possible bounded response are:
+
+#+begin_src json :eval never
+{
+  "action": "search", "path": "@sessions", "query": "Python 3.9",
+  "offset": 0, "start": 0, "end": 0, "cursor": ""
+}
+#+end_src
+
+#+begin_src json :eval never
+{
+  "state": "incomplete", "matches": [], "raw_scanned_bytes": 16777216,
+  "alignment_bytes": 0, "gaps": [], "omitted_gap_details": 0,
+  "earlier_gaps": false, "inventory_complete": true,
+  "source_consistency": "unfrozen; traversal completion does not establish query absence in a coherent source revision",
+  "render_surface": "claude-view-v1; redaction, tool clipping and metadata omissions apply",
+  "next_cursor": "<opaque coordinator-issued token>"
+}
+#+end_src
+
+The subsequent search repeats its path/query with the returned cursor and zero numeric fields.
+Assignment identities and the other required explorer-result fields remain part of the enclosing native contract.
+
+Validate action-specific fields and cursor bindings before opening a source.
+An invalid request returns a stable =invalid_request= reason and a valid request example that fits the delivery allowance.
+For example, a session search with nonzero start/end is rejected with the corrected search shape, rather than a generic unavailable error.
+The native call that produced it remains charged; there is no free or automatic retry.
+
+* Evidence, identity and publication
+:PROPERTIES:
+:CUSTOM_ID: evidence
+:END:
+
+Use three distinct coverage records:
+
+- Scanned :: Raw intervals physically inspected to align, parse or search; query absence is scoped to successfully searched rendered blocks.
+- Delivered :: Exact redacted rendered intervals supplied to a model, with raw offsets, provenance and omission metadata.
+- Accepted :: Exact selected units represented by a published reviewed receipt, as today.
+
+A search hit is a lead; admission re-reads the selected complete-record range and records its raw/rendered digests through the existing =claude-view-v1= pipeline.
+Version 3 finish normalization retains its exact raw digest as =expected_raw_sha256= in the selected source request.
+Admission rejects different bytes, including metadata-only changes, before author/reviewer startup; source-request reconstruction preserves the expected digest for bounded units.
+Version 3 plans also enforce the combined 65,536-byte rendered/UTF-8 source limit during admission.
+Finish selections still require an explicit nonzero raw end; a pageable read with end zero does not authorize whole-session admission.
+Keep =dream_view.read_range=, rendering bytes, source identifiers, redaction and attribution semantics unchanged for a given admitted range.
+Metadata-only records, oversized records, clipped tool output and unavailable ranges remain distinguishable.
+Only accepted receipt ranges update consumption; scanning, navigation delivery and successful role completion do not.
+
+Retain scoped discovery, live/recent exclusions, canonical regular-file checks, native session identity and pinned-prefix bounds.
+Reject a changed selected window before author/reviewer invocation, as the existing snapshot check does.
+No cursor can enlarge the source universe or bypass a failed identity check.
+The inventory pins the source identity and prefix length; it is not a claim that the unobserved prefix has a frozen content digest.
+Existing lookup replay compares serialized rendered observations; raw-byte digests are established later during admission and snapshotting.
+Version 3 adds raw read receipts and uses committed lookup envelopes for replay, rather than upgrading that older rendered comparison into a whole-file consistency claim.
+Admitted evidence keeps the existing raw/rendered digests and exact snapshot validation.
+Admission and snapshot rendering use the same isolated execution boundary while preserving =claude-view-v1= bytes and attribution.
+Timeout there fails before a role receives evidence or an unchecked candidate can publish.
+New version 3 selections carry a versioned =processing= policy in their source request and admitted unit, with the worker limits frozen explicitly.
+The source-request parser and view-unit validator accept that optional field only for rendered session evidence; request reconstruction preserves it.
+Earlier units lack the field and retain their existing admission/snapshot execution path, rather than acquiring a new five-second failure mode on replay.
+New plan admission also receives the job's existing inspection deadline; it cannot refresh that deadline after discovery.
+Explicit planning retains its earlier default inspection window unless the caller supplies a shorter deadline.
+
+Record scan/delivery counters, stop reasons, gaps and remaining cursors privately in the job outcome.
+The independent writer/reviewer receive the selected evidence and a concise coverage qualification, not a claim that the whole project or session was examined.
+Source excerpts and private paths stay out of public issue drafts without the existing provenance/disclosure checks.
+Memory publication keeps its current review and compare-and-swap transaction.
+
+* Discovery allocation
+:PROPERTIES:
+:CUSTOM_ID: allocation
+:END:
+
+For new jobs, an omitted =max_discovery_calls= setting means automatic allocation; an explicit positive integer remains a fixed phase ceiling.
+The parser accepts null for automatic allocation, with global/per-mirror inheritance and a CLI integer override.
+
+At preparation, let =B= be unreserved native calls remaining in the actual persistent wallet, =R= its closeout-call reserve and =A= one ordinary author call.
+Freeze the automatic discovery ceiling as:
+
+#+begin_example
+K = max(0, min(B // 2, B - R - A))
+#+end_example
+
+Half the available calls is an initial conservative allocation, leaving room for writer context requests beyond the one-call minimum.
+It is a scheduling policy, not an estimate of the number of calls a transcript requires.
+With a fresh wallet and =R = 3=, =A = 1=, totals of 16, 32 and 40 calls yield discovery ceilings of 8, 16 and 20.
+A fixed explicit ceiling uses =K = min(requested, max(0, B - R - A))=.
+Finish counts within =K=; zero capacity stops before a provider request, and a one-call allocation offers finish only.
+Zero capacity does not create a prepared job header with an invalid zero discovery setting.
+This remains a ceiling per explicit discovery attempt, as in the current coordinator, with one cumulative wallet across attempts.
+
+Store the allocation policy, auto/fixed source, requested value, resolved integer, wallet identity and basis balance in the new header.
+Do not recompute the frozen phase ceiling on resume.
+Before each new native turn, the current shared-wallet headroom can reduce the available discovery calls further; one remaining call offers finish only, and zero cannot start inference.
+Never expand a ceiling or replenish unknown-call charges automatically.
+
+Persist that per-turn navigation allowance before building the assignment, keyed by attempt and step and bound to the header and prior history.
+Replay uses the saved allowance rather than today's wallet balance to reconstruct the original assignment.
+This extends the existing frozen-advice machinery; calculating live actions afresh during replay would change assignment hashes.
+Once a turn has an assignment, start marker or reservation, missing or corrupt per-turn advice fails closed; it cannot be regenerated from the current balance and become a different paid request.
+Publish a turn marker before its advice; a marker without valid advice fails closed even if interruption preceded a provider request.
+The marker and advice are bound to the job, inventory, attempt, step and prior history, so deleting advice after a reservation cannot produce a different assignment.
+If both marker and advice are absent, existing reservations for that run/step and published assignments with that history length still forbid regeneration.
+The native reservation layer still enforces the live wallet before an actual invocation.
+
+Every navigation assignment reports phase calls left, total wallet calls/time left, closeout/author reservation, remaining delivery bytes, and read/search page limits.
+When fewer than 1,024 delivery bytes remain, offer finish only rather than spend further calls on unavailable lookups.
+For version 3, narrow the native result schema's action enum to the actions actually offered by that saved turn, including finish-only turns.
+Inventory sizes can provide a raw-scan page lower bound, explicitly excluding rendering overhead and model-token/currency predictions.
+The 128 KiB default navigation-delivery allowance remains independent; increasing time/calls does not silently increase bytes or guarantee exhaustive investigation.
+
+The parser, CLI help, README and =config.example.yaml= describe the same automatic/fixed policy.
+Existing configuration that explicitly says eight retains eight.
+Saved headers always retain their stored integer and original semantics.
+
+* Compatibility and implementation map
+:PROPERTIES:
+:CUSTOM_ID: implementation
+:END:
+
+All new behavior is bound to navigation version 3 and a versioned allocation policy.
+Preserve the original version 1/2 schema, briefs, lookup dispatch and errors; changing a shared schema or brief globally would invalidate saved assignments.
+An earlier missing navigation-version field continues to mean version 1.
+The published job =9268f638...= must still replay its original failed lookups and accepted result without provider startup.
+No saved job is upgraded in place.
+
+The implementation reuses the existing evidence and wallet pipeline:
+
+1. =sucoder/dream_session_scan.py= provides chunked complete-record reads, search pages and selection alignment.
+   =sucoder/dream_inventory.py= bounds enumeration, metadata and complete-prefix tail probes.
+2. =sucoder/dream_isolate.py= bounds local processing, including subprocess-group cleanup; =dream_view= retains its earlier rendering bytes and opt-in execution policy.
+3. =sucoder/dream_navigation.py= validates requests, binds cursors, commits observation envelopes, freezes per-turn advice and reconstructs version 3 discovery.
+   =dream_discover= preserves version 1/2 dispatch and schemas alongside the new path.
+4. =dream_explore= freezes the actual-wallet allocation and inventory, carries selected raw digests through admission, and keeps the existing independently reviewed publication transaction.
+
+New iterator/cursor helpers are justified because the current session-ordinal search and whole-prefix alignment cannot resume bounded work inside a session.
+Upstream impact was checked before runtime edits.
+Shared source-request parsing, admission/snapshotting, processing and configuration paths had HIGH/CRITICAL impact; their new behavior is explicitly versioned.
+The admitted range reader and renderer's =claude-view-v1= bytes remain unchanged.
+
+* Acceptance cases
+:PROPERTIES:
+:CUSTOM_ID: acceptance
+:END:
+
+- Large source :: A synthetic complete-record transcript larger than 20,604,616 bytes contains a decision after byte 20,550,000.
+  A small read there succeeds with exact raw/rendered provenance.
+  Instrument navigation-iterator I/O to reject unsized reads and reads larger than 64 KiB and to assert the per-operation scan/alignment bounds.
+  Separately assert the six-unit normalization bound and the existing admitted-range guard.
+- Search continuation :: A first page has no hit, the hit is after 16 MiB, and continuation finds it.
+  Include output filled mid-record, multiple matching blocks, raw-chunk boundary matches and multiple sessions; no hit is lost or repeated.
+- Oversized records :: Preserve the first-record attachment regression, cover records larger than the scan budget and content larger than delivery, and prove strictly advancing skip cursors reach a later usable record with explicit gaps.
+- Boundaries :: Cover LF/CRLF, multibyte UTF-8, metadata-only pages, a partial final line, the complete-prefix probe ceiling, appends beyond the pinned end and source/identity replacement.
+- Source revisions :: Swap equal-length records between pages and assert completion remains explicitly unfrozen, never coherent query absence.
+  Change an omitted attachment or a partially returned record and assert raw receipts change or continuation rejects the changed record.
+- Processing deadlines :: Put repeated unmatched private-key markers in a small record and enforce an external timeout around navigation, normalization and admission/snapshot tests.
+  Verify worker termination/reaping, typed failure, and unchanged successful rendering bytes.
+  A two-session search with a pathological first session must terminate with unsearched-scope qualification rather than claim that the second session was searched.
+- Enumeration :: Cover expired deadlines before enumeration, invalid names, metadata failures, entry/candidate/metadata caps, and unknown remaining counts without an extra traversal.
+- Cursor recovery :: Interrupt envelope publication, replay after the deadline, and delete or corrupt a committed cursor/advice artifact; assert stable continuations or failure without provider startup.
+- Evidence :: Search after redaction, preserve main-thread/sidechain/summary attribution, reject changed selected bytes, and prove that navigation or a finished role never creates accepted consumption.
+- Resource accounting :: Exact response caps include cursors/errors/leads; exhausted delivery still leaves a finish opportunity, while hard elapsed/call exhaustion cannot invoke the provider or publish an unchecked candidate.
+- Allocation :: Cover fresh totals 16/32/40, fixed eight, global/per-mirror inheritance, a partly spent shared wallet, small/zero headroom, author/closeout reserves, explicit attempts and immutable per-turn advice.
+  Delete or corrupt saved advice after a reservation and prove that restart makes no additional provider request.
+- Replay :: Earlier version 1/2 jobs retain byte-identical assignments and observations; new version 3 replay retains cursors and original advice after expiry without provider startup.
+- Native parity :: Fake Codex and Claude transports exercise the version 3 schema, invalid-field recovery, paged selection, author/reviewer handoff and checked publication.
+  An end-to-end fixture selects a human decision after 16 MiB, delivers it to author/reviewer and publishes the corrected seeded note with the exact late-window receipt.
+  This establishes the transport and evidence path, not model quality on a new live run.
+
+Acceptance uses deterministic synthetic transcripts and fake native transports.
+A later live run requires its own instruction; this design does not restart the completed dream or authorize additional inference.
+
+* Red-team implementation gates
+:PROPERTIES:
+:CUSTOM_ID: red-team-gates
+:END:
+
+The independent [[file:transcript-navigation-review.org][red-team review]] of =5f892c7= found two high-priority blockers and one medium-priority gap.
+The revised decisions above address them as follows; implementation and adversarial regression verification remain required:
+
+- R1, source revision :: Use explicitly unfrozen completion, exact raw read receipts and raw-digest binding for resumed records.
+  This preserves bounded seeks without copying or hashing an unobserved whole prefix.
+- R2, CPU bounds :: Isolate navigation, normalization, inventory preparation and admission/snapshot rendering with a killable process and finite time, memory and output allowances.
+  A killed lookup has a terminal typed reason and unknown actual reads; a killed admission/snapshot cannot invoke a role or publish evidence.
+- R3, inventory enumeration :: Stream directory entries, retain a bounded candidate subset, limit metadata operations and allow unknown remaining counts.
+
+The recovery decisions are:
+
+- Cursor commit :: One atomic envelope contains the observation, continuation body and read receipts; its publication precedes a successor assignment.
+- Partial-scan replay :: Validate and reuse the saved envelope, including its original stop and read receipts, without recomputing the scan.
+
+The expanded acceptance matrix must establish these gates before the implementation is marked complete.
+
+* Verification
+:PROPERTIES:
+:CUSTOM_ID: verification
+:END:
+
+The revised design and implementation received independent red-team review.
+The review found and the implementation corrected JSON response-size/cursor accounting, selection-to-admission rewrites, process-group cleanup, and range-end handling after skipped records.
+Additional tests cover missing advice and marker artifacts, malformed-source error bounds, and unknown actual read accounting.
+The reviewer's 100 deterministic multi-session search-pagination probes found every expected hit exactly once; this does not establish model investigation quality.
+
+The final planning/navigation/configuration/CLI/lifecycle regression group passes all 245 cases:
+
+#+begin_src sh :eval never
+PYTHONPATH=$PWD /home/coder/.cache/pypoetry/virtualenvs/sucoder-_hu1CrVA-py3.12/bin/python \
+  -m pytest -q -p no:cacheprovider \
+  tests/test_dream.py tests/test_dream_navigation.py tests/test_dream_navigation_recovery.py \
+  tests/test_dream_settings.py tests/test_dream_experience.py tests/test_dream_explore.py \
+  tests/test_dream_leads.py tests/test_dream_explore_cli.py tests/test_dream_explore_guards.py
+#+end_src
+
+The earlier navigation/view group passed 39 cases; the reviewer's 100-case pagination probe also passes when rerun with seed 913.
+The full project suite on a frozen private clone collected 3,339 cases: 3,298 passed, 40 failed and one skipped in 2,314 seconds.
+Exactly 38 failures reproduce as a selected group on the unchanged runtime baseline =359d018=.
+The other two were obsolete test expectations for the cursor field and zero-capacity diagnostic; both are corrected, and their complete CLI/lifecycle files pass all 42 cases.
+After that full-suite snapshot, the deadline propagation fix and its two added cases were checked in the final 245-case group above.
+This is full-suite comparison plus final regression validation, not an unfiltered final-source full-suite pass.
+All ten changed runtime modules pass mypy and match the built verification wheel.
+The published job =9268f638...= still replays as =published= with provider startup forbidden, retaining memory =f651866=.
+Evidence, source hashes and logs are under =/home/coder/.sucoder/logs/dream-implementation/2026-11-16-navigation/=.
+All new role tests use fake Codex/Claude transports and synthetic sources; no new live dream or provider request was made for implementation verification.
+
+After implementation, the human authorized one real experience dream at =cdb4a8c= with 1,800 seconds and 32 calls.
+The [[file:runs/sucoder-e3.org][E3 report]] records its reviewed publication, automatic discovery allocation of 16, two search continuations and successful admission beyond byte 20 million in the previously inaccessible transcript.
+It used 13 discovery calls and three editorial calls, with no navigation errors or reported gaps.
+This live observation complements the synthetic acceptance evidence; it did not exercise timeouts, oversized records, concurrent rewrites or stopped-job recovery.
+
+Prepared by Sue (GPT-6 Codex).
