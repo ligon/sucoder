@@ -1,7 +1,7 @@
 #+TITLE: Twelve-session SuCoder dream campaign
 #+AUTHOR: Sue
 #+DATE: 2026-11-25
-#+STATUS: ACTIVE -- 3 OF 12 SESSIONS AUDITED
+#+STATUS: ACTIVE -- 4 OF 12 SESSIONS AUDITED
 
 * Scope and method
 :PROPERTIES:
@@ -31,7 +31,7 @@ The [[file:../../dream-twelve-ledger.org][grounding ledger]] identifies reused m
 |       1 | project    | published     | accepted with advisory |          16 |
 |       2 | project    | published     | rejected / withdrawn  |          15 |
 |       3 | experience | published     | accepted with advisory |          18 |
-|       4 | experience | running       | pending               |             |
+|       4 | experience | unchanged     | accepted no-op        |          14 |
 |       5 | project    | planned       | pending               |             |
 |       6 | project    | planned       | pending               |             |
 |       7 | experience | planned       | pending               |             |
@@ -113,6 +113,7 @@ The index and four other topics remain byte-identical.
 
 The author takes 346.15 native seconds and the reviewer 69.53 seconds.
 Each uses exactly one StructuredOutput attempt with no validation errors; all eight reviewer reasons are 112-321 characters.
+The final explorer call separately retries after invalid JSON arguments to StructuredOutput, taking 103.58 seconds; the editorial observation does not make the entire run retry-free.
 [[https://github.com/ligon/sucoder/issues/107][Issue 107]] receives this first full live-v9 observation; the separate 936-character test establishes the relaxed allowance.
 Different evidence, outputs and prompt contracts prevent treating these timings as a controlled savings comparison.
 All eighteen usage records are complete: 355,785 input tokens, including 55,580 cache reads and 300,150 cache writes, and 52,571 output tokens; these are native telemetry rather than subscription billing.
@@ -131,15 +132,29 @@ Random lead repetition and usefulness remain observations for the remaining nine
 :CUSTOM_ID: session-4
 :END:
 
-Job =6a799c0066104346aa5862d1111ef658= is live at this checkpoint.
+Job =6a799c0066104346aa5862d1111ef658= completes a reviewed unchanged decision after twelve discovery calls, one author and one reviewer.
 It uses the same frozen v9 runtime =2063680=, project =05dcce3= with the small status-docstring correction, and independently retained memory =399fe527=.
 The original fresh 32-invocation/1,800-second allowance and 600-second/three-call closeout reserve apply.
-A terminal result and independent source-quality decision remain pending.
+The author avoids a fourth inspection note without new substance; there are no proposed pages, task actions, candidate commit or memory update.
+Sue accepts the no-op within its admitted evidence, with the follow-up limitation below.
 
 A completed discovery lookup reproduces the unavailable memory-page read from session 3.
 [[https://github.com/ligon/sucoder/issues/112][Issue 112]] records the bounded retrieval gap: the frozen Talk preview contains 2,048 bytes and omits 1,144 more, including the newer module-docstring follow-up.
 The full memory page is 11,995 bytes, but its displayed path cannot be read through the explorer's project inventory.
-This limits access to omitted follow-up context; the eventual usefulness or publication outcome of session 4 is still unknown at this checkpoint.
+The final discovery questions explicitly ask what the omitted fourth and fifth questions are.
+The writer sees the full prior page but makes no lookback request; because the module docstring is outside the admitted windows, the existing source correction is not verified or pruned from memory.
+This separates the discovery access limitation from the writer's conservative no-op; retrieving the page alone is not yet proved to change that choice.
+
+The author takes 132.43 seconds and the reviewer 69.47 seconds, each with one StructuredOutput attempt; no invocation in this session records an internal StructuredOutput retry.
+The reviewer completes all eight page checks and accepts the unchanged proposal.
+All fourteen usage records are complete: 271,374 input tokens and 38,073 output tokens; no controlled savings comparison is inferred.
+Pinned-v9 read-only replay validates the no-op, preserves all 211 job files and leaves memory exactly =399fe527=, with native/build/authentication access forbidden.
+All five admitted Git excerpts match their pinned blobs and hashes.
+No candidate or task changes require a new export; the existing memory tip is exactly the one inspected after session 3.
+
+The fourth seed again selects the same Talk item from five visible leads; reproducing the recorded random draws gives that result for all four job IDs.
+[[https://github.com/ligon/sucoder/issues/93][Issue 93]] records the repetition without alleging a random-number malfunction or the older missing-memory defect.
+Eight further sessions remain: four project and four experience runs.
 
 * Reproducibility and continuation
 :PROPERTIES:

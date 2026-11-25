@@ -1,13 +1,13 @@
-#+TITLE: Twelve-session dream campaign: 3 of 12 audited
+#+TITLE: Twelve-session dream campaign: 4 of 12 audited
 #+DATE: 2026-11-25
-#+STATUS: READY -- USER GOAL ACTIVE; NINE SESSIONS REMAIN
+#+STATUS: READY -- USER GOAL ACTIVE; EIGHT SESSIONS REMAIN
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
 * Active twelve-session goal, 2026-11-25
 
 The user set the goal: "test with repeated dreams, identifying problems as the process goes along and either repairing or filing an issue. Repeat 12 times."
-The goal remains active; do not redefine completion as the three sessions already finished or count old probes toward the twelve.
+The goal remains active; do not redefine completion as the four sessions already finished or count old probes toward the twelve.
 The [[file:../docs/dream/runs/twelve-session-campaign.org][campaign report]] and [[file:../docs/dream-twelve-ledger.org][grounding ledger]] describe the method and current verification.
 The authoritative private progress record is =/home/coder/.sucoder/logs/dream-twelve/2026-11-25/campaign.json=.
 It enumerates all twelve sessions, paired project/experience modes, pinned runtimes, job IDs, process identities, quality checks and repair/issue dispositions.
@@ -50,13 +50,19 @@ All three jobs received the same random Talk seed from five visible topics; issu
 The private =launch.py NUMBER= submits exactly one planned fresh session, preserves the normal mode purpose plus the TARGET-unit clarification and refuses automatic restarts.
 Sessions 1-3 are terminal and audited; do not resume them or reuse their elapsed allowances.
 The source/status correction is committed at =05dcce3da97dc483889f19a343d7359af0c89671=; all forty reply-probe tests pass and the module AST apart from its docstring is unchanged.
-Session 4 is now live: experience job =6a799c0066104346aa5862d1111ef658=, PID 1157811, using pinned runtime =2063680=, project =05dcce3= and accepted memory =399fe527=.
-Use =poll.py 4= to verify its command line and recorded process start ticks before any lifecycle decision.
-Issue 112 is filed for a reproduced discovery limitation: the memory Talk preview clips newer follow-up text, while reading the named full memory page is unavailable through the pinned project inventory.
-The private =run-04-memory-lead-gap.json= records exact preview sizes and immutable failed lookup hashes from sessions 3 and 4; this does not claim a terminal session-4 outcome.
+Session 4, experience job =6a799c0066104346aa5862d1111ef658=, is terminal and independently audited: fourteen completed calls, with a reviewed unchanged decision and accepted safe no-op.
+It uses pinned runtime =2063680= and project =05dcce3=; memory remains exactly =399fe527= and no new candidate, page or task is produced.
+The author avoids another inspection note without new substance.
+Author and reviewer take 132.43/69.47 seconds and each use one StructuredOutput attempt; this session has no internal schema retry.
+Read-only v9 no-op replay preserves all 211 job files and memory with native/build/authentication access forbidden.
+Issue 112 is filed for a reproduced discovery limitation: the 2,048-byte memory Talk preview omits 1,144 bytes, including the fourth and fifth questions, while the named full page cannot be read through the project inventory.
+The explorer explicitly asks what those omitted questions are; the writer sees the full page but requests no lookback, so the already-committed docstring correction is not verified or pruned from memory.
+The private =run-04-memory-lead-gap.json= records exact sizes and immutable failed lookup hashes from sessions 3 and 4; =run-04-quality.json= records the no-op's limits.
+All four jobs have received the same random Talk seed from five visible leads; issue 93 records this without a missing-memory or RNG-malfunction claim.
 The private =audit-campaign.py= checks audited-record continuity and unchanged historical job bytes; it is not a substitute for the final direct semantic and problem-disposition audit.
-The private progress record and launch artifacts bind this new allowance; never substitute an old job or replenish an elapsed wallet.
-Sessions 5-12 remain planned; session 4 plus those eight still require terminal, independently audited outcomes.
+At this checkpoint no campaign worker is live. Commit the updated report, then launch session 5 as a fresh project dream with the existing pinned v9 runtime and normal purpose plus the TARGET clarification.
+Sessions 1-4 are terminal; never substitute an old job or replenish an elapsed wallet.
+Sessions 5-12 remain planned and still require terminal, independently audited outcomes; the private campaign record supersedes this point-in-time launch state.
 
 All source work belongs on local main; never push private memory.
 The user-facing installed CLI remains older, so launch each dream from its explicitly pinned runtime source with the existing Poetry interpreter and correct PYTHONPATH/PYTHONSAFEPATH.
