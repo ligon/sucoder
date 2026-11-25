@@ -98,8 +98,9 @@ Expected-old additive withdrawal =00bc4e53b7f3749000198c3cd37711f93ffd971f= rest
 The eighteen-file managed copy is current; both pinned audits preserve all 249 job files and the exporter finds zero tasks/drafts.
 Author/reviewer take 223.78/53.23 seconds, each one StructuredOutput attempt; the private quality/source/withdrawal records bind this disposition.
 Sessions 1-8 are audited; never substitute an old job or replenish an elapsed wallet.
-No campaign native worker is live. Sessions 9-12 remain planned: two project and two experience sessions.
-Launch session 9 with the existing private =launch.py 9= after this checkpoint is committed and main is clean.
+Session 9 is live: project job =391d70d401d0485aade0542b64205a6b=, PID 1203584, on v9 runtime =2063680=, project =dbbde56= and accepted memory =00bc4e53=.
+Use =poll.py 9= to verify its command line and recorded start ticks; retain its original 32-call/1,800-second allowance and 600-second/three-call reserve.
+Sessions 10-12 remain planned: one project and two experience sessions.
 All four still require terminal, independently audited outcomes.
 The private campaign record supersedes this point-in-time state.
 

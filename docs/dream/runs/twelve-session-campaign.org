@@ -37,7 +37,7 @@ The [[file:../../dream-twelve-ledger.org][grounding ledger]] identifies reused m
 |       6 | project    | incomplete    | safe rejection        |          16 |
 |       7 | experience | published     | accepted with advisory |          15 |
 |       8 | experience | published     | rejected / withdrawn  |          17 |
-|       9 | project    | planned       | pending               |             |
+|       9 | project    | running       | pending               |             |
 |      10 | project    | planned       | pending               |             |
 |      11 | experience | planned       | pending               |             |
 |      12 | experience | planned       | pending               |             |
@@ -280,6 +280,15 @@ The existing exporter finds zero tasks or drafts at the rejected commit without 
 Author and reviewer durations are 223.78 and 53.23 native seconds, each with one StructuredOutput attempt.
 All seventeen usage records are complete: 356,893 input tokens and 50,561 output tokens; these are telemetry, not a billing or controlled-savings claim.
 Four sessions remain: two project and two experience runs.
+
+* Session 9: project follow-up
+:PROPERTIES:
+:CUSTOM_ID: session-9
+:END:
+
+Job =391d70d401d0485aade0542b64205a6b= is live at this checkpoint.
+It uses v9 runtime =2063680=, project =dbbde56= and accepted memory =00bc4e53=, with the normal project purpose and original fresh allowance.
+Terminal status and independent acceptance remain pending.
 
 * Reproducibility and continuation
 :PROPERTIES:
