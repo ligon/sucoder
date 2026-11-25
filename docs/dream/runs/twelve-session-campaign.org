@@ -32,7 +32,7 @@ The [[file:../../dream-twelve-ledger.org][grounding ledger]] identifies reused m
 |       2 | project    | published     | rejected / withdrawn  |          15 |
 |       3 | experience | published     | accepted with advisory |          18 |
 |       4 | experience | unchanged     | accepted no-op        |          14 |
-|       5 | project    | planned       | pending               |             |
+|       5 | project    | running       | pending               |             |
 |       6 | project    | planned       | pending               |             |
 |       7 | experience | planned       | pending               |             |
 |       8 | experience | planned       | pending               |             |
@@ -155,6 +155,15 @@ No candidate or task changes require a new export; the existing memory tip is ex
 The fourth seed again selects the same Talk item from five visible leads; reproducing the recorded random draws gives that result for all four job IDs.
 [[https://github.com/ligon/sucoder/issues/93][Issue 93]] records the repetition without alleging a random-number malfunction or the older missing-memory defect.
 Eight further sessions remain: four project and four experience runs.
+
+* Session 5: project follow-up
+:PROPERTIES:
+:CUSTOM_ID: session-5
+:END:
+
+Job =3e2f9f3ab2694ba1a19b0eec349a2715= is live at this checkpoint, with pinned v9 runtime =2063680=, project =55d7abc= and accepted memory =399fe527=.
+The normal project purpose and original fresh allowance apply, with the explicit TARGET-unit clarification.
+Terminal status and independent source-quality acceptance remain pending.
 
 * Reproducibility and continuation
 :PROPERTIES:

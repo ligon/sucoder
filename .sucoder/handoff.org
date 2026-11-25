@@ -58,11 +58,13 @@ Read-only v9 no-op replay preserves all 211 job files and memory with native/bui
 Issue 112 is filed for a reproduced discovery limitation: the 2,048-byte memory Talk preview omits 1,144 bytes, including the fourth and fifth questions, while the named full page cannot be read through the project inventory.
 The explorer explicitly asks what those omitted questions are; the writer sees the full page but requests no lookback, so the already-committed docstring correction is not verified or pruned from memory.
 The private =run-04-memory-lead-gap.json= records exact sizes and immutable failed lookup hashes from sessions 3 and 4; =run-04-quality.json= records the no-op's limits.
-All four jobs have received the same random Talk seed from five visible leads; issue 93 records this without a missing-memory or RNG-malfunction claim.
+The first four jobs received the same random Talk seed from five visible leads; issue 93 records this without a missing-memory or RNG-malfunction claim.
 The private =audit-campaign.py= checks audited-record continuity and unchanged historical job bytes; it is not a substitute for the final direct semantic and problem-disposition audit.
-At this checkpoint no campaign worker is live. Commit the updated report, then launch session 5 as a fresh project dream with the existing pinned v9 runtime and normal purpose plus the TARGET clarification.
+Session 5 is now live: project job =3e2f9f3ab2694ba1a19b0eec349a2715=, PID 1164177, pinned runtime =2063680= and project =55d7abc=, starting from accepted memory =399fe527=.
+Use =poll.py 5= to verify its command line and recorded start ticks; retain its original 32-call/1,800-second allowance and 600-second/three-call closeout reserve.
 Sessions 1-4 are terminal; never substitute an old job or replenish an elapsed wallet.
-Sessions 5-12 remain planned and still require terminal, independently audited outcomes; the private campaign record supersedes this point-in-time launch state.
+Session 5 is running and sessions 6-12 remain planned; all eight still require terminal, independently audited outcomes.
+The private campaign record supersedes this point-in-time launch state.
 
 All source work belongs on local main; never push private memory.
 The user-facing installed CLI remains older, so launch each dream from its explicitly pinned runtime source with the existing Poetry interpreter and correct PYTHONPATH/PYTHONSAFEPATH.
