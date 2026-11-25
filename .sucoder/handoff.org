@@ -1,13 +1,13 @@
-#+TITLE: Twelve-session dream campaign: 9 of 12 audited
+#+TITLE: Twelve-session dream campaign: 10 of 12 audited
 #+DATE: 2026-11-25
-#+STATUS: READY -- USER GOAL ACTIVE; THREE SESSIONS REMAIN
+#+STATUS: READY -- USER GOAL ACTIVE; TWO SESSIONS REMAIN
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
 * Active twelve-session goal, 2026-11-25
 
 The user set the goal: "test with repeated dreams, identifying problems as the process goes along and either repairing or filing an issue. Repeat 12 times."
-The goal remains active; do not redefine completion as the nine sessions already audited or count old probes toward the twelve.
+The goal remains active; do not redefine completion as the ten sessions already audited or count old probes toward the twelve.
 The [[file:../docs/dream/runs/twelve-session-campaign.org][campaign report]] and [[file:../docs/dream-twelve-ledger.org][grounding ledger]] describe the method and current verification.
 The authoritative private progress record is =/home/coder/.sucoder/logs/dream-twelve/2026-11-25/campaign.json=.
 It enumerates all twelve sessions, paired project/experience modes, pinned runtimes, job IDs, process identities, quality checks and repair/issue dispositions.
@@ -106,12 +106,19 @@ The corrected header is read during discovery but absent from the final bundle, 
 The author takes 487.57 seconds and two StructuredOutput attempts after a 15,719-byte argument fails JSON parsing; issue 117 records this distinct retry without guessing its cause or per-attempt cost.
 The reviewer takes 60.36 seconds and one StructuredOutput attempt.
 Pinned read-only status preserves all 210 job files and memory; the managed copy matches the retained commit and the exporter finds zero tasks/drafts.
-Sessions 1-9 are audited; never substitute an old job or replenish an elapsed wallet.
-Session 10 is live: project job =dfa4c9bfec314654ac0c604aedbf5b54=, PID 1211604, on v9 runtime =2063680=, project =949106c= and accepted memory =25d25622=.
-Use =poll.py 10= to verify its command line and recorded start ticks; retain its original 32-call/1,800-second allowance and 600-second/three-call reserve.
-Sessions 11-12 remain planned, both experience mode.
-All three still require terminal, independently audited outcomes.
-The private campaign record supersedes this point-in-time state.
+Session 10, project job =dfa4c9bfec314654ac0c604aedbf5b54=, is terminal and audited on v9 runtime =2063680= and project =949106c=.
+Seven discovery calls, author and reviewer complete; all nine invocations have one StructuredOutput attempt.
+Sue retains =26335ccb1e33dbb873d844c356bd63cc308f4c79= with a precision advisory: first matching bare candidates persist while later tagged replies can supersede them.
+Four independent synthetic cases confirm priority; issue 109 receives the design-intent question and issue 108 the wording advisory.
+The original five questions remain open, a sixth is added, and index/other topics are unchanged.
+Issue 118 is filed after exact read-only reproduction: unrelated attention provenance fills 16,132 of 16,384 bytes, omitting the selected reply page's matching receipt. Priority ordering includes both pages in 16,097 bytes under the same collector/limit, with no native calls or job changes.
+The operator's equal-blob/function comparison is not evidence that this provenance was delivered to the author; the issue 108 note is clarified accordingly.
+Issue 116 tracks repeated inspection history and issue 112 the failed full-page read with 1,626 omitted preview bytes.
+The header remains outside the bundle and no editorial lookback occurs. Author/reviewer take 240.84/61.45 seconds; pinned read-only status preserves all 145 job files and the exporter finds zero tasks/drafts.
+Sessions 1-10 are audited; all six project sessions are done. Never substitute an old job or replenish an elapsed wallet.
+No campaign native worker is live. Sessions 11-12 remain planned, both experience mode.
+Launch session 11 with the existing private =launch.py 11= after this checkpoint is committed and main is clean.
+Both still require terminal, independently audited outcomes; the private campaign record supersedes this checkpoint.
 
 All source work belongs on local main; never push private memory.
 The user-facing installed CLI remains older, so launch each dream from its explicitly pinned runtime source with the existing Poetry interpreter and correct PYTHONPATH/PYTHONSAFEPATH.
