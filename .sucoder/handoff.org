@@ -1,13 +1,13 @@
-#+TITLE: Twelve-session dream campaign: 8 of 12 audited
+#+TITLE: Twelve-session dream campaign: 9 of 12 audited
 #+DATE: 2026-11-25
-#+STATUS: READY -- USER GOAL ACTIVE; FOUR SESSIONS REMAIN
+#+STATUS: READY -- USER GOAL ACTIVE; THREE SESSIONS REMAIN
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
 * Active twelve-session goal, 2026-11-25
 
 The user set the goal: "test with repeated dreams, identifying problems as the process goes along and either repairing or filing an issue. Repeat 12 times."
-The goal remains active; do not redefine completion as the eight sessions already audited or count old probes toward the twelve.
+The goal remains active; do not redefine completion as the nine sessions already audited or count old probes toward the twelve.
 The [[file:../docs/dream/runs/twelve-session-campaign.org][campaign report]] and [[file:../docs/dream-twelve-ledger.org][grounding ledger]] describe the method and current verification.
 The authoritative private progress record is =/home/coder/.sucoder/logs/dream-twelve/2026-11-25/campaign.json=.
 It enumerates all twelve sessions, paired project/experience modes, pinned runtimes, job IDs, process identities, quality checks and repair/issue dispositions.
@@ -97,11 +97,19 @@ Issue 108 receives the scope false pass; issue 116 is filed for verification-onl
 Expected-old additive withdrawal =00bc4e53b7f3749000198c3cd37711f93ffd971f= restores exactly the =daa1cc7e= tree, including session 7's retained index change, with rejected =c237bd28= as parent.
 The eighteen-file managed copy is current; both pinned audits preserve all 249 job files and the exporter finds zero tasks/drafts.
 Author/reviewer take 223.78/53.23 seconds, each one StructuredOutput attempt; the private quality/source/withdrawal records bind this disposition.
-Sessions 1-8 are audited; never substitute an old job or replenish an elapsed wallet.
-Session 9 is live: project job =391d70d401d0485aade0542b64205a6b=, PID 1203584, on v9 runtime =2063680=, project =dbbde56= and accepted memory =00bc4e53=.
-Use =poll.py 9= to verify its command line and recorded start ticks; retain its original 32-call/1,800-second allowance and 600-second/three-call reserve.
-Sessions 10-12 remain planned: one project and two experience sessions.
-All four still require terminal, independently audited outcomes.
+Session 9, project job =391d70d401d0485aade0542b64205a6b=, is terminal and audited on v9 runtime =2063680= and project =dbbde56=.
+Twelve discovery calls select four Git windows (2,723 bytes), followed by author and reviewer, for fourteen completed invocations.
+Sue retains publication =25d256222f732ff448a63e2c34ae9ee88f2944e8= with precision advisories: the tagged-reply leading-non-word prefix is directly supported and independently checked in four cases; all five policy questions remain open.
+Its inspection wording should identify only the rechecked descriptions, not imply fresh verification of omitted material in linked sections; the review preservation reason also incorrectly says all questions are verbatim when question 2 is expanded.
+Issue 108 receives these narrower advisories; issue 116 distinguishes the repeated inspection-history component from the supported new regex fact.
+The corrected header is read during discovery but absent from the final bundle, and there is no editorial lookback; the old header follow-up stays unresolved in admitted evidence.
+The author takes 487.57 seconds and two StructuredOutput attempts after a 15,719-byte argument fails JSON parsing; issue 117 records this distinct retry without guessing its cause or per-attempt cost.
+The reviewer takes 60.36 seconds and one StructuredOutput attempt.
+Pinned read-only status preserves all 210 job files and memory; the managed copy matches the retained commit and the exporter finds zero tasks/drafts.
+Sessions 1-9 are audited; never substitute an old job or replenish an elapsed wallet.
+No campaign native worker is live. Sessions 10-12 remain planned: one project and two experience sessions.
+Launch session 10 with the existing private =launch.py 10= after this checkpoint is committed and main is clean.
+All three still require terminal, independently audited outcomes.
 The private campaign record supersedes this point-in-time state.
 
 All source work belongs on local main; never push private memory.

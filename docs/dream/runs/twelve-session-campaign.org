@@ -1,7 +1,7 @@
 #+TITLE: Twelve-session SuCoder dream campaign
 #+AUTHOR: Sue
 #+DATE: 2026-11-25
-#+STATUS: ACTIVE -- 8 OF 12 SESSIONS AUDITED
+#+STATUS: ACTIVE -- 9 OF 12 SESSIONS AUDITED
 
 * Scope and method
 :PROPERTIES:
@@ -37,7 +37,7 @@ The [[file:../../dream-twelve-ledger.org][grounding ledger]] identifies reused m
 |       6 | project    | incomplete    | safe rejection        |          16 |
 |       7 | experience | published     | accepted with advisory |          15 |
 |       8 | experience | published     | rejected / withdrawn  |          17 |
-|       9 | project    | running       | pending               |             |
+|       9 | project    | published     | accepted with advisory |          14 |
 |      10 | project    | planned       | pending               |             |
 |      11 | experience | planned       | pending               |             |
 |      12 | experience | planned       | pending               |             |
@@ -286,9 +286,31 @@ Four sessions remain: two project and two experience runs.
 :CUSTOM_ID: session-9
 :END:
 
-Job =391d70d401d0485aade0542b64205a6b= is live at this checkpoint.
-It uses v9 runtime =2063680=, project =dbbde56= and accepted memory =00bc4e53=, with the normal project purpose and original fresh allowance.
-Terminal status and independent acceptance remain pending.
+Job =391d70d401d0485aade0542b64205a6b= uses v9 runtime =2063680=, project =dbbde56= and starting memory =00bc4e53=.
+Twelve discovery calls select four Git windows, 2,723 bytes, about the investigation recommendation, reply patterns, reader docstring and a scan-loop excerpt.
+All four admitted spans independently match their pinned Git bytes and hashes.
+The corrected module header was read during discovery but not selected, and the author requests no lookback; its old follow-up remains explicitly unresolved within the admitted evidence.
+
+One author and one reviewer complete, for fourteen coordinator invocations and publication =25d256222f732ff448a63e2c34ae9ee88f2944e8=.
+The topic adds the directly supported fact that =tagged_reply= permits leading non-word characters before =REPLY= while still requiring the message ID; the investigation recommends a stricter line prefix.
+Four independent checks of the literal source regex confirm the prefix and ID distinction.
+All five Talk questions stay open, question 2 is expanded, and the index and other topics remain byte-identical.
+Sue retains this narrow static observation with precision advisories recorded in [[https://github.com/ligon/sucoder/issues/108][issue 108]].
+The inspection paragraph should name the particular rechecked descriptions; it does not freshly verify omitted probe/main, fixture, header or historical descriptions elsewhere in the linked sections.
+The review reason incorrectly says all five questions are verbatim, although question 2 is expanded without losing its prior qualifications.
+Unlike session 8's explicit whole-page confirmation, this paragraph names the delivered source text and adds a concrete supported regex observation.
+[[https://github.com/ligon/sucoder/issues/116][Issue 116]] records the repeated inspection-history component without classifying the whole result as verification-only.
+
+The author uses two StructuredOutput attempts inside its one charged native invocation.
+The first rejects a 15,719-byte argument as invalid JSON; the diagnostic does not isolate escaping, truncation or another particular cause.
+[[https://github.com/ligon/sucoder/issues/117][Issue 117]] records this distinct native-generation failure, separate from the reason-length correction.
+The entire author invocation takes 487.57 seconds, including both attempts; per-attempt cost is unknown.
+The reviewer takes 60.36 seconds and uses one StructuredOutput attempt.
+All fourteen usage records are complete: 282,641 input tokens and 63,128 output tokens; no billing or controlled-savings claim is inferred.
+
+Pinned read-only status preserves all 210 job files and memory with native/build/authentication access forbidden.
+The managed topic copy matches the retained commit and remains read-only; the exporter finds zero correction tasks/drafts without native/GitHub access or mutations.
+Three sessions remain: one project and two experience runs.
 
 * Reproducibility and continuation
 :PROPERTIES:
