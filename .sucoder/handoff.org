@@ -125,9 +125,16 @@ The twenty-file managed copy is current; both read-only audits preserve all 264 
 Issue 119 is filed for zero-tail transcript clipping: a synthetic 1,000-byte tool body expands to 1,330 bytes with a negative 300-byte omission marker because data[-0:] retains the whole body. A fix must preserve frozen claude-view-v1 replay; no renderer change is made here.
 All eighteen invocations use one StructuredOutput attempt. Author calls take 129.28/186.76/326.04 seconds and reviewer 132.79 seconds.
 Sessions 1-11 are audited; all six project and five experience sessions are done. Never substitute an old job or replenish an elapsed wallet.
-No campaign native worker is live. Session 12 remains planned, experience mode.
-Launch it with the existing private =launch.py 12= after this checkpoint is committed and main is clean.
+Session 12 is live: experience job =1b9dfe6d4fe5422eb7d21d80bba5454d=, PID 1228297, on v9 runtime =2063680=, project =7e74abb= and accepted memory =70851cc6=.
+Use =poll.py 12= to verify its command line and recorded start ticks; retain its original 32-call/1,800-second allowance and 600-second/three-call reserve.
+No further native session is planned. Launching job twelve is not completion.
 Its terminal independent audit and the final full-scope completion audit remain required; the private campaign record supersedes this checkpoint.
+
+After session 12, finish its exact source/quality/issue disposition and run the campaign continuity check across all twelve.
+The completion audit must also verify all problem URLs/repairs, actual original wallet bounds with no extensions, absent campaign workers and the current managed memory copy.
+The private =source-validation-evidence-review.json= reconciles all seven initial source-test failures with later passing cases; the recorded targeted validation is not an unfiltered full-suite pass.
+Update the grounding ledger's historical section 7 and append the final verification in a standalone commit.
+Create and verify a latest-main-only source bundle, excluding private memory objects; only then mark the goal complete.
 
 All source work belongs on local main; never push private memory.
 The user-facing installed CLI remains older, so launch each dream from its explicitly pinned runtime source with the existing Poetry interpreter and correct PYTHONPATH/PYTHONSAFEPATH.

@@ -40,7 +40,7 @@ The [[file:../../dream-twelve-ledger.org][grounding ledger]] identifies reused m
 |       9 | project    | published     | accepted with advisory |          14 |
 |      10 | project    | published     | accepted with advisory |           9 |
 |      11 | experience | published     | rejected / withdrawn  |          18 |
-|      12 | experience | planned       | pending               |             |
+|      12 | experience | running       | pending               |             |
 
 * Session 1: follow a recorded reply-policy question
 :PROPERTIES:
@@ -380,6 +380,15 @@ The author calls take 129.28, 186.76 and 326.04 seconds; reviewer time is 132.79
 All eighteen invocations use one StructuredOutput attempt.
 All usage records are complete: 283,044 input tokens and 66,773 output tokens; no controlled savings or billing claim is inferred.
 One fresh experience session remains; the campaign is not complete.
+
+* Session 12: final experience session
+:PROPERTIES:
+:CUSTOM_ID: session-12
+:END:
+
+Job =1b9dfe6d4fe5422eb7d21d80bba5454d= is live at this checkpoint.
+It uses v9 runtime =2063680=, project =7e74abb= and accepted memory =70851cc6=, with the normal experience purpose and original fresh allowance.
+Terminal status and independent acceptance remain pending; launching the twelfth job does not complete the campaign.
 
 * Reproducibility and continuation
 :PROPERTIES:
