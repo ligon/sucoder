@@ -33,7 +33,7 @@ The [[file:../../dream-twelve-ledger.org][grounding ledger]] identifies reused m
 |       3 | experience | published     | accepted with advisory |          18 |
 |       4 | experience | unchanged     | accepted no-op        |          14 |
 |       5 | project    | published     | rejected / withdrawn  |           9 |
-|       6 | project    | planned       | pending               |             |
+|       6 | project    | running       | pending               |             |
 |       7 | experience | planned       | pending               |             |
 |       8 | experience | planned       | pending               |             |
 |       9 | project    | planned       | pending               |             |
@@ -191,6 +191,15 @@ All nine usage records are complete: 152,869 input tokens and 59,536 output toke
 The reason-format correction is functioning, while semantic correctness remains unproven by matrix completion.
 No controlled savings comparison is inferred from these phase observations.
 Seven sessions still require terminal outcomes and source-quality audits.
+
+* Session 6: second project follow-up
+:PROPERTIES:
+:CUSTOM_ID: session-6
+:END:
+
+Job =628ab3b8b9434a75a0ea4dd9f3be03f7= is live at this checkpoint.
+Its pinned v9 runtime is =2063680=, its project is =3a0a2cb= and its starting accepted memory is =b9539d6e=.
+The original fresh allowance and open project purpose apply; terminal status and independent acceptance remain pending.
 
 * Reproducibility and continuation
 :PROPERTIES:

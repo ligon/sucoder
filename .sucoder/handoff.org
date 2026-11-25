@@ -71,9 +71,11 @@ Issue 113 is filed for two quote-only changes that consumed a full 299.04-second
 Author and reviewer take 423.96/150.61 seconds, and all three editorial roles use one StructuredOutput attempt.
 The private =run-05-source-checklist.json= predates the native final result; =run-05-quality.json=, =run-05-withdrawal.json= and both pinned audits preserve the source-quality and rollback evidence.
 No new tasks or drafts are found by the read-only exporter at the rejected commit.
-At this checkpoint no campaign worker is live. Commit the updated report, then launch session 6 as a fresh project dream from the pinned v9 runtime and accepted memory =b9539d6e=.
+Session 6 is now live: project job =628ab3b8b9434a75a0ea4dd9f3be03f7=, PID 1174146, using pinned v9 runtime =2063680=, project =3a0a2cb= and accepted memory =b9539d6e=.
+Use =poll.py 6= to verify its command line and recorded start ticks; retain its original 32-call/1,800-second allowance and 600-second/three-call closeout reserve.
 Sessions 1-5 are terminal; never substitute an old job or replenish an elapsed wallet.
-Sessions 6-12 remain planned and require terminal, independently audited outcomes.
+Session 6 is running; sessions 7-12 remain planned.
+All seven still require terminal, independently audited outcomes.
 The private campaign record supersedes this point-in-time launch state.
 
 All source work belongs on local main; never push private memory.
