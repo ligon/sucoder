@@ -1,7 +1,7 @@
 #+TITLE: Twelve-session SuCoder dream campaign
 #+AUTHOR: Sue
 #+DATE: 2026-11-25
-#+STATUS: ACTIVE -- 7 OF 12 SESSIONS AUDITED
+#+STATUS: ACTIVE -- 8 OF 12 SESSIONS AUDITED
 
 * Scope and method
 :PROPERTIES:
@@ -36,7 +36,7 @@ The [[file:../../dream-twelve-ledger.org][grounding ledger]] identifies reused m
 |       5 | project    | published     | rejected / withdrawn  |           9 |
 |       6 | project    | incomplete    | safe rejection        |          16 |
 |       7 | experience | published     | accepted with advisory |          15 |
-|       8 | experience | running       | pending               |             |
+|       8 | experience | published     | rejected / withdrawn  |          17 |
 |       9 | project    | planned       | pending               |             |
 |      10 | project    | planned       | pending               |             |
 |      11 | experience | planned       | pending               |             |
@@ -259,9 +259,27 @@ Five sessions remain: two project and three experience runs.
 :CUSTOM_ID: session-8
 :END:
 
-Job =6c220960ada24f27822e4fc16bfc7460= is live at this checkpoint.
-It uses v9 runtime =2063680=, project =874f847= and accepted memory =daa1cc7e=, with the normal experience purpose and original fresh allowance.
-Terminal status and independent acceptance remain pending.
+Job =6c220960ada24f27822e4fc16bfc7460= uses v9 runtime =2063680=, project =874f847= and starting memory =daa1cc7e=.
+Fifteen discovery calls select four Git excerpts about reply recognition, the reader loop, probe/main and the investigation recommendation.
+Author and reviewer complete, for seventeen returned invocations; no transcript or editorial lookback is selected.
+All four source spans independently match their exact Git bytes and digests.
+
+The only explanatory edit adds a fourth inspection record and says its findings confirm descriptions throughout the page.
+The admitted windows do not recheck the page's adapter and identity machinery, historical transcript observations or tests.
+All five open questions remain unchanged, including the module-header follow-up whose separate source correction is outside this bundle.
+The reviewer accepts without findings and passes all eight checks, including the overbroad scope assertion.
+Sue rejects that new confirmation claim; this does not establish that the older descriptions are false.
+[[https://github.com/ligon/sucoder/issues/108][Issue 108]] receives this scope false pass, and [[https://github.com/ligon/sucoder/issues/116][issue 116]] records verification-only explanatory churn.
+A reviewed unchanged result with precisely scoped audit provenance would avoid another inspection-only paragraph.
+
+Expected-old additive withdrawal =00bc4e53b7f3749000198c3cd37711f93ffd971f= restores exactly the accepted =daa1cc7e= tree, retaining rejected publication =c237bd285b91fecfabfc8fb2d681841c708648a8= as parent.
+The managed copy is refreshed to eighteen files, preserving session 7's accepted index update.
+Pinned read-only status before and after withdrawal preserves all 249 job files and memory with native/build/authentication access forbidden.
+The existing exporter finds zero tasks or drafts at the rejected commit without native/GitHub access or mutations.
+
+Author and reviewer durations are 223.78 and 53.23 native seconds, each with one StructuredOutput attempt.
+All seventeen usage records are complete: 356,893 input tokens and 50,561 output tokens; these are telemetry, not a billing or controlled-savings claim.
+Four sessions remain: two project and two experience runs.
 
 * Reproducibility and continuation
 :PROPERTIES:
