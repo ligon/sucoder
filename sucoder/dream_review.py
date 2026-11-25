@@ -107,7 +107,7 @@ def findings(review, gate, available):
     return result
 
 
-def check_receipt(receipt):
+def check_receipt(receipt, *, reviewer_schema=None):
     """Bounded shared proof consistency; replay still reconstructs assignments."""
     handles.check_receipt(receipt)
     try:
@@ -154,7 +154,7 @@ def check_receipt(receipt):
             raise DreamError("Accepted semantic review omits changed output pages")
         if diff_bytes > DIFF_BYTES:
             raise DreamError("Accepted semantic review diff allowance differs")
-        dream_roles.validate_schema(receipt["review"], schema("reviewer"))
+        dream_roles.validate_schema(receipt["review"], schema("reviewer") if reviewer_schema is None else reviewer_schema)
         if receipt["review"]["requests"] or findings(receipt["review"], gate,
                 {entry["handle"] for entry in receipt["context"]["evidence"]["entries"]}):
             raise DreamError("Accepted semantic review contains unresolved checks")
@@ -195,5 +195,8 @@ class Editor(handles.Editor):
     def prepare(self):
         pages, receipt = super().prepare()
         receipt["semantic_review"] = copy.deepcopy(self.review_gate)
-        check_receipt(receipt)
+        self.receipt_check(receipt)
         return pages, receipt
+
+    def receipt_check(self, receipt):
+        check_receipt(receipt)

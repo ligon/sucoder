@@ -2868,7 +2868,7 @@ sucoder --config ~/.sucoder/config.yaml dream budget SuCoder \
 #+end_example
 
 Native runs persist a whole-job budget before snapshotting or native startup.
-New plans and exploratory jobs freeze authoring v8, retaining coordinator-managed handles for exact delivered evidence.
+New plans and exploratory jobs freeze authoring v9, retaining coordinator-managed handles and the v8 semantic review matrix.
 Authors select a supplied handle for each citation and task-action evidence item; Python supplies literal quotes and absolute UTF-8 ranges, including when identical text occurs twice.
 Source text appears once in labeled passages, with a bounded provenance registry in context; handles grant neither additional reads nor human authority.
 Located diagnostics still report independent reference and changed-anchor coverage defects together.
@@ -2880,11 +2880,15 @@ See [[file:docs/dream/evidence-handles.org][the evidence-handle contract]] for b
 V8 also supplies a coordinator-generated diff for every changed output, including the index, and requires explicit reviewer judgments on support, scope, time, causality, outcomes, attribution, preservation and summaries.
 Missing, stale, failed or uncertain judgments block publication even with an accepting overall verdict.
 These judgments remain model assessments; the [[file:docs/dream/semantic-review.org][semantic review contract]] distinguishes mechanical enforcement from measured reviewer quality.
-Fresh v8 work cannot reuse earlier receipts as proof of passing this gate.
+Fresh work reuses accepted receipts only under its own frozen authoring contract.
+V9 asks for one short sentence per review reason and uses the existing general text allowance, avoiding v8's 512-character per-reason constraint.
+The plan's existing cumulative =max_proposal_bytes= ceiling still bounds all replies; raw reasons are not truncated.
+V1-v8 schemas, policies and replay remain frozen.
 See [[file:docs/dream/authoring-plan.org::#implemented-diagnostics][the diagnostics contract and staged authoring plan]] for details and the later patch, checkpoint and resource-control work.
 The [[file:docs/dream/runs/authoring-sequence.org][Claude evaluation]] records one controlled repair, one real publication with grounding qualifications and one real job stopped by its elapsed ceiling.
 The [[file:docs/dream/runs/sucoder-e9.org][first v7 live trial]] resolves handles successfully but fails the root source-quality check after reviewer acceptance; its publication was withdrawn with an additive revert.
 The [[file:docs/dream/runs/review-calibration.org][v8 reviewer calibration]] blocks that draft and accepts an operator correction, while still missing several topic-level overclaims; a completed matrix is not semantic proof.
+The [[file:docs/dream/runs/twelve-session-campaign.org][twelve-session campaign]] records subsequent live results and the fixes/issues they produce.
 By default the plan's elapsed and role ceilings become a shared deadline and native invocation cap (normally 900 seconds and 40 invocations), including review, repairs, context-request turns, failed calls and explicit attempts.
 Elapsed time includes idle time between restarts; restarting a process or selecting =--attempt 2= does not replenish the budget.
 An exploratory job can receive an explicit =--retry-seconds= window as described above; this is recorded separately from the original policy and never adds native calls.

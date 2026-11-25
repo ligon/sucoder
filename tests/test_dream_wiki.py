@@ -21,7 +21,7 @@ OLD = ("#+title: Reply evidence\n#+TODO: TODO NEXT ACTIVE WAITING REVIEW | DONE 
        "Any reply tag in a compaction summary proves that a reply was sent.\n\n" + POLICY)
 
 
-def planned(workspace, authoring_version=8):
+def planned(workspace, authoring_version=9):
     repo = workspace[0]
     (repo / "evidence-a.org").write_text("A compaction summary reports earlier events; it does not establish a native assistant reply.\n")
     (repo / "evidence-b.org").write_text("Reply evidence is native assistant text after the matching delivery and before the next input. Use --session-id <uuid> at launch; this is documented capability, not a freshly tested launch.\n")
@@ -33,7 +33,7 @@ def planned(workspace, authoring_version=8):
         locator=dict(repository="sample", commit="HEAD", path=name + ".org")) for name in ("evidence-a", "evidence-b")])
     result = invoke(workspace, request)
     assert result.exit_code == 0, result.output
-    if authoring_version != 8:
+    if authoring_version != 9:
         return dream.create_plan(workspace[2], "sample", workspace[1].parent / "sources.json", "refs/heads/main", authoring_version=authoring_version)
     return json.loads(result.output)
 
@@ -71,11 +71,11 @@ class EditorTransport:
                 references=[dict(path=TOPIC, target="reply-proof", evidence_status="inference", citations=[
                     dict(unit_id=s["unit_id"], quote=source_text(s)) for s in inputs["sources"]])],
                 omissions=[])
-        if task["contract"] in ("source-grounded-wiki-v3", "source-grounded-wiki-v4", "source-grounded-wiki-v5", "source-grounded-wiki-v6", "source-grounded-wiki-v7", "source-grounded-wiki-v8") and task["role"] != "reviewer":
+        if task["contract"] in ("source-grounded-wiki-v3", "source-grounded-wiki-v4", "source-grounded-wiki-v5", "source-grounded-wiki-v6", "source-grounded-wiki-v7", "source-grounded-wiki-v8", "source-grounded-wiki-v9") and task["role"] != "reviewer":
             result.update(decision="change", rationale="Correct unsupported memory and connect the two necessary sources.")
-        if task["contract"] in ("source-grounded-wiki-v4", "source-grounded-wiki-v5", "source-grounded-wiki-v6", "source-grounded-wiki-v7", "source-grounded-wiki-v8"):
+        if task["contract"] in ("source-grounded-wiki-v4", "source-grounded-wiki-v5", "source-grounded-wiki-v6", "source-grounded-wiki-v7", "source-grounded-wiki-v8", "source-grounded-wiki-v9"):
             result["requests"] = []
-        if task["contract"] in ("source-grounded-wiki-v5", "source-grounded-wiki-v6", "source-grounded-wiki-v7", "source-grounded-wiki-v8"):
+        if task["contract"] in ("source-grounded-wiki-v5", "source-grounded-wiki-v6", "source-grounded-wiki-v7", "source-grounded-wiki-v8", "source-grounded-wiki-v9"):
             result["task_checks" if task["role"] == "reviewer" else "task_actions"] = []
         if self.mutate:
             self.mutate(task, result)
@@ -114,7 +114,7 @@ def test_corrects_existing_topic_and_combines_sources_preserving_human_task(work
     assert len(transport.calls) == 2
     assert dream_run.status(workspace[2], "sample", Path(plan["plan_path"]))["state"] == "candidate_ready"
     receipt = json.loads(git(repo, "show", result["candidate_commit"] + ":.sucoder/wiki/receipts/" + result["run_id"] + ".json"))
-    assert receipt["contract"] == "source-grounded-wiki-v8"
+    assert receipt["contract"] == "source-grounded-wiki-v9"
     assert len(receipt["references"][0]["citations"]) == 2
     assert all(b["rule"] == "file-utf8-v1" for b in receipt["outputs"])
 
@@ -172,7 +172,7 @@ def test_cli_defaults_to_editor_and_binds_operator_purpose(workspace, monkeypatc
     result = command(workspace, "run", plan, "--harness", "codex", "--model", "explicit-model",
                      "--purpose", "Explain how reply evidence differs from historical summaries.")
     assert result.exit_code == 0, result.output
-    assert json.loads(result.output)["fidelity"] == "source-grounded-wiki-v8"
+    assert json.loads(result.output)["fidelity"] == "source-grounded-wiki-v9"
     assert transport.calls[0]["input"]["purpose"] == "Explain how reply evidence differs from historical summaries."
     status = command(workspace, "status", plan)
     assert status.exit_code == 0, status.output

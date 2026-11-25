@@ -18,7 +18,7 @@ def request(kind, key="", target="", query="", start=0, end=0):
 
 
 def native_result(harness, model, task, result, version):
-    if task["contract"] in ("source-grounded-wiki-v5", "source-grounded-wiki-v6", "source-grounded-wiki-v7", "source-grounded-wiki-v8"):
+    if task["contract"] in ("source-grounded-wiki-v5", "source-grounded-wiki-v6", "source-grounded-wiki-v7", "source-grounded-wiki-v8", "source-grounded-wiki-v9"):
         result.setdefault("task_checks" if task["role"] == "reviewer" else "task_actions", [])
     if harness == "codex":
         events = [dict(type="item.completed", item=dict(type="agent_message", text=json.dumps(result))),

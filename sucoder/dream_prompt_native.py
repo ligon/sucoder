@@ -185,7 +185,7 @@ def draft_profile(build, model, version, auth, *, submission_contract="coordinat
 
 def variants(submission_contract="coordinator-submission-v1"):
     """Current production variants, including mandatory closeout schemas."""
-    from . import dream_discover, dream_review, dream_leads, dream_navigation, dream_prompt, dream_support
+    from . import dream_discover, dream_concise, dream_leads, dream_navigation, dream_prompt, dream_support
     values = []
     for mode, brief in (("project", dream_discover.BRIEF), ("experience", dream_discover.EXPERIENCE_BRIEF)):
         for leads in (False, True):
@@ -196,10 +196,10 @@ def variants(submission_contract="coordinator-submission-v1"):
                     schema["properties"]["action"]["enum"] = ["finish"]
                 values.append(dict(name="explorer-" + mode + ("-leads" if leads else "") + ("-finish" if finish else ""),
                     policy=policy, schema=schema))
-    for editorial, briefs in ((1, dream_review.BRIEFS), (2, dream_support.briefs(dream_review.BRIEFS))):
+    for editorial, briefs in ((1, dream_concise.BRIEFS), (2, dream_support.briefs(dream_concise.BRIEFS))):
         for role, brief in sorted(briefs.items()):
             values.append(dict(name=role + "-editorial-" + str(editorial), policy=dream_prompt.GUARD + brief,
-                schema=dream_review.schema(role)))
+                schema=dream_concise.schema(role)))
     if submission_contract is not None:
         from . import dream_submission
         dream_submission.validate(submission_contract)

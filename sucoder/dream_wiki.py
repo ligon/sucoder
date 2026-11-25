@@ -398,7 +398,7 @@ def frozen_profile(config, plan, fd, harness, model, attempt, purpose, layout, r
         if len({digest(canonical(profile)) for profile in historical}) != 1:
             raise DreamError("Historical prompt profiles are ambiguous; supply the intended frozen profile explicitly", 3)
         return historical[0]
-    if plan.get("authoring_version", 5) != 8:
+    if plan.get("authoring_version", 5) != 9:
         raise DreamError("Historical stable plan requires its frozen prompt profile", 3)
     return dream_prompt_native.load_profile(config, harness, model, time.monotonic() + 15)
 
@@ -450,10 +450,10 @@ def run(config, mirror, plan_path, harness, model, attempt=1, mode="wiki", purpo
                                              transport.version, purpose, deadline) if prompt_profile is None and submission_contract is None else None)
             if reused is not None:
                 return reused
-            from . import dream_curate, dream_editor, dream_diagnostics, dream_handles, dream_review, dream_prefix
+            from . import dream_curate, dream_editor, dream_diagnostics, dream_handles, dream_review, dream_concise, dream_prefix
             prefixes = (dream_prefix.discover(plan, fd, source_readers[mirror], harness, model, transport.version, purpose, deadline)
                         if prompt_profile is None and submission_contract is None else [])
-            editor = {8: dream_review.Editor, 7: dream_handles.Editor, 6: dream_diagnostics.Editor, 5: dream_editor.Editor}[plan.get("authoring_version", 5)]
+            editor = {9: dream_concise.Editor, 8: dream_review.Editor, 7: dream_handles.Editor, 6: dream_diagnostics.Editor, 5: dream_editor.Editor}[plan.get("authoring_version", 5)]
             coordinator = editor(plan, fd, harness, model, deadline, transport,
                 attempt=attempt, purpose=purpose, source=source_readers[mirror], prefixes=prefixes)
             if prompt_profile is not None:
@@ -483,17 +483,19 @@ def run(config, mirror, plan_path, harness, model, attempt=1, mode="wiki", purpo
 def restore(plan, fd, run_id, deadline):
     spec = dream._json(dream_run._read(fd, "native-" + run_id + "-spec.json", dream_run.MAX_PLAN_BYTES))
     dream._object(spec, ("contract", "run_id", "harness", "model", "native_version", "attempt", "purpose"), ("prefixes", "budget", "prompt_profile", "submission_contract"))
-    from . import dream_curate, dream_author, dream_editor, dream_diagnostics, dream_handles, dream_review
-    if spec["contract"] not in (CONTRACT, LEGACY_CONTRACT, dream_curate.CONTRACT, dream_author.CONTRACT, dream_editor.CONTRACT, dream_diagnostics.CONTRACT, dream_handles.CONTRACT, dream_review.CONTRACT) or spec["run_id"] != run_id or spec["harness"] not in ("codex", "claude"):
+    from . import dream_curate, dream_author, dream_editor, dream_diagnostics, dream_handles, dream_review, dream_concise
+    if spec["contract"] not in (CONTRACT, LEGACY_CONTRACT, dream_curate.CONTRACT, dream_author.CONTRACT, dream_editor.CONTRACT, dream_diagnostics.CONTRACT, dream_handles.CONTRACT, dream_review.CONTRACT, dream_concise.CONTRACT) or spec["run_id"] != run_id or spec["harness"] not in ("codex", "claude"):
         raise DreamError("Invalid wiki run specification")
     def no_inference(*args):
         raise DreamError("Wiki run is incomplete; status never invokes inference", 3)
     parameters = dict(native_version=spec["native_version"], attempt=spec["attempt"], purpose=spec["purpose"])
     if "prefixes" in spec:
-        if spec["contract"] not in (dream_author.CONTRACT, dream_editor.CONTRACT, dream_diagnostics.CONTRACT, dream_handles.CONTRACT, dream_review.CONTRACT) or not spec["prefixes"]:
-            raise DreamError("Prefix manifests require a nonempty v4/v5/v6/v7/v8 run")
+        if spec["contract"] not in (dream_author.CONTRACT, dream_editor.CONTRACT, dream_diagnostics.CONTRACT, dream_handles.CONTRACT, dream_review.CONTRACT, dream_concise.CONTRACT) or not spec["prefixes"]:
+            raise DreamError("Prefix manifests require a nonempty v4/v5/v6/v7/v8/v9 run")
         parameters["prefixes"] = spec["prefixes"]
-    coordinator = (dream_review.Editor(plan, fd, spec["harness"], spec["model"], deadline, no_inference, **parameters)
+    coordinator = (dream_concise.Editor(plan, fd, spec["harness"], spec["model"], deadline, no_inference, **parameters)
+        if spec["contract"] == dream_concise.CONTRACT else
+        dream_review.Editor(plan, fd, spec["harness"], spec["model"], deadline, no_inference, **parameters)
         if spec["contract"] == dream_review.CONTRACT else
         dream_handles.Editor(plan, fd, spec["harness"], spec["model"], deadline, no_inference, **parameters)
         if spec["contract"] == dream_handles.CONTRACT else

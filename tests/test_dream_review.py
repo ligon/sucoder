@@ -10,7 +10,11 @@ from sucoder import dream, dream_handles, dream_progress, dream_review as review
 from tests.dream_submission_fixture import handle_reply
 from tests.test_dream import git, workspace  # noqa: F401
 from tests.test_dream_curate import NoopTransport, noop_plan
-from tests.test_dream_wiki import EditorTransport, TOPIC, planned
+from tests.test_dream_wiki import EditorTransport, TOPIC, planned as current_plan
+
+
+def planned(workspace):
+    return current_plan(workspace, authoring_version=8)
 
 
 def gate():

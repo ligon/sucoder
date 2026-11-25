@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from sucoder import dream, dream_review, dream_editor, dream_run, dream_support, dream_wiki
+from sucoder import dream, dream_concise, dream_editor, dream_run, dream_support, dream_wiki
 from tests.dream_submission_fixture import source_text
 from tests.test_dream import git, workspace  # noqa: F401
 from tests.test_dream_memory import MEMORY, memory_plan
@@ -101,7 +101,7 @@ def test_plan_prepared_before_editorial_amendment_replays_unchanged(workspace, m
     assert "editorial_version" not in plan and "prior_support" not in plan
     native = EditorTransport()
     result = dream_wiki.run(workspace[2], "sample", Path(plan["plan_path"]), "codex", "fixture", transport=native)
-    assert all(task["brief"] == dream_review.BRIEFS[task["role"]] for task in native.calls)
+    assert all(task["brief"] == dream_concise.BRIEFS[task["role"]] for task in native.calls)
     monkeypatch.setattr(dream_support, "VERSION", 2)
     assert dream_wiki.run(workspace[2], "sample", Path(plan["plan_path"]), "codex", "fixture", transport=native) == result
     assert dream_run.status(workspace[2], "sample", Path(plan["plan_path"]))["state"] == "published"

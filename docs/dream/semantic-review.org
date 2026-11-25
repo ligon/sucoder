@@ -12,7 +12,8 @@ The draft collapsed distinct failure causes, generalized one host report, conver
 Its index introduced an unsupported causal summary.
 Exact quotations cannot establish that the prose preserves their meaning.
 
-Fresh plans and exploratory headers select =authoring_version: 8= and =source-grounded-wiki-v8=.
+V8 introduced =authoring_version: 8= and =source-grounded-wiki-v8=.
+Fresh plans now select v9, retaining the manifest and checks below with the [[#concise-output][concise-output correction]].
 V8 extends the existing reviewer and full-proposal repair loop; source admission, context accounting, human authority, native isolation, call/time ceilings and compare-and-swap publication remain the existing machinery.
 The [[file:../dream-authoring-ledger.org][grounding ledger]] records reuse decisions and deferred work.
 V1-v7 policies, schemas and replay remain frozen; absent historical version fields still select v5.
@@ -75,3 +76,20 @@ The [[file:runs/review-calibration.org][native calibration]] records both the kn
 
 This slice does not introduce a second model vote, byte-preserving patches, durable phase checkpoints or reserved reviewer budgets.
 It makes the required review visible and enforceable, while leaving semantic effectiveness an empirical question.
+
+* V9 concise output
+:PROPERTIES:
+:CUSTOM_ID: concise-output
+:END:
+
+The v8 calibration and first full campaign dream show native StructuredOutput retries caused by 512-character review-reason bounds, tracked in [[https://github.com/ligon/sucoder/issues/107][issue 107]].
+V9 asks for one short sentence, normally at most forty words, and points to assertions and supplied handles rather than repeating paragraphs.
+Its reason field uses the existing general 8,192-character text allowance.
+The existing cumulative =max_proposal_bytes= bound, normally 128 KiB across all role results, remains unchanged and fails explicitly on overflow.
+Raw replies and their receipt reasons are preserved exactly.
+
+Fresh plans freeze =authoring_version: 9= and =source-grounded-wiki-v9=.
+V8 retains its original 512-character schema and policy; a default-preserving validation hook lets v9 reuse the same manifest/proof checks with its own schema.
+Accepted-progress reuse stays within the plan's frozen contract; fresh v9 work cannot treat a v8 review as a v9 pass.
+The new policy/schema catalog requires certification before stable native use.
+This is an output-efficiency correction; [[https://github.com/ligon/sucoder/issues/108][semantic false passing judgments]] remain a separate problem.

@@ -1,10 +1,52 @@
-#+TITLE: V8 semantic review implemented; native calibration remains partial
-#+DATE: 2026-11-24
-#+STATUS: COMPLETE -- V8 ON LOCAL MAIN; CALIBRATION PARTIAL; NO NEW MEMORY PUBLICATION
+#+TITLE: Twelve-session dream campaign: 2 of 12 audited
+#+DATE: 2026-11-25
+#+STATUS: READY -- USER GOAL ACTIVE; TEN SESSIONS REMAIN
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
-* V8 semantic review gate, 2026-11-24
+* Active twelve-session goal, 2026-11-25
+
+The user set the goal: "test with repeated dreams, identifying problems as the process goes along and either repairing or filing an issue. Repeat 12 times."
+The goal remains active; do not redefine completion as the two sessions already finished or count old probes toward the twelve.
+The [[file:../docs/dream/runs/twelve-session-campaign.org][campaign report]] and [[file:../docs/dream-twelve-ledger.org][grounding ledger]] describe the method and current verification.
+The authoritative private progress record is =/home/coder/.sucoder/logs/dream-twelve/2026-11-25/campaign.json=.
+It enumerates all twelve sessions, paired project/experience modes, pinned runtimes, job IDs, process identities, quality checks and repair/issue dispositions.
+
+Each fresh session has 32 native invocations/1,800 seconds, with 600 seconds and three calls reserved for closeout.
+Use the existing coder Claude subscription, =claude-sonnet-4-6= and certified stable delivery; no hard token/currency ceiling is available.
+This explicit new user goal authorizes the sequence and repairs/issue filing; historical no-inference notes and expired wallets remain historical.
+Do not restart merely because status says incomplete or an observation times out: verify the matching process or terminal artifacts first.
+
+Session 1, job =64226805b1de4988b60d3934359799f6=, finished with sixteen completed calls (fourteen explorer, author, reviewer) under pinned v8 runtime/project =dbc79a5=.
+It followed the existing transcript-reply policy question and updated that topic, preserving earlier qualifications.
+Private memory is now =ec39fb7387f8ac72e235e2edfb84db7681a609a1=; Sue accepted it with a precision advisory and no blocking finding.
+The independent bare-reply fixture passes, and [[https://github.com/ligon/sucoder/issues/109][issue 109]] records the maintainer policy/documentation gap.
+[[https://github.com/ligon/sucoder/issues/107][Issue 107]] records the reproduced 512-character reason retry; [[https://github.com/ligon/sucoder/issues/108][issue 108]] tracks semantic false passes and receives the narrower wording advisory.
+Pinned-v8 and working-v9 read-only replay both preserve all 237 job files and memory, with native/build/authentication access forbidden.
+
+A v9 concise-output correction is verified in the canonical source; it preserves all v8 policies/schemas and replay identities.
+It reuses the existing cumulative =max_proposal_bytes= bound, adds concise-output guidance and relaxes only the new reason fields to the existing general text allowance.
+The initial targeted run exposed and fixed a native-version variable shadow and two overly specific test-message assertions.
+The broader corrected run passes 135 cases with one native Org replay timeout; that exact test passes serially under unchanged limits.
+The prompt/cache/submission group passes all 68 cases; ten runtime files pass mypy and the new module passes untyped-body checking.
+The first v9 offline certification attempt hit its unchanged 120-second ceiling while tests were active; the quieter retry passes all 28 captures for fourteen variants under the same ceiling.
+The new certified profile is =23bdeddfe5732927a72350f3d8692098013aa7e0df91d035617e9a7f7722c09a=; the older v8 profile remains intact.
+Session 2, job =ae034039a8d842e4a74023c8e28d9efe=, is terminal and audited: fifteen completed calls on v8, project source =c6ceaae= and starting memory =ec39fb7=.
+It published =aea4fe1=, but its two new correction tasks used byte offsets as line TARGETs in an 811-line file; the existing read-only exporter withholds both tasks.
+[[https://github.com/ligon/sucoder/issues/111][Issue 111]] records this new mechanical validation gap.
+An expected-old additive withdrawal =89ae1878b56d2f91edd063c826835936f4401d63= restores exactly the =ec39fb7= tree, retains =aea4fe1= as parent and preserves all 223 job files.
+Native status remains its historical published event; the independent campaign verdict is rejected/withdrawn.
+Future campaign purposes explicitly clarify that TARGET coordinates are one-based source lines, never citation byte offsets; this is a workflow mitigation, not the missing deterministic validator.
+Commit and pin the checked v9 source, then launch session 3 as a genuine experience dream to exercise the reason-limit correction.
+The first session is terminal and audited; do not resume it or reuse its elapsed allowance.
+No native worker is currently running in this campaign; sessions 3-12 remain planned.
+
+All source work belongs on local main; never push private memory.
+The user-facing installed CLI remains older, so launch each dream from its explicitly pinned runtime source with the existing Poetry interpreter and correct PYTHONPATH/PYTHONSAFEPATH.
+
+Sue.
+
+* Previous v8 semantic review gate, 2026-11-24
 
 The human said "Carry on" after E9 exposed the failed semantic acceptance gate.
 Implementation =533b58e= is on local main; the [[file:../docs/dream/semantic-review.org][contract]] and [[file:../docs/dream/runs/review-calibration.org][calibration report]] describe its scope and limits.
