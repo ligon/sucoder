@@ -327,6 +327,8 @@ class RemoteExecutor(CommandExecutor):
     slurm_job_id: Optional[int] = None          # Active SLURM allocation, if any
     local_disk_root: Optional[str] = None       # Local-disk tiering root (e.g. /local);
                                                 # None = agent works on the shared mirror
+    confined_nodelist: Optional[str] = None     # Node a confined sbatch must run on
+                                                # (``collaborate --node``); None = any
     proxy_node: str = ""                         # Login node hostname (compute-node proxy)
     proxy_socket_path: Optional[str] = None      # Login node ControlMaster socket
     scaffolding_node: str = ""                   # Login node for filesystem ops

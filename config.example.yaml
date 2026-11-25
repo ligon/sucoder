@@ -5,6 +5,39 @@ mirror_root: /var/tmp/coder-mirrors
 log_dir: /home/<your-username>/.sucoder/logs
 system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 
+# Bare `sucoder dream` dreams over this mirror's finished sessions and agent notes
+# (`--explore`: the committed project). Configure a
+# native model once; harness/model otherwise inherit agent_launcher selection.
+# The same optional block under mirrors.NAME overrides individual defaults.
+# dream:
+#   harness: codex                 # codex | claude
+#   model: YOUR_AVAILABLE_MODEL
+#   max_total_seconds: 900         # discovery + authorship + review, across resume
+#   max_total_calls: 40            # native invocations, not hidden HTTP retries
+#   reserve_seconds: 30           # review/repair/finalization
+#   reserve_calls: 3
+#   max_discovery_calls: 8         # also leaves one author call beyond closeout
+#   max_discovery_bytes: 131072    # bounded navigation delivery; selected evidence <= 64 KiB
+#   memory_branch: sucoder/memory  # wiki-only branch reviewed dreams update in place;
+#                                  # "" keeps dream/<run> candidates for a human merge
+#   inject: true                   # add that branch's index to every launch's context
+#   inject_bytes: 2048             # cut at a line; at most 16384
+#   checkout: true                 # read-only copy of the wiki at .sucoder/wiki, where
+#                                  # its project links resolve (local launches, publication)
+#   session_quiet_minutes: 30      # a session quiet this long, with no live launch, is finished
+
+# Explicit plan/run budgets are CLI options; bare-launch defaults use dream
+# above. Native writer runs persist limits across restarts/--attempt changes.
+# First run: dream run MIRROR --plan PLAN --harness codex --model MODEL
+#   --max-total-seconds 28800 --max-total-calls 120
+#   --budget /PRIVATE/EXISTING/PARENT/overnight-job
+# Use that same --budget for other plans sharing the allowance. Inspect with
+# dream budget MIRROR --plan PLAN [--budget PATH]. Limits become immutable.
+# Default closeout reserve: --reserve-seconds 30 --reserve-calls 1 (short jobs
+# reserve one tenth of their seconds). Hard token/$ caps are unsupported;
+# --max-total-tokens and --max-cost-usd fail before provider work.
+# README.org and docs/dream/budget.org describe accounting and checkpoints.
+
 # Compute-side dispatch project settings are explicit JSON profiles, separate
 # from this interactive-mirror YAML. Use `dispatch submit --project-profile
 # /shared/private/project.json` or `dispatch verify-stage --project-profile ...`.
@@ -24,6 +57,21 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #   user: <your-username>
 #   command: /usr/local/bin/sucoder
 
+# Attention (optional; off by default): SuCoder-launched Claude and Codex
+# sessions write a status record (~/.sucoder/attention/<mirror>--<target>.rec
+# where the agent runs) on every turn, permission request and idle prompt;
+# `sucoder attention` lists the sessions waiting on you first.  Codex asks once per account to
+# trust the hooks ("Hooks need review": trust all).  `notify_command` runs under
+# `sucoder attention --watch` when a session starts waiting, with the session in
+# SUCODER_ATTENTION_* environment variables.  notify_kinds (default all of
+# permission, question, idle, other) and notify_after_minutes (default 0) limit
+# which requests notify.  README: Which sessions need you.
+# attention:
+#   hooks: true
+#   notify_kinds: [permission, question]
+#   notify_after_minutes: 2
+#   notify_command: ["sh", "-c", 'curl -fsS -d "$SUCODER_ATTENTION_MIRROR: $SUCODER_ATTENTION_MESSAGE" https://ntfy.sh/<private-topic>']
+
 # Codex remote control (optional; ordinary terminal launch by default).
 # Applies when Codex is selected, including --agent codex / --harness codex.
 # Per-mirror agent_launcher.codex_remote_control overrides this default.
@@ -41,12 +89,44 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 # Inspect/pair the selected owner with codex-remote-status / codex-remote-pair;
 # native codex remote-control pair addresses a different, shared daemon.
 
+# Auth switch (optional; each harness's subscription login by default).
+# When a subscription quota runs out, switch codex or claude to pay-as-you-go
+# API billing. The API key stays in the `pass` store and never becomes an
+# environment variable: codex swaps ~/.codex/auth.json via stdin (the
+# subscription login is backed up so it can be restored); claude reads the key
+# through an apiKeyHelper merged into its --settings, leaving OAuth untouched.
+#   agent_launcher:
+#     auth:
+#       codex:
+#         mode: apikey                    # subscription | apikey (default: subscription)
+#         apikey_credential: openai       # credentials: name (default: openai)
+#         subscription_credential: codex-chatgpt-auth  # pass entry holding the auth.json backup
+#         base_url: https://us.api.openai.com/v1  # optional; see regional note below
+#       claude:
+#         mode: apikey
+#         apikey_credential: anthropic    # credentials: name (default: anthropic)
+# Regional OpenAI projects (e.g. US data residency) only accept their keys at a
+# regional host. The endpoint is configuration: codex apikey launches route the
+# built-in openai provider at base_url when set (an argv config override, never
+# an env var). No base_url override is added for the default api.openai.com.
+# Per-launch override: --auth MODE (subscription|apikey). Switch at the command
+# line with `sucoder auth apikey|subscription --harness codex|claude`, and check
+# state with `sucoder auth status`. The codex swap is host-global (one shared
+# ~/.codex/auth.json), so two concurrent codex sessions on a host share a mode.
+# Deprecated flat keys codex_auth/codex_auth_credential still work for codex.
+
 # Provider credentials (optional). Values stay in the human user's `pass`
 # store; only the pass entry name belongs in this file. The first line of
 # the entry is used as the API key. OpenRouter metadata is built in.
 # credentials:
 #   openrouter:
 #     pass: openrouter.ai/apikey
+#   openai:                          # used by agent_launcher.auth.codex.mode: apikey
+#     pass: openai.com/apikey
+#   anthropic:                       # used by agent_launcher.auth.claude.mode: apikey
+#     pass: anthropic.com/apikey
+#   codex-chatgpt-auth:              # optional codex subscription auth.json backup
+#     pass: codex/chatgpt-auth.json
 
 # Custom OpenAI-compatible providers can be described once and selected by
 # the prefix of --model (for example laboratory/my-model).
@@ -148,6 +228,12 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #     # command also offers to mint one before connecting when it's stale.
 #     # `tunnel doctor` reports its validity.
 #     cert_file: ~/.ssh/ssh_certs/brc_cert
+#     # Interpreter for SuCoder's staged helpers on the target (the managed
+#     # Codex state runner, context installer, remote-control helper, reply
+#     # probe): a command name or absolute path, Python 3.9 or newer.  The
+#     # default `python3` is whatever the target's PATH finds first; Savio's
+#     # system python3 is 3.6.8, so name the interpreter outright there.
+#     python: /usr/bin/python3.12
 #     slurm:
 #       partition: savio3
 #       account: fc_jevons

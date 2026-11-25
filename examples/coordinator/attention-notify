@@ -1,0 +1,33 @@
+#!/bin/sh
+# notify_command for `sucoder attention --watch` (docs/attention.org).
+#
+# Runs once per waiting request, with the session in SUCODER_ATTENTION_*.
+# Two optional destinations, each enabled by an environment variable:
+#
+#   NTFY_URL          post to a phone, e.g. https://ntfy.sh/<private-topic>
+#   COORDINATOR_PANE  type one line into the coordinator's tmux pane, e.g.
+#                     "coordinator" for a tmux session of that name.  The
+#                     watcher must run as the account owning that tmux server.
+#   COORDINATOR_MIRROR  the coordinator's own mirror (default Coordinator),
+#                     never reported to itself.
+#
+# Always exits 0: a failed notification must not stop the watcher.
+set -u
+
+key=${SUCODER_ATTENTION_KEY:-unknown}
+mirror=${SUCODER_ATTENTION_MIRROR:-unknown}
+kind=${SUCODER_ATTENTION_KIND:-other}
+age=${SUCODER_ATTENTION_AGE:-?}
+# Claude's notification text, one line, no control characters, bounded.
+msg=$(printf '%s' "${SUCODER_ATTENTION_MESSAGE:-waiting}" | tr '\000-\037' ' ' | cut -c1-200)
+
+if [ -n "${NTFY_URL:-}" ]; then
+    curl -fsS -m 10 -H "Title: $mirror ($kind)" -d "$msg" "$NTFY_URL" >/dev/null 2>&1 || true
+fi
+
+if [ -n "${COORDINATOR_PANE:-}" ] && [ "$mirror" != "${COORDINATOR_MIRROR:-Coordinator}" ]; then
+    line="[attention] $key is waiting ($kind, $age): $msg"
+    tmux send-keys -t "$COORDINATOR_PANE" -l "$line" 2>/dev/null \
+        && tmux send-keys -t "$COORDINATOR_PANE" Enter 2>/dev/null
+fi
+exit 0

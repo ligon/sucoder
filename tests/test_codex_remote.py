@@ -126,12 +126,14 @@ def test_confined_remote_launch_stages_toml_context_inside_batch(tmp_path, monke
     staged = next(c["input"] for c in calls if c["args"][0] == "sh" and "prelude-" in c["args"][2])
     assert staged == "developer_instructions=" + json.dumps(prelude)
     batch = next(c["input"] for c in calls if c["args"][0] == "sh" and "job-sample.sh" in c["args"][2])
-    assert "sucoder-codex-remote" in batch
-    assert "--remote-control" in batch
-    assert "__SUCODER_PRELUDE_FROM_FILE__" not in batch
-    assert "$(not-a-command)" not in batch
-    assert "prelude-sample.txt" in batch
+    pane = next(c["input"] for c in calls if "sucoder-pane-script" in c["args"])
+    assert "sucoder-codex-remote" in pane
+    assert "--remote-control" in pane
+    assert "__SUCODER_PRELUDE_FROM_FILE__" not in pane
+    assert "$(not-a-command)" not in pane
+    assert "prelude-sample.txt" in pane
     assert "tmux -L" in batch
+    assert "sucoder-codex-remote" not in batch
 
 
 @pytest.fixture
@@ -150,9 +152,12 @@ if '--help' in args:
 role = 'server' if args[0] == 'app-server' else 'client'
 url = args[args.index('--listen' if role == 'server' else '--remote') + 1]
 path = Path(url.removeprefix('unix://'))
+(root / (role + '.dir')).mkdir()
 (root / (role + '.json')).write_text(json.dumps({
     'pid': os.getpid(), 'url': url, 'args': args,
     'mode': path.parent.stat().st_mode & 0o777,
+    'log_modes': {name: (path.parent / name).stat().st_mode & 0o777
+                  for name in ('probe.log', 'server.log')},
     'cwd': os.getcwd(), 'env': os.environ.get('FAKE_SHARED_ENV'),
 }))
 def stop(*_):
@@ -205,6 +210,21 @@ def test_terminal_uses_same_server_and_cleans_up(fake_codex, tmp_path):
     assert "--model" in client["args"]
     assert (tmp_path / "server.stopped").exists()
     assert not Path(server["url"][7:]).parent.exists()
+
+
+@pytest.mark.parametrize("launch_umask", [0o007, 0o027, 0o077])
+def test_remote_children_preserve_launch_umask(fake_codex, tmp_path, launch_umask):
+    result = subprocess.run(build_remote_command([str(fake_codex)], "terminal"),
+                            env=dict(os.environ, FAKE_RECORD=str(tmp_path)),
+                            capture_output=True, text=True, timeout=15, umask=launch_umask)
+    assert result.returncode == 0, result.stderr
+    for role in ("server", "client"):
+        record = tmp_path / (role + ".json")
+        child = json.loads(record.read_text())
+        assert record.stat().st_mode & 0o777 == 0o666 & ~launch_umask
+        assert (tmp_path / (role + ".dir")).stat().st_mode & 0o777 == 0o777 & ~launch_umask
+        assert child["mode"] == 0o700
+        assert child["log_modes"] == {"probe.log": 0o600, "server.log": 0o600}
 
 
 @pytest.mark.parametrize("mode", ["terminal", "server"])

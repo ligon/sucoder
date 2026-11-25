@@ -1,0 +1,56 @@
+#+TITLE: sucoder attention: PR 89 merged; Codex hooks await their first live launch
+#+DATE: 2026-11-03
+#+STATUS: READY
+#+AUTHOR: Sue
+#+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Where things stand
+
+PR 89 (agent status records, =sucoder attention=, untracked-session listing, Codex hooks, the coordinator example) is merged into =main= as =3a68deb=.
+GitHub, =~ligon/Projects/SuCoder= and this mirror's =main= are all at =3a68deb=; CI on =main= is green on 3.9 and 3.11, and the docs deploy succeeded.
+=/opt/sucoder= on vantage is installed from that commit (=2026.7.1.dev383+g3a68deb=).
+The Coordinator mirror (=~coder/mirrors/Coordinator=) and =~ligon/Projects/Coordinator= are level at =9e07c23=; its brief (=CLAUDE.md=, commit =ff0b3fe=) covers untracked sessions.
+The branch =coder/attention-status= is kept on GitHub and here; delete it when convenient.
+The ligon-owned worktree =~ligon/.cache/sucoder-attention= has been removed.
+
+The design note is [[file:../../docs/attention.org][docs/attention.org]]: Codex at =docs/attention.org:83=, trust at =:111=, untracked sessions at =:150=, the open list at =:287=.
+
+* The task: confirm Codex hooks from a live launch
+
+The human's launcher defaults to Codex, and =attention.hooks: true= is set in =~ligon/.sucoder/config.yaml:249=, so the next SuCoder Codex launch on vantage is the first real one with hooks.
+Codex hooks are untrusted until the account that runs Codex reviews them once; as of 2026-11-03 =~coder/.codex/config.toml= has no =session-flags= trust entries.
+On the first hooked launch Codex shows "Hooks need review"; the human chooses "2. Trust all and continue".
+Codex writes =[hooks.state."/<session-flags>/config.toml:<event>:0:0"]= entries; SuCoder never writes that file and never passes =--dangerously-bypass-hook-trust= (the human's rule: ask first).
+The hook command is the same on every launch (the record key is in =SUCODER_ATTENTION_KEY=), so one review covers every later launch; this was checked in a throwaway =CODEX_HOME=.
+
+What has been seen fire live: =SessionStart= (in the TUI it fires at the first prompt), =UserPromptSubmit=, =SessionEnd=.
+What has not, and should be checked with =sucoder attention= (or =cat ~coder/.sucoder/attention/<mirror>--<target>.rec=) while the session runs:
+
+1. =PermissionRequest= :: an approval prompt shows =waiting [permission]= and the watcher's push arrives (=permission= is in =notify_kinds=).
+2. =Stop= :: a finished turn shows =idle=, then =waiting [idle]= "Codex is waiting for your input" a minute later; that is synthesized by =synthesize_idle_waits= (=sucoder/attention.py:452=), because Codex has no idle notification.  =idle= is not in the human's =notify_kinds=, so it lists but does not push.
+3. =Interrupt= (Esc during a turn) :: back to =idle=.
+4. =PreToolUse= with matcher =^request_user_input= :: a model question shows =waiting [question]=.
+
+If any of these does not fire, the event names and matchers are in =CODEX_EVENTS= (=sucoder/attention.py:76=) and =codex_overrides= (=:209=); the launch wiring is =_with_attention_hooks= (=sucoder/mirror.py:5414=).
+Record what was seen in =docs/attention.org:293= (open item 3) and remove the item once all four are confirmed.
+
+Known gaps, documented, not bugs: MCP elicitations raise no hook; a failed Codex turn emits no =Stop= and reads =working=; a session launched with its own =hooks.*= override is left unhooked (=_codex_sets_hooks=, =sucoder/mirror.py:8139=).
+
+* Other open items (from =docs/attention.org:287=)
+
+- A hooked interactive session on Savio; confirm =Notification= for permission and idle (Claude), and the Codex events above on a compute node.
+- A record whose tmux is gone stays at its last state; the listing could mark it orphaned now that it knows what is running (=mark_untracked=, =sucoder/attention.py:737=), but an absent local process is weak evidence.
+- Allocation expiry and renewal failure as watcher events; =message= and =peek= for local sessions.
+- CI: the test job is pinned to =ubuntu-24.04= because =ubuntu-latest= (26.04) has no Python 3.9 build.  Whether to drop 3.9 instead (=pyproject.toml:11= says =^3.9=) is the human's decision.
+- Local full suite on vantage: 49 failures (=codex_state_runner= 39, =codex_state= 4, =direct_remote= 3, =timer_lifecycle= 2, =codex_app_server= 1) that also fail on =main= here and pass in CI; environment-specific, not investigated.
+
+* Loose files outside the repo
+
+=~coder/try-attention.sh=, =~coder/merge-attention.sh= and =~coder/pr89-body.md= were the human's runbooks for this rollout.
+The setup steps in =try-attention.sh= (perms, coordinator, tmux, start) are still the quickest way to rebuild the coordinator; the other two can be deleted.
+
+* Earlier handoffs
+
+The previous handoff (Codex node-local state, cross-node acceptance, 2026-10-16, COMPLETE) is at [[file:2026-10-16-codex-local-state-acceptance.org]]; its open recovery gates are unchanged by this work.
+
+Recorded by Sue (Claude Opus 5.5).

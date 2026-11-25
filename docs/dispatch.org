@@ -63,10 +63,13 @@ sucoder dispatch --root /shared/private/dispatch result <dispatch-id>
 #+end_src
 
 =wait= succeeds only for an explicit successful worker result.
-It propagates a nonzero worker exit when available; a timeout or unavailable result exits nonzero.
+It propagates a failed result's exit code when available; a timeout or a failed result without one exits 3.
+A worker's own exit code can coincide with 2, 3 or 4, so the printed JSON is authoritative.
 An empty queue query never establishes successful completion.
+=status=, =result= and =logs= exit 2 for an invalid dispatch ID or record; =result= exits 0 with =result_state= =missing= while the worker runs.
 A timed-out or malformed submission receipt is =submission_unknown=, because Slurm may already have accepted the job.
-Reconcile the recorded =sucoder-dispatch:<dispatch-id>= job comment before submitting a replacement.
+=submit= exits 0 when submitted or for a valid dry run, 1 when =sbatch= could not be run (no job exists), 2 for a refused request and 3 for =submission_unknown=.
+Reconcile the recorded =sucoder-dispatch:<dispatch-id>= job comment before submitting a replacement; =squeue --me -o '%i %k'= lists comments of queued and running jobs.
 Do not retry an unknown submission blindly.
 Automatic Slurm requeue is disabled for the single-use staged launch.
 The request reserves a 120-second early TERM window and refuses time limits shorter than two minutes.

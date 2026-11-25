@@ -87,6 +87,9 @@ app.add_typer(list_app, name="list")
 from .dispatch_cli import app as dispatch_app
 app.add_typer(dispatch_app, name="dispatch")
 
+from .dream_cli import app as dream_app
+app.add_typer(dream_app, name="dream")
+
 _SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 
@@ -785,6 +788,13 @@ def _build_executor(
         executor_kwargs["forward_x11_explicit"] = x11_explicit
         if use_local_disk:
             executor_kwargs["local_disk_root"] = local_disk_root
+        # ``collaborate --node`` on a confined target: the sbatch that
+        # _launch_confined submits carries --nodelist for it.  Only a
+        # confined launch submits through this executor, so the pin is
+        # dropped everywhere else rather than carried as a stray field.
+        confined_node = (cli_ctx.obj or {}).get("confined_node") if cli_ctx else None
+        if confined and confined_node:
+            executor_kwargs["confined_nodelist"] = confined_node
         # Route filesystem scaffolding through the login node: the shared
         # mirror is reachable from there whichever node the agent works on,
         # and it spares a compute-node target the three-hop chain.
@@ -1428,6 +1438,9 @@ def _get_login_node_override(ctx: Optional[click.Context]) -> Optional[str]:
 # sbatch/salloc --time: minutes, MM:SS, HH:MM:SS, D-HH, D-HH:MM, D-HH:MM:SS.
 _SLURM_TIME_RE = re.compile(r"^(?:\d+-)?\d+(?::\d{1,2}){0,2}$")
 
+# collaborate --node: one Slurm hostname (n0035.savio4), no shell syntax.
+_NODE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
 
 def _get_time_limit_override(ctx: Optional[click.Context]) -> Optional[str]:
     """Return the --time CLI override, or None to request slurm.time."""
@@ -1806,6 +1819,16 @@ def main(
     ),
 ) -> None:
     """Load configuration once and store it on the Typer context."""
+    if ctx.invoked_subcommand == "dream":
+        # Planning reads only explicitly configured local mirrors. No agent
+        # detection, privilege setup, SSH, synchronization or default config.
+        unsupported = [parameter.name for parameter in ctx.command.params
+                       if parameter.name not in ("config", "version")
+                       and getattr(ctx.get_parameter_source(parameter.name), "name", None) == "COMMANDLINE"]
+        if unsupported:
+            raise typer.BadParameter("dream accepts only --config before the command; unsupported: " + ", ".join(unsupported))
+        ctx.obj = {"config_path": config or _default_config_path()}
+        return
     if ctx.invoked_subcommand == "dispatch":
         # Compute-side workers use the current uid and local scheduler, never
         # interactive SSH, sudo, agent detection, or mirror synchronization.
@@ -1834,6 +1857,19 @@ def main(
         # Never run the interactive startup/privilege checks on this route.
         ctx.obj = {"observation_config": str(config) if config else None,
                    "target_name": target, "config_path": config or _default_config_path()}
+        return
+    if ctx.meta.get("help_only"):
+        # Help renders from the command definitions: no config file, no
+        # zero-config repository probe, no startup checks, so --help works
+        # outside a repository and before any config exists.  relay_main still
+        # checks config_path.  Like the observation route, a literal --help
+        # given as an option value also lands here; the command then exits 2
+        # from _get_config.
+        ctx.obj = {"target_name": target, "config_path": config or _default_config_path()}
+        return
+    if ctx.meta.get("attention_tmux"):
+        # Reads the attention cache only (docs/attention.org).
+        ctx.obj = {}
         return
     config_explicitly_set = config is not None
     default_path = _default_config_path()
@@ -1865,11 +1901,17 @@ def main(
             raise typer.Exit(code=2) from exc
         is_default_config = True
 
+    # Already the agent (a relay call, the coordinator): check access
+    # directly.  `sudo -u <self>` needs a sudoers rule the agent account
+    # does not have, so wrapping it failed every agent-side command with
+    # "cannot read configuration" even when the file was readable --- the
+    # same rule `_get_use_sudo_for_agent` applies to every later command.
+    running_as_agent = loaded_config.agent_user == pwd.getpwuid(os.getuid()).pw_name
     try:
         run_startup_checks(
             loaded_config,
             config_path,
-            use_sudo=use_sudo_for_agent,
+            use_sudo=use_sudo_for_agent and not running_as_agent,
         )
     except StartupError as exc:
         if is_default_config:
@@ -2321,6 +2363,86 @@ def _codex_remote_request(ctx: typer.Context, mirror: Optional[str], action: str
     return manager.codex_remote_request(manager.context_for(mirror), session.slurm_job_id or 0, action, run_dir=run_dir)
 
 
+auth_app = typer.Typer(
+    help=(
+        "Switch a harness between subscription login and pay-as-you-go API-key "
+        "auth. The API key stays in the pass store; it never becomes an env var."
+    )
+)
+app.add_typer(auth_app, name="auth")
+
+
+def _auth_executor(ctx: typer.Context):
+    config = _get_config(ctx)
+    logger = setup_logger("sucoder.auth", config.log_dir, False)
+    executor = _build_executor(config, logger, False, cli_ctx=ctx)
+    return config, executor, logger
+
+
+def _auth_harness(harness: Optional[str], ctx: typer.Context) -> str:
+    if harness is not None:
+        if harness not in ("codex", "claude"):
+            raise typer.BadParameter("--harness must be 'codex' or 'claude'.")
+        return harness
+    config = _get_config(ctx)
+    command = (config.agent_launcher.command if config.agent_launcher else None) or ["claude"]
+    name = command[0]
+    return name if name in ("codex", "claude") else "claude"
+
+
+@auth_app.command("status")
+def auth_status(
+    ctx: typer.Context,
+    harness: Optional[str] = typer.Option(None, "--harness", "-H", help="codex or claude (default: configured harness)."),
+) -> None:
+    """Show the current auth method for a harness."""
+    from . import auth as auth_mod
+
+    config, executor, _ = _auth_executor(ctx)
+    harnesses = [harness] if harness else list(auth_mod.harnesses())
+    for h in harnesses:
+        if h not in ("codex", "claude"):
+            raise typer.BadParameter("--harness must be 'codex' or 'claude'.")
+        st = auth_mod.status(config, executor, h)
+        typer.echo(f"{h}: {st.mode} ({st.detail})")
+
+
+@auth_app.command("apikey")
+def auth_apikey(
+    ctx: typer.Context,
+    harness: Optional[str] = typer.Option(None, "--harness", "-H", help="codex or claude (default: configured harness)."),
+) -> None:
+    """Switch a harness to pay-as-you-go API-key auth."""
+    from . import auth as auth_mod
+
+    config, executor, logger = _auth_executor(ctx)
+    h = _auth_harness(harness, ctx)
+    try:
+        auth_mod.to_apikey(config, executor, h, logger)
+    except auth_mod.AuthError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"{h}: switched to apikey auth.")
+
+
+@auth_app.command("subscription")
+def auth_subscription(
+    ctx: typer.Context,
+    harness: Optional[str] = typer.Option(None, "--harness", "-H", help="codex or claude (default: configured harness)."),
+) -> None:
+    """Switch a harness back to its subscription login."""
+    from . import auth as auth_mod
+
+    config, executor, logger = _auth_executor(ctx)
+    h = _auth_harness(harness, ctx)
+    try:
+        auth_mod.to_subscription(config, executor, h, logger)
+    except auth_mod.AuthError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"{h}: switched to subscription auth.")
+
+
 @app.command("codex-remote-status")
 def codex_remote_status(
     ctx: typer.Context,
@@ -2578,6 +2700,23 @@ def _codex_remote_mode(enabled: Optional[bool], server_only: bool) -> Optional[s
     return None if enabled is None else "terminal" if enabled else "off"
 
 
+def _auth_mode(mode: Optional[str], *, option: str = "--auth") -> Optional[str]:
+    if mode is None:
+        return None
+    if mode not in ("subscription", "apikey"):
+        raise typer.BadParameter(f"{option} must be 'subscription' or 'apikey'.")
+    return mode
+
+
+def _codex_auth_mode(mode: Optional[str]) -> Optional[str]:
+    """Deprecated --codex-auth alias; maps chatgpt/apikey onto the generic mode."""
+    if mode is None:
+        return None
+    if mode not in ("chatgpt", "apikey"):
+        raise typer.BadParameter("--codex-auth must be 'chatgpt' or 'apikey'.")
+    return "apikey" if mode == "apikey" else "subscription"
+
+
 def _tmux_launch_preamble(
     ctx: typer.Context,
     config: Config,
@@ -2751,6 +2890,18 @@ def agents_run(
         False, "--remote-control-only",
         help="Start a Codex remote-control server without the terminal UI.",
     ),
+    auth: Optional[str] = typer.Option(
+        None, "--auth", metavar="MODE",
+        help=(
+            "Authentication for this launch: subscription (the harness's native "
+            "login, the default) or apikey (pay-as-you-go API key from the "
+            "pass-backed credential, never an env var). Applies to codex and claude."
+        ),
+    ),
+    codex_auth: Optional[str] = typer.Option(
+        None, "--codex-auth", metavar="MODE", hidden=True,
+        help="Deprecated alias for --auth (chatgpt=subscription).",
+    ),
     codex_state_from: Optional[str] = typer.Option(
         None, "--codex-state-from", metavar="RUN/GENERATION",
         help="Continue managed Codex state from this exact generation (slurm.codex_state).",
@@ -2825,6 +2976,7 @@ def agents_run(
             env_override=env_override,
             supports_inline_prompt=inline_prompt_flag,
             codex_remote_control=remote_mode,
+            auth_override=_auth_mode(auth) or _codex_auth_mode(codex_auth),
             codex_state_from=codex_state_from,
             codex_state_fresh=codex_state_fresh,
         )
@@ -2892,6 +3044,18 @@ def collaborate(
         False, "--remote-control-only",
         help="Start a Codex remote-control server without the terminal UI.",
     ),
+    auth: Optional[str] = typer.Option(
+        None, "--auth", metavar="MODE",
+        help=(
+            "Authentication for this launch: subscription (the harness's native "
+            "login, the default) or apikey (pay-as-you-go API key from the "
+            "pass-backed credential, never an env var). Applies to codex and claude."
+        ),
+    ),
+    codex_auth: Optional[str] = typer.Option(
+        None, "--codex-auth", metavar="MODE", hidden=True,
+        help="Deprecated alias for --auth (chatgpt=subscription).",
+    ),
     codex_state_from: Optional[str] = typer.Option(
         None, "--codex-state-from", metavar="RUN/GENERATION",
         help="Continue managed Codex state from this exact generation (slurm.codex_state).",
@@ -2931,7 +3095,10 @@ def collaborate(
         help="Request a specific compute node (e.g. --node n0047.savio3). "
              "Useful to recover work on local disk from a previous session. "
              "If you already hold a live allocation on that node, this "
-             "session adopts (shares) it instead of reserving a new one.",
+             "session adopts (shares) it instead of reserving a new one. "
+             "On a confined target the new job is submitted to that node "
+             "(sbatch --nodelist) and waits there if it is busy; a live job "
+             "of this mirror on another node is refused, not reused.",
     ),
     wrap_tmux: bool = typer.Option(
         True,
@@ -2973,17 +3140,37 @@ def collaborate(
         if _direct is not None and _direct.host:
             typer.echo("--node requires a cluster target.", err=True)
             raise typer.Exit(code=1)
-        # ``ctx`` is the typer.Context for this subcommand and carries
-        # the callback's obj; don't go through click.get_current_context
-        # (typer >=0.21 doesn't push onto Click's global stack).
-        _tgt = ((ctx.obj or {}).get("target_name") if ctx else None)
-        _session = RemoteSession.load(mirror, target_name=_tgt)
-        # Clear the old job so _ensure_slurm_node allocates a new one,
-        # but set compute_node so it becomes the preferred_node.
-        _session.slurm_job_id = None
-        _session.compute_node = node
-        _session.save()
-        logger.info("Requesting specific node %s", node)
+        # The node reaches a remote shell as one word of a command string
+        # (the salloc line below is joined unquoted), so admit only the
+        # characters a Slurm hostname uses.
+        if not _NODE_NAME_RE.match(node):
+            raise typer.BadParameter(
+                f"{node!r} is not a node name (e.g. n0035.savio4).",
+                param_hint="--node",
+            )
+        if _direct is not None and _direct.slurm is not None and _direct.slurm.confined:
+            # A confined target submits its own sbatch and never reads the
+            # session's compute_node, so the record-based pin below would
+            # be dropped there without a word.  Hand the node to the
+            # executor instead (``_build_executor`` -> confined_nodelist),
+            # and leave the session record alone: clearing its job id
+            # would hide a live job from the id-keyed reuse probe.
+            if ctx.obj is None:
+                ctx.obj = {}
+            ctx.obj["confined_node"] = node
+            logger.info("Pinning the confined job to node %s", node)
+        else:
+            # ``ctx`` is the typer.Context for this subcommand and carries
+            # the callback's obj; don't go through click.get_current_context
+            # (typer >=0.21 doesn't push onto Click's global stack).
+            _tgt = ((ctx.obj or {}).get("target_name") if ctx else None)
+            _session = RemoteSession.load(mirror, target_name=_tgt)
+            # Clear the old job so _ensure_slurm_node allocates a new one,
+            # but set compute_node so it becomes the preferred_node.
+            _session.slurm_job_id = None
+            _session.compute_node = node
+            _session.save()
+            logger.info("Requesting specific node %s", node)
 
     manager = _build_manager_for_mirror(config, logger, dry_run, mirror, cli_ctx=ctx)
     command_override = _resolve_harness_command(
@@ -3005,6 +3192,7 @@ def collaborate(
             env_override=env_override,
             supports_inline_prompt=inline_prompt_flag,
             codex_remote_control=remote_mode,
+            auth_override=_auth_mode(auth) or _codex_auth_mode(codex_auth),
             codex_state_from=codex_state_from,
             codex_state_fresh=codex_state_fresh,
             skip_lfs=not lfs,
@@ -4939,6 +5127,335 @@ def sessions(
         raise typer.Exit(code=EXIT_UNAVAILABLE)
 
 
+@app.command("attention")
+def attention(
+    ctx: typer.Context,
+    json_output: bool = typer.Option(False, "--json", help="Print the collected statuses as JSON."),
+    tmux_line: bool = typer.Option(
+        False, "--tmux",
+        help="Print one status-bar line from the cache that --watch keeps; never connects.",
+    ),
+    cached: bool = typer.Option(
+        False, "--cached",
+        help="List from the cache that --watch keeps instead of collecting; never connects.",
+    ),
+    local_only: bool = typer.Option(
+        False, "--local-only", help="Read only this host's records; skip the clusters.",
+    ),
+    watch: int = typer.Option(
+        0, "--watch", min=0, metavar="SECONDS",
+        help="Collect every SECONDS, refresh the cache and run attention.notify_command "
+             "for sessions that start waiting. Uses warm connections only; never prompts.",
+    ),
+    cache: Optional[Path] = typer.Option(
+        None, "--cache", help="Cache file (default ~/.sucoder/attention.json).",
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Increase console logging."),
+) -> None:
+    """Which agent sessions need you: waiting, idle, working, ended.
+
+    Reads the status records that SuCoder-launched Claude sessions write
+    when ``attention.hooks`` is enabled (docs/attention.org): this host's
+    agent account's ``~/.sucoder/attention/`` and, unless --local-only,
+    the same directory on every configured cluster, one round trip each.
+    Sessions waiting on you sort first.  Read-only on every host.
+
+    On an account with ``session_relay``, everything but --local-only and
+    --tmux runs as the relay's user, whose connections and cache it uses.
+    """
+    import time as _time
+
+    from .attention import cache_payload, render_table, render_tmux, statuses_from_cache
+
+    if sum(bool(x) for x in (tmux_line, cached, watch)) > 1:
+        raise typer.BadParameter("choose one of --tmux, --cached and --watch")
+    cache_path = cache or Path.home() / ".sucoder" / "attention.json"
+    if tmux_line:
+        typer.echo(_attention_tmux_line(cache_path, render_tmux, statuses_from_cache))
+        return
+    config = _get_config(ctx)
+    if _session_relay_applies(config) and not local_only:
+        if watch:
+            typer.echo(f"attention --watch runs as {config.session_relay.user}, who holds the "
+                       "cluster connections; use --local-only to watch this account's records.", err=True)
+            raise typer.Exit(code=2)
+        if cache is not None:
+            typer.echo("attention: --cache is not relayed; the relay reads its own cache.", err=True)
+            raise typer.Exit(code=2)
+        _delegate_to_session_relay(config, "attention", [
+            *(["--json"] if json_output else []), *(["--cached"] if cached else []),
+            *(["--verbose"] if verbose else []),
+        ])
+    if cached:
+        _attention_print_cached(cache_path, json_output=json_output)
+        return
+    logger = setup_logger("sucoder.attention", config.log_dir, verbose)
+    debug_ssh = _get_debug_ssh(ctx)
+    if not watch:
+        statuses, errors = _collect_attention(
+            config, local_only=local_only, warm_only=False, logger=logger, debug_ssh=debug_ssh,
+        )
+        now = _time.time()
+        _write_attention_cache(cache_path, cache_payload(statuses, errors=errors, now=now))
+        if json_output:
+            typer.echo(json.dumps(cache_payload(statuses, errors=errors, now=now), indent=2))
+        else:
+            typer.echo(render_table(statuses, now))
+        for line in errors:
+            typer.echo(f"! {line}", err=True)
+        if errors:
+            raise typer.Exit(code=EXIT_UNAVAILABLE)
+        return
+    _attention_watch(config, watch, cache_path, local_only=local_only, logger=logger,
+                     debug_ssh=debug_ssh, json_output=json_output)
+
+
+def _attention_print_cached(path: Path, *, json_output: bool) -> None:
+    """The watcher's last collection, as collected; says how old it is."""
+    import time as _time
+
+    from .attention import format_age, render_table, statuses_from_cache
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        typer.echo(f"No attention cache at {path}; is `sucoder attention --watch` running?", err=True)
+        raise typer.Exit(code=EXIT_UNAVAILABLE)
+    now = _time.time()
+    collected = payload.get("collected_at")
+    age = now - collected if isinstance(collected, (int, float)) else None
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        typer.echo(f"(cached {format_age(age)} ago)")
+        typer.echo(render_table(statuses_from_cache(payload), now))
+        for line in payload.get("errors") or []:
+            typer.echo(f"! {line}", err=True)
+
+
+def _attention_local_dir(config) -> Path:
+    """The agent account's record directory on this host."""
+    from .attention import DIR_ENV, RECORD_DIR
+
+    override = os.environ.get(DIR_ENV)
+    if override:
+        return Path(override)
+    try:
+        home = Path(pwd.getpwnam(config.agent_user).pw_dir)
+    except KeyError:
+        home = Path.home()
+    return home / RECORD_DIR
+
+
+def _collect_attention(config, *, local_only: bool, warm_only: bool, logger, debug_ssh):
+    """``(statuses, errors)`` from this host and, unless *local_only*, each cluster.
+
+    One read per cluster: targets sharing a scheduler share ``$HOME`` and so
+    one record directory (``group_targets_by_cluster``).  *warm_only* uses
+    existing connections and never authenticates, for the unattended watcher.
+    """
+    from .attention import (
+        RECORD_SUFFIX, mark_untracked, merge_statuses, parse_listing, parse_record,
+        synthesize_idle_waits,
+    )
+
+    def finish(found):
+        # Newest record per key; a Codex turn idle a minute is waiting (as
+        # Claude's own idle_prompt says); then live sessions with no record.
+        return mark_untracked(synthesize_idle_waits(merge_statuses(found), time.time()), live)
+    from .sessions_report import group_targets_by_cluster, login_hosts_for
+
+    statuses = []
+    errors: List[str] = []
+    live = _attention_local_live(config, logger)
+    local_dir = _attention_local_dir(config)
+    try:
+        for path in sorted(local_dir.glob(f"*{RECORD_SUFFIX}")):
+            try:
+                with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                    text = handle.read(70000)
+            except OSError as exc:
+                errors.append(f"local: could not read {path.name} ({exc.strerror})")
+                continue
+            statuses.append(parse_record(path.name[: -len(RECORD_SUFFIX)], text, source="local"))
+    except OSError as exc:
+        errors.append(f"local: could not list {local_dir} ({exc.strerror})")
+    if local_only or not config.targets:
+        return finish(statuses), errors
+
+    from .attention import live_from_squeue, live_from_tmux, records_and_live_sh, split_records_and_live
+    from .sessions_report import LOGIN_SESSION_SH, SQUEUE_FORMAT
+
+    mirror_tokens = {name: _sanitize_session_token(name) for name in config.mirrors}
+    squeue = f"squeue --me --noheader -o {shlex.quote(SQUEUE_FORMAT)}"
+    clusters, schedulerless = group_targets_by_cluster(config.targets)
+    # (label, remote, host, candidate targets, scheduler?)
+    plan: List[Tuple[str, Any, str, List[str], bool]] = []
+    for cluster, names in clusters.items():
+        plan.append((cluster, config.targets[names[0]], _cluster_query_host(names) or "", names, True))
+    for name in schedulerless:
+        remote = config.targets[name]
+        hosts = login_hosts_for(name, remote, {})
+        if hosts:
+            plan.append((name, remote, hosts[0], [name], False))
+    for label, remote, host, names, scheduled in plan:
+        host = host or getattr(remote, "gateway", None) or ""
+        if not host:
+            continue
+        # The records and what is running, in one round trip: running
+        # sessions with no record are shown as untracked.
+        script = records_and_live_sh(squeue if scheduled else LOGIN_SESSION_SH)
+        try:
+            control = _control_for_host(remote, host, debug_ssh)
+            if warm_only:
+                result = _run_remote_capture(control, host, script, debug=debug_ssh)
+            else:
+                result = _capture_over_tunnel(control, host, script,
+                                              logger=logger, config=config, debug=debug_ssh)
+        except Exception as exc:  # noqa: BLE001 -- one cluster must not sink the rest
+            errors.append(f"{label}: not inspected ({exc})")
+            continue
+        if result.returncode != 0:
+            detail = (result.stderr or "").strip().splitlines()[-1:] or ["(no output)"]
+            errors.append(f"{label}: not inspected (exit {result.returncode}: {detail[0]})")
+            continue
+        records, live_text, live_rc = split_records_and_live(result.stdout)
+        statuses.extend(parse_listing(records, source=label))
+        what = "squeue" if scheduled else "tmux"
+        if live_text is None:
+            errors.append(f"{label}: running sessions not inspected ({what} did not answer)")
+        elif live_rc != 0:
+            errors.append(f"{label}: running sessions not inspected ({what} exit {live_rc})")
+        elif scheduled:
+            found, bad = live_from_squeue(live_text, label=label, targets=config.targets,
+                                          candidates=names, mirror_tokens=mirror_tokens)
+            live.extend(found)
+            errors.extend(f"{label}: could not parse squeue row: {line}" for line in bad)
+        else:
+            live.extend(live_from_tmux(live_text, target=label, host=host, mirror_tokens=mirror_tokens))
+    return finish(statuses), errors
+
+
+def _attention_local_live(config, logger) -> list:
+    """Agent sessions running on this host, from the process table."""
+    from .attention import AGENT_COMMANDS, local_live_sessions, scan_local_launches
+
+    try:
+        entry = pwd.getpwnam(config.agent_user)
+        agent_uid, agent_home = entry.pw_uid, entry.pw_dir
+    except KeyError:
+        agent_uid, agent_home = None, str(Path.home())
+    agents = set(AGENT_COMMANDS)
+    launchers = [getattr(config, "agent_launcher", None)]
+    launchers += [getattr(m, "agent_launcher", None) for m in config.mirrors.values()]
+    for launcher in launchers:
+        command = getattr(launcher, "command", None) or []
+        if command:
+            agents.add(os.path.basename(str(command[0])))
+    try:
+        launches = scan_local_launches(agent_user=config.agent_user, agent_uid=agent_uid, agents=agents)
+    except Exception as exc:  # noqa: BLE001 -- the records still stand on their own
+        logger.warning("attention: could not scan local processes: %s", exc)
+        return []
+    mirror_paths = {
+        str(Path(config.mirror_root) / settings.mirror_dirname).rstrip("/"): name
+        for name, settings in config.mirrors.items()
+    }
+    return local_live_sessions(launches, mirror_paths=mirror_paths,
+                               mirror_root=str(config.mirror_root), agent_home=agent_home,
+                               host=socket.gethostname())
+
+
+def _write_attention_cache(path: Path, payload) -> None:
+    """Atomic replace, so the tmux status line never reads a torn file."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f".{path.name}.{os.getpid()}")
+        tmp.write_text(json.dumps(payload), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        pass  # The cache is a convenience; the listing itself already printed.
+
+
+def _attention_tmux_line(path: Path, render_tmux, statuses_from_cache, *, stale_after: float = 300.0) -> str:
+    import time as _time
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "attn: no data"
+    now = _time.time()
+    line = render_tmux(statuses_from_cache(payload), now)
+    collected = payload.get("collected_at")
+    if not isinstance(collected, (int, float)) or now - collected > stale_after:
+        line = "attn STALE | " + line
+    if payload.get("errors"):
+        line += " | !" + str(len(payload["errors"]))
+    return line
+
+
+def _attention_notify(command: List[str], status, now: float, logger) -> None:
+    from .attention import format_age
+
+    env = dict(os.environ)
+    env.update({
+        "SUCODER_ATTENTION_KEY": status.key,
+        "SUCODER_ATTENTION_MIRROR": status.mirror,
+        "SUCODER_ATTENTION_TARGET": status.target,
+        "SUCODER_ATTENTION_HOST": status.host or "",
+        "SUCODER_ATTENTION_STATE": status.state,
+        "SUCODER_ATTENTION_KIND": status.kind or "other",
+        "SUCODER_ATTENTION_AGE": format_age(status.age(now)),
+        "SUCODER_ATTENTION_MESSAGE": status.message or f"{status.mirror} is waiting",
+    })
+    try:
+        subprocess.run(command, env=env, timeout=30, check=False,
+                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.warning("attention notify_command failed for %s: %s", status.key, exc)
+
+
+def _attention_watch(config, interval: int, cache_path: Path, *, local_only: bool, logger,
+                     debug_ssh: bool, json_output: bool) -> None:
+    """Collect, cache, notify, redraw; until interrupted.
+
+    The first pass sets the baseline: requests already waiting when the
+    watcher starts are shown but not notified.  Later requests notify once,
+    filtered by ``attention.notify_kinds`` and ``notify_after_minutes``.
+    """
+    import time as _time
+
+    from .attention import cache_payload, due_notifications, render_table, waiting_requests
+
+    settings = config.attention
+    notified = None
+    try:
+        while True:
+            statuses, errors = _collect_attention(
+                config, local_only=local_only, warm_only=True, logger=logger, debug_ssh=debug_ssh,
+            )
+            now = _time.time()
+            payload = cache_payload(statuses, errors=errors, now=now)
+            _write_attention_cache(cache_path, payload)
+            if notified is None:
+                notified = waiting_requests(statuses)
+            elif settings.notify_command:
+                for status in due_notifications(statuses, notified, now, kinds=settings.notify_kinds,
+                                                after_seconds=settings.notify_after_minutes * 60):
+                    _attention_notify(settings.notify_command, status, now, logger)
+            if json_output:
+                typer.echo(json.dumps(payload))
+            else:
+                stamp = _time.strftime("%H:%M:%S", _time.localtime(now))
+                typer.echo("\033[H\033[2J" + f"sucoder attention  {stamp}  (every {interval}s)\n")
+                typer.echo(render_table(statuses, now))
+                for line in errors:
+                    typer.echo(f"! {line}")
+            _time.sleep(interval)
+    except KeyboardInterrupt:
+        raise typer.Exit(code=0)
+
+
 @app.command("message")
 def message(
     ctx: typer.Context,
@@ -5263,7 +5780,8 @@ def _run_probe(config, hosts, w, route: str, *, logger, debug_ssh) -> Optional[D
     control = _control_for_recipient(config, hosts, r.host, r, debug_ssh)
     if control is None:
         return None
-    command = probe_command(w.spec)
+    target = config.targets.get(r.target or "")
+    command = probe_command(w.spec, python=target.python if target is not None else "python3")
     if route == "job" and r.job_id is not None:
         command = _in_job(r, command)
     timed_out = {"schema": PROBE_SCHEMA, "status": "unrecognized", "why": PROBE_TIMEOUT, "replies": []}
@@ -5515,7 +6033,7 @@ def _delegate_to_session_relay(config, command: str, args: List[str]) -> None:
 
 
 relay_app = typer.Typer(
-    help="sessions/message/peek on behalf of another local account, run as this one "
+    help="sessions/message/peek/attention on behalf of another local account, run as this one "
          "through sudo (session_relay; issue 52).",
 )
 app.add_typer(relay_app, name="relay")
@@ -5625,6 +6143,19 @@ def relay_peek(
     for messages that caller sent."""
     _relay_target(ctx, target)
     peek(ctx, mirror=mirror, lines=lines, reply=reply, verbose=verbose)
+
+
+@relay_app.command("attention")
+def relay_attention(
+    ctx: typer.Context,
+    json_output: bool = typer.Option(False, "--json"),
+    cached: bool = typer.Option(False, "--cached"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+) -> None:
+    """``sucoder attention`` for the relay's caller: a one-shot collection or
+    the cache, never --watch and never a caller-chosen file."""
+    attention(ctx, json_output=json_output, tmux_line=False, cached=cached, local_only=False,
+              watch=0, cache=None, verbose=verbose)
 
 
 # A pane read is one ssh session open (~10s on a BRC login node), so a poll

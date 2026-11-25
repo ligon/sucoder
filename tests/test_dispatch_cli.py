@@ -1,11 +1,13 @@
 """Headless dispatch bypasses interactive launch and propagates job evidence."""
 import json
+import re
 
 import pytest
 
+import typer.main
 from typer.testing import CliRunner
 
-from sucoder import cli, dispatch
+from sucoder import cli, dispatch, dispatch_cli
 
 
 runner = CliRunner()
@@ -25,6 +27,36 @@ def test_help_does_not_detect_agents_or_check_privileges(monkeypatch):
     result = runner.invoke(cli.app, ["dispatch", "--help"])
     assert result.exit_code == 0, result.output
     assert "submit" in result.output
+
+
+def _help_words(*command):
+    result = runner.invoke(cli.app, ["dispatch", *command, "--help"])
+    assert result.exit_code == 0, result.output
+    # Rich colours help under CI and wraps it inside boxes; compare words only.
+    text = re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]", "", result.output)
+    return " ".join(text.replace("│", " ").split())
+
+
+def test_help_states_exit_codes_and_unknown_submission_reconciliation(monkeypatch):
+    _no_interactive(monkeypatch)
+    submit = _help_words("submit")
+    assert "3 submission_unknown" in submit
+    assert "never resubmit blindly" in submit
+    assert "sucoder-dispatch:DISPATCH_ID" in submit
+    wait = _help_words("wait")
+    assert "4 succeeded, but --require-task-complete" in wait
+    assert "3 no final result before --timeout" in wait
+    assert "result_state" in _help_words("result")
+    assert "exactly one of --command-file or --script-file" in _help_words("verify-stage")
+    assert "docs/dispatch.org" in _help_words()
+
+
+def test_every_dispatch_parameter_has_help():
+    # Installed releases ship no docs/, so a bare option is undocumented.
+    group = typer.main.get_command(dispatch_cli.app)
+    for name, command in [("dispatch", group), *group.commands.items()]:
+        for param in command.params:
+            assert getattr(param, "help", None), name + " " + param.name + " has no help"
 
 
 def test_submit_uses_headless_controller_and_explicit_resources(monkeypatch, tmp_path):

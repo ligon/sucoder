@@ -1,0 +1,528 @@
+#+title: Dream implementation status and backend boundary
+#+author: Sue
+#+date: 2026-11-09
+#+setupfile: settings.org
+
+* Full runtime charter status
+
+The runtime objective is complete under the [[file:workplan.org::#accepted-synthesis][user-accepted explanatory-synthesis mode]] and explicit live-Claude deferral.
+P1-P6 have their recorded engineering, pilot and human dispositions, including real SuCoder correction/synthesis, fresh-reader use, selective maintenance and editorial/archive behavior.
+The [[file:runs/sucoder-p6.org][completed pilot]] records a small wiki-plus-search quality gain, two failed wiki-only diagnostics and no dependable context saving.
+The user chose to retain explanatory articles alongside source search and explicitly permitted dreaming to synthesize new explanations.
+Live Claude verification remains unverified under the user's deferral; accepting this operating mode does not imply broader performance evidence or automatic deployment.
+
+** Unattended operation
+
+=sucoder dream= is expected to run unsupervised, including overnight/headless operation, under the [[file:../dream.org::#unattended][unattended execution contract]].
+The CLI already bypasses interactive startup; the native transport starts a detached process with finite assignment stdin, bounded output/time and noninteractive approval flags for both harnesses.
+The author/editor can preserve and create open Talk tasks while completing unrelated supported work.
+Record important human questions as WAITING or REVIEW items with the missing decision and resumption condition, then return a candidate/status for later inspection.
+Agent review and bounded context requests remain available during execution.
+Configure the sources, model, credentials and allowances before launch; an unusable prerequisite returns an error rather than requesting human input.
+
+* Implemented slices: explicit evidence and native role publication
+
+Bare =sucoder dream= now implements [[file:exploration.org][bounded project-wide exploration]] without an explicit source catalog or advance topic.
+It pins the actual current checkout, resolves strict inherited =dream= configuration defaults and starts a durable private job before native discovery.
+The explorer requests paginated directory listings, file/line reads and literal search over committed regular text, then selects bounded evidence for the existing author/editor and independent reviewer.
+All stages share the same wallet; explorer reservations preserve one author invocation beyond the closeout reserve, even when another job already spent part of that wallet.
+The job stores its exact source revision, configuration, native traces, lookup observations and handoff intent; resume/inspection preserve those identities and unknown paid outcomes.
+Each job has a private plan log root, allowing recovery of a saved provisional-identity plan after interruption before its pointer was recorded.
+Explicit maintenance intent keeps new exploration available on unchanged evidence while retaining the existing explicit-run accepted-receipt shortcut.
+=--detach= starts the same job with private logs and finite stdin; =dream status= and =dream budget= inspect the latest job for the current project, or select =--job PATH= explicitly.
+Configured model/harness and native capabilities are validated without interactive human questions; missing prerequisites return diagnostics.
+The existing explicit commands below remain available.
+
+=sucoder dream plan= implements the first part of the [[file:../dream.org::#implementation][data-plane sequence]].
+It freezes explicitly admitted local git selections or native Claude/Codex transcript prefixes and budgets in a private JSON manifest without inference, source synchronization, or repository writes.
+Frozen-plan validation, private snapshots, deterministic quotation fixtures, native Org subtree checks, output-bound receipts, atomic candidate publication, and local run status are implemented.
+Native Claude and Codex adapters now default to a source-grounded wiki author/editor with independent whole-candidate review; legacy =--mode notes= preserves the earlier extractor/verifier/grouping contract.
+Wiki mode permits new explanations and abstractions inferred across admitted sources, with supporting citations and =inference= source-reference status.
+The explanation need not appear verbatim in one source; independent review assesses the inferred relationship and necessary qualifications.
+Wiki mode can revise existing topics while preserving their anchors and current editorial task subtrees.
+Accepted receipt reuse is evaluated at execution, while planning remains inference-free; generic native adapters remain subsequent work.
+Bounded deterministic wiki/source retrieval and fresh native readers are implemented; real-reader engineering acceptance is tracked in P3.
+The planning manifest retains =execution.available: false= and =prior_wiki.progress: not_evaluated=: planning itself does not execute roles or establish accepted progress.
+Original git-only frozen plans remain compatible, including their legacy execution-reason text.
+No plan is evidence of an examined source, accepted claim, or integrated wiki generation.
+
+Use an existing SuCoder configuration and a locally accessible configured mirror:
+
+#+begin_example
+sucoder --config ~/.sucoder/config.yaml dream plan SuCoder \
+  --sources sources.json --base refs/heads/main
+#+end_example
+
+The required =--base= must exactly match the catalog's full =integration_ref= under =refs/heads/= or =refs/remotes/=.
+Symbolic integration refs and =refs/heads/dream/*= are rejected.
+The command never fetches; update the local integration ref through the normal workflow before planning if necessary.
+Global execution-target, sudo, and interactive-launch flags are rejected.
+Help works without a configuration file.
+
+The source request format is a strict JSON object:
+
+#+begin_example
+{
+  "schema_version": 1,
+  "repository": "SuCoder",
+  "integration_ref": "refs/heads/main",
+  "units": [
+    {
+      "unit_id": "reply-semantics",
+      "kind": "git",
+      "shareable": true,
+      "locator": {
+        "repository": "SuCoder",
+        "commit": "refs/heads/main",
+        "path": "docs/reply-from-transcript.org",
+        "lines": [93, 110]
+      }
+    }
+  ]
+}
+#+end_example
+
+The locator repository is another explicitly named configured mirror, or the target itself.
+The commit may be a locally resolvable revision; the plan stores its full object ID.
+Omit =lines= to select the entire file; otherwise it is an inclusive one-based LF line range, retaining original CRLF and UTF-8 bytes.
+Only nonempty UTF-8 regular git blobs up to 16 MiB are inspected in this slice; directories, symlinks, gitlinks, binary NUL bytes, missing objects, traversal, and unknown fields are rejected.
+A catalog is limited to 256 KiB, as are individual git tree listings.
+=shareable= is mandatory and boolean: it records whether explanatory extracts may later be proposed for publication.
+It does not grant permission to transmit private sources to a provider.
+
+An optional =limits= object overrides positive integer defaults:
+
+#+begin_example
+"limits": {
+  "max_units": 6,
+  "max_source_bytes": 1048576,
+  "chunk_bytes": 65536,
+  "max_role_invocations": 40,
+  "max_prior_bytes": 65536,
+  "max_proposal_bytes": 131072,
+  "max_consolidation_bytes": 229376,
+  "max_elapsed_seconds": 900,
+  "max_repairs": 1
+}
+#+end_example
+
+At most one repair is permitted, and =max_repairs= may be zero.
+Chunks cover every selected byte contiguously, preferring complete lines and preserving UTF-8 boundaries for long lines.
+Each chunk reserves extraction and verification, plus one consolidation and the declared repair allowance.
+New plans use =bounded-prior-v1=: index/settings plus an explicit topic or source-associated current topics and direct topic neighbors.
+Without a relevant seed, the entire active wiki is selected when it fits; otherwise only orientation is delivered, with a bounded omitted-page catalog.
+Selected Org pages include Talk and LOGBOOK content and count toward =max_prior_bytes=; necessary selected context must fit that allowance.
+Omitted active pages retain exact frozen identities and byte ranges and cannot be overwritten as new pages.
+Receipt associations select relevance only, including current human edits; they do not establish accepted progress.
+Old frozen plans reconstruct their original all-active-pages policy without identity changes.
+Consolidation planning checks that prior bytes and the proposal allowance leave space for briefs and metadata; exact staged-payload validation belongs to the later execution slice.
+Planning itself has a separate 30-second inspection deadline and five-second git probe limits.
+
+=--maintenance REASON --topic TOPIC= records an explicit maintenance intention and still requires nonempty sources.
+Both options must be supplied together; this slice does not perform the maintenance.
+
+Plans are stored in =<log_dir>/dream/<plan-id>/plan.json=, falling back to =~/.sucoder/logs/dream/= when =log_dir= is unset.
+Runtime directories and plan files are created with modes 0700 and 0600, without changing the process umask or repairing existing directory permissions.
+Storage inside any inspected repository is rejected.
+The stored manifest is private: it contains absolute local mirror paths, frozen source/chunk digests, prior-wiki object identities, allowances, and coverage marked planned rather than examined.
+Its SHA-256 identity excludes the identity field itself and the returned local plan pathname.
+Existing identical private plans are reusable; a mismatching existing file is rejected.
+
+An accepted =.sucoder/wiki/sources.json= registry must have integer =schema_version: 1= and a UUID-valued =repository_uuid=.
+When absent, the plan proposes a new provisional UUID without writing a registry into the repository.
+Separate initial plans may therefore propose different UUIDs; integration and later re-planning must establish the shared identity.
+The planner does not yet discover shared receipts to skip extraction.
+
+Exit 0 means a valid stored plan, 2 means invalid or unsupported input, and 3 means unavailable evidence/storage or an inspection allowance exhausted.
+No installed launcher deployment follows from a source-tree change.
+Run source-tree checks with =poetry run pytest -q tests/test_dream.py= from the mirror root.
+
+* Frozen plans, snapshots, and deterministic candidates
+
+The local data-plane commands use the stored plan pathname returned by =plan=:
+
+#+begin_example
+sucoder dream snapshot SuCoder --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json
+sucoder dream run SuCoder --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json --harness fixture
+sucoder dream status SuCoder --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json
+#+end_example
+
+All three commands print JSON and bypass interactive agent startup.
+The installed launcher need not yet contain these source-tree commands; =poetry run sucoder= runs them from this checkout.
+Native Org validation requires a locally available =emacs= executable with Org; no new configuration key or provider dependency is introduced.
+
+=snapshot= verifies the plan's content-addressed identity and reconstructs its complete planning contract against current configuration, committed source objects, the designated integration ref, source registries, and prior wiki objects.
+Only a still-provisional UUID is carried forward from the frozen proposal; a newly accepted or changed registry requires re-planning.
+It then stores exact selected bytes and active prior-wiki bytes in private content-addressed files beside the plan, verifying digests before accepting them.
+Stored paths must stay outside all inspected repositories.
+Snapshot publication is atomic and retryable; an existing differing artifact is preserved and rejected.
+Coverage is =snapshotted= with zero examined bytes: copying evidence does not establish extraction or comprehension.
+
+=run --harness fixture= revalidates and snapshots first, then executes a deterministic quotation fixture over every planned chunk.
+All selected units must be explicitly shareable; an external repository also needs an accepted UUID.
+Private units may be snapshotted but cannot enter a fixture candidate.
+The fixture accepts git evidence only.
+Native =codex= and =claude= harnesses are described below; other harnesses fail without fallback.
+The fixture records each delivered range and exact-byte comparison, retaining git commit, blob, selected lines, byte offsets, digest, and repository UUID in its receipt.
+These checks prove delivery and literal-text preservation under a fixed rendering rule; they do not perform semantic extraction, model verification, synthesis, or a pilot evaluation.
+Published quotations normalize CRLF to LF and use Org comma escapes to keep source headings and block terminators literal.
+The exact original bytes remain in the private snapshot.
+
+Fixture output adds a fresh topic page and receipt, initializes the target source registry only when absent, and appends a generation link to the existing index.
+Existing pages, settings, archives, and human index content are preserved.
+Native Org parsing checks generated targets and links within the changed files, without following setup files, evaluating Babel, exporting, loading user init files, or opening source links.
+The receipt binds each quotation subtree and the generated index entry under =org-subtree-utf8-v1=: SHA-256 over UTF-8 bytes from the headline's native Org =:begin= through =:end=, including child content and trailing whitespace.
+The fixture has a separate =git-quotation-fixture-v1= fidelity contract; its receipt must never suppress future semantic work.
+The quotation fixture does not validate semantic claims, task transitions, archival moves or human-decision attribution; native wiki mode supplies the separate reviewed editorial contract below.
+
+The coordinator assembles a tree from the frozen base through a private index and git plumbing, disabling hooks, external filters, signing, network transports, and inherited git redirection.
+It leaves the invoking worktree, staged index, current branch, and integration ref untouched.
+One ref transaction verifies the designated integration ref and creates =refs/heads/dream/<run-id>= only if absent; retry verifies an identical existing ref in the same transaction.
+A changed integration ref or conflicting candidate requires re-planning.
+Interrupted preparation may leave unreachable git objects; those objects do not establish progress.
+The run record reports =candidate_ready= and =not_integrated= after publication.
+The human reviews and integrates through the ordinary repository workflow.
+
+=status --plan= checks the saved fixture against the current designated integration tree.
+It reports candidate-ref availability separately from =not_integrated=, =integrated_fixture=, or =needs_reconciliation=.
+It can recover a candidate published immediately before an interrupted local run-record write.
+Integration validation requires the expected receipt and every required subtree binding; a retained receipt with an edited, missing, non-Org, or unlinked output requires reconciliation.
+Squash integration is supported without requiring candidate ancestry.
+This local status interface requires the saved plan and private snapshots; cross-machine receipt discovery and planning reuse remain unimplemented.
+
+All fixture stages spend the declared elapsed allowance, and proposal/staged-output bytes are bounded before publication.
+The role-invocation count represents deterministic fixture stages, with token and currency usage unknown; no native model is invoked.
+Exit 0 means completed snapshot, prepared candidate, or completed status inspection; 2 rejects invalid/private/unsupported input, 3 reports unavailable evidence/storage, exhausted allowance or a ref conflict, and 1 reports failed fixture/Org validation.
+
+* Claude/Codex transcript evidence
+
+Add an explicitly selected local JSONL unit to the same source catalog:
+
+#+begin_example
+{
+  "unit_id": "session",
+  "kind": "codex-jsonl",
+  "shareable": true,
+  "locator": {
+    "path": "/PRIVATE/EXPLICIT/session.jsonl",
+    "thread_id": "NATIVE_THREAD_ID",
+    "byte_end": 12345
+  }
+}
+#+end_example
+
+Use =claude-jsonl= for Claude Code evidence.
+The absolute canonical path must name a regular file without symlinks; no transcript discovery or home crawl occurs.
+The required thread ID is checked against native identities, rather than inferred from the filename.
+Omit =byte_end= to freeze the current complete-line prefix, excluding a partial final line.
+An explicit cut must end at LF and fit =max_source_bytes=; it permits bounded selection from a larger transcript.
+Snapshots reread and compare the selected prefix; append-only growth beyond the frozen cut is allowed, while rewrites and shrinkage require a new plan.
+
+The independent =native-jsonl-evidence-v1= normalizer retains native records, exact line digests/ranges, roles, calls, results, error payloads, summary/fork/sidechain provenance and unknown events in file order.
+It reports unmatched calls and orphan results and never infers session completion or independent corroboration.
+Compaction and replay records remain evidence of their own recorded claims, not new independent observations.
+The planner binds the normalization digest; snapshots privately store both exact JSONL bytes and normalized records.
+Neither the existing reply classifiers nor their delivery rules change.
+Transcript source identity uses the target repository UUID, harness kind and native thread ID; copying a transcript path creates no independent source identity.
+
+* Wiki author/editor mode (default)
+
+#+begin_example
+poetry run sucoder --config ~/.sucoder/config.yaml dream run SuCoder \
+  --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json --harness codex --model MODEL \
+  --purpose "Explain reply evidence and transcript identity for future maintainers."
+#+end_example
+
+The default =source-grounded-wiki-v5= contract lets the agent select salient knowledge, write natural explanatory Org, combine source contributions and correct existing topic prose.
+The assignment explicitly supplies the permitted =.sucoder/wiki/index.org= and =.sucoder/wiki/topics/TOPIC.org= paths, change/reference format, existing page hashes, prior anchors/tasks and source-link examples.
+Those interface rules bind the run identity; the agent decides the content and organization.
+The coordinator owns initial settings, receipts, source registry and git publication.
+
+The initial assignment supplies the selected source bundle and bounded prior pages inline, using the existing native transport and private role records.
+The author, reviewer and repair roles may request frozen source ranges/literal searches, full active topics, active-topic searches and specific archive sections.
+Requests cannot admit new sources or read current worktree files.
+At most twelve requests share the run's role/time/output limits, the prior-context allowance and an extra 32 KiB source-delivery allowance; active-topic search also has a cumulative 2 MiB scan allowance.
+Only a full active-topic response authorizes editing that page; search snippets and archive sections remain read-only.
+Both author and independent reviewer receive the newly delivered evidence, validated accepted-prefix provenance when applicable and accumulated context; final-page review checks material omissions, unsupported relationships, human authority and essential operational qualifications.
+Exact request/response traces and byte accounting enter the receipt; frozen wiki blobs are cached privately by Git identity for inference-free status.
+Call-order bindings prevent changed cached context from silently starting a different paid assignment during resume.
+Saved v1/v2/v3/v4 writer and no-op runs retain their original briefs, schemas and replay identities.
+Assignments that cannot fit =max_consolidation_bytes= stop as incomplete.
+The planner's conservative role reservation is not a promise that this mode needs a separate invocation per chunk.
+
+The author returns full changed-page text, before-page digests, reasoned change dispositions, source-bound section references and material omissions.
+Mechanical checks validate edit paths, exact source quotes/ranges, retained existing anchors, existing editorial task subtrees, wiki/source link targets and index reachability.
+The author selects a unit ID and literal quotation; the coordinator derives its exact UTF-8 byte range only when that quote occurs once in the selected unit.
+Modified, absent or ambiguous quotations are rejected without fuzzy matching.
+The older =source-grounded-wiki-v1= offset-bearing and =source-grounded-wiki-v2= quotation-bearing contracts remain replayable for saved runs.
+V3 adds a reasoned =change= or =unchanged= disposition to author/repair results while preserving both older briefs and identities.
+V3 transcript receipt units also retain the frozen normalization contract/digest, so later prefix reuse can verify the interpretation as well as literal bytes.
+Native Org inventories distinguish active directives from inert examples; arbitrary inclusion/configuration directives and links outside the admitted source/wiki view are rejected.
+The model can reorganize prose and replace mistaken factual explanations; existing task states, properties, completion stamps and LOGBOOKs change only through explicit v5 editorial actions.
+
+A reviewer accepts or returns concrete blocking findings.
+At most one editorial repair is allowed, followed by another whole-candidate review; a nonactionable revision request or persistent failure produces no candidate.
+This repair is distinct from an uncertain native request, which is never silently repeated.
+All calls, results and repairs use the shared invocation/time/proposal allowances.
+Mechanical checks and model acceptance still do not prove semantic truth or future usefulness; ordinary review and reader acceptance remain required.
+
+An author may decide that useful knowledge is already represented, or that no worthwhile edit is supported.
+An unchanged proposal requires a reason and empty page/change/reference arrays; the independent reviewer still sees all selected evidence and prior pages and may reject that decision.
+The one bounded repair can replace a mistaken no-op with a real source-grounded correction.
+A checked no-op stores private coverage, rationale, review and native traces and returns =unchanged=, without a candidate or shared accepted-progress claim.
+Its atomic marker makes an interrupted local result write recoverable without inference.
+Status replays the original contract and reports reconciliation if the wiki context has changed.
+
+One atomic candidate changes only the validated wiki files and coordinator-owned metadata, preserving the user's index/worktree/branch.
+Receipts bind complete changed-file bytes, including text outside anchored subtrees, and identify multi-source references, dispositions, findings and exact role payloads.
+Inference-free status replays the saved contract and validates outputs after ordinary or squash integration; a title/intro edit can require reconciliation even if all subtree bodies remain unchanged.
+This conservative binding will be refined for selective claim-level reuse in P4.
+Legacy notes/fixture receipts continue using their original contract and subtree rules.
+
+* Editorial transitions and archives
+
+V5 adds =task_actions= to author/repair results and one independent =task_check= per action to reviewer results.
+The agent proposes transitions or archive moves bound to the frozen task subtree SHA-256; the coordinator materializes the complete candidate before review.
+Each transition records an owner, reason and frozen UTC proposal time, preserving earlier decisions and returned reviews in LOGBOOK.
+WAITING requires a blocker and resumption condition, REVIEW requires a named reviewer and acceptance criteria, and DONE requires a checked acceptance criterion.
+Leaving WAITING clears its current blocker/resumption properties while retaining their values in history.
+Reopening retains the earlier resolution; the proposal timestamp is distinct from later candidate integration.
+
+Declared human requirements cannot be removed or downgraded by the author or independent reviewer.
+Terminal decisions requiring human authority need an exact admitted quotation from maintained decision records or a native non-summary user message, followed by independent attribution and acceptance checks.
+Assistant/tool/summary transcript claims cannot supply that human authority.
+Attribution and whether a decision actually authorizes the action remain semantic review judgments, including for maintained Git records; the mechanical checks do not authenticate a human or prove a quotation's meaning.
+Prose-only authority requirements are also checked by the independent reviewer.
+
+The separate =native-editorial-org-v1= inline Org engine preserves properties, IDs, earlier history, inherited tags and repository-relative archive context without executing source-directed setup files, hooks or Babel.
+Only terminal trees without open descendants can move to =.sucoder/wiki/archive/TOPIC.org=.
+Existing archive destinations and necessary incoming-link pages are loaded from the frozen Git view within shared context/request limits.
+The coordinator creates forwarding anchors for moved targets, rebases outgoing/history links and updates tracked incoming links in the same candidate.
+Archive bodies and LOGBOOKs remain excluded from ordinary topic reads; fresh readers can follow a forwarding link to a specific archived entry.
+Immutable timestamps, actions, checks, moves, source references and actual context delivery are retained for inference-free replay.
+Older v1-v4 contracts retain their original task-preservation behavior and run identities.
+
+* Accepted shared progress and transcript appends
+
+Before wiki inference, execution inspects compatible changed wiki-v2/v3/v4/v5 receipts in the frozen designated integration tree.
+The unchanged shortcut supports complete unchanged Git selections and normalized Claude/Codex transcripts.
+Every receipt dependency must still be admitted with the same repository/source identity, selected range, exact bytes and normalized interpretation when applicable.
+It verifies complete chunk coverage, the accepted final review, native harness/model/build, brief and purpose, and every required output binding.
+Source commit IDs may advance while the exact selected source bytes remain unchanged; reused coverage retains the original receipt's provenance.
+A candidate ref or a receipt without valid outputs cannot establish accepted progress.
+Each receipt-discovery scan is bounded to 2 MiB within the run deadline, and selected proof records are bounded by newly covered units.
+
+Successful reuse returns =already_integrated=, zero model invocations and no new candidate/topic.
+It records a private =accepted-wiki-progress-v1= proof referencing the accepted receipt digests; inference-free status reconstructs that proof and checks the current integration tree.
+Changing a required output, receipt or repository UUID reports reconciliation, including changes outside Org subtrees.
+Missing original evidence is not inferred from shared metadata.
+=--maintenance= with =--topic= bypasses the shortcut for an explicit checked repair using existing evidence.
+For appended transcripts, =accepted-transcript-prefix-v1= selects the longest compatible accepted prefix per logical source, independent of local path/unit aliases.
+Every parent dependency must still match, its selected raw prefix must end at a complete JSONL line and have the same SHA-256 and normalized interpretation, and all required outputs must validate at the frozen integration tree.
+Rewritten/shrunk prefixes, changed normalization and required-output edits request explicit maintenance; unknown or incomplete metadata never establishes progress.
+Canonical parent receipts and required output blobs are cached privately and checked against the frozen Git inventory during inference-free replay.
+An optional compact manifest binds those proofs into the v4 native spec/run identity; empty-prefix v4 runs keep their original payloads and identities.
+
+The author/reviewer initially receive only the appended source window plus relevant prior wiki.
+The coordinator retains complete admitted snapshots for validation and bounded older-source requests.
+Native record ranges, pending calls at the cut and current ambiguous/orphan/pending metadata retain provenance without exposing omitted raw arguments or treating tool reports as successful execution.
+Exact quotes must occur uniquely among actually delivered windows; receipts partition all selected bytes into accepted-prefix reuse and actual new delivery and report extra requested bytes separately.
+Successor receipts bind the complete current normalized source revision and the changed pages plus delivered prior decisions/navigation they depend on.
+Publication validates required unchanged pages against the frozen base without adding them to the write set; atomic integration-ref verification protects peer contributions.
+After ordinary or squash integration, a new plan can reuse the complete accepted appended revision without loading earlier role caches or invoking a provider.
+A private append no-op remains private and cannot establish shared coverage of its newly examined suffix.
+
+Sanitized live append acceptance uses an explicit provider and a disposable private repository:
+
+#+begin_example
+poetry run python scripts/dream_append_acceptance.py \
+  --harness codex --model MODEL --kind codex-jsonl
+#+end_example
+
+The script ordinarily integrates only its fixture candidates, checks stable topic update and suffix-only initial delivery, retains the evidence/usage privately and forbids provider calls during the unchanged accepted rerun.
+It does not discover real transcripts or run the documented sample procedure.
+Live Claude verification remains explicitly deferred.
+
+* Bounded readers and explicit session entry
+
+#+begin_example
+poetry run sucoder --config ~/.sucoder/config.yaml dream read SuCoder --base refs/heads/main
+poetry run sucoder --config ~/.sucoder/config.yaml dream read SuCoder \
+  --topic transcript-replies --target reader-results --base REVISION
+poetry run sucoder --config ~/.sucoder/config.yaml dream source SuCoder \
+  --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json --search "compaction summary"
+poetry run sucoder --config ~/.sucoder/config.yaml dream ask SuCoder "QUESTION" \
+  --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json --base REVISION \
+  --harness codex --model MODEL
+#+end_example
+
+Both Claude and Codex sessions can begin with =dream read= and use its explicit lookup instructions; no AGENTS.md, skill or project policy is rewritten.
+=read= pins a git commit without checkout, reports the original page/blob digest and projected delivery, and uses native Org structure to omit LOGBOOK drawers from ordinary active reads.
+It retains substantive article caveats and editorial text.
+Orientation includes instructions within 2 KiB; active topic delivery defaults to 12 KiB.
+An explicit =--max-bytes= records a changed per-command allowance and truncation remains explicit.
+Archive access requires a topic and specific custom target, retrieving that entry and its historical decision/provenance without the rest of the archive.
+
+=source= reads only the selected local plan's frozen source snapshots, verifies exact hashes, and returns original source identities and absolute UTF-8 ranges.
+It supports unit/range lookup or literal search with neighboring lines, with a default 32 KiB evidence allowance and explicit searched/checked/delivered/omitted byte counts.
+Missing snapshots remain unavailable; a shared receipt alone neither discovers nor grants access to original transcript bytes.
+Use the explicit snapshot command when admitted sources have not yet been frozen.
+
+=ask= starts a separate =bounded-wiki-reader-v1= native role with only its question, bounded orientation, admitted source metadata and chosen retrieval responses.
+It inherits no construction conversation, earlier answer or grading rubric.
+The coordinator serves requested topic/archive/source/search reads, enforces cumulative 12 KiB topic and 32 KiB source delivery, twelve retrievals and at most eight native calls within the plan's time/output allowances.
+Every delivered response has a content-bound read ID; the final answer can cite only IDs actually delivered.
+Private assignments, native traces and the final result record its chosen evidence, actual byte counts and native usage; topic delivery is observable but does not certify comprehension or answer correctness.
+The source-only condition uses the identical original-evidence interface with wiki access disabled.
+Native failures retain traces and require an explicit new attempt; successful reader replay makes no inference calls.
+
+The opt-in =bounded-wiki-reader-v2= comparison API, =sucoder.dream_reader_eval.ask=, supplies source-only, wiki-plus-search and wiki-only conditions with one common brief/schema and enforced tool availability.
+The CLI's =--wiki-only= uses that contract; existing default and =--source-only= v1 calls retain their saved identities.
+Pilot comparisons use the v2 API for all three conditions, rather than mixing contracts.
+V2 records archive bytes separately, repeated retrieval/common-instruction delivery across turns, complete serialized assignment bytes, native token usage and explicitly scoped invocation latency.
+Provider-added instructions are unmeasured and currency remains unknown; a requested dollar ceiling is rejected before transport because this backend cannot enforce it.
+The comparison reader has a maximum two-minute invocation deadline; cached replay preserves its recorded result and first recorded invocation latency.
+=scripts/dream_pilot_prepare.py= verifies every pinned corpus blob, selected line range and digest, prepares the randomized 36-answer schedule and exercises the actual kernel isolation boundary against an evaluator-only canary without provider calls.
+Experiment execution remains separately scoped by [[file:pilot.org][the pilot protocol]].
+
+* Native notes mode (legacy)
+
+#+begin_example
+poetry run sucoder --config ~/.sucoder/config.yaml dream run SuCoder \
+  --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json --harness codex --model MODEL --mode notes
+poetry run sucoder --config ~/.sucoder/config.yaml dream run SuCoder \
+  --plan /PRIVATE/LOGS/dream/PLAN_ID/plan.json --harness claude --model MODEL --mode notes
+#+end_example
+
+The model is required; no harness or model fallback is attempted.
+The native run transmits the explicitly admitted evidence and selected prior wiki context to that harness's authenticated provider.
+Every selected unit must be marked shareable before preparing a native publication candidate.
+The existing YAML settings suffice; source-tree commands use =poetry run sucoder= until the launcher is deployed.
+
+The =inline-semantic-roles-v1= coordinator freezes its maintained role briefs, strict result schemas, plan, requested harness/model, observed native build and attempt number into the run identity.
+Each chunk receives a separate extractor and verifier assignment, including its exact source bytes/range/digest, transcript provenance when applicable, and frozen prior wiki context.
+The result must match its assignment/input identities and schema, report no unread failures, and cite literal UTF-8 bytes within the delivered chunk.
+The verifier must return exactly one verdict for each proposed claim.
+Contradicted claims are excluded; unresolved claims retain their qualification and explicit verification note.
+One consolidator organizes eligible claim IDs into titled sections, including each claim exactly once.
+The coordinator renders checked claims and source references rather than accepting arbitrary model-authored Org files.
+This conservative mode appends a fresh topic and navigation entry while preserving all previous wiki content.
+
+Native role processes have a private temporary home/cwd and receive immutable JSON on stdin.
+Linux Landlock ABI 3 or newer restricts the entire process tree to runtime executables/libraries, certificate/resolver files and that temporary directory; the real repository, git metadata, private run store, unrelated home files and process environments are outside the allowed filesystem view.
+Only the appropriate native authentication seed or provider API-key environment is staged; user/project settings, hooks, plugins, parent thread IDs and relay/socket locations are not copied.
+The authenticated provider connection remains network-enabled; this is filesystem confinement plus disabled model-facing external tools, not operating-system network isolation.
+Codex uses read-only sandbox mode with command, image, app, plugin, hook, browser and agent tools disabled and user configuration/rules ignored.
+Claude uses restricted/safe modes, no external tools or MCP servers, disabled hooks/commands, and noninteractive denial of permission prompts.
+Claude's internal =StructuredOutput= tool is allowed only as its schema response mechanism.
+Required CLI flags, native version and kernel restriction support are checked before a role's provider request; unknown execution trace events/tools fail validation.
+Unsupported platforms/builds preserve inference-free planning and snapshot functionality but reject native execution.
+
+Private assignments, results and complete bounded native traces bind each delivered payload, result and reported usage.
+Status reconstructs expected outputs from those bound records without invoking a model, and validates receipt/output subtrees after ordinary or squash integration.
+The public receipt identifies the requested harness/model, native build, checked source revisions, all chunk assignments and output bindings; private transcript paths and full transcripts are excluded.
+Delivery records show input provision, not comprehension; model verification remains fallible and candidates require ordinary review.
+
+The plan's shared role count and elapsed deadline apply to each attempt; each role is bounded to 180 seconds within the remaining allowance.
+New native wiki and notes runs additionally use a durable whole-job deadline and invocation cap across roles, repairs, context-request turns, explicit attempts, several explicitly joined plans and process restarts.
+The job starts before snapshots/native startup; idle time between restarts counts, and a boot-domain change fails closed for new paid work while preserving inspection.
+Defaults use the plan's existing limits, reserving one invocation and up to 30 seconds for closeout.
+Use =--max-total-seconds=, =--max-total-calls=, =--reserve-seconds= and =--reserve-calls= on first creation; =--budget PATH= joins an explicit shared private directory instead of the plan's default =job-budget/=.
+Limits cannot change after creation.
+Each paid invocation has a durable reservation written before its started sentinel, with a bound trace/return record when available; unknown outcomes stay charged.
+Frozen remaining-budget advice participates in each assignment identity and replays without substituting later live balances.
+Cumulative result bytes, per-assignment bytes, trace bytes, proposals and staged output are bounded separately.
+Native usage is aggregated without inventing missing token/currency totals; =--max-total-tokens= and =--max-cost-usd= fail before provider work because the current adapters cannot enforce those ceilings.
+The native-call cap excludes hidden HTTP retries, so it is not a financial guarantee.
+An advisory whole-job lock and the existing per-run lock prevent concurrent coordinators from repeating or overspending the same job.
+Validated completed results are reused on retry.
+A started/failed request with no validated result is never automatically repeated because its provider outcome and cost may be unknown.
+After inspecting its private trace, use an explicit new =--attempt 2= to start an independent run within the same remaining job allowance.
+Exhaustion produces =budget_exhausted= JSON/exit 3 and a durable stop checkpoint; incomplete proposals and completed roles remain private rather than becoming unchecked candidates.
+=dream budget MIRROR --plan PLAN [--budget PATH]= is an inference-free live balance report separate from immutable role/output receipts.
+Read-only status and fully completed cached results remain replayable after budget expiry; legacy unbudgeted specifications retain their original identities.
+See [[file:budget.org][the durable budget charter and verification]].
+If a plan has multiple native runs, pass =dream status --plan PLAN --run RUN_ID=; an unfinished native run reports =incomplete=.
+The planner's repair allowance remains reserved; this slice does not automatically repair a rejected semantic role result.
+
+For an opt-in live acceptance check using only synthetic evidence in a fresh disposable repository:
+
+#+begin_example
+poetry run python scripts/dream_acceptance.py \
+  --harness codex --model MODEL --kind codex-jsonl
+poetry run python scripts/dream_acceptance.py \
+  --harness claude --model MODEL --kind claude-jsonl
+#+end_example
+
+The script retains its private artifacts, checks a critical command flag, preserves the original index/worktree/branch and verifies output bindings after synthetic squash integration.
+It sends synthetic content to the requested provider and never discovers real transcripts.
+
+* Agent-independent dreaming
+
+On 2026-11-08 the user requested that implementation prioritize Codex and generic agents alongside Claude.
+The [[file:../dream.org::#pipeline][design's initial file-tool Claude adapter]] was a capability hypothesis; the implemented inline mode uses the same independent coordinator for both harnesses.
+The planning implementation imports no native agent client, chooses no provider/model, and has no fallback harness.
+
+Keep these interfaces separate:
+
+- Evidence adapter :: Resolve and normalize immutable source selections, preserving native events, tool outcomes, lineage, unknown ranges, and exact provenance.
+  Claude/Codex JSONL are input formats, independently of who performs a dream.
+- Role adapter :: Execute a frozen extractor, verifier, or consolidator assignment for a specified harness and model.
+  Every adapter must return the same versioned result contract: assignment/input identities, proposed artifacts, trace-supported delivered ranges, explicit unread/failed coverage, native usage, and capability limitations.
+- Coordinator :: Own complete selected coverage, shared allowances, independent validation, source/output receipts, and atomic candidate publication.
+  Native exit success and an agent's final summary cannot substitute for these checks.
+
+Before either native adapter runs, feature-probe the installed version and verify its ability to restrict the input/output file view, expose usable traces, enforce deadlines/retries, and produce schema-bound role results.
+A generic headless agent must satisfy the same contract through an explicit adapter; an arbitrary shell command returning prose does not establish those capabilities.
+Unsupported capabilities fail before inference with no provider/model fallback.
+Money or token limits are enforceable only when the adapter demonstrates run-wide accounting and enforcement; missing usage remains unknown.
+This contract is exercised with deterministic role fixtures and isolated native executable fixtures, independently of live account availability.
+
+* Deferred verification and extensions
+
+The [[file:workplan.org][runtime workplan]] is complete under its recorded acceptance and deferral dispositions.
+Retain the user's explicit live-Claude deferral and report that live check as unverified.
+Further comparison models/repetitions and generic execution adapters are separate extensions rather than unfinished requirements of this accepted scope.
+The existing CLI's unattended execution is part of the accepted scope and can be scheduled by the operator.
+
+The [[file:../dream-implementation-ledger.org][implementation ledger]] records reuse decisions and invariants.
+
+* Validation record, 2026-11-08
+
+** Planning slice
+
+The final focused Python run passed 402 tests, including 58 dream tests; mypy and native Org export/link/archive checks passed.
+The full suite had 2616 passes, eight skips and 41 failures; all 41 failing cases also failed at the unchanged =944b0f2= upstream baseline.
+The full run preceded the final planner refinements, which the focused run covers.
+This is source-tree validation, with no model invocation or deployment.
+
+** Resumed data plane
+
+The final focused run passed 440 tests, including 58 planning tests and 38 new data-plane tests; mypy, native design Org export/link/archive checks and wheel construction passed.
+The wheel includes the runtime =dream_validate.el= asset.
+The final full suite passed 2661 tests, skipped eight and failed 41; all 41 failing node IDs exactly match failures reproduced at the unchanged recovered =f452f0b= baseline.
+The full suite preceded the last optional planning-deadline refinement and its new regression test; the 440-test focused run covers that final change.
+The failing suites concern Codex app-server/state/runner and timer lifecycle, independently of dream.
+No model invocation, real-corpus publication, deployment or merge was performed.
+
+** Native roles and transcripts
+
+The final focused run passed 497 tests across dream, CLI, configuration, dispatch CLI and binding observations, including 153 dream cases.
+Mypy passed for all six dream modules; native Org design export/link/archive validation passed.
+Wheel construction and inspection confirmed inclusion of the new runtime modules and native Org validator.
+The full suite passed 2701 tests, skipped eight and failed 55; all 55 failing node IDs reproduced exactly at unchanged recovered =b7d9014= in an isolated archive checkout under the current installed CLI/environment.
+Those failures concern Codex app-server/state/runner, direct-remote and timer lifecycle, not dream.
+The final focused run includes source traversal, call-ID ambiguity, explicit-attempt and significant-whitespace refinements made after full-suite collection.
+
+On this host, actual Landlock ABI 8 denied unrelated reads/writes and process-environment access while allowing private role output and native CLI startup.
+Codex CLI 0.167.0 with explicit =gpt-6.1-sol= completed live synthetic git-evidence publication and a native-Codex-JSONL acceptance run, including exact source coverage and synthetic squash integration.
+The private reproducible JSONL acceptance artifacts are at =/tmp/sucoder-dream-acceptance-ha5ohs1g/=; no real-corpus publication occurred.
+Claude Code 2.1.317 started inside the same boundary and exposed only its internal =StructuredOutput= tool, then reported =usage_limit_reached= for its seven-day account allowance.
+Its reported reset is 2026-11-11 16:00 UTC; live Claude semantic acceptance remains unverified until account availability changes.
+The user explicitly chose to leave that live verification pending.
+Both native protocols and CLI pipelines pass deterministic isolated-executable tests, including each execution harness crossed with git, Codex and Claude evidence.
+No launcher deployment, upstream push, ordinary integration or real-corpus pilot was performed.
+Staged GitNexus detection reports CRITICAL aggregate risk across broad CLI flows, including unnamed-symbol mappings into unrelated flows.
+Direct diff inspection confines production changes to dream modules, with passing CLI/configuration/binding regressions and the exact matched baseline failure set above.
+
+Prepared by Sue.

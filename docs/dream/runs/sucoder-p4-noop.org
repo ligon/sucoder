@@ -1,0 +1,49 @@
+#+title: P4: real SuCoder maintenance converges without edits
+#+author: Sue
+#+date: 2026-11-09
+#+status: PASSED checked no-op; P4 remains ACTIVE
+#+setupfile: ../settings.org
+
+* Explicit maintenance, same evidence
+:PROPERTIES:
+:CUSTOM_ID: maintenance
+:END:
+
+The v3 curation code is committed at =0fcb84e=, with verification ledger =dc0279f=.
+A new explicit maintenance plan selected the same six real SuCoder git passages and 23,236 bytes against the accepted reply wiki.
+It admitted no new transcript or grading rubric.
+The purpose remained the normal project-understanding purpose; maintenance asked for supported factual corrections, material omissions or unnecessary duplication in =transcript-replies=.
+
+- Execution base :: =dc0279f= on =coder/dream-data-plane=.
+- Plan :: =d3e1297bcd7c0bda1feda381db27cc7a02d000063e4062f2ff706bb4cdc17a29=.
+- Run :: =19edc9239c69e2ee42ebb992233e25ed37207f89498b7ff8786b6e8aed4c198b=.
+- Harness/model/build :: Codex, explicit =gpt-6.1-sol=, CLI 0.167.0.
+- Contract :: =source-grounded-wiki-v3=.
+- Artifacts :: The private plan directory contains =real-maintenance-check.json= and =real-maintenance-replay-check.json=; the retained driver is =/tmp/sucoder-dream-p4-maintenance.py=.
+
+The author returned =unchanged= with a reason, and independent review accepted it.
+Both roles received all selected source bytes and the existing wiki.
+Inspection of the stated reason confirms that it considered historical reports versus static source/test definitions, delivery and attribution rules, version/scope qualifications, maintained-source links, and unresolved tagged-versus-bare reply and missing-screen-evidence caveats.
+It judged additional detail mostly duplicative of maintained sources and invented no human ruling.
+
+The two native calls reported 42,849 input and 618 output tokens; currency remains unknown.
+No candidate, ref, worktree or index change occurred.
+The checked no-op retains private coverage, rationale, review, native traces and exact wiki footprint; it does not promote a new shared accepted-progress receipt.
+Inference-free status returned =unchanged= with =no_changes_proposed=.
+A subsequent replay explicitly forbade provider invocation and passed with zero new provider calls.
+
+* Verification and remaining work
+:PROPERTIES:
+:CUSTOM_ID: limits
+:END:
+
+The seven-module dream regression passed 120 tests; the final ten curation cases include both execution protocols and normalized interpretation metadata for both transcript formats.
+Mypy and native Org checks passed.
+Tests also demonstrate that an independent reviewer can reject a mistaken no-op and obtain a real correction, and that interrupted private-result publication is recoverable without inference.
+Actual saved v2 candidate and shared-progress status still replay correctly.
+
+This verifies targeted maintenance with existing evidence and a bounded stopping decision.
+P4 still requires appended transcript processing and deterministic bounded prior-topic selection; P5/P6 remain outstanding.
+The separate usefulness experiment has not run, and live Claude remains explicitly deferred.
+
+Prepared by Sue.

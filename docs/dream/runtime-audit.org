@@ -1,0 +1,94 @@
+#+title: Dream runtime charter audit
+#+author: Sue
+#+date: 2026-11-09
+
+* Completion finding
+
+The runtime workplan is complete under the user's accepted operating mode and explicit live-Claude deferral.
+P1-P5 passed their runtime gates, and [[file:runs/sucoder-p6.org][P6]] completed all 36 scheduled attempts with a small wiki-plus-search quality gain, two failed wiki-only diagnostics and no dependable context saving.
+The user selected [[file:workplan.org::#accepted-synthesis][explanatory synthesis alongside source search]], explicitly permitting dreaming to synthesize new explanations.
+This supplies the requested human disposition while retaining the measured limitations.
+Live Claude is an explicit user deferral, not a passed live check.
+This audit maps the [[file:workplan.org][runtime workplan]] and [[file:../dream-charter.org::#research-conclusions][charter conclusions]] to inspectable artifacts, rather than treating the design workshop's DONE entries as runtime results.
+
+* Behavior and evidence
+
+- Real SuCoder wiki :: The accepted [[file:../../.sucoder/wiki/topics/transcript-replies.org][topic]] and [[file:../../.sucoder/wiki/receipts/ba7ba3aa22adabd09f0b9534803a26bbfc0690df69201c8ce83498c538d1c2c1.json][receipt]] are present in the current feature branch.
+  The receipt records six units, an accepted independent review, pinned Codex/model identity and exact required outputs.
+  [[file:runs/sucoder-p2.org][P2]] records its source objects, candidate, ordinary feature-branch integration and qualification repair.
+- Correction and synthesis :: P2's separate disposable real-source correction retained the stable wrong-note target and unresolved human constraint while combining documentation, adapter and fixture evidence.
+  [[file:../../tests/test_dream_wiki.py::test_corrects_existing_topic_and_combines_sources_preserving_human_task][The public protocol case]] runs the same behavior for both harnesses.
+  Semantic acceptance remains fallible; exact quotations alone do not prove a synthesized relationship.
+- Subsequent use :: [[file:runs/sucoder-p3.org][P3]] records three fresh native readers, their actual topic/source retrievals and correction/synthesis/lookup answers.
+  A current public CLI read on =7aec2cc= delivered 1,156 orientation bytes and 8,312 topic bytes, retained =--session-id= and =queued_command= and excluded LOGBOOK history.
+  The captured outputs are =/tmp/sucoder-dream-charter-audit-orientation.json= and =/tmp/sucoder-dream-charter-audit-topic.json=.
+- Bounded retrieval :: [[file:../../sucoder/dream_reader.py][The deterministic reader]], [[file:../../sucoder/dream_context.py][frozen context service]] and [[file:../../tests/test_dream_reader_eval.py][comparison-access cases]] enforce bounded orientation/topics/sources, explicit unavailable/truncated results and specific archive targets.
+  The same source interface serves source-only and wiki-plus-search readers; wiki-only denies source access before retrieval.
+- Selective maintenance :: [[file:runs/sucoder-p4-git-reuse.org][Real accepted Git reuse]], [[file:runs/sucoder-p4-noop.org][reviewed no-op]] and [[file:runs/sucoder-p4-append.org][live sanitized append]] establish unchanged zero-call convergence, a same-topic suffix update and bounded context requests.
+  [[file:../../tests/test_dream_prefix.py][Prefix cases]] cross both evidence formats and both harness protocols, including changed outputs, pending/ambiguous calls, aliases, interruption and squash acceptance.
+  Output bindings are deliberately conservative at file level; this evidence does not establish reuse of individual unaffected claims within an edited bound page.
+- Editorial lifecycle :: [[file:runs/sucoder-p5.org][P5]] records both public protocol lifecycles and a live Codex archive/fresh-reader check over labeled synthetic history.
+  [[file:../../tests/test_dream_editor.py][Public editorial cases]] exercise all seven states, returned review, reopening, human-authority rejection and preserved history.
+  [[file:../../tests/test_dream_editorial.py][Native mechanics cases]] compare archival behavior against Org and preserve inherited tags, IDs, source/outline/time context and forwarding links.
+  The live archive history is illustrative, not a real maintainer ruling.
+- Admission and provenance :: [[file:../../sucoder/dream.py][Planning]] and [[file:../../tests/test_dream_transcript.py][native transcript cases]] preserve explicit admission, complete-line cuts, native ordering, calls/results, summary/sidechain/unknown provenance and append validation.
+  [[file:../../tests/test_dream_roles.py::test_every_chunk_has_separate_extraction_and_verification][Notes-mode coverage]] verifies every chunk separately; the default author can receive a complete bounded bundle and rejects oversized assignments rather than silently accepting partial learning.
+- Publication and privacy :: [[file:../../tests/test_dream_run.py][Publication cases]] check private snapshots/indexes, allowed paths, hook/filter suppression, user-work preservation, binding/ref races, interruptions, squash output validation and private-source refusal.
+  [[file:../../tests/test_dream_native.py][Actual boundary cases]] enforce filesystem canaries and disabled external tools; authenticated provider networking remains enabled.
+- Stable replay :: [[file:../../tests/test_dream_roles.py::test_failed_native_request_is_not_automatically_repeated][Unknown-outcome rejection]], [[file:../../tests/test_dream_context.py][frozen-context cases]] and [[file:../../tests/test_dream_editor.py::test_changed_private_execution_time_cannot_start_a_new_paid_assignment][timestamp drift rejection]] prevent silent new paid assignments after changed or incomplete caches.
+  Actual saved v2-v4 candidate/progress/no-op statuses were also replayed without inference, as recorded in the implementation ledger.
+- Unattended execution :: [[file:../../tests/test_dream_unattended.py][Headless regressions]] exercise no controlling terminal, finite assignment stdin, disabled interactive approvals, and public CLI runs with human prompt functions forbidden.
+  Both harness protocol cases prepare a candidate containing independent synthesis and a new evidence-bound human WAITING question, preserve the existing human constraint and replay status without another role call.
+  These checks use protocol fixtures, not new live provider requests; live Claude remains deferred.
+- Harness parity :: Shared protocol fixtures cover both execution harnesses independently of Git/Claude/Codex evidence formats.
+  Live Codex has real-source construction and fresh-reader evidence plus synthetic append/archive evidence.
+  Live Claude remains unverified under the user's quota-related deferral; no new Claude probe was made for this audit.
+- Packaging and entry :: The extracted wheel from =0a5e84d= executed the packaged native Org helper and exposed =--wiki-only=, with zero provider requests.
+  Explicit =dream read/source/ask= provide session entry without rewriting instructions or installing automatic background work.
+  [[file:p6-next.org][The P6 continuation]] retains the checksum, commands and artifact paths.
+- Comparative use :: The approved Codex pilot reproduced all twelve frozen passages, completed six construction stages and recorded 36 fresh-reader attempts under the original two-hour/180-call cap.
+  Wiki plus search scored 23/24 versus 22/24 on SuCoder and 25/26 versus 23/26 on LSMS, with a three-item synthesis/caveat gain and zero graded critical errors.
+  That meets the original exploratory quality alternative; context savings and broader benefit are unestablished.
+  Two LSMS wiki-only readers explicitly reported missing evidence and were retained without answer regeneration; the separately frozen outcome collector conservatively classifies the full run inconclusive.
+  [[file:runs/sucoder-p6.org][The P6 report]] preserves the original criterion, amended classification, actual failures, source-read traces, full costs and sensitivity to the rejected baseline citation attempt.
+
+* Independent review and current verification
+
+The workshop skill's independent skeptic found two concrete P6 defects missed by completed-replay fixtures: partial resume could mix reader contracts, and a crash after seed mutation/commit could duplicate the reserved anchor.
+The fixes freeze source/role/retrieval contracts before inference, guard transport against drift, replay completed readers against their original case binding, and record a seed intent before exact atomic replacement or commit.
+The reviewer re-inspected both fixes and found no surviving instance of either defect or a new concrete defect in those changes.
+The final retry audit also confirmed that schema-valid rejected decks/grades were frozen before their semantic checks, preventing a usable explicit retry.
+Those checks now precede the validated pointer; rejected native traces remain retained, same-attempt replay makes no new call, explicit attempt 2 can recover, and a valid critical grade remains frozen.
+The final partitions passed nineteen fast guard/preparation cases and four full/critical-stop/partial-reader workflows: eighteen driver and five preparation cases in total.
+Four-module mypy also passed.
+The broader integration run on =7aec2cc= passed 2,855 cases, skipped eight and explicitly deselected the exact 55 known baseline failures; =/tmp/sucoder-dream-p6-final-integration.txt= records it.
+The pilot-only review fixes are committed at =c753aed= and followed that integration collection; their separate tests above cover the changes.
+Those pre-pilot tests use protocol fixtures and simulated grades.
+The later live pilot exposed ambiguous grader failure reporting and terminal reader-failure collection; separate frozen helper scripts correct the orchestration without changing the original reader/model inputs or runtime.
+Five grading-amendment cases and two outcome-collector cases pass, including complete negative/failure comparisons, preserved original allowances, zero-call replay and trace-tampering rejection; mypy passes both scripts.
+The actual completed live comparison then replayed exactly with native inference forbidden and no new reservations.
+
+* Limits that still matter
+
+The subsequently approved [[file:budget.org][durable budget extension]] gives native wiki/notes runs a persisted elapsed deadline and invocation ledger, reserved closeout capacity, shared-plan budgets and inference-free inspection.
+Frozen remaining-budget advice binds each assignment; failed/unknown reservations remain charged, and exhaustion retains private checkpoints without publishing unchecked proposals.
+Current adapters reject requested hard token/dollar caps before provider work, reporting native observations and unknowns separately.
+The original real SuCoder =source-grounded-wiki-v2= run still reports an integrated candidate with native startup/invocation replaced by exceptions and no budget directory created.
+The private check is =/tmp/sucoder-dream-budget-legacy-status.txt=.
+The extension's regression partitions cover 604 distinct relevant passing cases, including 26 new budget cases; four-file mypy, documentation export and packaged-source byte checks pass.
+Three independent review passes leave no surviving concrete budget defect.
+The implementation is =314111c=; final private logs and tested-source hashes are indexed by =/home/coder/.sucoder/logs/dream-budget/2026-11-10-314111c/verification.json=.
+No new provider experiment was run.
+
+The user explicitly approved the scoped pilot; it completed 137 native invocations in 71.2 minutes and reported 2,003,683 input/87,760 output tokens, including every failed attempt and both grading versions.
+No scientific ruling or actual LSMS change was made.
+Its evidence and frozen runtime are retained privately outside =/tmp= under =/home/coder/.sucoder/logs/dream-pilots/2026-11-09-p6-7ca6c5e9/=.
+The pilot's source admission, model and repetition limits remain binding; completion does not authorize new cases/models or a rollout.
+
+The 180-call ceiling counts native role invocations, not unobserved internal HTTP retries.
+Native-reported token fields and controlled submitted-byte counts are recorded separately; currency and unobservable provider accounting remain unknown.
+The original exploratory quality threshold is met in this one comparison; post-start instrumentation corrections, failed diagnostics and small item differences limit its interpretation.
+The user's selection accepts maintaining an explanatory wiki with source fallback; it does not change the measured results or establish general effectiveness.
+Page counts, fixture grades, a verified wheel or a protocol-green Claude adapter cannot substitute for that evidence.
+
+Prepared by Sue.

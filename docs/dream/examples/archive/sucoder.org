@@ -1,0 +1,52 @@
+#+title: Worked archive: reply-evidence editorial tasks
+#+author: Sue
+#+date: 2026-11-08
+#+setupfile: ../../settings.org
+
+* Worked example notice
+
+The task dialogue and dates below illustrate the proposed editorial lifecycle.
+They are not historical user reviews or observations of an executed dream.
+Evidence links identify inspected project material; the [[file:../sucoder.org::#example-scope][active page]] states the example's scope.
+
+* DONE Correct the reply-evidence rule
+CLOSED: [2026-11-08 Sun 08:10]
+:PROPERTIES:
+:CUSTOM_ID: corrected-reply-rule
+:OWNER: Example editor
+:ARCHIVE_FILE: docs/dream/examples/sucoder.org
+:ARCHIVE_OLPATH: A transcript copy is not a reply/Talk
+:ARCHIVE_ITAGS: editorial
+:ARCHIVE_TIME: 2026-11-08 Sun 08:11
+:END:
+:LOGBOOK:
+- State "DONE" from "REVIEW" [2026-11-08 Sun 08:10] \\
+  Example verifier: The article now distinguishes native delivery/text, queued input, commentary, and copied summaries, with source and fixture links.
+- State "REVIEW" from "ACTIVE" [2026-11-08 Sun 08:09] \\
+  Example editor: Request another check of the corrected rule and its qualifications.
+- State "ACTIVE" from "REVIEW" [2026-11-08 Sun 08:08] \\
+  Example verifier returned the first proposal: it omitted Claude queued-command attachment delivery. Restore that qualification before completion.
+- State "REVIEW" from "ACTIVE" [2026-11-08 Sun 08:07] \\
+  Example editor: First proposed correction excludes summary-only matches.
+:END:
+
+The [[https://github.com/ligon/SuCoder/blob/2383401df43c637b70ece5d0518440a4edf61e27/docs/reply-transcripts-evidence.org#L12][investigation]] and [[https://github.com/ligon/SuCoder/blob/2383401df43c637b70ece5d0518440a4edf61e27/tests/test_reply_probe.py#L220][compaction fixture]] contradict the seeded summary-match rule.
+Keep the corrected rule and live qualifications on the [[file:../sucoder.org::#reply-evidence][active page]].
+The full discussion has no open descendant tasks and is no longer required in the normal reading set.
+
+* MOOT Infer a reply from a summary tag
+CLOSED: [2026-11-08 Sun 08:10]
+:PROPERTIES:
+:CUSTOM_ID: infer-from-summary
+:OWNER: Example editor
+:ARCHIVE_FILE: docs/dream/examples/sucoder.org
+:ARCHIVE_OLPATH: A transcript copy is not a reply/Talk
+:ARCHIVE_ITAGS: editorial
+:ARCHIVE_TIME: 2026-11-08 Sun 08:11
+:END:
+:LOGBOOK:
+- State "MOOT" from "TODO" [2026-11-08 Sun 08:10] \\
+  Superseded by the [[file:../sucoder.org::#reply-evidence][native-event rule]] because the named evidence contains a false summary claim. No implementation success is implied.
+:END:
+
+Retain this disposition so a future dream can recognize why the tempting shortcut was rejected in this worked example.

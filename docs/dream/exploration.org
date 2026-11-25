@@ -1,0 +1,67 @@
+#+title: Project-wide exploratory dream launch
+#+author: Sue
+#+date: 2026-11-10
+#+status: COMPLETE
+
+* Approved scope
+
+The user approved implementing =cd ~ligon/Projects/SuCoder && sucoder dream= with sensible defaults, somewhat unpredictable topics and no narrower advance territory inside the project.
+Build on the [[file:workplan.org::#exploratory-default][agreed exploration direction]] and [[file:budget.org][durable budget contract]].
+The bare command operates on the actual project's committed Git revision, whether invoked in its canonical checkout, mirror or a subdirectory.
+The agent chooses what to investigate through bounded coordinator-served project navigation, then hands selected evidence to the existing reviewed wiki pipeline.
+Configuration supplies harness/model and resource defaults; missing prerequisites fail without human prompts.
+Existing explicit plan/run/read/status interfaces remain available.
+
+* Definition of done
+
+- Bare launch resolves the actual project and stable publication ref, preserving the worktree/index and unrelated refs.
+- Global and per-project defaults plus CLI overrides provide model/harness, resource limits and bounded discovery without an explicit source catalog or topic.
+- The agent can navigate committed regular text files throughout the project using paginated listings, reads and search, with recorded bounds/omissions and no external model tools or transcript discovery.
+- Discovery and wiki authorship/review share one durable elapsed/call budget and closeout reserve; exploration leaves authoring capacity and cannot reset limits on resume.
+- Each new job may choose a different path through unchanged evidence; interrupted resume retains its job, frozen settings and paid-work journal.
+- Durable job identity, separate orchestration ownership and recoverable plan handoff prevent duplicate paid calls and inconsistent source/base revisions after interruption or concurrent resume.
+- The default produces a reviewed candidate or a justified no-change/exhaustion result, preserves important open questions, and supports headless/detached operation and inference-free job inspection.
+- Both native protocols pass fixture integration and legacy explicit workflows/status remain valid; live Claude and additional paid corpus experiments remain deferred.
+- Documentation, examples, handoff and packaged runtime include the new interface and distinguish selected evidence from project coverage.
+
+* Grounding and decisions
+
+See [[file:../dream-implementation-ledger.org][the current implementation ledger]].
+The source universe is committed regular files under the project Git root; working edits, untracked files, symlink targets, submodule contents and private session directories are outside automatic admission.
+The coordinator freezes a source commit and real branch/ref before provider work and rejects a moved publication base.
+An ephemeral local binding lets the existing Git/data plane operate on that exact checkout without implicit mirror synchronization or privilege changes.
+Job settings and binding are persisted before inference; each job has a private plan log root so a plan saved before its pointer can be recovered without generating another provisional repository identity.
+The default is an unsupervised foreground command; an explicit detach option launches the same durable job in the background.
+Hard token/dollar limits retain their existing fail-closed capability behavior.
+Independent skeptical review is required against the definition of done; no new live model experiment is needed for this implementation.
+
+* Implemented behavior and verification
+
+=sucoder dream= launches in the foreground, =--detach= starts a private worker and =--job PATH= resumes frozen settings and the same wallet.
+=dream status= and =dream budget= inspect the latest job for the exact current project path; explicit job paths remain usable after configured defaults change.
+The optional global/per-mirror =dream= block supplies harness/model, elapsed/call limits, closeout reserves and discovery limits.
+Defaults are 900 seconds, 40 native invocations, 30 closeout seconds, three closeout invocations, eight discovery turns and 128 KiB navigation delivery.
+Exploration additionally leaves one ordinary author invocation; every new explorer reservation checks the wallet's live shared balance, while cached replay spends no new call.
+An existing shared wallet's policy takes precedence over configuration defaults; contradictory explicit budget overrides fail without changing it.
+
+The source interface preserves LF/CRLF/UTF-8 ranges, excludes nonregular/binary sources, records pagination and skipped/truncated search results, and advances cursors past oversized or match-heavy files.
+Selected evidence is limited to six units and 64 KiB before the reviewed wiki handoff.
+An empty selection returns =no_selection= with its private reasoning/questions, explicitly distinct from independently reviewed =unchanged= wiki work.
+Raw discovery questions/rationale remain private even when their single-line editorial context must be shortened to the existing handoff limit.
+
+Independent review found and corrected handoff control-character/length validation, incomplete latest-job directories, search cursors without progress and a shared-wallet author-reserve gap.
+A preparation marker binds the original wallet identity and prevents a lost/recreated wallet from becoming a fresh allowance for the same job.
+Cached job results are revalidated against native discovery and checked writer records; substituted private questions/results cannot replace that evidence.
+The final reviewer found no surviving concrete defect.
+The final combined exploratory/config suite passed all 211 cases; the legacy wiki/notes/curation/unattended group passed all 65 cases.
+The navigation/budget group passed 38 cases, including all 26 existing budget cases; an additional CLI/planning regression group passed 264 cases.
+These partitions plus the final checkout-binding regression cover 567 distinct relevant cases, confirmed by a collection inventory, rather than a new unfiltered whole-project run.
+Thirty facade cases include an actual detached fake-native worker, finite non-TTY stdin, frozen settings after config changes and private logs; twelve runtime integrations cover both native protocols and exact crash/replay boundaries.
+Five-source-file mypy passes; the built wheel's changed runtime/configuration files and native Org validator match current source bytes.
+Org export passes for the charter, workplan, implementation guide, design, README and handoff with Babel evaluation disabled.
+Tests and source/log hashes are retained under =/home/coder/.sucoder/logs/dream-exploration/2026-11-10-7dad839/=.
+No live provider request, account probe or new corpus experiment was made.
+The final binding regression reproduced and prevents following a frozen checkout path replaced by a symlink to another location; independent final inspection accepts that guard.
+All 24 runtime/binding cases pass again against that final source; the final package and five-module mypy checks also pass.
+
+Prepared by Sue.

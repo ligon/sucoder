@@ -46,6 +46,7 @@ from tests.codex_app_server import (
     codex_available,
     goal_rows,
     model_options,
+    nested_bwrap_available,
     projection,
     queue_rows,
     quick_check_all,
@@ -477,6 +478,8 @@ def _run_status(local_root, scope, predicate, what, timeout=60):
 
 
 @pytest.mark.skipif(not codex_available(need_bwrap=True), reason="needs codex and bwrap")
+@pytest.mark.skipif(not nested_bwrap_available(), reason="Codex's own bwrap sandbox cannot start inside the runner's here "
+                    "(nested user namespaces refused, e.g. by AppArmor bwrap-userns-restrict)")
 def test_a_restored_thread_works_in_the_successors_clone(root):
     """Issue 46 on the real build, as the pilot ran it: run A (the managed
     runner, allocation ``disk/job111``) holds a two-turn thread started in its

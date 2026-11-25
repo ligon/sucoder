@@ -61,6 +61,25 @@ def codex_available(need_bwrap: bool = False) -> bool:
     return not need_bwrap or os.access("/usr/bin/bwrap", os.X_OK)
 
 
+def nested_bwrap_available() -> bool:
+    """Whether a bwrap sandbox can start inside another one.
+
+    Codex sandboxes a tool call with bwrap; under the managed runner that is a
+    user namespace inside the runner's.  Ubuntu's bwrap-userns-restrict
+    AppArmor profile (``kernel.apparmor_restrict_unprivileged_userns=1``)
+    allows bwrap a namespace but not the processes inside it, so there the
+    inner sandbox fails with "No permissions to create new namespace".
+    """
+    if not os.access("/usr/bin/bwrap", os.X_OK):
+        return False
+    probe = ["/usr/bin/bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--unshare-user", "--"]
+    try:
+        return subprocess.run(probe + probe + ["true"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, timeout=10, check=False).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def model_options(port: int, sqlite_home: Optional[Path] = None) -> List[str]:
     """The ``-c`` overrides that point Codex at the fake model (and sqlite_home)."""
     options = ["-c", 'model_provider="offline"', "-c", 'model="fake"', *QUIET_OPTIONS,
@@ -513,7 +532,15 @@ class AppServer:
         """
         if self.running():
             raise RuntimeError("stop the server before queueing; the CLI writes the stores directly")
-        argv = [self.codex, *self.options, "queue", "--thread", thread_id, "--message", text]
+        # Codex 0.167 refuses a model override here ("queued messages use the thread's model").
+        options, i = [], 0
+        while i < len(self.options):
+            if self.options[i] in ("-c", "--config") and self.options[i + 1:i + 2] and self.options[i + 1].startswith("model="):
+                i += 2
+                continue
+            options.append(self.options[i])
+            i += 1
+        argv = [self.codex, *options, "queue", "--thread", thread_id, "--message", text]
         return subprocess.run(argv, cwd=str(self.cwd), env=self.home.env(), capture_output=True, text=True,
                               timeout=timeout, check=False)
 

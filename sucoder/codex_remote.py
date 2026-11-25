@@ -17,6 +17,7 @@ _SUPERVISOR = r'''set -u
 mode=$1; count=$2; shift 2
 server=("${@:1:count}"); shift "$count"
 client=("$@")
+launch_umask=$(umask)
 umask 077
 runtime=$(mktemp -d /tmp/sucoder-codex-XXXXXXXX) || exit 1
 socket="unix://$runtime/server.sock"
@@ -65,6 +66,10 @@ if [ "$mode" = terminal ]; then trap '' INT; else trap stop_server INT; fi
 trap stop_server TERM
 trap 'exit 129' HUP
 
+# Keep runtime logs private without imposing their umask on agent work.
+: >"$runtime/probe.log" && : >"$runtime/server.log" || exit 1
+umask "$launch_umask"
+
 # Resolve to a native executable/shim in the same login/nvm environment as
 # the normal launch. Probe the experimental flag before creating a server.
 if ! "${server[0]}" app-server --remote-control --help >"$runtime/probe.log" 2>&1; then
@@ -95,8 +100,8 @@ if ! "$ready"; then
 fi
 echo "SuCoder: owned Codex server; local socket: $socket; server log: $runtime/server.log" >&2
 if [ -n "${SUCODER_CODEX_REMOTE_HELPER:-}" ]; then
-    python3 "$SUCODER_CODEX_REMOTE_HELPER" register --runtime "$runtime" --pid "$server_pid" || exit 1
-    python3 "$SUCODER_CODEX_REMOTE_HELPER" wait --timeout 20 || true
+    "${SUCODER_CODEX_REMOTE_PYTHON:-python3}" "$SUCODER_CODEX_REMOTE_HELPER" register --runtime "$runtime" --pid "$server_pid" || exit 1
+    "${SUCODER_CODEX_REMOTE_PYTHON:-python3}" "$SUCODER_CODEX_REMOTE_HELPER" wait --timeout 20 || true
 fi
 if [ "$mode" = server ]; then
     echo 'SuCoder: server only. Check relay status before pairing. Ctrl-C stops this server.' >&2

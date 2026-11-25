@@ -1,0 +1,196 @@
+#+TITLE: tunnel keep: a supervisor for the gateway mux on an always-on host
+#+DATE: 2026-10-29
+#+AUTHOR: Sue
+#+STATUS: Design; not implemented
+
+* Charter
+
+=sucoder -T <target> tunnel keep= is a long-running process on the control-plane host described in [[file:vps-control-plane.org][the VPS plan]].
+It watches a target's warm ControlMasters, re-warms them when they die, records how long each lived, and asks the human for an OTP only when the certificate cannot do the job.
+A companion =sucoder attach --keep= re-attaches a session's tmux window after the mux returns.
+
+The goal is to replace "one OTP and N attaches per laptop wake" with "one short notification per gateway death, and nothing else".
+It also produces the measurement the VPS plan needs: BRC's server-side ceiling on a keepalive'd connection from a static address.
+
+Out of scope: storing or generating the second factor; holding or releasing allocations (=renew= and =release= own those); any change to how a mux is established; vendor-specific notification integrations beyond running a configured command.
+
+** Definition of done
+
+1. A dead gateway mux with a valid certificate is re-warmed with no prompt, and every login-node and DTN mux behind it comes back without the human noticing.
+2. A dead gateway mux with a stale certificate produces one notification naming the target and the time of death; an OTP supplied through the intake command mints a certificate, re-warms the chain, and produces one more notification.
+3. A merely slow or session-busy hop is never treated as dead; a probe failure is logged and reconfirmed before anything is re-established.
+4. Every mux death is appended to a lifetime log with its establishment time, death time, how it was detected, and whether a certificate was valid at the time.
+5. Mint attempts are rate-limited so a wrong OTP cannot lock the account out of the gateway.
+6. The keeper never prompts, never holds the gateway's single session slot longer than one probe, never closes a live socket, never touches Slurm, and exits cleanly when a second keeper already owns the target.
+7. =attach --keep= re-attaches after a transport death and stops after a human detach.
+8. The decision logic is pure and unit-tested with injected I/O, as =renew.py= is; the live validation is one week on the VPS with the lifetime log as evidence.
+
+* Prior art and evidence
+
+- Liveness :: =SshControl.is_active(deep=...)= (=sucoder/tunnel.py:269=) layers a structural =ssh -O check= (=_mux_alive=, =:338=) under an end-to-end =ssh ... true= (=_probe_end_to_end=, =:359=).
+  The deep probe is what catches a zombie, mux alive and TCP dead; it costs a session open of about ten seconds on a BRC login node (=:42=--=:65=) and is retried three times before a verdict.
+  Upstream =3ad1803= exposes it as =tunnel status --deep=.
+- Establishment :: =SshControl.establish= (=:435=) is idempotent on a live socket, removes a stale socket first, presents the certificate on the direct hop only (=_identity_options=, =:562=), and under =set_noninteractive(True)= (=:31=) adds =BatchMode=yes= so a stale certificate fails fast instead of prompting.
+  That switch exists for the relay and is exactly what the keeper needs.
+- Warm-up and retry :: =_warm_free_tunnels= (=sucoder/cli.py:6784=) brings up gateway, login node and DTN in order, pins the login node into the =tunnel-<target>= session record, and tolerates a missing DTN.
+  =_connect_with_retry= (=:248=) retries only failures =is_transient_ssh_error= (=tunnel.py:168=) recognises, and calls =_maybe_offer_cert_mint= (=:188=), which is inert when non-interactive or when the certificate is valid.
+- Certificate :: =_cert_status= (=cli.py:6999=) reads validity with =ssh-keygen -L=; =cert.mint= (=sucoder/cert.py=) is one HTTPS POST of username, PIN, OTP and lifetime to the MSM CA, with the CA's own message surfaced on refusal.
+- One session per master :: BRC's =MaxSessions 1= (=tunnel.py:131=).
+  A deep probe spends the hop's one slot; =is_session_busy_error= (=:121=) recognises a refusal; =session_lock= (=:152=) serialises only within one process.
+- A failed probe is not a lost job :: =renew.py= states the rule for Slurm and keeps its decision logic free of I/O so it is testable; the keeper adopts both.
+- Ownership without PID matching :: =timer_lifecycle.py= records the owner's PID and process start time, takes =flock= on node-local =run.lock= and =start.lock=, and reports reuse through a status file.
+  The keeper's owner record follows that shape on the VPS's local disk.
+- Records :: =RemoteSession= (=sucoder/session.py=) holds the pinned login node under =tunnel-<target>= and per-mirror job and node identities; =_reconcile_login_node= in =cli.py= re-pins when the recorded node is gone (issue 59).
+  =sessions_report.build_report= (=sucoder/sessions_report.py:552=) enumerates live jobs from =squeue=.
+- Credentials :: =CredentialConfig= (=sucoder/config.py:216=) names a =pass= entry; =_read_pass_credential= (=sucoder/mirror.py:2426=) reads its first line.
+  The BRC PIN can be a =credentials: brc: pass: ...= entry with no new mechanism.
+- Attach :: =attach= (=cli.py:3225=) resolves the mirror's record, reconciles the login node, warms the login mux through the gateway, probes the job, and execs =ssh -t ... tmux attach-session=.
+  Its exit status distinguishes nothing today; a human detach and a transport death both end the =ssh=.
+
+* Design
+
+** Process and ownership
+
+One keeper per target, started by =sucoder -T <target> tunnel keep= and intended to run under a systemd user unit with lingering enabled, or inside the control-plane tmux.
+State lives under =~/.sucoder/keep/<target>/= on local disk: =run.lock= (=flock=), =owner= (PID and process start time), =status= (one line, current state and timestamps), =otp= (the intake file, see below).
+A second keeper for the same target finds the lock held and a live owner, prints the status, and exits 0.
+The keeper calls =set_noninteractive(True)= at start and never reads a terminal.
+Direct =host:= targets without a gateway run the same loop with no certificate step.
+
+** Probe policy
+
+Every =interval= seconds (default 60) the keeper runs the structural check on the gateway socket.
+Every =deep_interval= seconds (default 600), and only when the structural check passed, it runs one deep probe on the gateway.
+The gateway's session slot is otherwise unused, because every hop behind it rides a =-W= channel, so a gateway probe collides with nothing.
+Login-node and DTN hops are checked structurally only; a deep probe there would steal the slot an attached client holds.
+A session-busy refusal on any hop is recorded as alive: a slot cannot be busy on a dead connection.
+
+The gateway is dead when the structural check fails, or when two consecutive deep probes fail with the structural check still passing.
+A single deep failure is logged as =suspect= and reconfirmed at the next interval, not acted on.
+This is the =renew= rule applied to the mux.
+
+** Re-warm
+
+On a confirmed death the keeper first classifies what it can: whether the socket file vanished, whether =ssh -O check= reported no master, whether the deep probe timed out or returned a refusal.
+It then reads the certificate's validity.
+
+- Certificate valid :: call =_warm_free_tunnels= under =BatchMode=.
+  The gateway comes up on the certificate; the login node is re-pinned if its recorded host no longer answers; the DTN is optional.
+  Record the event, notify at informational level, return to watching.
+- Certificate stale or absent :: enter =waiting_for_otp=.
+  Notify at action level with the target, time of death, and the intake command.
+  Poll the intake file.
+  When an OTP arrives, read the PIN from =credentials.brc=, call =cert.mint=, remove the intake file, and proceed as above.
+  A refused mint notifies again with the CA's message and counts against the rate limit.
+
+Mint attempts are capped at three per hour per target.
+Above the cap the keeper stays in =waiting_for_otp=, notifies that it has stopped trying, and resumes only on a fresh intake.
+The cap exists because the gateway sits behind =fail2ban=; see the =Too many authentication failures= note at =tunnel.py:131=.
+
+Re-warming also runs =tunnel up='s =~/.ssh/config= block write only if the block is absent, so TRAMP and plain =ssh= aliases keep working after a re-pin.
+
+** OTP intake
+
+=sucoder -T <target> tunnel otp <code>= validates a six-to-eight digit code, writes it to the intake file with mode 0600 through a temporary file and =os.replace=, and exits.
+The human runs it from a phone over =mosh=, or a notification backend that can carry a reply runs it.
+The keeper consumes the file at once, overwrites its contents before unlinking, and never logs the code.
+An intake file older than two minutes is discarded unread, since the code has expired.
+The PIN never appears in the status file, the log, a notification or an argument vector.
+
+** Notification
+
+=notify_command= on the target, or =--notify-command=, names a program the keeper runs with the message on stdin and these variables: =SUCODER_KEEP_TARGET=, =SUCODER_KEEP_EVENT=, =SUCODER_KEEP_LEVEL= (=info= or =action=), =SUCODER_KEEP_SINCE=.
+Events: =mux_dead_rewarmed=, =mux_dead_otp_needed=, =mint_failed=, =mint_capped=, =rewarmed_after_otp=, =login_repinned=, =keeper_stopped=.
+SuCoder ships no vendor integration; the documentation gives a =curl= to an ntfy topic as the example, and a =mail= one-liner as the other.
+A failed notification is logged and retried at the next interval; it never changes the keeper's state.
+
+** Lifetime log
+
+=~/.sucoder/logs/tunnel-keep.<target>.jsonl= gets one record per death:
+
+#+begin_example
+{"target": "savio-node", "hop": "gateway", "established": "...", "died": "...",
+ "lifetime_s": 0, "detected_by": "structural|deep", "classification": "socket_gone|no_master|probe_timeout|refused",
+ "cert_valid_at_death": true, "action": "rewarmed|otp_requested", "rewarmed": "...", "otp_wait_s": null}
+#+end_example
+
+=established= is taken from the socket's creation time when the keeper did not establish the mux itself.
+This file is the instrument that answers the VPS plan's open question about BRC's ceiling.
+=tunnel keep --report= summarises it: count, median and maximum lifetime, deaths by classification, and OTPs requested.
+
+** attach --keep
+
+=sucoder -T <target> attach <mirror> --keep= wraps the existing attach.
+Before attaching it waits until the target's gateway and login muxes pass the structural check, polling the keeper's status file when one exists and =tunnel status= otherwise.
+After the attach's =ssh= exits it classifies the exit: a tmux detach returns 0 and the wrapper exits; a non-zero exit with transport text on stderr (=Connection closed=, =Broken pipe=, =mux request timed out=, the session-busy markers) waits for the muxes and attaches again.
+The wrapper never re-establishes a mux itself; that is the keeper's job, and two re-warmers would race on one socket.
+This keeps window bookkeeping out of the keeper: the human's own tmux layout holds one =attach --keep= per session, and each window recovers on its own.
+
+** Interaction with other commands
+
+- =renew= also re-warms through =_connect_with_retry=; both paths are idempotent on =is_active=, and =renew= inherits the certificate, so the two can coexist.
+  The keeper should not run =_maybe_offer_cert_mint=; non-interactive mode already disables it.
+- =sessions=, =message= and =peek= open their own session channels on login nodes; the keeper never probes those hops deeply, so it cannot refuse them the slot.
+- =tunnel down= closes sockets the keeper is watching; the keeper sees =socket_gone= and would re-warm.
+  =tunnel down= therefore writes a =paused= marker the keeper honours until =tunnel up= or =tunnel keep --resume=.
+- Session records are read, never written, except the =tunnel-<target>= login-node pin that =_warm_free_tunnels= already owns.
+
+** Failure contract
+
+- Never prompts; every =ssh= it spawns runs with =BatchMode=yes= and a wall-clock timeout.
+- Never removes a socket whose =-O check= passes, never sends =-O exit=, never runs =scancel=, =salloc= or =sbatch=.
+- A probe that times out is =suspect=, not =dead=.
+- A mint refusal is reported with the CA's words and counted; the keeper never guesses a second code.
+- If the =pass= entry for the PIN is missing, the keeper notifies once at action level and waits; it does not fall back to any other secret.
+- If the log directory is unwritable the keeper still re-warms, and says so on stderr once.
+
+* Configuration and command surface
+
+#+begin_src yaml
+credentials:
+  brc:
+    pass: brc/pin            # the BRC PIN; the OTP is never stored
+targets:
+  savio-node:
+    keep:
+      interval: 60           # seconds between structural checks
+      deep_interval: 600     # seconds between gateway end-to-end probes
+      notify_command: ~/.sucoder/bin/notify   # receives the message on stdin
+      mint_cap_per_hour: 3
+#+end_src
+
+#+begin_src shell
+sucoder -T savio-node tunnel keep                 # foreground; systemd or tmux keeps it
+sucoder -T savio-node tunnel keep --once          # one probe/act cycle; for cron
+sucoder -T savio-node tunnel keep --status        # the owner's status line
+sucoder -T savio-node tunnel keep --report        # summarise the lifetime log
+sucoder -T savio-node tunnel otp 123456           # supply a code to a waiting keeper
+sucoder -T savio-node attach LSMS_Library --keep  # re-attach after the mux returns
+#+end_src
+
+A systemd user unit, =sucoder-tunnel-keep@.service=, is shipped under =examples/= with =Restart=on-failure= and a note that =loginctl enable-linger= is required for it to outlive the login session.
+
+* Implementation sketch
+
+- =sucoder/keep.py= :: the pure state machine: =State=, =Observation=, =decide(state, observation, now) -> (state, actions)=, the rate limiter and the log record builder.
+  No I/O; the shape of =renew.py=.
+- =cli.py= :: =tunnel keep=, =tunnel otp=, and =--keep= on =attach=, wiring real probes, =_warm_free_tunnels=, =cert.mint=, =_read_pass_credential= and the notify command.
+  =attach= gains a classified exit the wrapper can read; this is the one change to an existing command, and =impact= on =attach= is run before it.
+- =examples/sucoder-tunnel-keep@.service= :: the unit.
+- Tests :: =tests/test_keep.py= drives =decide= with a scripted clock through every transition in the definition of done; =tests/test_cli.py= covers =tunnel otp= file handling and the =--keep= exit classification with a fake attach.
+
+* Validation
+
+Unit tests as above.
+Live: run the keeper on the VPS for one week against =savio-node= with =deep_interval: 600=, close the laptop nightly, and bring back the lifetime log and the notification history.
+Expected deliverables: median and maximum gateway lifetime, the count of OTPs requested, and whether any =suspect= verdict was later contradicted by a successful probe.
+
+* Open questions
+
+- Whether the deep probe should run on the gateway at all once the lifetime log shows structural failures always precede or coincide with deep ones; it is the only probe that spends a session.
+- Whether to pre-emptively request an OTP when the certificate expires inside working hours and the mux is still alive, so a later death re-warms silently.
+  This trades a scheduled interruption for an unscheduled one and is off by default in this design.
+- Whether =attach --keep= should also be the thing that starts the keeper when none is running, or refuse.
+  The design says refuse, with a hint.
+- The BRC terms question from the VPS plan.
+  The design needs no answer: the seed never reaches the box.

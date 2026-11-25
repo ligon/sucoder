@@ -1,0 +1,116 @@
+#+title: E1 live experience dreams over this mirror's sessions
+#+author: Sue
+#+date: 2026-11-12
+
+* Result
+
+The sixth live experience dream published the first generation on the memory branch: =371afd3= on =refs/heads/sucoder/memory=, topic =codex-hook-validation=.
+Each of the five earlier runs stopped on a different defect in the explorer contract or a validator, and each defect was fixed and committed before the next run.
+A seventh defect, unredacted email addresses, was found by inspection and fixed after the sixth run.
+All six runs used Codex CLI 0.167.1 with explicit =gpt-6.1-sol= and the default limits: 900 seconds, 40 native calls, 8 discovery calls and 131072 discovery bytes.
+Together they made 55 native calls and reported 785,946 input and 24,455 output tokens; currency is unknown.
+Live Claude verification remains deferred, as in P1-P6.
+
+The human asked on 2026-11-12 to "try a live experience dream run".
+During the runs the human added "We will want to get the "finish" fix into --project also" and, after a CRITICAL impact warning, "validate_proposal change approved".
+
+* Setup
+
+Every run started from the worktree =/home/coder/mirrors/SuCoder-dream-merge= on =coder/dream-essay=, so the project binding is named =SuCoder-dream-merge=.
+The first plan seeded the memory branch as =e0aa81c= from that branch's =.sucoder/wiki=, which holds the P2 companion wiki.
+The inventory found three Claude sessions of this mirror.
+The running session (=ee16689c=) was listed as live and never read; =fbcd2c8d= and =b3206283= were finished.
+
+Before the first provider call the three sessions were rendered locally, with no model calls.
+The human's email address appears in the raw files of all three, but in the rendered view of the live session only.
+The only token-like strings in the finished renders are test fixtures such as =sk-fake-test=.
+
+* Runs
+
+| Run | Job        | Calls |   Input | Output | Seconds | Outcome                                        | Fix       |
+|-----+------------+-------+---------+--------+---------+------------------------------------------------+-----------|
+|   1 | =acc43579= |     8 | 107,919 |  1,849 |      81 | exploration allowance exhausted                | =04d38ed= |
+|   2 | =9dc6e6a8= |     8 | 101,149 |  1,852 |      70 | rejected: caveats reported as =failures=       | =531df2b= |
+|   3 | =a2e82ed5= |     8 |  98,819 |  1,808 |      72 | exhausted: phrase topic refused on last call   | =4535965= |
+|   4 | =0d98ce29= |    10 | 143,927 |  2,437 |      96 | =unchanged= (reviewed no-op)                   | =c0d8ddd= |
+|   5 | =f6131ffc= |    10 | 147,249 |  9,213 |     230 | rejected: earlier index link outside sources   | =9755ae1= |
+|   6 | =e2be9fd7= |    11 | 185,883 |  7,296 |     202 | =published= =371afd3=                          |           |
+
+* Defects and fixes
+
+- Finish on the last call (=04d38ed=, =531df2b=) :: Run 1 spent its eighth and last discovery call on a read, giving the rationale "Use the final discovery read", as though a finish turn would follow.
+  =finish= counts as a discovery call, and the brief never said so.
+  Both briefs now say so, and the last call offers only =finish= in experience and project mode alike.
+  Project mode had been left frozen to protect replay, but bare =dream= exists only on unmerged branches and no project job has ever been stored.
+- Failures (=531df2b=) :: Run 2 finished with a sound two-source selection, but listed two unverified caveats as =failures=, and any listed failure rejects the job.
+  P6's grader hit the same ambiguity.
+  =failures= now means only that the turn's request could not be carried out.
+- Invisible memory (=531df2b=) :: The experience brief asked the explorer to verify "the existing memory", which its inventory does not contain.
+  It now says that the author and reviewer receive the memory with the selection and decide novelty.
+- Topic names (=4535965=) :: Run 3's finish gave a phrase as its topic, and the simple-name check refused it on the last call, losing the selection.
+  Run 2's topic would have failed the same way.
+  A phrase now becomes a lowercase hyphenated name.
+- Line ends (=4535965=) :: Runs 2 and 3 lost three of their sixteen calls to reads such as lines 1-220 of a 109-line file.
+  An end past the last line now reads, or selects, through the end of the file.
+- Long records (=c0d8ddd=) :: Session =fbcd2c8d= holds a 143 KB attachment record from raw offset 274704 to 417929.
+  Run 4 lost two calls on reads ending inside it, each refused as an empty window, with no way to learn where the record ended.
+  A window now always holds its first record, and =range_too_large= reports the offset to skip to.
+- Earlier source links (=9755ae1=) :: Run 5 was the first to admit a rendered session window.
+  Its author listed a new topic in the index, but the index still linked =docs/reply-transcripts-evidence.org= and =sucoder/reply_probe.py=, admitted by P2 and not by this run.
+  The validator refused the edited index, before and after repair.
+  An in-place memory branch keeps earlier generations' links, so every dream that edited such a page would have been refused.
+  A source link the same page already carried is now accepted; a new unadmitted link is still refused, and so is a carried link moved to another page or repeated.
+  =validate_proposal= has CRITICAL impact (358 symbols, 79 processes), and the human approved the change.
+
+- Email addresses (=09b2863=) :: The running session's render contained the human's email address.
+  It would become eligible for a dream after 30 quiet minutes, and the redaction patterns covered credentials only.
+  Every email-shaped string is now redacted, except SSH remote specs (=git@host:...=).
+  Python decorators in escaped commands and grep output are not mistaken for addresses.
+  No render of this mirror's three sessions now contains the private address, and the window that run 6 published renders unchanged.
+  =redact= has CRITICAL impact, and the human approved the change.
+  The private address never reached the provider: no stored lookup, evidence file or assignment of the six jobs contains it.
+  The only address in them is =noreply@anthropic.com=, from commit trailers in discovery reads.
+
+Each fix has targeted tests.
+The new jobs make three of the old ones replay differently: jobs 1-3 because the briefs changed, and job 4 because its two refused lookups would now succeed.
+None of those four published anything.
+
+* The published generation
+
+Run 6 read the November 10 dream handoff and the November 3 attention handoff.
+It searched the sessions twice, read one window of =b3206283= and read =docs/attention.org=.
+It selected three sources:
+- raw bytes 5798219-5807918 of session =b3206283=, a Codex hook experiment in a throwaway =CODEX_HOME=;
+- lines 18-46 of =.sucoder/handoffs/2026-11-03-attention.org=;
+- lines 83-136 of =docs/attention.org=.
+
+The author added =topics/codex-hook-validation.org= and an index entry.
+The coordinator found duplicate references for one section; P6 and run 5 hit the same author error.
+One repair merged them, and the independent reviewer then returned =accept= with no findings.
+
+The page separates what the session observed from what was reported or intended.
+The session showed the "Hooks need review" screen for eight hooks and a =SessionEnd= record after =/quit=.
+The handoff reports =SessionStart=, =UserPromptSubmit= and =SessionEnd= seen live, and leaves four live checks open.
+Those checks are =PermissionRequest=, =Stop=, =Interrupt= and =request_user_input=.
+The page lists the four checks with their expected states.
+It keeps the handoff's acceptance condition and the human's rule against =--dangerously-bypass-hook-trust=.
+Each claim was checked against its source after publication, and each is supported.
+Its one inference, that a record left at =working= need not mean the model is still running, is marked as such.
+The topic is the Codex-hooks work that the previous handoff listed as unrecorded.
+
+The receipt records the session window by thread ID, raw range and digest, with no path and no email address.
+The index is 1,101 bytes, so the whole of it fits in the 2 KiB injected =PROJECT MEMORY= block.
+A readonly =sucoder dream status --job= replay of job =e2be9fd7= returns =published= and =integrated=.
+No remote holds the memory branch: =origin= has no such head, and the =ligon= remote's push URL is =no_push=.
+
+* Limits and open items
+
+- Duplicate references :: The author repeated one section's reference in P6, run 5 and run 6.
+  The repair fixes it, but it costs a call each time.
+- Project links :: Memory pages link into the project tree (for example =file:../../../docs/attention.org=), which a wiki-only branch does not contain.
+  A reader has to resolve such links against a project checkout.
+- Evidence :: One published page is one observation.
+  It shows that the pipeline works end to end on real sessions; it does not establish how often a dream corrects memory well.
+- Project mode :: No live project-mode dream (=--explore=) has run.
+
+Recorded by Sue (Claude Opus 5.5).

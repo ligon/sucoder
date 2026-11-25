@@ -1,55 +1,119 @@
-#+TITLE: Codex node-local state: cross-node acceptance passed; PRs 48-50 merged; remaining recovery gates
-#+DATE: 2026-10-16
+#+TITLE: sucoder dream, the test-environment fixes and the Python 3.9 floor merged locally into main; publication awaits the human
+#+DATE: 2026-11-13
 #+STATUS: COMPLETE
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
-* Current status after laptop acceptance (2026-10-16)
+* Where things stand
 
-PRs 50 (CI test assumptions), 48 (attach and SSH routing) and 49 (restored cwd) are merged on GitHub; issues 46 and 47 are closed. Production code matches merge =3f9ed7f=.
-The laptop retest ran job =40042040= on =n0043.savio4=, then successor =40042340= on =n0059.savio4=: exact sealed-parent restore, one thread moved through Codex thread/resume, conversation recall, and a real =pwd; head -n 1 README.org= in the successor clone all passed. Both normal attach and --via-srun worked. Both pilot jobs sealed and were released.
-The measured result is in [[file:../docs/codex-local-state.org][the design's laptop acceptance retest record]] and on issue 46. The private =codex-state-retest-20261016= evidence bundle is on the laptop and Savio under =~/.sucoder/pilots/=.
-GitHub CI is green on Python 3.9/3.11; 407 portable local tests and three forced-color cases passed. A full local run with umask 022 had 1714 passes, six skips and one pre-existing shutdown-test failure also reproduced on the unchanged baseline: the final holder scan counts the runner's own in-flight snapshot reader and records a conservative crash generation. This needs follow-up; it was not introduced by the cwd fix and the actual cross-node pilot sealed normally.
-The broader storage/fencing, upload-failure, overlapping-history and replay gates remain open. Managed state is enabled for carleton-htc on the laptop, with its normal ten-minute checkpoint cadence; the disposable retest used a separate two-minute config.
-The earlier notes below are preserved as history; their pending-PR and pending-laptop-check statements have been superseded by this section.
+On 2026-11-12 the human said "When tests are clean merge" and chose to merge both branches.
+=main= (checked out in =/home/coder/mirrors/SuCoder-issue-90-merge=) now holds:
+- =8ccb066= :: =coder/test-env-failures= (worktree =/home/coder/mirrors/SuCoder-test-env=).
+  Its full suite on =423bb8c= passed 2627 with 9 skipped and none failed, against 2578 passed and 50 failed on =main=.
+  It sets the suite's umask to 022 (=43cfdc4=).
+  It makes the placement monitor stop a misplaced Codex itself, not the =bwrap= around it, which had left Codex as an orphan (=207503d=).
+  It updates the real-Codex app-server tests for =codex-cli= 0.167 (=423bb8c=).
+- =666258f= :: =coder/dream-essay=, the whole dream subsystem; its full suite on =79e9cc5= showed only those 50 failures, the same set by test ID.
+Nothing is pushed: the coder account cannot push, and the installed =/opt/sucoder= (=c50d913=) still has no =dream= command.
+The main mirror checkout stays on =coder/confined-node=.
 
-* Earlier slice handoff (before the pilot)
+- =8370dcc= :: =main= merged into =coder/dream-data-plane=.
+  Full pytest: =main= 2578 passed, 50 failed; merged 3063 passed, the same 50 failed.
+- =8585b8a= :: The charter, [[file:../docs/dream/essay-alignment.org][docs/dream/essay-alignment.org]], with the human's four choices and three answers ("go", 2026-11-12).
+- =5cbfdad= :: S1, in-place generations on the wiki-only memory branch =sucoder/memory=; full pytest 3082 passed, the same 50 failed.
+- =2f239e6= :: S2, the =PROJECT MEMORY= block in every launch's context; full pytest 3090 passed, the same 50 failed.
+- =ac0b717= :: S3, rendered =claude-view= session windows as admitted evidence and the mirror-scoped session inventory (=sucoder/dream_view.py=, =sucoder/dream_experience.py=); full pytest 3097 passed, the same 50 failed.
+- =99423ed= :: S4, experience mode as the bare default (=@sessions= navigation, notes, the experience purpose), =--explore= for project mode; full pytest 3104 passed, the same 50 failed.
 
-=main= is =bb6242f=: the human's merge of Slices 0-3c (=3652d05=), then this session's three merges -- the 3a gap (=fdb2de4=, merged as =97912f4=), the Slice 3e runner half (=6fcf18e= by Codex, review fixes =178ee47= by Claude Opus, merged as =26d79c4=) and Slice 3d (=9f74f35=, =b1adb60=, Codex fix passes =355fad8= and =3ce05f3=, merged as =bb6242f=, the record conflict resolved by keeping the 3d entry before the 3e entry).
-Full suite on merged =main=: 1667 passed and one failure, =test_a_real_codex_thread_resumes_from_a_restored_generation=, which passes alone (3.9 s) and times out its 20 s status wait only when the shared node is loaded (load average 7 from other users' Codex processes during that run); the run before the 3d merge was 1525 passed, the 3d branch alone 1621 passed.
-The design record (=docs/codex-local-state.org=, end of the Slice 2 record) carries the 3d entry with its review-fix paragraphs and residuals, then the 3e entry with its residuals.
-Nothing is enabled on any real mirror; =slurm.codex_state= stays off by default.
-The feature branches are merged and published; their worktrees on this job's local disk were removed.
+- =04d38ed= .. =09b2863= :: Fixes found by six live experience dreams with Codex (=gpt-6.1-sol=), recorded in [[file:../docs/dream/runs/sucoder-e1.org][docs/dream/runs/sucoder-e1.org]]: the last discovery call offers only =finish= in both modes, =failures= excludes caveats, topic phrases become names, line ends clamp, a session window holds at least one record, a page keeps its earlier source links, and email addresses are redacted.
+  The human approved the two CRITICAL-impact changes (=validate_proposal=, =redact=).
+  Run 6 published =371afd3= on =refs/heads/sucoder/memory= (topic =codex-hook-validation=); its claims were checked against its three sources.
 
-* Pilot aftermath (2026-10-16, evening): three pull requests, a Codex install incident
+- =8c69f14=, =7797b3d=, =6c6d96b= :: S5, project links (charter section 3, the human's "go" of 2026-11-12).
+  The memory branch's wiki is copied, read-only, into =.sucoder/wiki/= of a checkout: at local launch through =run_agent=, after in-place publication, and by =sucoder dream checkout=.
+  Pages may link any regular file of the inventoried project commit.
+  The tracked P2 copy is gone from this branch; the memory branch holds it.
+  In this worktree the copy resolves all twelve links of the three live pages.
 
-The human ran the Slice 4 pilot from the laptop (predecessor job 40038236 on n0059, successor 40038356 on n0037; recall across nodes passed) and filed issues 46 and 47 on GitHub.
-=main= on the shared mirror and on GitHub is the human's =9765aa1=; this session landed nothing on =main= after that, by the human's choice to review as pull requests:
+- =4c55c47= :: =coder/drop-py36-tests=: the tests that needed a =python3.6= interpreter are gone (the human, 2026-11-13).
+- =43e2592= :: =coder/pin-receiving-python= (worktree =/home/coder/mirrors/SuCoder-pin-python=).
+  A live probe on Savio found a pooled dispatch step (=srun --export=NONE=) ran the image's =/usr/bin/python3=, 3.6.8, while =sbatch= got 3.12 only through the human's =~/.local/bin/python3= symlink.
+  =batch.sh= now execs the controller's resolved interpreter by absolute path and exits 72 on a receiving node that lacks it or has one older than 3.9; =project-inputs.sh= runs under the worker's own interpreter.
+  Verified on n0034 under =srun --export=NONE=; recorded in [[file:../docs/dispatch-pool-ledger.org][docs/dispatch-pool-ledger.org]].
+  Full suite 3205 passed, 1 skipped.
+- =5a28233= :: =coder/python-floor= (worktree =/home/coder/mirrors/SuCoder-py39=), the human's "drop 3.6 support too".
+  Targets take an optional =python:= (default =python3=) for the managed Codex state runner, the context installer, the remote-control helper and the reply probe; the launch preflight probes it against =PYTHON_FLOOR= (3.9) and warns.
+  The runner's =sqlite3= CLI backup fallback is removed, and the staged modules and grammar tests move to 3.9.
+  Full suite at =ef546ba= had 23 failures, all in =test_reply_cli.py= from a test fake lacking the field; =e225b37= adds it and that file passes.
+- =84281a6= :: =coder/editable-version=, the human's choice of an editable install on Savio ("Yes go", 2026-11-13).
+  =sucoder.__version__= follows the checkout an editable install runs from, in pyproject's version format; =git describe= runs once per HEAD and is cached in the checkout's git directory, and uncommitted edits are not detected.
+  README.org's "Installing on a cluster account" documents the layout.
+  Full suite 3232 passed, 1 skipped.
+- =649c93e= :: =coder/dream-large-inventory= (worktree =/home/coder/mirrors/SuCoder-dream-inventory=), the human's "fix the file-count limit" (2026-11-13).
+  The discovery inventory has its own 16 MiB bound (=dream_discover.MAX_INVENTORY_BYTES=) instead of the 2 MiB plan bound, which refused LSMS_Library (19,466 files) before any provider call; see the ledger entry of that date in =docs/dream-implementation-ledger.org=.
+  Merged as =6f60c83= at the human's request while its full suite was still running; that suite then passed (3233 passed, 1 skipped).
+  The first live =--explore= dream ran on it the same day, on this host in the human's =~/Projects/LSMS_Library= at =f138a3d= (Savio has no Landlock): it published =d5ae174= on that checkout's =sucoder/memory=, a cache-freshness page whose documentation conflicts hold against the code.
+- =ce54589= :: =coder/dream-search-file= (worktree =/home/coder/mirrors/SuCoder-dream-search=), the human's "yes" to fixing search and the question "why isn't the search done using rg".
+  The second LSMS_Library dream ended =unchanged= because search read files 128 at a time and treated a file path as an empty directory.
+  Navigation version 2 lets one =git grep= at the pinned commit choose the files a search reads (=git grep=, not =rg=, because evidence is the commit, not the working tree), names files and missing paths, and is frozen per job so earlier jobs replay.
+  =GitSource.git= (impact CRITICAL, 34 direct callers) gained only the optional =empty_status=.
+  Full suite 3239 passed, 1 skipped; merged as =8286823=.
 
-- PR 48 (issue 47, =attach= treated a failed SSH scheduler probe as an ended allocation) :: branch =fix/issue-47-attach-probe= (=6352658=, Codex): the probe follows the launcher's three-way rule, rides a login-node control jumped through the gateway, and the nested ProxyCommand keeps the jump mux's fallback options; 1711 passed.  Still to do from the laptop: a live =attach= against a running confined allocation.
-- PR 49 (issue 46, a restored thread kept the predecessor's cwd) :: branch =fix/issue-46-restore-cwd= (=16002d6=, Claude Opus): measured on Codex 0.162.1 that the default resume uses =threads.cwd= and that =thread/resume {cwd}= through the app-server moves it and sticks; the runner now runs a one-shot app-server before Codex starts and resumes each thread whose cwd was this mirror's clone in another allocation into the successor's clone (policy and residuals in the PR and the Slice 4 record); 1696 passed, a real-Codex regression for recall plus =pwd=.  Still to do from the laptop: repeat the cross-node turnover.
-- PR https://github.com/ligon/sucoder/pull/50 (CI) :: branch =fix/ci-test-environment-assumptions=: GitHub Actions has been red on =main= since =3652d05= on four environment-sensitive tests (Rich-rendered Typer errors under =GITHUB_ACTIONS=; no =bwrap= on the runner); test-only fix.  Merge it first, then re-run or rebase 48 and 49.
+A read-only check on this mirror's real sessions (no model calls, statistics only) rendered all three without error: 5.21, 1.91 and 6.97 MB raw became 447, 74 and 520 KB (4-9 percent); the running session was marked live and the others finished.
 
-Incident: during the issue 46 measurements a scripted TUI keystroke accepted Codex's "Update available" dialog and replaced the shared nvm Codex with 0.163.0 at 12:39 PDT; the agent reinstalled 0.162.1 by 12:47 (=codex --version= confirms).  Launches in that window may have failed or run 0.163.0; Codex's own run for issue 47 lost its sandbox helper then.  Two half-removed package directories remain under =~/.nvm/versions/node/v20.20.2/lib/node_modules/= as =.openai-codex*.broken-issue46-*=; delete them once nothing holds the old binary.  Scripted TUI runs now set =check_for_update_on_startup=false=.
+The 50 failures this host showed before =8ccb066= are resolved; the full suite now fails none and skips one.
 
-Next: merge the three PRs on GitHub (CI first), pull =main= to the mirror and the laptop, do the two live checks above, then the items below.
+* What remains
 
-* Next concrete actions
+The charter's five slices are implemented and merged locally; nothing remains that this account can do without a human decision.
 
-1. Slice 3e's second half: transfer records (offer at a renew-mode seal, claim at restore binding the attempt, revoke before a drained runner restarts) and =--attempt= through =runner_command=; the 3d residuals recorded in the design (a startup-result file the runner writes independently of =latest-run=; the attempt id in sbatch =--comment= so a lost =sbatch= reply can be reconciled; a per-allocation tmux socket for two confined jobs of one mirror on one node; the two tolerated TUI attach races) and the 3e residuals (backfill of pins for children restored before 3e; a retirement cap per cycle); and make =test_a_real_codex_thread_resumes_from_a_restored_generation='s 20 s status wait longer or tunable (an environment variable the test reads), since it times out under node load twice in this session and passes alone.
-2. The disposable cross-node pilot and cwd/attach acceptance retest are complete and recorded. Continue only the remaining Slice 4 production gates, including upload-failure behavior and independent overlapping histories.
-3. Pilot jobs 40042040 and 40042340 are cancelled. The existing SuCoder allocation 40017774 was left intact for its active agent; release it separately when that work ends.
-4. Investigate the pre-existing local final-seal test failure described above without weakening the stop proof for other processes holding stores.
+1. Publication :: The human pushed =main= to GitHub at =06b86cb= and reinstalled =/opt/sucoder= at that commit (both seen 2026-11-13); =6f60c83= and later wait for the next push from the canonical account (=/home/ligon/Projects/SuCoder=).
+   Never push =sucoder/memory=.
+   The dispatch interpreter fix takes effect on Savio only once SuCoder is updated there, since the controller that writes =batch.sh= runs there.
+   After reinstalling, set =python: /usr/bin/python3.12= on the Savio targets; until then =python3= reaches 3.12 only through the human's dotfiles.
+   Savio's install is now editable (2026-11-13, on ln000): =~/.local/share/sucoder/venv= (=/usr/bin/python3.12=) runs =~/.local/share/sucoder/src=, a GitHub clone on =main= tracking =origin/main=, installed at =c18a288=, the commit the human published to the Savio mirror.
+   It was detached at first and switched to =main= at the human's request ("the update instructions seem slightly baroque"), so an update is one =pull --ff-only=.
+   =sucoder --version= reports =2026.7.1.dev518+gc18a288= on the login and compute nodes, and dispatch pins =/usr/bin/python3.12=.
+   =~/.local/share/sucoder/INSTALLED_COMMIT= records it, the update steps and the previous =c9dafdb= install as the rollback point.
+   A clone of the scratch mirror stalled and was cancelled; its partial copy is =~/.local/share/sucoder/src.partial-20261113=, for the human to delete.
+   Savio's checkout is still at =c18a288=; =git -C ~/.local/share/sucoder/src pull= brings it to GitHub's =main=, with no reinstall.
+2. Live verification :: Six Codex experience dreams ran on 2026-11-12 (E1); one generation is published, which is one observation, not a quality estimate.
+   Live Claude verification remains deferred by the human, and no live project-mode (=--explore=) dream has run.
+   The first attempt, on LSMS_Library in Savio job 41201840 on n0035 (2026-11-13), was refused three times before any model call: Savio has no config file, its NFS home refuses =flock=, and the inventory bound fixed in =649c93e=.
+   Dreams on Savio take =--config ~/.sucoder/dream-savio.yaml=, which sets the harness and model and puts =log_dir= on scratch; =~/.sucoder/config.yaml= was deliberately not created, since the running coordinators call =sucoder= there.
+   Run from the node-local clone and chain =git push origin sucoder/memory= after the dream, or the generation dies with the job (issue 91); the Savio bulletin has the details.
+3. Deferred by the charter :: A staleness pass over pages whose cited sources changed; an organizer and pruning pass; Codex session discovery (S3b); a scheduler example for nightly dreams.
+4. Known limits :: Queued-command attachments are dropped when rendering, so a message delivered to a busy session is not visible in a window.
+   The injected reading hint assumes the session's repository has the memory branch; node-local and remote clones may not.
+   Remote and confined sessions get no wiki copy: their working clone is not the local mirror, so their block keeps the =git show= hint.
+   Your own clone needs =git fetch <mirror> sucoder/memory:sucoder/memory= and =sucoder dream checkout= to get working links.
+   Not yet filed: =sucoder dream= requires a config file even with =--harness= and =--model=; its default =log_dir= (=~/.sucoder/logs=) fails with =ENOLCK= on an NFS home; and session discovery is keyed by checkout path, so sessions of earlier per-job =/local= clones (13 on Savio for LSMS_Library) are never found.
+   The author repeats a section's reference in most live runs; the repair fixes it at the cost of one call.
+5. Test host :: One test skips here, for nested user namespaces (AppArmor =bwrap-userns-restrict=); the =python3.6= tests are gone and the human installed =zsh=.
+   The =bwrap=-dependent tests likely skip in CI, which is how the orphaned-Codex defect stayed hidden there.
+   Whether =--die-with-parent= ends a sandboxed Codex on Savio's kernel is unknown; since =207503d= the runner no longer depends on it.
 
-* Second confirmation and clean-up (2026-10-16, later)
+* How to work here
 
-A second Codex read-only confirmation of =7406ee7= found four of the six confirmation fixes resolved, two partly (a requeue re-counted queue time against the no-status bound; a failed =has-session= probe let an attach overwrite the owner record) and two new races (the HOLD reconciliation saved a stale session over a =release=; a session present at the probe but gone before =new-session -A= left the new owner unrecorded); a third Codex pass fixed the first three and documented the TUI races as tolerated, merged into =main= with the record naming it; full suite 1674 passed, mypy at the baseline.
-The trial durable root =/global/scratch/fsa/fc_jevons/ligon/.sucoder-state-trial= (170 MB, five dogfood scopes) was deleted at the human's request; no dogfood runner holds a lock on this slice.
+- Tests :: =PYTHONPATH=$PWD /home/coder/.cache/pypoetry/virtualenvs/sucoder-_hu1CrVA-py3.12/bin/python -m pytest -q -p no:cacheprovider= from the worktree.
+  =PYTHONPATH= matters: the venv's editable install points at the main mirror checkout.
+  The full suite takes about 32 minutes because dream tests start Emacs; run it on a frozen detached worktree in the scratchpad so the working tree stays editable.
+- GitNexus :: The worktree is indexed separately, also named =SuCoder=; pass =--repo /home/coder/mirrors/SuCoder-dream-merge= and exact =--uid= values to =impact=.
+  Refresh with =node /home/coder/mirrors/SuCoder/.gitnexus/run.cjs analyze --index-only /home/coder/mirrors/SuCoder-dream-merge=.
+- No paid inference :: Every new test uses the fake native transports; live Claude verification remains deferred by the human.
 
-* Dogfooding findings (also in the 3d record)
+* Open items
 
-- Codex under the Slice 2 runner: placement, warm and sealed generations and the drain protocol work on this node; a Codex task that runs the runner's own tests is stopped by the misplacement guard (nested fake-Codex stores) and ends as a crash generation, by design; run such tasks with plain =codex exec=.  Read-only reviews under the runner end with a sealed final generation.
-- Codex cannot write =-o= outside its sandbox; have it write the report inside the worktree.
-- Delegation pattern used: Codex writes and fixes (own review loop), a Claude subagent reviews independently, Opus fixes the runner half; one agent per file set, worktree per stream.
+- The memory branch must stay out of public remotes; it is documented, and SuCoder never pushes it.
+  It now exists in the SuCoder mirror (=e0aa81c= seed, =371afd3= generation); =origin= has no such head and the =ligon= remote's push URL is =no_push=.
+- Jobs =acc43579=, =9dc6e6a8=, =a2e82ed5= and =0d98ce29= no longer replay readonly under the fixed explorer, and the rejected =f6131ffc= window no longer matches its plan after email redaction; none published anything.
+- =dream/228cde57= is the P1 diagnostic candidate, cited by hash in =docs/dream/runs/sucoder-p1.org=: keep it, do not merge it.
+- The untracked =.sucoder/handoffs/2026-11-12-dream-summary.org= in the main mirror checkout predates this work and is now stale; this handoff supersedes it.
+- =examples/lsms/burst.sbatch:17= still runs a bare =python3= under =sbatch --export=NONE=, which reloads the login environment, and =dispatch_verify.py:105='s =run= field names =python3= too.
+- The coder account now has a 12-hour BRC certificate in =~/.ssh/ssh_certs/= (the human minted it 2026-11-13) and accepted the gateway's ED25519 host key on first use, =SHA256:ciu39oN/Yirco9ODd+pcwewL2XwqpznHWPmvtuuxzpo=; the human has not yet compared it with their own known_hosts.
+- On Savio, the human's =~/.local/bin/python3.12= and =python3.13= point into =/local/job40653699/=, which no longer exists.
+- Merged branches with worktrees awaiting the human's OK to remove: =coder/dream-essay=, =coder/test-env-failures=, =coder/drop-py36-tests=, =coder/pin-receiving-python=, =coder/python-floor=, =coder/editable-version=, =coder/confined-node=; =coder/issue-90-confined-launch='s four commits are on =main= under rebased hashes (=git cherry=).
+  Scratch worktrees =pin-old=, =py39-old=, =py39-head=, =suite-edver= and =suite-ec= live in the session scratchpad.
+- The previous handoff (exploration and budgets, COMPLETE) is [[file:handoffs/2026-11-10-dream-exploration-and-budgets.org]].
 
-Recorded by Sue (Claude Fable 5.1).
+Recorded by Sue (Claude Opus 5.5).

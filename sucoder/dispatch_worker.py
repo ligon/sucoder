@@ -1,4 +1,4 @@
-"""Receiving-node headless dispatch supervisor (Python 3.6, stdlib only).
+"""Receiving-node headless dispatch supervisor (Python 3.9, stdlib only).
 
 Staged with the existing managed Codex runner. No package installation, TTY,
 coordinator runtime, or shared working checkout is needed on the worker node.

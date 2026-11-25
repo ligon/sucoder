@@ -1,6 +1,6 @@
 """Owned-socket diagnostics and pairing, staged standalone on the target.
 
-Stdlib only, Python 3.6 compatible like codex_state_runner. This client never
+Stdlib only, Python 3.9 like codex_state_runner. This client never
 starts a daemon, resumes a thread, or performs inference (ledger 3--5).
 """
 import argparse

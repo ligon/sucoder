@@ -1,4 +1,4 @@
-"""Shared headless dispatch constants; Python 3.6 and standard library only."""
+"""Shared headless dispatch constants; Python 3.9 and standard library only."""
 
 import json
 import os

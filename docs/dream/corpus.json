@@ -1,0 +1,176 @@
+{
+  "corpora": [
+    {
+      "commit": "2383401df43c637b70ece5d0518440a4edf61e27",
+      "repository": "SuCoder",
+      "selected_bytes": 23236,
+      "sources": [
+        {
+          "byte_end": 4206,
+          "byte_start": 0,
+          "bytes": 4206,
+          "git_blob": "d44ee88702a916e7ef53335b02ee534b535d69dc",
+          "lines": [
+            1,
+            45
+          ],
+          "path": "docs/reply-transcripts-evidence.org",
+          "sha256": "2bffd39e7530ff807ed5ab60a59e001eda6def8fa36db663bc405d7a2b868455",
+          "unit_id": "sc-investigation"
+        },
+        {
+          "byte_end": 8782,
+          "byte_start": 4485,
+          "bytes": 4297,
+          "git_blob": "2339e031efbb07d1d50baa7489a82b8c9f76766c",
+          "lines": [
+            114,
+            214
+          ],
+          "path": "sucoder/reply_probe.py",
+          "sha256": "69d66665f5891f50fa0eacbf54164c6b881654aee3ba16ff2cc52d61d3da51a1",
+          "unit_id": "sc-adapters"
+        },
+        {
+          "byte_end": 12967,
+          "byte_start": 9448,
+          "bytes": 3519,
+          "git_blob": "2339e031efbb07d1d50baa7489a82b8c9f76766c",
+          "lines": [
+            235,
+            322
+          ],
+          "path": "sucoder/reply_probe.py",
+          "sha256": "1a683fef99f86abf919dad2d3593c224e6fa7fcb361add2d94690eff625e4366",
+          "unit_id": "sc-parser"
+        },
+        {
+          "byte_end": 13188,
+          "byte_start": 8050,
+          "bytes": 5138,
+          "git_blob": "0efbd4b287b514eaf3927e050c5fb2009497c581",
+          "lines": [
+            199,
+            303
+          ],
+          "path": "tests/test_reply_probe.py",
+          "sha256": "a285bb10e2a12a68d9451ef41b0380005503d268bfb175a0441548d488b5bf43",
+          "unit_id": "sc-fixtures"
+        },
+        {
+          "byte_end": 8002,
+          "byte_start": 4636,
+          "bytes": 3366,
+          "git_blob": "62eeb003ef45af7c484bc2ba2a2f9ec8b99eea77",
+          "lines": [
+            95,
+            154
+          ],
+          "path": "docs/reply-from-transcript.org",
+          "sha256": "42634e67aa99dcb55937a6b4a275e060485ee6e2fbb686432d97d847e57971dc",
+          "unit_id": "sc-protocol"
+        },
+        {
+          "byte_end": 6493,
+          "byte_start": 3783,
+          "bytes": 2710,
+          "git_blob": "7dba7ae935aaaa7701e8de9b6294c22724a064f9",
+          "lines": [
+            110,
+            164
+          ],
+          "path": "sucoder/replies.py",
+          "sha256": "4cb5bb3b61075bf64cbb70e94c62bc3f459cc103747620037368a57ac1698409",
+          "unit_id": "sc-identity"
+        }
+      ]
+    },
+    {
+      "commit": "06710190305e0057d9e19d42059753d4cc0db012",
+      "repository": "LSMS_Library",
+      "selected_bytes": 22472,
+      "sources": [
+        {
+          "byte_end": 15104,
+          "byte_start": 10876,
+          "bytes": 4228,
+          "git_blob": "8e88d7eacebadfb44ce6387e5ec15e44e63fb756",
+          "lines": [
+            85,
+            100
+          ],
+          "path": "AGENTS.md",
+          "sha256": "1fdaddf0d590820bae5a73b1f6608fd6ce9c1c903ed228b5ce5d381b6a93bda6",
+          "unit_id": "tz-authority"
+        },
+        {
+          "byte_end": 2986,
+          "byte_start": 0,
+          "bytes": 2986,
+          "git_blob": "a9f8944177a4f5e1bf51a216a57f14c372a52e70",
+          "lines": [
+            1,
+            61
+          ],
+          "path": "lsms_library/data_info.yml",
+          "sha256": "45f4ef01a02a1b9b90c082cc06aafdab29034f4e3a91b4f87b718020d5e2c93c",
+          "unit_id": "tz-schema"
+        },
+        {
+          "byte_end": 3798,
+          "byte_start": 0,
+          "bytes": 3798,
+          "git_blob": "c1130989b7a656de1f7367720e0120f9a869a47b",
+          "lines": [
+            1,
+            84
+          ],
+          "path": "lsms_library/countries/Tanzania/_/CONTENTS.org",
+          "sha256": "0ed986058157417d45c7de1b49b16803b9ad86a1eb1c4754cd4a2c46f9ab011b",
+          "unit_id": "tz-notes-july"
+        },
+        {
+          "byte_end": 4825,
+          "byte_start": 0,
+          "bytes": 4825,
+          "git_blob": "fefe59627f66681134a22e699d391247f7a87a2d",
+          "lines": [
+            1,
+            115
+          ],
+          "path": "lsms_library/countries/Tanzania/2008-15/_/shocks.py",
+          "sha256": "efeaeb6be38f5f75f38b1f0df2f559cb374a7b47be34f0273b2879326c829f4d",
+          "unit_id": "tz-shocks-source"
+        },
+        {
+          "byte_end": 63159,
+          "byte_start": 57924,
+          "bytes": 5235,
+          "git_blob": "c1130989b7a656de1f7367720e0120f9a869a47b",
+          "lines": [
+            1087,
+            1191
+          ],
+          "path": "lsms_library/countries/Tanzania/_/CONTENTS.org",
+          "sha256": "138590a28f10c4906bb3b60841408d357b0ae3b3500e19ae6bd5ad285d2c915b",
+          "unit_id": "tz-issue-114"
+        },
+        {
+          "byte_end": 55925,
+          "byte_start": 54525,
+          "bytes": 1400,
+          "git_blob": "c1130989b7a656de1f7367720e0120f9a869a47b",
+          "lines": [
+            1019,
+            1052
+          ],
+          "path": "lsms_library/countries/Tanzania/_/CONTENTS.org",
+          "sha256": "a22c0d22ecc576f86c3725ea3fa3186ef47b6b67378f2de6b9688a89311b5261",
+          "unit_id": "tz-panel-design"
+        }
+      ]
+    }
+  ],
+  "purpose": "frozen design-pilot source map; not an implemented dream plan",
+  "schema_version": 1
+}

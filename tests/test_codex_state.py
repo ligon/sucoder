@@ -179,12 +179,8 @@ def test_restore_selector_rejects_everything_else(value):
         validate_restore_selector(value)
 
 
-def test_runner_source_is_the_staged_file_and_stays_valid_for_python_3_6():
+def test_runner_source_is_the_staged_file():
     assert runner_source() == RUNNER.read_text(encoding="utf-8")
-    old = shutil.which("python3.6")
-    if old is None:
-        pytest.skip("no python3.6 to compile against")
-    subprocess.run([old, "-m", "py_compile", str(RUNNER)], check=True)
 
 
 # ----------------------------------------------------------------- config
@@ -784,11 +780,31 @@ def test_runner_places_databases_and_rollout_locally_and_forwards_sigterm(home):
             proc.kill()
 
 
+def _alive(script):
+    """Processes still running ``script``, from /proc (no process-group assumptions)."""
+    found = []
+    for entry in Path("/proc").iterdir():
+        try:
+            if entry.name.isdigit() and str(script).encode() in (entry / "cmdline").read_bytes():
+                found.append(int(entry.name))
+        except OSError:
+            continue
+    return found
+
+
 @needs_bwrap
 def test_runner_stops_codex_that_opens_a_database_elsewhere(home):
+    # Signalling bwrap instead of Codex once left Codex running as an orphan that held
+    # the misplaced store and this test's pipes: bound the wait and look for survivors.
     proc = _runner(home, _env(home, FAKE_IGNORE_SQLITE_HOME="1"))
-    assert proc.wait(timeout=30) == 71
-    assert "outside the managed placement" in proc.stderr.read()
+    try:
+        _, err = proc.communicate(timeout=30)
+        assert proc.returncode == 71
+        assert "outside the managed placement" in err
+        assert _alive(home["fake"]) == []
+    finally:
+        for pid in _alive(home["fake"]):
+            os.kill(pid, signal.SIGKILL)
     status, _ = _status(home)
     assert status["state"] == "stopped_misplaced" and status["misplaced"] == [str(home["codex_home"] / "state_5.sqlite")]
 

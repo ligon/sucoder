@@ -420,6 +420,99 @@ def test_launch_commands_forward_harness_and_model(
     assert calls[0][2]["model_override"] == "openrouter/deepseek/deepseek-chat"
 
 
+@pytest.mark.parametrize("subcommand, method", [("agents-run", "launch_agent"), ("collaborate", "bootstrap")])
+def test_launch_commands_forward_auth(
+    tmp_path, monkeypatch, subcommand, method,
+):
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+
+    calls = []
+
+    class StubManager:
+        def context_for(self, name):
+            return SimpleNamespace(name=name)
+
+        def launch_agent(self, ctx, **kwargs):
+            calls.append(("launch_agent", ctx.name, kwargs))
+
+        def bootstrap(self, ctx, **kwargs):
+            calls.append(("bootstrap", ctx.name, kwargs))
+
+    monkeypatch.setattr(cli, "_build_manager_for_mirror", lambda *args, **kwargs: StubManager())
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "--config", str(config_path), subcommand, "sample", "--no-sync",
+            "--harness", "claude", "--auth", "apikey",
+        ],
+    )
+
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert calls[0][0] == method
+    assert calls[0][2]["auth_override"] == "apikey"
+
+
+@pytest.mark.parametrize("subcommand", ["agents-run", "collaborate"])
+def test_launch_commands_forward_deprecated_codex_auth(
+    tmp_path, monkeypatch, subcommand,
+):
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+
+    calls = []
+
+    class StubManager:
+        def context_for(self, name):
+            return SimpleNamespace(name=name)
+
+        def launch_agent(self, ctx, **kwargs):
+            calls.append(("launch_agent", ctx.name, kwargs))
+
+        def bootstrap(self, ctx, **kwargs):
+            calls.append(("bootstrap", ctx.name, kwargs))
+
+    monkeypatch.setattr(cli, "_build_manager_for_mirror", lambda *args, **kwargs: StubManager())
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "--config", str(config_path), subcommand, "sample", "--no-sync",
+            "--harness", "codex", "--codex-auth", "apikey",
+        ],
+    )
+
+    assert result.exit_code == 0, (result.output, result.exception)
+    # Deprecated --codex-auth maps onto the generic auth_override.
+    assert calls[0][2]["auth_override"] == "apikey"
+
+
+def test_auth_rejects_unknown_mode(tmp_path, monkeypatch):
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "--config", str(config_path), "agents-run", "sample", "--no-sync",
+            "--harness", "codex", "--auth", "oauth",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--auth must be 'subscription' or 'apikey'" in _plain_output(result)
+
+
 def test_harness_and_legacy_agent_are_mutually_exclusive(tmp_path, monkeypatch):
     runner = CliRunner()
     skills_dir = tmp_path / "skills"
@@ -437,6 +530,88 @@ def test_harness_and_legacy_agent_are_mutually_exclusive(tmp_path, monkeypatch):
 
     assert result.exit_code != 0
     assert "either --harness or the legacy --agent" in _plain_output(result)
+
+
+def _stub_auth_module(monkeypatch):
+    import sucoder.auth as auth_mod
+    from sucoder.auth import AuthStatus
+
+    calls = {"status": [], "to_apikey": [], "to_subscription": []}
+    monkeypatch.setattr(
+        auth_mod, "status",
+        lambda config, executor, h: (calls["status"].append(h), AuthStatus(h, "subscription", "x"))[1],
+    )
+    monkeypatch.setattr(
+        auth_mod, "to_apikey",
+        lambda config, executor, h, logger: calls["to_apikey"].append(h),
+    )
+    monkeypatch.setattr(
+        auth_mod, "to_subscription",
+        lambda config, executor, h, logger: calls["to_subscription"].append(h),
+    )
+    return calls
+
+
+def test_auth_status_reports_both_harnesses(tmp_path, monkeypatch):
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+    calls = _stub_auth_module(monkeypatch)
+
+    result = runner.invoke(cli.app, ["--config", str(config_path), "auth", "status"])
+
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert sorted(calls["status"]) == ["claude", "codex"]
+
+
+def test_auth_apikey_uses_harness_flag(tmp_path, monkeypatch):
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+    calls = _stub_auth_module(monkeypatch)
+
+    result = runner.invoke(
+        cli.app, ["--config", str(config_path), "auth", "apikey", "--harness", "codex"],
+    )
+
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert calls["to_apikey"] == ["codex"]
+
+
+def test_auth_subscription_uses_harness_flag(tmp_path, monkeypatch):
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+    calls = _stub_auth_module(monkeypatch)
+
+    result = runner.invoke(
+        cli.app, ["--config", str(config_path), "auth", "subscription", "--harness", "claude"],
+    )
+
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert calls["to_subscription"] == ["claude"]
+
+
+def test_auth_rejects_bad_harness(tmp_path, monkeypatch):
+    runner = CliRunner()
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    config_path = _write_config(tmp_path, skills_entry=skills_dir)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *args, **kwargs: None)
+    _stub_auth_module(monkeypatch)
+
+    result = runner.invoke(
+        cli.app, ["--config", str(config_path), "auth", "apikey", "--harness", "gemini"],
+    )
+
+    assert result.exit_code != 0
+    assert "--harness must be 'codex' or 'claude'" in _plain_output(result)
 
 
 def test_skills_list_reports_accessible_paths(tmp_path, monkeypatch):
@@ -4698,6 +4873,7 @@ class _SnapshotsHarness:
 
     class _Remote:
         host = None
+        python = "python3"   # RemoteConfig's default
 
         def __init__(self, gateway, slurm, mirror_root="~/mirrors"):
             self.gateway = gateway
@@ -5304,3 +5480,145 @@ def test_attach_local_mirror_refuses_cluster_flags(tmp_path, monkeypatch):
     )
     assert result.exit_code == 1, _output(result)
     assert "this mirror is local" in _output(result)
+
+
+@pytest.mark.parametrize("command", [
+    ["message"], ["peek"], ["pull"], ["status"],
+    ["tunnel", "up"], ["list", "mirrors"], ["relay", "message"],
+])
+def test_subcommand_help_needs_no_config_or_startup(monkeypatch, command):
+    # Outside a repository with no config file, every --help used to fail
+    # with "Not inside a git repository" before Click reached the help.
+    from sucoder import tunnel
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("--help loaded configuration or ran startup checks")
+    for name in ("load_config", "build_default_config", "run_startup_checks"):
+        monkeypatch.setattr(cli, name, refuse)
+    # relay_main sets this module global; restore it for later tests.
+    monkeypatch.setattr(tunnel, "_NONINTERACTIVE", tunnel._NONINTERACTIVE)
+    result = CliRunner().invoke(cli.app, [*command, "--help"])
+    assert result.exit_code == 0, result.output
+    assert "Usage:" in _plain_output(result)
+
+
+@pytest.mark.parametrize("arguments", [
+    ["message", "sample", "hello"],
+    ["message", "sample", "--", "--help"],  # an operand after --, not the option
+])
+def test_commands_without_the_help_option_still_load_config(monkeypatch, tmp_path, arguments):
+    calls = []
+
+    def probe(*args, **kwargs):
+        calls.append(args)
+        raise cli.ConfigError("probe")
+    monkeypatch.setattr(cli, "_default_config_path", lambda: tmp_path / "absent.yaml")
+    monkeypatch.setattr(cli, "build_default_config", probe)
+    result = CliRunner().invoke(cli.app, arguments)
+    assert calls, result.output
+    assert result.exit_code == 2
+    assert "probe" in result.output
+
+
+# --- collaborate --node on a confined target ------------------------------
+
+
+def _node_pin_run(tmp_path, monkeypatch, *, confined, node="n0035.savio4"):
+    """Invoke ``-T fake-slurm collaborate sample --node NODE`` and stop at
+    the manager build.  Returns ``(result, seen_obj, session)``: the
+    ctx.obj the manager was built with (None if never reached) and the
+    session record afterwards."""
+    from sucoder import session as session_mod
+
+    config_path = _slurm_config(tmp_path)
+    if confined:
+        text = config_path.read_text().replace(
+            "      account: test_acct\n", "      account: test_acct\n      confined: true\n",
+        )
+        config_path.write_text(text)
+    sessions = tmp_path / "sessions"
+    monkeypatch.setattr(session_mod, "_session_dir", lambda: sessions)
+    monkeypatch.setattr(cli, "run_startup_checks", lambda *a, **k: None)
+    # A live job on another node, recorded the way a confined launch does.
+    sess = session_mod.RemoteSession(
+        mirror_name="sample", target_name="fake-slurm",
+        slurm_job_id=4242, compute_node="n0001.savio4",
+    )
+    sess.save()
+    seen = {}
+
+    def fake_manager(config, logger, dry_run, mirror, cli_ctx=None):
+        seen["obj"] = dict(cli_ctx.obj or {})
+        raise typer.Exit(code=0)      # captured what we need; skip the launch
+
+    monkeypatch.setattr(cli, "_build_manager_for_mirror", fake_manager)
+    result = CliRunner().invoke(
+        cli.app,
+        ["--config", str(config_path), "-T", "fake-slurm", "collaborate", "sample",
+         "--no-sync", "--no-tmux", "--node", node],
+    )
+    after = session_mod.RemoteSession.load("sample", target_name="fake-slurm")
+    return result, seen.get("obj"), after
+
+
+def test_collaborate_node_on_confined_target_pins_the_executor_not_the_session(
+    tmp_path, monkeypatch,
+):
+    """A confined launch submits its own sbatch and never read the
+    session's compute_node, so --node was dropped without a word.  The
+    node now rides ctx.obj to the executor, and the record keeps the live
+    job's id so the reuse probe still sees it."""
+    result, obj, after = _node_pin_run(tmp_path, monkeypatch, confined=True)
+    assert obj is not None, _plain_output(result)
+    assert obj["confined_node"] == "n0035.savio4"
+    assert after.slurm_job_id == 4242, "the live job must stay recorded"
+    assert after.compute_node == "n0001.savio4"
+
+
+def test_collaborate_node_on_unconfined_target_still_pins_the_session(
+    tmp_path, monkeypatch,
+):
+    """The unconfined (salloc/adopt) path keeps its record-based pin."""
+    result, obj, after = _node_pin_run(tmp_path, monkeypatch, confined=False)
+    assert obj is not None, _plain_output(result)
+    assert "confined_node" not in obj
+    assert after.slurm_job_id is None
+    assert after.compute_node == "n0035.savio4"
+
+
+@pytest.mark.parametrize("confined", [True, False])
+def test_collaborate_node_rejects_a_name_that_is_not_a_hostname(
+    tmp_path, monkeypatch, confined,
+):
+    """The node is one word of a remote command string; shell syntax is
+    refused before anything is built or saved."""
+    result, obj, after = _node_pin_run(
+        tmp_path, monkeypatch, confined=confined, node="n0035;true",
+    )
+    assert result.exit_code == 2, _plain_output(result)
+    assert "not a node name" in _plain_output(result)
+    assert obj is None
+    assert after.slurm_job_id == 4242 and after.compute_node == "n0001.savio4"
+
+
+@pytest.mark.parametrize("confined", [True, False])
+def test_build_executor_carries_the_node_pin_only_when_confined(
+    tmp_path, monkeypatch, confined,
+):
+    import logging
+    import click
+
+    captured, _ = _install_build_executor_fakes(monkeypatch, tmp_path)
+    config = Config(human_user="coder", mirror_root=tmp_path / "mirrors")
+    settings = _confined_mirror_settings(tmp_path, confined=confined)
+    cli_ctx = click.Context(click.Command("collaborate"), obj={"confined_node": "n0035.savio4"})
+
+    cli._build_executor(
+        config, logging.getLogger("t"), dry_run=False, mirror_settings=settings,
+        cli_ctx=cli_ctx,
+    )
+
+    if confined:
+        assert captured["kwargs"]["confined_nodelist"] == "n0035.savio4"
+    else:
+        assert "confined_nodelist" not in captured["kwargs"]

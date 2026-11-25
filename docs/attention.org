@@ -1,0 +1,299 @@
+#+TITLE: Attention: which agent sessions need the human
+#+DATE: 2026-11-01
+#+AUTHOR: Sue
+#+STATUS: Design; step 1 prototyped on branch coder/attention-status
+#+OPTIONS: toc:2 num:nil
+
+* Problem
+
+The [[file:vps-control-plane.org][control plane note]] deferred its third decision, "how attention is paid to N sessions", and named a sequence for it: =sucoder sessions= in a =watch= window, then an agent-side status push, then a coordinator session.
+Vantage now holds the launcher, so the OTP between cycles is gone, but the cycling is not.
+Each project runs in its own tmux in its own foot terminal, and the human finds out which session wants a reply by looking at each of them in turn.
+
+The cost is mostly not steering.
+Sending a reply is cheap and already has machinery: =sucoder message= and =peek=, with the =REPLY <id>:= convention.
+The cost is *detection*: knowing, without looking, that a session has stopped and is waiting for a permission or an answer, and which one has waited longest.
+=sucoder sessions= cannot say this.
+Its pane probe (=sucoder/sessions_report.py=, =PANE_PROBE_SH=) tells a running agent from a bare shell, which is the right question for releasing an allocation and the wrong one here: a Claude process waiting for input and one halfway through a test run look the same from =ps=.
+
+* Design
+
+Three layers, each usable without the next.
+
+** Layer 1: the agent reports its own state
+
+The only party that knows reliably whether an agent is working or waiting is the agent's harness.
+Claude Code exposes this as hooks; the relevant events and the state each leaves behind are:
+
+| Hook event         | State     | Meaning                                                     |
+|--------------------+-----------+-------------------------------------------------------------|
+| =SessionStart=     | idle      | started; no prompt yet                                      |
+| =UserPromptSubmit= | working   | the human sent a turn                                       |
+| =PostToolUse=      | working   | a tool ran (so a granted permission clears "waiting")       |
+| =Stop=             | idle      | the turn finished                                           |
+| =Notification=     | waiting   | a permission request, or a minute idle waiting for input    |
+| =SessionEnd=       | ended     | =/exit= or the process ended; the pane falls back to bash   |
+
+=Notification= is the event that matters.
+Claude sends it both for a permission prompt and after about a minute of sitting idle at its prompt, so a finished turn turns into "waiting" on its own after a short delay, with no timer in SuCoder.
+
+Not every notification means the agent is blocked.
+Claude Code 2.1.316 tags each with a =notification_type= (read from the binary 2026-11-01), and only some are requests:
+
+| =notification_type=                                              | Kind       |
+|------------------------------------------------------------------+------------|
+| =permission_prompt=, =worker_permission_prompt=                  | permission |
+| =elicitation_dialog=, =elicitation_url_dialog=, =agent_needs_input= | question   |
+| =idle_prompt=                                                    | idle       |
+| =auth_success=, =agent_completed=, =computer_use_*=, =push_notification=, ... | not hooked |
+
+The =Notification= hook carries a matcher listing the first three rows, and Claude matches it against =notification_type=, so an informational notification never overwrites a record.
+A record from an older Claude without the field is classified by its message ("permission", "waiting for your input"), else =other=.
+
+SuCoder installs the hooks at launch with =claude --settings <json>= (=MirrorManager._with_attention_hooks=, =sucoder/mirror.py=).
+Settings passed this way add to the user's and project's own hooks rather than replacing them; measured 2026-11-01 on Claude Code 2.1.316 with a =-p= run whose record appeared while the user settings stayed in force.
+A launch whose command already passes =--settings= is left alone.
+
+Each hook runs a short POSIX shell command (=attention.hook_shell_command=) that writes one *record* per session:
+
+#+begin_example
+$HOME/.sucoder/attention/<mirror>--<target>.rec
+
+sucoder-attention-v1<TAB><epoch seconds><TAB><hostname><TAB><claude|codex>
+{...the hook's JSON payload, at most 64 KiB...}
+#+end_example
+
+Design choices, each for a stated reason:
+
+- The record is the payload, not a digest of it :: Shell cannot pick JSON apart safely and SuCoder may not be installed on the compute node.
+  The reader parses it instead, and needs only =hook_event_name=, =message=, =session_id= and =cwd=.
+  =PostToolUse= is the exception: its payload carries the tool's output, so that hook drains stdin and records only the event name.
+- One record per =<mirror>--<target>= :: The same pairing as =~/.sucoder/sessions/<mirror>--<target>.yaml=, so the record and the session file name the same thing.
+  The key is sanitized to =[A-Za-z0-9._-]= and written literally into the hook command, which avoids carrying it through the launch's environment file.
+- Atomic replace :: A temporary file beside the record, then =mv=, so a reader never sees a torn record.
+- Never fails the agent :: Every step's failure is swallowed and the command exits 0.
+  A status write must not block a turn.
+- Where the agent runs :: =$HOME= of the account running the agent.
+  On Savio that is the NFS home, readable from any login node over the existing mux.
+  On vantage it is =~coder=, mode 2770 and group =coder=, which =ligon= belongs to; the agent's =umask 0007= makes the record group-readable.
+
+The hooks are opt-in: =attention.hooks: true= in the launcher's config.
+The same switch covers Codex (next section); a record written before the harness field existed reads as Claude's.
+
+*** Codex
+
+Codex (=codex-cli= 0.164.0, read 2026-11-03 from the [[https://learn.chatgpt.com/docs/hooks][hooks reference]] and tried against the installed binary in a throwaway =CODEX_HOME=) has hooks with the same shape as Claude's: a JSON payload on stdin with =hook_event_name=, =session_id=, =transcript_path= and =cwd=.
+SuCoder passes them per launch as =-c hooks.<Event>=[...]= overrides (=attention.codex_overrides=), so nothing is written to =~/.codex/config.toml= by SuCoder; Codex shows their source as "Session flags".
+
+| Codex event          | State                     | Notes                                                                 |
+|----------------------+---------------------------+-----------------------------------------------------------------------|
+| =SessionStart=       | idle                      | not after a compaction (matcher, below)                               |
+| =UserPromptSubmit=   | working                   |                                                                       |
+| =PreToolUse=         | waiting, kind question    | matcher =^request_user_input=, the tool through which Codex asks a question; recorded by name only |
+| =PostToolUse=        | working                   | recorded by name only (its payload carries the tool's output)        |
+| =PermissionRequest=  | waiting, kind permission  | detail: "Codex needs your approval for <tool>: <description or command>" |
+| =Stop=               | idle                      | waiting, kind idle, a minute later (below)                            |
+| =Interrupt=          | idle                      | Esc during a turn; waiting, kind idle, a minute later                 |
+| =SessionEnd=         | ended                     | =/quit=, or 30 minutes idle with no client attached                   |
+
+=SessionStart= also fires after a compaction, mid-turn, which is not idle; its matcher (a regex on =source=) admits only =startup=, =resume=, =clear= and =fork=.
+
+What Codex cannot signal, and what SuCoder does about it:
+
+1. No idle notification.
+   Claude raises =idle_prompt= a minute after its turn ends; Codex has nothing like it.
+   =attention.synthesize_idle_waits= turns a Codex =Stop= or =Interrupt= record a minute old into a waiting request of kind =idle=, dated when the minute ran out, so =notify_kinds= and =notify_after_minutes= treat both harnesses alike and the request notifies once.
+2. Questions only through =request_user_input=.
+   MCP elicitations raise no hook event, and whether =PreToolUse= covers =request_user_input= is documented ("local function tools") but not yet seen live.
+3. A turn that fails raises no =Stop=.
+   A turn that ended in an API error (a 401, in the test) left the record at =working= until the next event; Claude has the same gap for an interrupted turn.
+
+**** Trust
+
+Codex runs a =-c= hook only after it has been reviewed and trusted.
+Until then it is skipped without a message, though the TUI opens a "Hooks need review" screen at startup.
+Trusting writes, into =$CODEX_HOME/config.toml= and by Codex itself,
+
+#+begin_example
+[hooks.state."/<session-flags>/config.toml:stop:0:0"]
+trusted_hash = "sha256:..."
+#+end_example
+
+one entry per event, keyed by event and position and hashing the hook's definition.
+Hence the one design difference from Claude: the Codex hook command is identical for every launch, and the record key reaches it in =$SUCODER_ATTENTION_KEY= (put in front of the launch as =env SUCODER_ATTENTION_KEY=<key>=, outermost but for the environment file, so no extra cluster round trip).
+The command checks the key at run time and writes nothing for an empty or unsafe one.
+Measured: after one "trust all", a launch with a different key ran every hook without a new review.
+
+So review happens once per account and Codex home: =coder= on vantage, and the human's account on Savio (one home across nodes); and again whenever a SuCoder release changes =codex_overrides= (the command, a matcher, a timeout).
+Press =2= ("Trust all and continue") on the first hooked launch.
+A launch with no TUI (=codex_remote_control: server=) cannot show the review, so its hooks stay off until an interactive launch on that account has trusted them.
+SuCoder does not pass =--dangerously-bypass-hook-trust=.
+
+Two consequences of =-c= that were checked: Codex runs embedded rather than on its shared background daemon when given =-c= overrides, and SuCoder's remote-control modes pass =-c= to the launch-owned app-server (=codex_remote.build_remote_command=), so each session's hooks see its own environment.
+A launch whose command already sets a =hooks.= override is left alone.
+
+** Layer 2: one screen, sorted by need
+
+=sucoder attention= reads every record and lists the sessions that need the human first:
+
+#+begin_example
+STATE    AGE  MIRROR          TARGET        HOST    DETAIL
+waiting  12m  LSMS_Library    carleton-htc  n0043   Claude needs your permission to use Bash
+waiting  3m   SuCoder         local         vantage Claude is waiting for your input
+working  40s  K-Aggregators   carleton-htc  n0059
+ended    2h   GradApps        local         vantage
+#+end_example
+
+It reads the agent account's directory on this host, then the same directory once per cluster (targets that share a scheduler share =$HOME=; =group_targets_by_cluster=), one round trip each with =LIST_RECORDS_SH=.
+When a key appears in two places the newest record wins.
+
+*** Untracked sessions
+
+Hooks are attached at launch, so a session started before =attention.hooks= was on, by an older SuCoder, or by a harness without hooks writes no record.
+Listing only records made such a session vanish from the screen, which is worse than showing it with an unknown state: on vantage on 2026-11-02 the coordinator could not see a Savio job or the SuCoder session, both launched before the install.
+
+So the listing also asks what is running, and shows a live session with no record, or with only an =ended= record, as =untracked=:
+
+- This host :: the process table.
+  A local launch is =sudo -u <agent> bash -c '... cd <mirror> || exit 1; umask 0007; <agent> ...'= (=CommandExecutor._wrap_agent_command=), and =/proc/<pid>/cmdline= is readable by every account, so the watcher, running as the human, can see it without reading the agent's =cwd=.
+  The directory maps to a configured mirror through =mirror_root= and =mirror_dirname=; a Claude launch's =--session-id= gives the transcript path, which the coordinator reads.
+  A bare =bash -c= with that shape counts only when the agent account owns it.
+- A cluster :: =squeue --me= in the same round trip as the records (=records_and_live_sh=; markers delimit the two halves and carry =squeue='s exit status), mapped to mirror and target exactly as =sessions= does (=token_to_mirror=, =match_target=).
+  Only =RUNNING= jobs count.
+  A job that no single target claims is filed under the cluster's name.
+- A host without a scheduler :: its SuCoder tmux sessions (=LOGIN_SESSION_SH=).
+
+An =untracked= session sorts after =idle=, shows =untracked N= on the tmux line, and never notifies: nothing says it is waiting.
+A live session whose =squeue= did not answer is reported as an error ("running sessions not inspected"), not as absent.
+The cluster check does not probe panes, so a job whose agent has exited (its pane back at a shell) still reads =untracked=; =sucoder sessions= says which.
+
+Four modes:
+
+- =sucoder attention= :: one listing; may authenticate like =sessions= does.
+- =sucoder attention --cached= :: the watcher's last pass, without connecting; what the coordinator reads.
+- =sucoder attention --watch 30= :: a dashboard that redraws every 30 seconds, writes the cache =~/.sucoder/attention.json=, and runs =attention.notify_command= for each session that /starts/ waiting.
+  It uses warm connections only (=BatchMode=, never a prompt), so it can run unattended in a tmux window on vantage while the [[file:tunnel-keep.org][tunnel keeper]] keeps the muxes up.
+  Sessions already waiting when it starts set the baseline and are not notified.
+- =sucoder attention --tmux= :: one line from the cache, for =status-right=; it loads no configuration and runs no startup checks, so it costs a file read.
+  It says =STALE= when the cache is more than five minutes old and appends =!N= when N hosts were not inspected.
+
+The intended arrangement on vantage is a single tmux server holding every attach window, one foot terminal on the laptop reaching it over mosh, and:
+
+#+begin_src conf
+# ~/.tmux.conf on vantage (ligon)
+set -g status-interval 10
+set -g status-right '#(sucoder attention --tmux)'
+#+end_src
+
+with a window running =sucoder attention --watch 30=.
+
+On the agent account, with =session_relay= configured, =attention= and =attention --cached= run as the relay's user through =sucoder relay attention=, as =sessions= does (issue 52): that account holds the cluster connections and the cache.
+The relay accepts only =--json=, =--cached= and =--verbose=; =--watch= and =--cache= are refused, since the caller would otherwise start a loop or choose a file under the human's home.
+=--local-only= and =--tmux= never relay.
+
+** Phone notifications
+
+=notify_command= is an argv run with the session described in the environment, never interpolated into the command line:
+
+| Variable                     | Value                                 |
+|------------------------------+---------------------------------------|
+| =SUCODER_ATTENTION_KEY=      | =<mirror>--<target>=                  |
+| =SUCODER_ATTENTION_MIRROR=   | mirror                                |
+| =SUCODER_ATTENTION_TARGET=   | target, or =local=                    |
+| =SUCODER_ATTENTION_HOST=     | host the agent ran on                 |
+| =SUCODER_ATTENTION_STATE=    | =waiting=                             |
+| =SUCODER_ATTENTION_KIND=     | =permission=, =question=, =idle=, =other= |
+| =SUCODER_ATTENTION_AGE=      | how long, e.g. =3m=                   |
+| =SUCODER_ATTENTION_MESSAGE=  | Claude's notification text            |
+
+#+begin_src yaml
+attention:
+  hooks: true
+  notify_command:
+    - sh
+    - -c
+    - 'curl -fsS -H "Title: $SUCODER_ATTENTION_MIRROR" -d "$SUCODER_ATTENTION_MESSAGE" https://ntfy.sh/<private-topic>'
+#+end_src
+
+A request is one record, =(key, event time)=, and notifies once.
+A new event on a session that is still waiting (a second permission prompt) is a new request; an unchanged record is not.
+
+Two filters bound the volume, which matters because every finished turn becomes an =idle= request a minute later:
+
+- =notify_kinds= :: which kinds notify; default all four.
+  =[permission, question]= notifies only when a session is truly blocked.
+- =notify_after_minutes= :: how long a request must wait first; default 0.
+  A request answered sooner never notifies.
+
+[[file:../examples/coordinator/attention-notify][examples/coordinator/attention-notify]] is a ready notifier: it posts to ntfy when =NTFY_URL= is set and types a line into the coordinator's pane when =COORDINATOR_PANE= is set.
+
+** Layer 3: steering
+
+Unchanged: =sucoder message <mirror> "..."= and =peek=.
+
+* Coordinator (later)
+
+A coordinating agent on vantage is worth having, but not as a model that polls.
+Polling with a model spends tokens re-reading panes that have not changed, and an agent told to watch tends to find something to act on.
+
+The shape this design leaves room for:
+
+- The =--watch= loop is the poller and has no model in it.
+  It already detects the events that matter: a session starting to wait, a host going uninspected; allocation expiry and renewal failure are the next two.
+- On an event it wakes a coordinator session (an ordinary =coder= session on vantage) with the waiting session's recent transcript, that mirror's =.sucoder/handoff.org= and the bulletin.
+- The coordinator writes a digest with a suggested reply per waiting session.
+  It sends on its own only from an allowlist (continue after a checkpoint, =renew=, an answer stated verbatim in the handoff); everything else waits for the human.
+  Its messages carry an agent's authority, not the human's, as the system prompt already says of peer messages.
+
+This needs no dispatch path, since it steers existing sessions through =message=; issue 79 matters only if it is to start new work.
+
+** The built pieces
+
+[[file:../examples/coordinator/README.org][examples/coordinator/]] holds the setup, the brief ([[file:../examples/coordinator/CLAUDE.md][CLAUDE.md]]) and the notifier.
+The coordinator is a local Claude session on vantage in its own small mirror, so each triage is committed to =digests/= and can be audited.
+
+- v0 :: the human types =triage=.
+  The coordinator reads =attention --cached --json=, then each waiting session: a cluster session's pane through =peek= over the relay, a local session's transcript directly (local agents run as =coder=, as it does; the record carries =transcript_path=).
+  It writes one block per session (blocked on, evidence, suggested reply, why, risk) and sends only what the human approves.
+  It never answers a permission prompt, since =message= types into the pane and the permission is the human's to grant there.
+- v1 :: the notifier types =[attention] <key> is waiting (<kind>, <age>): <message>= into the coordinator's tmux pane, and it triages that one session unprompted.
+  This works because the watcher and the local sessions' tmux both belong to the human account on vantage.
+  =message= cannot do it: it reaches cluster sessions only.
+  The notifier skips the coordinator's own mirror, so it never wakes itself.
+
+The trial is v0 first: if its suggested replies are not ones the human would send, an event-driven version only makes them arrive sooner.
+
+* Happier
+
+The [[file:happier-pilot.org][pilot]] showed Happier working for Claude, and its value is the phone and browser client and one send/wait surface across harnesses.
+It does not replace layers 1 and 2: pairing is per allocation, the Codex integration is weaker, and it wraps every launch in an experimental adapter.
+Vantage is a natural host for its self-hosted light relay if the away-from-desk case grows; =notify_command= covers that case's first need, knowing that something is waiting, without it.
+Whether =--settings= reaches Claude through the Happier adapter is untested.
+
+* Prototype status (step 1)
+
+Built on branch =coder/attention-status=:
+
+- =sucoder/attention.py= :: hook command, record format and parser, listing script, renderers, transition detection.
+- =sucoder/config.py= :: =AttentionConfig=, =attention: {hooks, notify_command}=.
+- =sucoder/mirror.py= :: =_with_attention_hooks=, called beside the =--session-id= insertion in =launch_agent=; a no-op unless =attention.hooks=.
+- =sucoder/cli.py= :: =sucoder attention= with =--watch=, =--tmux=, =--local-only=, =--json=, =--cache=.
+- =tests/test_attention.py= :: runs the real hook and listing shell, the parser, sorting and transitions, config, the launch argv, and the command.
+
+Verified against real Claude Code 2.1.316 on vantage: a =--settings= hook fired, wrote a 0660 record, and parsed to the expected state.
+
+Added since (same branch): the =Notification= matcher and request kinds, =notify_kinds= and =notify_after_minutes=, =--cached=, =relay attention=, =transcript_path= in the record, [[file:../examples/coordinator/README.org][examples/coordinator/]], =untracked= sessions, and Codex hooks.
+
+Not yet done:
+
+1. A live interactive session on Savio with the hooks on; confirm =Notification= arrives for both permission and idle.
+2. On vantage, every =coder=-side =sucoder= command stopped at the startup check, for two reasons.
+   =~coder/.sucoder/config.yaml= was owned by =coder=, and the check refuses a configuration the agent can write (fixed on vantage, 2026-11-02: =ligon:coder 0640=).
+   And the check ran =sudo -u coder test -r= even when already running as =coder=, which needs a sudoers rule the account lacks, so it reported "cannot read configuration" for a readable file; fixed on this branch by checking directly when the current user is the agent (=sucoder/cli.py=, the =run_startup_checks= call).
+3. Codex hooks (above) on a real launch: =PermissionRequest=, =Stop=, =Interrupt= and the =request_user_input= question have been read from the documentation and exercised as shell, but not yet seen fire from a live model turn; the throwaway-home test reached =SessionStart=, =UserPromptSubmit= and =SessionEnd= only.
+   Verify on the first real launch.
+4. A record left by a session whose tmux is gone stays as its last state.
+   The listing now knows what is running (=untracked=, above), so it could mark such a record orphaned; it does not yet, because the local scan sees only SuCoder's own launches and an absent process is weaker evidence than an absent job.
+   An interrupted turn (Esc) sends no =Stop=, so it reads "working" until the idle =Notification= about a minute later.
+5. Allocation expiry and renewal failure as watcher events.
+6. =message= and =peek= for local sessions.

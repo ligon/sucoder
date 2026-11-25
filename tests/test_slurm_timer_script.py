@@ -950,23 +950,24 @@ def _confined_launch(tmp_path, monkeypatch, command):
                  if c["args"][0] == "sh" and c["input"] and "/job-sample.sh" in c["args"][2])
     timer = next(c["input"] for c in calls if "sucoder-slurm-timer" in c["args"] and c["input"])
     assert len(captured) == 1
-    return captured[0], batch, timer
+    pane = next(c["input"] for c in calls if "sucoder-pane-script" in c["args"])
+    return captured[0], batch, timer, pane
 
 
 def test_managed_codex_launch_hands_the_scope_to_the_timer(tmp_path, monkeypatch):
     from sucoder.codex_state import scope_id
 
-    kw, batch, timer = _confined_launch(tmp_path, monkeypatch, ["codex"])
+    kw, batch, timer, pane = _confined_launch(tmp_path, monkeypatch, ["codex"])
     scope = scope_id("cluster", "coder", "/global/scratch/u/mirrors/sample")
     assert kw["codex_state_scope"] == scope and kw["local_disk_root"] == "/local"
     assert f'\nCODEX_STATE_DIR=/local/job"${{SLURM_JOB_ID}}"/state/codex/{scope}\n' in timer
     assert timer.count("        request_codex_checkpoint\n") == 3
     # The same digest the staged runner is told, so the two meet on disk.
-    assert "codex-state-runner" in batch and f"--scope {scope}" in batch
+    assert "codex-state-runner" in pane and f"--scope {scope}" in pane
 
 
 def test_claude_launch_hands_no_scope_to_the_timer(tmp_path, monkeypatch):
-    kw, batch, timer = _confined_launch(tmp_path, monkeypatch, ["claude"])
+    kw, batch, timer, pane = _confined_launch(tmp_path, monkeypatch, ["claude"])
     assert kw["codex_state_scope"] is None
     assert "codex" not in timer.lower() and "checkpoint" not in timer.lower()
-    assert "codex-state-runner" not in batch
+    assert "codex-state-runner" not in pane

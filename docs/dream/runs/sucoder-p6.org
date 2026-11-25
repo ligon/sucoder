@@ -1,0 +1,151 @@
+#+title: P6 scoped two-repository dream pilot
+#+author: Sue
+#+date: 2026-11-09
+
+* Result and approved scope
+
+The scoped pilot completed all 36 scheduled attempts in 71.2 minutes, using 137 of 180 permitted native invocations.
+Independent grades recorded zero critical errors; 34 attempts answered and two LSMS wiki-only attempts explicitly reported missing evidence.
+The wiki-plus-search comparison meets the original exploratory quality threshold, but establishes no dependable context or monetary saving.
+The amended collector conservatively labels the complete run inconclusive because it retains the two failed diagnostic attempts.
+Those diagnostic failures and that additional conservative classification are distinct from the original wiki-plus-search decision rule.
+The single small comparison, instrument corrections during execution and sensitivity to individual rubric details preclude a rollout claim; the user's subsequent operating-mode disposition is recorded below.
+The user approved the prepared pilot on 2026-11-09 with "Pilot approved".
+Its unchanged scope is twelve frozen passages, 45,708 selected bytes, Codex CLI 0.167.0 with explicit =gpt-6.1-sol=, 36 answers, two hours total and 180 native invocations.
+All unsuccessful calls, inspected retries, question generation, construction, readers and graders share that original allowance.
+Currency is unknown; live Claude remains explicitly deferred because of its account quota.
+
+The [[file:../pilot.org][protocol]] compares source search, wiki plus the same source search, and a wiki-only diagnostic using six independently authored held-out questions per repository.
+The questions and rubrics were frozen before construction and withheld from builders and readers.
+The preparation canary enforced the evaluator-only filesystem boundary; the protocol, worked examples and other answers were also excluded.
+Reader order uses the prepared randomized schedule with seed 20261109.
+No private transcripts were admitted and no LSMS source files or scientific decisions were changed.
+
+* Human disposition
+
+On 2026-11-09 the user selected option one: "Let's proceed with option one, permitting dreaming to synthesize new  explanations."
+This accepts maintaining explanatory wiki articles alongside source search, including new source-grounded explanations and abstractions that need not appear verbatim in one source.
+The [[file:../workplan.org::#accepted-synthesis][recorded operating mode]] retains citations, uncertainty, independent review and source fallback.
+P6's requested human disposition is complete, with live Claude verification still explicitly deferred.
+The original exploratory threshold, conservative collector classification, failed diagnostics, costs and statistical limits remain unchanged.
+
+* Frozen sources and constructed wikis
+
+The [[file:../corpus.json][manifest]] reproduces exact Git blobs and selected ranges: SuCoder at =2383401df43c637b70ece5d0518440a4edf61e27= contributes 23,236 bytes, and LSMS_Library at =06710190305e0057d9e19d42059753d4cc0db012= contributes 22,472 bytes.
+Disposable Git repositories contain verified source envelopes; their import commits differ from those original repository commits.
+The private origin records preserve both identities and the source-object checks.
+
+All six construction stages passed independent review: initial admission of three passages, incremental admission of all six and correction of an explicitly seeded false rule.
+Only disposable evaluation candidates were integrated.
+The existing real SuCoder wiki remains a separate accepted artifact from [[file:sucoder-p2.org][P2]].
+
+- SuCoder final wiki :: =5a93f1af24c271643c72ed27c36e1253e9cf9fcf=, topic =transcript-replies.org=.
+  It distinguishes native delivery/reply evidence from copies and summaries, preserves storage/version qualifications and leaves missing surrounding source or maintainer decisions unresolved.
+  The deliberately false summary-only success rule was corrected.
+- LSMS_Library final wiki :: =0e76fcea8654ab4b351653effce6760bdcecb8bf=, topic =tanzania-household-grain.org=.
+  It distinguishes index uniqueness from survey entity, static shocks source from reported measurements, the October food update from the residual WAITING caveat, and later panel linkage from 2008-15 back-casting.
+  It retains the documentation conflict and absent general maintainer ruling; the deliberately false uniqueness rule was corrected.
+
+* Retained failures and explicit grader amendment
+
+The construction engine was frozen at =7e8487b=.
+The first SuCoder attempt ended without publication after a repair returned three duplicate references to one target.
+An inspected explicit attempt 2 reused the held-out decks and completed five construction stages, then rejected an LSMS reviewer that mistyped its frozen input hash.
+Explicit attempt 3 completed the final stage and began readers.
+These failures and their native usage remain in the journal.
+
+The original grader then exposed a contract ambiguity: two complete assessments of the same frozen answer placed missed rubric details in =failures=, which the shared Coordinator defines as inability to complete its task.
+Both retained assessments gave the same two-of-four score and no critical errors.
+The original process stopped after 27 calls; the answer was not regenerated.
+
+The separate [[file:../../../scripts/dream_pilot_grade_continue.py][grading-only continuation]], committed at =1f1b17e=, clarifies that complete negative grades must return an empty execution-failure list.
+It freezes its own source/brief/schema and the unchanged parent artifacts, preserves the original runtime guard, reuses frozen reader answers and grades every case under the one amended contract.
+Original grades remain intact; new grades and paired records have distinct paths.
+Any previously frozen critical grade prevents continuation, and a new critical grade immediately stops the experiment.
+The same original deadline and native-call journal remain authoritative.
+
+The first amended process scored fourteen cases without critical errors, then rejected source-only reader case 14 for a mistyped delivered-read identifier.
+After inspection, explicit attempt 2 retried that unfinished case while reusing the completed answers/grades.
+Its unsuccessful source-only assignments remain included in that case's cumulative byte/token accounting; final interpretation must also consider whether this single retry determines any apparent savings.
+
+After all eighteen SuCoder cases, LSMS wiki-only case 18 reported missing unit-schema guidance and case 21 reported a missing numerical household breakdown.
+Neither was regenerated for a better answer.
+The separately frozen [[file:../../../scripts/dream_pilot_outcomes.py][outcome collector]], committed at =9519550=, reconstructs those exact completed failures from journal-bound native traces and the original bounded lookups, without inference.
+It retains =reader_failed= rather than publishing an accepted answer, grades the retained text independently and continues the fixed remaining schedule.
+The original reader prompts/schemas/runtime and clarified grader are unchanged.
+The full report's conservative inconclusive classification was fixed before scoring the remaining LSMS cases.
+
+* Paired quality and controlled input
+
+Each row comprises six held-out questions; LSMS has 26 rubric items and SuCoder has 24.
+All six conditions have zero graded critical errors.
+Submitted bytes include common instructions, schema/metadata, repeated context and unsuccessful native calls for the case.
+
+| Repository   | Condition     | Rubric score | Median submitted bytes | Reader calls | Failed readers |
+|--------------+---------------+--------------+------------------------+--------------+----------------|
+| SuCoder      | Source only   |        22/24 |               26,429.0 |           14 |              0 |
+| SuCoder      | Wiki + search |        23/24 |               25,917.0 |           13 |              0 |
+| SuCoder      | Wiki only     |        15/24 |               19,811.0 |           12 |              0 |
+| LSMS_Library | Source only   |        23/26 |               27,352.5 |           12 |              0 |
+| LSMS_Library | Wiki + search |        25/26 |               31,747.0 |           13 |              0 |
+| LSMS_Library | Wiki only     |        14/26 |               19,247.0 |           14 |              2 |
+
+Wiki plus search improves the synthesis/caveat subset by three items in total, with no lower total score on either repository and no graded critical errors.
+That meets the original protocol's quality-gain alternative; the 20 percent context-reduction alternative is not met.
+Selected answer inspection confirms the narrow gains: mentioning the additional lyn checks, defining UPHI explicitly as the Round-4 household, and retaining the prohibition on incidental key harmonization.
+The corresponding source-only answers already explain the main relationships, so these results support a small exploratory qualification gain rather than a broad capability claim.
+Construction, question generation, readers and grading all used the same pinned model; independent roles have separate contexts, not independent model families.
+This single twelve-question comparison supports no statistical significance or model-ranking claim.
+
+SuCoder's 1.9 percent lower primary median includes the failed source-only citation attempt.
+Using only each retained completed attempt, its source-only median is 20,828.5 bytes; wiki plus search then uses 24.4 percent more bytes.
+LSMS wiki plus search uses 16.1 percent more median bytes under either accounting view.
+There is no supported context-saving claim.
+The retained successful invocation latencies are also slightly higher with wiki plus search: medians 23.9 versus 21.1 seconds for SuCoder and 26.1 versus 25.0 seconds for LSMS.
+Those invocation latencies exclude earlier failed invocations; the aggregate allowance and native accounting include them.
+
+The frozen active topics occupy 9,877 SuCoder bytes and 8,542 LSMS bytes, with index files of 411 and 685 bytes respectively.
+Neither pilot wiki contains an archive; the separate P5 engineering acceptance covers archive/history retrieval.
+Source bytes, unique topic bytes and repeatedly submitted assignment bytes are different measurements.
+All condition-level orientation/topic/archive/source deliveries and native tokens are retained in =inspection-summary.json= and the raw reader traces.
+
+* Construction accounting
+
+These are native-reported tokens across every construction attempt, including rejected results.
+Question generation, reader and grading usage are additional and belong in the final cumulative report.
+
+| Repository   | Stage       | Calls | Input tokens | Output tokens |
+|--------------+-------------+-------+--------------+---------------|
+| SuCoder      | Initial     |     5 |       84,936 |        11,916 |
+| SuCoder      | Incremental |     2 |       47,165 |         4,830 |
+| SuCoder      | Repair      |     2 |       48,303 |         3,290 |
+| LSMS_Library | Initial     |     2 |       32,656 |         3,324 |
+| LSMS_Library | Incremental |     3 |       75,211 |        11,830 |
+| LSMS_Library | Repair      |     4 |       98,004 |         6,453 |
+
+Native invocations do not expose every internal HTTP retry or monetary charge.
+Controlled assignment bytes, native tokens, selected corpus bytes and topic/archive bytes remain separate measurements.
+No currency break-even claim is supported.
+The full journal reports 2,003,683 input and 87,760 output tokens across question generation, all construction attempts, all readers and both grading versions.
+Every one of the 137 completed invocations has integer native token fields; this does not account for unobserved internal retries or establish a monetary price.
+
+* Artifacts and verification
+
+The approved proposal is =/tmp/sucoder-dream-p6-preparation-NjfocZ97/review-final/pilot-proposal.json=; its authoritative =execution/= directory retains the original budget, immutable reservations/returns, source origins, construction plans/results, held-out decks, answers and both grading versions.
+The final comparison is =report-outcomes.json= with =paired-outcomes-NN.json=; earlier =paired-v2-NN.json= records and rejected grade traces remain intact.
+The initial and amended execution contracts retain separate implementation revisions and hashes.
+The report SHA-256 is =7ca6c5e91f5475e483fb9314bf3fd465a20b580c8bb10edcaa24431b2de9c35d=.
+
+A private evidence copy is retained at =/home/coder/.sucoder/logs/dream-pilots/2026-11-09-p6-7ca6c5e9/=.
+Its =archive-manifest.json= hashes 1,766 files; the copy includes original Git objects, native traces, source/runtime snapshots and operator/test logs.
+Internal path strings retain their original execution location; the copy is evidence, not a relocated runnable configuration.
+The [[file:/home/coder/.sucoder/logs/dream-pilots/2026-11-09-p6-7ca6c5e9/review-final/execution/repos/SuCoder/.sucoder/wiki/topics/transcript-replies.org][SuCoder pilot topic]], [[file:/home/coder/.sucoder/logs/dream-pilots/2026-11-09-p6-7ca6c5e9/review-final/execution/repos/LSMS_Library/.sucoder/wiki/topics/tanzania-household-grain.org][LSMS pilot topic]] and [[file:/home/coder/.sucoder/logs/dream-pilots/2026-11-09-p6-7ca6c5e9/review-final/execution/inspection-summary.json][inspection summary]] are available for human review.
+
+Before the live amendment, five targeted cases passed, including a complete negative 36-answer fixture, original-budget and answer preservation, zero-call replay, genuine evaluator failure, critical-grade retention and contract drift.
+Its log is =/tmp/sucoder-dream-p6-grading-v2-tests-final.txt=; mypy passed the continuation script.
+The two outcome-collector tests pass, including complete continuation after a failed answer, zero-call replay and trace-tampering rejection, at =/tmp/sucoder-dream-p6-outcome-tests-verified.txt=; mypy also passed that script.
+The actual completed pilot was then replayed with native invocation replaced by an exception: the report matched exactly and no new reservation was made.
+=zero-inference-replay.json= records the 137 unchanged calls and exact report hash.
+The broader runtime verification remains the [[file:../runtime-audit.org][requirement/evidence audit]]; the amendment changes no original runtime file.
+
+Prepared by Sue.

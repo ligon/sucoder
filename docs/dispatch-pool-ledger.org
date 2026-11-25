@@ -291,3 +291,37 @@ prelaunch lock refusal. Production scope is the lock exception type and the
 post-submission summary update; receiving helpers are byte-identical to 78f43ad,
 the native-trial pin. GitNexus impact/detect-changes remain unavailable; manual
 callers are pool submit/status and their existing ValueError-handling CLIs.
+
+** Receiving Python pinned by the controller -- 2026-11-13
+
+A probe on Savio found the 23dcf39 binding picks the wrong interpreter. A
+pooled step runs =srun --export=NONE /bin/bash batch.sh=, and srun, unlike
+sbatch, does not reload the login environment: the step had no HOME and
+=PATH=/usr/local/bin:/usr/bin=, so =command -v python3= gave the image's
+=/usr/bin/python3=, 3.6.8, on n0034.savio4. =sbatch --export=NONE= with the
+ordinary-job flags got 3.12.15 on the same node, but only through the user's
+=~/.local/bin/python3= symlink to =/usr/bin/python3.12=, first on PATH by
+dotfile. Non-interactive ssh to n0035, n0037 and n0039 also got 3.12 that
+way, so =/usr/bin/python3.12= exists there; n0034 and n0103.savio3 list
+=/usr/bin/python3.6=, =python3.9= and =python3.12=. The worker's
+=_runtime_path= PATH also ends in =/usr/bin=, so =project-inputs.sh='s bare
+=python3= ran 3.6.8 on either launch shape.
+
+This reverses that entry's "no controller-local Python path". =submit= now
+pins the controller's own =sys.executable=, resolved: a system bin directory
+passes as is, as Node does in =_runtime_path=, and any other path must pass
+=_shared_path=. Both launch shapes write that path into =batch.sh=, which
+probes it before the worker is parsed. A missing interpreter, or one older
+than 3.9, exits 72 with a stderr line naming the path, version and node; 72
+is distinct from the worker's 70/71/74. =project-inputs.sh= now execs
+=$SUCODER_PROJECT_PYTHON=, which =prepare= sets to its own absolute
+=sys.executable=. The worker's empty-=sys.executable= case from 23dcf39 stays
+closed, since the exec is still absolute.
+
+Tests run the generated batch with a stub =python3= first on PATH that
+answers 3.6.8: the old template ran it, and the new one runs the pinned
+interpreter. A pinned stub that answers 3.6.8, and a missing pin, each exit
+72 before the worker runs. A node-local or empty =sys.executable= refuses at
+submit, and =project-inputs.sh= ignores PATH. All new controls fail against
+4c55c47. The staged modules' 3.6 grammar claims are unchanged here; removing
+them is separate work.

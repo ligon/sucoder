@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import time
 from types import SimpleNamespace
 
@@ -494,7 +495,25 @@ def test_pool_batch_resolves_absolute_receiving_python_without_exported_path(att
                                cwd='/tmp', text=True, capture_output=True, timeout=10)
     assert completed.returncode == 0, completed.stderr
     observed = json.loads(completed.stdout)
-    assert os.path.isabs(observed['executable'])
+    assert observed['executable'] == str(Path(sys.executable).resolve())
     assert observed['manifest'] == str(directory / 'manifest.json')
     assert os.access(observed['executable'], os.X_OK)
-    assert 'SUCODER_RECEIVING_PYTHON' in (directory / 'batch.sh').read_text()
+
+
+def test_pool_batch_ignores_an_older_python3_first_on_path(attached, source, monkeypatch, tmp_path):
+    # srun --export=NONE on Savio leaves PATH=/usr/local/bin:/usr/bin, where
+    # python3 is the image's 3.6.8; the batch must not pick it up from there.
+    monkeypatch.setattr(pool, 'launch_step', lambda directory, manifest, argv, report, timeout: report)
+    report = pool.submit(attached, **request(source))
+    directory = Path(report['directory'])
+    (directory / 'worker.py').write_text('import sys\nprint(sys.executable)\n')
+    image = tmp_path / 'image-bin'
+    image.mkdir()
+    (image / 'python3').write_text('#!/bin/sh\necho 3.6.8\necho image-python3 >&2\nexit 1\n')
+    (image / 'python3').chmod(0o755)
+    completed = subprocess.run(['/bin/bash', str(directory / 'batch.sh')],
+                               env={'LC_ALL': 'C', 'PATH': str(image) + ':/usr/bin:/bin'},
+                               cwd='/tmp', text=True, capture_output=True, timeout=10)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == str(Path(sys.executable).resolve())
+    assert 'image-python3' not in completed.stderr

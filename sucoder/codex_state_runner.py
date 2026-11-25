@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """SuCoder managed Codex state runner: one owned Codex process on local disk.
 
-Staged to the compute node and run as ``python3 <this file> --scope ...
+Staged to the compute node and run as ``<python> <this file> --scope ...
 --durable-root ... -- <command>``, like the native context installer, so it
-has no dependency beyond the standard library and must stay valid for the
-oldest ``python3`` a node image offers (3.6 has been seen).
+has no dependency beyond the standard library and must stay valid for
+Python 3.9, SuCoder's floor.  ``<python>`` is the target's ``python:``
+setting; a node image's system ``python3`` can be older (3.6 on Savio).
 
 What it does, per ``docs/codex-local-state.org`` ("Revision after Slice 0"):
 
@@ -22,8 +23,9 @@ What it does, per ``docs/codex-local-state.org`` ("Revision after Slice 0"):
 - runs Codex as a child in the same process group, ignores SIGINT (the TTY
   delivers it to Codex), forwards SIGTERM and SIGHUP, and exits with the
   child's code;
-- verifies placement through ``/proc``: every ``.sqlite`` descriptor must
-  be under ``db``, and every rollout descriptor must be on local disk;
+- verifies placement through ``/proc`` for the native Codex processes and
+  their launch wrappers, excluding tool subtrees: every ``.sqlite`` descriptor
+  must be under ``db``, and every rollout descriptor must be on local disk;
   anything else stops the child and fails with a specific error.  Nothing
   ever falls back to shared placement;
 - replicates every rollout under ``home/sessions`` by file growth to
@@ -2075,6 +2077,44 @@ def kill_command(child):
         pass
 
 
+def placement_pids(root_pid):
+    """Launch wrappers and native Codex processes, excluding tool subtrees.
+
+    Codex can start another native Codex process for its app server. Those
+    processes still own managed state. A non-Codex child of a native Codex
+    process starts a tool subtree: its databases (including a test's nested
+    Codex) belong to that tool, not to this launch's managed history.
+    Identify native processes by /proc/exe rather than argv or comm, which
+    also name the npm shim. Unreadable metadata keeps the old conservative
+    inspection; it never authorizes excluding a process.
+    """
+    pids = [root_pid] + descendants(root_pid)
+    parents = dict((pid, parent_of(pid)) for pid in pids)
+    executables = {}
+    for pid in pids:
+        try:
+            executable = os.readlink("/proc/%d/exe" % pid)
+        except OSError:
+            continue
+        if executable.endswith(" (deleted)"):
+            executable = executable[:-10]
+        executables[pid] = os.path.basename(executable)
+    native = set(pid for pid, name in executables.items() if name == "codex")
+    kept = []
+    for pid in pids:
+        current = pid
+        seen = set()
+        while current in parents and current not in seen:
+            seen.add(current)
+            parent = parents[current]
+            if parent in native and current in executables and current not in native:
+                break
+            current = parent
+        else:
+            kept.append(pid)
+    return kept
+
+
 def monitor(child, db_dir, local_root, status, timeout, result, placed_event=None, exit_event=None):
     db_dev = os.stat(db_dir).st_dev
     local_dev = os.stat(local_root).st_dev
@@ -2084,21 +2124,25 @@ def monitor(child, db_dir, local_root, status, timeout, result, placed_event=Non
     # 5-second cadence of the placed state must not delay the exit by 5 s.
     pause = exit_event.wait if exit_event is not None else time.sleep
     while child.poll() is None:
-        pids = [child.pid] + descendants(child.pid)
+        pids = placement_pids(child.pid)
         placed, misplaced = classify(open_files(pids), db_dir, db_dev, local_dev)
         if misplaced:
             result["outcome"] = "misplaced"
             result["misplaced"] = sorted(set(misplaced))
             status.update("misplaced", misplaced=sorted(set(misplaced)), placed=sorted(set(placed)))
             log("Codex opened state outside the managed placement: %s; stopping it" % ", ".join(sorted(set(misplaced))[:4]))
+            # Signal the command, not bwrap, as Drain and signal forwarding do (command_pids).
+            # SIGTERM to bwrap ended bwrap alone: Codex survived as an orphan of init still
+            # holding the misplaced store, since --die-with-parent did not end it on this kernel
+            # (Linux 7.0, 2026-11-12), and the runner reported it stopped.
             try:
-                child.terminate()
+                deliver(command_pids(child), signal.SIGTERM)
                 for _ in range(50):
                     if child.poll() is not None:
                         break
                     time.sleep(0.1)
                 if child.poll() is None:
-                    child.kill()
+                    kill_command(child)
             except OSError:
                 pass
             return
@@ -2321,11 +2365,11 @@ class Replicator(object):
 # ----------------------------------------------------------------- capture
 
 def backup_method():
+    # Connection.backup exists on every interpreter at SuCoder's 3.9 floor;
+    # the sqlite3 CLI fallback that 3.6 needed is gone.
     if hasattr(sqlite3.Connection, "backup"):
         return "connection"
-    if shutil.which("sqlite3"):
-        return "cli"
-    raise CaptureFailed("no backup method: this python has no sqlite3 backup API and no sqlite3 CLI is installed")
+    raise CaptureFailed("no backup method: this python's sqlite3 has no backup API")
 
 
 def overdue(deadline):
@@ -2360,33 +2404,6 @@ def backup_with_connection(source, target, deadline):
             src.close()
 
 
-def backup_with_cli(source, target, deadline):
-    """``sqlite3 <src> ".backup <dst>"`` for interpreters without the API (3.6)."""
-    cli = shutil.which("sqlite3")
-    attempt = 0
-    while True:
-        attempt += 1
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise CaptureFailed("backup of %s overdue" % os.path.basename(source))
-        try:
-            proc = subprocess.run([cli, "-bail", "-cmd", ".timeout 5000", source, ".backup " + target],
-                                  stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=remaining)
-        except subprocess.TimeoutExpired:
-            raise CaptureFailed("sqlite3 .backup of %s timed out" % os.path.basename(source))
-        error = proc.stderr.decode("utf-8", "replace").strip()
-        if proc.returncode == 0 and not error:
-            os.chmod(target, 0o600)
-            return
-        if attempt >= 3:
-            raise CaptureFailed("sqlite3 .backup of %s failed (%d): %s" % (os.path.basename(source), proc.returncode, error[:200]))
-        try:
-            os.unlink(target)
-        except OSError:
-            pass
-        time.sleep(0.2)
-
-
 def connect_copy(path, deadline, readonly=True):
     """A connection to a copied store whose statements abort once the capture is overdue."""
     if readonly:
@@ -2407,10 +2424,7 @@ def backup_store(name, source, target, method, deadline):
     if overdue(deadline):
         raise CaptureFailed("capture overdue before %s" % name)
     try:
-        if method == "connection":
-            backup_with_connection(source, tmp, deadline)
-        else:
-            backup_with_cli(source, tmp, deadline)
+        backup_with_connection(source, tmp, deadline)
         conn = connect_copy(tmp, deadline, readonly=False)
         try:
             mode = conn.execute("pragma journal_mode=delete").fetchone()[0]
@@ -3671,6 +3685,10 @@ def run(args):
                 binds.append(binding)
                 env["SUCODER_CODEX_REMOTE_ID"] = installation
                 env["SUCODER_CODEX_REMOTE_HELPER"] = args.remote_helper
+                # The helper runs under this runner's own interpreter (the
+                # target's python:), not whatever python3 the pane's PATH finds.
+                if os.path.isabs(sys.executable):
+                    env["SUCODER_CODEX_REMOTE_PYTHON"] = sys.executable
                 status.note(remote_control={"installation_id": installation, "helper": args.remote_helper})
             argv = bwrap_argv(binds, command)
             owner = {

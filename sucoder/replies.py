@@ -170,8 +170,12 @@ def probe_source() -> str:
     return Path(__file__).with_name("reply_probe.py").read_text(encoding="utf-8")
 
 
-def probe_command(spec: Dict[str, Any], source: Optional[str] = None) -> str:
+def probe_command(spec: Dict[str, Any], source: Optional[str] = None, python: str = "python3") -> str:
     """The shell that runs the probe on *spec* and prints its one JSON line.
+
+    *python* is the recipient target's ``python:`` setting, which
+    ``config._parse_remote_config`` limits to one word with no characters
+    the layers below would need to quote.
 
     The source travels zlib-compressed and base64-encoded inside the ``-c``
     argument and the spec as one base64 JSON word, so nothing in either
@@ -187,7 +191,7 @@ def probe_command(spec: Dict[str, Any], source: Optional[str] = None) -> str:
     """
     code = base64.b64encode(zlib.compress((source or probe_source()).encode("utf-8"), 9)).decode("ascii")
     args = base64.b64encode(json.dumps(spec, sort_keys=True).encode("utf-8")).decode("ascii")
-    run = (f'python3 -I -c "import base64,zlib;exec(zlib.decompress(base64.b64decode(\'{code}\')))" '
+    run = (f'{python} -I -c "import base64,zlib;exec(zlib.decompress(base64.b64decode(\'{code}\')))" '
            f"{args} 2>/dev/null")
     late = json.dumps({"schema": PROBE_SCHEMA, "status": "unrecognized", "why": PROBE_TIMEOUT}, sort_keys=True)
     return (f"if command -v timeout >/dev/null 2>&1; then timeout -s TERM {PROBE_REMOTE_LIMIT} {run}; "

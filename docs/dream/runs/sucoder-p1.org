@@ -1,0 +1,86 @@
+#+title: P1: first real SuCoder wiki candidate
+#+author: Sue
+#+date: 2026-11-09
+#+status: DIAGNOSTIC -- candidate ready; unintegrated
+#+setupfile: ../settings.org
+
+* Reproducible run identity
+:PROPERTIES:
+:CUSTOM_ID: identity
+:END:
+
+This is the first completed dream run against the actual configured SuCoder mirror, using six real git passages.
+It is a diagnostic under [[file:../workplan.org::#real-sucoder][workplan P1]], not evidence that the full runtime charter or reader-benefit gates have passed.
+No private transcripts, construction examples or evaluation rubrics were supplied to the model.
+
+- Source/base commit :: =1db3566b29e34312f1c36b61b8cc4eef65d2cf86=.
+- Integration ref :: =refs/heads/coder/dream-data-plane=, unchanged during the run.
+- Plan ID :: =b432f3958540c25459dc7cbe69f2ed65dcc0b04daa65bf539020ef0157f7c060=.
+- Native run ID :: =228cde57cac21c9adb2ef29c3e76cd7f069ba0f80f5e45a95b49a7e9fb57b99b=.
+- Candidate commit :: =635f040183f8ed0770fa1f96157e2b6cac3dc143=.
+- Candidate ref :: =refs/heads/dream/228cde57cac21c9adb2ef29c3e76cd7f069ba0f80f5e45a95b49a7e9fb57b99b=.
+- Harness/model :: Codex CLI 0.167.0; explicitly requested =gpt-6.1-sol=; no fallback.
+- Contract :: =inline-semantic-roles-v1=, the original append-only notes pipeline.
+- Local artifacts :: The configured log directory's =dream/<plan-id>/= contains the plan, snapshots, native assignments/results/traces, receipt and =candidate-review.org=.
+  The input catalog is under =dream-inputs/2026-11-09-sucoder-p1-1db3566b29e3.json=.
+
+The candidate adds an index, initial source registry, output-bound receipt and one topic under =.sucoder/wiki/topics/dream-<run-id>.org=.
+The worktree, index and active branch remain unchanged; the candidate has not been integrated or exported into the active worktree.
+Inference-free status reported =candidate_ready=, =candidate_status: available= and =integration.state: not_integrated=.
+
+Inspect the candidate directly from this repository:
+
+#+begin_example
+git show --stat 635f040183f8ed0770fa1f96157e2b6cac3dc143
+git show 635f040183f8ed0770fa1f96157e2b6cac3dc143:.sucoder/wiki/topics/dream-228cde57cac21c9adb2ef29c3e76cd7f069ba0f80f5e45a95b49a7e9fb57b99b.org
+#+end_example
+
+* Admitted source selection and allowances
+:PROPERTIES:
+:CUSTOM_ID: sources
+:END:
+
+The passages were resolved at the source commit above, using the existing corpus inventory as a location map.
+Their selected bytes still match that inventory; this does not promote the historical observations into claims about the current installed harnesses.
+
+- =sc-investigation= :: =docs/reply-transcripts-evidence.org:1-45=, 4,206 bytes.
+- =sc-adapters= :: =sucoder/reply_probe.py:114-214=, 4,297 bytes.
+- =sc-parser= :: =sucoder/reply_probe.py:235-322=, 3,519 bytes.
+- =sc-fixtures= :: =tests/test_reply_probe.py:199-303=, 5,138 bytes.
+- =sc-protocol= :: =docs/reply-from-transcript.org:95-154=, 3,366 bytes.
+- =sc-identity= :: =sucoder/replies.py:110-164=, 2,710 bytes.
+
+All 23,236 selected bytes were delivered to extractor and verifier assignments.
+The run completed thirteen role calls: six extraction, six verification and one consolidation.
+The elapsed run allowance was 900 seconds; approximately 410 seconds elapsed from the first started role to the retained run result.
+Native-reported usage totals 150,819 input tokens and 16,896 output tokens, with cached/reasoning breakdowns retained per call.
+Currency cost remains unknown; these totals are not a billing estimate.
+The resulting topic is 16,381 UTF-8 bytes.
+
+* Inspection findings and disposition
+:PROPERTIES:
+:CUSTOM_ID: findings
+:END:
+
+The candidate preserves useful distinctions between reported investigations, static implementation, encoded test expectations and observed test execution.
+It retains version/environment caveats and rejects a compaction summary as independent proof of a reply.
+Its exact source references and output bindings validate mechanically.
+
+It is not yet a satisfactory maintained explanation of the topic.
+The following observations directly motivate [[file:../workplan.org::#correction-synthesis][P2]] and [[file:../workplan.org::#fresh-reader][P3]]:
+
+- Weak selection :: Section 4 reduces the 88-line parser passage to its documented purpose, complete-line rule and final diagnostic string.
+  It omits the central matching window, duplicate-delivery treatment, fallback reply handling and status precedence that the passage explains.
+- Lost qualification :: The readable claims omit the exact =--session-id <uuid>= flag, although the admitted protocol passage supplies it.
+  A reader is told that a session UUID can be selected at launch without receiving the actual command qualification.
+- Limited synthesis :: Historical reports and current source descriptions sit beside each other, with repeated claim/qualification/verification scaffolding.
+  The consolidation role can group statements but cannot write the joined explanation or discard redundant formulations.
+- Weak navigation :: One hash-named page and a run-named index entry provide neither a stable semantic topic location nor a small useful orientation.
+- No learning-loop result :: There was no existing note to correct and no fresh-reader comparison.
+  Model verification established support for emitted claims, not completeness or usefulness of the resulting explanation.
+
+Keep this candidate available as a reproducible diagnostic; do not integrate it as a charter-complete companion or use its existence as evidence of improved memory.
+P1's outcome is a real-source run and inspected baseline, including its failures.
+The next implementation must permit substantive source-grounded authorship and edits, and check final-page omissions against the full admitted bundle.
+
+Prepared by Sue.

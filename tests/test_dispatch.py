@@ -2,6 +2,7 @@
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -69,6 +70,53 @@ def test_dry_run_has_no_mutation_or_scheduler(source, monkeypatch):
     assert "--no-requeue" in report["command"]
     assert "--signal=B:TERM@120" in report["command"]
     assert "--comment=sucoder-dispatch:" + report["dispatch_id"] in report["command"]
+
+
+def run_batch(directory, path="/usr/bin:/bin"):
+    return subprocess.run(["/bin/bash", str(directory / "batch.sh")], env={"LC_ALL": "C", "PATH": path},
+                          cwd="/tmp", text=True, capture_output=True, timeout=10)
+
+
+def test_batch_execs_the_controller_interpreter_by_absolute_path(source, monkeypatch):
+    scheduler(monkeypatch)
+    directory = Path(dispatch.submit(**source)["directory"])
+    (directory / "worker.py").write_text("import sys\nprint(sys.executable, sys.argv[1])\n")
+    completed = run_batch(directory)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.split() == [str(Path(sys.executable).resolve()), str(directory / "manifest.json")]
+    assert "exec python3" not in (directory / "batch.sh").read_text()
+
+
+@pytest.mark.parametrize("script, named", [
+    ("#!/bin/sh\necho 3.6.8\nexit 1\n", "is 3.6.8"),
+    (None, "is unavailable"),
+])
+def test_batch_refuses_a_missing_or_old_interpreter_before_the_worker(source, monkeypatch, tmp_path, script, named):
+    old = tmp_path / "old-python"
+    if script is not None:
+        old.write_text(script)
+        old.chmod(0o755)
+    monkeypatch.setattr(dispatch, "_receiving_python", lambda: old)
+    scheduler(monkeypatch)
+    directory = Path(dispatch.submit(**source)["directory"])
+    marker = tmp_path / "worker-ran"
+    (directory / "worker.py").write_text("open(%r, 'w').close()\n" % str(marker))
+    completed = run_batch(directory)
+    assert completed.returncode == dispatch.EXIT_INTERPRETER
+    assert named in completed.stderr and "3.9 or newer is required" in completed.stderr
+    assert str(old) in completed.stderr
+    assert not marker.exists()
+
+
+def test_receiving_python_accepts_system_bin_and_refuses_node_local(monkeypatch, tmp_path):
+    monkeypatch.setattr(sys, "executable", "/usr/bin/python3")
+    assert str(dispatch._receiving_python().parent) in dispatch.SYSTEM_BIN
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "python3"))
+    with pytest.raises(ValueError, match="node-local"):
+        dispatch._receiving_python()
+    monkeypatch.setattr(sys, "executable", "")
+    with pytest.raises(ValueError, match="absolute path"):
+        dispatch._receiving_python()
 
 
 @pytest.mark.parametrize("value", [0, -1, True, float("inf"), float("nan"), 301])

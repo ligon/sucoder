@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import warnings
@@ -121,6 +122,9 @@ class RemoteConfig:
     system_prompt_extra: Optional[Path] = None      # Target-specific prompt snippet
     cert_file: Optional[Path] = None                # Local SSH cert (private key) presented to the gateway
     host: Optional[str] = None                      # Direct SSH host or ~/.ssh/config alias
+    python: str = "python3"                         # Interpreter for SuCoder's staged helpers
+                                                    # on this target: a command name or an
+                                                    # absolute path, at least PYTHON_FLOOR
 
     def __post_init__(self) -> None:
         if self.host:
@@ -230,12 +234,29 @@ class ProviderConfig:
 
 
 @dataclass
+class HarnessAuthConfig:
+    """How one harness authenticates (subscription login vs pay-as-you-go key).
+
+    The API key itself stays in the human user's ``pass`` store; only the
+    ``credentials:`` entry names live here.
+    """
+
+    mode: Literal["subscription", "apikey"] = "subscription"
+    apikey_credential: Optional[str] = None
+    subscription_credential: Optional[str] = None
+    base_url: Optional[str] = None
+
+
+@dataclass
 class AgentLauncher:
     """Configuration for launching the agent process."""
 
     command: List[str] = field(default_factory=lambda: ["claude"])
     model: Optional[str] = None
     codex_remote_control: Optional[Literal["off", "terminal", "server"]] = None
+    codex_auth: Optional[Literal["chatgpt", "apikey"]] = None
+    codex_auth_credential: Optional[str] = None
+    auth: Dict[str, "HarnessAuthConfig"] = field(default_factory=dict)
     env: Dict[str, str] = field(default_factory=dict)
     nvm: Optional[NvmConfig] = None
     accepts_inline_prompt: Optional[bool] = None
@@ -402,6 +423,35 @@ DEFAULT_LAUNCH_MODES: Dict[AgentType, Literal["subprocess", "exec"]] = {
 }
 
 
+@dataclass(frozen=True)
+class DreamSettings:
+    """Exploratory job defaults (dream implementation ledger, discovery).
+
+    Harness/model may inherit the existing launcher selection at execution.
+    These limits cover discovery and the subsequent reviewed wiki candidate.
+    ``memory_branch`` names the wiki-only branch that reviewed dreams update
+    in place (docs/dream/essay-alignment.org, S1); None keeps the legacy
+    candidate branches that wait for a human merge. ``inject`` adds that
+    branch's index, cut to ``inject_bytes``, to every launch's context (S2).
+    ``checkout`` writes a read-only copy of the branch's wiki into the local
+    mirror at launch and after publication, so its project links resolve (S5).
+    """
+
+    harness: Optional[str] = None
+    model: Optional[str] = None
+    max_total_seconds: int = 900
+    max_total_calls: int = 40
+    reserve_seconds: int = 30
+    reserve_calls: int = 3
+    max_discovery_calls: int = 8
+    max_discovery_bytes: int = 131072
+    memory_branch: Optional[str] = "sucoder/memory"
+    inject: bool = True
+    inject_bytes: int = 2048
+    checkout: bool = True
+    session_quiet_minutes: int = 30
+
+
 @dataclass
 class MirrorSettings:
     """Configuration for a single mirror repository."""
@@ -420,6 +470,7 @@ class MirrorSettings:
     mcp_servers: Dict[str, McpServerConfig] = field(default_factory=dict)
     remote: Optional[RemoteConfig] = None
     sync_policy: Literal["canonical", "external"] = "canonical"
+    dream: Optional[DreamSettings] = None
 
     def __post_init__(self) -> None:
         if self.sync_policy not in ("canonical", "external"):
@@ -502,6 +553,25 @@ class SessionRelayConfig:
 
 
 @dataclass
+class AttentionConfig:
+    """Agent status records and their watcher (docs/attention.org).
+
+    ``hooks`` installs status hooks into SuCoder-launched Claude sessions
+    (``claude --settings``); each writes ``~/.sucoder/attention/<key>.rec``
+    where the agent runs.  ``notify_command`` is run by ``sucoder attention
+    --watch`` when a session starts waiting on the human, with the session
+    described in ``SUCODER_ATTENTION_*`` environment variables, for the
+    request *kinds* in ``notify_kinds`` once it has waited
+    ``notify_after_minutes``.
+    """
+
+    hooks: bool = False
+    notify_command: List[str] = field(default_factory=list)
+    notify_kinds: List[str] = field(default_factory=lambda: ["permission", "question", "idle", "other"])
+    notify_after_minutes: float = 0.0
+
+
+@dataclass
 class Config:
     human_user: str
     agent_user: str = "coder"
@@ -521,6 +591,8 @@ class Config:
     audit: AuditConfig = field(default_factory=AuditConfig)
     tool_preflight: ToolPreflightConfig = field(default_factory=ToolPreflightConfig)
     session_relay: Optional[SessionRelayConfig] = None
+    attention: AttentionConfig = field(default_factory=AttentionConfig)
+    dream: DreamSettings = field(default_factory=DreamSettings)
 
     def resolve_target(self, target_name: Optional[str]) -> Optional[RemoteConfig]:
         """Look up a named target, returning ``None`` for local execution."""
@@ -570,7 +642,7 @@ _VALID_SLURM_KEYS = frozenset({
 _TARGET_LEVEL_KEYS = frozenset({
     "gateway", "transfer_host", "mirror_root", "ssh_options",
     "control_persist", "keepalive_interval", "keepalive_count_max",
-    "system_prompt_extra", "cert_file", "x11",
+    "system_prompt_extra", "cert_file", "x11", "python",
 })
 
 
@@ -764,9 +836,11 @@ def _build_config(data: Dict[str, Any], *, path: Path) -> Config:
     audit = _parse_audit_config(data.get("audit"), path=path)
     tool_preflight = _parse_tool_preflight(data.get("tool_preflight"), path=path)
     session_relay = _parse_session_relay(data.get("session_relay"))
+    attention = _parse_attention(data.get("attention"))
+    dream_settings = _parse_dream(data.get("dream"))
     mirrors = _parse_mirrors(
         data.get("mirrors"), global_skills=global_skills,
-        global_mcp_servers=global_mcp_servers, path=path,
+        global_mcp_servers=global_mcp_servers, path=path, global_dream=dream_settings,
     )
 
     mirror_root = _expand_path(mirror_root_raw)
@@ -790,7 +864,104 @@ def _build_config(data: Dict[str, Any], *, path: Path) -> Config:
         audit=audit,
         tool_preflight=tool_preflight,
         session_relay=session_relay,
+        attention=attention,
+        dream=dream_settings,
     )
+
+
+def _parse_dream(
+    raw: Any,
+    defaults: Optional[DreamSettings] = None,
+    *,
+    label: str = "dream",
+) -> DreamSettings:
+    """Merge validated project overrides into the global dream defaults."""
+    defaults = defaults or DreamSettings()
+    if raw is None:
+        return defaults
+    if not isinstance(raw, dict):
+        raise ConfigError(f"`{label}` must be a mapping.")
+    fields = DreamSettings.__dataclass_fields__
+    unknown = set(raw) - set(fields)
+    if unknown:
+        raise ConfigError(
+            f"Unknown key(s) under `{label}`: "
+            + ", ".join(sorted(str(key) for key in unknown))
+            + "."
+        )
+    values = {key: getattr(defaults, key) for key in fields}
+    values.update(raw)
+    if values["harness"] is not None and values["harness"] not in ("codex", "claude"):
+        raise ConfigError(f"`{label}.harness` must be codex, claude, or null.")
+    model = values["model"]
+    if model is not None:
+        if not isinstance(model, str) or not model.strip():
+            raise ConfigError(f"`{label}.model` must be a non-empty string or null.")
+        values["model"] = model.strip()
+    memory = values["memory_branch"]
+    if memory is not None:
+        if not isinstance(memory, str):
+            raise ConfigError(f"`{label}.memory_branch` must be a branch name, or empty/null to disable.")
+        memory = memory.strip()
+        if memory and (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,127}", memory) or
+                       memory.startswith("dream/") or ".." in memory or "//" in memory or
+                       memory.endswith(("/", ".", ".lock"))):
+            raise ConfigError(f"`{label}.memory_branch` must be a simple branch name outside dream/.")
+        values["memory_branch"] = memory or None
+    for flag in ("inject", "checkout"):
+        if type(values[flag]) is not bool:
+            raise ConfigError(f"`{label}.{flag}` must be true or false.")
+    if type(values["inject_bytes"]) is not int or not 1 <= values["inject_bytes"] <= 16384:
+        raise ConfigError(f"`{label}.inject_bytes` must be an integer from 1 to 16384.")
+    for key in fields:
+        if key in ("harness", "model", "memory_branch", "inject", "checkout"):
+            continue
+        minimum = 0 if key.startswith("reserve_") else 1
+        if type(values[key]) is not int or values[key] < minimum:
+            kind = "nonnegative" if minimum == 0 else "positive"
+            raise ConfigError(f"`{label}.{key}` must be a {kind} integer.")
+    if values["reserve_seconds"] >= values["max_total_seconds"]:
+        raise ConfigError(f"`{label}.reserve_seconds` must be less than max_total_seconds.")
+    if values["reserve_calls"] > values["max_total_calls"]:
+        raise ConfigError(f"`{label}.reserve_calls` must not exceed max_total_calls.")
+    return DreamSettings(**values)
+
+
+def _parse_attention(raw: Any) -> AttentionConfig:
+    """``attention: {hooks: true, notify_command: [...]}``."""
+    if raw is None:
+        return AttentionConfig()
+    if not isinstance(raw, dict):
+        raise ConfigError("`attention` must be a mapping (keys: hooks, notify_command).")
+    valid = ("hooks", "notify_after_minutes", "notify_command", "notify_kinds")
+    unknown = sorted(set(raw) - set(valid))
+    if unknown:
+        raise ConfigError(
+            f"Unknown key(s) under `attention`: {', '.join(unknown)} (valid keys: {', '.join(valid)})."
+        )
+    hooks = raw.get("hooks", False)
+    if not isinstance(hooks, bool):
+        raise ConfigError("`attention.hooks` must be true or false.")
+    command = raw.get("notify_command")
+    if command is None:
+        command = []
+    elif isinstance(command, str):
+        command = shlex.split(command)
+    if not isinstance(command, list) or not all(isinstance(part, str) and part for part in command):
+        raise ConfigError("`attention.notify_command` must be a command string or a list of strings.")
+    all_kinds = ["permission", "question", "idle", "other"]
+    kinds = raw.get("notify_kinds", all_kinds)
+    if isinstance(kinds, str):
+        kinds = [kinds]
+    if not isinstance(kinds, list) or not kinds or any(k not in all_kinds for k in kinds):
+        raise ConfigError(
+            "`attention.notify_kinds` must be a non-empty list drawn from: " + ", ".join(all_kinds) + "."
+        )
+    after = raw.get("notify_after_minutes", 0)
+    if isinstance(after, bool) or not isinstance(after, (int, float)) or after < 0:
+        raise ConfigError("`attention.notify_after_minutes` must be a number of minutes, 0 or more.")
+    return AttentionConfig(hooks=hooks, notify_command=list(command), notify_kinds=list(kinds),
+                           notify_after_minutes=float(after))
 
 
 def _parse_session_relay(raw: Any) -> Optional[SessionRelayConfig]:
@@ -1051,6 +1222,7 @@ def _parse_mirrors(
     global_skills: List[Path],
     global_mcp_servers: Dict[str, McpServerConfig],
     path: Path,
+    global_dream: Optional[DreamSettings] = None,
 ) -> Dict[str, MirrorSettings]:
     if raw is None:
         return {}  # No mirrors configured; zero-config detection will add them.
@@ -1114,6 +1286,7 @@ def _parse_mirrors(
             mcp_servers=mcp_servers,
             remote=remote,
             sync_policy=value.get("sync_policy", "canonical"),
+            dream=_parse_dream(value.get("dream"), global_dream, label=f"mirrors.{name}.dream"),
         )
 
     _reject_token_collisions(list(mirrors))
@@ -1152,6 +1325,33 @@ def _parse_agent_launcher(raw: Any) -> AgentLauncher:
     if codex_remote_control is not None and codex_remote_control not in ("off", "terminal", "server"):
         raise ConfigError(
             '`agent_launcher.codex_remote_control` must be "off", "terminal", or "server".'
+        )
+
+    codex_auth = raw.get("codex_auth")
+    if codex_auth is not None and codex_auth not in ("chatgpt", "apikey"):
+        raise ConfigError(
+            '`agent_launcher.codex_auth` must be "chatgpt" or "apikey".'
+        )
+
+    codex_auth_credential = raw.get("codex_auth_credential")
+    if codex_auth_credential is not None and (
+        not isinstance(codex_auth_credential, str) or not codex_auth_credential.strip()
+    ):
+        raise ConfigError(
+            "`agent_launcher.codex_auth_credential` must be a non-empty string when provided."
+        )
+
+    auth = _parse_auth(raw.get("auth"))
+    # Deprecated flat codex keys map onto the generic per-harness structure.
+    if codex_auth is not None:
+        codex_cfg = auth.get("codex") or HarnessAuthConfig()
+        auth["codex"] = HarnessAuthConfig(
+            mode="apikey" if codex_auth == "apikey" else "subscription",
+            apikey_credential=(
+                codex_auth_credential.strip() if codex_auth_credential is not None
+                else codex_cfg.apikey_credential
+            ),
+            subscription_credential=codex_cfg.subscription_credential,
         )
 
     nvm_settings = _parse_nvm_settings(raw.get("nvm"))
@@ -1200,6 +1400,9 @@ def _parse_agent_launcher(raw: Any) -> AgentLauncher:
         command=command,
         model=model.strip() if model is not None else None,
         codex_remote_control=codex_remote_control,
+        codex_auth=codex_auth,
+        codex_auth_credential=codex_auth_credential.strip() if codex_auth_credential is not None else None,
+        auth=auth,
         env=dict(env_raw),
         nvm=nvm_settings,
         accepts_inline_prompt=accepts_inline_prompt,
@@ -1210,6 +1413,56 @@ def _parse_agent_launcher(raw: Any) -> AgentLauncher:
         default_flags=default_flags_raw,
         flags=flag_templates,
     )
+
+
+def _parse_auth(raw: Any) -> Dict[str, HarnessAuthConfig]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ConfigError("`agent_launcher.auth` must be a mapping when provided.")
+    result: Dict[str, HarnessAuthConfig] = {}
+    for harness, entry in raw.items():
+        if not isinstance(harness, str) or not harness.strip():
+            raise ConfigError("`agent_launcher.auth` keys must be non-empty harness names.")
+        if not isinstance(entry, dict):
+            raise ConfigError(
+                f"`agent_launcher.auth.{harness}` must be a mapping when provided."
+            )
+        mode = entry.get("mode", "subscription")
+        if mode not in ("subscription", "apikey"):
+            raise ConfigError(
+                f'`agent_launcher.auth.{harness}.mode` must be "subscription" or "apikey".'
+            )
+        apikey_credential = entry.get("apikey_credential")
+        if apikey_credential is not None and (
+            not isinstance(apikey_credential, str) or not apikey_credential.strip()
+        ):
+            raise ConfigError(
+                f"`agent_launcher.auth.{harness}.apikey_credential` must be a "
+                "non-empty string when provided."
+            )
+        subscription_credential = entry.get("subscription_credential")
+        if subscription_credential is not None and (
+            not isinstance(subscription_credential, str) or not subscription_credential.strip()
+        ):
+            raise ConfigError(
+                f"`agent_launcher.auth.{harness}.subscription_credential` must be a "
+                "non-empty string when provided."
+            )
+        base_url = entry.get("base_url")
+        if base_url is not None and (not isinstance(base_url, str) or not base_url.strip()):
+            raise ConfigError(
+                f"`agent_launcher.auth.{harness}.base_url` must be a non-empty string when provided."
+            )
+        result[harness.strip()] = HarnessAuthConfig(
+            mode=mode,
+            apikey_credential=apikey_credential.strip() if apikey_credential is not None else None,
+            subscription_credential=(
+                subscription_credential.strip() if subscription_credential is not None else None
+            ),
+            base_url=base_url.strip() if base_url is not None else None,
+        )
+    return result
 
 
 def _parse_nvm_settings(raw: Any) -> Optional[NvmConfig]:
@@ -1360,6 +1613,14 @@ def _parse_remote_config(raw: Any) -> Optional[RemoteConfig]:
     # falls back to the interactive prompt (and `tunnel doctor` flags it).
     cert_file = _expand_path(cert_file_raw)
 
+    # Runs on the target, so it is never expanded here. One shell word:
+    # every call site passes it through tmux, ssh and bash -c unquoted.
+    python = raw.get("python", "python3")
+    if (not isinstance(python, str) or not re.fullmatch(r"[A-Za-z0-9_.+/-]+", python)
+            or python.startswith("-") or ("/" in python and not python.startswith("/"))):
+        raise ConfigError("`remote.python` must be a command name or an absolute path "
+                          "without spaces or shell characters (e.g. /usr/bin/python3.12).")
+
     return RemoteConfig(
         host=host,
         gateway=gateway,
@@ -1374,6 +1635,7 @@ def _parse_remote_config(raw: Any) -> Optional[RemoteConfig]:
         slurm=slurm,
         system_prompt_extra=prompt_extra,
         cert_file=cert_file,
+        python=python,
     )
 
 
