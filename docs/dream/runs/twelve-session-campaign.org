@@ -1,7 +1,7 @@
 #+TITLE: Twelve-session SuCoder dream campaign
 #+AUTHOR: Sue
 #+DATE: 2026-11-25
-#+STATUS: ACTIVE -- 5 OF 12 SESSIONS AUDITED
+#+STATUS: ACTIVE -- 6 OF 12 SESSIONS AUDITED
 
 * Scope and method
 :PROPERTIES:
@@ -33,7 +33,7 @@ The [[file:../../dream-twelve-ledger.org][grounding ledger]] identifies reused m
 |       3 | experience | published     | accepted with advisory |          18 |
 |       4 | experience | unchanged     | accepted no-op        |          14 |
 |       5 | project    | published     | rejected / withdrawn  |           9 |
-|       6 | project    | running       | pending               |             |
+|       6 | project    | incomplete    | safe rejection        |          16 |
 |       7 | experience | planned       | pending               |             |
 |       8 | experience | planned       | pending               |             |
 |       9 | project    | planned       | pending               |             |
@@ -197,9 +197,32 @@ Seven sessions still require terminal outcomes and source-quality audits.
 :CUSTOM_ID: session-6
 :END:
 
-Job =628ab3b8b9434a75a0ea4dd9f3be03f7= is live at this checkpoint.
-Its pinned v9 runtime is =2063680=, its project is =3a0a2cb= and its starting accepted memory is =b9539d6e=.
-The original fresh allowance and open project purpose apply; terminal status and independent acceptance remain pending.
+Job =628ab3b8b9434a75a0ea4dd9f3be03f7= uses pinned v9 runtime =2063680=, project =3a0a2cb= and accepted memory =b9539d6e=.
+Thirteen discovery calls select four Git excerpts about Codex hook validation; author, one mechanical repair and reviewer then complete, for sixteen returned native invocations.
+The proposal preserves the four pending live-event checks and the human's hook-trust rule, and adds static hook-skip and event-set descriptions.
+
+Independent review returns =revise=.
+Three peripheral details are not verified by the admitted windows: a call-site line number, PR 89 framing and a =codex_overrides= line number that conflicts with the old handoff reference.
+Although its prose findings are advisory, the topic's support check is =uncertain=; that judgment and the revise verdict block publication.
+[[https://github.com/ligon/sucoder/issues/108][Issue 108]] records this correctly blocked case alongside session 5's false pass, without inferring completeness of every other judgment.
+
+Attempt 1 ends with a recorded failure and the matching worker exits; read-only status calls the job =incomplete=.
+All exploration, authorship, repair and independent-review phases ran, making this a substantive terminal tested attempt under the campaign definition.
+It produces no candidate/result commit and leaves memory exactly =b9539d6e=.
+Pinned read-only status forbids native/build/authentication access and preserves all 231 job files and memory.
+No new page or task is published; no new correction export is required.
+The private failure marker, final review and process-identity check distinguish this stopped attempt from a live job reporting incomplete status.
+
+The mechanical repair consolidates two references to =pending-checks=, choosing one evidence label and retaining all four handles.
+The initial labels differ (=observation= and =summary_claim=), so unconditional machine merging would not be justified.
+The repair returns both candidate pages with exactly identical text bytes: 10,444 UTF-8 bytes are re-emitted for a metadata change.
+[[https://github.com/ligon/sucoder/issues/114][Issue 114]] records a bounded reference-only repair operation that would preserve page bytes while retaining the model's label decision and full review.
+The unavailable discovery read of the named memory page also repeats issue 112; the explorer asks whether the page was omitted from a commit despite its separate prior-memory delivery.
+
+Author, repair and reviewer durations are 466.47, 138.02 and 221.91 native seconds.
+Each uses one StructuredOutput attempt; the longest reviewer reason is 475 characters and validates against both v8 and v9 schemas.
+All sixteen usage records are complete: 248,580 input tokens and 62,142 output tokens; no savings estimate or native-format guarantee is inferred.
+Six further sessions remain: two project and four experience runs.
 
 * Reproducibility and continuation
 :PROPERTIES:
@@ -208,7 +231,7 @@ The original fresh allowance and open project purpose apply; terminal status and
 
 The durable private record is =/home/coder/.sucoder/logs/dream-twelve/2026-11-25/campaign.json=.
 It records all twelve intended sessions, exact job/runtime paths, process identities, per-session outcomes, source-quality decisions and problem dispositions.
-=launch.py NUMBER= submits one planned fresh session from its verified pinned release and refuses automatic restarts.
+=launch.py NUMBER= serializes fresh launches with a private lock, submits one planned session from its verified pinned release and refuses automatic restarts.
 =poll.py NUMBER= verifies the actual worker process and reports immutable job artifacts without restarting it.
 =audit-status.py NUMBER --label LABEL= reconstructs status with native/build/authentication access forbidden and checks unchanged job files and memory.
 An observed timeout or status saying incomplete does not establish that a live worker stopped.
