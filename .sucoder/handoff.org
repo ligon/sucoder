@@ -107,8 +107,9 @@ The author takes 487.57 seconds and two StructuredOutput attempts after a 15,719
 The reviewer takes 60.36 seconds and one StructuredOutput attempt.
 Pinned read-only status preserves all 210 job files and memory; the managed copy matches the retained commit and the exporter finds zero tasks/drafts.
 Sessions 1-9 are audited; never substitute an old job or replenish an elapsed wallet.
-No campaign native worker is live. Sessions 10-12 remain planned: one project and two experience sessions.
-Launch session 10 with the existing private =launch.py 10= after this checkpoint is committed and main is clean.
+Session 10 is live: project job =dfa4c9bfec314654ac0c604aedbf5b54=, PID 1211604, on v9 runtime =2063680=, project =949106c= and accepted memory =25d25622=.
+Use =poll.py 10= to verify its command line and recorded start ticks; retain its original 32-call/1,800-second allowance and 600-second/three-call reserve.
+Sessions 11-12 remain planned, both experience mode.
 All three still require terminal, independently audited outcomes.
 The private campaign record supersedes this point-in-time state.
 

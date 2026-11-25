@@ -38,7 +38,7 @@ The [[file:../../dream-twelve-ledger.org][grounding ledger]] identifies reused m
 |       7 | experience | published     | accepted with advisory |          15 |
 |       8 | experience | published     | rejected / withdrawn  |          17 |
 |       9 | project    | published     | accepted with advisory |          14 |
-|      10 | project    | planned       | pending               |             |
+|      10 | project    | running       | pending               |             |
 |      11 | experience | planned       | pending               |             |
 |      12 | experience | planned       | pending               |             |
 
@@ -311,6 +311,15 @@ All fourteen usage records are complete: 282,641 input tokens and 63,128 output 
 Pinned read-only status preserves all 210 job files and memory with native/build/authentication access forbidden.
 The managed topic copy matches the retained commit and remains read-only; the exporter finds zero correction tasks/drafts without native/GitHub access or mutations.
 Three sessions remain: one project and two experience runs.
+
+* Session 10: second project follow-up
+:PROPERTIES:
+:CUSTOM_ID: session-10
+:END:
+
+Job =dfa4c9bfec314654ac0c604aedbf5b54= is live at this checkpoint.
+It uses v9 runtime =2063680=, project =949106c= and accepted memory =25d25622=, with the normal project purpose and original fresh allowance.
+Terminal status and independent acceptance remain pending.
 
 * Reproducibility and continuation
 :PROPERTIES:
