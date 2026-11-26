@@ -258,7 +258,7 @@ New job kinds get new contract versions; saved jobs and receipts replay under th
 
 The organizer track and the reader track run in parallel after the shared slice.
 
-0. Shared :: Fix the zero-tail clip (issue 119); origin classes; redaction before clipping; the session-note schema, private store and coverage record; owner-only copy modes with digest checks.
+0. Shared :: Fix the zero-tail clip (issue 119; done as =claude-view-v2=, which new exploratory jobs freeze); origin classes; redaction before clipping; the session-note schema, private store and coverage record; owner-only copy modes with digest checks.
 1. Organizer track :: The organizer contract with carried support, corrections and retractions, per-area jobs, the mechanical index, and hub linting.
    It first runs on the existing wiki plus README and =docs/=, before any session notes exist.
 2. Reader track :: Claude (with subagents and spilled tool results) and Codex adapters, reader jobs, per-note review, the shared backlog budget, and the two-session pilot.

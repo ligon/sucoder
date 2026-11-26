@@ -2824,6 +2824,9 @@ See [[file:docs/dream/essay-alignment.org][the essay-alignment charter]].
 A =claude-view= unit admits a rendered window of a Claude session instead of raw JSONL: its locator names the transcript =path=, =thread_id= and a complete-line raw range =byte_start=/=byte_end=.
 Rendering keeps user and assistant text, clips tool calls and results to a head and tail with an omission marker, drops thinking and metadata records, labels sidechains and compaction summaries, and redacts high-confidence credential patterns.
 Each block starts with =[@OFFSET]=, the raw byte offset of its record; quotes are checked against the rendered text, and the plan records both the raw and the rendered digests, so a changed window is refused before any model call.
+Rendering is versioned so saved plans replay byte for byte.
+A unit without =render_contract= uses =claude-view-v1=; ="render_contract": "claude-view-v2"= selects version 2, which clips a tool call to its head instead of also keeping its whole input (issue 119).
+Exploratory jobs prepared since version 2 freeze it in their job header and render their session windows with it; earlier jobs keep version 1.
 Receipts record the raw range but not the private path; rendered windows require wiki mode.
 For configured local-tier projects, experience discovery also recognizes Claude project directories for earlier =<local_disk>/job<ID>/mirrors/<token>= clones, even after those working directories disappear.
 It scans directory names only within Claude's project-directory catalog, then requires matching native session id, working directory and branch metadata before admitting a historical session.

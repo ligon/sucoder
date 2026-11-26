@@ -172,3 +172,110 @@ def test_inventory_lists_only_this_mirrors_sessions_and_marks_live_and_recent(wo
     assert [(s["thread_id"], s["state"]) for s in found] == [("11111111-2222-4333-8444-555555555555", "live"), (SID, "finished")]
     assert dream_experience.sessions(source, home=home)[0]["state"] == "recent"
     assert all(s["workspace"] == str(source.path) for s in found)
+
+
+# ----------------------------------------------------------------------
+# Issue 119: zero-tail clipping in a replay-compatible rendering contract
+# ----------------------------------------------------------------------
+
+V1, V2 = dream_view.CONTRACT_V1, dream_view.CONTRACT
+
+
+def omitted(clipped):
+    return int(clipped.split("[... ", 1)[1].split(" bytes omitted", 1)[0])
+
+
+def test_version_1_keeps_its_zero_tail_defect_so_frozen_windows_replay():
+    clipped = dream_view._clip("x" * 1000, 300, 0)
+    assert clipped == "x" * 300 + "\n[... -300 bytes omitted ...]\n" + "x" * 1000
+    assert dream_view._clip("x" * 1000, 300, 0, V1) == clipped
+
+
+@pytest.mark.parametrize("text, head, kept", [
+    ("x" * 1000, 300, "x" * 300),
+    ("\u00e9" * 500, 301, "\u00e9" * 150),     # A two-byte character split at the head is dropped whole.
+    ("\u20ac" * 400, 300, "\u20ac" * 100),     # Three-byte characters on an exact boundary.
+    ("ab\U0001F600" * 100, 7, "ab\U0001F600a"),
+    ("ab\U0001F600" * 100, 5, "ab"),               # A four-byte character split at the head.
+])
+def test_version_2_omits_the_suffix_for_a_zero_tail(text, head, kept):
+    clipped = dream_view._clip(text, head, 0, V2)
+    data = text.encode()
+    assert clipped.startswith(kept + "\n[... ") and clipped.endswith(" bytes omitted ...]\n")
+    assert clipped == kept + "\n[... " + str(len(data) - len(kept.encode())) + " bytes omitted ...]\n"
+    assert 0 < omitted(clipped) == len(data) - len(kept.encode())
+    assert text not in clipped
+
+
+@pytest.mark.parametrize("text", ["line of output\n" * 200, "\u00e9\u20ac\U0001F600 mixed " * 120, "short"])
+def test_head_and_tail_clips_are_identical_in_both_versions(text):
+    for head, tail in ((240, 120), (960, 480)):
+        assert dream_view._clip(text, head, tail, V2) == dream_view._clip(text, head, tail, V1)
+        if len(text.encode()) > head + tail + 64:
+            assert omitted(dream_view._clip(text, head, tail, V2)) >= 0
+    assert dream_view._clip("short", 300, 0, V2) == "short"
+
+
+def long_call(tmp_path):
+    command = "printf '" + "y" * 2000 + "'"
+    return session(tmp_path / "long" / (SID + ".jsonl"),
+        record("user", "Print the long line."),
+        record("assistant", [dict(type="tool_use", id="t1", name="Bash", input=dict(command=command))])), command
+
+
+def test_version_2_rendering_drops_a_tool_calls_unselected_input(tmp_path):
+    path, command = long_call(tmp_path)
+    raw = path.read_bytes()
+    old, old_map = dream_view.render(raw, SID, 0)
+    new, new_map = dream_view.render(raw, SID, 0, V2)
+    assert (old, old_map) == dream_view.render(raw, SID, 0, V1)
+    assert "-300 bytes omitted" in old and command in old
+    assert command not in new and omitted(new) > 0 and len(new) < len(old)
+    assert old_map["contract"] == V1 and new_map["contract"] == V2
+    assert [b["role"] for b in new_map["blocks"]] == [b["role"] for b in old_map["blocks"]]
+    with pytest.raises(dream.DreamError, match="Unknown session rendering contract"):
+        dream_view.render(raw, SID, 0, "claude-view-v9")
+
+
+def test_plan_requests_name_only_a_later_rendering_contract(workspace):
+    path, _ = long_call(workspace[0].parent)
+    repo, config_path, config, request = workspace
+    planned(workspace)
+    raw = path.read_bytes()
+    view = dict(unit_id="session", kind="claude-view", shareable=True,
+                locator=dict(path=str(path), thread_id=SID, byte_start=0, byte_end=len(raw)))
+    git_unit = dict(unit_id="evidence-a", kind="git", shareable=True,
+                    locator=dict(repository="sample", commit="HEAD", path="evidence-a.org"))
+    catalog = config_path.parent / "contract-sources.json"
+    for bad in (dict(view, render_contract=V1), dict(view, render_contract="claude-view-v9"),
+                dict(git_unit, render_contract=V2)):
+        catalog.write_text(json.dumps(dict(request, integration_ref="refs/heads/main", units=[bad])))
+        with pytest.raises(dream.DreamError, match="render_contract"):
+            dream.create_plan(config, "sample", catalog, "refs/heads/main")
+
+
+def test_a_version_2_window_is_planned_snapshotted_and_rebuilt_under_its_contract(workspace):
+    path, command = long_call(workspace[0].parent)
+    repo, config_path, config, request = workspace
+    planned(workspace)
+    raw = path.read_bytes()
+    units = [dict(unit_id=name, kind="claude-view", shareable=True,
+                  locator=dict(path=str(path), thread_id=SID, byte_start=0, byte_end=len(raw)), **extra)
+             for name, extra in (("old", {}), ("new", dict(render_contract=V2)))]
+    catalog = config_path.parent / "v2-sources.json"
+    catalog.write_text(json.dumps(dict(request, integration_ref="refs/heads/main", units=units)))
+    plan = dream.create_plan(config, "sample", catalog, "refs/heads/main")
+    frozen = {u["unit_id"]: u for u in plan["units"]}
+    assert frozen["old"]["render"]["contract"] == V1 and frozen["new"]["render"]["contract"] == V2
+    assert frozen["new"]["bytes"] < frozen["old"]["bytes"]
+    # Version 1 requests rebuild without the key, exactly as they were made.
+    assert dream_view.request_unit(frozen["old"]) == units[0]
+    assert dream_view.request_unit(frozen["new"]) == units[1]
+    for unit in frozen.values():
+        dream_view.shape(unit, dream.Limits())
+        text, mapping = dream_view.snapshot(unit, time.monotonic() + 30)
+        assert mapping["contract"] == unit["render"]["contract"] and dream.digest(text) == unit["sha256"]
+    assert command.encode() not in dream_view.snapshot(frozen["new"], time.monotonic() + 30)[0]
+    swapped = dict(frozen["new"], render=dict(frozen["new"]["render"], contract=V1))
+    with pytest.raises(dream.DreamError, match="rendering differs"):
+        dream_view.snapshot(swapped, time.monotonic() + 30)

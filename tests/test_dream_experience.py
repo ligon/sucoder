@@ -8,6 +8,7 @@ import time
 import pytest
 
 from sucoder import dream, dream_discover, dream_experience, dream_explore as explore, dream_view, dream_leads, dream_navigation
+from sucoder import dream_native
 from tests.test_dream import git, workspace  # noqa: F401
 from tests.test_dream_explore import ExploringTransport, clock, options  # noqa: F401
 from tests.test_dream_explore_cli import exploratory_runtime, invoke  # noqa: F401
@@ -241,3 +242,60 @@ def test_a_job_header_frozen_before_these_settings_still_loads(workspace, clock,
     assert explore.prepare(config, job)["job_id"] == header["job_id"]
     with explore._job(job) as (_, _, frozen):
         assert "mode" not in frozen and "memory_branch" not in frozen["settings"]
+
+
+LONG = "printf '" + "y" * 2000 + "'"
+
+
+def write_long_call_session(home, repo):
+    """The finished session of write_session, with a tool call long enough to be clipped (issue 119)."""
+    path = dream_experience.project_dir(home, repo) / (SID + ".jsonl")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(line("user", "Did my reply 1733 arrive?") + line("assistant", [dict(type="text", text=TRUTH)]) +
+                     line("assistant", [dict(type="tool_use", id="t", name="Bash", input=dict(command=LONG))]))
+    os.utime(path, (time.time() - 3600, time.time() - 3600))
+    return path
+
+
+@pytest.mark.parametrize("contract", [dream_view.CONTRACT_V1, dream_view.CONTRACT])
+def test_new_jobs_freeze_claude_view_v2_and_earlier_jobs_replay_as_v1(workspace, clock, no_live, monkeypatch, contract):
+    planned(workspace)
+    repo, _, config, _ = workspace
+    write_long_call_session(Path(os.environ["HOME"]), repo)
+    with monkeypatch.context() as patch:
+        # A version-1 job is one prepared before claude-view-v2 existed: its header has no key.
+        patch.setattr(dream_view, "CONTRACT", contract)
+        native = ExperienceTransport()
+        result = explore.start(config, cwd=repo, transport=native, overrides=dict(harness="codex", model="explicit-model"))
+    assert result["state"] == "published"
+    job = json.loads((Path(result["job_path"]) / "job.json").read_bytes())
+    assert job.get("render_contract") == (None if contract == dream_view.CONTRACT_V1 else contract)
+    read = [t for t in native.calls if t["role"] == "explorer"][2]["input"]["history"][1]["observation"]
+    assert read["render_surface"].startswith(contract + ";") and TRUTH in read["text"]
+    assert (LONG in read["text"]) == (contract == dream_view.CONTRACT_V1)
+    plan = json.loads(Path(result["plan_path"]).read_bytes())
+    view = next(u for u in plan["units"] if u["kind"] == dream_view.KIND)
+    assert view["render"]["contract"] == contract
+    assert ("render_contract" in dream_view.request_unit(view)) == (contract != dream_view.CONTRACT_V1)
+    clock.advance(901)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Cached exploratory replay attempted native startup")
+    monkeypatch.setattr(dream_native, "Transport", forbidden)
+    assert explore.start(config, Path(result["job_path"])) == result
+    assert explore.status(config, Path(result["job_path"]))["state"] == "published"
+
+
+@pytest.mark.parametrize("bad", ["claude-view-v1", "claude-view-v9"])
+def test_a_frozen_header_may_name_only_a_later_rendering_contract(workspace, clock, no_live, bad):
+    repo, _, config, _ = workspace
+    result = explore.start(config, cwd=repo, overrides=options(mode="project"), transport=ExploringTransport(no_selection=True))
+    job = Path(result["job_path"])
+    header = json.loads((job / "job.json").read_bytes())
+    assert header["render_contract"] == dream_view.CONTRACT
+    header["render_contract"] = bad
+    for name, value in (("job.json", header), ("identity.json", dict(sha256=dream.digest(dream.canonical(header))))):
+        (job / name).chmod(0o600)
+        (job / name).write_bytes(dream.canonical(value) + b"\n")
+    with pytest.raises(dream.DreamError, match="rendering contract"):
+        explore.prepare(config, job)

@@ -91,7 +91,8 @@ class Inventory:
     size, so an inspection replay reproduces its lookups after a resumed
     session grows.
     """
-    def __init__(self, source, commit, sessions=None, navigation=None, *, limits=None, processing=None, session_coverage=None):
+    def __init__(self, source, commit, sessions=None, navigation=None, *, limits=None, processing=None, session_coverage=None,
+                 render_contract=None):
         self.source, self.commit = source, commit
         self.navigation = NAVIGATION if navigation is None else navigation
         raw = source.git("ls-tree", "-r", "-l", "-z", commit, limit=MAX_INVENTORY_BYTES)
@@ -123,7 +124,7 @@ class Inventory:
         if len(canonical(self.manifest)) > MAX_INVENTORY_BYTES:
             raise DreamError("Project inventory exceeds its bounded metadata allowance", 3)
         if self.navigation >= 3:
-            self.navigator = dream_navigation.Navigation(self, limits, processing)
+            self.navigator = dream_navigation.Navigation(self, limits, processing, render_contract)
 
     def notes(self):
         return [name for name in self.files if any(fnmatch.fnmatchcase(name, p) for p in NOTES)][:64]
@@ -199,6 +200,8 @@ class Inventory:
                 if self.navigation >= 3:
                     units[-1]["processing"] = self.navigator.processing
                     units[-1]["expected_raw_sha256"] = self.navigator.last_window["raw_sha256"]
+                    if self.navigator.render_contract != dream_view.CONTRACT_V1:
+                        units[-1]["render_contract"] = self.navigator.render_contract
                 continue
             raw = self.raw(path)
             lines = raw.split(b"\n")
