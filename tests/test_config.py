@@ -723,6 +723,24 @@ def test_detect_agent_autodetect_single(monkeypatch: pytest.MonkeyPatch, tmp_pat
         assert detect_agent_command() == ["gemini"]
 
 
+def test_detect_agent_prefers_agy_over_gemini(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """With both installed, the superseded Gemini CLI causes no prompt."""
+    monkeypatch.delenv("SUCODER_AGENT", raising=False)
+    monkeypatch.setattr("sucoder.config.AGENT_PREFERENCE_FILE", tmp_path / "nonexistent")
+    with mock.patch(
+        "sucoder.config.shutil.which",
+        side_effect=lambda x: f"/usr/bin/{x}" if x in ("agy", "gemini") else None,
+    ), mock.patch("builtins.input", side_effect=AssertionError("prompted")):
+        assert detect_agent_command() == ["agy"]
+
+
+def test_explicit_gemini_survives_agy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Explicit selection of the Gemini CLI still works with agy installed."""
+    monkeypatch.setenv("SUCODER_AGENT", "gemini")
+    with mock.patch("sucoder.config.shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
+        assert detect_agent_command() == ["gemini"]
+
+
 def test_detect_goose_uses_interactive_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.delenv("SUCODER_AGENT", raising=False)
     monkeypatch.setattr("sucoder.config.AGENT_PREFERENCE_FILE", tmp_path / "nonexistent")

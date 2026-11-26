@@ -2874,7 +2874,7 @@ def agents_run(
         None,
         "--harness",
         "-H",
-        help="Agent harness to use (e.g. claude, codex, gemini, aider, opencode, goose, kimi).",
+        help="Agent harness to use (e.g. claude, codex, agy, gemini, aider, opencode, goose, kimi).",
     ),
     model: Optional[str] = typer.Option(
         None,
@@ -3028,7 +3028,7 @@ def collaborate(
         None,
         "--harness",
         "-H",
-        help="Agent harness to use (e.g. claude, codex, gemini, aider, opencode, goose, kimi).",
+        help="Agent harness to use (e.g. claude, codex, agy, gemini, aider, opencode, goose, kimi).",
     ),
     model: Optional[str] = typer.Option(
         None,

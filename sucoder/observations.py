@@ -273,7 +273,7 @@ def account_for(remote):
 
 def pane_class(text):
     status = parse_pane_status(text)
-    if status.command in {"claude", "codex", "gemini", "aider", "opencode", "goose", "kimi"}:
+    if status.command in {"claude", "codex", "agy", "gemini", "aider", "opencode", "goose", "kimi"}:
         return "recognized_agent_command"
     if status.agent_mode == "codex-remote-control":
         return "service_marker"

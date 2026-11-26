@@ -122,7 +122,7 @@ def test_list_harnesses_shows_builtins_and_configured_default(tmp_path, monkeypa
     )
 
     assert result.exit_code == 0, (result.output, result.exception)
-    for harness in ("aider", "claude", "codex", "gemini", "goose", "kimi", "opencode"):
+    for harness in ("agy", "aider", "claude", "codex", "gemini", "goose", "kimi", "opencode"):
         assert harness in result.stdout
     for capability in (
         "Shell", "Files", "Skills", "MCP", "Subagents", "Providers", "Approval",

@@ -25,6 +25,7 @@ class AgentType(Enum):
     CLAUDE = auto()
     CODEX = auto()
     GEMINI = auto()
+    AGY = auto()  # Antigravity CLI, Google's successor to the Gemini CLI
     AIDER = auto()
     OPENCODE = auto()
     GOOSE = auto()
@@ -337,6 +338,17 @@ AGENT_PROFILES: Dict[AgentType, AgentFlagTemplates] = {
         mcp_config=None,
         model="--model {model}",
     ),
+    # Antigravity CLI.  Shares ``--prompt-interactive`` and ``--model`` with
+    # the Gemini CLI it succeeds, but rejects ``--yolo`` and
+    # ``--include-directories`` as undefined flags.
+    AgentType.AGY: AgentFlagTemplates(
+        yolo="--dangerously-skip-permissions",
+        writable_dir="--add-dir {path}",
+        system_prompt="--prompt-interactive",
+        skills=None,
+        mcp_config=None,  # agy reads its own mcp_config.json
+        model="--model {model}",
+    ),
     AgentType.AIDER: AgentFlagTemplates(
         yolo="--yes-always",
         writable_dir=None,
@@ -391,6 +403,9 @@ HARNESS_CAPABILITIES: Dict[AgentType, HarnessCapabilities] = {
     AgentType.GEMINI: HarnessCapabilities(
         "yes", "yes", "yes", "yes", "yes", "Gemini", "yolo",
     ),
+    AgentType.AGY: HarnessCapabilities(
+        "yes", "yes", "yes", "yes", "yes", "Google", "bypass",
+    ),
     AgentType.AIDER: HarnessCapabilities(
         "suggest", "edit", "no", "no", "no", "multi", "explicit",
     ),
@@ -415,6 +430,7 @@ DEFAULT_LAUNCH_MODES: Dict[AgentType, Literal["subprocess", "exec"]] = {
     AgentType.CLAUDE: "subprocess",   # Works fine with subprocess
     AgentType.CODEX: "subprocess",    # Works fine with subprocess
     AgentType.GEMINI: "exec",         # Needs TTY passthrough
+    AgentType.AGY: "exec",            # Needs TTY passthrough
     AgentType.AIDER: "subprocess",
     AgentType.OPENCODE: "subprocess",
     AgentType.GOOSE: "subprocess",
@@ -685,7 +701,12 @@ def _detect_git_toplevel() -> Path:
     return Path(result.stdout.strip())
 
 
-KNOWN_AGENTS = ["claude", "codex", "gemini", "aider", "opencode", "goose", "kimi"]
+KNOWN_AGENTS = ["claude", "codex", "agy", "gemini", "aider", "opencode", "goose", "kimi"]
+
+# Superseded harnesses that auto-detection skips when their successor is also
+# installed.  Explicit selection (--harness, $SUCODER_AGENT, the preference
+# file, configuration) is unaffected.
+SUPERSEDED_AGENTS = {"gemini": "agy"}
 AGENT_PREFERENCE_FILE = Path("~/.sucoder/agent")
 
 
@@ -721,6 +742,7 @@ def detect_agent_command() -> List[str]:
 
     # 3. Auto-detect from PATH
     found = [name for name in KNOWN_AGENTS if shutil.which(name)]
+    found = [name for name in found if SUPERSEDED_AGENTS.get(name) not in found]
 
     if len(found) == 1:
         return _default_agent_command(found[0])
