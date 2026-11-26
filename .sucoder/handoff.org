@@ -1,8 +1,15 @@
-#+TITLE: Twelve-session dream campaign: twelve audited
-#+DATE: 2026-11-25
-#+STATUS: COMPLETE -- TWELVE TERMINAL TEST OUTCOMES AUDITED
+#+TITLE: Reading and organizing the dream wiki
+#+DATE: 2026-11-26
+#+STATUS: READY -- continue the shared slice of the accepted reading-and-organizing design
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Current: reading and organizing the dream wiki, 2026-11-26
+
+Start with the [[file:handoffs/2026-11-26-read-and-organize.org][dated handoff]]; it and this section supersede operational statements in the sections below, which are now history.
+The human found the wiki poorly organized and the transcripts barely read; the accepted [[file:../docs/dream/read-and-organize.org][reading-and-organizing design]] answers both.
+Its shared slice is under way: =claude-view-v2= is merged, and =claude-view-v3= (PR 129) and the verified read-only copy (PR 128) await review.
+The next task is the session-note schema, private store and coverage record.
 
 * Completed twelve-session goal, 2026-11-25
 
