@@ -1,0 +1,287 @@
+#+TITLE: Reading every session and organizing the wiki
+#+AUTHOR: Sue
+#+DATE: 2026-11-26
+#+STATUS: ACCEPTED 2026-11-26 after red-team review; dispositions 1, 2 and 4 settled by the human, the rest by experiment -- not yet implemented
+#+OPTIONS: toc:2 num:nil
+
+* Why
+:PROPERTIES:
+:CUSTOM_ID: why
+:END:
+
+On 2026-11-26 the human found the SuCoder wiki poorly organized and observed that the dreams do not seem to use the transcripts.
+Both observations hold.
+The measurements below were taken that day on this host, against memory =70851cc= and project =729ad8d=.
+
+- The wiki is a set of episodes :: It has five topic pages, about 33 KB in all, each about one incident or validation.
+  No page describes a feature area, and the index is a list of paragraphs.
+  The index is 3,285 bytes against the 2,048-byte injected cap (=dream.inject_bytes=), so every session receives it truncated.
+- Sessions are barely read :: The table gives the share of each finished Claude session that any published generation admitted, from the receipts' raw ranges.
+  Across the twelve receipts on the memory branch, 35 of the 48 admitted units are committed files; fifteen of those are the same module, =sucoder/reply_probe.py=, five are handoffs and two are ledgers.
+  On 2026-11-25 nine generations were published and four later withdrawn; of the five whose receipts remain, four admitted no session.
+- Codex sessions are never read :: This mirror has 18 Codex rollout replicas, 167.6 MB in all, the largest 85 MB and the newest from 2026-11-25, under =/home/coder/mirrors/.sucoder-state/codex/=.
+  =dream_transcript= parses Codex JSONL (=sucoder/dream_transcript.py:17=), but experience dreams admit only the Claude rendering (=sucoder/dream_view.py:24=) and discover only Claude project directories.
+- Discovery costs more than reading :: One measured job spent 252,386 input tokens across fourteen discovery calls to select two windows totaling 14,557 rendered bytes ([[file:authoring-plan.org][authoring plan]]).
+- Selection is self-reinforcing :: Seven of the twelve campaign sessions revisited the same reply-policy topic ([[file:runs/twelve-session-campaign.org][campaign report]]), whose module dominates the admitted files.
+- Sessions can expire :: Claude Code deletes transcripts after 30 days unless =cleanupPeriodDays= says otherwise.
+  The oldest surviving session of this mirror, =b3206283=, began on 2026-11-01; nothing shows that a session has expired yet.
+  The agent account's setting was raised to 365 on 2026-11-26.
+
+#+NAME: tab:session-coverage
+| Session    | Raw     | Read by dreams | Windows | Rendered | Conversation only |
+|------------+---------+----------------+---------+----------+-------------------|
+| =ee16689c= | 20.6 MB |          0.75% |       7 | 1,736 KB | 232 KB            |
+| =b3206283= | 7.0 MB  |          0.91% |       4 | 520 KB   | 60 KB             |
+| =fbcd2c8d= | 1.9 MB  |          2.45% |       2 | 74 KB    | 11 KB             |
+
+"Rendered" is the existing =claude-view-v1= rendering of the whole top-level session, with thinking and metadata dropped and tool results clipped to a head and tail.
+Tool blocks are 86% of it, but that share is inflated: the zero-tail clip keeps every tool call's input whole (=data[-0:]=, =sucoder/dream_view.py:126=, issue 119).
+"Conversation only" counts the user and assistant text alone.
+Neither column includes Claude subagent transcripts (2.2 MB raw for =ee16689c=) or tool output that Claude spills to separate files.
+
+** Causes
+:PROPERTIES:
+:CUSTOM_ID: causes
+:END:
+
+- The evidence cap was never derived :: The 64 KiB value first appears as the chunk size for planning from explicit git passages (=f452f0b=, 2026-11-08).
+  Exploration's separate constant =MAX_SELECTED_BYTES= (=60f95c8=, 2026-11-10) uses the same value as "six units and 64 KiB" ([[file:exploration.org][exploration]]), and the charter kept "the same six-unit, 64 KiB allowance" for sessions ([[file:essay-alignment.org::#experience][S4]]).
+  None of the dream design documents states a reason for the size.
+  64 KiB is about 16K tokens, a small fraction of current context windows.
+- Nothing may restructure :: The charter deferred "An organizer pass that merges and prunes across pages, and page retirement" ([[file:essay-alignment.org::#deferred][section 5]]), and none exists.
+- The purpose asks for verification :: The default experience purpose is to verify memory and notes against sessions and to "Prefer correcting and pruning to adding" (=sucoder/dream_explore.py:28=).
+- Whole-session reading was ruled out twice :: S4 replaced the per-transcript analyzer, noting it "can return later if coverage of whole sessions proves to matter".
+  The [[file:transcript-navigation.org][navigation amendment]] kept "selective evidence" and left "Per-transcript analyzer fan-out, mandatory reading of every transcript, Codex discovery and a new financial estimator" outside its scope.
+  The coverage table is the evidence S4 asked for.
+- The campaign model :: The twelve-session campaign used =claude-sonnet-4-6=.
+
+** What the essay and cookbook do
+:PROPERTIES:
+:CUSTOM_ID: essay
+:END:
+
+The [[https://www.anthropic.com/research/components-of-agent-memory][essay]] says "Claude builds its wikis incrementally", using later rounds of dreaming "to add to, edit, or prune it", and one pass "added three new pages, including an index".
+It does not say that organization emerged from model capability during dreaming.
+Its better-organized store is in-session note-taking (Fable 5 "wrote nine files in two folders, plus a single top-level file"), and its wiki experiments used Opus 5.
+It describes Sonnet 4.6's memory as "a scattering of files, each listing several untested guesses".
+It also reports a failure: a wiki that "grew to be larger than the raw files" and "effectively abstracted nothing".
+
+The [[https://platform.claude.com/cookbook/managed-agents-cma-dreaming-with-a-dynamic-workflow][dreaming cookbook]] separates two roles.
+Its analyzers read each transcript whole, verify and enrich memory, and "Link rather than merge".
+Its organizer "Merges duplicates, fixes links and completes =_index.md=, keeping every fact", writes one line per page under domain headings, and retires merged pages with a "MOVED TO" line.
+The domain grouping comes from that prompt, not from emergence.
+
+* Red-team review
+:PROPERTIES:
+:CUSTOM_ID: red-team
+:END:
+
+On 2026-11-26 the human asked for a red team on the first draft of this proposal and its evaluation.
+Three independent read-only reviewers examined it against the code: design feasibility, evaluation validity, and security, privacy and cost.
+Sue re-checked the findings that changed the design: Codex replicas on this host, the publication check (=sucoder/dream_run.py:557=), the section-citation rule (=sucoder/dream_wiki.py:272=), the attention hooks default (=sucoder/config.py:585=), the human-attribution check (=sucoder/dream_editor.py:204-209=), the redaction patterns, the copy's permissions, and the repository's public visibility.
+The findings below changed the proposal; each names its disposition.
+
+- One poisoned session could reach every later session :: Tool output, including comments on this public repository, would flow into session notes, then hubs, then the injected index.
+  Quotable planted text counts as support, and the reviewer shares the author's inputs and model family.
+  Disposition: the index is built mechanically; hubs are linted and reviewed against their cited notes ([[#organize][Organize]], [[#safety][Safety]]).
+- The organizer cannot move cited content under today's rules :: Every new or revised section must cite a unit admitted in the same job (=sucoder/dream_wiki.py:272=), and moved sections are new where they land.
+  Disposition: an organizer contract that carries receipt-backed support to a new path and anchor.
+- Parallel publication breaks :: Publication is a strict check against the frozen base with no merge (=sucoder/dream_run.py:557=), so concurrent readers and an organizer would discard each other's reviewed work.
+  Disposition: the organizer is the only writer of the memory branch; readers write a private store ([[#tracks][Two tracks]]).
+- Wrong facts would become permanent :: "Keep every fact" plus a citation-survival check lets a wrong fact move but never leave, and a single-session reader cannot see a later reversal.
+  Four of the nine 2026-11-25 publications passed native review and were then withdrawn by the operator.
+  Disposition: an explicit superseded or retracted disposition, dated decisions, and an independent reviewer from a different model family, with human review kept minimal ([[#decisions][disposition 4]]).
+- Human attribution is too permissive :: =_human_source= accepts any git unit and any main-thread user block of a Claude session (=sucoder/dream_editor.py:204-209=).
+  Those blocks include system reminders, skill text and task notifications; Codex delivers AGENTS.md and environment context as user messages.
+  Disposition: adapters classify origin, and only human blocks support "the human decided".
+- Redaction has holes :: The label patterns begin with =\b=, which fails after an underscore (=GEMINI_API_KEY==), several common token families are absent, and clipping runs before redaction, so a cut can expose a token's tail.
+  Disposition: redact whole records before any clip or chunk, widen the patterns, and scan every page and receipt before publishing.
+- Session pages on the memory branch are a privacy risk :: The repository is public, no pre-push guard is installed by default, =sucoder dream checkout= tells the human to fetch the branch, and withdrawal keeps history.
+  Disposition: session notes stay in a private store; only digests and coverage reach the branch.
+- The evaluation answer key leaks :: Questions drafted in an agent session sit in that session's transcript, which readers would read.
+  Disposition: the drafted set is a development set; the held-out set lives outside the agent account ([[#evaluate][Evaluate]]).
+- The evaluation's acceptance rule was wrong :: =wiki-only= diagnoses coverage rather than deployment ([[file:pilot.org][P6 protocol]]), and README-derived hubs win it by copying the README.
+  Disposition: =wiki-search= is primary, with a no-model baseline the organizer must beat.
+- The existing reader cannot see new pages :: It opens only the index, =topics/= and =archive/= (=sucoder/dream_reader.py:97-103=), with a 12,288-byte topic allowance.
+  Disposition: a new reader contract version before any comparison.
+- Whole sessions do not fit today's plans :: Default limits allow 19 chunks per plan (=sucoder/dream.py:76-81=, =:397-400=), and =ee16689c= needs 27; no chunked wiki-mode reader exists.
+  Disposition: a reader job shape of its own ([[#read][Read]]).
+- The tool-result lookup does not exist :: =dream_context= returns only ranges of the admitted rendered text (=sucoder/dream_context.py:139-140=), where tool results are already clipped.
+  Disposition: admit the full rendering and deliver conversation windows first, with lookups into the admitted text.
+- Coverage bookkeeping does not scale :: =consumed= reads only the last 256 receipts by name, counts only =claude-view=, and loses withdrawn and no-op runs (=sucoder/dream_experience.py:41-55=).
+  Disposition: a coverage record in the private store, keyed by harness, source identity and subagent path.
+- Launch records cannot replace discovery :: Attention hooks are off by default (=sucoder/config.py:585=) and installed only for Claude and Codex, records are overwritten per event, and Codex thread ids are unknown at launch.
+  Hook records do copy =transcript_path= from Codex payloads too (=sucoder/attention.py:286=).
+  Disposition: discovery stays per harness; an append-only launch log is an optional aid.
+- Cost was underestimated about fivefold :: Including Codex, subagents and repeated delivery to review and repair, the reviewers estimate 1-2.5M input tokens for a conversation-first backlog and 10-20M for full renderings (uncertain); the campaign's known telemetry totals are 3,076,553 input and 583,737 output tokens over twelve jobs.
+  Disposition: a shared backlog budget, and a two-session pilot that calibrates the estimate before the backlog runs.
+- The read-only copy is group-writable :: Files are mode 0460 and directories 2770, the =coder= group includes =ligon=, and the copy's freshness check trusts its marker file.
+  Disposition: owner-only modes and a content-digest check in =materialize=.
+
+* Proposal
+:PROPERTIES:
+:CUSTOM_ID: proposal
+:END:
+
+Read every finished session whole, from every harness SuCoder launches, into private session notes.
+Organize the wiki around SuCoder's feature areas in a separate track that alone writes the memory branch.
+Evaluate both against the current wiki and a no-model baseline.
+
+** Two tracks and one writer
+:PROPERTIES:
+:CUSTOM_ID: tracks
+:END:
+
+The human decided on 2026-11-26 that the organizer runs in parallel with the adapter and reader work.
+That is safe only if the two never publish to the same ref.
+
+- Readers :: Write session notes, coverage and their own receipts to a private store in the agent account, mode 0600, never to the memory branch; the organizer consolidates them ([[#decisions][disposition 2]]).
+  A per-session lease keeps two readers off one session.
+- Organizer :: The only writer of the memory branch.
+  It snapshots the session-note store at planning time, so readers' progress never invalidates its compare-and-swap.
+- Shared prerequisite :: The session-note schema is frozen before either track builds on it.
+
+** Session sources across harnesses
+:PROPERTIES:
+:CUSTOM_ID: adapters
+:END:
+
+An adapter per harness supplies discovery of a mirror's sessions, a finished test, a deterministic rendering with a map from rendered offsets to raw records, an origin class for every block, and an identity check.
+Citations keep pointing at raw byte ranges with digests.
+
+- Claude :: The =claude-view= rendering exists; the zero-tail clip (issue 119) is fixed first.
+  Discovery adds =subagents/*.jsonl= and spilled tool-result files, keyed separately: subagent records carry the parent's =sessionId=.
+- Codex :: Discovery reuses =reply_probe.managed_codex_threads=, which already separates the user's thread from forks, over the replicated rollouts (=sucoder/codex_state_runner.py:32=), plus local =~/.codex/sessions/=.
+  Only =session_meta= at byte 0 carries the thread id, so identity is established per file, not per window.
+  Replicas can end mid-line, restores copy replicas into new runs, and forks copy their parent; the adapter de-duplicates by content digest.
+  The injected prelude (=developer_instructions=), AGENTS.md and environment-context messages are stripped or classed as harness origin.
+- Antigravity (=agy=) :: =~/.gemini/antigravity-cli/= holds =history.jsonl=, a SQLite store with model-written summaries, and an OAuth token file beside them.
+  Summaries are not evidence.
+  Any export is written mode 0600 inside the private job directory, never includes the token, and is cited by its digest.
+- Others :: Gemini, aider, opencode, goose and kimi have no sessions on this host; each gets an adapter when it does.
+- Origin classes :: =human= (typed by the human), =agent=, =tool=, =harness= (system reminders, skill text, notifications, AGENTS.md, environment context, the injected PROJECT MEMORY block) and =dispatch= (prompts written by another agent, identified from launch records where they exist).
+  Only =human= blocks support a recorded human decision; a git unit needs an explicit human marker.
+- Memory reading itself :: Tool results that read the memory branch or its copy, and the injected PROJECT MEMORY block, are not citable, so memory cannot cite itself.
+- Out of reach from here :: Sessions under the human's account and on other hosts.
+  Existing local-tier session discovery (=dream_sessions=) and checked memory transfer (=dream_local=) are the starting point; bringing the human's own sessions in needs a new explicit disposition ([[#decisions][open questions]]).
+
+** Read
+:PROPERTIES:
+:CUSTOM_ID: read
+:END:
+
+- One reader per session :: A reader job may admit one whole session's rendering and read it in turn-aligned chunks with notes carried forward between chunks ([[#decisions][disposition 1]]).
+  It may instead select windows within the session, as explorers do now; the pilot compares the two.
+  Whole-session reading is a new job shape: today's plan limits refuse the largest session, and notes mode refuses rendered views (=sucoder/dream_wiki.py:418=).
+- View :: Conversation windows are delivered first; tool results are fetched by lookup within the admitted rendering.
+  A claimed outcome needs the tool result behind it, and notes label each claim as "agent reported" or "output shows".
+  A two-session pilot compares this view with the full rendering before the backlog runs.
+- Output :: One session note per session in the private store: dated facts, decisions with their origin class and date, commands and flags with outcomes, open questions, and proposed corrections to wiki pages, each cited.
+  Readers never edit wiki pages.
+- Review :: An independent reviewer checks each note against its session and against the wiki pages its corrections name.
+- Coverage :: The private coverage record marks ranges read per harness, source identity and subagent path.
+  A session that grows after reading has only its new tail read; ranges read by earlier explorer windows count as covered.
+  This session (=dcdc7362=) is excluded mechanically from reading, because it holds the development question set.
+- Budget :: The 64 KiB selection cap does not apply to readers.
+  A per-call cap on delivered bytes, the existing elapsed and call wallets, and one shared budget for the whole backlog bound the work.
+  The preflight estimates calls times input plus output, with multipliers measured in the pilot; it is an estimate, not a ceiling, because the adapters cannot enforce token limits.
+  The backlog runs oldest first.
+
+** Organize
+:PROPERTIES:
+:CUSTOM_ID: organize
+:END:
+
+- Input :: The current wiki, a snapshot of reviewed session notes, and the README and =docs/= headings as admitted sources.
+- Incremental :: One feature area per job, which fits today's proposal and review limits (16 pages of 64 KiB, a 128 KiB review diff).
+- Output :: A hub page per area that explains it and links its pages and notes; merged pages left as forwarding sections that keep their anchors; repaired links.
+- Carried support :: A section moved to a hub keeps its receipt-backed citations, re-bound to the new path and anchor and checked mechanically against the full receipt history.
+  That check proves citations survive; it cannot prove that a qualification survives, so fact preservation remains a semantic review.
+- Editor :: The organizer is the wiki's editor ([[#decisions][disposition 4]]).
+  It applies a reader's proposed correction when the cited evidence supports it, under independent review.
+  A contradicted claim is marked superseded or retracted with its evidence and leaves the hubs and index; it is not silently kept.
+- Index :: Built mechanically: one line per hub, from hub titles and areas, within =dream.inject_bytes=.
+  Session notes and topic pages are reachable from hubs, not listed in the index.
+- Existing roles :: Experience-mode authors stop renaming or merging pages; only the organizer restructures.
+- Initial areas :: Mirrors and sync; harnesses and launch; remote and confined targets; dispatch; Codex state; attention; auth; skills; dream memory.
+  README's Key Features list commands, not areas, so this grouping is Sue's; the human confirms it.
+
+** Safety and privacy
+:PROPERTIES:
+:CUSTOM_ID: safety
+:END:
+
+- Untrusted input :: Session text, including tool output and comments on this public repository, is data.
+  Hubs are linted for imperatives, URLs, commands and claims of human decisions, and their reviewer checks each hub claim against the cited notes.
+- Placement :: Whether PROJECT MEMORY should leave the system prompt is an open question ([[#decisions][open questions]]).
+- Redaction :: Applied to whole records before any clipping or chunking, with the word-boundary fix and the missing token families; a fail-closed scan runs over every note, page and receipt before it is written or published.
+- Privacy :: Session notes never reach the memory branch; receipts on the branch keep digests rather than quotations from sessions.
+  =sucoder dream checkout= adds a push exclusion for the memory branch, and a purge procedure is documented.
+- Copy integrity :: The read-only copy uses owner-only modes, and =materialize= verifies content digests rather than trusting its marker.
+- Review :: Human review is expensive and kept minimal ([[#decisions][disposition 4]]).
+  Each organizer generation therefore gets a second independent reviewer from a different model family; SuCoder already runs dream roles on both Claude and Codex.
+  How much human review remains, and where it is spent, is settled by experiment.
+
+** Evaluate
+:PROPERTIES:
+:CUSTOM_ID: evaluate
+:END:
+
+- Question sets :: The reviewer-drafted set of 20 questions is a development set, stored outside the repository at mode 0600 and already exposed in session =dcdc7362=.
+  The held-out set is re-verified and frozen outside the agent account; the repository records only its SHA-256 and a canary string, and every note, hub, index and receipt is searched for both before grading.
+- Primary condition :: =wiki-search=, the deployment condition, against =source-only= and against the current wiki, on one frozen plan that admits README, AGENTS.md, handoffs and the relevant code.
+  =wiki-only= is a coverage diagnostic, and README-answerable questions are reported separately.
+- Arms :: The current wiki; the current wiki plus session notes indexed mechanically; a no-model index that groups existing pages under README headings; README only; and the organized wiki.
+  If the organized wiki does not beat the no-model index, the organizer is not justified.
+- Reader :: A new reader contract version that reaches hubs and session notes, with its byte allowances reported per answer; all conditions run through =dream_reader_eval=.
+- Grading :: A rubric and critical errors frozen with the questions: fabricated human decisions, unverified outcomes stated as fact, withdrawn claims repeated, later corrections contradicted.
+  Blind grading by two graders from different model families, with each citation checked against what it delivered; human grading, being expensive, is limited to a small sample that measures the graders' agreement with a human.
+  A hedge earns credit only where the reference answer says the record does not establish the point.
+- Repetition :: At least three organizer runs per model and three reader attempts per question, paired by question, with thresholds fixed in advance.
+- Models :: Sonnet 4.6 against an Opus model on the same frozen brief and identical wallets, with reader and grader models distinct from both.
+- Preservation :: A frozen list of old-wiki claims with their qualifiers, dates and actors, checked blind in the new wiki.
+- Limits :: The evaluation cannot show whether launched agents benefit from the injected index, whether quality drifts over repeated passes, or whether the results generalize beyond SuCoder.
+
+* What stays
+:PROPERTIES:
+:CUSTOM_ID: stays
+:END:
+
+The [[file:essay-alignment.org::#invariants][charter invariants]] hold: one writer per page, independent review and mechanical validation before publication, native roles without tools under Landlock, durable budgets, no invented human decisions, and no dream edits to project files.
+The memory branch is still never pushed.
+New job kinds get new contract versions; saved jobs and receipts replay under their original contracts.
+
+* Slices
+:PROPERTIES:
+:CUSTOM_ID: slices
+:END:
+
+The organizer track and the reader track run in parallel after the shared slice.
+
+0. Shared :: Fix the zero-tail clip (issue 119); origin classes; redaction before clipping; the session-note schema, private store and coverage record; owner-only copy modes with digest checks.
+1. Organizer track :: The organizer contract with carried support, corrections and retractions, per-area jobs, the mechanical index, and hub linting.
+   It first runs on the existing wiki plus README and =docs/=, before any session notes exist.
+2. Reader track :: Claude (with subagents and spilled tool results) and Codex adapters, reader jobs, per-note review, the shared backlog budget, and the two-session pilot.
+3. Evaluation track :: The reader contract version, the no-model baseline, the held-out set outside the agent account, the grading protocol, and the comparisons.
+4. Later :: Antigravity and other harnesses; sessions under the human's account and on other hosts.
+
+Each slice adds targeted tests, including fake-native end-to-end tests for new job kinds, updates =README.org= and =config.example.yaml= for any setting, and shows no new test failures.
+
+* Dispositions and open questions
+:PROPERTIES:
+:CUSTOM_ID: decisions
+:END:
+
+On 2026-11-26 the human settled three questions and left the others to experiment ("Other questions may require experimentation to answer").
+
+1. Whole sessions :: Settled: "Readers *may* read whole sessions."
+   Whole-session reading is permitted, not required, so the navigation amendment's "selective evidence" remains available to reader jobs; the pilot compares the two.
+2. Private session notes :: Settled: "Yes, a private store for notes, to be consolidated by the organizer."
+3. Mechanical index :: Open, by experiment: the evaluation compares a generated hubs-only index with a written one, for answer quality, injection resistance and size.
+4. Editor :: Settled: "The organizer *should* play this role of editor, with minimal (expensive) human review."
+   The organizer applies corrections and marks claims superseded or retracted; a cross-family reviewer stands in for most human review.
+5. PROJECT MEMORY placement :: Open, by experiment: a planted-instruction test across the placements each harness allows.
+6. Held-out questions :: Open: the development set serves the experiments; who writes and holds the held-out set outside the agent account is needed only before the final comparison.
+7. Budget :: Open, by experiment: the two-session pilot measures the multipliers behind the shared backlog budget.
+8. Sessions beyond this account and host :: Open, deferred to slice 4; bringing in the human's own sessions needs a new disposition, and reading them in place is preferred to moving them into the agent account.
+9. Feature areas :: Open, by experiment: the organizer's first run on the existing wiki proposes areas, and the no-model baseline groups pages under README headings for comparison.
