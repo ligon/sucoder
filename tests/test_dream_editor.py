@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from sucoder import dream, dream_handles, dream_editor, dream_editorial as org, dream_reader, dream_reader_agent, dream_run, dream_wiki
+from sucoder import dream, dream_concise, dream_editor, dream_editorial as org, dream_reader, dream_reader_agent, dream_run, dream_wiki
 from tests.test_dream import git, invoke, workspace  # noqa: F401
 from tests.test_dream_context import native_result
 
@@ -136,7 +136,7 @@ def test_public_transition_is_materialized_independently_reviewed_and_replayed(w
     prepare(workspace)
     transport = Lifecycle("NEXT")
     plan, result = execute(workspace, "Select the correction for work", transport, harness)
-    assert result["fidelity"] == dream_handles.CONTRACT
+    assert result["fidelity"] == dream_concise.CONTRACT
     assert [call["role"] for call in transport.calls] == ["author", "reviewer"]
     assert 'State "NEXT" from "TODO"' in (workspace[0] / TOPIC).read_text()
     receipt = json.loads(git(workspace[0], "show", result["candidate_commit"] + ":.sucoder/wiki/receipts/" + result["run_id"] + ".json"))
