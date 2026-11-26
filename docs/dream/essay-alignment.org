@@ -257,4 +257,5 @@ The human found the wiki poorly organized and the transcripts largely unused, an
 [[file:read-and-organize.org][Reading every session and organizing the wiki]] proposes one reader per finished session from every harness, then a separate organizer that groups the wiki by feature area, with an evaluation of both.
 It takes up the organizer deferred in [[#deferred][section 5]] and the per-session reading that S4 and the navigation amendment set aside, and lists the decisions it needs from the human.
 A same-day red-team review revised it: readers write a private store, the organizer alone writes the memory branch, and the evaluation uses a held-out question set kept outside the agent account.
+The human then settled three of its questions: readers may read whole sessions, notes go to a private store that the organizer consolidates, and the organizer acts as editor with minimal human review; the rest are left to experiment.
 Nothing in it is implemented.

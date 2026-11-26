@@ -1,7 +1,7 @@
 #+TITLE: Reading every session and organizing the wiki
 #+AUTHOR: Sue
 #+DATE: 2026-11-26
-#+STATUS: PROPOSED 2026-11-26, revised the same day after red-team review -- for the human's review; no code yet
+#+STATUS: PROPOSED 2026-11-26, revised after red-team review; dispositions 1, 2 and 4 settled by the human the same day, the rest by experiment -- no code yet
 #+OPTIONS: toc:2 num:nil
 
 * Why
@@ -90,7 +90,7 @@ The findings below changed the proposal; each names its disposition.
   Disposition: the organizer is the only writer of the memory branch; readers write a private store ([[#tracks][Two tracks]]).
 - Wrong facts would become permanent :: "Keep every fact" plus a citation-survival check lets a wrong fact move but never leave, and a single-session reader cannot see a later reversal.
   Four of the nine 2026-11-25 publications passed native review and were then withdrawn by the operator.
-  Disposition: an explicit superseded or retracted disposition, dated decisions, and a sampled human audit.
+  Disposition: an explicit superseded or retracted disposition, dated decisions, and an independent reviewer from a different model family, with human review kept minimal ([[#decisions][disposition 4]]).
 - Human attribution is too permissive :: =_human_source= accepts any git unit and any main-thread user block of a Claude session (=sucoder/dream_editor.py:204-209=).
   Those blocks include system reminders, skill text and task notifications; Codex delivers AGENTS.md and environment context as user messages.
   Disposition: adapters classify origin, and only human blocks support "the human decided".
@@ -135,7 +135,7 @@ Evaluate both against the current wiki and a no-model baseline.
 The human decided on 2026-11-26 that the organizer runs in parallel with the adapter and reader work.
 That is safe only if the two never publish to the same ref.
 
-- Readers :: Write session notes, coverage and their own receipts to a private store in the agent account, mode 0600, never to the memory branch.
+- Readers :: Write session notes, coverage and their own receipts to a private store in the agent account, mode 0600, never to the memory branch; the organizer consolidates them ([[#decisions][disposition 2]]).
   A per-session lease keeps two readers off one session.
 - Organizer :: The only writer of the memory branch.
   It snapshots the session-note store at planning time, so readers' progress never invalidates its compare-and-swap.
@@ -163,15 +163,16 @@ Citations keep pointing at raw byte ranges with digests.
   Only =human= blocks support a recorded human decision; a git unit needs an explicit human marker.
 - Memory reading itself :: Tool results that read the memory branch or its copy, and the injected PROJECT MEMORY block, are not citable, so memory cannot cite itself.
 - Out of reach from here :: Sessions under the human's account and on other hosts.
-  Existing local-tier session discovery (=dream_sessions=) and checked memory transfer (=dream_local=) are the starting point; bringing the human's own sessions in needs a new explicit disposition ([[#decisions][Decisions]]).
+  Existing local-tier session discovery (=dream_sessions=) and checked memory transfer (=dream_local=) are the starting point; bringing the human's own sessions in needs a new explicit disposition ([[#decisions][open questions]]).
 
 ** Read
 :PROPERTIES:
 :CUSTOM_ID: read
 :END:
 
-- One reader per session :: A reader job admits one whole session's rendering and reads it in turn-aligned chunks with notes carried forward between chunks.
-  It is a new job shape: today's plan limits refuse the largest session, and notes mode refuses rendered views (=sucoder/dream_wiki.py:418=).
+- One reader per session :: A reader job may admit one whole session's rendering and read it in turn-aligned chunks with notes carried forward between chunks ([[#decisions][disposition 1]]).
+  It may instead select windows within the session, as explorers do now; the pilot compares the two.
+  Whole-session reading is a new job shape: today's plan limits refuse the largest session, and notes mode refuses rendered views (=sucoder/dream_wiki.py:418=).
 - View :: Conversation windows are delivered first; tool results are fetched by lookup within the admitted rendering.
   A claimed outcome needs the tool result behind it, and notes label each claim as "agent reported" or "output shows".
   A two-session pilot compares this view with the full rendering before the backlog runs.
@@ -196,7 +197,8 @@ Citations keep pointing at raw byte ranges with digests.
 - Output :: A hub page per area that explains it and links its pages and notes; merged pages left as forwarding sections that keep their anchors; repaired links.
 - Carried support :: A section moved to a hub keeps its receipt-backed citations, re-bound to the new path and anchor and checked mechanically against the full receipt history.
   That check proves citations survive; it cannot prove that a qualification survives, so fact preservation remains a semantic review.
-- Corrections :: The organizer applies a reader's proposed correction when the cited evidence supports it, under review.
+- Editor :: The organizer is the wiki's editor ([[#decisions][disposition 4]]).
+  It applies a reader's proposed correction when the cited evidence supports it, under independent review.
   A contradicted claim is marked superseded or retracted with its evidence and leaves the hubs and index; it is not silently kept.
 - Index :: Built mechanically: one line per hub, from hub titles and areas, within =dream.inject_bytes=.
   Session notes and topic pages are reachable from hubs, not listed in the index.
@@ -211,12 +213,14 @@ Citations keep pointing at raw byte ranges with digests.
 
 - Untrusted input :: Session text, including tool output and comments on this public repository, is data.
   Hubs are linted for imperatives, URLs, commands and claims of human decisions, and their reviewer checks each hub claim against the cited notes.
-- Placement :: Whether PROJECT MEMORY should leave the system prompt is an open question ([[#decisions][Decisions]]).
+- Placement :: Whether PROJECT MEMORY should leave the system prompt is an open question ([[#decisions][open questions]]).
 - Redaction :: Applied to whole records before any clipping or chunking, with the word-boundary fix and the missing token families; a fail-closed scan runs over every note, page and receipt before it is written or published.
 - Privacy :: Session notes never reach the memory branch; receipts on the branch keep digests rather than quotations from sessions.
   =sucoder dream checkout= adds a push exclusion for the memory branch, and a purge procedure is documented.
 - Copy integrity :: The read-only copy uses owner-only modes, and =materialize= verifies content digests rather than trusting its marker.
-- Audit :: A sampled human audit of published generations continues, and the first false pass halts publication.
+- Review :: Human review is expensive and kept minimal ([[#decisions][disposition 4]]).
+  Each organizer generation therefore gets a second independent reviewer from a different model family; SuCoder already runs dream roles on both Claude and Codex.
+  How much human review remains, and where it is spent, is settled by experiment.
 
 ** Evaluate
 :PROPERTIES:
@@ -231,7 +235,7 @@ Citations keep pointing at raw byte ranges with digests.
   If the organized wiki does not beat the no-model index, the organizer is not justified.
 - Reader :: A new reader contract version that reaches hubs and session notes, with its byte allowances reported per answer; all conditions run through =dream_reader_eval=.
 - Grading :: A rubric and critical errors frozen with the questions: fabricated human decisions, unverified outcomes stated as fact, withdrawn claims repeated, later corrections contradicted.
-  Blind grading by two graders, one of them a human or a different model family for at least a quarter of the answers, with each citation checked against what it delivered.
+  Blind grading by two graders from different model families, with each citation checked against what it delivered; human grading, being expensive, is limited to a small sample that measures the graders' agreement with a human.
   A hedge earns credit only where the reference answer says the record does not establish the point.
 - Repetition :: At least three organizer runs per model and three reader attempts per question, paired by question, with thresholds fixed in advance.
 - Models :: Sonnet 4.6 against an Opus model on the same frozen brief and identical wallets, with reader and grader models distinct from both.
@@ -263,17 +267,21 @@ The organizer track and the reader track run in parallel after the shared slice.
 
 Each slice adds targeted tests, including fake-native end-to-end tests for new job kinds, updates =README.org= and =config.example.yaml= for any setting, and shows no new test failures.
 
-* Decisions for the human
+* Dispositions and open questions
 :PROPERTIES:
 :CUSTOM_ID: decisions
 :END:
 
-1. Whole sessions :: Readers stop selecting evidence, which reverses the navigation amendment's "selective evidence" for reader jobs.
-2. Private session notes :: Notes and coverage live in the agent account's private store, and only the organizer writes the memory branch.
-3. Mechanical index :: The injected index lists hubs only, generated rather than written, which gives up prose summaries in exchange for resistance to injection and a fixed size.
-4. Correction authority :: The organizer may apply corrections and mark claims superseded or retracted, under review and a sampled human audit.
-5. PROJECT MEMORY placement :: Keep it in the system prompt, or move it to a lower-trust position where the harness allows one.
-6. Held-out questions :: Who writes and holds them outside the agent account, and how many.
-7. Budget :: The shared backlog budget, set after the two-session pilot.
-8. Sessions beyond this account and host :: Deferred to slice 4; bringing in the human's own sessions needs a new disposition, and reading them in place is preferred to moving them into the agent account.
-9. Feature areas :: Whether the initial list is right.
+On 2026-11-26 the human settled three questions and left the others to experiment ("Other questions may require experimentation to answer").
+
+1. Whole sessions :: Settled: "Readers *may* read whole sessions."
+   Whole-session reading is permitted, not required, so the navigation amendment's "selective evidence" remains available to reader jobs; the pilot compares the two.
+2. Private session notes :: Settled: "Yes, a private store for notes, to be consolidated by the organizer."
+3. Mechanical index :: Open, by experiment: the evaluation compares a generated hubs-only index with a written one, for answer quality, injection resistance and size.
+4. Editor :: Settled: "The organizer *should* play this role of editor, with minimal (expensive) human review."
+   The organizer applies corrections and marks claims superseded or retracted; a cross-family reviewer stands in for most human review.
+5. PROJECT MEMORY placement :: Open, by experiment: a planted-instruction test across the placements each harness allows.
+6. Held-out questions :: Open: the development set serves the experiments; who writes and holds the held-out set outside the agent account is needed only before the final comparison.
+7. Budget :: Open, by experiment: the two-session pilot measures the multipliers behind the shared backlog budget.
+8. Sessions beyond this account and host :: Open, deferred to slice 4; bringing in the human's own sessions needs a new disposition, and reading them in place is preferred to moving them into the agent account.
+9. Feature areas :: Open, by experiment: the organizer's first run on the existing wiki proposes areas, and the no-model baseline groups pages under README headings for comparison.
