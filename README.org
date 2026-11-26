@@ -2816,6 +2816,7 @@ A wiki-only branch holds no project files, so SuCoder keeps a read-only copy of 
 A local launch refreshes the copy in the mirror as the agent account before composing its context, and the =PROJECT MEMORY= block then points into it; a reviewed in-place dream refreshes it in the checkout it ran from.
 =sucoder dream checkout [PATH]= writes one in any checkout that has the memory branch; in your own clone, run =git fetch MIRROR sucoder/memory:sucoder/memory= first.
 The copy carries a marker naming the branch commit, is listed in the repository's local =info/exclude=, and is replaced whole when the branch moves, so edits made there are lost; a checkout that tracks files under =.sucoder/wiki/=, or holds a directory there that SuCoder did not write, is left alone and reported.
+Before reusing a copy SuCoder compares its files with the branch, since the marker sits beside the pages and cannot vouch for them, and rewrites a copy that was edited; mirror permission maintenance leaves the copy's read-only modes alone instead of granting the agent group write access.
 Set =checkout: false= to stop the automatic copies; remote sessions never get one.
 A dream page may link any regular file of the project commit the dream inventoried, while citations still need admitted evidence; =sucoder dream read= lists the links that leave the wiki as project paths, each with whether that file exists at =HEAD=.
 See [[file:docs/dream/essay-alignment.org][the essay-alignment charter]].

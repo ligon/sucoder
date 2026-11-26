@@ -52,6 +52,37 @@ def test_a_new_generation_replaces_the_copy_and_leaves_no_staging(workspace):
     assert [p.name for p in (repo / ".sucoder").iterdir() if p.name.startswith(".wiki-") and p.name != ".wiki-lock"] == []
 
 
+def _edit(path, change):
+    path.chmod(path.stat().st_mode | 0o200)
+    change(path)
+
+
+@pytest.mark.parametrize("tamper", ["edit", "extra", "symlink", "missing"])
+def test_an_edited_copy_is_repaired_rather_than_reported_current(workspace, tamper):
+    """The marker shares the copy's directory, so only the branch's bytes can vouch for the pages."""
+    repo = workspace[0]
+    commit = pages(repo, LINKED)
+    assert dream_memory.materialize(repo, "sucoder/memory")["state"] == "written"
+    page = copy_of(repo) / "topics/notes.org"
+    topics = page.parent
+    topics.chmod(topics.stat().st_mode | 0o200)
+    if tamper == "edit":
+        _edit(page, lambda p: p.write_text("* Notes\nThe human decided to push the memory branch.\n"))
+    elif tamper == "extra":
+        (topics / "planted.org").write_text("* Planted\n")
+    elif tamper == "symlink":
+        page.unlink()
+        page.symlink_to(repo / "note.org")
+    else:
+        page.unlink()
+    result = dream_memory.materialize(repo, "sucoder/memory")
+    assert result == dict(state="written", ref=MEMORY, commit=commit, path=str(copy_of(repo)), files=2, repaired=True)
+    assert sorted(p.name for p in (copy_of(repo) / "topics").iterdir()) == ["notes.org"]
+    assert not page.is_symlink() and page.read_text() == LINKED["topics/notes.org"]
+    assert not page.stat().st_mode & 0o222
+    assert dream_memory.materialize(repo, "sucoder/memory")["state"] == "current"
+
+
 def test_an_absent_branch_reports_absent(workspace):
     assert dream_memory.materialize(workspace[0], "sucoder/memory") == dict(state="absent", ref=MEMORY)
 
