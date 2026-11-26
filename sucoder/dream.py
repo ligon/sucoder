@@ -337,11 +337,16 @@ def build_plan(config, mirror, request, base, *, maintenance=None, topic=None, i
         raise DreamError("Source request requires between one and max_units units")
     seen = set()
     for unit in units:
-        _object(unit, ("unit_id", "kind", "locator", "shareable"), ("processing", "expected_raw_sha256"))
+        _object(unit, ("unit_id", "kind", "locator", "shareable"), ("processing", "expected_raw_sha256", "render_contract"))
         if "expected_raw_sha256" in unit and (unit["kind"] != dream_view.KIND or
                 not isinstance(unit["expected_raw_sha256"], str) or
                 not re.fullmatch(r"[0-9a-f]{64}", unit["expected_raw_sha256"])):
             raise DreamError("Expected raw digest requires rendered session evidence and SHA-256")
+        # Version 1 stays implicit, so a request names only a later rendering contract and
+        # dream_view.request_unit rebuilds every saved request byte for byte.
+        if "render_contract" in unit and (unit["kind"] != dream_view.KIND or
+                unit["render_contract"] not in dream_view.CONTRACTS[1:]):
+            raise DreamError("A render_contract names a later claude-view rendering of session evidence")
         if "processing" in unit:
             from . import dream_isolate
             if unit["kind"] != dream_view.KIND:

@@ -9,7 +9,7 @@ import copy
 import os
 import time
 
-from . import dream, dream_isolate, dream_run, dream_session_scan as scan
+from . import dream, dream_isolate, dream_run, dream_session_scan as scan, dream_view
 from .dream import DreamError, canonical, digest
 
 
@@ -36,10 +36,12 @@ def checked(value):
 
 
 class Navigation:
-    def __init__(self, inventory, limits=None, processing=None):
+    def __init__(self, inventory, limits=None, processing=None, render_contract=None):
         self.inventory = inventory
         self.limits = scan.validate_limits(dict(scan.LIMITS if limits is None else limits))
         self.processing = dream_isolate.validate(dict(dream_isolate.POLICY if processing is None else processing))
+        # The job header freezes this; jobs from before claude-view-v2 omit it and keep version 1.
+        self.render_contract = dream_view._contract(render_contract or dream_view.CONTRACT_V1)
         self.binding = dict(inventory_sha256=digest(canonical(inventory.manifest)), navigation_version=3)
         self.cursors, self.last, self.selection_receipts = {}, None, []
 
@@ -82,7 +84,7 @@ class Navigation:
 
     def window(self, row, start, end, cap):
         deadline = min(self.inventory.source.deadline, time.monotonic() + self.processing["max_seconds"])
-        value = dream_isolate.run(lambda: scan.normalize(row, start, end, cap, deadline, self.limits),
+        value = dream_isolate.run(lambda: scan.normalize(row, start, end, cap, deadline, self.limits, self.render_contract),
                                   deadline, self.processing)
         self.last_window = value
         self.selection_receipts.extend(value["receipts"])
@@ -139,7 +141,7 @@ class Navigation:
         deadline = min(self.inventory.source.deadline, time.monotonic() + self.processing["max_seconds"])
         try:
             value = dream_isolate.run(lambda: scan.page(rows, action, request["query"], state, cap,
-                deadline, self.limits), deadline, self.processing)
+                deadline, self.limits, self.render_contract), deadline, self.processing)
         except dream_isolate.ProcessingError as exc:
             private_error = exc.detail
             value = dict(observation=dict(state=exc.reason, unsearched_scope=path, actual_reads="unknown",

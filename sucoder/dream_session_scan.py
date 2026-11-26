@@ -150,7 +150,7 @@ class Reader:
                 for p in self.parts]
 
 
-def normalize(row, start, end, cap, deadline, limits):
+def normalize(row, start, end, cap, deadline, limits, contract=dream_view.CONTRACT_V1):
     """The old complete-record selection rule, without a whole-prefix read."""
     if not 0 <= start < row["bytes"] or (end and not start < end <= row["bytes"]):
         raise DreamError("Session window is outside the pinned prefix")
@@ -181,19 +181,19 @@ def normalize(row, start, end, cap, deadline, limits):
             raise DreamError("selection_record_limit")
         if not raw:
             raise DreamError("No complete session record fits the selected range")
-        text, _ = dream_view.render(bytes(raw), row["thread_id"], lo)
+        text, _ = dream_view.render(bytes(raw), row["thread_id"], lo, contract)
         if len(text.encode()) > cap:
             raise DreamError("Selected evidence exceeds 65536 bytes; select narrower windows")
         return dict(start=lo, end=hi, text=text, receipts=reader.receipts(), raw_sha256=digest(raw))
 
 
 def _observation(state, scanned, aligned, gaps, omitted, earlier, *, row=None, lo=None, hi=None,
-                 position=0, body="", dropped=0, target=0, next_cursor=""):
+                 position=0, body="", dropped=0, target=0, next_cursor="", contract=dream_view.CONTRACT_V1):
     """One public shape for both response fitting and actual delivery."""
     value = dict(state=state, source_consistency=QUALIFICATION, raw_scanned_bytes=scanned,
         alignment_bytes=aligned, gaps=gaps, omitted_gap_details=omitted, earlier_gaps=earlier,
         inventory_complete=False, next_cursor=next_cursor,
-        render_surface="claude-view-v1; redaction, tool clipping and metadata omissions apply")
+        render_surface=contract + "; redaction, tool clipping and metadata omissions apply")
     if row is not None:
         header = ("SESSION " + row["thread_id"] + " raw bytes " + str(lo) + "-" + str(hi) +
                   "; " + str(dropped) + " records without conversation text omitted\n\n")
@@ -203,7 +203,7 @@ def _observation(state, scanned, aligned, gaps, omitted, earlier, *, row=None, l
     return value
 
 
-def page(rows, action, query, state, cap, deadline, limits):
+def page(rows, action, query, state, cap, deadline, limits, contract=dream_view.CONTRACT_V1):
     """Return a public observation and private continuation/read receipts."""
     state = dict(state)
     index, position = state["session"], state["position"]
@@ -267,10 +267,10 @@ def page(rows, action, query, state, cap, deadline, limits):
                 entry = dream._json(raw)
                 if not isinstance(entry, dict):
                     raise DreamError("Transcript record must be a JSON object")
-                if entry.get("sessionId") is None and not list(dream_view._blocks(entry, start)):
+                if entry.get("sessionId") is None and not list(dream_view._blocks(entry, start, contract)):
                     text, mapping = "", dict(blocks=[], dropped_records=1)
                 else:
-                    text, mapping = dream_view.render(raw, row["thread_id"], start)
+                    text, mapping = dream_view.render(raw, row["thread_id"], start, contract)
                 if action == "read":
                     piece = text.split("\n\n", 1)[1] if text else ""
                     candidate = "".join(body) + piece
@@ -278,14 +278,14 @@ def page(rows, action, query, state, cap, deadline, limits):
                         fit = _observation("complete_with_gaps" if had_gaps else "complete", scanned + reader.scan_bytes,
                             aligned + reader.alignment_bytes, [], len(gaps), state.get("had_gaps", False), row=row,
                             lo=lo if lo is not None else start, hi=end, position=end, body=candidate,
-                            dropped=dropped + mapping["dropped_records"], target=target)
+                            dropped=dropped + mapping["dropped_records"], target=target, contract=contract)
                     else:
                         # Use bounded worst-case counters and the same public shape;
                         # gap details may be omitted, but record text may not be clipped.
                         pin = row["bytes"]
                         fit = _observation("complete_with_gaps", limits["scan_bytes"], limits["alignment_bytes"], [],
                             limits["records"] + limits["sessions"], False, row=row, lo=pin, hi=pin, position=pin,
-                            body=candidate, dropped=limits["records"], target=pin, next_cursor="0" * 64)
+                            body=candidate, dropped=limits["records"], target=pin, next_cursor="0" * 64, contract=contract)
                     if len(canonical(fit)) > cap:
                         if body or lo is not None:
                             reader.position, reader.pending = start, b""
@@ -360,7 +360,7 @@ def page(rows, action, query, state, cap, deadline, limits):
         "complete_unfrozen" if action == "search" else "complete"), scanned, aligned, public_gaps,
         max(0, len(gaps) - len(public_gaps)), state.get("had_gaps", False),
         row=rows[0] if action == "read" else None, lo=lo, hi=hi, position=position,
-        body="".join(body), dropped=dropped, target=target, next_cursor="0" * 64 if next_state else "")
+        body="".join(body), dropped=dropped, target=target, next_cursor="0" * 64 if next_state else "", contract=contract)
     if action == "search":
         observation["matches"] = found
     else:

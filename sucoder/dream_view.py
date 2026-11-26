@@ -22,7 +22,12 @@ from .dream import DreamError, _chunks, _json, _object, _text, canonical, digest
 from . import dream_transcript
 
 KIND = "claude-view"
-CONTRACT = "claude-view-v1"
+# Version 1 is frozen as issued so saved plans, receipts and evidence handles
+# replay byte for byte. Version 2 differs only for a zero tail (issue 119):
+# version 1's data[-0:] kept a tool call's whole input after its clipped head.
+CONTRACT_V1 = "claude-view-v1"
+CONTRACT = "claude-view-v2"
+CONTRACTS = (CONTRACT_V1, CONTRACT)
 MAX_RAW_BYTES = 16 * 1024 * 1024
 TOOL_HEAD, TOOL_TAIL, CALL_LIMIT = 240, 120, 300
 REDACTED = "[REDACTED]"
@@ -100,16 +105,23 @@ def _content_text(content):
     return json.dumps(content, sort_keys=True, ensure_ascii=False)
 
 
-def _clip(text, head, tail):
+def _clip(text, head, tail, contract=CONTRACT_V1):
     data = text.encode()
     if len(data) <= head + tail + 64:
         return text
     first = data[:head].decode("utf-8", errors="ignore")
-    last = data[-tail:].decode("utf-8", errors="ignore")
+    # Version 1 keeps data[-0:], the whole body, for a zero tail; later versions keep no tail.
+    last = data[-tail:].decode("utf-8", errors="ignore") if tail or contract == CONTRACT_V1 else ""
     return first + "\n[... " + str(len(data) - len(first.encode()) - len(last.encode())) + " bytes omitted ...]\n" + last
 
 
-def _blocks(entry, offset):
+def _contract(contract):
+    if contract not in CONTRACTS:
+        raise DreamError("Unknown session rendering contract", 3)
+    return contract
+
+
+def _blocks(entry, offset, contract=CONTRACT_V1):
     events, provenance = dream_transcript._claude(entry)
     side = "SIDECHAIN " if provenance.get("sidechain") else ""
     for event, payload in events:
@@ -120,14 +132,14 @@ def _blocks(entry, offset):
         elif event == "summary":
             role, label = "summary", "SUMMARY (compaction; not evidence of delivery)"
             body = _content_text(payload.get("text") or payload.get("summary") or payload.get("content") or "")
-            body = _clip(body, TOOL_HEAD * 4, TOOL_TAIL * 4)
+            body = _clip(body, TOOL_HEAD * 4, TOOL_TAIL * 4, contract)
         elif event == "tool_call":
             role, label = "tool", "TOOL CALL " + str(payload.get("name", "?"))
-            body = _clip(json.dumps(payload.get("input"), sort_keys=True, ensure_ascii=False), CALL_LIMIT, 0)
+            body = _clip(json.dumps(payload.get("input"), sort_keys=True, ensure_ascii=False), CALL_LIMIT, 0, contract)
         elif event == "tool_result":
             role = "tool"
             label = "TOOL RESULT" + (" (error)" if payload.get("is_error") else "")
-            body = _clip(_content_text(payload.get("content")), TOOL_HEAD, TOOL_TAIL)
+            body = _clip(_content_text(payload.get("content")), TOOL_HEAD, TOOL_TAIL, contract)
         else:
             continue  # Thinking, metadata and unknown records carry no conversation text.
         if body.strip():
@@ -135,8 +147,9 @@ def _blocks(entry, offset):
                        summary=bool(provenance.get("summary")) or event == "summary", body=body.strip("\n"))
 
 
-def render(raw, thread_id, byte_start):
-    """Deterministic text and map for a complete-line raw window."""
+def render(raw, thread_id, byte_start, contract=CONTRACT_V1):
+    """Deterministic text and map for a complete-line raw window under one rendering contract."""
+    _contract(contract)
     if not raw or not raw.endswith(b"\n"):
         raise DreamError("Rendering requires a nonempty complete-line window")
     blocks, identities, dropped, offset = [], set(), 0, byte_start
@@ -144,7 +157,7 @@ def render(raw, thread_id, byte_start):
         entry = _json(line)
         if not isinstance(entry, dict):
             raise DreamError("Transcript record must be a JSON object")
-        found = list(_blocks(entry, offset))
+        found = list(_blocks(entry, offset, contract))
         if entry.get("sessionId") is not None:
             identities.add(entry["sessionId"])
         dropped += not found
@@ -164,18 +177,20 @@ def render(raw, thread_id, byte_start):
                             sidechain=block["sidechain"], summary=block["summary"]))
         parts.append(text)
         position += size
-    return "".join(parts), dict(contract=CONTRACT, blocks=mapping, dropped_records=dropped, redactions=redactions)
+    return "".join(parts), dict(contract=contract, blocks=mapping, dropped_records=dropped, redactions=redactions)
 
 
 def admit(unit, repository, identity, limits, deadline):
     locator = unit["locator"]
+    # A request without a rendering contract is version 1, so saved requests rebuild unchanged.
+    contract = _contract(unit.get("render_contract", CONTRACT_V1))
     if "processing" in unit:
         from . import dream_isolate
-        value = dream_isolate.run(lambda: _processed(locator, deadline), deadline, unit["processing"])
+        value = dream_isolate.run(lambda: _processed(locator, deadline, contract), deadline, unit["processing"])
         text, mapping, raw_digest = value["text"], value["mapping"], value["raw_sha256"]
     else:
         raw = read_range(locator, deadline)
-        text, mapping = render(raw, locator["thread_id"], locator["byte_start"])
+        text, mapping = render(raw, locator["thread_id"], locator["byte_start"], contract)
         raw_digest = digest(raw)
     if "expected_raw_sha256" in unit and unit["expected_raw_sha256"] != raw_digest:
         raise DreamError("Session window bytes differ from the frozen discovery selection", 3)
@@ -187,7 +202,7 @@ def admit(unit, repository, identity, limits, deadline):
                 repository=repository, repository_uuid=identity["repository_uuid"],
                 path=locator["path"], thread_id=locator["thread_id"],
                 raw=dict(byte_start=locator["byte_start"], byte_end=locator["byte_end"], sha256=raw_digest),
-                render=dict(contract=CONTRACT, sha256=digest(canonical(mapping)), blocks=len(mapping["blocks"]),
+                render=dict(contract=contract, sha256=digest(canonical(mapping)), blocks=len(mapping["blocks"]),
                             dropped_records=mapping["dropped_records"], redactions=mapping["redactions"]),
                 byte_start=0, byte_end=len(data), bytes=len(data), sha256=digest(data),
                 chunks=_chunks(data, 0, limits.chunk_bytes,
@@ -197,10 +212,10 @@ def admit(unit, repository, identity, limits, deadline):
     return result
 
 
-def _processed(locator, deadline):
+def _processed(locator, deadline, contract=CONTRACT_V1):
     """Run only inside a bounded worker for explicitly versioned units."""
     raw = read_range(locator, deadline)
-    text, mapping = render(raw, locator["thread_id"], locator["byte_start"])
+    text, mapping = render(raw, locator["thread_id"], locator["byte_start"], contract)
     return dict(text=text, mapping=mapping, raw_sha256=digest(raw))
 
 
@@ -211,14 +226,17 @@ def request_unit(unit):
     if "processing" in unit:
         result["processing"] = unit["processing"]
         result["expected_raw_sha256"] = unit["raw"]["sha256"]
+    if unit["render"]["contract"] != CONTRACT_V1:
+        result["render_contract"] = unit["render"]["contract"]
     return result
 
 
 def snapshot(unit, deadline):
-    """Re-read and re-render a frozen window; both digests must reproduce."""
+    """Re-read and re-render a frozen window under its own contract; both digests must reproduce."""
+    contract = _contract(unit["render"]["contract"])
     if "processing" in unit:
         from . import dream_isolate
-        value = dream_isolate.run(lambda: _processed(request_unit(unit)["locator"], deadline),
+        value = dream_isolate.run(lambda: _processed(request_unit(unit)["locator"], deadline, contract),
                                   deadline, unit["processing"])
         if value["raw_sha256"] != unit["raw"]["sha256"]:
             raise DreamError("Session window bytes differ from the frozen selection", 3)
@@ -228,7 +246,7 @@ def snapshot(unit, deadline):
     raw = read_range(request_unit(unit)["locator"], deadline)
     if digest(raw) != unit["raw"]["sha256"]:
         raise DreamError("Session window bytes differ from the frozen selection", 3)
-    text, mapping = render(raw, unit["thread_id"], unit["raw"]["byte_start"])
+    text, mapping = render(raw, unit["thread_id"], unit["raw"]["byte_start"], contract)
     if digest(canonical(mapping)) != unit["render"]["sha256"]:
         raise DreamError("Session window rendering differs from the frozen plan", 3)
     return text.encode(), mapping
@@ -243,7 +261,7 @@ def shape(unit, limits):
         dream_isolate.validate(unit["processing"])
     _object(unit["raw"], ("byte_start", "byte_end", "sha256"))
     _object(unit["render"], ("contract", "sha256", "blocks", "dropped_records", "redactions"))
-    if (type(unit["shareable"]) is not bool or unit["byte_start"] != 0 or unit["render"]["contract"] != CONTRACT or
+    if (type(unit["shareable"]) is not bool or unit["byte_start"] != 0 or unit["render"]["contract"] not in CONTRACTS or
             type(unit["bytes"]) is not int or not 0 < unit["byte_end"] == unit["bytes"] <= limits.max_source_bytes or
             not isinstance(unit["chunks"], list) or not unit["chunks"]):
         raise DreamError("Invalid frozen session window")

@@ -108,7 +108,8 @@ def _job(path):
         header = _read(fd, "job.json")
         dream._object(header, ("contract", "job_id", "directory", "created_at", "project", "settings", "purpose", "budget_path"),
                       ("mode", "navigation_version", "leads", "memory_origin", "navigation_limits", "processing",
-                       "inventory_sha256", "discovery_allocation", "prompt_profile", "submission_contract", "authoring_version"))
+                       "inventory_sha256", "discovery_allocation", "prompt_profile", "submission_contract", "authoring_version",
+                       "render_contract"))
         if "authoring_version" in header and (type(header["authoring_version"]) is not int or header["authoring_version"] not in (6, 7, 8, 9)):
             raise DreamError("Invalid frozen authoring version", 3)
         from . import dream_submission
@@ -123,6 +124,8 @@ def _job(path):
         navigation = header.get("navigation_version", 1)
         if type(navigation) is not int or not 1 <= navigation <= dream_discover.NAVIGATION:
             raise DreamError("Invalid frozen exploratory navigation version", 3)
+        if "render_contract" in header and (navigation < 3 or header["render_contract"] not in dream_view.CONTRACTS[1:]):
+            raise DreamError("Invalid frozen session rendering contract", 3)
         if navigation >= 3:
             dream_session_scan.validate_limits(header.get("navigation_limits"))
             dream_isolate.validate(header.get("processing"))
@@ -249,6 +252,9 @@ def prepare(config, job_path=None, *, cwd=None, overrides=None, budget_path=None
             if allocation is not None:
                 header.update(discovery_allocation=allocation, navigation_limits=dict(dream_session_scan.LIMITS),
                               processing=dict(dream_isolate.POLICY))
+                if dream_view.CONTRACT != dream_view.CONTRACT_V1:
+                    # Version 1 rendering stays implicit, so earlier headers (and their digests) are unchanged.
+                    header["render_contract"] = dream_view.CONTRACT
             recognized = dream_local.recognize(config, root) if memory_ref else None
             if recognized is not None:
                 header["memory_origin"] = dream_local.synchronize(_source(config, header, time.monotonic() + 30),
@@ -337,7 +343,8 @@ def _inventory(source, header, sessions):
         return dream_discover.Inventory(source, header["project"]["base_commit"],
             sessions=sessions["sessions"] if sessions is not None else None,
             navigation=header["navigation_version"], limits=header["navigation_limits"], processing=header["processing"],
-            session_coverage=sessions["coverage"] if sessions is not None else None)
+            session_coverage=sessions["coverage"] if sessions is not None else None,
+            render_contract=header.get("render_contract"))
     return dream_discover.Inventory(source, header["project"]["base_commit"], sessions=sessions,
                                    navigation=header.get("navigation_version", 1))
 
@@ -396,6 +403,7 @@ def _plan(config, fd, header, chosen, deadline):
             if proposed["kind"] == dream_view.KIND:
                 if (unit["kind"] != dream_view.KIND or unit["path"] != locator["path"] or
                         unit["thread_id"] != locator["thread_id"] or
+                        unit["render"]["contract"] != proposed.get("render_contract", dream_view.CONTRACT_V1) or
                         [unit["raw"]["byte_start"], unit["raw"]["byte_end"]] != [locator["byte_start"], locator["byte_end"]]):
                     raise DreamError("Saved plan evidence differs from the exploratory choice", 3)
                 continue
