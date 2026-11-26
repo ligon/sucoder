@@ -1,7 +1,7 @@
 #+TITLE: Reading every session and organizing the wiki
 #+AUTHOR: Sue
 #+DATE: 2026-11-26
-#+STATUS: PROPOSED 2026-11-26, revised after red-team review; dispositions 1, 2 and 4 settled by the human the same day, the rest by experiment -- no code yet
+#+STATUS: ACCEPTED 2026-11-26 after red-team review; dispositions 1, 2 and 4 settled by the human, the rest by experiment -- not yet implemented
 #+OPTIONS: toc:2 num:nil
 
 * Why

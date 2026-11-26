@@ -17,7 +17,7 @@ This is the full implementation design under the [[file:dream-charter.org][appro
 The [[file:dream/implementation.org][implementation status]] records explicit Git/Claude/Codex evidence, native source-grounded authorship/review, correction, accepted progress, task/archive editing and bounded fresh readers.
 The [[file:dream/workplan.org][runtime workplan]] records the charter requirements, implemented behavior and acceptance dispositions.
 The [[file:dream/transcript-navigation.org][bounded transcript-navigation contract]] specifies version 3 session paging/search, explicit scan/delivery coverage and discovery allocation while preserving earlier saved-job contracts.
-The [[file:dream/read-and-organize.org][reading-and-organizing proposal]] (proposed 2026-11-26, not implemented) would read every finished session from every harness and add a separate organizer that groups the wiki by feature area.
+The [[file:dream/read-and-organize.org][reading-and-organizing design]] (accepted 2026-11-26, not yet implemented) would read every finished session from every harness and add a separate organizer that groups the wiki by feature area.
 The [[file:dream-ledger.org][prior-art ledger]] supplies the reuse decisions and source limitations.
 Read the [[file:dream/prompts.org][role briefs]], [[file:dream/scenarios.org][scenario checks]], [[file:dream/pilot.org][pilot protocol]], and the [[file:dream/examples/sucoder.org][SuCoder]] and [[file:dream/examples/lsms.org][LSMS]] examples for operational detail.
 
