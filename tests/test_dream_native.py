@@ -25,6 +25,13 @@ def test_kernel_boundary_denies_outside_reads_and_writes(tmp_path):
     secret.write_text("canary outside the role")
     boundary = boundary_or_skip(scratch)
     try:
+        # Production admits the harness executable it starts (invoke).
+        # An interpreter also reads its standard library, which is outside
+        # /usr when setup-python installs it under /opt/hostedtoolcache.
+        python = Path(sys.executable).resolve()
+        for path in (python, Path(sys.base_prefix).resolve()):
+            assert path not in secret.resolve().parents
+            boundary.allow(path, native.READ)
         script = """
 import os,sys
 open('allowed','w').write('role output')
@@ -42,7 +49,7 @@ except PermissionError:
 else:
     raise SystemExit('process read escaped')
 """
-        code, stdout, _ = native.capture([sys.executable, "-S", "-c", script, str(secret)], b"", scratch,
+        code, stdout, _ = native.capture([str(python), "-S", "-c", script, str(secret)], b"", scratch,
             dict(PATH=os.defpath), time.monotonic() + 5, boundary)
         assert code == 0, stdout
         assert stdout == b"read:denied\nwrite:denied\nprocess-environment:denied\n"
