@@ -111,9 +111,12 @@ class Registry:
         if unit["kind"] == dream_view.KIND:
             for block in unit["provenance"]["blocks"]:
                 if block["start"] <= lo < hi <= block["end"]:
-                    return dict(kind="rendered_transcript", role=block["role"],
+                    handle = dict(kind="rendered_transcript", role=block["role"],
                         summary=block["summary"], sidechain=block["sidechain"], raw_offset=block["offset"],
                         tool_association="not_established")
+                    if "origin" in block:  # claude-view-v3 and later
+                        handle["origin"] = block["origin"]
+                    return handle
             return dict(kind="render_framing", tool_association="not_established")
         for record in unit["provenance"]["records"]:
             if record["byte_start"] <= lo < hi <= record["byte_end"]:

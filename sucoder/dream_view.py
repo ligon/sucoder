@@ -22,12 +22,16 @@ from .dream import DreamError, _chunks, _json, _object, _text, canonical, digest
 from . import dream_transcript
 
 KIND = "claude-view"
-# Version 1 is frozen as issued so saved plans, receipts and evidence handles
-# replay byte for byte. Version 2 differs only for a zero tail (issue 119):
+# Each version is frozen as issued so saved plans, receipts and evidence handles
+# replay byte for byte. Version 2 differs from 1 only for a zero tail (issue 119):
 # version 1's data[-0:] kept a tool call's whole input after its clipped head.
+# Version 3 records who wrote each block (origin) and redacts a block's whole body,
+# with the PATTERNS_V3 family below, before clipping it.
 CONTRACT_V1 = "claude-view-v1"
-CONTRACT = "claude-view-v2"
-CONTRACTS = (CONTRACT_V1, CONTRACT)
+CONTRACT_V2 = "claude-view-v2"
+CONTRACT = "claude-view-v3"
+CONTRACTS = (CONTRACT_V1, CONTRACT_V2, CONTRACT)
+LEGACY = (CONTRACT_V1, CONTRACT_V2)
 MAX_RAW_BYTES = 16 * 1024 * 1024
 TOOL_HEAD, TOOL_TAIL, CALL_LIMIT = 240, 120, 300
 REDACTED = "[REDACTED]"
@@ -53,13 +57,54 @@ EMAIL = re.compile(r"(?:(?<![A-Za-z0-9._%+\\-])|(?<=\\[nrt]))(?!git@)[A-Za-z0-9.
                    r"@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b")
 
 
-def redact(text):
+# Version 3 patterns. An alphanumeric lookbehind replaces \b, so a label or token
+# after an underscore is caught (GEMINI_API_KEY=...). A private key whose END line
+# lies outside the text is redacted to its end. A labelled value needs an explicit
+# = or :, and one that starts like a call or subscript ("secrets.token_hex(6)",
+# "os.environ[...]") is code, not a secret.
+_EDGE = r"(?<![A-Za-z0-9])"
+PATTERNS_V3 = [re.compile(p) for p in (
+    r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)",
+    _EDGE + r"sk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}",
+    _EDGE + r"[rsp]k_(?:live|test)_[A-Za-z0-9]{16,}",
+    _EDGE + r"gh[pousr]_[A-Za-z0-9]{30,}",
+    _EDGE + r"github_pat_[A-Za-z0-9_]{30,}",
+    _EDGE + r"glpat-[A-Za-z0-9_-]{20,}",
+    _EDGE + r"xox[abprs]-[A-Za-z0-9-]{10,}",
+    _EDGE + r"(?:AKIA|ASIA)[0-9A-Z]{16}(?![A-Za-z0-9])",
+    _EDGE + r"AIza[0-9A-Za-z_-]{35}",
+    _EDGE + r"ya29\.[0-9A-Za-z_-]{20,}",
+    _EDGE + r"(?:hf|npm)_[A-Za-z0-9]{30,}",
+    r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}",
+    r"(?i)" + _EDGE + r"bearer\s+[A-Za-z0-9._~+/-]{16,}=*",
+)]
+_LABEL = (r"(?:api[_-]?key|access[_-]?key|access[_-]?token|auth[_-]?token|refresh[_-]?token|client[_-]?secret|"
+          r"secret[_-]?key|token|password|passwd|secret)")
+LABELLED_V3 = [re.compile(p) for p in (
+    r"(?i)" + _EDGE + r"((?:[A-Za-z0-9]+[_-])*" + _LABEL + r"(?:\\?[\"'])?\s*[=:]\s*(?:\\?[\"'])?)(?![A-Za-z_][\w.]*[(\[])([^\s\"'\\]{8,})",
+    r"(?i)(--(?:api[_-]?key|access[_-]?token|auth[_-]?token|token|password|passwd|secret)(?:=|\s+))([^\s\"']{8,})",
+    r"(?i)([?&](?:key|api[_-]?key|token|access[_-]?token|password|sig|signature)=)([^&\s\"'#]{8,})",
+)]
+USERINFO_V3 = re.compile(r"(?<=://)[^\s/:@]+:[^\s/@]+(?=@)")
+
+
+def redact(text, contract=CONTRACT_V1):
     count = 0
-    for pattern in PATTERNS:
-        text, n = pattern.subn(REDACTED, text)
+    if contract in LEGACY:
+        for pattern in PATTERNS:
+            text, n = pattern.subn(REDACTED, text)
+            count += n
+        text, n = LABELLED.subn(lambda m: m.group(1) + REDACTED, text)
         count += n
-    text, n = LABELLED.subn(lambda m: m.group(1) + REDACTED, text)
-    count += n
+    else:
+        for pattern in PATTERNS_V3:
+            text, n = pattern.subn(REDACTED, text)
+            count += n
+        for pattern in LABELLED_V3:
+            text, n = pattern.subn(lambda m: m.group(1) + REDACTED, text)
+            count += n
+        text, n = USERINFO_V3.subn(REDACTED, text)
+        count += n
     text, n = EMAIL.subn(REDACTED, text)
     return text, count + n
 
@@ -122,6 +167,83 @@ def _contract(contract):
 
 
 def _blocks(entry, offset, contract=CONTRACT_V1):
+    return _blocks_v1(entry, offset, contract) if contract in LEGACY else _blocks_v3(entry, offset)
+
+
+# Claude Code appends these to user turns; their text is the harness's, not the human's.
+REMINDER = re.compile(r"<system-reminder>[\s\S]*?(?:</system-reminder>|\Z)")
+COMMAND_PREFIXES = ("<command-name>", "<command-message>", "<command-args>", "<local-command-stdout>",
+                    "<local-command-stderr>", "<local-command-caveat>", "<bash-input>", "<bash-stdout>",
+                    "<bash-stderr>", "<user-prompt-submit-hook>")
+
+
+def _user_origin(entry, text):
+    """Who wrote a user-turn text in version 3, from the transcript's own record fields.
+
+    Claude Code marks typed messages origin={"kind": "human"} and its own injections
+    with another kind; meta records and command echoes carry none. A record without
+    an origin is unattributed, never human.
+    """
+    if entry.get("isMeta"):
+        return "harness", "meta"
+    origin = entry.get("origin")
+    if isinstance(origin, dict) and isinstance(origin.get("kind"), str):
+        if origin["kind"] == "human":
+            return "human", ""
+        return "harness", re.sub(r"[^a-z0-9-]", "", origin["kind"].lower())[:40] or "other"
+    if text.lstrip().startswith(COMMAND_PREFIXES):
+        return "harness", "command"
+    return "unattributed", ""
+
+
+def _blocks_v3(entry, offset):
+    """Version 3 blocks: origin per block, and whole bodies redacted before clipping."""
+    events, provenance = dream_transcript._claude(entry)
+    sidechain = bool(provenance.get("sidechain"))
+    side = "SIDECHAIN " if sidechain else ""
+    for event, payload in events:
+        pieces = []  # (label, role, origin, text, clip)
+        if event == "message" and isinstance(payload, dict):
+            role = payload.get("role")
+            text = payload.get("text") if isinstance(payload.get("text"), str) else ""
+            if role != "user":
+                pieces.append(("AGENT", role, "agent", text, None))
+            else:
+                origin, kind = _user_origin(entry, text)
+                if origin == "harness":
+                    pieces.append(("HARNESS " + kind, role, "harness", text, None))
+                else:
+                    label = "USER" if origin == "human" else "USER (origin not recorded)"
+                    at = 0
+                    for match in REMINDER.finditer(text):
+                        pieces.append((label, role, origin, text[at:match.start()], None))
+                        pieces.append(("HARNESS system-reminder", role, "harness", match.group(0),
+                                       (TOOL_HEAD * 4, TOOL_TAIL * 4)))
+                        at = match.end()
+                    pieces.append((label, role, origin, text[at:], None))
+        elif event == "summary":
+            text = _content_text(payload.get("text") or payload.get("summary") or payload.get("content") or "")
+            pieces.append(("SUMMARY (compaction; not evidence of delivery)", "summary", "summary", text,
+                           (TOOL_HEAD * 4, TOOL_TAIL * 4)))
+        elif event == "tool_call":
+            pieces.append(("TOOL CALL " + str(payload.get("name", "?")), "tool", "tool",
+                           json.dumps(payload.get("input"), sort_keys=True, ensure_ascii=False), (CALL_LIMIT, 0)))
+        elif event == "tool_result":
+            pieces.append(("TOOL RESULT" + (" (error)" if payload.get("is_error") else ""), "tool", "tool",
+                           _content_text(payload.get("content")), (TOOL_HEAD, TOOL_TAIL)))
+        else:
+            continue  # Thinking, metadata and unknown records carry no conversation text.
+        for label, role, origin, text, clip in pieces:
+            body, redactions = redact(text, CONTRACT)
+            if clip is not None:
+                body = _clip(body, clip[0], clip[1], CONTRACT)
+            if body.strip():
+                yield dict(offset=offset, label=side + label, role=role, sidechain=sidechain,
+                           summary=bool(provenance.get("summary")) or event == "summary", origin=origin,
+                           body=body.strip("\n"), redactions=redactions)
+
+
+def _blocks_v1(entry, offset, contract):
     events, provenance = dream_transcript._claude(entry)
     side = "SIDECHAIN " if provenance.get("sidechain") else ""
     for event, payload in events:
@@ -169,12 +291,15 @@ def render(raw, thread_id, byte_start, contract=CONTRACT_V1):
             "; " + str(dropped) + " records without conversation text omitted\n\n")
     parts, mapping, redactions, position = [head], [], 0, len(head.encode())
     for block in blocks:
-        body, n = redact(block["body"])
+        # Versions 1 and 2 redact the clipped body; version 3 blocks arrive redacted before clipping.
+        body, n = redact(block["body"]) if contract in LEGACY else (block["body"], block["redactions"])
         redactions += n
         text = "[@" + str(block["offset"]) + "] " + block["label"] + "\n" + body + "\n\n"
         size = len(text.encode())
         mapping.append(dict(start=position, end=position + size, offset=block["offset"], role=block["role"],
                             sidechain=block["sidechain"], summary=block["summary"]))
+        if contract not in LEGACY:
+            mapping[-1]["origin"] = block["origin"]
         parts.append(text)
         position += size
     return "".join(parts), dict(contract=contract, blocks=mapping, dropped_records=dropped, redactions=redactions)
@@ -270,7 +395,9 @@ def shape(unit, limits):
 def user_quote(mapping, citation):
     """True when a citation lies inside one main-thread user block (editor attribution)."""
     for block in mapping["blocks"]:
+        # Version 3 maps record an origin; only human text counts. Earlier maps have none.
         if (block["start"] <= citation["byte_start"] < citation["byte_end"] <= block["end"] and
-                block["role"] == "user" and not block["sidechain"] and not block["summary"]):
+                block["role"] == "user" and block.get("origin", "human") == "human" and
+                not block["sidechain"] and not block["summary"]):
             return True
     return False

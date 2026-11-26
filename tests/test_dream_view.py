@@ -178,7 +178,7 @@ def test_inventory_lists_only_this_mirrors_sessions_and_marks_live_and_recent(wo
 # Issue 119: zero-tail clipping in a replay-compatible rendering contract
 # ----------------------------------------------------------------------
 
-V1, V2 = dream_view.CONTRACT_V1, dream_view.CONTRACT
+V1, V2, V3 = dream_view.CONTRACT_V1, dream_view.CONTRACT_V2, dream_view.CONTRACT
 
 
 def omitted(clipped):
@@ -279,3 +279,102 @@ def test_a_version_2_window_is_planned_snapshotted_and_rebuilt_under_its_contrac
     swapped = dict(frozen["new"], render=dict(frozen["new"]["render"], contract=V1))
     with pytest.raises(dream.DreamError, match="rendering differs"):
         dream_view.snapshot(swapped, time.monotonic() + 30)
+
+
+# ----------------------------------------------------------------------
+# claude-view-v3: block origin, and redaction before clipping
+# ----------------------------------------------------------------------
+
+def origins(tmp_path):
+    return session(tmp_path / "origins" / (SID + ".jsonl"),
+        record("user", "Pin the job to n0035, please.", origin=dict(kind="human")),
+        record("user", "Go ahead.<system-reminder>Project rules: " + "r" * 2000 + "</system-reminder>",
+               origin=dict(kind="human")),
+        record("user", "<task-notification>agent finished</task-notification>",
+               origin=dict(kind="task-notification", producer="session-task")),
+        record("user", "Base directory for this skill: /x", isMeta=True),
+        record("user", "<command-name>/model</command-name>"),
+        record("user", "A message whose record names no origin."),
+        record("assistant", [dict(type="text", text="Pinning it.")]),
+        record("user", [dict(type="tool_result", tool_use_id="t1", content="ok")]))
+
+
+def test_version_3_records_who_wrote_each_block(tmp_path):
+    raw = origins(tmp_path).read_bytes()
+    text, mapping = dream_view.render(raw, SID, 0, V3)
+    data = text.encode()
+    seen = [(b["origin"], data[b["start"]:b["end"]].decode().split("\n", 1)[0].split("] ", 1)[1]) for b in mapping["blocks"]]
+    assert seen == [("human", "USER"), ("human", "USER"), ("harness", "HARNESS system-reminder"),
+                    ("harness", "HARNESS task-notification"), ("harness", "HARNESS meta"), ("harness", "HARNESS command"),
+                    ("unattributed", "USER (origin not recorded)"), ("agent", "AGENT"), ("tool", "TOOL RESULT")]
+    assert "r" * 2000 not in text and "bytes omitted" in text  # The reminder is clipped like other harness bulk.
+    assert dream_view.render(raw, SID, 0, V3) == (text, mapping)
+
+
+def test_only_human_text_supports_a_recorded_human_decision_in_version_3(tmp_path):
+    raw = origins(tmp_path).read_bytes()
+    for contract in (V2, V3):
+        text, mapping = dream_view.render(raw, SID, 0, contract)
+        data = text.encode()
+        verdicts = {}
+        for phrase in ("Pin the job to n0035", "agent finished", "Base directory", "whose record names no origin"):
+            start = data.index(phrase.encode())
+            verdicts[phrase] = dream_view.user_quote(mapping, dict(byte_start=start, byte_end=start + len(phrase)))
+        if contract == V2:  # Frozen: any main-thread user block counted.
+            assert all(verdicts.values())
+        else:
+            assert verdicts == {"Pin the job to n0035": True, "agent finished": False, "Base directory": False,
+                                "whose record names no origin": False}
+
+
+def test_version_3_redacts_before_clipping_so_no_token_tail_survives(tmp_path):
+    token = "sk-ant-" + "Q7" * 30
+    output = "x" * 800 + " key " + token + "y" * 90  # The 120-byte tail cuts through the token.
+    path = session(tmp_path / "tail" / (SID + ".jsonl"),
+        record("user", [dict(type="tool_result", tool_use_id="t1", content=output)]))
+    raw = path.read_bytes()
+    suffix = token[-30:]
+    assert suffix in dream_view.render(raw, SID, 0, V2)[0]  # Clipped first, the tail no longer looks like a key.
+    text, mapping = dream_view.render(raw, SID, 0, V3)
+    assert suffix not in text and token[:20] not in text and mapping["redactions"] >= 1
+
+
+def _secret(*parts):
+    return "".join(parts)  # Built at run time, so no literal credential sits in the source.
+
+
+@pytest.mark.parametrize("text, secret", [
+    ("GEMINI_API_KEY=" + _secret("Ab3", "Cd4", "Ef5", "Gh6"), _secret("Ab3", "Cd4", "Ef5", "Gh6")),
+    ("aws_secret_access_key = " + _secret("wJal", "rXUt", "nFEM", "I1K7"), _secret("wJal", "rXUt", "nFEM", "I1K7")),
+    ("id " + _secret("AS", "IA", "Q" * 16), _secret("AS", "IA", "Q" * 16)),
+    ("key " + _secret("AI", "za", "B" * 35), _secret("AI", "za", "B" * 35)),
+    ("tok " + _secret("ya", "29.", "c" * 24), _secret("ya", "29.", "c" * 24)),
+    ("jwt " + _secret("ey", "J", "a" * 10, ".ey", "J", "b" * 10, ".", "c" * 10), _secret("a" * 10, ".ey", "J")),
+    ("Authorization: Bearer " + _secret("t0k", "e" * 20), _secret("t0k", "e" * 20)),
+    ("gh run --token " + _secret("z9", "z" * 12), _secret("z9", "z" * 12)),
+    ("https://example.org/x?key=" + _secret("q1", "q" * 12), _secret("q1", "q" * 12)),
+    ("https://alice:" + _secret("pw", "Pw" * 5) + "@example.org/", _secret("pw", "Pw" * 5)),
+    ("stripe " + _secret("sk", "_live_", "9" * 20), _secret("_live_", "9" * 20)),
+    ("hub " + _secret("hf", "_", "h" * 32), _secret("h" * 32)),
+    ("lab " + _secret("gl", "pat-", "g" * 22), _secret("g" * 22)),
+    ("password: " + _secret("hunter", "22"), _secret("hunter", "22")),
+    ('{\\"password\\": \\"' + _secret("s3cret", "pass") + '\\"}', _secret("s3cret", "pass")),
+    (_secret("-----BEGIN ", "RSA PRIVATE KEY-----\nMIIabc") + "\nmore key material", "more key material"),
+])
+def test_version_3_patterns_catch_what_version_1_missed(text, secret):
+    redacted, count = dream_view.redact(text, V3)
+    assert secret not in redacted and "[REDACTED]" in redacted and count >= 1
+
+
+@pytest.mark.parametrize("text", [
+    "token = secrets.token_hex(6)", "max_tokens: 4096", "the password field is required",
+    "a bearer token is accepted", "git clone git@github.com:owner/repo.git", "tokenizer=bert-base-cased",
+])
+def test_version_3_leaves_code_and_prose_alone(text):
+    assert dream_view.redact(text, V3) == (text, 0)
+
+
+def test_legacy_redaction_is_unchanged_for_frozen_windows():
+    # Version 1 and 2 windows must re-render byte for byte, holes included.
+    hole = "GEMINI_API_KEY=" + _secret("Ab3", "Cd4", "Ef5", "Gh6")
+    assert dream_view.redact(hole) == (hole, 0) == dream_view.redact(hole, V2)
