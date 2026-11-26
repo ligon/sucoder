@@ -67,8 +67,7 @@ def projection(path, text, deadline, *, history=False):
     if history:
         command.append("--history")
     try:
-        result = subprocess.run(command, input=canonical({path: text}), stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, timeout=dream_run._remaining(deadline), check=False)
+        result = dream_run._native_org(command, canonical({path: text}), deadline)
     except (OSError, subprocess.TimeoutExpired):
         raise DreamError("Native reader projection unavailable or timed out", 3) from None
     if result.returncode or len(result.stdout) > dream_run.MAX_PLAN_BYTES:

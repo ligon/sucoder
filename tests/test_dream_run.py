@@ -406,3 +406,27 @@ def test_plan_revalidation_uses_the_run_deadline(workspace, monkeypatch):
     frozen = json.loads(Path(plan["plan_path"]).read_bytes())
     dream_run._validate(workspace[2], "sample", frozen, deadline)
     assert seen and all(value <= deadline for value in seen)
+
+
+def test_native_org_reuses_only_identical_successful_parses(monkeypatch):
+    calls = []
+    def emacs(command, *, input, timeout, env, **kwargs):
+        calls.append(input)
+        return subprocess.CompletedProcess(command, int(input == b"bad"), b"parsed " + input, b"")
+    monkeypatch.setattr(dream_run, "_ORG_RESULTS", {})
+    monkeypatch.setattr(dream_run.subprocess, "run", emacs)
+    deadline = dream_run.time.monotonic() + 30
+    first = dream_run._native_org(["emacs", "--inventory"], b"page", deadline)
+    assert dream_run._native_org(["emacs", "--inventory"], b"page", deadline).stdout == first.stdout == b"parsed page"
+    assert len(calls) == 1
+    dream_run._native_org(["emacs", "--reader"], b"page", deadline)
+    dream_run._native_org(["emacs", "--inventory"], b"page", deadline, env=dict(os.environ, SUCODER_ORG_PROBE="1"))
+    assert dream_run._native_org(["emacs", "--inventory"], b"bad", deadline).returncode == 1
+    assert dream_run._native_org(["emacs", "--inventory"], b"bad", deadline).returncode == 1
+    assert len(calls) == 5
+    with pytest.raises(dream.DreamError, match="allowance exhausted"):
+        dream_run._native_org(["emacs", "--inventory"], b"page", dream_run.time.monotonic() - 1)
+    monkeypatch.setattr(dream_run, "ORG_RESULT_LIMIT", 1)
+    dream_run._native_org(["emacs", "--inventory"], b"other", deadline)
+    dream_run._native_org(["emacs", "--inventory"], b"page", deadline)
+    assert len(calls) == 7 and len(dream_run._ORG_RESULTS) == 1

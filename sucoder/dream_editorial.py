@@ -92,9 +92,8 @@ def native(files, actions=(), *, at=None, deadline=None):
     if len(request) > dream_run.MAX_PLAN_BYTES:
         raise DreamError("Native editorial input exceeds its byte allowance", 3)
     try:
-        result = subprocess.run(["emacs", "--batch", "-Q", "--script", str(NATIVE)], input=request,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=dream_run._remaining(deadline),
-            env=dict(os.environ, TZ="UTC"), check=False)
+        result = dream_run._native_org(["emacs", "--batch", "-Q", "--script", str(NATIVE)], request, deadline,
+            env=dict(os.environ, TZ="UTC"))
     except (OSError, subprocess.TimeoutExpired):
         raise DreamError("Native editorial operations unavailable or timed out", 3) from None
     if len(result.stdout) > dream_run.MAX_PLAN_BYTES:

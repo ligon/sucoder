@@ -62,9 +62,8 @@ def schema(role, contract=CONTRACT):
 def inventory(files, deadline):
     """Reuse the native parser with an opt-in richer, read-only inventory."""
     try:
-        result = subprocess.run(["emacs", "--batch", "-Q", "--script", str(dream_run.ORG_VALIDATOR), "--inventory"],
-            input=canonical(files), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            timeout=dream_run._remaining(deadline), check=False)
+        result = dream_run._native_org(["emacs", "--batch", "-Q", "--script", str(dream_run.ORG_VALIDATOR), "--inventory"],
+            canonical(files), deadline)
     except (OSError, subprocess.TimeoutExpired):
         raise DreamError("Native wiki inventory unavailable or timed out", 3) from None
     if result.returncode:
