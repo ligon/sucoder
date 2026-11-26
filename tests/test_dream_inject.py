@@ -133,6 +133,14 @@ def test_a_local_launch_writes_the_read_only_copy_and_points_into_it(mirror):
     assert manager._memory_block(ctx) == block  # Current: nothing rewritten.
 
 
+def test_the_copy_runs_this_process_s_package_not_the_one_the_child_finds(mirror, foreign_sucoder):
+    # A source-checkout launch whose agent account finds another sucoder, or none.
+    manager, ctx = mirror
+    commit = pages(ctx.mirror_path, LINKED)
+    assert "a read-only copy of sucoder/memory at " + commit[:12] in manager._memory_block(ctx)
+    assert (ctx.mirror_path / ".sucoder/wiki/topics/readme.org").exists()
+
+
 def test_the_copy_follows_checkout_not_inject(mirror):
     manager, ctx = mirror
     pages(ctx.mirror_path, LINKED)

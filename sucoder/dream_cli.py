@@ -6,11 +6,11 @@ import os
 from pathlib import Path
 import stat
 import subprocess
-import sys
 from typing import Optional
 
 import typer
 
+from . import child_python
 from . import dream
 from . import dream_run
 from . import dream_wiki
@@ -107,7 +107,9 @@ def _detach(config, config_path, job_path=None, *, overrides=None, budget_path=N
             except BaseException:
                 os.close(handle)
                 raise
-        argv = [sys.executable, "-c", "from sucoder.cli import app; app()"]
+        # The worker imports this process's package, not a sucoder that its
+        # own path finds first (e.g. in a checkout it was started from).
+        argv = child_python.argv("from sucoder.cli import app; app()")
         if config_path is not None:
             argv += ["--config", str(Path(config_path).expanduser().absolute())]
         argv += ["dream", "--job", str(directory), "--attempt", str(attempt)]

@@ -12,7 +12,6 @@ import secrets
 import shlex
 import shutil
 import subprocess
-import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +25,7 @@ from .agent_mode import (
     service_launch, service_marker,
 )
 from . import auth as auth_mod
+from . import child_python
 from .codex_state import (
     DRAIN_ACK as _STATE_DRAIN_ACK,
     DRAIN_EXITED_STATES as _STATE_DRAIN_EXITED_STATES,
@@ -7672,10 +7672,13 @@ If you find issues, describe each one clearly with the filename and specific con
         The mirror belongs to the agent, so ``dream_memory`` runs through
         ``run_agent``; it never replaces anything it did not write.  Bounded
         and best-effort: any failure leaves the launch and the block intact.
+        ``child_python`` makes the child import this launcher's package: sudo
+        drops a source checkout's PYTHONPATH, and the agent may find another
+        copy or none.
         """
         try:
             result = self.executor.run_agent(
-                [sys.executable, "-m", "sucoder.dream_memory", "checkout", str(ctx.mirror_path), branch],
+                child_python.module_argv("sucoder.dream_memory", "checkout", str(ctx.mirror_path), branch),
                 check=False, cwd="/", timeout=15, show_progress=False,
             )
             lines = (result.stdout or "").strip().splitlines()
