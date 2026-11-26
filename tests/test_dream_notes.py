@@ -143,7 +143,7 @@ NOTE_REJECTIONS = [
     (lambda n: n["items"][0]["citations"][0].update(quote="q" * 501), "at most 500"),
     (lambda n: n["items"][0]["citations"][0].pop("quote"), "Invalid object fields"),
     (lambda n: n["items"][0].update(basis="output suggests"), "basis"),
-    (lambda n: n["items"][0].update(origin="dispatch"), "origin"),
+    (lambda n: n["items"][0].update(origin="summary"), "origin"),
     (lambda n: n["items"][0].update(basis="human said"), "requires origin human"),
     (lambda n: n["items"][0].update(by="agent"), "Invalid object fields"),
     (lambda n: n["items"][1].pop("by"), "Invalid object fields"),

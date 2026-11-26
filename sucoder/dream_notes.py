@@ -45,7 +45,9 @@ NOTE_FIELDS = ("contract", "source", "ranges", "render_contract", "reader", "wri
 REVIEW_FIELDS = ("verdict", "reviewer", "findings", "reviewed_at")
 RECORD_FIELDS = ("contract", "source", "device", "inode")
 BASES = ("output shows", "agent reported", "human said", "harness recorded")
-ORIGINS = ("human", "agent", "tool", "harness", "unattributed")
+# The renderer's classes plus dispatch (a prompt another agent wrote, from the harness adapters).
+# Compaction summaries are model-written and "not evidence of delivery", so they are never cited.
+ORIGINS = ("human", "agent", "tool", "harness", "dispatch", "unattributed")
 OUTCOMES = ("worked", "failed", "unknown")
 VERDICTS = ("accept", "reject")
 SHA256 = re.compile(r"[0-9a-f]{64}")
