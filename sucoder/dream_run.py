@@ -321,6 +321,32 @@ def _remaining(deadline):
     return min(5, remaining)
 
 
+# Each emacs start spends ~0.5 s of CPU entering Org before it parses anything,
+# and one dream re-parses identical frozen pages for planning, its snapshot
+# check, preparation, every proposal check and replay. With -Q --batch these
+# scripts read only argv, environment and stdin, so an identical successful
+# request is answered from this bounded record. Failures always rerun.
+_ORG_RESULTS: dict[str, bytes] = {}
+ORG_RESULT_LIMIT = 32
+
+
+def _native_org(command, payload, deadline, env=None):
+    """subprocess.run for the pure native Org scripts (stdout/returncode only)."""
+    timeout = _remaining(deadline)
+    key = digest(canonical([command, dict(os.environ if env is None else env)]) + b"\n" + payload)
+    stdout = _ORG_RESULTS.pop(key, None)
+    if stdout is None:
+        result = subprocess.run(command, input=payload, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            timeout=timeout, env=env, check=False)
+        if result.returncode or len(result.stdout) > MAX_PLAN_BYTES:
+            return result
+        stdout = result.stdout
+    _ORG_RESULTS[key] = stdout
+    for stale in list(_ORG_RESULTS)[:-ORG_RESULT_LIMIT]:
+        _ORG_RESULTS.pop(stale, None)
+    return subprocess.CompletedProcess(command, 0, stdout, b"")
+
+
 def _git_write(source, index, args, deadline, data=None):
     """Only coordinator-owned plumbing; never use the user's git index/hooks."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
@@ -347,9 +373,7 @@ def _git_write(source, index, args, deadline, data=None):
 def _validate_org(files, deadline):
     """Native Org parsing, with no init files, Babel evaluation or export."""
     try:
-        result = subprocess.run(["emacs", "--batch", "-Q", "--script", str(ORG_VALIDATOR)],
-            input=canonical(files), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            timeout=_remaining(deadline), check=False)
+        result = _native_org(["emacs", "--batch", "-Q", "--script", str(ORG_VALIDATOR)], canonical(files), deadline)
     except (OSError, subprocess.TimeoutExpired):
         raise DreamError("Native Org validation unavailable or timed out", 3) from None
     if result.returncode:
