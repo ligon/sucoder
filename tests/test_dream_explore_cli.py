@@ -40,6 +40,16 @@ def invoke(workspace, *arguments):
     return CliRunner().invoke(cli.app, ["--config", str(workspace[1]), "dream", *arguments], input="")
 
 
+WORKER = "from sucoder.cli import app; app()"
+
+
+def worker_arguments(argv):
+    """What follows the detached worker's code in its argv, or None for any other child."""
+    if argv[:2] != [sys.executable, "-c"] or not argv[2].endswith(WORKER):
+        return None
+    return argv[3:]
+
+
 def test_bare_dream_starts_once_without_interactive_questions(workspace, exploratory_runtime, monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError("Exploratory launch attempted a human prompt")
@@ -167,7 +177,8 @@ def test_detach_prepares_then_spawns_same_job_with_private_logs(workspace, explo
     assert value["state"] == "detached" and value["pid"] == 4321 and value["job_path"] == str(job)
     assert prepare_calls == [((None,), dict(overrides=dict(model="fixture-model"), budget_path=None, attempt=2))]
     assert exploratory_runtime[1] == []
-    assert process_calls[0][0] == [sys.executable, "-c", "from sucoder.cli import app; app()",
+    # sucoder/child_python.py passes this process's package root so the child imports it.
+    assert worker_arguments(process_calls[0][0]) == [str(Path(sucoder.__file__).resolve().parents[1]),
         "--config", str(workspace[1].absolute()), "dream", "--job", str(job), "--attempt", "2"]
     assert (job / "worker.stdout.log").read_bytes() == (job / "worker.stderr.log").read_bytes() == b"detached fixture\n"
 
@@ -210,9 +221,11 @@ def test_bare_cli_executes_exploration_and_inspects_current_project_without_more
     assert json.loads(balance.output)["reserved_calls"] == 1 and len(native.calls) == 1
 
 
-def test_detached_child_from_subdirectory_uses_frozen_job_and_finite_stdin(workspace, monkeypatch):
+def test_detached_child_from_subdirectory_uses_frozen_job_and_finite_stdin(workspace, monkeypatch, foreign_sucoder):
     # This fixture executable exercises the real detached Python child, native
     # launcher, Landlock confinement, staged dummy auth and persistent wallet.
+    # foreign_sucoder: the child must import this process's package, not the
+    # one its own path finds first.
     scratch = workspace[1].parent
     executable = scratch / "codex"
     executable.write_text('''#!/usr/bin/python3 -S
@@ -256,7 +269,7 @@ print(json.dumps(dict(type='turn.completed',usage={})))
     real_popen = subprocess.Popen
     workers = []
     def start_worker(argv, *args, **kwargs):
-        is_worker = argv[:3] == [sys.executable, "-c", "from sucoder.cli import app; app()"]
+        is_worker = worker_arguments(argv) is not None
         if is_worker:
             # A worker must use the model frozen by prepare, even when the
             # caller's defaults change before the child loads configuration.

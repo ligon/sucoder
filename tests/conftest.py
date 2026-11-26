@@ -43,3 +43,21 @@ def _private_sent_log(tmp_path, monkeypatch):
     from sucoder import replies
 
     monkeypatch.setattr(replies, "sent_log_path", lambda: tmp_path / "sent-log" / "sent.jsonl")
+
+
+@pytest.fixture
+def foreign_sucoder(tmp_path, monkeypatch):
+    """Put another, unimportable ``sucoder`` first on child Pythons' path.
+
+    It stands in for the copy a child finds on its own -- an older installed
+    one, or a checkout in its working directory -- even where CI installs the
+    package under test.  A child that imports it fails, so a test passing
+    with this fixture shows the child imported this process's package
+    (sucoder/child_python.py).
+    """
+    directory = tmp_path / "foreign-sucoder"
+    (directory / "sucoder").mkdir(parents=True)
+    (directory / "sucoder" / "__init__.py").write_text('raise ImportError("foreign sucoder imported")\n')
+    inherited = os.environ.get("PYTHONPATH")
+    monkeypatch.setenv("PYTHONPATH", str(directory) + (os.pathsep + inherited if inherited else ""))
+    return directory

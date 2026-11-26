@@ -45,7 +45,8 @@ def test_detached_derived_defaults_do_not_pass_a_missing_config_to_child(workspa
     calls = []
     original = dream_cli.subprocess.Popen
     def spawn(argv, **kwargs):
-        if "from sucoder.cli import app; app()" not in argv:
+        # The worker's code is argv[2], after sucoder/child_python.py's pin.
+        if not any(str(code).endswith("from sucoder.cli import app; app()") for code in argv[2:3]):
             return original(argv, **kwargs)
         calls.append(argv)
         return SimpleNamespace(pid=123)
