@@ -4874,6 +4874,9 @@ def test_codex_auth_apikey_uses_configured_base_url(tmp_path, monkeypatch):
     # reserved built-in ``openai`` provider is never overridden.
     assert 'model_providers.sucoder-openai.base_url="https://us.api.openai.com/v1"' in launched
     assert 'model_provider="sucoder-openai"' in launched
+    # The key is in auth.json, never the environment.
+    assert "model_providers.sucoder-openai.requires_openai_auth=true" in launched
+    assert not any(".env_key=" in tok for tok in launched)
     assert not any(tok.startswith("model_providers.openai.") for tok in launched)
 
 
@@ -4898,6 +4901,78 @@ def test_codex_auth_subscription_leaves_auth_untouched(
     assert swap_calls == []
     launched, _ = agent_calls[-1]
     assert "-c" not in launched
+
+
+@pytest.mark.parametrize("mode,override,restores", [
+    ("subscription", None, True), (None, "subscription", True),
+    ("apikey", "subscription", True), ("subscription", "apikey", False),
+    (None, None, False),
+])
+def test_codex_launch_restores_subscription_only_when_selected(
+    tmp_path, monkeypatch, mode, override, restores,
+):
+    from sucoder.config import HarnessAuthConfig
+
+    calls = []
+    monkeypatch.setattr(
+        mirror.auth_mod, "codex_ensure_subscription",
+        lambda config, executor, cfg, logger: calls.append(cfg),
+    )
+    monkeypatch.setattr(mirror.auth_mod, "codex_to_apikey", lambda *a: None)
+    manager = build_manager(tmp_path)
+    ctx = manager.context_for("sample")
+    manager.ensure_clone(ctx)
+    ctx.settings.agent_launcher = AgentLauncher(
+        command=["codex"], auth={"codex": HarnessAuthConfig(mode=mode)} if mode else {},
+    )
+    manager.config.credentials["openai"] = CredentialConfig(pass_entry="openai.com/apikey")
+    monkeypatch.setattr(manager, "_compose_context_prelude", lambda _ctx: "")
+    monkeypatch.setattr(manager.executor, "run_agent", lambda *a, **kw: CommandResult(
+        requested_args=list(a[0]), executed_args=list(a[0]), stdout="", stderr="", returncode=0,
+    ))
+    manager.launch_agent(ctx, sync=False, auth_override=override)
+    assert len(calls) == (1 if restores else 0)
+
+
+def test_codex_remote_subscription_launch_leaves_local_login(tmp_path, monkeypatch):
+    manager, ctx = _remote_launch_manager(tmp_path, monkeypatch, local_disk_root=None)
+    ctx.settings.agent_launcher = AgentLauncher(command=["codex"])
+    monkeypatch.setattr(
+        mirror.auth_mod, "codex_ensure_subscription",
+        lambda *a: pytest.fail("a remote launch touched the local login"),
+    )
+    monkeypatch.setattr(manager.executor, "run_agent", lambda *a, **kw: CommandResult(
+        requested_args=list(a[0]), executed_args=list(a[0]), stdout="", stderr="", returncode=0,
+    ))
+    reached = []
+    monkeypatch.setattr(
+        manager, "_with_attention_hooks",
+        lambda ctx, command: (reached.append(command), (_ for _ in ()).throw(mirror.MirrorError("stop")))[1],
+    )
+    with pytest.raises(mirror.MirrorError, match="stop"):  # just past the auth step
+        manager.launch_agent(ctx, sync=False, auth_override="subscription")
+    assert reached
+
+
+@pytest.mark.parametrize("explicit", [True, False])
+def test_codex_unrestorable_subscription_fails_only_when_explicit(
+    tmp_path, monkeypatch, caplog, explicit,
+):
+    from sucoder.config import HarnessAuthConfig
+
+    def no_backup(*args):
+        raise mirror.auth_mod.AuthError("No codex subscription backup found.")
+
+    monkeypatch.setattr(mirror.auth_mod, "codex_ensure_subscription", no_backup)
+    manager = build_manager(tmp_path)
+    launcher = AgentLauncher(command=["codex"], auth={"codex": HarnessAuthConfig()})
+    if explicit:
+        with pytest.raises(mirror.MirrorError, match="No codex subscription backup"):
+            manager._codex_auth_to_subscription(launcher, "codex", explicit=True)
+        return
+    with caplog.at_level(logging.WARNING):
+        manager._codex_auth_to_subscription(launcher, "codex", explicit=False)
+    assert "will use the API key" in caplog.text
 
 
 def test_codex_auth_apikey_requires_a_credential(
