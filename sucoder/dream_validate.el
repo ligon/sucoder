@@ -16,6 +16,7 @@
                          (file-name-directory (expand-file-name source "/"))) "/"))))
 
 (let* ((inventory (member "--inventory" command-line-args-left))
+       (collect (and inventory (member "--collect-page-errors" command-line-args-left)))
        (reader (member "--reader" command-line-args-left))
        (history (member "--history" command-line-args-left))
        (inputs (json-read-from-string
@@ -26,7 +27,7 @@
        (details (make-hash-table :test 'equal))
        (read-details (make-hash-table :test 'equal))
        (links nil))
-  (dolist (flag '("--inventory" "--reader" "--history"))
+  (dolist (flag '("--inventory" "--reader" "--history" "--collect-page-errors"))
     (setq command-line-args-left (delete flag command-line-args-left)))
   (dolist (entry inputs)
     (let ((path (symbol-name (car entry)))
@@ -67,7 +68,9 @@
                           (state . ,(org-element-property :todo-keyword heading))
                           (sha256 . ,hash)) headings))
                 (when id
-                  (when (gethash id ids)
+                  ;; The collecting validator checks every target in headings and
+                  ;; every link in the returned inventory, including duplicates.
+                  (when (and (not collect) (gethash id ids))
                     (error "Duplicate custom target in %s" path))
                   (puthash id hash ids)))))
           (org-element-map tree 'link
@@ -115,7 +118,7 @@
                         (headings . ,(vconcat (nreverse headings)))
                         (keywords . ,(vconcat (nreverse keywords)))
                         (links . ,(vconcat (nreverse all-links)))) details))))
-  (dolist (link (unless reader links))
+  (dolist (link (unless (or reader collect) links))
     ;; Existing links outside the changed set retain their original semantics;
     ;; the fixture's new links all resolve inside the supplied generated files.
     (let ((ids (gethash (nth 1 link) result)))

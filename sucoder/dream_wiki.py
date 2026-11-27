@@ -59,11 +59,13 @@ def schema(role, contract=CONTRACT):
     return object_schema(fields)
 
 
-def inventory(files, deadline):
+def inventory(files, deadline, *, collect_page_errors=False):
     """Reuse the native parser with an opt-in richer, read-only inventory."""
+    command = ["emacs", "--batch", "-Q", "--script", str(dream_run.ORG_VALIDATOR), "--inventory"]
+    if collect_page_errors:
+        command.append("--collect-page-errors")
     try:
-        result = dream_run._native_org(["emacs", "--batch", "-Q", "--script", str(dream_run.ORG_VALIDATOR), "--inventory"],
-            canonical(files), deadline)
+        result = dream_run._native_org(command, canonical(files), deadline)
     except (OSError, subprocess.TimeoutExpired):
         raise DreamError("Native wiki inventory unavailable or timed out", 3) from None
     if result.returncode:
@@ -113,13 +115,15 @@ def prior_bundle(plan, fd):
     return files
 
 
-def validate_proposal(plan, proposal, prior, sources, deadline, contract=CONTRACT, *, approved_tasks=None, archive_paths=(), derived_targets=(), reference_validator=None, report_issue=None, editable=None):
+def validate_proposal(plan, proposal, prior, sources, deadline, contract=CONTRACT, *, approved_tasks=None, archive_paths=(), derived_targets=(), reference_validator=None, report_issue=None, editable=None, collect_page_errors=False):
     """Check edit scope, source ranges, retained anchors/tasks and wiki links.
 
     Human meaning and salience are reviewed separately against this full input.
     No claim that these mechanical checks prove semantic fidelity is made.
     ``editable`` replaces editable_path for a contract with its own writable
     pages (wiki-organizer-v1 writes hubs/); every earlier contract omits it.
+    With collect_page_errors the native parser returns the complete inventory
+    so independent target, link, manifest and task errors can be reported here.
     """
     def reject(message, *, path, target="", code="structure_invalid"):
         if report_issue is None:
@@ -147,7 +151,10 @@ def validate_proposal(plan, proposal, prior, sources, deadline, contract=CONTRAC
     for path, change in changes.items():
         before = digest(prior[path].encode()) if path in prior else ""
         if change["before_sha256"] != before or not change["reason"].strip():
-            raise DreamError("Edit does not bind its frozen base or explain its disposition")
+            message = "Edit does not bind its frozen base or explain its disposition"
+            if not collect_page_errors:
+                raise DreamError(message)
+            reject(message, path=path)
     files = dict(prior, **pages)
     if INDEX not in files:
         raise DreamError("The companion needs a short navigable index")
@@ -157,7 +164,13 @@ def validate_proposal(plan, proposal, prior, sources, deadline, contract=CONTRAC
     if sum(len(text.encode()) for text in files.values()) > plan["limits"]["max_consolidation_bytes"]:
         raise DreamError("Wiki validation context exceeds max_consolidation_bytes", 3)
     old = inventory(prior, deadline) if prior else {}
-    parsed = inventory(files, deadline)
+    parsed = inventory(files, deadline, collect_page_errors=True) if collect_page_errors else inventory(files, deadline)
+    if collect_page_errors:
+        for path, details in parsed.items():
+            counts = Counter(h["target"] for h in details["headings"] if h["target"])
+            for target, count in counts.items():
+                if count > 1:
+                    reject("Duplicate custom target", path=path, target=target)
     for path in pages:
         # Active inclusion/configuration directives are unnecessary in this
         # prose-only editor. Existing shared settings may be included by path.
@@ -178,7 +191,10 @@ def validate_proposal(plan, proposal, prior, sources, deadline, contract=CONTRAC
             new_tasks = Counter(h["sha256"] for h in parsed[path]["headings"] if h["state"])
             approved = Counter((approved_tasks or {}).get(path, []))
             if old_tasks - new_tasks - approved:
-                raise DreamError("Existing editorial tasks must be preserved until explicit transition validation")
+                message = "Existing editorial tasks must be preserved until explicit transition validation"
+                if not collect_page_errors:
+                    raise DreamError(message)
+                reject(message, path=path)
     # Any regular file of the project the dream inventoried may be linked (S5);
     # citations still need admitted evidence.
     project = frozenset(plan.get("project", {}).get("paths", ()))
