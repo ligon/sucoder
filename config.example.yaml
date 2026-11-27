@@ -30,6 +30,7 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #                                  # its project links resolve (local launches, publication)
 #   session_quiet_minutes: 30      # a session quiet this long, with no live launch, is finished
 #   reader_chunk_bytes: 131072     # `dream read-session`: rendered session bytes per reader call (1024-1048576)
+#   reader_effort: null            # Codex read-session roles: low, medium, high, xhigh, max, ultra (null uses the model default)
 #   reader_exclude_sessions: ["dcdc7362"]  # quoted session ids or 8+ hex prefixes never read;
 #                                  # dcdc7362 holds SuCoder's evaluation development set
 

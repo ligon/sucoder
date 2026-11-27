@@ -106,6 +106,57 @@ def jsonl(*events):
     return b"".join(json.dumps(event).encode() + b"\n" for event in events)
 
 
+@pytest.mark.parametrize("effort", [None, "low", "medium", "high", "xhigh", "max", "ultra"])
+def test_codex_command_changes_only_the_requested_effort(effort):
+    # Literal argv from c0fa15c. In particular, the TOML quotes are part of one argument.
+    before = ["codex", "exec", "--ignore-user-config", "--ignore-rules", "--strict-config", "--ephemeral",
+              "--skip-git-repo-check", "--sandbox", "read-only", "--json", "--model", "fixture"]
+    after = ["--output-schema", "result.schema.json", "-c", 'approval_policy="never"', "-c", 'web_search="disabled"',
+             "-c", "project_doc_max_bytes=0", "-c", 'developer_instructions="Use only the inline assignment. Do not call tools."',
+             "-c", "agents.enabled=false", "-c", "mcp_servers={}"]
+    for feature in ("shell_tool", "view_image", "apps", "plugins", "hooks", "multi_agent", "browser_use",
+                    "computer_use", "image_generation", "code_mode", "shell_snapshot"):
+        after.extend(["--disable", feature])
+    after.append("-")
+    assert native.command("codex", "codex", "fixture", {}) == before + after
+    extra = [] if effort is None else ["-c", 'model_reasoning_effort="' + effort + '"']
+    assert native.command("codex", "codex", "fixture", {}, effort) == before + extra + after
+
+
+@pytest.mark.parametrize("harness,effort", [("claude", "high"), ("codex", "default"), ("codex", "")])
+def test_invalid_effort_is_refused(harness, effort):
+    with pytest.raises(dream.DreamError, match="effort"):
+        native.command(harness, "native", "fixture", {}, effort)
+
+
+def test_native_invocation_binds_effort_to_command_assignment_and_trace(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+    from sucoder import dream_submission
+
+    task = dict(role="reviewer", effort="max")
+    monkeypatch.setattr(native.tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setattr(native.shutil, "which", lambda name: "/fixture/codex")
+    monkeypatch.setattr(native, "environment", lambda *args: {})
+    monkeypatch.setattr(native, "FilesystemBoundary", Mock())
+
+    def capture(args, stdin, *rest):
+        if "--help" in args:
+            return 0, b"--ignore-user-config --output-schema --ephemeral --ignore-rules", b""
+        if "--version" in args:
+            return 0, b"fixture", b""
+        assert args[args.index('model_reasoning_effort="max"') - 1] == "-c"
+        assert stdin == dream.canonical(task)
+        return 0, jsonl(dict(type="item.completed", item=dict(type="agent_message", text='{"checked":true}')),
+                        dict(type="turn.completed", usage={})), b""
+
+    monkeypatch.setattr(native, "capture", capture)
+    result, usage, trace = native.invoke("codex", "fixture", task, {}, time.monotonic() + 5)
+    assert result == {"checked": True} and trace["effort"] == "max"
+    assert dream_submission.parse(task, trace) == (result, usage)
+    with pytest.raises(dream.DreamError, match="reasoning effort"):
+        dream_submission.parse(task, dict(trace, effort="low"))
+
+
 def test_codex_trace_uses_completed_final_result_and_native_usage():
     raw = jsonl(dict(type="thread.started", thread_id="native"),
                 dict(type="item.completed", item=dict(type="agent_message", text="Commentary is not the final result.")),

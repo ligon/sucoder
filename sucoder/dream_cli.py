@@ -309,6 +309,7 @@ def read_session(
     attempt: int = typer.Option(1, "--attempt", min=1, max=1000000, help="Explicit native attempt within the job's persisted wallet."),
     harness: Optional[str] = typer.Option(None, "--harness", help="Native codex/claude reader and reviewer; otherwise configured defaults."),
     model: Optional[str] = typer.Option(None, "--model", help="Native model; transmits the admitted session rendering to its provider."),
+    effort: Optional[str] = typer.Option(None, "--effort", help="Codex reasoning effort for both roles (dream.reader_effort)."),
     chunk_bytes: Optional[int] = typer.Option(None, "--chunk-bytes", min=1024, max=1048576, help="Per-call cap on rendered session bytes (dream.reader_chunk_bytes)."),
     budget_path: Optional[Path] = typer.Option(None, "--budget", help="Explicit shared private wallet directory for a new job."),
     max_total_seconds: Optional[int] = typer.Option(None, "--max-total-seconds", min=1, help="Whole-job elapsed ceiling, including review."),
@@ -319,7 +320,7 @@ def read_session(
 ):
     """Read one finished session into the private session-note store; never writes the memory branch."""
     from . import dream_reader_job
-    overrides = dict(harness=harness, model=model, reader_chunk_bytes=chunk_bytes, max_total_seconds=max_total_seconds,
+    overrides = dict(harness=harness, model=model, effort=effort, reader_chunk_bytes=chunk_bytes, max_total_seconds=max_total_seconds,
         max_total_calls=max_total_calls, reserve_seconds=reserve_seconds, reserve_calls=reserve_calls)
     _data_command(ctx, dream_reader_job.OPERATION, dream_reader_job.start, job_path, session=session,
         overrides={key: value for key, value in overrides.items() if value is not None},

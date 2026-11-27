@@ -2992,8 +2992,14 @@ and v1 notes retain their frozen behavior.
 
 =--prepare-only= prints the frozen chunks and estimate without a native call; =--job JOB= resumes a job, and a completed attempt replays from its saved artifacts with native calls forbidden.
 
+For Codex, =--effort= sets the reasoning effort of both the reader and the reviewer.
+Choose =low=, =medium=, =high=, =xhigh=, =max= or =ultra=.
+New jobs use the CLI value first, then =dream.reader_effort= from the mirror or global config, then the native model default.
+Resuming a job uses its frozen choice. Claude rejects an explicit effort.
+
 #+begin_example
 sucoder dream read-session --prepare-only
+sucoder dream read-session --harness codex --model gpt-6.2-astra --effort high --prepare-only
 sucoder dream read-session --session SESSION_ID --max-total-calls 24
 sucoder dream read-session --job JOB_ID
 #+end_example

@@ -39,14 +39,17 @@ def run(
     plan_path: Path = typer.Option(..., "--plan", help="Stored organizer plan.json."),
     harness: str = typer.Option(..., "--harness", help="Organizer and first reviewer: claude or codex."),
     model: str = typer.Option(..., "--model", help="Model for the organizer and first reviewer; sends the frozen input to its provider."),
-    cross_harness: str = typer.Option(..., "--cross-harness", help="Second reviewer's harness; must differ from --harness."),
-    cross_model: str = typer.Option(..., "--cross-model", help="Second reviewer's model, from that other family."),
+    cross_harness: str = typer.Option(..., "--cross-harness", help="Second reviewer's harness. Use a different harness unless --same-family-review is set."),
+    cross_model: str = typer.Option(..., "--cross-model", help="Second reviewer's model."),
+    effort: Optional[str] = typer.Option(None, "--effort", help="Codex reasoning effort for the organizer, repair and first review."),
+    cross_effort: Optional[str] = typer.Option(None, "--cross-effort", help="Codex reasoning effort for the second review."),
+    same_family_review: bool = typer.Option(False, "--same-family-review", help="Allow the same harness and require a different reviewer model."),
     attempt: int = typer.Option(1, "--attempt", min=1, max=1000000, help="Explicit attempt; a started call is never silently repeated."),
 ):
     """Organize the area and publish it in place; a rerun replays saved results without model calls."""
     from . import dream_organizer
     _data(ctx, "organizer_run", dream_organizer.run, mirror, plan_path, harness, model, cross_harness, cross_model,
-          attempt=attempt)
+          attempt=attempt, effort=effort, cross_effort=cross_effort, same_family_review=same_family_review)
 
 
 @app.command("status")

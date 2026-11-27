@@ -196,6 +196,7 @@ def prepare(config, job_path=None, *, cwd=None, overrides=None, budget_path=None
     if memory_ref == "refs/heads/" + branch:
         raise DreamError("dream.memory_branch must differ from the launch branch", 3)
     frozen = asdict(settings)
+    del frozen["reader_effort"]  # Only read-session uses this setting.
     # Capability rejection precedes job creation, native probes and all calls.
     dream_budget.limits(dict(limits=dict(max_elapsed_seconds=settings.max_total_seconds,
         max_role_invocations=settings.max_total_calls)), dict(_limits(frozen), **hard))

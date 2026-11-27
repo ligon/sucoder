@@ -21,7 +21,7 @@ import re
 import stat
 import time
 
-from . import dream, dream_memory, dream_notes, dream_roles, dream_run, dream_support, dream_view, dream_wiki as wiki
+from . import dream, dream_memory, dream_native, dream_notes, dream_roles, dream_run, dream_support, dream_view, dream_wiki as wiki
 from .dream import DreamError, canonical, digest
 from .dream_roles import TEXT, array_schema, object_schema
 
@@ -92,6 +92,9 @@ BRIEFS["cross_reviewer"] = BRIEFS["reviewer"] + (
     " You are the second reviewer, from a different model family than the organizer and the first reviewer; "
     "judge independently of them.")
 BRIEFS = {role: brief + UNTRUSTED for role, brief in BRIEFS.items()}
+SAME_FAMILY_BRIEF = "organizer-different-model-review-v1"
+SAME_FAMILY_BRIEFS = dict(BRIEFS, cross_reviewer=BRIEFS["cross_reviewer"].replace(
+    "from a different model family than", "using a different model than"))
 REVIEWERS = ("reviewer", "cross_reviewer")
 EDITING = dict(
     hub="input.area.hub; #+title: must equal input.area.title; every heading needs :CUSTOM_ID:; no tasks.",
@@ -751,13 +754,17 @@ def refuse(*args, **kwargs):
 
 class Seat(dream_roles.Coordinator):
     """One native seat; the shared role call keeps assignments, traces and results."""
-    def __init__(self, organizer, harness, model, transport, native_version=None):
+    def __init__(self, organizer, harness, model, transport, native_version=None, *, native_options):
+        self.briefs = organizer.briefs
+        self.native_options = native_options
+        if transport is None:
+            transport = dream_native.Transport(harness, organizer.deadline)
         super().__init__(organizer.plan, organizer.fd, harness, model, organizer.deadline, transport,
                          native_version=native_version)
 
     def make_assignment(self, role, inputs):
-        task = dict(contract=CONTRACT, run_id=self.run_id, role=role, brief=BRIEFS[role], input=inputs,
-                    result_schema=schema(role), input_sha256=digest(canonical(inputs)))
+        task = dict(contract=CONTRACT, run_id=self.run_id, role=role, brief=self.briefs[role], input=inputs,
+                    result_schema=schema(role), input_sha256=digest(canonical(inputs)), **self.native_options)
         task["assignment_id"] = digest(canonical(task))
         return task
 
@@ -829,24 +836,41 @@ def _editable(path):
 
 
 class Organizer:
-    def __init__(self, plan, fd, source, deadline, author, cross, attempt=1):
+    def __init__(self, plan, fd, source, deadline, author, cross, attempt=1, *,
+                 effort=None, cross_effort=None, same_family_review=False):
         if author[0] not in ("claude", "codex") or cross[0] not in ("claude", "codex"):
             raise DreamError("Organizer seats use the native claude or codex harness")
-        if author[0] == cross[0]:
+        cross_family = author[0] != cross[0]
+        if not same_family_review and not cross_family:
             raise DreamError("The cross reviewer needs the other harness, so a different model family")
         dream._text(author[1], "Organizer --model")
         dream._text(cross[1], "Cross reviewer --cross-model")
+        if same_family_review and author[1].strip() == cross[1].strip():
+            raise DreamError("--same-family-review requires a different model for the second reviewer")
         if type(attempt) is not int or not 1 <= attempt <= 1000000:
             raise DreamError("Invalid organizer attempt number")
         self.plan, self.fd, self.source, self.deadline, self.attempt = plan, fd, source, deadline, attempt
         self.area = plan["area"]
-        self.author = Seat(self, *author)
-        self.cross = Seat(self, *cross)
-        self.run_id = digest(canonical([CONTRACT, plan["plan_id"], attempt,
+        author_options = dream_native.effort_fields(author[0], effort)
+        cross_options = dream_native.effort_fields(cross[0], cross_effort)
+        self.options = dict(author_options)
+        if cross_options:
+            self.options["cross_effort"] = cross_effort
+        if same_family_review:
+            self.options.update(same_family_review=True, cross_family=cross_family)
+        if not cross_family:
+            self.options["cross_brief"] = SAME_FAMILY_BRIEF
+        self.briefs = BRIEFS if cross_family else SAME_FAMILY_BRIEFS
+        self.author = Seat(self, *author, native_options=author_options)
+        self.cross = Seat(self, *cross, native_options=cross_options)
+        identity = [CONTRACT, plan["plan_id"], attempt,
             [self.author.harness, self.author.model, self.author.expected_version],
             [self.cross.harness, self.cross.model, self.cross.expected_version],
-            BRIEFS, EDITING, {role: schema(role) for role in BRIEFS},
-            SUPPORT_CONTRACT, INDEX_CONTRACT, LINT_CONTRACT, LINT_RULES, FORWARD_CONTRACT]))
+            self.briefs, EDITING, {role: schema(role) for role in self.briefs},
+            SUPPORT_CONTRACT, INDEX_CONTRACT, LINT_CONTRACT, LINT_RULES, FORWARD_CONTRACT]
+        if self.options:
+            identity.append(self.options)
+        self.run_id = digest(canonical(identity))
         self.author.run_id = self.cross.run_id = self.run_id
         self.traces, self.usage = [], []
 
@@ -854,7 +878,7 @@ class Organizer:
         if self.author.invocations + self.cross.invocations >= self.plan["limits"]["max_role_invocations"]:
             raise DreamError("Organizer role allowance exhausted", 3)
         result = seat.call(role, inputs)
-        self.traces.append(dict(seat.traces[-1], harness=seat.harness, model=seat.model))
+        self.traces.append(dict(seat.traces[-1], harness=seat.harness, model=seat.model, **seat.native_options))
         self.usage.append(seat.usage[-1])
         return result
 
@@ -1138,13 +1162,15 @@ class Organizer:
         receipt = dict(schema_version=1, contract=CONTRACT, run_id=self.run_id, plan_id=self.plan["plan_id"],
             repository_uuid=self.plan["repository_uuid"], base_commit=self.plan["base_commit"],
             harness=self.author.harness, model=self.author.model, native_version=self.author.version,
-            cross_seat=dict(harness=self.cross.harness, model=self.cross.model, native_version=self.cross.version),
+            cross_seat=dict(harness=self.cross.harness, model=self.cross.model, native_version=self.cross.version,
+                            **self.cross.native_options),
             area=self.area, timestamp=self.plan["created_at"],
             outputs=[dict(path=path, target="", sha256=digest(text.encode()), rule="file-utf8-v1")
                      for path, text in sorted(candidate.pages.items())],
             coverage=[dict(unit_id=key, kind=data.resolve[key]["receipt"]["kind"],
                            sha256=data.resolve[key]["receipt"].get("item_sha256") or data.resolve[key]["receipt"]["sha256"],
-                           extraction="organizer_inline_delivered", verification="dual_family_review")
+                           extraction="organizer_inline_delivered", verification=(
+                               "dual_family_review" if self.author.harness != self.cross.harness else "dual_model_review"))
                       for key in sorted(data.units)],
             fidelity="organizer_carried_support_dual_review", changes=candidate.changes,
             references=candidate.fresh, inherited_support=candidate.carried + candidate.rebound,
@@ -1158,20 +1184,11 @@ class Organizer:
             docs=[{key: doc[key] for key in ("path", "commit", "blob", "outline_sha256")} for doc in self.plan["docs"]],
             review=review, cross_review=cross, assignments=self.traces,
             units=[candidate.units[key] for key in sorted(candidate.units)],
-            usage=dict(role_invocations=len(self.traces), native=self.usage, tokens=None, currency=None))
+            usage=dict(role_invocations=len(self.traces), native=self.usage, tokens=None, currency=None), **self.options)
         dream_support.check_receipt(receipt)
         if dream_view.redact(canonical(receipt).decode(), dream_view.CONTRACT)[1]:
             raise DreamError("The organizer receipt matches a secret pattern; nothing was published", 3)
         return receipt
-
-
-def _seats(harness, model, cross_harness, cross_model, transport, cross_transport, deadline):
-    from . import dream_native
-    if transport is None:
-        transport = dream_native.Transport(harness, deadline)
-    if cross_transport is None:
-        cross_transport = dream_native.Transport(cross_harness, deadline)
-    return (harness, model, transport), (cross_harness, cross_model, cross_transport)
 
 
 def _source(config, plan, deadline):
@@ -1194,9 +1211,10 @@ def _contains(source, commit, tip):
 
 
 def run(config, mirror, plan_path, harness, model, cross_harness, cross_model, *, attempt=1,
-        transport=None, cross_transport=None):
+        transport=None, cross_transport=None, effort=None, cross_effort=None, same_family_review=False):
     """Organize one area and publish it in place; reruns replay saved role results."""
-    if harness not in ("claude", "codex") or cross_harness not in ("claude", "codex") or harness == cross_harness:
+    if (harness not in ("claude", "codex") or cross_harness not in ("claude", "codex") or
+            (harness == cross_harness and not same_family_review)):
         raise DreamError("Use --harness claude|codex and the other harness for --cross-harness")
     dream._text(model, "Explicit --model")
     dream._text(cross_model, "Explicit --cross-model")
@@ -1211,12 +1229,14 @@ def run(config, mirror, plan_path, harness, model, cross_harness, cross_model, *
                if re.fullmatch(r"candidate-[0-9a-f]{64}\.txt", name)]
         if tip != plan["base_commit"] and not any(_contains(source, commit, tip) for commit in own):
             raise DreamError("Memory branch moved since planning; plan again against the new memory tip", 3)
-        author, cross = _seats(harness, model, cross_harness, cross_model, transport, cross_transport, deadline)
-        organizer = Organizer(plan, fd, source, deadline, author, cross, attempt)
+        organizer = Organizer(plan, fd, source, deadline, (harness, model, transport),
+            (cross_harness, cross_model, cross_transport), attempt,
+            effort=effort, cross_effort=cross_effort, same_family_review=same_family_review)
         prefix = "organizer-" + organizer.run_id
         spec = dict(contract=CONTRACT, run_id=organizer.run_id, attempt=attempt,
             harness=harness, model=model, native_version=organizer.author.expected_version,
-            cross_harness=cross_harness, cross_model=cross_model, cross_native_version=organizer.cross.expected_version)
+            cross_harness=cross_harness, cross_model=cross_model, cross_native_version=organizer.cross.expected_version,
+            **organizer.options)
         dream_run._store(fd, prefix + "-spec.json", canonical(spec) + b"\n")
         with dream_roles.run_lock(fd, prefix):
             pages, receipt = organizer.prepare()
@@ -1241,15 +1261,19 @@ def status(config, mirror, plan_path, run_id=None):
         if run_id not in specs:
             raise DreamError("Requested organizer run does not exist")
         spec = dream._json(dream_run._read(fd, "organizer-" + run_id + "-spec.json", 16384))
+        optional = ("effort", "cross_effort", "same_family_review", "cross_family", "cross_brief")
         dream._object(spec, ("contract", "run_id", "attempt", "harness", "model", "native_version",
-                             "cross_harness", "cross_model", "cross_native_version"))
+                             "cross_harness", "cross_model", "cross_native_version"), optional)
         if spec["contract"] != CONTRACT or spec["run_id"] != run_id:
             raise DreamError("Invalid organizer run specification")
         deadline = time.monotonic() + 120
         source = _source(config, plan, deadline)
         organizer = Organizer(plan, fd, source, deadline, (spec["harness"], spec["model"], refuse, spec["native_version"]),
-            (spec["cross_harness"], spec["cross_model"], refuse, spec["cross_native_version"]), spec["attempt"])
-        if organizer.run_id != run_id:
+            (spec["cross_harness"], spec["cross_model"], refuse, spec["cross_native_version"]), spec["attempt"],
+            effort=spec.get("effort"), cross_effort=spec.get("cross_effort"),
+            same_family_review=spec.get("same_family_review", False))
+        stored_options = {key: spec[key] for key in optional if key in spec}
+        if organizer.run_id != run_id or canonical(organizer.options) != canonical(stored_options):
             raise DreamError("Organizer run identity differs from its frozen contract")
         try:
             _, receipt = organizer.prepare()

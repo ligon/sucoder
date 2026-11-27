@@ -171,7 +171,7 @@ A finding is a mechanical rejection that the organizer may repair once.
 
 - Roles :: =organizer= writes the proposal, =repair= revises it once from concrete findings, =reviewer= reviews independently in the same harness family, and =cross_reviewer= reviews in the other one.
   All four use the existing native role call (=dream_roles.Coordinator.call=), with its frozen assignments, traces and result cache.
-- Families :: The cross reviewer's harness must differ from the organizer's (=claude= or =codex=), which also gives a different model family.
+- Families :: By default the cross reviewer's harness must differ from the organizer's (=claude= or =codex=), which also gives a different model family. The [[#codex-review][Codex-only review option]] permits a second model on the same harness.
 - Candidate :: Reviewers receive the full input and the materialized candidate: every written page whole with its before hash, the moves, references with their carried handles, corrections, retractions and the generated index.
 - Checks :: Besides a verdict and findings, each reviewer returns exactly one check per hub section (claims supported by its citations), per move (qualifications preserved), per applied correction (evidence supports it) and per retraction (evidence contradicts the claim).
   Any missing, duplicated or failing check, any blocking finding, or a verdict other than accept rejects the candidate.
@@ -236,3 +236,33 @@ A finding is a mechanical rejection that the organizer may repair once.
 - Strict human-decision lint :: Chosen to accept only fresh human-origin note items; sections whose only support for a human decision is carried stay on their topic pages, linked from the hub.
 - Harness, not model name, decides the family :: =claude= runs Anthropic models and =codex= OpenAI models, so a different harness is a different family; checking model names was rejected as fragile.
 - Explicit models :: The command needs an explicit harness and model for both seats; no configuration key is added, so the job never falls back to a default that pays for an unintended model.
+
+* Codex-only review and reasoning effort, 2026-11-27
+:PROPERTIES:
+:CUSTOM_ID: codex-review
+:END:
+
+The human chose to run dream roles on Codex for now and to select more capable
+models with an explicit reasoning effort. For example, this runs the organizer,
+repair and first review on =gpt-6.2-astra= and the second review on =gpt-6.2-sol=.
+
+#+begin_example
+sucoder dream organize run MIRROR --plan PLAN --harness codex --model gpt-6.2-astra --effort high \
+  --same-family-review --cross-harness codex --cross-model gpt-6.2-sol --cross-effort xhigh
+#+end_example
+
+By default the second harness must still differ. With =--same-family-review=,
+the two harnesses may match and the two model names must differ. A second
+reviewer on the same harness receives =organizer-different-model-review-v1=,
+whose brief identifies the reviewer as using a different model.
+The run spec and receipt record =cross_family: false= and the brief version,
+and each coverage row records =dual_model_review=. Review across harnesses
+uses the original brief and coverage label.
+
+=--effort= applies to the organizer, repair and first reviewer.
+=--cross-effort= applies independently to the second reviewer. Both accept
+=low=, =medium=, =high=, =xhigh=, =max= or =ultra= on Codex. A Claude seat
+refuses an effort. Each omitted effort uses that seat's native model default.
+The spec freezes supplied options in the run identity. Status uses the spec
+to rebuild the assignments and receipt. With all three options omitted,
+historical runs reproduce their original commands, identities and receipts.
