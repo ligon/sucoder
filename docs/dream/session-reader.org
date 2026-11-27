@@ -24,7 +24,7 @@ The human ruled that "Readers *may* read whole sessions" and that notes go to "a
   New job kinds get new contract names; no existing contract changes ([[file:read-and-organize.org::#stays][What stays]]).
   An optional =reader_contract= key names how reader items are checked; without it the job is =session-reader-v1=, as every job prepared before [[#v2][version 2]] is.
 - =session-reader-v1=, =session-reader-v2= :: The reader contracts: version 1 is the behavior this specification describes, and [[#v2][version 2]] blanks unused kind fields, drops a failing item instead of rejecting the note, and fails closed per chunk.
-  New jobs freeze version 2.
+  New jobs freeze version 3 ([[#v3][version 3]]).
 - =session-reader-roles-v1= :: The assignment contract of the two native roles, =reader= and =reviewer=, with their briefs and output schemas.
   Assignments use =coordinator-submission-v1= (=sucoder/dream_submission.py=), so a model returns only the reply body and Python attaches the assignment identifiers.
   =session-reader-v1= freezes it; =session-reader-v2= freezes =session-reader-roles-v2=, whose reader brief differs ([[#v2][version 2]]).
@@ -247,3 +247,32 @@ The command lives in one separate block of =sucoder/dream_cli.py=, because the o
 12. Oldest first :: By last write time, since the listing carries no start time.
 13. One note per job :: A job writes one note for all the chunks it read.
 14. Dates :: Record timestamps are delivered beside the rendering, and a date must be recorded or quoted.
+
+* Version 3 after the second pilot, 2026-11-27
+:PROPERTIES:
+:CUSTOM_ID: v3
+:END:
+
+- Pilot :: The second real pilot used =claude-sonnet-4-6= on one finished session.
+  Three reader calls proposed 44 items; mechanical checks dropped 4 and 40 were stored.
+  The reviewer accepted with five findings that individual claims exceeded their citations, including generalizing two inspected failures into confirmed causes of fifty.
+  Usage was 58,753 input and 63,008 output tokens over four calls (three reader, one reviewer), against estimates of 33,258 input and 7,000 output; elapsed time was 943 seconds.
+  No transcript content is reproduced here.
+- Versioning :: New headers freeze =session-reader-v3=, =session-reader-roles-v3= (both briefs and the reviewer schema), and =session-reader-estimate-v2=.
+  Headers naming v1 or v2, or lacking =reader_contract=, retain their earlier behavior, estimates, role identities and replay outcomes. Unknown contracts are refused.
+- Mechanical checks :: Version 2 normalization, per-item drops and per-chunk reliability thresholds remain.
+- Review :: Each call returns =verdict=, =overall_findings= and =item_verdicts=.
+  Every delivered item index must occur exactly once, with verdict =supported=, =overstated= or =unsupported=; missing, duplicate or out-of-group judgments reject the job.
+  Overstated and unsupported items require a one-sentence =finding=; supported items leave it empty.
+  Only supported items are retained, in order and renumbered in the stored note.
+  =review-items-AAAAAA.json= records reviewed and kept counts and every removal's original item index, proposed item, =stage= =review=, verdict and finding, before applying the threshold.
+  The result reports =reviewed_items=, =kept_items= and =removed_items=, in addition to mechanical chunk counts.
+- Fail closed :: Any overall reject, removal of more than half the reviewed items, or no supported items rejects the note.
+  Review and removal artifacts remain private in the job directory; no note, intent or coverage is written to the store.
+  This includes an empty proposed note under v3.
+  The composed note is saved only after review accepts, then the existing intent and idempotent lease-held writes proceed.
+  The stored review retains the existing store schema; findings summarize each removal with its original index and verdict, plus overall findings.
+  Review judgments are model assessments, not mechanical proof of support.
+- Estimate :: Estimate v2 scales the v1 input-token formula by 1.8 (rounded up), and allows 20,000 output tokens per reader call and 12,000 per estimated review call.
+  Its frozen basis is "one pilot: claude-sonnet-4-6, 2026-11-27, 3 reader and 1 reviewer call".
+  It is still an estimate, not a ceiling; other models may differ, and actual excerpt grouping may require more review calls.
