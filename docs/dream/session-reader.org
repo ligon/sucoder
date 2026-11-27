@@ -1,7 +1,7 @@
 #+TITLE: Session reader, milestone R1: one finished Claude session into the private note store
 #+AUTHOR: Sue
 #+DATE: 2026-11-27
-#+STATUS: SPECIFIED 2026-11-27 for milestone R1 of the reader track; implemented in =sucoder/dream_reader_job.py=
+#+STATUS: SPECIFIED 2026-11-27 for milestone R1 of the reader track; implemented in =sucoder/dream_reader_job.py=; reader contract =session-reader-v2= added 2026-11-27 after the first pilot
 #+OPTIONS: toc:2 num:nil
 
 * Scope
@@ -22,8 +22,12 @@ The human ruled that "Readers *may* read whole sessions" and that notes go to "a
 
 - =session-reader-job-v1= :: The frozen job header (=job.json=) and its result.
   New job kinds get new contract names; no existing contract changes ([[file:read-and-organize.org::#stays][What stays]]).
+  An optional =reader_contract= key names how reader items are checked; without it the job is =session-reader-v1=, as every job prepared before [[#v2][version 2]] is.
+- =session-reader-v1=, =session-reader-v2= :: The reader contracts: version 1 is the behavior this specification describes, and [[#v2][version 2]] blanks unused kind fields, drops a failing item instead of rejecting the note, and fails closed per chunk.
+  New jobs freeze version 2.
 - =session-reader-roles-v1= :: The assignment contract of the two native roles, =reader= and =reviewer=, with their briefs and output schemas.
   Assignments use =coordinator-submission-v1= (=sucoder/dream_submission.py=), so a model returns only the reply body and Python attaches the assignment identifiers.
+  =session-reader-v1= freezes it; =session-reader-v2= freezes =session-reader-roles-v2=, whose reader brief differs ([[#v2][version 2]]).
 - =session-reader-estimate-v1= :: The preflight estimate frozen in the header.
 - Unchanged contracts :: Notes are =session-note-v1= with =render_contract= =claude-view-v3=, coverage is =session-coverage-v1=, and the wallet is =persistent-dream-budget-v1=.
   The job freezes the rendering contract it prepared under, so a later =claude-view-v4= does not change a saved job.
@@ -114,8 +118,9 @@ The store checks schema and internal consistency but "does not hold transcripts"
 6. Dates :: A nonempty =when= must be the recorded date of a cited record or an ISO date that appears in a cited quote, so a date is never invented.
 7. Allowances :: The note keeps at most 200 items and 256 KiB, and every composed note passes =dream_notes.validate_note=.
 
-Any failure stops the job with a rejection that names the chunk, the item and the rule.
+Under =session-reader-v1=, any failure stops the job with a rejection that names the chunk, the item and the rule.
 Nothing reaches the store, the private role results stay in the job directory, and the failure is recorded there.
+Under =session-reader-v2=, an item that fails checks 1 to 6 or the store's item validation is dropped and recorded instead, and only a chunk that loses more than half of its items, or all of them, rejects the note ([[#v2][version 2]]).
 
 * Reviewer role
 :PROPERTIES:
@@ -158,12 +163,46 @@ Nothing reaches the store, the private role results stay in the job directory, a
 :CUSTOM_ID: replay
 :END:
 
-- Storage :: =<log_dir>/dream-reader-jobs/<job_id>/=, private and account-owned, holding =job.json=, =identity.json=, =prepared.json=, the wallet (=budget/= by default), role assignments, traces and results, =spec-NNNNNN.json=, the composed note and review, the intent and =result-NNNNNN.json=.
+- Storage :: =<log_dir>/dream-reader-jobs/<job_id>/=, private and account-owned, holding =job.json=, =identity.json=, =prepared.json=, the wallet (=budget/= by default), role assignments, traces and results, =spec-NNNNNN.json=, the composed note and review, the intent and =result-NNNNNN.json=, and under version 2 one =dropped-NNNNNN-CCCCCC.json= per chunk read.
 - Resume :: Running the same job again reuses every saved role result without a call; a started call without a result is never repeated, as =dream_roles.Coordinator.call= already guarantees.
   A changed native build is refused; select a new =--attempt=.
 - Replay :: When the attempt's result exists, the job replays with native calls forbidden: it restores the wallet read-only, re-reads and re-renders every chunk and checks its raw and render digests, revalidates every saved result and trace, recomposes the note and review with their saved times, checks the store holds them, and returns the saved result.
   This works after the wallet's time has passed and after the session has grown.
 - Determinism :: A mechanical rejection recurs on resume of the same attempt; a new =--attempt= pays for new calls from the same wallet.
+
+* Version 2 after the first pilot, 2026-11-27
+:PROPERTIES:
+:CUSTOM_ID: v2
+:END:
+
+- Pilot :: The first real reader call (=claude-sonnet-4-6=, one finished session) returned 11 items for chunk 0, and the job rejected the whole note at the first: "Chunk 0 item 0: by applies only to a kind that uses it, not to fact".
+  The cause was a schema mismatch.
+  The output schema requires every kind-specific field (=by=, =command=, =outcome=, =target=) on every item, an empty string meaning absent, and the version 1 check refuses a nonempty one on a kind that does not use it.
+  The model had filled such fields on three items: =by= =human= on a fact whose basis was =human said=, =outcome= =unknown= on an open question, and =by= =agent= on a command.
+  Replaying the checks offline on the saved output with those fields blanked, 8 of the 11 items pass every check.
+  The other 3 fail genuinely: a quote that matches a different record than the one cited, a quote with ten characters altered, and tool-origin text labelled =agent=.
+  Under version 1 any failing item rejects the note, so nothing was stored.
+- Decision :: The human ruled that the change is a new reader contract, so the existing version 1 job and its stored outcome replay exactly as before.
+- Versioning :: A new job's header freezes =reader_contract= =session-reader-v2=.
+  A header without the key, or naming =session-reader-v1=, keeps every version 1 behavior above byte for byte, including the whole-note rejection, the =session-reader-roles-v1= brief and the result; an unknown reader contract is refused.
+  This follows =render_contract= in exploratory job headers (=sucoder/dream_explore.py=): version 1 stays implicit, so earlier headers and their digests are unchanged.
+- Normalize :: Before an item is checked, the kind-specific fields its kind does not use are blanked: =by= is kept only for a decision, =command= and =outcome= only for a command, and =target= only for a correction.
+  Such a field is the model filling a closed schema, not a claim, and =session-note-v1= keeps only the kind's own fields anyway.
+- Item-level rejection :: An item that fails any of the [[#validate][mechanical checks]] 1 to 6, or the store's item validation, is dropped: it is never stored, never carried forward to a later chunk and never shown to the reviewer.
+  For every chunk read, =dropped-NNNNNN-CCCCCC.json= (attempt and chunk index) in the job directory records the chunk's proposed and accepted counts and, for each dropped item, its chunk index, item index, reason and the item as proposed.
+  It is written before the threshold below is applied, so the job directory of a rejected note still shows what was dropped and why.
+- Reliability threshold :: If more than half of a chunk's proposed items are dropped, or a chunk proposes items and none survive, the note is rejected as in version 1 (fail closed): nothing reaches the store, the failure is recorded in the job directory, and the reason names the threshold.
+  Exactly half dropped is not more than half, so that chunk's surviving items are kept.
+- Note-level checks :: The per-call item allowance and the composed note's =session-note-v1= validation (200 items, 256 KiB) still reject the whole note, as in version 1.
+- Briefs :: The brief text is part of the role contract and of the run identity, so version 2 freezes =session-reader-roles-v2=, and a version 2 run never reuses a version 1 role result.
+  Its reader brief says plainly that the kind-specific fields stay empty strings unless the item's kind uses them, and which kind uses which.
+  It says that each quote is copied verbatim from the rendered text of the record it cites, never from another record, a marker line or the chunk header.
+  It also says that tool blocks have origin =tool= even when the agent made the call, and that a failing item is dropped while a chunk that loses more than half of its items rejects the note.
+  The reviewer brief and both output schemas are unchanged.
+- Result :: A version 2 result adds =reader_contract=, =chunk_items= (one entry per chunk read, with =chunk=, =proposed=, =accepted= and =dropped= counts) and =dropped_items=, their total; =items= is still the number of items in the note.
+- Replay :: Replay recomputes every dropped record from the saved role results and requires the saved record unchanged, as it does for the note and review.
+- Unchanged :: The store, =session-note-v1=, the review, coverage, the lease, the budget and the absence of a repair call are as in version 1.
+  A dropped item's chunk is still covered by the note, so what the dropped item claimed is not read again by a later reader; the dropped record keeps it for inspection.
 
 * Command
 :PROPERTIES:
@@ -199,7 +238,7 @@ The command lives in one separate block of =sucoder/dream_cli.py=, because the o
 3. Quote citations :: The reader cites a record and a quote, and the coordinator computes the raw range.
 4. Origin of every citation :: An item's origin must hold for all its citations, so mixed evidence becomes separate items.
 5. Append-only notes :: Carried items are never edited or dropped.
-6. Fail closed :: A mechanical rejection stops the job without a repair call.
+6. Fail closed :: A mechanical rejection stops the job without a repair call; [[#v2][version 2]] fails closed per chunk rather than per item.
 7. Rejected notes are stored :: A reviewer's rejection is recorded with its coverage, as the store anticipates; an empty note gets no review.
 8. Explorer ranges :: They count as covered, as the design says, though their content reaches no note.
 9. Exclusion list :: It is configuration with an empty default; the deployment must list =dcdc7362=, and the job re-reads the current list at run time.

@@ -142,6 +142,18 @@ def no_real_native(monkeypatch):
     monkeypatch.setattr(dream_native, "Transport", forbidden)
 
 
+@pytest.fixture(autouse=True)
+def v1_jobs(monkeypatch):
+    """Tests prepare session-reader-v1 jobs, as every job was before v2 existed, unless they request v2."""
+    monkeypatch.setattr(reader, "READER", reader.READER_V1)
+
+
+@pytest.fixture
+def v2(v1_jobs, monkeypatch):
+    """New jobs freeze session-reader-v2, the module's default."""
+    monkeypatch.setattr(reader, "READER", reader.READER_V2)
+
+
 @pytest.fixture
 def no_live(monkeypatch):
     monkeypatch.setattr(dream_explore, "_live_sessions", lambda config: set())
@@ -329,6 +341,165 @@ def test_a_mechanically_invalid_item_stops_the_job_before_any_store_write(mirror
     with pytest.raises(reader.Rejected, match=message):
         reader.run(config, job, transport=native)
     assert len(native.calls) == 1
+
+
+# session-reader-v2: unused kind fields are blanked, failing items are dropped, unreliable chunks reject the note
+
+def pilot_fields(path):
+    """Valid items that fill kind fields their kinds do not use, as the first pilot's reader did."""
+    user, call, output = at(path, "keep the timeout"), at(path, "pytest -n 2"), at(path, "56 passed")
+    return {0: [item("fact", "The human asked to keep the timeout at 30 seconds.",
+                     [(user, "keep the timeout at 30 seconds")], "human said", "human", by="human"),
+                item("command", "The dream notes tests ran in parallel and passed.",
+                     [(call, "pytest -n 2"), (output, "56 passed")], "output shows", "tool", by="agent",
+                     command="pytest -n 2 tests/test_dream_notes.py", outcome="worked")],
+            1: [item("open_question", "Why two slow tests failed is not yet known.",
+                     [(at(path, "cause is not yet known"), "the cause is not yet known")], "agent reported", "agent",
+                     outcome="unknown")]}
+
+
+def saved(job, name):
+    return json.loads((job / name).read_bytes())
+
+
+def test_unused_kind_fields_are_blanked_under_v2_and_still_reject_a_v1_job(mirror, monkeypatch):
+    repo, _, config, path = mirror
+    output = pilot_fields(path)
+    # A job prepared before v2 rejects the whole note at the first unused field, as the pilot's job did.
+    native = Native(output)
+    with pytest.raises(reader.Rejected, match="Chunk 0 item 0: by applies only to a kind that uses it, not to fact"):
+        reader.start(config, cwd=repo, overrides=OPTIONS, transport=native)
+    old = Path(config.log_dir) / "dream-reader-jobs" / jobs(config)[0]
+    assert "reader_contract" not in saved(old, "job.json") and not list(old.glob("dropped-*.json"))
+    assert native.calls[0]["contract"] == reader.ROLES and native.calls[0]["brief"] == reader.BRIEFS["reader"]
+    session = dream_notes.Store(Path(config.log_dir) / "dream-notes" / IDENTITY).source("claude", SID)
+    assert session.coverage() == [] and session.notes() == []
+    monkeypatch.setattr(reader, "READER", reader.READER_V2)
+    native = Native(output)
+    result = reader.start(config, cwd=repo, overrides=OPTIONS, transport=native)
+    assert result["state"] == "accepted" and result["reader_contract"] == reader.READER_V2
+    assert result["chunk_items"] == [dict(chunk=0, proposed=2, accepted=2, dropped=0),
+                                     dict(chunk=1, proposed=1, accepted=1, dropped=0)]
+    assert result["dropped_items"] == 0 and result["items"] == 3
+    job = Path(result["job_path"])
+    assert saved(job, "job.json")["reader_contract"] == reader.READER_V2
+    assert saved(job, "spec-000001.json")["contract"] == reader.ROLES_V2
+    assert saved(job, "dropped-000001-000001.json") == dict(contract=reader.READER_V2, attempt=1, chunk=1, proposed=1,
+                                                            accepted=1, dropped=[])
+    # The v2 role contract's reader brief states both rules plainly; the reviewer brief is unchanged.
+    brief = native.calls[0]["brief"]
+    assert native.calls[0]["contract"] == reader.ROLES_V2 and brief == reader.BRIEFS_V2["reader"]
+    assert "stay empty strings unless the item's kind uses them" in brief and "copied verbatim" in brief
+    assert native.calls[-1]["role"] == "reviewer" and native.calls[-1]["brief"] == reader.BRIEFS["reviewer"]
+    note = source_of(result).notes(accepted_only=True)[0]["note"]
+    fact, command, question = note["items"]
+    assert "by" not in fact and "by" not in command and command["outcome"] == "worked" and "outcome" not in question
+    assert [c["text"] for c in native.calls[1]["input"]["carried"]] == [i["text"] for i in output[0]]
+    assert native.calls[1]["input"]["carried"][0]["by"] == ""
+
+
+def test_items_that_fail_a_check_are_dropped_recorded_and_never_carried_or_reviewed(mirror, v2, monkeypatch,
+                                                                                    clock):  # noqa: F811
+    repo, _, config, path = mirror
+    good = script(path)
+    agent, slow, failure = at(path, "All dream tests passed"), at(path, "pytest -m slow"), at(path, "2 failed")
+    # The pilot's genuine failures: an altered quote, a quote from another record and tool text labelled agent.
+    altered = item("fact", "The agent said the tests failed.", [(agent, "All dream tests failed")],
+                   "agent reported", "agent")
+    elsewhere = item("fact", "Two slow tests failed.", [(slow, "2 failed")], "agent reported", "tool")
+    labelled = item("fact", "Two of three slow tests failed.", [(failure, "2 failed")], "agent reported", "agent")
+    native = Native({0: [good[0][0], altered, good[0][1], good[0][2]],
+                     1: [elsewhere, good[1][0], labelled, good[1][1]]})  # Exactly half dropped: the chunk survives.
+    result = reader.start(config, cwd=repo, overrides=OPTIONS, transport=native)
+    assert result["state"] == "accepted" and result["items"] == 5 and result["dropped_items"] == 3
+    assert result["chunk_items"] == [dict(chunk=0, proposed=4, accepted=3, dropped=1),
+                                     dict(chunk=1, proposed=4, accepted=2, dropped=2)]
+    job = Path(result["job_path"])
+    assert saved(job, "dropped-000001-000000.json") == dict(
+        contract=reader.READER_V2, attempt=1, chunk=0, proposed=4, accepted=3,
+        dropped=[dict(chunk=0, item=1, reason="the quote does not match the rendering of record " + str(agent),
+                      proposed=altered)])
+    later = saved(job, "dropped-000001-000001.json")
+    assert [(d["chunk"], d["item"], d["proposed"]) for d in later["dropped"]] == [(1, 0, elsewhere), (1, 2, labelled)]
+    assert later["dropped"][0]["reason"] == "the quote does not match the rendering of record " + str(slow)
+    assert later["dropped"][1]["reason"] == ("the quoted text of record " + str(failure) +
+                                             " has origin tool, not the stated agent")
+    # Only accepted items are carried forward, reviewed and stored.
+    accepted = [i["text"] for i in good[0] + good[1]]
+    reads = [task["input"] for task in native.calls if task["role"] == "reader"]
+    assert [c["text"] for c in reads[1]["carried"]] == accepted[:3]
+    review = [task["input"] for task in native.calls if task["role"] == "reviewer"]
+    assert len(review) == 1 and [i["text"] for i in review[0]["items"]] == accepted
+    note = source_of(result).notes(accepted_only=True)[0]["note"]
+    assert [i["text"] for i in note["items"]] == accepted
+    # The completed job replays, dropped records included, without a call or a write.
+    files = {p.name: p.read_bytes() for p in job.iterdir() if p.is_file()}
+    clock.advance(10 ** 6)
+    forbid_native(monkeypatch)
+    assert reader.run(config, job) == result
+    assert {p.name: p.read_bytes() for p in job.iterdir() if p.is_file()} == files
+    (job / "dropped-000001-000001.json").write_bytes(dream.canonical(dict(later, dropped=[])) + b"\n")
+    with pytest.raises(DreamError, match="dropped-000001-000001.json differs from its role results"):
+        reader.run(config, job)
+
+
+@pytest.mark.parametrize("case, message", [
+    ("most", "Chunk 0: 2 of its 3 proposed items failed .* more than half of a chunk's items are dropped"),
+    ("all", "Chunk 0: none of its 2 proposed items passed .* no item of a chunk survives"),
+])
+def test_a_chunk_that_loses_more_than_half_or_all_of_its_items_rejects_the_note(mirror, v2, case, message):
+    repo, _, config, path = mirror
+    bad = [bad_reading("quote", path), bad_reading("origin", path)]
+    proposed = dict(most=[script(path)[0][0]] + bad, all=bad)[case]
+    native = Native({0: proposed, 1: script(path)[1]})
+    with pytest.raises(reader.Rejected, match=message):
+        reader.start(config, cwd=repo, overrides=OPTIONS, transport=native)
+    assert [task["role"] for task in native.calls] == ["reader"]
+    job = Path(config.log_dir) / "dream-reader-jobs" / jobs(config)[0]
+    assert [json.loads(p.read_bytes())["state"] for p in job.glob("failure-*.json")] == ["rejected"]
+    record = saved(job, "dropped-000001-000000.json")
+    assert record["proposed"] == len(proposed) and record["accepted"] == len(proposed) - 2
+    assert [d["proposed"] for d in record["dropped"]] == bad and all(d["reason"] for d in record["dropped"])
+    session = dream_notes.Store(Path(config.log_dir) / "dream-notes" / IDENTITY).source("claude", SID)
+    assert session.coverage() == [] and session.notes() == [] and session.record() is None
+    with pytest.raises(reader.Rejected, match=message):
+        reader.run(config, job, transport=native)
+    assert len(native.calls) == 1
+
+
+def test_a_saved_v1_job_replays_to_its_stored_outcome_when_new_jobs_freeze_v2(mirror, monkeypatch,
+                                                                             clock):  # noqa: F811
+    repo, _, config, path = mirror
+    result = reader.start(config, cwd=repo, overrides=OPTIONS, transport=Native(script(path)))
+    job = Path(result["job_path"])
+    assert "reader_contract" not in saved(job, "job.json") and "chunk_items" not in result
+    assert saved(job, "spec-000001.json")["contract"] == reader.ROLES and not list(job.glob("dropped-*.json"))
+    files = {p.name: p.read_bytes() for p in job.iterdir() if p.is_file()}
+    monkeypatch.setattr(reader, "READER", reader.READER_V2)
+    clock.advance(10 ** 6)
+    forbid_native(monkeypatch)
+    assert reader.run(config, job) == result and reader.start(config, result["job_id"]) == result
+    assert {p.name: p.read_bytes() for p in job.iterdir() if p.is_file()} == files
+
+
+@pytest.mark.parametrize("named", [reader.READER_V1, "session-reader-v9"])
+def test_a_header_naming_v1_keeps_v1_and_an_unknown_reader_contract_is_refused(mirror, v2, named):
+    repo, _, config, path = mirror
+    prepared = reader.prepare(config, cwd=repo, overrides=OPTIONS)
+    assert prepared["reader_contract"] == reader.READER_V2
+    job = Path(prepared["job_path"])
+    header = dict(saved(job, "job.json"), reader_contract=named)
+    for name, value in (("job.json", header), ("identity.json", dict(sha256=dream.digest(dream.canonical(header))))):
+        (job / name).write_bytes(dream.canonical(value) + b"\n")
+    native = Native(pilot_fields(path))
+    if named == reader.READER_V1:
+        with pytest.raises(reader.Rejected, match="by applies only to a kind that uses it, not to fact"):
+            reader.run(config, job, transport=native)
+        assert native.calls[0]["contract"] == reader.ROLES and not list(job.glob("dropped-*.json"))
+    else:
+        with pytest.raises(DreamError, match="Invalid frozen reader contract"):
+            reader.run(config, job, transport=native)
+        assert native.calls == []
 
 
 # Sessions that must not be read
