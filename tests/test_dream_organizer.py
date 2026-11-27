@@ -78,7 +78,7 @@ def git_unit(repo, unit_id, path, text, quote):
     return unit, dict(unit_id=unit_id, byte_start=start, byte_end=start + len(quote), quote=quote)
 
 
-def seed(workspace):
+def seed(workspace, index=INDEX_TEXT):
     """main: README and docs; sucoder/memory: three episode pages, one receipt, and a later edit without one."""
     repo, _, config, _ = workspace
     (repo / "README.org").write_text(README)
@@ -89,7 +89,7 @@ def seed(workspace):
     readme, install = git_unit(repo, "readme", "README.org", README, "Install with pip.")
     design, inplace = git_unit(repo, "design", "docs/dream.org", DESIGN, "In place.")
     _, abi = git_unit(repo, "design", "docs/dream.org", DESIGN, "ABI 3.")
-    pages = {REPLIES: REPLIES_V1, LAUNCH: LAUNCH_TEXT}
+    pages = {REPLIES: REPLIES_V1, LAUNCH: LAUNCH_TEXT, wiki.INDEX: index}
     receipt = dict(schema_version=1, contract="source-grounded-wiki-v9", run_id="1" * 64, repository_uuid=IDENTITY,
         outputs=[dict(path=p, target="", sha256=sha(t), rule="file-utf8-v1") for p, t in sorted(pages.items())],
         units=[readme, design], review=dict(verdict="accept", failures=[], findings=[]), references=[
@@ -97,9 +97,10 @@ def seed(workspace):
             dict(path=REPLIES, target="reply-timeout", evidence_status="inference", citations=[install]),
             dict(path=LAUNCH, target="landlock", evidence_status="observation", citations=[inplace, abi]),
             dict(path=LAUNCH, target="index-size", evidence_status="inference", citations=[inplace]),
-            dict(path=LAUNCH, target="budget", evidence_status="inference", citations=[install])])
+            dict(path=LAUNCH, target="budget", evidence_status="inference", citations=[install]),
+            dict(path=wiki.INDEX, target="orientation", evidence_status="observation", citations=[install, abi])])
     files = {W + "sources.json": json.dumps(dict(schema_version=1, repository_uuid=IDENTITY)) + "\n",
-             wiki.SETTINGS_PATH: wiki.SETTINGS, wiki.INDEX: INDEX_TEXT, REPLIES: REPLIES_V1, LAUNCH: LAUNCH_TEXT,
+             wiki.SETTINGS_PATH: wiki.SETTINGS, wiki.INDEX: index, REPLIES: REPLIES_V1, LAUNCH: LAUNCH_TEXT,
              CODEX: CODEX_TEXT, W + "receipts/" + "1" * 64 + ".json": dream.canonical(receipt).decode() + "\n"}
     first = tree_commit(repo, files, message="Seed memory with one reviewed generation")
     second = tree_commit(repo, dict(files, **{REPLIES: REPLIES_V2}), first, "A later edit without a receipt")
@@ -279,10 +280,11 @@ def test_an_area_job_publishes_hub_forwarding_index_correction_and_retraction(or
     index = show(repo, MEMORY, wiki.INDEX) + "\n"
     assert index == ("#+title: Companion wiki\n\n* Memory\n- [[file:hubs/dream-memory.org][Dream memory]] :: " + AREA["summary"] +
                      "\n\n* Pages not yet in a hub\n- [[file:topics/codex.org][codex]]\n\n"
-                     "* Earlier index sections\n** orientation\n:PROPERTIES:\n:CUSTOM_ID: orientation\n:END:\n")
+                     + INDEX_TEXT[INDEX_TEXT.index("* Orientation"):])
     assert len(organizer.injected(index).encode()) <= plan["inject_bytes"]
     receipt = json.loads(show(repo, MEMORY, W + "receipts/" + result["run_id"] + ".json"))
-    assert receipt["contract"] == "wiki-organizer-v3" and receipt["area"]["id"] == "dream-memory"
+    assert receipt["contract"] == "wiki-organizer-v4" and receipt["area"]["id"] == "dream-memory"
+    assert receipt["index"]["contract"] == "organizer-index-v2"
     assert receipt["review"]["verdict"] == receipt["cross_review"]["verdict"] == "accept"
     assert receipt["cross_seat"]["harness"] == "codex" and receipt["harness"] == "claude"
     carried = [row for row in receipt["inherited_support"] if row["status"] == "carried_not_reread"]
@@ -305,6 +307,8 @@ def test_carried_support_is_history_for_the_next_job_and_for_editorial_support(o
     execute(organized[0], plan)
     later = organizer.plan(config, "sample", "dream-memory", now="2026-11-28T12:00:00Z")
     rows = {(row["path"], row["target"]) for row in later["support"]}
+    assert [row for row in later["support"] if row["path"] == wiki.INDEX] == [
+        row for row in plan["support"] if row["path"] == wiki.INDEX]
     assert {(HUB, "reply-proof"), (HUB, "landlock"), (LAUNCH, "budget"), (LAUNCH, "index-size")} <= rows
     assert (REPLIES, "reply-proof") not in rows  # The forwarding section no longer carries the moved claim.
     assert later["areas"] == [dict(id="dream-memory", hub=HUB, **AREA)] and later["area"]["title"] == "Dream memory"
@@ -324,7 +328,7 @@ def test_a_dropped_carried_citation_fails_the_survival_check_and_publishes_nothi
     with pytest.raises(dream.DreamError, match="Carried support for .*dream-launch.org::#landlock drops support-") as raised:
         execute(organized[0], plan, author)
     assert raised.value.exit_code == 3
-    assert [t["role"] for t in author.calls] == ["organizer", "repair"]
+    assert [t["role"] for t in author.calls] == ["organizer", "repair", "repair"]
     assert "drops" in author.calls[1]["input"]["findings"][0]["message"]
     assert git(repo, "rev-parse", MEMORY) == base
 
@@ -344,7 +348,7 @@ def test_rendered_heading_quotations_bind_only_source_bytes():
     data = organizer.Inputs({}, [], {}, {unit: dict(rows=organizer.outline(raw))}, [])
     author = ("claude", "author", forbidden, "fixture")
     cross = ("codex", "reviewer", forbidden, "fixture")
-    for contract in (organizer.PLAN_CONTRACT_V2, organizer.PLAN_CONTRACT_V3):
+    for contract in (organizer.PLAN_CONTRACT_V2, organizer.PLAN_CONTRACT_V3, organizer.PLAN_CONTRACT_V4):
         job = organizer.Organizer(dict(contract=contract, area={}, limits=organizer.LIMITS_V2, plan_id="a" * 64),
                                   None, None, 60, author, cross)
         for quote in ("decisions", "13: ** R\u00e9sum\u00e9 of decisions", "13: ** R\u00e9sum\u00e9"):
@@ -363,7 +367,7 @@ def test_rendered_heading_quotations_bind_only_source_bytes():
 
 
 @pytest.mark.parametrize("repair_succeeds", [True, False])
-def test_v3_repairs_independent_findings_together(organized, repair_succeeds):
+def test_repairs_independent_findings_together(organized, repair_succeeds):
     workspace, plan, base, _ = organized
 
     def broken(inputs):
@@ -393,7 +397,7 @@ def test_v3_repairs_independent_findings_together(organized, repair_succeeds):
     else:
         with pytest.raises(dream.DreamError) as refused:
             execute(workspace, plan, author, cross)
-        assert [t["role"] for t in author.calls + cross.calls] == ["organizer", "repair"]
+        assert [t["role"] for t in author.calls + cross.calls] == ["organizer", "repair", "repair"]
         assert git(workspace[0], "rev-parse", MEMORY) == base
     messages = [f["message"] for f in author.calls[1]["input"]["findings"]]
     if not repair_succeeds:
@@ -464,7 +468,7 @@ def test_a_cross_family_rejection_publishes_nothing(organized):
     cross = Seat("codex-fixture-1", reject=True)
     with pytest.raises(dream.DreamError, match="loses its ABI qualification"):
         execute(organized[0], plan, author, cross)
-    assert [t["role"] for t in author.calls] == ["organizer", "reviewer", "repair", "reviewer"]
+    assert [t["role"] for t in author.calls] == ["organizer", "reviewer", "repair", "reviewer", "repair"]
     assert [t["role"] for t in cross.calls] == ["cross_reviewer", "cross_reviewer"]
     assert git(repo, "rev-parse", MEMORY) == base
 
@@ -474,7 +478,7 @@ def test_an_unchanged_candidate_is_not_reviewed_twice(organized):
     author, cross = Seat("claude-fixture-1"), Seat("codex-fixture-1", reject=True)
     with pytest.raises(dream.DreamError, match="loses its ABI qualification"):
         execute(organized[0], organized[1], author, cross)
-    assert [t["role"] for t in author.calls] == ["organizer", "reviewer", "repair"] and len(cross.calls) == 1
+    assert [t["role"] for t in author.calls] == ["organizer", "reviewer", "repair", "repair"] and len(cross.calls) == 1
 
 
 def test_the_cross_reviewer_needs_the_other_harness(organized):
@@ -739,6 +743,17 @@ def test_pinned_v2_replay(workspace, monkeypatch):
         "098a349cd8982f2f055b3a876fe074c4e62d8f7a210d093b3b369b3aa93745d4")
 
 
+def test_pinned_v3_replay(workspace, monkeypatch):
+    """Plan and canonical assignment/receipt digests captured with 06b07c1 and fake transports."""
+    check_pinned_replay(workspace, monkeypatch, "v3",
+        "cd5eb79ed18a419833e01c3d5a87203c3a4f9553b45c8e34debe2723232c4bf8", [
+            "04132eab4828a374b6291825ecc1a51f56a0eef98009a76c564a2267adf7bcae",
+            "8744e5281fc55a51ba9e085283b317c9e24101a54ffe7346b8c0e187963152e1",
+            "330d53718c5cda366e0ee50fb9c9296b32874ce6d0ac0f2913406143484a951a",
+            "143d4d280b2fdc223680495e14b99b487b9de96fee08fd8cc74a434eb5883f10"],
+        "9ae6a80fec7eaa73c2f78c0ae958b563bec289442c3ca609699de00a03af3cb6")
+
+
 def record_inherited(workspace, plan, citations, *, accepted=True):
     """A later organizer receipt, sorted ahead of the original receipt by filename."""
     config, base = workspace[2], plan["base_commit"]
@@ -772,7 +787,7 @@ def test_move_with_64_distinct_handles_and_repeated_receipt_evidence(workspace, 
     author, cross = Seat("claude-fixture-1", propose=legacy_move), Seat("codex-fixture-1")
     result = execute(workspace, plan, author, cross)
     for task in author.calls + cross.calls:
-        assert task["contract"] == task["input"]["contract"] == "wiki-organizer-v3"
+        assert task["contract"] == task["input"]["contract"] == "wiki-organizer-v4"
         for row in task["input"]["support"]:
             assert set(row) == {"handle", "path", "target", "evidence_status", "unit"}
             assert row["unit"] == dict(kind="git", path="README.org", lines=[2, 3])
@@ -815,7 +830,7 @@ def test_support_byte_cap_in_planning_and_replay(workspace, monkeypatch, count):
     assert 64 * 1024 < size <= plan["limits"]["max_support_bytes"] == 256 * 1024
     with organizer._job(config, plan["plan_path"]) as (fd, _):
         source = organizer._source(config, plan, time.monotonic() + 30)
-        monkeypatch.setitem(organizer.LIMITS_V2, "max_support_bytes", 0)
+        monkeypatch.setitem(organizer.LIMITS_V4, "max_support_bytes", 0)
         data = organizer.frozen(source, plan, fd)
         assert data.support == plan["support"]
         with pytest.raises(dream.DreamError, match="max_support_bytes"):
@@ -840,7 +855,7 @@ def test_note_admission_and_replay_use_the_frozen_byte_cap(workspace, tmp_path, 
     monkeypatch.setattr(dream_notes.SessionSource, "write_note", large_note)
     first, second = [write_notes(workspace, tmp_path) for _ in range(2)]
     plan = organizer.plan(config, "sample", "dream-memory", now=NOW, **AREA)
-    assert plan["contract"] == "wiki-organizer-plan-v3"
+    assert plan["contract"] == "wiki-organizer-plan-v4"
     assert plan["limits"]["max_note_bytes"] == 256 * 1024
     assert plan["limits"]["max_consolidation_bytes"] == 768 * 1024
     assert [n["note_id"] for n in plan["notes"]] == [first]
@@ -851,7 +866,7 @@ def test_note_admission_and_replay_use_the_frozen_byte_cap(workspace, tmp_path, 
         assert selected == [] and [n["note_id"] for n in omitted] == [first, second]
         size = len(dream.canonical(json.loads((directory / ("note-" + first + ".json")).read_bytes())["note"]))
         assert 64 * 1024 < size <= 256 * 1024
-        monkeypatch.setitem(organizer.LIMITS_V2, "max_note_bytes", 0)
+        monkeypatch.setitem(organizer.LIMITS_V4, "max_note_bytes", 0)
         data = organizer.frozen(source, plan, fd)
         assert len([u for u in data.units.values() if u["kind"] == "session-note"]) == 90
         plan["limits"]["max_note_bytes"] = size - 1
@@ -873,3 +888,142 @@ def test_compact_unit_descriptions(unit, description):
                          source_id=sha("source")), byte_start=8, byte_end=20, receipt="fixture.json")
     assert organizer._delivered_support(row, organizer.CONTRACT_V2) == dict(
         handle="support-example", path=HUB, target="proof", evidence_status="inference", unit=description)
+
+
+def test_second_repair_publishes_with_field_relative_note_evidence(organized):
+    workspace, plan, _, note_id = organized
+    assert plan["limits"] == dict(organizer.LIMITS_V2, max_repairs=2, max_role_invocations=10)
+
+    class FirstReviewRevises(Seat):
+        def __call__(self, harness, model, task, contract, deadline):
+            self.reject = task["role"] == "reviewer" and not any(t["role"] == "reviewer" for t in self.calls)
+            return super().__call__(harness, model, task, contract, deadline)
+
+    def repair(inputs):
+        value = proposal(inputs)
+        citations = value["references"][-1]["citations"]
+        if any("ABI qualification" in f["message"] for f in inputs["findings"]):
+            citations[0]["quote"] = "2048"  # In both text and quotes[0].
+        else:
+            assert any("once across the text and delivered quotes" in f["message"] for f in inputs["findings"])
+            # Bytes [0, 12) in text and quotes[0] are distinct evidence.
+            citations[:] = [dict(unit_id="note:" + note_id + ":0", quote=q) for q in ("inject_bytes", "The injected")]
+        return value
+
+    author, cross = FirstReviewRevises("claude-fixture-1", repair=repair), Seat("codex-fixture-1")
+    result = execute(workspace, plan, author, cross)
+    assert result["state"] == "published"
+    tasks = author.calls + cross.calls
+    assert [t["role"] for t in tasks] == ["organizer", "reviewer", "repair", "repair", "reviewer", "cross_reviewer"]
+    for task in tasks:
+        for rule in ("earlier anchored index sections verbatim until moved", "from .sucoder/wiki/index.org into the hub",
+                     "carrying all their handles", "Review moved index sections like moved topic sections",
+                     "item's text or its delivered support quotes", "once across text and quotes together"):
+            assert rule in task["brief"]
+        assert ".sucoder/wiki/index.org" in task["input"]["editing"]["moves"]
+    receipt = json.loads(show(workspace[0], MEMORY, W + "receipts/" + result["run_id"] + ".json"))
+    ref = next(r for r in receipt["references"] if r["target"] == "index-size")
+    unit_id = "note:" + note_id + ":0"
+    assert ref["citations"] == [
+        dict(unit_id=unit_id, field="quotes", quote_index=0, byte_start=0, byte_end=12, sha256=sha("inject_bytes")),
+        dict(unit_id=unit_id, field="text", byte_start=0, byte_end=12, sha256=sha("The injected"))]
+    later = organizer.plan(workspace[2], "sample", "dream-memory", now=NOW)
+    rows = [r for r in later["support"] if r["target"] == "index-size"]
+    assert len(set(r["handle"] for r in rows)) == 2
+    assert {r["sha256"] for r in rows} == {c["sha256"] for c in ref["citations"]}
+    assert organizer.status(workspace[2], "sample", plan["plan_path"])["replayed_roles"] == 6
+
+
+def test_note_resolution_uses_only_the_delivered_fields_of_its_generation():
+    unit_id = "note:item:0"
+    unit = dict(text="An observation.", quotes=["First evidence.", "Caf\u00e9: observed \u03b1. More evidence."])
+    data = organizer.Inputs({}, [], {unit_id: unit}, {unit_id: dict(text=unit["text"])}, [])
+    author, cross = ("claude", "author", forbidden, "fixture"), ("codex", "reviewer", forbidden, "fixture")
+    for contract in (organizer.PLAN_CONTRACT_V3, organizer.PLAN_CONTRACT_V4):
+        job = organizer.Organizer(dict(contract=contract, area={}, limits=organizer.LIMITS_V2, plan_id="a" * 64),
+                                  None, None, 60, author, cross)
+        citation = dict(unit_id=unit_id, quote="observed \u03b1")
+        if contract == organizer.PLAN_CONTRACT_V3:
+            with pytest.raises(dream.DreamError, match="once in the text"):
+                job.resolve(data, citation)
+            continue
+        encoded = citation["quote"].encode()
+        at = unit["quotes"][1].encode().index(encoded)
+        assert job.resolve(data, citation) == dict(unit_id=unit_id, field="quotes", quote_index=1, byte_start=at,
+                                                  byte_end=at + len(encoded), sha256=sha(encoded))
+        for ambiguous in ("observ", "evidence", "", "context-only quotation"):
+            with pytest.raises(dream.DreamError, match="once across"):
+                job.resolve(data, dict(unit_id=unit_id, quote=ambiguous))
+
+
+@pytest.mark.parametrize("drop", [False, True])
+def test_index_move_carries_all_handles_into_reviewed_destination(organized, drop):
+    workspace, plan, base, _ = organized
+
+    def move(inputs):
+        value = proposal(inputs)
+        value["moves"].append(dict(from_path=wiki.INDEX, from_target="orientation", to_target="pages",
+                                   reason="Collect the orientation links in the hub."))
+        carried = handles(inputs, wiki.INDEX, "orientation")
+        assert len(carried) == 2
+        value["references"][3]["carried"] = [dict(handle=h) for h in (carried[:1] if drop else carried)]
+        return value
+
+    author, cross = Seat("claude-fixture-1", propose=move), Seat("codex-fixture-1")
+    if drop:
+        with pytest.raises(dream.DreamError, match="index.org::#orientation drops support-"):
+            execute(workspace, plan, author, cross)
+        assert not cross.calls and git(workspace[0], "rev-parse", MEMORY) == base
+        return
+    result = execute(workspace, plan, author, cross)
+    receipt = json.loads(show(workspace[0], MEMORY, W + "receipts/" + result["run_id"] + ".json"))
+    carried = [r for r in receipt["inherited_support"] if r["carried_from"]["path"] == wiki.INDEX]
+    assert {r["carried_from"]["handle"] for r in carried} == set(handles(plan, wiki.INDEX, "orientation"))
+    assert all((r["path"], r["target"]) == (HUB, "pages") for r in carried)
+    for review in (receipt["review"], receipt["cross_review"]):
+        assert any(m["from_path"] == wiki.INDEX and m["preserved"] == "yes" for m in review["move_checks"])
+    index = show(workspace[0], MEMORY, wiki.INDEX)
+    assert index.endswith("* Orientation\n:PROPERTIES:\n:CUSTOM_ID: orientation\n:END:\n"
+                          "Moved to [[file:hubs/dream-memory.org::#pages][Dream memory]] by the organizer on 2026-11-27.")
+
+
+def test_index_budget_counts_only_generated_prefix_and_keeps_subtrees(workspace, tmp_path):
+    first = section("Orientation", "orientation", "Old prose. " * 215, "** Details\nA child with caf\u00e9.\n\n")
+    second = section("Merge record", "merged", "ee9f4f0 merged as 19f8352.").rstrip("\n")
+    wrapper = "* Earlier index sections\n** legacy\n:PROPERTIES:\n:CUSTOM_ID: legacy\n:END:\n"
+    prior = "#+title: Old\n* Obsolete group\nOld listing.\n" + first + wrapper + "* Empty group\n" + second
+    seed(workspace, prior)
+    write_notes(workspace, tmp_path)
+    config = workspace[2]
+    mirror = config.mirrors["sample"]
+    prefix = ("#+title: Companion wiki\n\n* Memory\n- [[file:hubs/dream-memory.org][Dream memory]] :: " + AREA["summary"] +
+              "\n\n* Pages not yet in a hub\n- [[file:topics/codex.org][codex]]\n\n")
+    size = len(prefix.encode())
+    for cap in (size - 1, size):
+        small = replace(config, mirrors=dict(sample=replace(mirror, dream=replace(mirror.dream or config.dream, inject_bytes=cap))))
+        plan = organizer.plan(small, "sample", "dream-memory", now=NOW, **AREA)
+        if cap < size:
+            with pytest.raises(dream.DreamError, match="over dream.inject_bytes"):
+                execute(workspace, plan)
+            continue
+        result = execute(workspace, plan)
+        index = subprocess.check_output(["git", "-C", str(workspace[0]), "show", MEMORY + ":" + wiki.INDEX])
+        assert index == (prefix + first + wrapper + second).encode()
+        receipt = json.loads(show(workspace[0], MEMORY, W + "receipts/" + result["run_id"] + ".json"))
+        assert receipt["index"]["injected_bytes"] == size < len(organizer.injected(index.decode()).encode())
+
+
+@pytest.mark.parametrize("limit,cap,message,roles", [
+    ("max_role_invocations", 3, "role allowance exhausted", ["organizer", "reviewer", "cross_reviewer"]),
+    ("max_elapsed_seconds", 0, "deadline exhausted", []),
+])
+def test_run_enforces_frozen_plan_caps(organized, monkeypatch, limit, cap, message, roles):
+    workspace, _, base, _ = organized
+    with monkeypatch.context() as patch:
+        patch.setitem(organizer.LIMITS_V4, limit, cap)
+        plan = organizer.plan(workspace[2], "sample", "dream-memory", now=NOW, **AREA)
+    author, cross = Seat("claude-fixture-1"), Seat("codex-fixture-1", reject=True)
+    with pytest.raises(dream.DreamError, match=message):
+        execute(workspace, plan, author, cross)
+    assert [t["role"] for t in author.calls + cross.calls] == roles
+    assert git(workspace[0], "rev-parse", MEMORY) == base
