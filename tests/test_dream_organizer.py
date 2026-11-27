@@ -166,8 +166,8 @@ def proposal(inputs, *, drop=False, hub=HUB_TEXT):
     landlock = handles(inputs, LAUNCH, "landlock")
     return dict(
         pages=[dict(path=HUB, content=hub), dict(path=LAUNCH, content=launch)],
-        changes=[dict(path=HUB, before_sha256="", reason="Create the dream memory hub."),
-                 dict(path=LAUNCH, before_sha256=prior[LAUNCH]["sha256"], reason="Apply the reviewed index-size correction.")],
+        changes=[dict(path=HUB, reason="Create the dream memory hub."),
+                 dict(path=LAUNCH, reason="Apply the reviewed index-size correction.")],
         moves=[dict(from_path=REPLIES, from_target="reply-proof", to_target="reply-proof", reason="Reply evidence belongs to the hub."),
                dict(from_path=LAUNCH, from_target="landlock", to_target="landlock", reason="Landlock is an area-wide requirement.")],
         references=[
@@ -283,7 +283,10 @@ def test_an_area_job_publishes_hub_forwarding_index_correction_and_retraction(or
                      + INDEX_TEXT[INDEX_TEXT.index("* Orientation"):])
     assert len(organizer.injected(index).encode()) <= plan["inject_bytes"]
     receipt = json.loads(show(repo, MEMORY, W + "receipts/" + result["run_id"] + ".json"))
-    assert receipt["contract"] == "wiki-organizer-v4" and receipt["area"]["id"] == "dream-memory"
+    assert receipt["contract"] == "wiki-organizer-v5" and receipt["area"]["id"] == "dream-memory"
+    changes = {change["path"]: change for change in receipt["changes"]}
+    assert changes[HUB] == dict(path=HUB, before_sha256="", reason="Create the dream memory hub.")
+    assert changes[LAUNCH] == dict(path=LAUNCH, before_sha256=sha(LAUNCH_TEXT), reason="Apply the reviewed index-size correction.")
     assert receipt["index"]["contract"] == "organizer-index-v2"
     assert receipt["review"]["verdict"] == receipt["cross_review"]["verdict"] == "accept"
     assert receipt["cross_seat"]["harness"] == "codex" and receipt["harness"] == "claude"
@@ -328,7 +331,7 @@ def test_a_dropped_carried_citation_fails_the_survival_check_and_publishes_nothi
     with pytest.raises(dream.DreamError, match="Carried support for .*dream-launch.org::#landlock drops support-") as raised:
         execute(organized[0], plan, author)
     assert raised.value.exit_code == 3
-    assert [t["role"] for t in author.calls] == ["organizer", "repair", "repair"]
+    assert [t["role"] for t in author.calls] == ["organizer", "repair", "repair", "repair"]
     assert "drops" in author.calls[1]["input"]["findings"][0]["message"]
     assert git(repo, "rev-parse", MEMORY) == base
 
@@ -372,6 +375,7 @@ def test_repairs_independent_findings_together(organized, repair_succeeds):
 
     def broken(inputs):
         value = proposal(inputs, drop=True)
+        value["changes"][1]["reason"] = " "
         stray = handles(inputs, LAUNCH, "budget")[0]
         value["references"][0].update(citations=[dict(unit_id="headings:README.org", quote="absent"),
                                                  dict(unit_id="unknown-unit", quote="absent")],
@@ -397,7 +401,7 @@ def test_repairs_independent_findings_together(organized, repair_succeeds):
     else:
         with pytest.raises(dream.DreamError) as refused:
             execute(workspace, plan, author, cross)
-        assert [t["role"] for t in author.calls + cross.calls] == ["organizer", "repair", "repair"]
+        assert [t["role"] for t in author.calls + cross.calls] == ["organizer", "repair", "repair", "repair"]
         assert git(workspace[0], "rev-parse", MEMORY) == base
     messages = [f["message"] for f in author.calls[1]["input"]["findings"]]
     if not repair_succeeds:
@@ -405,7 +409,7 @@ def test_repairs_independent_findings_together(organized, repair_succeeds):
         assert str(refused.value).endswith("... (" + str(len(messages)) + " findings total)")
         assert len(str(refused.value)) < 4200
     for part in ("heading citation", "unknown-unit", "belongs to", "Duplicate carried", "unknown-handle",
-                 "drops support-", "note citation", "existing topic pages only", "Duplicate custom target",
+                 "drops support-", "note citation", "existing topic pages only", "must give a reason", "Duplicate custom target",
                  HUB + "::#absent-anchor", LAUNCH + "::#other-absent-anchor"):
         assert any(part in m for m in messages)
         if not repair_succeeds:
@@ -468,7 +472,7 @@ def test_a_cross_family_rejection_publishes_nothing(organized):
     cross = Seat("codex-fixture-1", reject=True)
     with pytest.raises(dream.DreamError, match="loses its ABI qualification"):
         execute(organized[0], plan, author, cross)
-    assert [t["role"] for t in author.calls] == ["organizer", "reviewer", "repair", "reviewer", "repair"]
+    assert [t["role"] for t in author.calls] == ["organizer", "reviewer", "repair", "reviewer", "repair", "repair"]
     assert [t["role"] for t in cross.calls] == ["cross_reviewer", "cross_reviewer"]
     assert git(repo, "rev-parse", MEMORY) == base
 
@@ -478,7 +482,7 @@ def test_an_unchanged_candidate_is_not_reviewed_twice(organized):
     author, cross = Seat("claude-fixture-1"), Seat("codex-fixture-1", reject=True)
     with pytest.raises(dream.DreamError, match="loses its ABI qualification"):
         execute(organized[0], organized[1], author, cross)
-    assert [t["role"] for t in author.calls] == ["organizer", "reviewer", "repair", "repair"] and len(cross.calls) == 1
+    assert [t["role"] for t in author.calls] == ["organizer", "reviewer", "repair", "repair", "repair"] and len(cross.calls) == 1
 
 
 def test_the_cross_reviewer_needs_the_other_harness(organized):
@@ -697,7 +701,7 @@ def legacy_move(inputs):
                          carried=[dict(handle=h) for h in carried])], corrections=[], retractions=[], omissions=[])
 
 
-def check_pinned_replay(workspace, monkeypatch, version, run_id, assignments, receipt):
+def pinned_plan(workspace, monkeypatch, version):
     repo, _, config, _ = workspace
     legacy_history(workspace, monkeypatch)
     fixture = Path(__file__).with_name("organizer-plan-" + version + ".json")
@@ -711,12 +715,17 @@ def check_pinned_replay(workspace, monkeypatch, version, run_id, assignments, re
     # Relocate the fixture mirror while preserving the original plan bytes and run identity.
     source = organizer._source
     monkeypatch.setattr(organizer, "_source", lambda c, p, d: source(c, dict(p, repository_path=str(repo)), d))
+    return path
+
+
+def check_pinned_replay(workspace, monkeypatch, version, run_id, assignments, receipt):
+    path = pinned_plan(workspace, monkeypatch, version)
     author = Seat("claude-fixture-1", propose=lambda inputs: dict(legacy_move(inputs), moves=[]), repair=legacy_move)
     cross = Seat("codex-fixture-1")
     result = execute(workspace, dict(plan_path=path), author, cross)
     assert result["run_id"] == run_id
     assert [sha(dream.canonical(task)) for task in author.calls + cross.calls] == assignments
-    replay = organizer.status(config, "sample", path)
+    replay = organizer.status(workspace[2], "sample", path)
     assert replay["state"] == "published" and replay["replayed_roles"] == 4
     assert replay["receipt_sha256"] == receipt
 
@@ -754,13 +763,43 @@ def test_pinned_v3_replay(workspace, monkeypatch):
         "9ae6a80fec7eaa73c2f78c0ae958b563bec289442c3ca609699de00a03af3cb6")
 
 
-def record_inherited(workspace, plan, citations, *, accepted=True):
+def test_pinned_v4_replay(workspace, monkeypatch):
+    """Plan and canonical assignment/receipt digests captured with b1bb283 and fake transports."""
+    check_pinned_replay(workspace, monkeypatch, "v4",
+        "ac9a7306bd6aa6c6014b92dc33af633cb2825cb77346f016964baa901f3085fd", [
+            "842ceca952734d634538da07569f603c844a022feb8b21a42a4f3eb813b24937",
+            "e4a15381e08aba96b366b43aa6e8332a3b5683cc294d2b062eca7a535115dc9e",
+            "1820ee37b0102c09679fee21f9e5dff1cc8285d0e6f8092d20e6b30f1bff5b4c",
+            "49502f00ade3b1421c0be39d62697d904e0d6e50333dac1f9d35fff3207ec322"],
+        "9dc86cdae07491732c30a2dc8d8e7e5586300b636fedd8cef2e7ac7a9c043cfc")
+
+
+def test_v4_rejects_wrong_frozen_digest(workspace, monkeypatch):
+    path = pinned_plan(workspace, monkeypatch, "v4")
+    base = git(workspace[0], "rev-parse", MEMORY)
+
+    def mistyped(inputs):
+        value = legacy_move(inputs)
+        prior = next(page for page in inputs["prior"] if page["path"] == REPLIES)
+        wrong = prior["sha256"][:-1] + ("0" if prior["sha256"][-1] != "0" else "1")
+        value["pages"].append(dict(path=REPLIES, content=prior["content"].replace("#+title: Reply evidence", "#+title: Replies")))
+        value["changes"].append(dict(path=REPLIES, before_sha256=wrong, reason="Shorten the page title."))
+        return value
+
+    author = Seat("claude-fixture-1", propose=mistyped)
+    with pytest.raises(dream.DreamError, match="bind its frozen page and give a reason"):
+        execute(workspace, dict(plan_path=path), author)
+    assert [task["role"] for task in author.calls] == ["organizer", "repair", "repair"]
+    assert git(workspace[0], "rev-parse", MEMORY) == base
+
+
+def record_inherited(workspace, plan, citations, *, accepted=True, contract="wiki-organizer-v2"):
     """A later organizer receipt, sorted ahead of the original receipt by filename."""
     config, base = workspace[2], plan["base_commit"]
     source = dream.GitSource(config, "sample", time.monotonic() + 30)
     files = {f["path"]: source.blob(f["blob"]).decode() for f in plan["prior_wiki"]["files"]}
     review = dict(verdict="accept", failures=[], findings=[])
-    receipt = dict(contract="wiki-organizer-v2", repository_uuid=IDENTITY, review=review,
+    receipt = dict(contract=contract, repository_uuid=IDENTITY, review=review,
         cross_review=dict(review, verdict="accept" if accepted else "revise"),
         area=dict(plan["area"], summary="A revised area summary."),
         outputs=[dict(path=REPLIES, rule="file-utf8-v1", sha256=sha(REPLIES_V1))],
@@ -784,10 +823,17 @@ def test_move_with_64_distinct_handles_and_repeated_receipt_evidence(workspace, 
     assert original in plan["support"]  # The older receipt supplies the digest, commit and evidence status.
     assert original["handle"] == "support-" + sha(dream.canonical([REPLIES, "reply-proof", unit, start, end]))[:16]
 
-    author, cross = Seat("claude-fixture-1", propose=legacy_move), Seat("codex-fixture-1")
+    def move(inputs):
+        value = legacy_move(inputs)
+        del value["changes"][0]["before_sha256"]
+        value["pages"][0]["content"] = "#+title: Dream memory\n" + section("Reply evidence", "proof",
+            "A compaction summary does not establish a native reply; native assistant text after delivery does.")
+        return value
+
+    author, cross = Seat("claude-fixture-1", propose=move), Seat("codex-fixture-1")
     result = execute(workspace, plan, author, cross)
     for task in author.calls + cross.calls:
-        assert task["contract"] == task["input"]["contract"] == "wiki-organizer-v4"
+        assert task["contract"] == task["input"]["contract"] == "wiki-organizer-v5"
         for row in task["input"]["support"]:
             assert set(row) == {"handle", "path", "target", "evidence_status", "unit"}
             assert row["unit"] == dict(kind="git", path="README.org", lines=[2, 3])
@@ -812,6 +858,17 @@ def test_unaccepted_v2_cross_review_establishes_no_support_or_area(workspace, mo
     assert later["support"] == first["support"] and later["areas"] == first["areas"]
 
 
+@pytest.mark.parametrize("contract", ["wiki-organizer-v3", "wiki-organizer-v4"])
+def test_v5_plan_inherits_intermediate_organizer_receipts(workspace, monkeypatch, contract):
+    project = legacy_history(workspace, monkeypatch)
+    first = organizer.plan(workspace[2], "sample", "dream-memory", project=project)
+    citation = dict(unit=first["support"][0]["unit"], byte_start=20, byte_end=21)
+    record_inherited(workspace, first, [citation], contract=contract)
+    later = organizer.plan(workspace[2], "sample", "dream-memory", project=project)
+    assert later["areas"] == [dict(first["area"], summary="A revised area summary.")]
+    assert any(all(row[k] == v for k, v in citation.items()) for row in later["support"])
+
+
 @pytest.mark.parametrize("count", [120, 450])
 def test_support_byte_cap_in_planning_and_replay(workspace, monkeypatch, count):
     project = legacy_history(workspace, monkeypatch)
@@ -830,7 +887,7 @@ def test_support_byte_cap_in_planning_and_replay(workspace, monkeypatch, count):
     assert 64 * 1024 < size <= plan["limits"]["max_support_bytes"] == 256 * 1024
     with organizer._job(config, plan["plan_path"]) as (fd, _):
         source = organizer._source(config, plan, time.monotonic() + 30)
-        monkeypatch.setitem(organizer.LIMITS_V4, "max_support_bytes", 0)
+        monkeypatch.setitem(organizer.LIMITS_V5, "max_support_bytes", 0)
         data = organizer.frozen(source, plan, fd)
         assert data.support == plan["support"]
         with pytest.raises(dream.DreamError, match="max_support_bytes"):
@@ -855,7 +912,7 @@ def test_note_admission_and_replay_use_the_frozen_byte_cap(workspace, tmp_path, 
     monkeypatch.setattr(dream_notes.SessionSource, "write_note", large_note)
     first, second = [write_notes(workspace, tmp_path) for _ in range(2)]
     plan = organizer.plan(config, "sample", "dream-memory", now=NOW, **AREA)
-    assert plan["contract"] == "wiki-organizer-plan-v4"
+    assert plan["contract"] == "wiki-organizer-plan-v5"
     assert plan["limits"]["max_note_bytes"] == 256 * 1024
     assert plan["limits"]["max_consolidation_bytes"] == 768 * 1024
     assert [n["note_id"] for n in plan["notes"]] == [first]
@@ -866,7 +923,7 @@ def test_note_admission_and_replay_use_the_frozen_byte_cap(workspace, tmp_path, 
         assert selected == [] and [n["note_id"] for n in omitted] == [first, second]
         size = len(dream.canonical(json.loads((directory / ("note-" + first + ".json")).read_bytes())["note"]))
         assert 64 * 1024 < size <= 256 * 1024
-        monkeypatch.setitem(organizer.LIMITS_V4, "max_note_bytes", 0)
+        monkeypatch.setitem(organizer.LIMITS_V5, "max_note_bytes", 0)
         data = organizer.frozen(source, plan, fd)
         assert len([u for u in data.units.values() if u["kind"] == "session-note"]) == 90
         plan["limits"]["max_note_bytes"] = size - 1
@@ -892,7 +949,7 @@ def test_compact_unit_descriptions(unit, description):
 
 def test_second_repair_publishes_with_field_relative_note_evidence(organized):
     workspace, plan, _, note_id = organized
-    assert plan["limits"] == dict(organizer.LIMITS_V2, max_repairs=2, max_role_invocations=10)
+    assert plan["limits"] == dict(organizer.LIMITS_V4, max_repairs=3, max_role_invocations=12)
 
     class FirstReviewRevises(Seat):
         def __call__(self, harness, model, task, contract, deadline):
@@ -918,8 +975,20 @@ def test_second_repair_publishes_with_field_relative_note_evidence(organized):
     for task in tasks:
         for rule in ("earlier anchored index sections verbatim until moved", "from .sucoder/wiki/index.org into the hub",
                      "carrying all their handles", "Review moved index sections like moved topic sections",
-                     "item's text or its delivered support quotes", "once across text and quotes together"):
+                     "item's text or its delivered support quotes", "once across text and quotes together",
+                     "keep every claim of each moved section with its qualifications, dates, scope and attribution",
+                     "Change only what the new location requires", "relative link paths and heading level",
+                     "may add linking sentences", "A summary or list of links cannot replace the moved text",
+                     "Link to the topic page instead of restating its facts only in a new section that is not a move destination"):
             assert rule in task["brief"]
+        assert "Link to the topic page instead of restating its facts." not in task["brief"]
+        if task["role"] == "organizer":
+            # In-place revisions keep the general preservation rule; only moves get BRIEF_V5.
+            assert "When revising or merging a section in place, keep every fact" in task["brief"]
+        assert "before_sha256" not in task["input"]["editing"]
+        if task["role"] in ("organizer", "repair"):
+            change = task["result_schema"]["properties"]["changes"]["items"]
+            assert set(change["properties"]) == set(change["required"]) == {"path", "reason"}
         assert ".sucoder/wiki/index.org" in task["input"]["editing"]["moves"]
     receipt = json.loads(show(workspace[0], MEMORY, W + "receipts/" + result["run_id"] + ".json"))
     ref = next(r for r in receipt["references"] if r["target"] == "index-size")
@@ -956,12 +1025,37 @@ def test_note_resolution_uses_only_the_delivered_fields_of_its_generation():
                 job.resolve(data, dict(unit_id=unit_id, quote=ambiguous))
 
 
+def test_third_repair_publishes_on_twelfth_invocation(organized):
+    workspace, plan, _, _ = organized
+    requirement = "Native dream execution requires Landlock ABI 3 or newer."
+    drafts = iter(["Landlock is required.", "Native dream execution requires Landlock.",
+                   "Native dream execution requires Landlock ABI 3.", requirement])
+
+    def revise(inputs):
+        return proposal(inputs, hub=HUB_TEXT.replace(requirement, next(drafts)))
+
+    class CheckQualification(Seat):
+        def __call__(self, harness, model, task, contract, deadline):
+            hub = next(p for p in task["input"]["candidate"]["pages"] if p["path"] == HUB)
+            self.reject = requirement not in hub["content"]
+            return super().__call__(harness, model, task, contract, deadline)
+
+    result = execute(workspace, plan, Seat("claude-fixture-1", propose=revise), CheckQualification("codex-fixture-1"))
+    assert result["state"] == "published"
+    receipt = json.loads(show(workspace[0], MEMORY, W + "receipts/" + result["run_id"] + ".json"))
+    assert [a["role"] for a in receipt["assignments"]] == (
+        ["organizer", "reviewer", "cross_reviewer"] + ["repair", "reviewer", "cross_reviewer"] * 3)
+    assert receipt["usage"]["role_invocations"] == plan["limits"]["max_role_invocations"] == 12
+    assert organizer.status(workspace[2], "sample", plan["plan_path"])["replayed_roles"] == 12
+
+
 @pytest.mark.parametrize("drop", [False, True])
 def test_index_move_carries_all_handles_into_reviewed_destination(organized, drop):
     workspace, plan, base, _ = organized
 
     def move(inputs):
-        value = proposal(inputs)
+        links = INDEX_TEXT.split(":END:\n", 1)[1].replace("file:topics/", "file:../topics/")
+        value = proposal(inputs, hub=HUB_TEXT.replace("* Decisions\n", links + "* Decisions\n"))
         value["moves"].append(dict(from_path=wiki.INDEX, from_target="orientation", to_target="pages",
                                    reason="Collect the orientation links in the hub."))
         carried = handles(inputs, wiki.INDEX, "orientation")
@@ -1020,7 +1114,7 @@ def test_index_budget_counts_only_generated_prefix_and_keeps_subtrees(workspace,
 def test_run_enforces_frozen_plan_caps(organized, monkeypatch, limit, cap, message, roles):
     workspace, _, base, _ = organized
     with monkeypatch.context() as patch:
-        patch.setitem(organizer.LIMITS_V4, limit, cap)
+        patch.setitem(organizer.LIMITS_V5, limit, cap)
         plan = organizer.plan(workspace[2], "sample", "dream-memory", now=NOW, **AREA)
     author, cross = Seat("claude-fixture-1"), Seat("codex-fixture-1", reject=True)
     with pytest.raises(dream.DreamError, match=message):

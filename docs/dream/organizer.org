@@ -10,7 +10,7 @@
 :END:
 
 This is the concrete contract for the first milestone of the organizer track in [[file:read-and-organize.org::#slices][Reading and organizing]], slice 1.
-The original v1 contract follows. New jobs use the [[#organizer-inputs-v2][v2 input and carried-support rules]], [[#organizer-repair-v3][v3 heading and repair rules]] and [[#organizer-index-notes-v4][v4 index and note rules]].
+The original v1 contract follows. New jobs use the [[#organizer-inputs-v2][v2 input and carried-support rules]], [[#organizer-repair-v3][v3 heading and repair rules]], [[#organizer-index-notes-v4][v4 index and note rules]] and [[#organizer-moves-v5][v5 move and change-binding rules]].
 It turns the accepted design's [[file:read-and-organize.org::#organize][Organize]], [[file:read-and-organize.org::#safety][Safety and privacy]] and disposition 4 into one job kind that a test can run end to end with fake native transports.
 An O1 job organizes one feature area: it writes that area's hub page, leaves forwarding sections where content moved, applies reviewed corrections, marks contradicted claims, regenerates the index mechanically and publishes one generation on the memory branch.
 Everything below names the code it relies on, so a reader can check each rule.
@@ -407,3 +407,44 @@ repair after three calls and never reached the second reviewer.
   allowances come from the stored plan. V4 reads accepted support and area
   records from all four organizer generations. Pinned v1, v2 and v3 plans
   replay their original identities, four assignments and receipt bytes.
+
+* Preserving moved claims and binding changes v5, 2026-11-27
+:PROPERTIES:
+:CUSTOM_ID: organizer-moves-v5
+:END:
+
+The third pilot used a v4 plan on the real wiki. Codex =gpt-6.2-astra= at
+high effort served as organizer, repairer and first reviewer. The configured
+second reviewer was =gpt-6-astra=. The organizer moved the earlier index
+sections =codex-hook-validation= and =attention-rollout= into the hub and
+carried every support handle. Its change to =topics/attention-rollout.org=
+gave a reason. The copied SHA-256 matched the frozen page digest for the
+first 16 characters and differed later, so the coordinator requested a
+repair. The repair corrected the digest and introduced two imperative
+sentences beginning with "Use =sucoder sessions= to ...". The second
+repair cleared hub lint and the candidate passed every mechanical check.
+
+The first reviewer blocked the candidate on the fourth call. The destination
+for =attention-rollout= linked to the record but omitted what it established.
+The final main checks had succeeded. Live-hook acceptance remained separate.
+The November 14 approval covered removing Python 3.6 and a per-target
+interpreter. Sue cited the retained 3.9 floor. A later reconsideration of
+3.9 and a CI runner decision remained unverified. The job had spent both
+repairs and ended before the second review.
+
+- =wiki-organizer-plan-v5= selects =wiki-organizer-v5= with =carried-support-v2=
+  and =organizer-index-v2=. The organizer, repairer and both reviewers apply
+  the same rule to each move. The destination keeps every claim from each
+  origin, with its qualifications, dates, scope and attribution. Adjust only
+  what the location requires, such as relative link paths or heading level.
+  Linking sentences may be added. A summary or list of links cannot stand
+  in for the moved text. The advice to link to a topic page instead of
+  restating its facts applies only to new sections without an incoming move.
+- Each job freezes one version of each prior page. The organizer and repairer
+  submit a path and reason for each authored page. The coordinator supplies
+  =before_sha256= in the materialized changes and receipt, using the frozen
+  page digest or the empty string for a new hub.
+- New plans allow three repairs and twelve role invocations within the v4
+  elapsed allowance. History reads support and area records from accepted
+  organizer receipts through v5. Stored v1-v4 plans retain their own limits,
+  digest checks, assignments, run identities and receipt bytes.
