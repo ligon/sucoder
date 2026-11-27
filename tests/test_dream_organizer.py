@@ -199,7 +199,7 @@ def trace(harness, model, version, task, result):
                   dict(type="result", subtype="success", is_error=False, structured_output=result, usage={}, total_cost_usd=None)]
     return result, dict(native={}, currency_usd=None), dict(harness=harness, model=model, version=version, returncode=0,
         input_sha256=dream.digest(dream.canonical(task)), stdout="\n".join(json.dumps(e) for e in events) + "\n",
-        stderr="", boundary="linux-landlock-inline-v1")
+        stderr="", boundary="linux-landlock-inline-v1", **({"effort": task["effort"]} if "effort" in task else {}))
 
 
 class Seat:
@@ -405,6 +405,51 @@ def test_the_cross_reviewer_needs_the_other_harness(organized):
     with pytest.raises(dream.DreamError, match="other harness"):
         organizer.run(organized[0][2], "sample", Path(organized[1]["plan_path"]), "codex", "m", "codex", "n",
                       transport=Seat("a"), cross_transport=Seat("b"))
+
+
+def test_same_family_run_freezes_two_efforts_and_replays_the_different_model_review(organized, monkeypatch):
+    from sucoder import dream_native
+    (_, config_path, config, _), plan, _, _ = organized
+    path = Path(plan["plan_path"])
+    author, cross = Seat("fixture"), Seat("fixture")
+    seats = iter([author, cross])
+    monkeypatch.setattr(dream_native, "Transport", lambda harness, deadline: next(seats))
+    args = ["--config", str(config_path), "dream", "organize", "run", "sample", "--plan", str(path),
+            "--harness", "codex", "--model", "gpt-6.2-astra", "--cross-harness", "codex", "--same-family-review",
+            "--effort", "high", "--cross-effort", "xhigh", "--cross-model"]
+    outcome = CliRunner().invoke(cli.app, args + ["gpt-6.2-astra"])
+    assert outcome.exit_code == 2 and "different model" in outcome.output
+    outcome = CliRunner().invoke(cli.app, args + ["gpt-6.2-sol"])
+    assert outcome.exit_code == 0, outcome.output
+    assert [(t["role"], t["effort"]) for t in author.calls] == [("organizer", "high"), ("reviewer", "high")]
+    assert [(t["role"], t["effort"]) for t in cross.calls] == [("cross_reviewer", "xhigh")]
+    assert "different model than" in cross.calls[0]["brief"] and "different model family" not in cross.calls[0]["brief"]
+    spec_path = next(path.parent.glob("organizer-*-spec.json"))
+    spec = json.loads(spec_path.read_bytes())
+    receipt = json.loads(next(path.parent.glob("organizer-*-receipt.json")).read_bytes())
+    for record in (spec, receipt):
+        assert record["effort"] == "high" and record["cross_effort"] == "xhigh"
+        assert record["cross_family"] is False and record["cross_brief"] == "organizer-different-model-review-v1"
+    assert {row["verification"] for row in receipt["coverage"]} == {"dual_model_review"}
+    assert receipt["cross_seat"]["effort"] == "xhigh"
+    assert [row["effort"] for row in receipt["assignments"]] == ["high", "high", "xhigh"]
+    monkeypatch.setattr(dream_native, "Transport", forbidden)
+    assert organizer.status(config, "sample", path)["state"] == "published"
+    spec_path.write_text(json.dumps(dict(spec, cross_effort="max")))
+    with pytest.raises(dream.DreamError, match="identity"):
+        organizer.status(config, "sample", path)
+
+
+def test_legacy_cross_family_identity_and_assignment():
+    plan = dict(plan_id="f" * 64, area={})
+    author = ("claude", "author", forbidden, "fixture")
+    cross = ("codex", "reviewer", forbidden, "fixture")
+    job = organizer.Organizer(plan, None, None, 60, author, cross)
+    # Run and assignment digests from c0fa15c.
+    assert job.run_id == "4d7d34718c26895b9e31c1f6494d249781c18aa2272ad029e2cbdeb2ad7d273a"
+    assert job.cross.make_assignment("cross_reviewer", {})["assignment_id"] == (
+        "4f86f6b84cafec6439c8f7ea6cd94985f00a0dcbe3a7ffe9dad76cca31bbb1b2")
+    assert job.options == {}
 
 
 def test_a_reviewer_omitting_a_required_check_blocks_acceptance(organized):

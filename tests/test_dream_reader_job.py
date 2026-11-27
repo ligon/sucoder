@@ -131,6 +131,8 @@ class Native:
         trace = dict(harness=harness, model=model, version=self.version, returncode=0,
                      input_sha256=dream.digest(dream.canonical(task)),
                      stdout="\n".join(json.dumps(e) for e in events) + "\n", stderr="", boundary="linux-landlock-inline-v1")
+        if "effort" in task:
+            trace["effort"] = task["effort"]
         return native_reply(task, result, dict(native={}, currency_usd=None), trace)
 
 
@@ -511,6 +513,41 @@ def write_config(config_path, **dream_settings):
     raw["dream"] = dream_settings
     config_path.write_text(yaml.safe_dump(raw))
     return load_config(config_path)
+
+
+def test_reader_effort_is_frozen_for_both_roles_and_cached_replay(mirror, monkeypatch):
+    repo, config_path, _, path = mirror
+    config = write_config(config_path, reader_effort="medium")
+    assert reader.prepare(config, cwd=repo, overrides=OPTIONS)["settings"]["effort"] == "medium"
+    with pytest.raises(DreamError, match="only for the codex"):
+        reader.prepare(config, cwd=repo, overrides=dict(OPTIONS, harness="claude"))
+    monkeypatch.chdir(repo)
+    outcome = runner.invoke(cli.app, ["--config", str(config_path), "dream", "read-session", "--prepare-only",
+                                      "--harness", "codex", "--model", "fixture-model", "--chunk-bytes", "1024",
+                                      "--effort", "ultra"])
+    assert outcome.exit_code == 0, outcome.output
+    job = Path(json.loads(outcome.output)["job_path"])
+    assert saved(job, "job.json")["settings"]["effort"] == "ultra"
+    config = write_config(config_path, reader_effort="low")
+    native = Native(script(path))
+    result = reader.start(config, job, transport=native)
+    assert [(t["role"], t["effort"]) for t in native.calls] == [
+        ("reader", "ultra"), ("reader", "ultra"), ("reviewer", "ultra")]
+    assert saved(job, "spec-000001.json")["effort"] == "ultra"
+    forbid_native(monkeypatch)
+    assert reader.start(config, job) == result
+    with pytest.raises(DreamError, match="immutable"):
+        reader.start(config, job, overrides=dict(effort="low"))
+
+
+def test_legacy_reader_identity_and_assignment():
+    settings = dict(harness="codex", model="reader", max_total_calls=3, reader_chunk_bytes=1024)
+    header = dict(settings=settings, job_id="f" * 32, chunks=[])
+    job = reader.Reader(header, None, 60, None, native_version="fixture")
+    # Run and assignment digests from c0fa15c for a header predating reader_contract.
+    assert job.run_id == "67310846e6eb4435ca16aa2f5bba1bace823b16aa5645690e03be9d24eb46068"
+    assert job.make_assignment("reader", {})["assignment_id"] == (
+        "4dfcec531f4d8698f26bb493510f420d67a19f414cebee0abdab1360de985be4")
 
 
 @pytest.mark.parametrize("state", ["live", "recent", "excluded"])

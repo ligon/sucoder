@@ -18,6 +18,7 @@ import subprocess
 import tempfile
 import time
 
+from .config import CODEX_EFFORTS
 from .dream import DreamError, _json, canonical, digest
 
 
@@ -169,7 +170,19 @@ def environment(scratch, harness):
     return result
 
 
-def command(harness, executable, model, schema):
+def effort_fields(harness, effort):
+    """Optional fields shared by frozen assignments and their native traces."""
+    if effort is None:
+        return {}
+    if harness != "codex":
+        raise DreamError("Reasoning effort is supported only for the codex harness")
+    if effort not in CODEX_EFFORTS:
+        raise DreamError("Reasoning effort must be one of " + ", ".join(CODEX_EFFORTS))
+    return dict(effort=effort)
+
+
+def command(harness, executable, model, schema, effort=None):
+    effort_fields(harness, effort)
     if harness == "claude":
         return [executable, "--print", "--restricted", "--safe-mode", "--tools", "",
                 "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
@@ -180,7 +193,8 @@ def command(harness, executable, model, schema):
                 "--json-schema", canonical(schema).decode()]
     return [executable, "exec", "--ignore-user-config", "--ignore-rules", "--strict-config",
             "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only", "--json",
-            "--model", model, "--output-schema", "result.schema.json",
+            "--model", model, *(["-c", f'model_reasoning_effort="{effort}"'] if effort is not None else []),
+            "--output-schema", "result.schema.json",
             "-c", 'approval_policy="never"', "-c", 'web_search="disabled"',
             "-c", "project_doc_max_bytes=0", "-c", 'developer_instructions="Use only the inline assignment. Do not call tools."',
             "-c", "agents.enabled=false", "-c", "mcp_servers={}",
@@ -256,6 +270,7 @@ def invoke(harness, model, assignment, schema, deadline, *, expected_version=Non
     output_schema = dream_submission.wire_schema(assignment) if "submission_contract" in assignment else schema
     if harness not in ("codex", "claude"):
         raise DreamError("Unsupported native dream harness")
+    options = effort_fields(harness, assignment.get("effort"))
     executable = shutil.which(harness)
     if executable is None:
         raise DreamError("Requested native harness is not installed: " + harness, 3)
@@ -282,7 +297,7 @@ def invoke(harness, model, assignment, schema, deadline, *, expected_version=Non
             submission = dream_submission.manifest(assignment)
             failure = None
             try:
-                code, stdout, stderr = capture(command(harness, executable, model, output_schema), payload,
+                code, stdout, stderr = capture(command(harness, executable, model, output_schema, **options), payload,
                                                 scratch, env, deadline, boundary)
             except DreamError as exc:
                 code = None
@@ -292,7 +307,7 @@ def invoke(harness, model, assignment, schema, deadline, *, expected_version=Non
             trace = dict(harness=harness, model=model, version=version.decode().strip(),
                          input_sha256=assignment_sha256, stdout=stdout.decode("utf-8"),
                          stderr=stderr.decode("utf-8"), returncode=code,
-                         boundary="linux-landlock-inline-v1")
+                         boundary="linux-landlock-inline-v1", **options)
             if submission is not None:
                 trace["submission"] = submission
             if failure is not None:

@@ -19,6 +19,9 @@ import yaml
 from .tool_preflight import DEFAULT_TOOL_FLOORS, parse_version
 
 
+CODEX_EFFORTS = ("low", "medium", "high", "xhigh", "max", "ultra")
+
+
 class AgentType(Enum):
     """Known agent CLI types for profile-based flag selection."""
 
@@ -471,6 +474,7 @@ class DreamSettings:
     # session bytes, and session ids or id prefixes that are never read.
     reader_chunk_bytes: int = 131072
     reader_exclude_sessions: List[str] = field(default_factory=list)
+    reader_effort: Optional[str] = None
 
 
 @dataclass
@@ -951,8 +955,11 @@ def _parse_dream(
                           "of at least eight lowercase hexadecimal characters.")
     # A list, not a tuple: exploratory jobs freeze these settings as JSON and compare them on resume.
     values["reader_exclude_sessions"] = list(excluded)
+    if values["reader_effort"] is not None and values["reader_effort"] not in CODEX_EFFORTS:
+        raise ConfigError(f"`{label}.reader_effort` must be one of {', '.join(CODEX_EFFORTS)}, or null.")
     for key in fields:
-        if key in ("harness", "model", "memory_branch", "inject", "checkout", "prompt_layout", "reader_exclude_sessions"):
+        if key in ("harness", "model", "memory_branch", "inject", "checkout", "prompt_layout",
+                   "reader_exclude_sessions", "reader_effort"):
             continue
         if key == "max_discovery_calls" and values[key] is None:
             continue

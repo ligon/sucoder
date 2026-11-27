@@ -113,6 +113,8 @@ def freeze(coordinator, task, request=None):
 
 def parse(task, trace, request=None):
     """Replay raw stdout, then supply metadata from the bound task, never text."""
+    if trace.get("effort") != task.get("effort"):
+        raise DreamError("Native reasoning effort differs from its frozen assignment", 3)
     expected = manifest(task, request)
     if trace.get("submission") != expected:
         raise DreamError("Native submission does not match its frozen assignment/delivery", 3)

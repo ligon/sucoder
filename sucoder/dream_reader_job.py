@@ -68,7 +68,7 @@ CALL_OVERHEAD = 16 * 1024
 CARRIED_BYTES = 2048
 BYTES_PER_TOKEN = 4
 OUTPUT_TOKENS = dict(reader=2000, reviewer=1000)
-OVERRIDES = ("harness", "model", "max_total_seconds", "max_total_calls", "reserve_seconds", "reserve_calls",
+OVERRIDES = ("harness", "model", "effort", "max_total_seconds", "max_total_calls", "reserve_seconds", "reserve_calls",
              "reader_chunk_bytes")
 TURN_ORIGINS = ("human", "unattributed")
 KIND_FIELDS = ("by", "command", "outcome", "target")
@@ -204,12 +204,16 @@ class Reader(dream_roles.Coordinator):
         super().__init__(plan, fd, settings["harness"], settings["model"], deadline, transport,
                          native_version=native_version, attempt=attempt)
         self.roles, self.briefs = ROLE_CONTRACTS[_reader_contract(header)]
-        self.run_id = digest(canonical([self.roles, plan["plan_id"], self.harness, self.model, self.briefs,
-                                        {role: self.result_schema(role) for role in self.briefs}, self.expected_version, attempt]))
+        self.native_options = dream_native.effort_fields(self.harness, settings.get("effort"))
+        identity = [self.roles, plan["plan_id"], self.harness, self.model, self.briefs,
+                    {role: self.result_schema(role) for role in self.briefs}, self.expected_version, attempt]
+        if self.native_options:
+            identity.append(self.native_options)
+        self.run_id = digest(canonical(identity))
 
     def make_assignment(self, role, inputs):
         task = dict(contract=self.roles, run_id=self.run_id, role=role, brief=self.briefs[role], input=inputs,
-                    result_schema=self.result_schema(role), input_sha256=digest(canonical(inputs)))
+                    result_schema=self.result_schema(role), input_sha256=digest(canonical(inputs)), **self.native_options)
         task["assignment_id"] = digest(canonical(task))
         return task
 
@@ -286,7 +290,7 @@ def _settings(config, item, overrides):
     unknown = set(overrides) - set(OVERRIDES)
     if unknown:
         raise DreamError("Unknown reader job options: " + ", ".join(sorted(unknown)))
-    settings = _parse_dream(overrides, item.dream or config.dream)
+    settings = _parse_dream({key: value for key, value in overrides.items() if key != "effort"}, item.dream or config.dream)
     launcher = item.agent_launcher if item.agent_launcher != AgentLauncher() else (config.agent_launcher or item.agent_launcher)
     harness = settings.harness or Path(launcher.command[0]).name
     model = settings.model or launcher.model
@@ -299,7 +303,8 @@ def _settings(config, item, overrides):
                 max_total_calls=settings.max_total_calls, reserve_seconds=settings.reserve_seconds,
                 reserve_calls=settings.reserve_calls, reader_chunk_bytes=settings.reader_chunk_bytes,
                 reader_exclude_sessions=sorted(set(settings.reader_exclude_sessions)),
-                session_quiet_minutes=settings.session_quiet_minutes, memory_branch=settings.memory_branch)
+                session_quiet_minutes=settings.session_quiet_minutes, memory_branch=settings.memory_branch,
+                **dream_native.effort_fields(harness, overrides.get("effort", settings.reader_effort)))
 
 
 def _current_exclusions(config, project):
@@ -1104,7 +1109,7 @@ def run(config, job_path, attempt=1, *, transport=None):
                                                    harness=reader.harness, model=reader.model,
                                                    native_version=native_version, attempt=attempt,
                                                    submission_contract=dream_submission.CONTRACT,
-                                                   budget=budget.descriptor()))
+                                                   budget=budget.descriptor(), **reader.native_options))
                     result = _execute(fd, header, attempt, reader, views, session)
                     _store(fd, _numbered("result", attempt), result)
                     return result
@@ -1127,7 +1132,7 @@ def _replay(config, fd, header, prepared, attempt, saved):
             def no_inference(*args, **kwargs):
                 raise DreamError("A completed reader job replays without inference", 3)
             reader = _reader(header, fd, deadline, no_inference, attempt, budget, spec["native_version"])
-            if reader.run_id != spec["run_id"]:
+            if reader.run_id != spec["run_id"] or spec.get("effort") != header["settings"].get("effort"):
                 raise DreamError("Reader run identity differs from its frozen role contract", 3)
         items, matched, screening = (_read_chunks(reader, header, views, fd, attempt, readonly=True)
                                      if reader is not None else ([], [], []))

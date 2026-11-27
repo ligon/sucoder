@@ -311,3 +311,19 @@ The command lives in one separate block of =sucoder/dream_cli.py=, because the o
   v2 or v3, or lacking the key, keep their old schemas, briefs, notes,
   estimates, identities and replay behavior. Unknown reader names are refused.
   V1 notes, coverage, reviews and receipts keep their existing contracts.
+
+* Codex reasoning effort, 2026-11-27
+
+The human chose Codex for dream roles for now, including more capable models
+whose default reasoning effort can be low. For a new job,
+=sucoder dream read-session --harness codex --model gpt-6.2-astra --effort high=
+selects high effort for every reader chunk and every review call.
+=--effort= overrides =dream.reader_effort= in mirror or global configuration.
+Codex accepts =low=, =medium=, =high=, =xhigh=, =max= and =ultra=.
+Claude refuses an effort setting.
+
+Preparation freezes a supplied effort beside the model in the job header.
+The attempt spec, role assignment identity and native trace bind the same
+choice. A resume uses the header even if the configuration has changed.
+When effort is unset, Codex uses its native default and earlier jobs replay
+with their original command, run identity and saved results.
