@@ -257,13 +257,14 @@ def write_long_call_session(home, repo):
     return path
 
 
-@pytest.mark.parametrize("contract", [dream_view.CONTRACT_V1, dream_view.CONTRACT])
-def test_new_jobs_freeze_claude_view_v2_and_earlier_jobs_replay_as_v1(workspace, clock, no_live, monkeypatch, contract):
+@pytest.mark.parametrize("contract", [dream_view.CONTRACT_V1, dream_view.CONTRACT_V2, dream_view.CONTRACT])
+def test_jobs_freeze_their_rendering_contract_and_replay_under_it(workspace, clock, no_live, monkeypatch, contract):
     planned(workspace)
     repo, _, config, _ = workspace
     write_long_call_session(Path(os.environ["HOME"]), repo)
     with monkeypatch.context() as patch:
-        # A version-1 job is one prepared before claude-view-v2 existed: its header has no key.
+        # A version-1 job is one prepared before claude-view-v2 existed: its header has no key;
+        # a version-2 job is one prepared before version 3.
         patch.setattr(dream_view, "CONTRACT", contract)
         native = ExperienceTransport()
         result = explore.start(config, cwd=repo, transport=native, overrides=dict(harness="codex", model="explicit-model"))

@@ -2827,7 +2827,10 @@ Rendering keeps user and assistant text, clips tool calls and results to a head 
 Each block starts with =[@OFFSET]=, the raw byte offset of its record; quotes are checked against the rendered text, and the plan records both the raw and the rendered digests, so a changed window is refused before any model call.
 Rendering is versioned so saved plans replay byte for byte.
 A unit without =render_contract= uses =claude-view-v1=; ="render_contract": "claude-view-v2"= selects version 2, which clips a tool call to its head instead of also keeping its whole input (issue 119).
-Exploratory jobs prepared since version 2 freeze it in their job header and render their session windows with it; earlier jobs keep version 1.
+Version 3 also records who wrote each block: text Claude Code marks as typed by the human is =USER=, its system reminders, task notifications, meta records and command echoes are =HARNESS=, and a user-turn record with no recorded origin is =USER (origin not recorded)=.
+Only =USER= text can support a recorded human decision in a version 3 window.
+Version 3 redacts each block whole before clipping it, so a cut cannot leave a credential's tail, and widens the high-confidence patterns (labels after an underscore, cloud and package-registry token shapes, JWTs, bearer tokens, URL credentials and private keys without an END line).
+Exploratory jobs freeze the version current when they were prepared in their job header and render their session windows with it; jobs prepared before version 2 keep version 1.
 Receipts record the raw range but not the private path; rendered windows require wiki mode.
 For configured local-tier projects, experience discovery also recognizes Claude project directories for earlier =<local_disk>/job<ID>/mirrors/<token>= clones, even after those working directories disappear.
 It scans directory names only within Claude's project-directory catalog, then requires matching native session id, working directory and branch metadata before admitting a historical session.
