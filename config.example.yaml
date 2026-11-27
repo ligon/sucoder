@@ -29,6 +29,9 @@ system_prompt: /home/<your-username>/.sucoder/system_prompt.org
 #   checkout: true                 # read-only copy of the wiki at .sucoder/wiki, where
 #                                  # its project links resolve (local launches, publication)
 #   session_quiet_minutes: 30      # a session quiet this long, with no live launch, is finished
+#   reader_chunk_bytes: 131072     # `dream read-session`: rendered session bytes per reader call (1024-1048576)
+#   reader_exclude_sessions: ["dcdc7362"]  # quoted session ids or 8+ hex prefixes never read;
+#                                  # dcdc7362 holds SuCoder's evaluation development set
 
 # Explicit plan/run budgets are CLI options; bare-launch defaults use dream
 # above. Native writer runs persist limits across restarts/--attempt changes.
