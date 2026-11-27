@@ -434,6 +434,7 @@ def test_items_that_fail_a_check_are_dropped_recorded_and_never_carried_or_revie
     assert [i["text"] for i in note["items"]] == accepted
     # The completed job replays, dropped records included, without a call or a write.
     files = {p.name: p.read_bytes() for p in job.iterdir() if p.is_file()}
+    monkeypatch.setattr(reader, "READER", reader.READER_V3)
     clock.advance(10 ** 6)
     forbid_native(monkeypatch)
     assert reader.run(config, job) == result
@@ -476,6 +477,7 @@ def test_a_saved_v1_job_replays_to_its_stored_outcome_when_new_jobs_freeze_v2(mi
     assert saved(job, "spec-000001.json")["contract"] == reader.ROLES and not list(job.glob("dropped-*.json"))
     files = {p.name: p.read_bytes() for p in job.iterdir() if p.is_file()}
     monkeypatch.setattr(reader, "READER", reader.READER_V2)
+    monkeypatch.setattr(reader, "READER", reader.READER_V3)
     clock.advance(10 ** 6)
     forbid_native(monkeypatch)
     assert reader.run(config, job) == result and reader.start(config, result["job_id"]) == result
@@ -603,3 +605,101 @@ def test_the_command_prepares_without_a_native_call(mirror, monkeypatch):
     refused = runner.invoke(cli.app, ["--config", str(config_path), "dream", "read-session", "--session", "nope",
                                       "--harness", "codex", "--model", "fixture-model"])
     assert refused.exit_code == 2 and json.loads(refused.output)["state"] == "rejected"
+
+
+class NativeV3(Native):
+    def __init__(self, items, judgments=None, verdict="accept", malformed=None):
+        super().__init__(items, verdict)
+        self.judgments = judgments or {}
+        self.malformed = malformed
+
+    def __call__(self, harness, model, task, schema, deadline):
+        if task["role"] != "reviewer":
+            return super().__call__(harness, model, task, schema, deadline)
+        self.calls.append(copy.deepcopy(task))
+        result = {key: task[key] for key in ("assignment_id", "input_sha256", "role")}
+        rows = [dict(item=i["index"], verdict=self.judgments.get(i["index"], "supported"),
+                     finding="The citation does not establish this claim." if i["index"] in self.judgments else "")
+                for i in task["input"]["items"]]
+        if self.malformed == "missing":
+            rows.pop()
+        if self.malformed == "duplicate":
+            rows.append(rows[0])
+        result.update(failures=[], verdict=self.verdict, overall_findings=[], item_verdicts=rows)
+        events = [dict(type="item.completed", item=dict(type="agent_message", text=json.dumps(result))),
+                  dict(type="turn.completed", usage={})]
+        trace = dict(harness=harness, model=model, version=self.version, returncode=0,
+                     input_sha256=dream.digest(dream.canonical(task)),
+                     stdout="\n".join(json.dumps(e) for e in events) + "\n", stderr="", boundary="linux-landlock-inline-v1")
+        return native_reply(task, result, dict(native={}, currency_usd=None), trace)
+
+
+@pytest.fixture
+def v3(v1_jobs, monkeypatch):
+    monkeypatch.setattr(reader, "READER", reader.READER_V3)
+
+
+def test_v3_filters_and_records_review_removals_and_replays(mirror, v3, monkeypatch, clock):
+    repo, _, config, path = mirror
+    native = NativeV3(script(path), {1: "overstated", 3: "unsupported"})
+    result = reader.start(config, cwd=repo, overrides=OPTIONS, transport=native)
+    assert (result["reviewed_items"], result["kept_items"], result["removed_items"]) == (5, 3, 2)
+    job = Path(result["job_path"])
+    record = saved(job, "review-items-000001.json")
+    assert [(r["item"], r["stage"], r["verdict"]) for r in record["removed"]] == [
+        (1, "review", "overstated"), (3, "review", "unsupported")]
+    assert all(r["finding"] and r["proposed"] for r in record["removed"])
+    note = source_of(result).notes(accepted_only=True)[0]["note"]
+    original = script(path)[0] + script(path)[1]
+    assert [i["text"] for i in note["items"]] == [original[i]["text"] for i in (0, 2, 4)]
+    assert len(result["review"]["findings"]) == 2
+    assert native.calls[-1]["contract"] == reader.ROLES_V3
+    assert native.calls[-1]["brief"] == reader.BRIEFS_V3["reviewer"]
+    files = {p.name: p.read_bytes() for p in job.iterdir() if p.is_file()}
+    monkeypatch.setattr(reader, "READER", reader.READER_V3)
+    clock.advance(10 ** 6)
+    forbid_native(monkeypatch)
+    assert reader.run(config, job) == result
+    assert {p.name: p.read_bytes() for p in job.iterdir() if p.is_file()} == files
+
+
+@pytest.mark.parametrize("judgments, verdict, malformed", [
+    ({0: "overstated", 1: "unsupported", 2: "overstated"}, "accept", None),
+    ({i: "unsupported" for i in range(5)}, "accept", None),
+    ({}, "reject", None), ({}, "accept", "missing"), ({}, "accept", "duplicate")])
+def test_v3_review_fails_closed(mirror, v3, judgments, verdict, malformed):
+    repo, _, config, path = mirror
+    native = NativeV3(script(path), judgments, verdict, malformed)
+    with pytest.raises(reader.Rejected):
+        reader.start(config, cwd=repo, overrides=OPTIONS, transport=native)
+    job = Path(config.log_dir) / "dream-reader-jobs" / jobs(config)[0]
+    assert not list(job.glob("note-*.json")) and not list(job.glob("intent-*.json"))
+    session = dream_notes.Store(Path(config.log_dir) / "dream-notes" / IDENTITY).source("claude", SID)
+    assert session.notes() == [] and session.coverage() == []
+    if malformed is None:
+        assert len(saved(job, "review-items-000001.json")["removed"]) == len(judgments)
+
+
+def test_v3_estimate_is_calibrated_and_frozen(mirror, v3):
+    repo, _, config, _ = mirror
+    prepared = reader.prepare(config, cwd=repo, overrides=OPTIONS)
+    header = saved(Path(prepared["job_path"]), "job.json")
+    old = reader._estimate(header["chunks"], header["settings"]["reader_chunk_bytes"])
+    estimate = header["estimate"]
+    assert header["reader_contract"] == reader.READER_V3
+    assert estimate["contract"] == reader.ESTIMATE_V2
+    assert estimate["input_tokens"] == (old["input_tokens"] * 18 + 9) // 10
+    assert estimate["output_tokens"] == 52000
+    assert estimate["calibrated"] and not estimate["ceiling"]
+    assert "one pilot: claude-sonnet-4-6, 2026-11-27, 3 reader and 1 reviewer call" in estimate["basis"]
+    assert "Other models may differ" in estimate["basis"]
+
+
+def test_v3_exactly_half_removed_is_accepted(mirror, v3):
+    repo, _, config, path = mirror
+    proposed = script(path)
+    proposed[1] = proposed[1][:1]
+    result = reader.start(config, cwd=repo, overrides=OPTIONS,
+                          transport=NativeV3(proposed, {0: "overstated", 3: "unsupported"}))
+    assert result["state"] == "accepted"
+    assert (result["reviewed_items"], result["kept_items"], result["removed_items"]) == (4, 2, 2)
