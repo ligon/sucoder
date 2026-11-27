@@ -467,6 +467,10 @@ class DreamSettings:
     checkout: bool = True
     session_quiet_minutes: int = 30
     prompt_layout: str = "legacy"
+    # Session reader jobs (docs/dream/session-reader.org): the per-call cap on rendered
+    # session bytes, and session ids or id prefixes that are never read.
+    reader_chunk_bytes: int = 131072
+    reader_exclude_sessions: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -938,8 +942,17 @@ def _parse_dream(
             raise ConfigError(f"`{label}.{flag}` must be true or false.")
     if type(values["inject_bytes"]) is not int or not 1 <= values["inject_bytes"] <= 16384:
         raise ConfigError(f"`{label}.inject_bytes` must be an integer from 1 to 16384.")
+    if type(values["reader_chunk_bytes"]) is not int or not 1024 <= values["reader_chunk_bytes"] <= 1048576:
+        raise ConfigError(f"`{label}.reader_chunk_bytes` must be an integer from 1024 to 1048576.")
+    excluded = values["reader_exclude_sessions"]
+    if (not isinstance(excluded, (list, tuple)) or
+            any(not isinstance(entry, str) or not re.fullmatch(r"[0-9a-f]{8}[0-9a-f-]{0,28}", entry) for entry in excluded)):
+        raise ConfigError(f"`{label}.reader_exclude_sessions` must be a list of quoted session ids or id prefixes "
+                          "of at least eight lowercase hexadecimal characters.")
+    # A list, not a tuple: exploratory jobs freeze these settings as JSON and compare them on resume.
+    values["reader_exclude_sessions"] = list(excluded)
     for key in fields:
-        if key in ("harness", "model", "memory_branch", "inject", "checkout", "prompt_layout"):
+        if key in ("harness", "model", "memory_branch", "inject", "checkout", "prompt_layout", "reader_exclude_sessions"):
             continue
         if key == "max_discovery_calls" and values[key] is None:
             continue

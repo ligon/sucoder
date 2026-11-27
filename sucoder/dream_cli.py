@@ -299,6 +299,34 @@ def ask(
     _data_command(ctx, "dream_ask", dream_reader_agent.ask, mirror, plan_path, question, harness, model, base, not source_only, attempt)
 
 
+# --- Session reader (docs/dream/session-reader.org) ---------------------------
+# Kept as one self-contained block: the organizer track adds its own command here.
+@app.command("read-session")
+def read_session(
+    ctx: typer.Context,
+    session: Optional[str] = typer.Option(None, "--session", help="Finished Claude session id; default: the least recently written finished session with unread bytes."),
+    job_path: Optional[Path] = typer.Option(None, "--job", help="Resume or replay this private reader job with its frozen settings."),
+    attempt: int = typer.Option(1, "--attempt", min=1, max=1000000, help="Explicit native attempt within the job's persisted wallet."),
+    harness: Optional[str] = typer.Option(None, "--harness", help="Native codex/claude reader and reviewer; otherwise configured defaults."),
+    model: Optional[str] = typer.Option(None, "--model", help="Native model; transmits the admitted session rendering to its provider."),
+    chunk_bytes: Optional[int] = typer.Option(None, "--chunk-bytes", min=1024, max=1048576, help="Per-call cap on rendered session bytes (dream.reader_chunk_bytes)."),
+    budget_path: Optional[Path] = typer.Option(None, "--budget", help="Explicit shared private wallet directory for a new job."),
+    max_total_seconds: Optional[int] = typer.Option(None, "--max-total-seconds", min=1, help="Whole-job elapsed ceiling, including review."),
+    max_total_calls: Optional[int] = typer.Option(None, "--max-total-calls", min=1, help="Whole-job native invocation ceiling, including review."),
+    reserve_seconds: Optional[int] = typer.Option(None, "--reserve-seconds", min=0, help="Time reserved for review."),
+    reserve_calls: Optional[int] = typer.Option(None, "--reserve-calls", min=0, help="Invocations reserved for review."),
+    prepare_only: bool = typer.Option(False, "--prepare-only", help="Freeze and print the chunks and preflight estimate without a native call."),
+):
+    """Read one finished session into the private session-note store; never writes the memory branch."""
+    from . import dream_reader_job
+    overrides = dict(harness=harness, model=model, reader_chunk_bytes=chunk_bytes, max_total_seconds=max_total_seconds,
+        max_total_calls=max_total_calls, reserve_seconds=reserve_seconds, reserve_calls=reserve_calls)
+    _data_command(ctx, dream_reader_job.OPERATION, dream_reader_job.start, job_path, session=session,
+        overrides={key: value for key, value in overrides.items() if value is not None},
+        budget_path=budget_path, attempt=attempt, prepare_only=prepare_only)
+# --- End of session reader block ----------------------------------------------
+
+
 def _config_path(ctx):
     path = Path(ctx.obj["config_path"]).expanduser()
     # Explicit paths never fall back, even when missing (recovery ledger, 3).
