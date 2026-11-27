@@ -10,7 +10,7 @@
 :END:
 
 This is the concrete contract for the first milestone of the organizer track in [[file:read-and-organize.org::#slices][Reading and organizing]], slice 1.
-The original v1 contract follows. New jobs use the [[#organizer-inputs-v2][v2 input and carried-support rules]].
+The original v1 contract follows. New jobs use the [[#organizer-inputs-v2][v2 input and carried-support rules]] and [[#organizer-repair-v3][v3 quotation and repair rules]].
 It turns the accepted design's [[file:read-and-organize.org::#organize][Organize]], [[file:read-and-organize.org::#safety][Safety and privacy]] and disposition 4 into one job kind that a test can run end to end with fake native transports.
 An O1 job organizes one feature area: it writes that area's hub page, leaves forwarding sections where content moved, applies reviewed corrections, marks contradicted claims, regenerates the index mechanically and publishes one generation on the memory branch.
 Everything below names the code it relies on, so a reader can check each rule.
@@ -310,3 +310,43 @@ and schema in reviewer assignments.
 - Saved =wiki-organizer-plan-v1= jobs select the original receipt-specific
   handles, limits, full support projection and 32-handle schema. Their run
   identities, assignments and receipts replay under =wiki-organizer-v1=.
+
+* Organizer quotations and repair v3, 2026-11-27
+:PROPERTIES:
+:CUSTOM_ID: organizer-repair-v3
+:END:
+
+The first run on the real wiki used a =wiki-organizer-plan-v2= plan and
+Codex =gpt-6.2-astra= at high effort for both organizer and repair. The
+organizer quoted =946: *** Structured observations for agents= from the
+delivered README outline. The resolver searched only the heading text in
+the blob, so it refused the line-number prefix. The repair corrected the
+heading quotations. The next check then found that the original proposal
+had declared no moves and carried four handles from the =verified-closure=
+section of =attention-rollout.org= into a new hub section. The organizer
+brief had invited carried handles for any new or revised section. The
+first-error check exposed the two problems on successive attempts. The job
+exhausted its one repair after two calls, before either reviewer ran.
+
+- =wiki-organizer-plan-v3= selects =wiki-organizer-v3= with the v2 limits and
+  =carried-support-v2=. Planning reads support and area records from all
+  three organizer receipt generations, with both reviews required.
+- A handle certifies the section text that established it. Only a reference
+  for an in-place revision of that section or for its declared move
+  destination may carry it. A new section, including a hub section with no
+  incoming move, cites exact quotations from delivered heading or session-note
+  units. The hub can link to a topic page instead of restating its facts.
+- A heading quotation must occur once within a single delivered heading
+  line. It may include the displayed =N: = prefix if the number matches
+  the row. Its range and digest cover only the quoted UTF-8 bytes from
+  the heading in the project blob. A prefix alone supplies no evidence.
+- The repair receives the independent mechanical findings together,
+  including the reference and citation position for failed quotations,
+  misplaced, unknown, repeated and dropped handles, and page-scope errors.
+  An invalid move cannot produce a forwarding edit. Native link checks
+  need a parsed inventory. Evidence checks can still run when parsing
+  fails. Review starts only after the candidate passes validation, and a
+  final refusal includes a bounded summary of the outstanding findings.
+- Saved v1 and v2 plans select their original briefs, heading resolver
+  and first-error repair behavior. Pinned replay fixtures cover the run
+  identity, all four role assignments and the published receipt for each.
