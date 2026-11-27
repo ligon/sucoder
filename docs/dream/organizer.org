@@ -1,0 +1,238 @@
+#+TITLE: Organizer milestone O1: one feature area per job
+#+AUTHOR: Sue
+#+DATE: 2026-11-27
+#+STATUS: Specification for milestone O1 of the organizer track; implemented in sucoder/dream_organizer.py
+#+OPTIONS: toc:2 num:nil
+
+* Scope
+:PROPERTIES:
+:CUSTOM_ID: scope
+:END:
+
+This is the concrete contract for the first milestone of the organizer track in [[file:read-and-organize.org::#slices][Reading and organizing]], slice 1.
+It turns the accepted design's [[file:read-and-organize.org::#organize][Organize]], [[file:read-and-organize.org::#safety][Safety and privacy]] and disposition 4 into one job kind that a test can run end to end with fake native transports.
+An O1 job organizes one feature area: it writes that area's hub page, leaves forwarding sections where content moved, applies reviewed corrections, marks contradicted claims, regenerates the index mechanically and publishes one generation on the memory branch.
+Everything below names the code it relies on, so a reader can check each rule.
+
+* Job kind and contracts
+:PROPERTIES:
+:CUSTOM_ID: contracts
+:END:
+
+- Job kind :: =wiki-organizer=, module =sucoder/dream_organizer.py=, command =sucoder dream organize=.
+- Plan :: =wiki-organizer-plan-v1=, operation =organizer_plan=, stored as =<log_dir>/dream-organizer/<plan_id>/plan.json=, where =plan_id= is the SHA-256 of the canonical plan.
+  The directory is 0700 and its files 0600, checked as dream plan directories are (=sucoder/dream_run.py:64-86=).
+- Generation :: =wiki-organizer-v1= names the roles, briefs, schemas and the receipt.
+- Sub-contracts :: =carried-support-v1= (support moved with a section), =organizer-index-v1= (the generated index), =organizer-hub-lint-v1= (hub linting) and =organizer-forwarding-v1= (forwarding and disposition markers).
+  Each is a frozen name in the run identity, so changing any rule needs a new name.
+- Frozen contracts :: No existing contract changes behaviour.
+  The one shared change is an optional =editable= argument to =dream_wiki.validate_proposal=; when it is absent the function is byte for byte what earlier plans and receipts replay against.
+
+* Inputs
+:PROPERTIES:
+:CUSTOM_ID: inputs
+:END:
+
+Planning freezes every input; running reads only what the plan names and checks each digest.
+
+- Memory tip :: The mirror's configured memory branch (=dream_memory.configured=) must exist, hold only =.sucoder/wiki/= (=dream_memory.check_tree=) and carry an accepted =repository_uuid= in =sources.json=.
+  Its tip is the frozen =base_commit=.
+- Wiki pages :: Every active page at the base: =index.org=, =settings.org=, =topics/**.org= and =hubs/*.org=, delivered whole, at most =max_prior_bytes= (128 KiB).
+  Archive pages and metadata are listed, not delivered, so links into them keep their meaning (=sucoder/dream_wiki.py:201-207=).
+- Receipt history :: Every receipt file under =.sucoder/wiki/receipts/= at the base, with the commit that added it.
+  Receipts removed by a withdrawal are no longer in the tree and so are not history.
+  More than 256 receipts or 4 MiB of receipts refuses planning, because a partial history cannot prove that support survives.
+- Session notes :: The accepted notes of the private store, =Store.for_repository(...).sources()= then =notes(accepted_only=True)= (=sucoder/dream_notes.py:659=), oldest first, up to =max_note_bytes= (64 KiB).
+  Planning copies each note and its review into the job directory, so readers' later progress never changes a frozen job.
+  Notes beyond the allowance are listed as omitted with their identities.
+  A store that does not exist yet means no notes; the organizer first runs before any reader does.
+- README and docs headings :: The heading lines (=^\*+ =) of =README.org= and every =docs/**.org= at the project commit (default the mirror's =HEAD=), up to =max_heading_bytes= (48 KiB), each with its line number and byte range in the blob.
+  Files beyond the allowance are listed as omitted.
+  The project's regular files are frozen too (=dream.project_files=), so a hub may link any of them.
+- Area :: An identifier =[a-z0-9][a-z0-9-]*= naming the hub =.sucoder/wiki/hubs/<id>.org=, with a title, a group and a one-line summary.
+  They are supplied by the operator and checked as plain text without links or brackets; a later job for the same area may reuse the earlier record.
+  The initial areas in the design are Sue's proposal, so the operator, not the model, chooses them.
+- Injection cap :: =dream.inject_bytes= for the mirror, read once at planning (=sucoder/mirror.py:7649=).
+- Time :: One UTC timestamp, frozen at planning, dates every forwarding and disposition marker.
+
+* One area per job
+:PROPERTIES:
+:CUSTOM_ID: area
+:END:
+
+A job writes exactly one hub, the area's own.
+It may also rewrite existing topic pages to apply corrections, and the coordinator rewrites the pages that lose sections and the index.
+It may not write other hubs, settings, archives or the index.
+One area keeps the change inside today's review sizes: the review sees every changed page whole, and the whole input stays within =max_consolidation_bytes= (512 KiB for organizer jobs).
+
+* Outputs
+:PROPERTIES:
+:CUSTOM_ID: outputs
+:END:
+
+- Hub :: =.sucoder/wiki/hubs/<id>.org= explains the area, links its topic pages and maintained docs, and carries moved sections.
+  Its =#+title:= is the frozen area title; it has no other keyword, every heading has a =CUSTOM_ID=, and it has no tasks.
+- Moves :: The organizer names each section it moves: origin page and anchor, destination anchor in the hub, and a reason.
+  A move takes the section's own text: its heading, drawer and body up to its first child heading.
+  Children stay where they are, under the forwarding heading, so no anchor and no editorial task moves or disappears.
+  Task headings and sections the same job rewrites cannot move.
+  Several origins may move into one destination; that is a merge.
+- Forwarding sections :: The coordinator, not the model, replaces each moved section's body with one line, =Moved to [[file:../hubs/<id>.org::#<anchor>][<area title>]] by the organizer on <date>.=, keeping the heading and drawer.
+  The anchor therefore survives, as =validate_proposal= requires (=sucoder/dream_wiki.py:169-174=).
+- Links :: The generated index links every hub and every topic page not yet linked from a hub.
+  Old index anchors are kept as empty forwarding headings at its end, so incoming links still resolve.
+  Every link is checked by the existing rules: file links stay inside the project, wiki links resolve to delivered pages and anchors, and existing links to archives are retained.
+
+* Carried support
+:PROPERTIES:
+:CUSTOM_ID: carried-support
+:END:
+
+Today every new or revised anchored section must cite a unit admitted in the same job (=sucoder/dream_wiki.py:267-271=), and a moved section is new where it lands, so moving cited content would be refused or would silently drop its evidence.
+The exemption for coordinator-materialized changes (=sucoder/dream_editor.py:348-357=) covers task history and archives, not prose that moves to another page.
+Editorial support, =dream_support.collect=, binds a receipt's references to a whole page's SHA-256 (=sucoder/dream_support.py:94-103=), so any later edit to a page loses the support of every section on it.
+
+=carried-support-v1= replaces that rule for organizer jobs only, through the existing =reference_validator= hook (=sucoder/dream_wiki.py:239-240=).
+
+- Section text :: A section's own text is its heading line, drawer and body up to its first child heading, as UTF-8.
+  A Python parser computes it, and its anchors must equal the native Org inventory's, or the job is refused.
+- Current support :: For each receipt in the history whose review accepted, for each of its =references= and =inherited_support= rows naming page P and anchor T, the coordinator reads P at the commit that added the receipt, checks that its SHA-256 equals the receipt's output binding, and compares T's own text there with T's own text at the base.
+  The row's citations are current support for P#T only when the two are equal.
+  This is the full receipt history check: it does not trust page hashes or the plan, and it runs again at every run and replay.
+- Handles :: Each current citation gets a handle, =support-= and 16 hex digits of the digest of its receipt, page, anchor, unit and byte range.
+  The organizer sees, per section, its handles with the receipt, unit and evidence status, not the quoted text.
+- Re-binding :: A reference may carry handles from its own section (an in-place revision) or from a section that moves into it in this job; any other handle is refused.
+- Citation survival :: Every handle of a moved section must be carried into its destination, or the job is refused, naming the dropped handle.
+  Survival proves only that citations survive; it cannot prove that a qualification does, so preservation is also a reviewer check per move.
+- Receipt rows :: Carried citations are written as =inherited_support= rows bound to the hub path, the new anchor and the new page SHA-256, with =carried_from= naming the origin and its own-text digest.
+  Unchanged sections of rewritten pages are re-bound the same way, so =dream_support.collect= still finds their support.
+  Both shapes are the ones =dream_support.check_receipt= already accepts.
+- Fresh citations :: A reference may also cite delivered units by exact quotation, as today's quotation editor does: a heading line of a frozen doc, or the text of a session-note item.
+  A quotation must occur exactly once in the unit.
+  Every new or revised section that the coordinator did not materialize needs at least one fresh citation or carried handle.
+
+* Corrections and retractions
+:PROPERTIES:
+:CUSTOM_ID: corrections
+:END:
+
+The organizer is the wiki's editor ([[file:read-and-organize.org::#decisions][disposition 4]]).
+
+- Corrections :: A reader proposes a correction as a note item of kind =correction= with a =target= page and optional anchor.
+  The organizer disposes of any correction it addresses as =applied= or =declined=, with a reason.
+  An applied correction must revise the target section (or its hub destination when it also moves) and cite that correction item in the section's reference.
+  Each reviewer checks, per applied correction, that its cited evidence supports it.
+- Retractions :: A contradicted claim on a topic page is marked =retracted=, or =superseded= with the section that replaces it, with a reason and at least one fresh citation as evidence.
+  The coordinator tags the heading =:retracted:= or =:superseded:= and inserts a dated marker line; the old text stays below it as the record, and the anchor stays.
+  A marked section cannot move, a hub may not link it, and its old support is no longer current because its own text changed.
+  Its evidence is recorded under =retractions= in the receipt, never as support for the section.
+  Retracting a hub section is out of scope; a hub claim is withdrawn by a reviewed revision of the hub.
+- Each reviewer checks, per retraction, that its evidence contradicts the claim.
+
+* Mechanical index
+:PROPERTIES:
+:CUSTOM_ID: index
+:END:
+
+=organizer-index-v1= generates =index.org=; the model never writes it.
+
+- Area records :: Each organizer receipt records its area (identifier, title, group, summary, hub).
+  The index uses the newest record per area in the receipt history, with this job's record replacing its own area's, and only areas whose hub exists.
+- Lines :: One heading per group, sorted, and one line per hub, =- [[file:hubs/<id>.org][<title>]] :: <summary>=, sorted by title.
+  Topic pages that no hub links follow under =Pages not yet in a hub=, one bare path link per page; once every page is placed this section disappears.
+  Old index anchors become empty headings under =Earlier index sections=.
+- Cap :: The index, with drawers removed as =_memory_block= removes them, must be at most =dream.inject_bytes=, so the injected block is never cut.
+  Planning refuses an area set whose hub lines alone exceed the cap; an over-long index at run time is a mechanical finding the organizer can repair by placing pages.
+- No model text :: Titles and summaries come from the operator, labels of unplaced pages from their file names, and the rest is fixed text.
+
+* Hub lint
+:PROPERTIES:
+:CUSTOM_ID: lint
+:END:
+
+=organizer-hub-lint-v1= runs on the hub after the native checks and before review, because session text, including tool output and comments on this public repository, is data that could reach every session one link below the index.
+A finding is a mechanical rejection that the organizer may repair once.
+
+- Shape :: Only =#+title:= before the first heading, a =CUSTOM_ID= on every heading, no task states, no blocks, comments or fixed-width lines.
+- URLs :: No =scheme://=, =www.= or =mailto:= text, and no link types other than =file= and =custom-id=.
+- Commands :: No line beginning with a shell prompt, and no inline code or verbatim span that contains a shell operator (=|=, =;=, =&&=, =$(=, a backtick or a redirection) or begins with a general-purpose program (shell, network, package, interpreter, =git=, =sudo= and similar).
+  Naming a SuCoder command such as =sucoder dream checkout= is description, not a command, and is allowed.
+- Imperatives :: No sentence, heading or description-list term that begins with an imperative verb from a frozen list (run, use, install, ignore, push, delete and others), and no second-person or agent-directed modal (=you must=, =agents should=, =ignore previous=).
+  The list errs towards refusal; a false positive costs a rephrasing.
+- Human decisions :: A sentence claiming that the human, maintainer or user decided, approved, asked or ruled needs, in the same section's references, a fresh citation of a note item with origin =human= and basis =human said=.
+  Carried support does not satisfy this, because earlier receipts used the permissive attribution the red team found (=sucoder/dream_editor.py:204-209=).
+- Dispositions :: No hub link to a retracted or superseded section.
+- Secrets :: Every written page and the receipt pass the version 3 redaction patterns (=dream_view.redact=) with no match, or the job is refused.
+
+* Review
+:PROPERTIES:
+:CUSTOM_ID: review
+:END:
+
+- Roles :: =organizer= writes the proposal, =repair= revises it once from concrete findings, =reviewer= reviews independently in the same harness family, and =cross_reviewer= reviews in the other one.
+  All four use the existing native role call (=dream_roles.Coordinator.call=), with its frozen assignments, traces and result cache.
+- Families :: The cross reviewer's harness must differ from the organizer's (=claude= or =codex=), which also gives a different model family.
+- Candidate :: Reviewers receive the full input and the materialized candidate: every written page whole with its before hash, the moves, references with their carried handles, corrections, retractions and the generated index.
+- Checks :: Besides a verdict and findings, each reviewer returns exactly one check per hub section (claims supported by its citations), per move (qualifications preserved), per applied correction (evidence supports it) and per retraction (evidence contradicts the claim).
+  Any missing, duplicated or failing check, any blocking finding, or a verdict other than accept rejects the candidate.
+- Order :: The cross reviewer reviews only a candidate the first reviewer accepted, so a rejection does not pay twice; a candidate is accepted only when both accept it.
+- Repair :: Mechanical or review findings get one =repair= call, then validation and both reviews again; a second failure ends the job with nothing published.
+- Human review :: None is required for publication, per disposition 4; how much remains is for the evaluation track to measure.
+
+* Publication
+:PROPERTIES:
+:CUSTOM_ID: publication
+:END:
+
+- One writer :: The organizer publishes through =dream_run.publish= with =publication: in_place=, the existing compare-and-swap from the frozen base to the new generation (=sucoder/dream_run.py:574-593=).
+  Readers write only the private note store, so they never move the branch.
+- Before any call :: A run first compares the memory tip with the frozen base and refuses, before any native call, when another writer moved it.
+- Lost compare-and-swap :: When the branch moves between that check and publication, the ref update fails, nothing is published, and the reviewed generation stays private in the job directory, as for dreams.
+  O1 does not merge or rebase: the operator plans again against the new tip, and that job is reviewed again.
+- Receipt :: =.sucoder/wiki/receipts/<run_id>.json= with the area, output bindings, fresh references, carried and re-bound support, moves, corrections, retractions, the index digest, the lint contract, the receipts the support check read, the note and doc digests, both reviews, the role traces and usage.
+
+* Replay and status
+:PROPERTIES:
+:CUSTOM_ID: replay
+:END:
+
+- Cache :: Every role result is stored under its assignment identity; a rerun with the same plan and attempt reuses them and calls no model, as for dreams (=sucoder/dream_roles.py:139-172=).
+- Idempotence :: A rerun after publication finds the generation on the branch and does not update the ref again.
+- Status :: =sucoder dream organize status= rebuilds the generation with transports that refuse inference, compares the receipt byte for byte with the stored one and, when published, with the receipt on the branch.
+  It reports =published=, =detached= (published, then reset away), =reviewed_unpublished= (a lost compare-and-swap), =incomplete= (roles left to run) or =not_run=.
+- Attempts :: A started role call without a stored result is never repeated, and status reports it as an error; a new =--attempt= is needed, as for dreams.
+
+* Privacy
+:PROPERTIES:
+:CUSTOM_ID: privacy
+:END:
+
+- Notes stay private :: Notes and their quotations are delivered to the roles, never written to the branch.
+- Receipts keep digests :: Citations in organizer receipts keep byte ranges and digests, not quotations; a note citation names the note, item, item digest and the source key's digest, not the session id.
+- Hubs :: Hub prose may restate what reviewed notes establish, with citations; the reviewers check it against the cited notes.
+
+* Out of scope for O1
+:PROPERTIES:
+:CUSTOM_ID: out-of-scope
+:END:
+
+- Choosing areas automatically, or several areas per job.
+- Merging or rebasing after a lost compare-and-swap.
+- Moving subtrees with tasks, or tasks between pages; retracting hub sections; retiring whole pages.
+- Shared backlog budgets and token or cost ceilings; O1 bounds calls and elapsed time per job only.
+- A reader contract that reads =hubs/=, and the evaluation against the no-model baseline; both are other tracks.
+- Changing the PROJECT MEMORY reading hint, which still names =topics/=; the index links hubs by path.
+- Admitting full git passages besides headings; corrections that need code evidence wait for that.
+
+* Open choices
+:PROPERTIES:
+:CUSTOM_ID: open
+:END:
+
+- Area records live in receipts :: Chosen over a registry file because =dream_run.publish= writes only Org pages besides receipts, and receipts are already coordinator-owned; the cost is that the index depends on the receipt history.
+- Unplaced pages in the index :: Chosen so no page becomes unreachable while areas are organized one at a time; the alternative was a generated page of unplaced topics one link down.
+- Own text, not subtree :: Chosen so a later task transition in a child does not void a parent's support.
+- Children stay behind :: Chosen so moves never touch tasks or anchors below the moved text; the cost is forwarding headings that still hold children.
+- Strict human-decision lint :: Chosen to accept only fresh human-origin note items; sections whose only support for a human decision is carried stay on their topic pages, linked from the hub.
+- Harness, not model name, decides the family :: =claude= runs Anthropic models and =codex= OpenAI models, so a different harness is a different family; checking model names was rejected as fragile.
+- Explicit models :: The command needs an explicit harness and model for both seats; no configuration key is added, so the job never falls back to a default that pays for an unintended model.

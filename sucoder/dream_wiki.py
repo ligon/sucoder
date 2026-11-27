@@ -113,11 +113,13 @@ def prior_bundle(plan, fd):
     return files
 
 
-def validate_proposal(plan, proposal, prior, sources, deadline, contract=CONTRACT, *, approved_tasks=None, archive_paths=(), derived_targets=(), reference_validator=None, report_issue=None):
+def validate_proposal(plan, proposal, prior, sources, deadline, contract=CONTRACT, *, approved_tasks=None, archive_paths=(), derived_targets=(), reference_validator=None, report_issue=None, editable=None):
     """Check edit scope, source ranges, retained anchors/tasks and wiki links.
 
     Human meaning and salience are reviewed separately against this full input.
     No claim that these mechanical checks prove semantic fidelity is made.
+    ``editable`` replaces editable_path for a contract with its own writable
+    pages (wiki-organizer-v1 writes hubs/); every earlier contract omits it.
     """
     def reject(message, *, path, target="", code="structure_invalid"):
         if report_issue is None:
@@ -131,7 +133,7 @@ def validate_proposal(plan, proposal, prior, sources, deadline, contract=CONTRAC
             if not path.startswith(".sucoder/wiki/archive/") or not path.endswith(".org"):
                 raise DreamError("Invalid coordinator archive path")
         else:
-            path = editable_path(page["path"])
+            path = (editable or editable_path)(page["path"])
         if path in existing and path not in prior:
             raise DreamError("Existing page is outside the delivered prior context; include it before editing")
         if path in pages or not page["content"].strip():
