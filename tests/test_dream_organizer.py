@@ -282,7 +282,7 @@ def test_an_area_job_publishes_hub_forwarding_index_correction_and_retraction(or
                      "* Earlier index sections\n** orientation\n:PROPERTIES:\n:CUSTOM_ID: orientation\n:END:\n")
     assert len(organizer.injected(index).encode()) <= plan["inject_bytes"]
     receipt = json.loads(show(repo, MEMORY, W + "receipts/" + result["run_id"] + ".json"))
-    assert receipt["contract"] == organizer.CONTRACT and receipt["area"]["id"] == "dream-memory"
+    assert receipt["contract"] == "wiki-organizer-v2" and receipt["area"]["id"] == "dream-memory"
     assert receipt["review"]["verdict"] == receipt["cross_review"]["verdict"] == "accept"
     assert receipt["cross_seat"]["harness"] == "codex" and receipt["harness"] == "claude"
     carried = [row for row in receipt["inherited_support"] if row["status"] == "carried_not_reread"]
@@ -441,7 +441,7 @@ def test_same_family_run_freezes_two_efforts_and_replays_the_different_model_rev
 
 
 def test_legacy_cross_family_identity_and_assignment():
-    plan = dict(plan_id="f" * 64, area={})
+    plan = dict(contract="wiki-organizer-plan-v1", plan_id="f" * 64, limits=organizer.LIMITS, area={})
     author = ("claude", "author", forbidden, "fixture")
     cross = ("codex", "reviewer", forbidden, "fixture")
     job = organizer.Organizer(plan, None, None, 60, author, cross)
@@ -580,3 +580,203 @@ def test_note_context_never_becomes_support_quotes(workspace, tmp_path, monkeypa
         os.close(fd)
     decision = next(u for u in units.values() if u.get("item_kind") == "decision")
     assert decision["quotes"] == ["Readers may read whole sessions."]
+
+
+def legacy_history(workspace, monkeypatch):
+    """Recreate the git objects backing the v1 plan from 607000f."""
+    repo = workspace[0]
+    monkeypatch.setenv("GIT_AUTHOR_DATE", NOW)
+    monkeypatch.setenv("GIT_COMMITTER_DATE", NOW)
+    project = tree_commit(repo, {"README.org": README})
+    unit = dict(unit_id="readme", kind="git", source_id=sha("readme"), repository_uuid=IDENTITY,
+                repository="sample", commit=project, path="README.org", lines=[2, 3],
+                blob=git(repo, "rev-parse", project + ":README.org"), sha256=sha(README))
+    review = dict(verdict="accept", failures=[], findings=[])
+    start = README.index("Install with pip.")
+    receipt = dict(contract="wiki-organizer-v1", repository_uuid=IDENTITY, review=review, cross_review=review,
+        area=dict(id="dream-memory", hub=HUB, **AREA), units=[unit],
+        outputs=[dict(path=REPLIES, rule="file-utf8-v1", sha256=sha(REPLIES_V1))],
+        references=[dict(path=REPLIES, target="reply-proof", evidence_status="inference",
+                         citations=[dict(unit_id="readme", byte_start=start, byte_end=start + 17)])])
+    files = {W + "sources.json": json.dumps(dict(schema_version=1, repository_uuid=IDENTITY)),
+             wiki.INDEX: "#+title: Companion wiki\n" + section("Orientation", "orientation",
+                 "- [[file:topics/replies.org::#reply-proof][Reply evidence]]"),
+             REPLIES: REPLIES_V1, W + "receipts/" + "1" * 64 + ".json": dream.canonical(receipt).decode()}
+    base = tree_commit(repo, files)
+    git(repo, "update-ref", MEMORY, base)
+    return project
+
+
+def legacy_move(inputs):
+    carried = handles(inputs, REPLIES, "reply-proof")
+    return dict(pages=[dict(path=HUB, content="#+title: Dream memory\n" +
+                            section("Reply evidence", "proof", "Native assistant text establishes a reply."))],
+        changes=[dict(path=HUB, before_sha256="", reason="Collect the reply evidence.")],
+        moves=[dict(from_path=REPLIES, from_target="reply-proof", to_target="proof", reason="Collect reply evidence.")],
+        references=[dict(path=HUB, target="proof", evidence_status="inference", citations=[],
+                         carried=[dict(handle=h) for h in carried])], corrections=[], retractions=[], omissions=[])
+
+
+def test_pinned_v1_replay(workspace, monkeypatch):
+    """Plan and canonical assignment/receipt digests captured with 607000f and fake transports."""
+    repo, _, config, _ = workspace
+    legacy_history(workspace, monkeypatch)
+    fixture = Path(__file__).with_name("organizer-plan-v1.json")
+    value = json.loads(fixture.read_bytes())
+    directory = config.log_dir / organizer.ROOT / value["plan_id"]
+    directory.parent.mkdir(parents=True, mode=0o700)
+    directory.mkdir(mode=0o700)
+    path = directory / "plan.json"
+    path.write_bytes(fixture.read_bytes())
+    path.chmod(0o600)
+    # Relocate the fixture mirror while preserving the original plan bytes and run identity.
+    source = organizer._source
+    monkeypatch.setattr(organizer, "_source", lambda c, p, d: source(c, dict(p, repository_path=str(repo)), d))
+    author = Seat("claude-fixture-1", propose=lambda inputs: dict(legacy_move(inputs), moves=[]), repair=legacy_move)
+    cross = Seat("codex-fixture-1")
+    result = execute(workspace, dict(plan_path=path), author, cross)
+    assert result["run_id"] == "c4fa7c9b0f975d0b7a8dff9e1f960e58d26974ca733de2d72fc6ea1a98e3f473"
+    assert [sha(dream.canonical(task)) for task in author.calls + cross.calls] == [
+        "6ea16b423f16041100ed639c285cb4ab68cf38afb6e3b179d46da45ab824abca",
+        "d3912be0856991506d653abe24a3b4ec47c0ced4c6ed4989715acbbcdb32c48d",
+        "b5bec264c2abcb5f43bbe351105eeec8fa52e24b8a165fcc36341a7a5d9a51cf",
+        "4867e672bcbe8af42a58072f22881c611cc98f79271dd1393184f5b556966b73"]
+    replay = organizer.status(config, "sample", path)
+    assert replay["state"] == "published" and replay["replayed_roles"] == 4
+    assert replay["receipt_sha256"] == "3b918a6dfb68cda68b9723ffcf1240f26ea6edfa9ac50668cbe01d467bb1e4bc"
+
+
+def record_inherited(workspace, plan, citations, *, accepted=True):
+    """A later organizer receipt, sorted ahead of the original receipt by filename."""
+    config, base = workspace[2], plan["base_commit"]
+    source = dream.GitSource(config, "sample", time.monotonic() + 30)
+    files = {f["path"]: source.blob(f["blob"]).decode() for f in plan["prior_wiki"]["files"]}
+    review = dict(verdict="accept", failures=[], findings=[])
+    receipt = dict(contract="wiki-organizer-v2", repository_uuid=IDENTITY, review=review,
+        cross_review=dict(review, verdict="accept" if accepted else "revise"),
+        area=dict(plan["area"], summary="A revised area summary."),
+        outputs=[dict(path=REPLIES, rule="file-utf8-v1", sha256=sha(REPLIES_V1))],
+        inherited_support=[dict(path=REPLIES, target="reply-proof", evidence_status="inference", citations=citations)])
+    files[W + "receipts/" + "0" * 64 + ".json"] = dream.canonical(receipt).decode()
+    git(workspace[0], "update-ref", MEMORY, tree_commit(workspace[0], files, base))
+
+
+def test_move_with_64_distinct_handles_and_repeated_receipt_evidence(workspace, monkeypatch):
+    project = legacy_history(workspace, monkeypatch)
+    config = workspace[2]
+    initial = organizer.plan(config, "sample", "dream-memory", project=project, now=NOW)
+    assert initial["areas"] == [dict(id="dream-memory", hub=HUB, **AREA)]  # From a v1 receipt.
+    original, = initial["support"]
+    unit, start, end = original["unit"], original["byte_start"], original["byte_end"]
+    spans = [(a, b) for a in range(start, end) for b in range(a + 1, end)][:63]
+    record_inherited(workspace, initial, [dict(unit=unit, byte_start=a, byte_end=b) for a, b in [(start, end)] + spans])
+    plan = organizer.plan(config, "sample", "dream-memory", project=project, now=NOW)
+    assert plan["area"]["summary"] == "A revised area summary."  # From the newer v2 receipt.
+    assert len(plan["support"]) == len(set(handles(plan, REPLIES, "reply-proof"))) == 64
+    assert original in plan["support"]  # The older receipt supplies the digest, commit and evidence status.
+    assert original["handle"] == "support-" + sha(dream.canonical([REPLIES, "reply-proof", unit, start, end]))[:16]
+
+    author, cross = Seat("claude-fixture-1", propose=legacy_move), Seat("codex-fixture-1")
+    result = execute(workspace, plan, author, cross)
+    for task in author.calls + cross.calls:
+        assert task["contract"] == task["input"]["contract"] == "wiki-organizer-v2"
+        for row in task["input"]["support"]:
+            assert set(row) == {"handle", "path", "target", "evidence_status", "unit"}
+            assert row["unit"] == dict(kind="git", path="README.org", lines=[2, 3])
+    carried_schema = author.calls[0]["result_schema"]["properties"]["references"]["items"]["properties"]["carried"]
+    assert carried_schema["maxItems"] == plan["limits"]["max_carried_per_reference"] == 64
+    receipt = json.loads(show(workspace[0], MEMORY, W + "receipts/" + result["run_id"] + ".json"))
+    assert receipt["support"]["contract"] == "carried-support-v2"
+    carried = receipt["inherited_support"]
+    assert len(carried) == 64
+    assert {r["carried_from"]["handle"] for r in carried} == set(handles(plan, REPLIES, "reply-proof"))
+    assert all(r["path"] == HUB and r["target"] == "proof" and r["citations"][0]["unit"] == unit for r in carried)
+
+
+def test_unaccepted_v2_cross_review_establishes_no_support_or_area(workspace, monkeypatch):
+    project = legacy_history(workspace, monkeypatch)
+    config = workspace[2]
+    first = organizer.plan(config, "sample", "dream-memory", project=project)
+    unit = first["support"][0]["unit"]
+    record_inherited(workspace, first, [dict(unit=unit, byte_start=20, byte_end=21)], accepted=False)
+    later = organizer.plan(config, "sample", "dream-memory", project=project)
+    assert len(later["receipts"]) == 2
+    assert later["support"] == first["support"] and later["areas"] == first["areas"]
+
+
+@pytest.mark.parametrize("count", [120, 450])
+def test_support_byte_cap_in_planning_and_replay(workspace, monkeypatch, count):
+    project = legacy_history(workspace, monkeypatch)
+    config = workspace[2]
+    first = organizer.plan(config, "sample", "dream-memory", project=project)
+    start, end = README.index("* Installation"), README.index("* Dream")
+    spans = [(a, b) for a in range(start, end) for b in range(a + 1, end + 1)]
+    record_inherited(workspace, first, [dict(unit=first["support"][0]["unit"], byte_start=a, byte_end=b)
+                                       for a, b in spans[:count]])
+    if count == 450:
+        with pytest.raises(dream.DreamError, match="max_support_bytes"):
+            organizer.plan(config, "sample", "dream-memory", project=project)
+        return
+    plan = organizer.plan(config, "sample", "dream-memory", project=project)
+    size = len(dream.canonical(plan["support"]))
+    assert 64 * 1024 < size <= plan["limits"]["max_support_bytes"] == 256 * 1024
+    with organizer._job(config, plan["plan_path"]) as (fd, _):
+        source = organizer._source(config, plan, time.monotonic() + 30)
+        monkeypatch.setitem(organizer.LIMITS_V2, "max_support_bytes", 0)
+        data = organizer.frozen(source, plan, fd)
+        assert data.support == plan["support"]
+        with pytest.raises(dream.DreamError, match="max_support_bytes"):
+            organizer.history(source, plan["base_commit"], plan["prior_wiki"]["files"], IDENTITY, data.prior,
+                              organizer.PLAN_CONTRACT, organizer.LIMITS)
+        plan["limits"]["max_support_bytes"] = size - 1
+        with pytest.raises(dream.DreamError, match="max_support_bytes"):
+            organizer.frozen(source, plan, fd)
+
+
+def test_note_admission_and_replay_use_the_frozen_byte_cap(workspace, tmp_path, monkeypatch):
+    config = workspace[2]
+    seed(workspace)
+    original = dream_notes.SessionSource.write_note
+    dates = iter(["2026-11-24T12:00:00Z", "2026-11-25T12:00:00Z"])
+
+    def large_note(source, note):
+        note["written_at"] = next(dates)
+        note["items"] = [dict(note["items"][1], text="Evidence. " * 150 + str(i)) for i in range(90)]
+        return original(source, note)
+
+    monkeypatch.setattr(dream_notes.SessionSource, "write_note", large_note)
+    first, second = [write_notes(workspace, tmp_path) for _ in range(2)]
+    plan = organizer.plan(config, "sample", "dream-memory", now=NOW, **AREA)
+    assert plan["contract"] == "wiki-organizer-plan-v2"
+    assert plan["limits"]["max_note_bytes"] == 256 * 1024
+    assert plan["limits"]["max_consolidation_bytes"] == 768 * 1024
+    assert [n["note_id"] for n in plan["notes"]] == [first]
+    assert plan["notes_omitted"] == [dict(note_id=second, reason="max_note_bytes")]
+    with organizer._job(config, plan["plan_path"]) as (fd, directory):
+        source = organizer._source(config, plan, time.monotonic() + 30)
+        selected, omitted = organizer._notes(config, source, plan["base_commit"], IDENTITY, organizer.LIMITS["max_note_bytes"])
+        assert selected == [] and [n["note_id"] for n in omitted] == [first, second]
+        size = len(dream.canonical(json.loads((directory / ("note-" + first + ".json")).read_bytes())["note"]))
+        assert 64 * 1024 < size <= 256 * 1024
+        monkeypatch.setitem(organizer.LIMITS_V2, "max_note_bytes", 0)
+        data = organizer.frozen(source, plan, fd)
+        assert len([u for u in data.units.values() if u["kind"] == "session-note"]) == 90
+        plan["limits"]["max_note_bytes"] = size - 1
+        with pytest.raises(dream.DreamError, match="max_note_bytes"):
+            organizer.frozen(source, plan, fd)
+
+
+@pytest.mark.parametrize("unit,description", [
+    (dict(kind="git-headings", path="docs/design.org", blob="abc"), dict(kind="git-headings", path="docs/design.org")),
+    (dict(kind="claude-view", path="@sessions/example", thread_id=SESSION, raw=dict(byte_start=12, byte_end=58),
+          render=dict(sha256=sha("render"))), dict(kind="claude-view", path="@sessions/example")),
+    (dict(kind="session-note", note_id="abcd" * 16, item=7, item_sha256=sha("item"), source_key=sha("source"),
+          origin="human", basis="human said"),
+     dict(kind="session-note", note="abcd" * 3, item=7, origin="human", basis="human said")),
+])
+def test_compact_unit_descriptions(unit, description):
+    row = dict(handle="support-example", path=HUB, target="proof", evidence_status="inference",
+               unit=dict(unit, repository_uuid=IDENTITY, repository="sample", commit="abc", sha256=sha("unit"),
+                         source_id=sha("source")), byte_start=8, byte_end=20, receipt="fixture.json")
+    assert organizer._delivered_support(row, organizer.CONTRACT_V2) == dict(
+        handle="support-example", path=HUB, target="proof", evidence_status="inference", unit=description)
