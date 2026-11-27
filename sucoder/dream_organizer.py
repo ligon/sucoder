@@ -29,6 +29,10 @@ from .dream_roles import TEXT, array_schema, object_schema
 CONTRACT = "wiki-organizer-v1"
 PLAN_CONTRACT = "wiki-organizer-plan-v1"
 SUPPORT_CONTRACT = "carried-support-v1"
+CONTRACT_V2 = "wiki-organizer-v2"
+PLAN_CONTRACT_V2 = "wiki-organizer-plan-v2"
+SUPPORT_CONTRACT_V2 = "carried-support-v2"
+GENERATIONS = {PLAN_CONTRACT: (CONTRACT, SUPPORT_CONTRACT), PLAN_CONTRACT_V2: (CONTRACT_V2, SUPPORT_CONTRACT_V2)}
 INDEX_CONTRACT = "organizer-index-v1"
 LINT_CONTRACT = "organizer-hub-lint-v1"
 FORWARD_CONTRACT = "organizer-forwarding-v1"
@@ -40,6 +44,8 @@ RECEIPT = re.compile(r"\.sucoder/wiki/receipts/[0-9a-f]{64}\.json")
 LIMITS = dict(max_role_invocations=8, max_repairs=1, max_elapsed_seconds=1800,
     max_prior_bytes=128 * 1024, max_heading_bytes=48 * 1024, max_note_bytes=64 * 1024,
     max_support_bytes=64 * 1024, max_proposal_bytes=256 * 1024, max_consolidation_bytes=512 * 1024)
+LIMITS_V2 = dict(LIMITS, max_support_bytes=256 * 1024, max_note_bytes=256 * 1024,
+                 max_consolidation_bytes=768 * 1024, max_carried_per_reference=64)
 MAX_RECEIPTS = 256
 MAX_RECEIPT_BYTES = 4 * 1024 * 1024
 MAX_HISTORY = 4096
@@ -110,7 +116,7 @@ QUOTE = object_schema(dict(unit_id=TEXT, quote=TEXT))
 YES = dict(type="string", enum=["yes", "no"])
 
 
-def schema(role):
+def schema(role, max_carried=32):
     fields = dict(assignment_id=TEXT, input_sha256=TEXT, role=dict(type="string", enum=[role]),
                   failures=array_schema(TEXT, 16))
     if role in REVIEWERS:
@@ -130,7 +136,7 @@ def schema(role):
             moves=array_schema(object_schema(dict(from_path=TEXT, from_target=TEXT, to_target=TEXT, reason=TEXT)), 32),
             references=array_schema(object_schema(dict(path=TEXT, target=TEXT,
                 evidence_status=dream_roles.CLAIM["properties"]["evidence_status"],
-                citations=array_schema(QUOTE, 16), carried=array_schema(object_schema(dict(handle=TEXT)), 32))), 64),
+                citations=array_schema(QUOTE, 16), carried=array_schema(object_schema(dict(handle=TEXT)), max_carried))), 64),
             corrections=array_schema(object_schema(dict(note_id=TEXT, item=dict(type="integer", minimum=0),
                 disposition=dict(type="string", enum=["applied", "declined"]), path=TEXT, target=TEXT, reason=TEXT)), 32),
             retractions=array_schema(object_schema(dict(path=TEXT, target=TEXT,
@@ -281,8 +287,8 @@ def _active(path):
         path.startswith(TOPICS) or (path.startswith(HUBS) and "/" not in path[len(HUBS):])))
 
 
-def _accepted(receipt, identity):
-    reviews = [receipt.get("review")] + ([receipt.get("cross_review")] if receipt.get("contract") == CONTRACT else [])
+def _accepted(receipt, identity, organizer_receipt):
+    reviews = [receipt.get("review")] + ([receipt.get("cross_review")] if organizer_receipt else [])
     return receipt.get("repository_uuid") == identity and all(
         isinstance(review, dict) and review.get("verdict") == "accept" and not review.get("failures") and
         not any(isinstance(row, dict) and row.get("severity") == "blocking" for row in review.get("findings", []))
@@ -303,8 +309,8 @@ def _record(value):
         return None
 
 
-def history(source, base, files, identity, current):
-    """carried-support-v1: receipt-backed support that is current at the base.
+def history(source, base, files, identity, current, plan_contract, limits):
+    """Derive receipt-backed support that is current at the base.
 
     For every receipt in the memory tree whose review accepted, each cited
     row for page P and anchor T counts only when T's own text at the commit
@@ -318,6 +324,7 @@ def history(source, base, files, identity, current):
     if len(order) > MAX_HISTORY:
         raise DreamError("Memory history is too long for the carried-support check", 3)
     rank = {commit: i for i, commit in enumerate(order)}
+    v2 = plan_contract == PLAN_CONTRACT_V2
     now = {path: own_texts(text) for path, text in current.items()}
     receipts, catalog, areas, used = [], {}, {}, 0
     for item in items:
@@ -326,13 +333,15 @@ def history(source, base, files, identity, current):
         if used > MAX_RECEIPT_BYTES:
             raise DreamError("Receipt history exceeds its byte allowance; carried support cannot be checked", 3)
         commit = source.git("log", "--diff-filter=A", "-1", "--format=%H", base, "--", item["path"]).decode().strip()
-        receipts.append(dict(path=item["path"], blob=item["blob"], sha256=digest(raw), commit=commit))
+        receipt_sha = digest(raw)
+        receipts.append(dict(path=item["path"], blob=item["blob"], sha256=receipt_sha, commit=commit))
         try:
             receipt = dream._json(raw)
             dream_support.check_receipt(receipt)
         except DreamError:
             continue  # Malformed history establishes no support.
-        if not commit or not _accepted(receipt, identity):
+        organizer_receipt = receipt.get("contract") == CONTRACT or (v2 and receipt.get("contract") == CONTRACT_V2)
+        if not commit or not _accepted(receipt, identity, organizer_receipt):
             continue
         then = {}
         for output in receipt.get("outputs", []):
@@ -340,7 +349,7 @@ def history(source, base, files, identity, current):
             if output.get("rule") != "file-utf8-v1" or path not in now:
                 continue
             blob = source.entry(commit, path)
-            text = source.blob(blob, LIMITS["max_prior_bytes"]) if blob else None
+            text = source.blob(blob, limits["max_prior_bytes"]) if blob else None
             if text is not None and digest(text) == output.get("sha256"):
                 then[path] = own_texts(text.decode("utf-8"))
         units = {unit.get("unit_id"): unit for unit in receipt.get("units", [])}
@@ -353,17 +362,21 @@ def history(source, base, files, identity, current):
             own = then.get(path, {}).get(target)
             if unit is None or own is None or own != now[path].get(target) or type(start) is not int or type(end) is not int:
                 continue
-            handle = "support-" + digest(canonical([item["path"], path, target, unit, start, end]))[:16]
-            catalog.setdefault(handle, dict(handle=handle, path=path, target=target, receipt=item["path"],
-                receipt_sha256=digest(raw), commit=commit, own_sha256=own,
-                evidence_status=status if isinstance(status, str) else None, unit=unit, byte_start=start, byte_end=end))
-        record = _record(receipt.get("area")) if receipt.get("contract") == CONTRACT else None
+            evidence = [path, target, unit, start, end]
+            handle = "support-" + digest(canonical(evidence if v2 else [item["path"]] + evidence))[:16]
+            # Prefer the oldest establishing commit in topological order. Path order breaks ties.
+            if handle in catalog and (not v2 or rank[catalog[handle]["commit"]] >= rank[commit]):
+                continue
+            catalog[handle] = dict(handle=handle, path=path, target=target, receipt=item["path"],
+                receipt_sha256=receipt_sha, commit=commit, own_sha256=own,
+                evidence_status=status if isinstance(status, str) else None, unit=unit, byte_start=start, byte_end=end)
+        record = _record(receipt.get("area")) if organizer_receipt else None
         if record is not None:
             position = rank.get(commit, len(order))
             if record["id"] not in areas or position < areas[record["id"]][0]:
                 areas[record["id"]] = (position, record)
     support = sorted(catalog.values(), key=lambda row: (row["path"], row["target"], row["handle"]))
-    if len(canonical(support)) > LIMITS["max_support_bytes"]:
+    if len(canonical(support)) > limits["max_support_bytes"]:
         raise DreamError("Receipt-backed support exceeds max_support_bytes", 3)
     return receipts, support, [record for _, record in sorted(areas.values(), key=lambda pair: pair[1]["id"])]
 
@@ -445,38 +458,39 @@ def plan(config, mirror, area, *, title=None, group=None, summary=None, project=
     if registry["provisional"]:
         raise DreamError("Organizer jobs need the memory registry's accepted repository_uuid", 3)
     identity = registry["repository_uuid"]
+    limits = dict(LIMITS_V2)
     files = _tree(source, base)
     pages, texts, used = [], {}, 0
     for item in files:
         if not _active(item["path"]):
             continue
-        raw = source.blob(item["blob"], LIMITS["max_prior_bytes"])
+        raw = source.blob(item["blob"], limits["max_prior_bytes"])
         used += len(raw)
-        if used > LIMITS["max_prior_bytes"]:
+        if used > limits["max_prior_bytes"]:
             raise DreamError("Active wiki pages exceed max_prior_bytes", 3)
         texts[item["path"]] = raw.decode("utf-8")
         pages.append(dict(path=item["path"], blob=item["blob"], sha256=digest(raw)))
-    receipts, support, areas = history(source, base, files, identity, texts)
+    receipts, support, areas = history(source, base, files, identity, texts, PLAN_CONTRACT_V2, limits)
     record = _area(area, title, group, summary, areas)
     listing = dream.project_files(source, project)
     if listing is None:
         raise DreamError("The project file listing exceeds its allowance", 3)
-    docs, docs_omitted = _docs(source, listing, LIMITS["max_heading_bytes"])
-    selected, notes_omitted = _notes(config, source, base, identity, LIMITS["max_note_bytes"]) if notes else ([], [])
+    docs, docs_omitted = _docs(source, listing, limits["max_heading_bytes"])
+    selected, notes_omitted = _notes(config, source, base, identity, limits["max_note_bytes"]) if notes else ([], [])
     settings = config.mirrors[mirror].dream or config.dream
     records = [r for r in areas if r["id"] != area and r["hub"] in texts] + [record]
     hubs_only = index_text(records, {r["hub"]: "" for r in records}, set(), [])
     if len(injected(hubs_only).encode()) > settings.inject_bytes:
         raise DreamError("The area records alone exceed dream.inject_bytes; shorten the summaries or raise the cap")
     stamp = now or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    value = dict(schema_version=1, operation="organizer_plan", contract=PLAN_CONTRACT, state="planned",
+    value = dict(schema_version=1, operation="organizer_plan", contract=PLAN_CONTRACT_V2, state="planned",
         repository=mirror, repository_path=str(source.path), repository_uuid=identity,
         integration_ref=ref, base_commit=base, publication="in_place",
         prior_wiki=dict(files=files, pages=pages), receipts=receipts, support=support, areas=areas, area=record,
         project=listing, docs=docs, docs_omitted=docs_omitted,
         notes=[dict(note_id=row["note_id"], review_sha256=digest(canonical(row["review"])),
                     source_key=digest(canonical(row["note"]["source"]))) for row in selected],
-        notes_omitted=notes_omitted, limits=dict(LIMITS), inject_bytes=settings.inject_bytes, created_at=stamp)
+        notes_omitted=notes_omitted, limits=limits, inject_bytes=settings.inject_bytes, created_at=stamp)
     source.check_binding()
     if dream_memory.tip(source, ref) != base:
         raise DreamError("Memory branch moved while planning; plan again", 3)
@@ -540,10 +554,12 @@ def _load(fd, identity, mirror):
             "areas", "area", "project", "docs", "docs_omitted", "notes", "notes_omitted", "limits", "inject_bytes",
             "created_at", "plan_id"))
         payload = {key: item for key, item in value.items() if key != "plan_id"}
+        defaults = LIMITS_V2 if value["contract"] == PLAN_CONTRACT_V2 else LIMITS
         if (value["plan_id"] != identity or digest(canonical(payload)) != identity or value["repository"] != mirror or
-                value["operation"] != "organizer_plan" or value["contract"] != PLAN_CONTRACT or
+                value["operation"] != "organizer_plan" or value["contract"] not in GENERATIONS or
                 value["schema_version"] != 1 or value["publication"] != "in_place" or
-                set(value["limits"]) != set(LIMITS) or any(type(n) is not int or n < 0 for n in value["limits"].values())):
+                set(value["limits"]) != set(defaults) or any(type(n) is not int or n < 0 for n in value["limits"].values()) or
+                value["limits"].get("max_carried_per_reference", 32) > 64):
             raise DreamError("Frozen organizer plan differs from its identity or contract")
         if _record(value["area"]) is None:
             raise DreamError("Invalid frozen area record")
@@ -575,7 +591,7 @@ def frozen(source, plan, fd):
             raise DreamError("Frozen wiki page differs from the plan", 3)
         prior[item["path"]] = raw.decode("utf-8")
     receipts, support, areas = history(source, plan["base_commit"], plan["prior_wiki"]["files"],
-                                       plan["repository_uuid"], prior)
+                                       plan["repository_uuid"], prior, plan["contract"], plan["limits"])
     if canonical([receipts, support, areas]) != canonical([plan["receipts"], plan["support"], plan["areas"]]):
         raise DreamError("The receipt history no longer derives the frozen support; plan again", 3)
     units, resolve = {}, {}
@@ -590,11 +606,16 @@ def frozen(source, plan, fd):
             source_id=digest(canonical([plan["repository_uuid"], "git", doc["path"]])), repository=plan["repository"],
             repository_uuid=plan["repository_uuid"], commit=doc["commit"], blob=doc["blob"], path=doc["path"],
             sha256=doc["sha256"]))
+    note_bytes = 0
     for meta in plan["notes"]:
         value = dream._json(dream_run._read(fd, "note-" + meta["note_id"] + ".json", dream_notes.MAX_NOTE_BYTES * 2 + 1024))
         dream._object(value, ("note", "review"))
         note, review = dream_notes.validate_note(value["note"]), dream_notes.validate_review(value["review"])
-        if (digest(canonical(note)) != meta["note_id"] or digest(canonical(review)) != meta["review_sha256"] or
+        raw = canonical(note)
+        note_bytes += len(raw)
+        if note_bytes > plan["limits"]["max_note_bytes"]:
+            raise DreamError("Frozen notes exceed max_note_bytes", 3)
+        if (digest(raw) != meta["note_id"] or digest(canonical(review)) != meta["review_sha256"] or
                 review["verdict"] != "accept" or digest(canonical(note["source"])) != meta["source_key"]):
             raise DreamError("Frozen session note differs from the plan", 3)
         for number, item in enumerate(note["items"]):
@@ -756,6 +777,7 @@ class Seat(dream_roles.Coordinator):
     """One native seat; the shared role call keeps assignments, traces and results."""
     def __init__(self, organizer, harness, model, transport, native_version=None, *, native_options):
         self.briefs = organizer.briefs
+        self.contract = organizer.contract
         self.native_options = native_options
         if transport is None:
             transport = dream_native.Transport(harness, organizer.deadline)
@@ -763,13 +785,13 @@ class Seat(dream_roles.Coordinator):
                          native_version=native_version)
 
     def make_assignment(self, role, inputs):
-        task = dict(contract=CONTRACT, run_id=self.run_id, role=role, brief=self.briefs[role], input=inputs,
-                    result_schema=schema(role), input_sha256=digest(canonical(inputs)), **self.native_options)
+        task = dict(contract=self.contract, run_id=self.run_id, role=role, brief=self.briefs[role], input=inputs,
+                    result_schema=self.result_schema(role), input_sha256=digest(canonical(inputs)), **self.native_options)
         task["assignment_id"] = digest(canonical(task))
         return task
 
     def result_schema(self, role):
-        return schema(role)
+        return schema(role, self.plan["limits"].get("max_carried_per_reference", 32))
 
 
 @dataclass
@@ -835,6 +857,18 @@ def _editable(path):
     raise DreamError("Organizer pages are index.org, topics/*.org and hubs/AREA.org under .sucoder/wiki/")
 
 
+def _delivered_support(row, contract):
+    if contract == CONTRACT:
+        return {key: row[key] for key in ("handle", "path", "target", "receipt", "evidence_status", "unit",
+                                          "byte_start", "byte_end")}
+    unit = row["unit"]
+    description = {key: unit[key] for key in ("kind", "path", "lines", "item", "basis", "origin") if key in unit}
+    if isinstance(unit.get("note_id"), str):
+        description["note"] = unit["note_id"][:12]
+    return dict(handle=row["handle"], path=row["path"], target=row["target"],
+                evidence_status=row["evidence_status"], unit=description)
+
+
 class Organizer:
     def __init__(self, plan, fd, source, deadline, author, cross, attempt=1, *,
                  effort=None, cross_effort=None, same_family_review=False):
@@ -851,6 +885,7 @@ class Organizer:
             raise DreamError("Invalid organizer attempt number")
         self.plan, self.fd, self.source, self.deadline, self.attempt = plan, fd, source, deadline, attempt
         self.area = plan["area"]
+        self.contract, self.support_contract = GENERATIONS[plan["contract"]]
         author_options = dream_native.effort_fields(author[0], effort)
         cross_options = dream_native.effort_fields(cross[0], cross_effort)
         self.options = dict(author_options)
@@ -863,11 +898,11 @@ class Organizer:
         self.briefs = BRIEFS if cross_family else SAME_FAMILY_BRIEFS
         self.author = Seat(self, *author, native_options=author_options)
         self.cross = Seat(self, *cross, native_options=cross_options)
-        identity = [CONTRACT, plan["plan_id"], attempt,
+        identity = [self.contract, plan["plan_id"], attempt,
             [self.author.harness, self.author.model, self.author.expected_version],
             [self.cross.harness, self.cross.model, self.cross.expected_version],
-            self.briefs, EDITING, {role: schema(role) for role in self.briefs},
-            SUPPORT_CONTRACT, INDEX_CONTRACT, LINT_CONTRACT, LINT_RULES, FORWARD_CONTRACT]
+            self.briefs, EDITING, {role: self.author.result_schema(role) for role in self.briefs},
+            self.support_contract, INDEX_CONTRACT, LINT_CONTRACT, LINT_RULES, FORWARD_CONTRACT]
         if self.options:
             identity.append(self.options)
         self.run_id = digest(canonical(identity))
@@ -892,9 +927,8 @@ class Organizer:
                          own_sha256=digest(text[row.start:row.own_end].encode()), support=handles.get((path, row.target), []))
                     for row in sections(text) if row.target]
             prior.append(dict(path=path, content=text, sha256=digest(text.encode()), sections=rows))
-        return dict(contract=CONTRACT, area=self.area, editing=EDITING, timestamp=self.plan["created_at"], prior=prior,
-            support=[{key: row[key] for key in ("handle", "path", "target", "receipt", "evidence_status", "unit", "byte_start", "byte_end")}
-                     for row in data.support],
+        return dict(contract=self.contract, area=self.area, editing=EDITING, timestamp=self.plan["created_at"], prior=prior,
+            support=[_delivered_support(row, self.contract) for row in data.support],
             sources=[data.units[key] for key in sorted(data.units)],
             omitted=dict(docs=self.plan["docs_omitted"], notes=self.plan["notes_omitted"]),
             index=dict(contract=INDEX_CONTRACT, inject_bytes=self.plan["inject_bytes"],
@@ -1159,7 +1193,7 @@ class Organizer:
         return candidate.pages, self.receipt(data, candidate, review, cross)
 
     def receipt(self, data, candidate, review, cross):
-        receipt = dict(schema_version=1, contract=CONTRACT, run_id=self.run_id, plan_id=self.plan["plan_id"],
+        receipt = dict(schema_version=1, contract=self.contract, run_id=self.run_id, plan_id=self.plan["plan_id"],
             repository_uuid=self.plan["repository_uuid"], base_commit=self.plan["base_commit"],
             harness=self.author.harness, model=self.author.model, native_version=self.author.version,
             cross_seat=dict(harness=self.cross.harness, model=self.cross.model, native_version=self.cross.version,
@@ -1178,7 +1212,7 @@ class Organizer:
             omissions=candidate.proposal["omissions"],
             index={key: value for key, value in candidate.index.items() if key != "text"},
             lint=dict(contract=LINT_CONTRACT, rules_sha256=LINT_RULES, findings=[]),
-            support=dict(contract=SUPPORT_CONTRACT, receipts=self.plan["receipts"],
+            support=dict(contract=self.support_contract, receipts=self.plan["receipts"],
                          catalog_sha256=digest(canonical(self.plan["support"]))),
             notes=[dict(note_id=n["note_id"], review_sha256=n["review_sha256"]) for n in self.plan["notes"]],
             docs=[{key: doc[key] for key in ("path", "commit", "blob", "outline_sha256")} for doc in self.plan["docs"]],
@@ -1233,7 +1267,7 @@ def run(config, mirror, plan_path, harness, model, cross_harness, cross_model, *
             (cross_harness, cross_model, cross_transport), attempt,
             effort=effort, cross_effort=cross_effort, same_family_review=same_family_review)
         prefix = "organizer-" + organizer.run_id
-        spec = dict(contract=CONTRACT, run_id=organizer.run_id, attempt=attempt,
+        spec = dict(contract=organizer.contract, run_id=organizer.run_id, attempt=attempt,
             harness=harness, model=model, native_version=organizer.author.expected_version,
             cross_harness=cross_harness, cross_model=cross_model, cross_native_version=organizer.cross.expected_version,
             **organizer.options)
@@ -1264,7 +1298,7 @@ def status(config, mirror, plan_path, run_id=None):
         optional = ("effort", "cross_effort", "same_family_review", "cross_family", "cross_brief")
         dream._object(spec, ("contract", "run_id", "attempt", "harness", "model", "native_version",
                              "cross_harness", "cross_model", "cross_native_version"), optional)
-        if spec["contract"] != CONTRACT or spec["run_id"] != run_id:
+        if spec["contract"] != GENERATIONS[plan["contract"]][0] or spec["run_id"] != run_id:
             raise DreamError("Invalid organizer run specification")
         deadline = time.monotonic() + 120
         source = _source(config, plan, deadline)

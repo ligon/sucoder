@@ -10,6 +10,7 @@
 :END:
 
 This is the concrete contract for the first milestone of the organizer track in [[file:read-and-organize.org::#slices][Reading and organizing]], slice 1.
+The original v1 contract follows. New jobs use the [[#organizer-inputs-v2][v2 input and carried-support rules]].
 It turns the accepted design's [[file:read-and-organize.org::#organize][Organize]], [[file:read-and-organize.org::#safety][Safety and privacy]] and disposition 4 into one job kind that a test can run end to end with fake native transports.
 An O1 job organizes one feature area: it writes that area's hub page, leaves forwarding sections where content moved, applies reviewed corrections, marks contradicted claims, regenerates the index mechanically and publishes one generation on the memory branch.
 Everything below names the code it relies on, so a reader can check each rule.
@@ -266,3 +267,46 @@ refuses an effort. Each omitted effort uses that seat's native model default.
 The spec freezes supplied options in the run identity. Status uses the spec
 to rebuild the assignments and receipt. With all three options omitted,
 historical runs reproduce their original commands, identities and receipts.
+
+* Organizer inputs v2, 2026-11-27
+:PROPERTIES:
+:CUSTOM_ID: organizer-inputs-v2
+:END:
+
+The first organizer pilot could not plan on the SuCoder memory branch. Its
+seven active pages occupied 36 KB. Across 12 receipts, the support catalog
+held 210 rows and took 208,638 canonical bytes, over the 64 KiB cap. Only
+119 rows had distinct page, anchor, unit and byte range. Later receipts had
+recorded the same evidence as inherited support, each time with a new handle.
+The talk section of =attention-rollout.org= had 68 handles for 17 pieces of
+evidence. Moving it required all 68, while a reference accepted at most 32.
+
+Each delivered support row averaged about 780 bytes, much of it receipt and
+repository identity. The three accepted notes measured 20,283, 42,635 and
+115,251 canonical bytes. The largest alone exceeded the 64 KiB note limit.
+Delivered as 308 items, the notes together occupied 216 KB. The original
+[[file:read-and-organize.org::#causes][64 KiB allowance]] had no measured basis. The intended Codex
+=gpt-6.2-astra= seats have a 272,000-token context window. The new limits
+are byte budgets sized for these inputs, including room for the candidate
+and schema in reviewer assignments.
+
+- =wiki-organizer-plan-v2= freezes 256 KiB for the full support catalog,
+  256 KiB for accepted notes in total, 768 KiB per role assignment and 64
+  carried handles per reference. Planning and replay use the frozen limits.
+- =carried-support-v2= hashes the page path, target anchor, receipt unit
+  identity and citation byte range. Every establishing receipt must pass
+  the output digest and current own-text checks. For duplicate evidence,
+  the oldest establishing commit in the frozen topological history supplies
+  the evidence status, receipt path, receipt SHA-256 and commit. Sorted
+  receipt path breaks ties within a commit. This retains one auditable
+  witness even after repeated inheritance. The plan lists every receipt
+  inspected. Both organizer generations require two accepting reviews to
+  establish support or an area record.
+- =wiki-organizer-v2= gives all four roles the handle, page, target,
+  evidence status and a unit description. Git passages have a path and line
+  range, heading outlines and session views have a path, and note items have
+  a short note identifier, item number, basis and origin. The plan and
+  receipt retain the full evidence binding used to validate a move.
+- Saved =wiki-organizer-plan-v1= jobs select the original receipt-specific
+  handles, limits, full support projection and 32-handle schema. Their run
+  identities, assignments and receipts replay under =wiki-organizer-v1=.
