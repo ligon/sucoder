@@ -35,9 +35,12 @@ PLAN_CONTRACT_V2 = "wiki-organizer-plan-v2"
 SUPPORT_CONTRACT_V2 = "carried-support-v2"
 CONTRACT_V3 = "wiki-organizer-v3"
 PLAN_CONTRACT_V3 = "wiki-organizer-plan-v3"
+CONTRACT_V4 = "wiki-organizer-v4"
+PLAN_CONTRACT_V4 = "wiki-organizer-plan-v4"
 GENERATIONS = {PLAN_CONTRACT: (CONTRACT, SUPPORT_CONTRACT), PLAN_CONTRACT_V2: (CONTRACT_V2, SUPPORT_CONTRACT_V2),
-               PLAN_CONTRACT_V3: (CONTRACT_V3, SUPPORT_CONTRACT_V2)}
+               PLAN_CONTRACT_V3: (CONTRACT_V3, SUPPORT_CONTRACT_V2), PLAN_CONTRACT_V4: (CONTRACT_V4, SUPPORT_CONTRACT_V2)}
 INDEX_CONTRACT = "organizer-index-v1"
+INDEX_CONTRACT_V2 = "organizer-index-v2"
 LINT_CONTRACT = "organizer-hub-lint-v1"
 FORWARD_CONTRACT = "organizer-forwarding-v1"
 ROOT = "dream-organizer"
@@ -50,6 +53,7 @@ LIMITS = dict(max_role_invocations=8, max_repairs=1, max_elapsed_seconds=1800,
     max_support_bytes=64 * 1024, max_proposal_bytes=256 * 1024, max_consolidation_bytes=512 * 1024)
 LIMITS_V2 = dict(LIMITS, max_support_bytes=256 * 1024, max_note_bytes=256 * 1024,
                  max_consolidation_bytes=768 * 1024, max_carried_per_reference=64)
+LIMITS_V4 = dict(LIMITS_V2, max_repairs=2, max_role_invocations=10)
 MAX_RECEIPTS = 256
 MAX_RECEIPT_BYTES = 4 * 1024 * 1024
 MAX_HISTORY = 4096
@@ -72,6 +76,11 @@ CITATIONS_V3 = (
     "within delivered heading or session-note units. Link to the topic page instead of restating its facts. "
     "A heading quotation matches all or part of one delivered heading line. You may include its exact 'N: ' "
     "line-number prefix. The quotation must cover heading text and stay on one line.")
+BRIEF_V4 = (
+    " The coordinator keeps earlier anchored index sections verbatim until moved. The organizer may move sections "
+    "belonging to this area from .sucoder/wiki/index.org into the hub, carrying all their handles into each "
+    "destination's reference. Review moved index sections like moved topic sections. A note quotation may come "
+    "from the item's text or its delivered support quotes. It must occur exactly once across text and quotes together.")
 BRIEFS = dict(
     organizer=(
         "Organize one feature area of the companion wiki into its hub page, as the wiki's editor. "
@@ -123,6 +132,8 @@ EDITING = dict(
     corrections="note_id and item name a delivered correction item; applied requires revising its target and citing it.",
     retractions="Only topic-page sections; superseded_by is PATH::#TARGET of the replacing section, empty for retracted.",
     links="[[file:../topics/NAME.org::#target][label]] from the hub; project files as [[file:../../../PATH][label]].")
+EDITING_V4 = dict(EDITING, moves="from_path is an existing topic page or .sucoder/wiki/index.org; from_target is an "
+                  "anchored non-task section retained from that page, to_target an anchor in the hub.")
 
 QUOTE = object_schema(dict(unit_id=TEXT, quote=TEXT))
 YES = dict(type="string", enum=["yes", "no"])
@@ -340,6 +351,7 @@ def history(source, base, files, identity, current, plan_contract, limits):
     organizer_contracts = {
         PLAN_CONTRACT: (CONTRACT,), PLAN_CONTRACT_V2: (CONTRACT, CONTRACT_V2),
         PLAN_CONTRACT_V3: (CONTRACT, CONTRACT_V2, CONTRACT_V3),
+        PLAN_CONTRACT_V4: (CONTRACT, CONTRACT_V2, CONTRACT_V3, CONTRACT_V4),
     }[plan_contract]
     now = {path: own_texts(text) for path, text in current.items()}
     receipts, catalog, areas, used = [], {}, {}, 0
@@ -379,13 +391,20 @@ def history(source, base, files, identity, current, plan_contract, limits):
             if unit is None or own is None or own != now[path].get(target) or type(start) is not int or type(end) is not int:
                 continue
             evidence = [path, target, unit, start, end]
+            locator = {}
+            if plan_contract == PLAN_CONTRACT_V4 and unit.get("kind") == "session-note" and "field" in citation:
+                locator = {key: citation[key] for key in ("field", "quote_index", "sha256") if key in citation}
+                if locator["field"] == "quotes":
+                    # Equal offsets in different support quotes identify distinct evidence.
+                    evidence.append(locator.get("quote_index"))
             handle = "support-" + digest(canonical(evidence if v2 else [item["path"]] + evidence))[:16]
             # Prefer the oldest establishing commit in topological order. Path order breaks ties.
             if handle in catalog and (not v2 or rank[catalog[handle]["commit"]] >= rank[commit]):
                 continue
             catalog[handle] = dict(handle=handle, path=path, target=target, receipt=item["path"],
                 receipt_sha256=receipt_sha, commit=commit, own_sha256=own,
-                evidence_status=status if isinstance(status, str) else None, unit=unit, byte_start=start, byte_end=end)
+                evidence_status=status if isinstance(status, str) else None, unit=unit, byte_start=start, byte_end=end,
+                **locator)
         record = _record(receipt.get("area")) if organizer_receipt else None
         if record is not None:
             position = rank.get(commit, len(order))
@@ -433,6 +452,28 @@ def _heading_citation(unit_id, rows, quote):
                 match = dict(unit_id=unit_id, byte_start=byte_start, byte_end=byte_start + len(raw),
                              line=number, sha256=digest(raw))
             at = line.find(quote, at + 1)
+    if match is None:
+        raise DreamError(error)
+    return match
+
+
+def _note_citation(unit_id, unit, quote):
+    """Locate exact UTF-8 bytes in the note fields delivered to this job."""
+    error = "A note citation needs a quotation occurring once across the text and delivered quotes of " + unit_id
+    encoded = quote.encode()
+    if not encoded:
+        raise DreamError(error)
+    match = None
+    for index, text in [(None, unit["text"])] + list(enumerate(unit["quotes"])):
+        raw = text.encode()
+        at = raw.find(encoded)
+        if at < 0:
+            continue
+        if match is not None or raw.find(encoded, at + 1) >= 0:
+            raise DreamError(error)
+        match = dict(unit_id=unit_id, field="text", byte_start=at, byte_end=at + len(encoded), sha256=digest(encoded))
+        if index is not None:
+            match.update(field="quotes", quote_index=index)
     if match is None:
         raise DreamError(error)
     return match
@@ -500,7 +541,7 @@ def plan(config, mirror, area, *, title=None, group=None, summary=None, project=
     if registry["provisional"]:
         raise DreamError("Organizer jobs need the memory registry's accepted repository_uuid", 3)
     identity = registry["repository_uuid"]
-    limits = dict(LIMITS_V2)
+    limits = dict(LIMITS_V4)
     files = _tree(source, base)
     pages, texts, used = [], {}, 0
     for item in files:
@@ -512,7 +553,7 @@ def plan(config, mirror, area, *, title=None, group=None, summary=None, project=
             raise DreamError("Active wiki pages exceed max_prior_bytes", 3)
         texts[item["path"]] = raw.decode("utf-8")
         pages.append(dict(path=item["path"], blob=item["blob"], sha256=digest(raw)))
-    receipts, support, areas = history(source, base, files, identity, texts, PLAN_CONTRACT_V3, limits)
+    receipts, support, areas = history(source, base, files, identity, texts, PLAN_CONTRACT_V4, limits)
     record = _area(area, title, group, summary, areas)
     listing = dream.project_files(source, project)
     if listing is None:
@@ -521,11 +562,11 @@ def plan(config, mirror, area, *, title=None, group=None, summary=None, project=
     selected, notes_omitted = _notes(config, source, base, identity, limits["max_note_bytes"]) if notes else ([], [])
     settings = config.mirrors[mirror].dream or config.dream
     records = [r for r in areas if r["id"] != area and r["hub"] in texts] + [record]
-    hubs_only = index_text(records, {r["hub"]: "" for r in records}, set(), [])
-    if len(injected(hubs_only).encode()) > settings.inject_bytes:
+    _, minimum_size = _index_v2(records, {r["hub"]: "" for r in records}, set(), _earlier_index(texts.get(INDEX, "")))
+    if minimum_size > settings.inject_bytes:
         raise DreamError("The area records alone exceed dream.inject_bytes; shorten the summaries or raise the cap")
     stamp = now or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    value = dict(schema_version=1, operation="organizer_plan", contract=PLAN_CONTRACT_V3, state="planned",
+    value = dict(schema_version=1, operation="organizer_plan", contract=PLAN_CONTRACT_V4, state="planned",
         repository=mirror, repository_path=str(source.path), repository_uuid=identity,
         integration_ref=ref, base_commit=base, publication="in_place",
         prior_wiki=dict(files=files, pages=pages), receipts=receipts, support=support, areas=areas, area=record,
@@ -677,7 +718,7 @@ def frozen(source, plan, fd):
     return Inputs(prior, support, units, resolve, records)
 
 
-# The generated index (organizer-index-v1)
+# The generated index
 
 def _relative(source, destination):
     return posixpath.relpath(destination, posixpath.dirname(source))
@@ -702,6 +743,30 @@ def index_text(records, files, linked, anchors):
         for anchor in anchors:
             lines.extend(["** " + anchor, ":PROPERTIES:", ":CUSTOM_ID: " + anchor, ":END:"])
     return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def _earlier_index(text):
+    """Keep anchored top-level subtrees and the wrapper emitted by organizer-index-v1."""
+    rows = sections(text)
+    kept = []
+    for i, row in enumerate(rows):
+        if row.level != 1:
+            continue
+        wrapper = (row.line == "* Earlier index sections" and row.line_end == row.own_end and
+                   i + 1 < len(rows) and rows[i + 1].level == 2 and rows[i + 1].target)
+        if row.target or wrapper:
+            kept.append(text[row.start:row.end])
+    return "".join(kept)
+
+
+def _index_v2(records, files, linked, earlier):
+    generated = index_text(records, files, linked, [])
+    if not earlier:
+        return generated, len(injected(generated).encode())
+    # Generated lines contain no drawers. Their whitespace and the separator
+    # before the first earlier section are interior bytes at launch.
+    prefix = generated + "\n"
+    return prefix + earlier, len(prefix.encode())
 
 
 # Hub lint (organizer-hub-lint-v1)
@@ -911,6 +976,10 @@ def _delivered_support(row, contract):
                 evidence_status=row["evidence_status"], unit=description)
 
 
+def _inherited_citation(row):
+    return {key: row[key] for key in ("unit", "byte_start", "byte_end", "field", "quote_index", "sha256") if key in row}
+
+
 class Organizer:
     def __init__(self, plan, fd, source, deadline, author, cross, attempt=1, *,
                  effort=None, cross_effort=None, same_family_review=False):
@@ -928,6 +997,8 @@ class Organizer:
         self.plan, self.fd, self.source, self.deadline, self.attempt = plan, fd, source, deadline, attempt
         self.area = plan["area"]
         self.contract, self.support_contract = GENERATIONS[plan["contract"]]
+        self.index_contract = INDEX_CONTRACT_V2 if self.contract == CONTRACT_V4 else INDEX_CONTRACT
+        self.editing = EDITING_V4 if self.contract == CONTRACT_V4 else EDITING
         author_options = dream_native.effort_fields(author[0], effort)
         cross_options = dream_native.effort_fields(cross[0], cross_effort)
         self.options = dict(author_options)
@@ -938,16 +1009,18 @@ class Organizer:
         if not cross_family:
             self.options["cross_brief"] = SAME_FAMILY_BRIEF
         self.briefs = BRIEFS if cross_family else SAME_FAMILY_BRIEFS
-        if self.contract == CONTRACT_V3:
+        if self.contract in (CONTRACT_V3, CONTRACT_V4):
             self.briefs = dict(self.briefs, organizer=self.briefs["organizer"].replace(CITATIONS_V1, CITATIONS_V3),
                                repair=self.briefs["repair"] + " " + CITATIONS_V3)
+        if self.contract == CONTRACT_V4:
+            self.briefs = {role: brief + BRIEF_V4 for role, brief in self.briefs.items()}
         self.author = Seat(self, *author, native_options=author_options)
         self.cross = Seat(self, *cross, native_options=cross_options)
         identity = [self.contract, plan["plan_id"], attempt,
             [self.author.harness, self.author.model, self.author.expected_version],
             [self.cross.harness, self.cross.model, self.cross.expected_version],
-            self.briefs, EDITING, {role: self.author.result_schema(role) for role in self.briefs},
-            self.support_contract, INDEX_CONTRACT, LINT_CONTRACT, LINT_RULES, FORWARD_CONTRACT]
+            self.briefs, self.editing, {role: self.author.result_schema(role) for role in self.briefs},
+            self.support_contract, self.index_contract, LINT_CONTRACT, LINT_RULES, FORWARD_CONTRACT]
         if self.options:
             identity.append(self.options)
         self.run_id = digest(canonical(identity))
@@ -972,11 +1045,11 @@ class Organizer:
                          own_sha256=digest(text[row.start:row.own_end].encode()), support=handles.get((path, row.target), []))
                     for row in sections(text) if row.target]
             prior.append(dict(path=path, content=text, sha256=digest(text.encode()), sections=rows))
-        return dict(contract=self.contract, area=self.area, editing=EDITING, timestamp=self.plan["created_at"], prior=prior,
+        return dict(contract=self.contract, area=self.area, editing=self.editing, timestamp=self.plan["created_at"], prior=prior,
             support=[_delivered_support(row, self.contract) for row in data.support],
             sources=[data.units[key] for key in sorted(data.units)],
             omitted=dict(docs=self.plan["docs_omitted"], notes=self.plan["notes_omitted"]),
-            index=dict(contract=INDEX_CONTRACT, inject_bytes=self.plan["inject_bytes"],
+            index=dict(contract=self.index_contract, inject_bytes=self.plan["inject_bytes"],
                        areas=[record for record in data.records if record["id"] != self.area["id"]]))
 
     def resolve(self, data, citation):
@@ -984,9 +1057,11 @@ class Organizer:
         found = data.resolve.get(unit_id)
         if found is None:
             raise DreamError("A citation names an undelivered unit: " + str(unit_id)[:80])
+        if self.contract == CONTRACT_V4 and "rows" not in found:
+            return _note_citation(unit_id, data.units[unit_id], quote)
         encoded = quote.encode()
         if "rows" in found:
-            if self.contract == CONTRACT_V3:
+            if self.contract in (CONTRACT_V3, CONTRACT_V4):
                 return _heading_citation(unit_id, found["rows"], quote)
             hits = [(row, row[3].find(quote)) for row in found["rows"] if quote and quote in row[3]]
             if len(hits) != 1 or hits[0][0][3].count(quote) != 1:
@@ -1003,7 +1078,7 @@ class Organizer:
     def materialize(self, data, proposal):
         """Apply the proposal and every coordinator-owned change, then check it all mechanically."""
         prior, hub, title, date = data.prior, self.area["hub"], self.area["title"], self.plan["created_at"][:10]
-        collect = self.contract == CONTRACT_V3
+        collect = self.contract in (CONTRACT_V3, CONTRACT_V4)
         problems = []
 
         def reject(message, path="", target=""):
@@ -1052,6 +1127,8 @@ class Organizer:
         for path in sorted(authored.keys() - changes.keys()):
             reject("Each authored page needs exactly one change disposition", path)
         working = dict(prior, **authored)
+        if self.contract == CONTRACT_V4 and INDEX in prior:
+            working[INDEX] = _earlier_index(prior[INDEX])
         before = {path: own_texts(text) for path, text in prior.items()}
         during = {path: own_texts(text) for path, text in working.items()}
         hub_targets = set(during.get(hub, {}))
@@ -1059,9 +1136,14 @@ class Organizer:
         for move in proposal["moves"]:
             key = move["from_path"], move["from_target"]
             row = _section(prior[key[0]], key[1]) if key[0] in prior and key[0].startswith(TOPICS) else None
+            if self.contract == CONTRACT_V4 and key[0] == INDEX:
+                row = _section(working.get(INDEX, ""), key[1])
             valid = True
             if row is None or not row.target:
-                reject("A move names an anchored section of an existing topic page: " + "::#".join(key)[:160], key[0])
+                pages = "an existing topic page"
+                if self.contract == CONTRACT_V4:
+                    pages += " or the retained index"
+                reject("A move names an anchored section of " + pages + ": " + "::#".join(key)[:160], key[0])
                 valid = False
             elif row.task or key in origins or during[key[0]].get(key[1]) != before[key[0]][key[1]]:
                 reject("A move takes one untouched non-task section once: " + "::#".join(key)[:160], key[0])
@@ -1113,6 +1195,8 @@ class Organizer:
             for target, kind, line in rows:
                 row = _section(text, target)
                 if kind == "move":
+                    if path == INDEX and text[row.body - 1] != "\n":
+                        line = "\n" + line
                     spans.append((row.body, row.own_end, line))
                 else:
                     match = _TAGS.match(row.line)
@@ -1136,11 +1220,14 @@ class Organizer:
             reject(str(exc), hub)
             hub_inventory = None
         linked = {link["path"] for details in (hub_inventory or {}).values() for link in details["links"] if link["type"] == "file"}
-        old_index = [row.target for row in sections(prior.get(INDEX, "")) if row.target]
-        if any(not ANCHOR.fullmatch(anchor) for anchor in old_index):
-            raise DreamError("An existing index anchor is not a simple name; the index cannot be regenerated", 3)
-        index = index_text(data.records, final, linked, old_index)
-        size = len(injected(index).encode())
+        if self.index_contract == INDEX_CONTRACT_V2:
+            index, size = _index_v2(data.records, final, linked, final.get(INDEX, ""))
+        else:
+            old_index = [row.target for row in sections(prior.get(INDEX, "")) if row.target]
+            if any(not ANCHOR.fullmatch(anchor) for anchor in old_index):
+                raise DreamError("An existing index anchor is not a simple name; the index cannot be regenerated", 3)
+            index = index_text(data.records, final, linked, old_index)
+            size = len(injected(index).encode())
         if hub_inventory is not None and size > self.plan["inject_bytes"]:
             reject("The generated index is " + str(size) + " bytes, over dream.inject_bytes " +
                    str(self.plan["inject_bytes"]) + "; link more topic pages from the hub", INDEX)
@@ -1148,12 +1235,12 @@ class Organizer:
         written = {path: text for path, text in final.items() if path not in prior or text != prior[path]}
         after = {path: own_texts(text) for path, text in written.items()}
         derived = sorted((path, target) for path, owns in after.items() for target, sha in owns.items()
-                         if path != INDEX and sha != during.get(path, {}).get(target) and
+                         if (path != INDEX or (path, target) in origins) and sha != during.get(path, {}).get(target) and
                          during.get(path, {}).get(target) == before.get(path, {}).get(target))
         reasons = {"move": "forwarding sections", "retracted": "disposition markers", "superseded": "disposition markers"}
         materialized = [dict(path=path, before_sha256=digest(prior[path].encode()) if path in prior else "",
             reason=changes[path]["reason"] if path in changes else
-            ("Coordinator generated the mechanical index (" + INDEX_CONTRACT + ")." if path == INDEX else
+            ("Coordinator generated the mechanical index (" + self.index_contract + ")." if path == INDEX else
              "Coordinator materialized " + " and ".join(sorted({reasons[kind] for _, kind, _ in edits.get(path, [])})) +
              " (" + FORWARD_CONTRACT + ")."))
             for path in sorted(written)]
@@ -1193,7 +1280,7 @@ class Organizer:
                         continue  # No output page digest to bind.
                     carried.append(dict(path=key[0], target=key[1], page_sha256=digest(pages[key[0]].encode()),
                         receipt=row["receipt"], evidence_status=row["evidence_status"],
-                        citations=[dict(unit=row["unit"], byte_start=row["byte_start"], byte_end=row["byte_end"])],
+                        citations=[_inherited_citation(row)],
                         status="carried_not_reread", carried_from=dict(path=origin[0], target=origin[1],
                             own_sha256=row["own_sha256"], handle=row["handle"], receipt_sha256=row["receipt_sha256"])))
             for path, text in pages.items():
@@ -1243,7 +1330,7 @@ class Organizer:
             references(written, after, set(derived))
         rebound = [dict(path=path, target=row["target"], page_sha256=digest(pages[path].encode()), receipt=row["receipt"],
                         evidence_status=row["evidence_status"],
-                        citations=[dict(unit=row["unit"], byte_start=row["byte_start"], byte_end=row["byte_end"])],
+                        citations=[_inherited_citation(row)],
                         status="rebound_unchanged_section", carried_from=dict(path=path, target=row["target"],
                             own_sha256=row["own_sha256"], handle=row["handle"], receipt_sha256=row["receipt_sha256"]))
                    for path in sorted(pages) if path not in (INDEX, SETTINGS)
@@ -1294,7 +1381,7 @@ class Organizer:
             fresh=result["fresh"], carried=result["carried"], rebound=rebound,
             units={unit_id: dict(unit_id=unit_id, **data.resolve[unit_id]["receipt"]) for unit_id in cited_units},
             hub_targets=sorted(after[hub]), proposal=proposal, derived=[list(key) for key in derived],
-            index=dict(contract=INDEX_CONTRACT, hub=hub, text=index, sha256=digest(index.encode()), injected_bytes=size,
+            index=dict(contract=self.index_contract, hub=hub, text=index, sha256=digest(index.encode()), injected_bytes=size,
                        inject_bytes=self.plan["inject_bytes"],
                        unplaced=sorted(p for p in final if p.startswith(TOPICS) and p.endswith(".org") and p not in linked)))
 
@@ -1324,7 +1411,7 @@ class Organizer:
                     break
             if repair >= limit:
                 messages = "; ".join(f["message"] for f in findings)
-                if self.contract == CONTRACT_V3 and len(messages) > 4096:
+                if self.contract in (CONTRACT_V3, CONTRACT_V4) and len(messages) > 4096:
                     suffix = "... (" + str(len(findings)) + " findings total)"
                     messages = messages[:4096 - len(suffix)] + suffix
                 raise DreamError("Organizer generation did not pass mechanical and independent review: " +

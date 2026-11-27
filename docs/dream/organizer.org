@@ -10,7 +10,7 @@
 :END:
 
 This is the concrete contract for the first milestone of the organizer track in [[file:read-and-organize.org::#slices][Reading and organizing]], slice 1.
-The original v1 contract follows. New jobs use the [[#organizer-inputs-v2][v2 input and carried-support rules]] and [[#organizer-repair-v3][v3 quotation and repair rules]].
+The original v1 contract follows. New jobs use the [[#organizer-inputs-v2][v2 input and carried-support rules]], [[#organizer-repair-v3][v3 heading and repair rules]] and [[#organizer-index-notes-v4][v4 index and note rules]].
 It turns the accepted design's [[file:read-and-organize.org::#organize][Organize]], [[file:read-and-organize.org::#safety][Safety and privacy]] and disposition 4 into one job kind that a test can run end to end with fake native transports.
 An O1 job organizes one feature area: it writes that area's hub page, leaves forwarding sections where content moved, applies reviewed corrections, marks contradicted claims, regenerates the index mechanically and publishes one generation on the memory branch.
 Everything below names the code it relies on, so a reader can check each rule.
@@ -350,3 +350,60 @@ exhausted its one repair after two calls, before either reviewer ran.
 - Saved v1 and v2 plans select their original briefs, heading resolver
   and first-error repair behavior. Pinned replay fixtures cover the run
   identity, all four role assignments and the published receipt for each.
+
+* Earlier index sections and note quotations v4, 2026-11-27
+:PROPERTIES:
+:CUSTOM_ID: organizer-index-notes-v4
+:END:
+
+The second pilot used a v3 plan, with Codex =gpt-6.2-astra= at high effort
+for the organizer, repair and first reviewer. The second seat was configured
+for same-family review with =gpt-6-astra=. The proposal passed every
+mechanical check. The first reviewer requested revision on one finding.
+The generated index had emptied the bodies of its old anchors. The prior
+index held 3,285 bytes of receipt-backed prose, with a launch injection
+allowance of 2,048 bytes. Its confined-node entry was the wiki's only
+record that =ee9f4f0= merged into local main as =19f8352=. The linked topic
+page still asked whether the merge had happened. The brief said only that
+the coordinator generated the index.
+
+The repair revised =topics/confined-node.org= using a session note. Two
+of its nine quotations came from the note item's delivered support quotes.
+The v3 resolver searched only the item's text. The run exhausted its one
+repair after three calls and never reached the second reviewer.
+
+- =wiki-organizer-plan-v4= selects =wiki-organizer-v4=, =carried-support-v2=
+  and =organizer-index-v2=. The coordinator regenerates the title, hub groups
+  and unplaced topic listing, then copies each prior anchored top-level
+  section verbatim, in order, including its drawer, body and children. It
+  also keeps the =* Earlier index sections= subtree produced by v1-v3.
+  Unchanged own text keeps the original receipt's support current without
+  a new binding. Other unanchored top-level sections are regenerated.
+- All four roles learn that the organizer may move a retained anchored
+  section belonging to its area from =.sucoder/wiki/index.org= into its
+  hub. As for topic moves, the section must be untouched, non-task and
+  named once, with a reason and a destination anchor. The destination's
+  reference must carry every support handle. The coordinator keeps the
+  source heading, drawer and children, and replaces its own body with the
+  dated forwarding line. Both reviewers check the move for lost facts
+  and qualifications.
+- The frozen =dream.inject_bytes= allowance covers the injected bytes up
+  to the first retained section, including the separator. All hub lines
+  fit there. Launch still cuts the full index at the configured allowance
+  and points the reader to the rest.
+- A note quotation must occur exactly once across the item's =text= and
+  all its delivered support =quotes=. Context citations remain private.
+  The receipt records =field= as =text= or =quotes=. For =quotes= it also
+  records the zero-based =quote_index= in the delivered list. =byte_start=
+  (inclusive), =byte_end= (exclusive) and =sha256= bind the exact quoted
+  UTF-8 bytes within that field. A later organizer carries the locator
+  with the evidence. For a quote field, the support handle includes the
+  quote index so equal offsets in different quotes stay distinct. Text
+  ranges retain their historical handle identity. Heading quotations
+  still use the v3 resolver.
+- The v2/v3 budgets carry forward with two repairs and ten total role
+  invocations. Each mechanically valid candidate goes to the first
+  reviewer and, upon acceptance, to the second. The invocation and elapsed
+  allowances come from the stored plan. V4 reads accepted support and area
+  records from all four organizer generations. Pinned v1, v2 and v3 plans
+  replay their original identities, four assignments and receipt bytes.
