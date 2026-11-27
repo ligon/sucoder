@@ -1,0 +1,60 @@
+#+TITLE: Reading and organizing the dream wiki: state after 2026-11-26
+#+AUTHOR: Sue
+#+DATE: 2026-11-26
+#+STATUS: READY -- continue the shared slice of the accepted reading-and-organizing design
+#+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Current state
+
+Sue ran on Claude Opus 5.5 in the coder mirror =/home/coder/mirrors/SuCoder=, branch =main=.
+GitHub =main=, the human's =~/Projects/SuCoder= and the mirror were all at =80199d0= after the merges below; only PR 122 (=coder/vantage-key-docs=, not Sue's) and the PRs listed as open remain.
+
+- Design :: [[file:../../docs/dream/read-and-organize.org][Reading every session and organizing the wiki]] is ACCEPTED (PR 124).
+  It was red-teamed the same day by three independent read-only reviews; its "Red-team review" section lists each finding and disposition.
+  The human settled dispositions 1, 2 and 4 ("Readers *may* read whole sessions"; "a private store for notes, to be consolidated by the organizer"; "The organizer *should* play this role of editor, with minimal (expensive) human review") and left the others to experiment.
+- Merged on 2026-11-26 :: PRs 85, 86, 106, 110 (conflict resolution and backlog), 121 and 123 (CI: Emacs in the test job, =fail-fast: false=, two stale tests; =main= CI fully green, Python 3.9 included), 124 (the design), 125 (=claude-view-v2=, issue 119), 126 (child Pythons import the parent's =sucoder=), 127 (identical native Org parses reused within a process).
+- Open, Sue's :: PR 128 (the read-only memory copy is verified by content and kept read-only) and PR 129 (=claude-view-v3=: block origin, redaction before clipping, widened patterns).
+  Both await CI and the human's merge.
+- GitHub branches :: Every merged branch was deleted after checking it was contained in =main=; only =main= and PR 122's branch remain.
+
+* Shared slice status
+
+From [[file:../../docs/dream/read-and-organize.org::#slices][the design's slices]]:
+
+- Done :: The zero-tail clip (=claude-view-v2=, merged).
+- In review :: Origin classes and redaction before clipping for Claude sessions (=claude-view-v3=, PR 129); the read-only copy verified by content and kept group-readable rather than owner-only, so the human can read it (PR 128).
+- Next :: The session-note schema, private store and coverage record.
+  The human decided the organizer track runs in parallel with the reader track; that is safe only because readers write the private store and the organizer alone writes the memory branch.
+  Freeze the note schema before either track builds on it.
+- Later :: The organizer contract (carried support, corrections and retractions, per-area jobs, a generated index, hub linting); the Codex adapter over the replicated rollouts under =/home/coder/mirrors/.sucoder-state/codex/=; the evaluation track.
+
+Rules learned on the way:
+- Any change to rendered output, redaction included, ships as a new =claude-view= contract; =09b2863= changed v1 in place and left job =f6131ffc= unreplayable (documented in the E1 handoff; not worth fixing).
+- Default every new contract parameter to the oldest version, so saved requests rebuild byte for byte, and freeze the current version in new job headers only.
+
+* Evidence and private artifacts
+
+- Development question set :: =/home/coder/.sucoder/logs/dream-eval/2026-11-26/dev-questions.org= (mode 0600), drafted by an independent reviewer.
+  It is exposed in session =dcdc7362=, so it is a development set only; that session must be excluded from reading.
+  A held-out set must be written and kept outside the agent account.
+- Organizer prototype :: =/home/coder/.sucoder/logs/dream-organizer-prototype/2026-11-26/= (mode 0700) holds a no-model baseline index (=baseline/=, with its script) and Opus and Sonnet prototypes (=opus/=, =sonnet/=) built from the wiki, README and =docs/= only.
+  The baseline found two README buckets and misfiled the attention page; Sonnet proposed 9 hubs, Opus 10 in four groups with nine recorded source conflicts.
+  Both had read the design note's proposed area list, so their agreement on areas is partly anchored.
+  Nothing there went through grounding or review.
+- Measurements :: Dreams had read 0.75-2.45% of each finished Claude session; this mirror's 18 Codex rollouts (167.6 MB) have never been read.
+  The design's "Why" section holds the figures and their sources.
+
+* Environment notes
+
+- GitHub :: =coder='s =gh= login holds the human's read-write fine-grained token (until 2027-02-23), by the human's choice.
+  Git has no global credential helper; push with =git -c credential.helper= -c credential.helper='!gh auth git-credential' push https://github.com/ligon/sucoder ...=.
+  Never push the memory branch.
+- Tests :: A scratch virtualenv from =poetry install --no-root= does not install =sucoder=; PR 126 makes child Pythons import the parent's package, so such runs now pass.
+  Run =python -m pytest= from the checkout; the full suite takes about 30 minutes with =-n 2= on this 2-CPU host.
+- GitNexus :: If =impact= cannot find a module-level function, re-run =node .gitnexus/run.cjs analyze --skip-agents-md=; the refreshed index found the =dream_view= functions.
+- Retention :: =cleanupPeriodDays= is 365 in =coder='s =~/.claude/settings.json=.
+
+* Known issues not yet filed
+
+- README said the SSH ControlMaster socket expires by "default 12 hours", while the code default is =7d= (=sucoder/config.py:119=); the Opus prototype found it, and the handoff PR corrects it.
+- =dream_editor._human_source= still accepts any git unit as human attribution; that is editor policy with its own frozen versions.
