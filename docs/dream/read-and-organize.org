@@ -141,6 +141,38 @@ That is safe only if the two never publish to the same ref.
   It snapshots the session-note store at planning time, so readers' progress never invalidates its compare-and-swap.
 - Shared prerequisite :: The session-note schema is frozen before either track builds on it.
 
+** Session-note store
+:PROPERTIES:
+:CUSTOM_ID: notes-store
+:END:
+
+The shared slice freezes this schema before either track builds on it ([[#tracks][Two tracks]]).
+Contracts =session-note-v1= and =session-coverage-v1=; module =sucoder/dream_notes.py=.
+
+- Location :: =<log_dir>/dream-notes/<repository_uuid>/=, with =~/.sucoder/logs= when =log_dir= is unset.
+  Directories are 0700 and files 0600, owned by the agent account; a store that is not private and account-owned is refused, as dream job directories are.
+  The repository identity is the memory registry's =repository_uuid= (=dream._repository_uuid=); a provisional identity is refused, so notes are never stored under a throwaway key.
+  Nothing in the store reaches the memory branch.
+- Source key :: =(harness, source_id, subpath)=: the harness name, its session or thread id, and an empty subpath for the main transcript or a relative one such as =subagents/agent-NAME.jsonl=.
+  Its directory is =sources/<key>/=, where =key= is the SHA-256 of the canonical triple, holding =source.json= (the triple and the file's device and inode when first seen), =coverage.json=, =lease= and =notes/=.
+- Lease :: A non-blocking exclusive lock on =lease=; coverage and notes are written only while it is held, and a second reader of the same source is told the source is busy.
+- Coverage :: =coverage.json= lists every raw range read as =[byte_start, byte_end, raw_sha256]=, sorted and never merged, so each range stays verifiable against the file.
+  The union of the ranges is what a reader has covered; a range whose bytes no longer match its digest marks the source as rewritten.
+- Note :: One immutable file =notes/<note_id>.json=, where =note_id= is the SHA-256 of the canonical note; writing an identical note again is a no-op and a different note never overwrites one.
+  Fields: =contract=, =source= (the triple), =ranges= (the raw ranges the reader admitted, as in coverage), =render_contract=, =reader= (=harness=, =model=), =written_at= (UTC, ISO 8601) and =items=.
+  At most 256 KiB and 200 items.
+- Item :: =kind= is one of =fact=, =decision=, =command=, =open_question= or =correction=, with =text= (at most 2,000 characters), =when= (an ISO date, or null when the session does not establish it) and =citations=, at least one.
+  =basis= is =output shows=, =agent reported=, =human said= or =harness recorded=, and =origin= is the cited blocks' origin class (=human=, =agent=, =tool=, =harness=, =dispatch= or =unattributed=).
+  Compaction summaries are model-written and not evidence of delivery, so they cannot be cited.
+  A =decision= adds =by= (=human= or =agent=); =by: human= requires =origin: human= and =basis: human said=.
+  A =command= adds =command= and =outcome= (=worked=, =failed= or =unknown=); =outcome: worked= or =failed= requires =basis: output shows=.
+  A =correction= adds =target=, a wiki page path with an optional =::#anchor=.
+  A citation is =byte_start=, =byte_end= (raw offsets inside one of the note's ranges) and =quote= (at most 500 characters).
+- Review :: An independent review is a separate immutable file =notes/<note_id>.review.json= with =verdict= (=accept= or =reject=), =reviewer= (=harness=, =model=), =findings= and =reviewed_at=.
+  The organizer reads only notes whose review accepts them.
+- Validation :: The store checks the schema and the internal consistency above.
+  Whether a quote matches the cited bytes, and whether the cited blocks really have the stated origin, is checked by the reader job against the admitted rendering, because the store does not hold transcripts.
+
 ** Session sources across harnesses
 :PROPERTIES:
 :CUSTOM_ID: adapters
