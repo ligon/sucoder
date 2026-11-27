@@ -24,7 +24,7 @@ The human ruled that "Readers *may* read whole sessions" and that notes go to "a
   New job kinds get new contract names; no existing contract changes ([[file:read-and-organize.org::#stays][What stays]]).
   An optional =reader_contract= key names how reader items are checked; without it the job is =session-reader-v1=, as every job prepared before [[#v2][version 2]] is.
 - =session-reader-v1=, =session-reader-v2= :: The reader contracts: version 1 is the behavior this specification describes, and [[#v2][version 2]] blanks unused kind fields, drops a failing item instead of rejecting the note, and fails closed per chunk.
-  New jobs freeze version 3 ([[#v3][version 3]]).
+  New jobs freeze version 4 ([[#v4][version 4]]).
 - =session-reader-roles-v1= :: The assignment contract of the two native roles, =reader= and =reviewer=, with their briefs and output schemas.
   Assignments use =coordinator-submission-v1= (=sucoder/dream_submission.py=), so a model returns only the reply body and Python attaches the assignment identifiers.
   =session-reader-v1= freezes it; =session-reader-v2= freezes =session-reader-roles-v2=, whose reader brief differs ([[#v2][version 2]]).
@@ -276,3 +276,38 @@ The command lives in one separate block of =sucoder/dream_cli.py=, because the o
 - Estimate :: Estimate v2 scales the v1 input-token formula by 1.8 (rounded up), and allows 20,000 output tokens per reader call and 12,000 per estimated review call.
   Its frozen basis is "one pilot: claude-sonnet-4-6, 2026-11-27, 3 reader and 1 reviewer call".
   It is still an estimate, not a ceiling; other models may differ, and actual excerpt grouping may require more review calls.
+
+* Version 4: model calibration and decision context, 2026-11-27
+:PROPERTIES:
+:CUSTOM_ID: v4
+:END:
+
+- Evidence :: The Claude pilot used =claude/claude-sonnet-4-6= on a 47 KB
+  session: four calls, 58,753 input tokens (1.77 times the v1 formula), reader
+  outputs 16,102, 22,196 and 14,418, and reviewer output 10,292 tokens.
+  The Codex pilot used =codex/gpt-6.1-sol= on a 244 KB session: six calls,
+  191,156 input tokens (1.75 times v1), reader outputs 3,967, 3,040, 2,786,
+  438 and 905, and reviewer output 1,338 tokens. Estimate v2 applied Sonnet
+  allowances to every model and overstated Codex output about ninefold.
+  No transcript content is included here.
+- Estimate :: =session-reader-estimate-v3= keeps calibration keyed by harness
+  and model, with pilot date (2026-11-27), model and reader/reviewer call counts.
+  Both measured input ratios round up to 1.8. Mean outputs with a 1.25 margin,
+  rounded up to whole tokens, are 21,965/12,865 per reader/reviewer call for
+  Claude and 2,784/1,673 for Codex. Unlisted pairs use the largest known
+  values and are explicitly uncalibrated for that model. This remains an
+  estimate, not a ceiling; excerpt grouping can require extra review calls.
+- Context :: The human ruled "allow an extra agent citation". Each citation
+  gains =role= =support= or =context=. Every item requires support; only a
+  decision by human may add at most one context citation, of main-thread
+  agent text showing what the human answered. Context is never support.
+  Human-decision and item-origin checks apply only to support; all quotes
+  still match their cited rendered record exactly. Dates require support.
+  The reviewer sees excerpts labelled context and judges the decision with
+  them. The organizer excludes context from support quotes.
+- Versioning :: New jobs freeze =session-reader-v4=, =session-reader-roles-v4=
+  and estimate v3, and write =session-note-v2= ([[file:read-and-organize.org::#notes-store][store amendment]]).
+  V3 per-item review and v2 mechanical screening remain. Headers naming v1,
+  v2 or v3, or lacking the key, keep their old schemas, briefs, notes,
+  estimates, identities and replay behavior. Unknown reader names are refused.
+  V1 notes, coverage, reviews and receipts keep their existing contracts.

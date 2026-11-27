@@ -2970,18 +2970,26 @@ Planning and snapshots remain inference-free; generic harness adapters remain su
 =sucoder dream read-session= reads the unread part of one finished Claude session of this mirror into the private session-note store (=<log_dir>/dream-notes/<repository_uuid>/=), never the memory branch, a wiki page or a project file.
 It is milestone R1 of the [[file:docs/dream/read-and-organize.org][reading-and-organizing design]]; [[file:docs/dream/session-reader.org][the session reader specification]] gives its contracts, checks and limits.
 The job cuts the session's =claude-view-v3= rendering into turn-aligned chunks of at most =dream.reader_chunk_bytes= rendered bytes (default 131072, from 1024 to 1048576), asks the native reader for cited items chunk by chunk with earlier items carried forward, and has an independent reviewer check the note.
-Before anything is written it checks each quote against the admitted rendering, each citation's origin against the v3 map, that a human decision cites only the human's own words, and that a =worked= or =failed= command outcome cites tool output.
-New jobs freeze reader contract =session-reader-v3=: kind-specific fields an item's kind does not use (=by=, =command=, =outcome=, =target=) are blanked first, an item that fails a check is dropped, never stored, carried or reviewed, and recorded with its reason in the job directory (=dropped-*.json=), and the result counts accepted and dropped items per chunk.
+Before anything is written it checks each quote against the admitted rendering, each citation's origin against the v3 map, that a human decision's support cites only the human's own words, and that a =worked= or =failed= command outcome cites tool output.
+New jobs freeze reader contract =session-reader-v4=: kind-specific fields an item's kind does not use (=by=, =command=, =outcome=, =target=) are blanked first, an item that fails a check is dropped, never stored, carried or reviewed, and recorded with its reason in the job directory (=dropped-*.json=), and the result counts accepted and dropped items per chunk.
 If more than half of a chunk's items, or all of them, are dropped, the job stops and the store is unchanged.
-The v3 reviewer must judge every item exactly once as supported, overstated or unsupported; only supported items enter the stored note, in their original order with new indices.
+The reviewer must judge every item exactly once as supported, overstated or unsupported; only supported items enter the stored note, in their original order with new indices.
 Review removals and findings are durable in =review-items-*.json=, and the result counts reviewed, kept and removed items.
 An overall rejection, more than half removed, or no supported item rejects the note before any note or coverage reaches the store.
-Saved v1 jobs (including headers without a reader contract) and v2 jobs retain their original behavior and role contracts.
+Saved v1 jobs (including headers without a reader contract) and v2/v3 jobs retain their original behavior and role contracts.
 Coverage, the note and its review are written under the source's lease, so a second reader of the same session is refused as busy, and a later read covers only ranges no reader has covered.
 Only finished sessions are read; =dream.reader_exclude_sessions= lists quoted session ids or prefixes of at least eight lowercase hexadecimal characters that are never read (SuCoder lists =dcdc7362=, which holds its evaluation development set).
 Without =--session= the least recently written finished session with unread bytes is chosen.
-The job uses a durable wallet from the =dream= limits or the matching options; preparation refuses a wallet without room for every reader call plus a review, and v3 freezes =session-reader-estimate-v2= with 1.8 times the original input estimate, 20000 output tokens per reader call and 12000 per review call.
-This calibration uses one claude-sonnet-4-6 pilot; it remains an estimate, not a ceiling, and other models may differ.
+The job uses a durable wallet from the =dream= limits or the matching options; preparation refuses a wallet without room for every reader call plus a review, and freezes a per-model estimate.
+Reader v4 uses =session-reader-roles-v4= and writes =session-note-v2=.
+Every citation has role =support= or =context=. Only a human decision may
+add one main-thread agent context citation showing what the human answered;
+context never supplies support and is excluded from organizer support quotes.
+Estimate =session-reader-estimate-v3= uses per-model pilot calibration with a
+25 percent output margin, or the largest known allowances marked uncalibrated
+for an unlisted harness/model. Estimates are not ceilings. Existing v1-v3 jobs
+and v1 notes retain their frozen behavior.
+
 =--prepare-only= prints the frozen chunks and estimate without a native call; =--job JOB= resumes a job, and a completed attempt replays from its saved artifacts with native calls forbidden.
 
 #+begin_example

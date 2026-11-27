@@ -2,7 +2,7 @@
 
 Readers record the raw ranges they read and the notes they wrote here, in the
 agent account, never on the memory branch; the organizer later consolidates
-reviewed notes. Contracts session-note-v1 and session-coverage-v1.
+reviewed notes. Contracts session-note-v1/v2 and session-coverage-v1.
 
 The store checks the note schema and its internal consistency. It does not
 hold transcripts, so whether a quote matches its cited bytes, and whether the
@@ -27,6 +27,7 @@ from .dream import DreamError, canonical, digest
 
 
 NOTE_CONTRACT = "session-note-v1"
+NOTE_V2 = "session-note-v2"
 COVERAGE_CONTRACT = "session-coverage-v1"
 MAX_NOTE_BYTES = 256 * 1024
 MAX_ITEMS = 200
@@ -170,7 +171,7 @@ def _target(value):
     return value
 
 
-def _item(item, ranges):
+def _item(item, ranges, contract=NOTE_CONTRACT):
     kind = item.get("kind") if isinstance(item, dict) else None
     if not isinstance(kind, str) or kind not in KINDS:
         raise DreamError("Item kind must be one of: " + ", ".join(KINDS))
@@ -189,13 +190,21 @@ def _item(item, ranges):
     if not isinstance(citations, list) or not citations:
         raise DreamError("Each item needs at least one citation")
     for citation in citations:
-        dream._object(citation, ("byte_start", "byte_end", "quote"))
+        dream._object(citation, ("byte_start", "byte_end", "quote") + (("role",) if contract == NOTE_V2 else ()))
+        if contract == NOTE_V2 and citation["role"] not in ("support", "context"):
+            raise DreamError("Citation role must be support or context")
         start, end = citation["byte_start"], citation["byte_end"]
         if type(start) is not int or type(end) is not int or not 0 <= start < end:
             raise DreamError("A citation needs raw offsets with 0 <= byte_start < byte_end")
         if not any(low <= start and end <= high for low, high, _ in ranges):
             raise DreamError("A citation must lie inside one of the note's ranges")
         _prose(citation["quote"], "Citation quote", MAX_QUOTE)
+    if contract == NOTE_V2:
+        contexts = sum(c["role"] == "context" for c in citations)
+        if contexts == len(citations):
+            raise DreamError("Each item needs at least one support citation")
+        if contexts > 1 or (contexts and (kind != "decision" or item.get("by") != "human")):
+            raise DreamError("Only a decision by human may have at most one context citation")
     if kind == "decision":
         if item["by"] not in ("human", "agent"):
             raise DreamError("A decision is by human or agent")
@@ -212,9 +221,9 @@ def _item(item, ranges):
 
 
 def validate_note(note):
-    """Check a session-note-v1 note's schema and internal consistency."""
+    """Check a session-note-v1/v2 note's schema and internal consistency."""
     dream._object(note, NOTE_FIELDS)
-    if note["contract"] != NOTE_CONTRACT:
+    if note["contract"] not in (NOTE_CONTRACT, NOTE_V2):
         raise DreamError("Session notes use contract " + NOTE_CONTRACT)
     _triple(note["source"])
     ranges = _ranges(note["ranges"], "Note ranges", True)
@@ -227,7 +236,7 @@ def validate_note(note):
     if not isinstance(items, list) or len(items) > MAX_ITEMS:
         raise DreamError("Note items must be a list of at most " + str(MAX_ITEMS))
     for item in items:
-        _item(item, ranges)
+        _item(item, ranges, note["contract"])
     if len(canonical(note)) > MAX_NOTE_BYTES:
         raise DreamError("A session note may not exceed 256 KiB")
     return note

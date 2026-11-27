@@ -598,7 +598,8 @@ def frozen(source, plan, fd):
             unit_id = "note:" + meta["note_id"] + ":" + str(number)
             delivered = dict(unit_id=unit_id, kind="session-note", note_id=meta["note_id"], item=number,
                 item_kind=item["kind"], text=item["text"], when=item["when"], basis=item["basis"], origin=item["origin"],
-                written_at=note["written_at"], quotes=[citation["quote"] for citation in item["citations"]])
+                written_at=note["written_at"], quotes=[citation["quote"] for citation in item["citations"]
+                                                    if citation.get("role", "support") == "support"])
             delivered.update({key: item[key] for key in ("by", "command", "outcome", "target") if key in item})
             units[unit_id] = delivered
             resolve[unit_id] = dict(text=item["text"], receipt=dict(kind="session-note",

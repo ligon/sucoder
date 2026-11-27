@@ -509,3 +509,29 @@ def test_the_section_parser_finds_own_text_and_agrees_with_native_anchors():
     native = wiki.inventory({REPLIES: REPLIES_V1}, time.monotonic() + 30)[REPLIES]["targets"]
     organizer._check_anchors(REPLIES, REPLIES_V1, native)
     assert rows[2].task and not rows[0].task
+
+
+@pytest.mark.parametrize("contract", ["session-note-v1", "session-note-v2"])
+def test_note_context_never_becomes_support_quotes(workspace, tmp_path, monkeypatch, contract):
+    seed(workspace)
+    original = dream_notes.SessionSource.write_note
+    def write(source, note):
+        if contract == "session-note-v2":
+            note["contract"] = contract
+            for item in note["items"]:
+                for citation in item["citations"]:
+                    citation["role"] = "support"
+            note["items"][-1]["citations"].append(dict(byte_start=0, byte_end=1,
+                quote="Agent proposal used only as context.", role="context"))
+        return original(source, note)
+    monkeypatch.setattr(dream_notes.SessionSource, "write_note", write)
+    write_notes(workspace, tmp_path)
+    plan = organizer.plan(workspace[2], "sample", "dream-memory", now=NOW, **AREA)
+    source = dream.GitSource(workspace[2], "sample", time.monotonic() + 30)
+    fd = os.open(Path(plan["plan_path"]).parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        units = organizer.frozen(source, plan, fd).units
+    finally:
+        os.close(fd)
+    decision = next(u for u in units.values() if u.get("item_kind") == "decision")
+    assert decision["quotes"] == ["Readers may read whole sessions."]

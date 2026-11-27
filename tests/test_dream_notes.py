@@ -111,7 +111,7 @@ def test_a_note_with_every_kind_and_a_review_are_accepted():
 NOTE_REJECTIONS = [
     (lambda n: n.pop("items"), "Invalid object fields"),
     (lambda n: n.update(note_id="0" * 64), "Invalid object fields"),
-    (lambda n: n.update(contract="session-note-v2"), "contract"),
+    (lambda n: n.update(contract="session-note-v99"), "contract"),
     (lambda n: n.update(source=["claude", SESSION]), "harness, source_id, subpath"),
     (lambda n: n.update(source=["Claude Code", SESSION, ""]), "harness"),
     (lambda n: n.update(source=["claude", SESSION, "../x.jsonl"]), "subpath"),
@@ -485,3 +485,18 @@ def test_the_store_never_follows_a_symlink(tmp_path, session):
             pass
     assert not (tmp_path / "decoy").exists()
     assert len(source.notes()) == 1
+
+
+def test_v2_roles_and_v1_validation_remain_separate():
+    value = note()
+    assert dream_notes.validate_note(value) is value
+    value["contract"] = dream_notes.NOTE_V2
+    for item in value["items"]:
+        for citation in item["citations"]:
+            citation["role"] = "support"
+    context = dict(value["items"][3]["citations"][0], role="context")
+    value["items"][1]["citations"].append(context)
+    assert dream_notes.validate_note(value) is value
+    value["items"][1]["citations"] = [context]
+    with pytest.raises(DreamError, match="support citation"):
+        dream_notes.validate_note(value)

@@ -14,6 +14,7 @@ reader_contract) the first item that fails a check rejects the whole note.
 Under session-reader-v2 kind fields the kind does not use are blanked first,
 a failing item is dropped and recorded in the job directory, and only a chunk
 that loses more than half of its items, or all of them, rejects the note.
+Version 4 adds per-model estimates and one agent context citation for human decisions.
 Version 3 additionally removes items not supported by independent per-item
 review, before saving the note, and freezes a pilot-calibrated estimate.
 """
@@ -22,6 +23,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
+import copy
 import os
 from pathlib import Path
 import re
@@ -41,12 +43,15 @@ CONTRACT = "session-reader-job-v1"
 READER_V1 = "session-reader-v1"
 READER_V2 = "session-reader-v2"
 READER_V3 = "session-reader-v3"
-READERS = (READER_V1, READER_V2, READER_V3)
-READER = READER_V3  # What new jobs freeze.
+READER_V4 = "session-reader-v4"
+READERS = (READER_V1, READER_V2, READER_V3, READER_V4)
+READER = READER_V4  # What new jobs freeze.
 # Each reader contract freezes one role contract; ROLES and BRIEFS keep their version-1 meaning.
 ROLES = "session-reader-roles-v1"
 ROLES_V2 = "session-reader-roles-v2"
 ROLES_V3 = "session-reader-roles-v3"
+ROLES_V4 = "session-reader-roles-v4"
+ESTIMATE_V3 = "session-reader-estimate-v3"
 ESTIMATE = "session-reader-estimate-v1"
 ESTIMATE_V2 = "session-reader-estimate-v2"
 OPERATION = "dream_session_read"
@@ -126,8 +131,17 @@ BRIEFS_V3 = dict(BRIEFS_V2, reader=BRIEFS_V2["reader"] + (
     "one-sentence finding; for supported leave finding empty. Items not supported will be removed. Return an "
     "overall accept or reject verdict and overall_findings for overall concerns. Reject if the supported "
     "remainder is unacceptable. Return only the schema-bound result; no tools."))
+BRIEFS_V4 = dict(BRIEFS_V3, reader=BRIEFS_V3["reader"].replace(
+    "origin is who wrote every cited block", "origin is who wrote every support block").replace(
+    "put text of different origins in separate items", "put support text of different origins in separate items") + (
+    " Every citation has role support or context. Every item needs support citations, which alone must meet "
+    "the origin, basis, date and human-decision rules. Only a decision by human may additionally have at most "
+    "one context citation of main-thread agent text showing what the human answered. Context is never support."),
+    reviewer=BRIEFS_V3["reviewer"] + (
+    " Context excerpts are labelled context: judge the decision with them, but require the human's own "
+    "support citations. Context shows what the human answered and is never support."))
 ROLE_CONTRACTS = {READER_V1: (ROLES, BRIEFS), READER_V2: (ROLES_V2, BRIEFS_V2),
-                  READER_V3: (ROLES_V3, BRIEFS_V3)}
+                  READER_V3: (ROLES_V3, BRIEFS_V3), READER_V4: (ROLES_V4, BRIEFS_V4)}
 
 
 def _string(limit):
@@ -146,6 +160,10 @@ ITEM = dream_roles.object_schema(dict(
     target=_string(MAX_TARGET),
     citations=dream_roles.array_schema(dream_roles.object_schema(dict(
         record=dict(type="integer", minimum=0), quote=_string(dream_notes.MAX_QUOTE))), MAX_CITATIONS)))
+ITEM_V4 = copy.deepcopy(ITEM)
+ITEM_V4["properties"]["citations"]["items"] = dream_roles.object_schema(dict(
+    record=dict(type="integer", minimum=0), quote=_string(dream_notes.MAX_QUOTE),
+    role=dict(type="string", enum=["support", "context"])))
 FINDING = dream_roles.object_schema(dict(item=dict(type="integer", minimum=0),
                                          finding=_string(dream_notes.MAX_TEXT - 16)))
 
@@ -154,11 +172,11 @@ def schema(role, contract=READER_V1):
     fields = dict(assignment_id=dream_roles.TEXT, input_sha256=dream_roles.TEXT, role=dict(type="string", enum=[role]),
                   failures=dream_roles.array_schema(dream_roles.TEXT, 16))
     if role == "reader":
-        fields["items"] = dream_roles.array_schema(ITEM, MAX_CALL_ITEMS)
+        fields["items"] = dream_roles.array_schema(ITEM_V4 if contract == READER_V4 else ITEM, MAX_CALL_ITEMS)
     else:
         fields.update(verdict=dict(type="string", enum=["accept", "reject"]),
                       findings=dream_roles.array_schema(FINDING, MAX_REVIEW_FINDINGS))
-    if role == "reviewer" and contract == READER_V3:
+    if role == "reviewer" and contract in (READER_V3, READER_V4):
         fields.pop("findings")
         fields["overall_findings"] = dream_roles.array_schema(_string(dream_notes.MAX_TEXT - 16), 16)
         fields["item_verdicts"] = dream_roles.array_schema(dream_roles.object_schema(dict(
@@ -196,7 +214,8 @@ class Reader(dream_roles.Coordinator):
         return task
 
     def result_schema(self, role):
-        return schema(role, READER_V3 if self.roles == ROLES_V3 else READER_V1)
+        return schema(role, READER_V4 if self.roles == ROLES_V4 else
+                      READER_V3 if self.roles == ROLES_V3 else READER_V1)
 
 
 # Storage helpers
@@ -499,6 +518,30 @@ def _estimate_v2(previous):
                                        "Still an estimate, not a ceiling. Other models may differ."))
 
 
+# Output means times 1.25, rounded up; input ratios rounded up to one decimal.
+CALIBRATION = {
+    ("claude", "claude-sonnet-4-6"): dict(input_multiplier=1.8, reader=21965, reviewer=12865,
+        basis=dict(date="2026-11-27", model="claude-sonnet-4-6", calls=dict(reader=3, reviewer=1))),
+    ("codex", "gpt-6.1-sol"): dict(input_multiplier=1.8, reader=2784, reviewer=1673,
+        basis=dict(date="2026-11-27", model="gpt-6.1-sol", calls=dict(reader=5, reviewer=1))),
+}
+
+
+def _estimate_v3(previous, harness, model):
+    entry = CALIBRATION.get((harness, model))
+    calibrated = entry is not None
+    if entry is None:
+        entry = {key: max(row[key] for row in CALIBRATION.values())
+                 for key in ("input_multiplier", "reader", "reviewer")}
+    return dict(previous, contract=ESTIMATE_V3,
+                input_tokens=(previous["input_tokens"] * int(entry["input_multiplier"] * 10) + 9) // 10,
+                output_tokens=sum(entry[role] * count for role, count in previous["calls"].items()),
+                calibrated=calibrated, model=dict(harness=harness, model=model), calibration=copy.deepcopy(entry),
+                pilot_basis=[copy.deepcopy(row["basis"]) for row in CALIBRATION.values()],
+                basis=("Per-model pilot averages plus 25 percent output; estimate, not a ceiling." if calibrated else
+                       "Uncalibrated for this model; largest known allowances. Estimate, not a ceiling."))
+
+
 def _preflight(estimate, calls, reserve):
     reader, reviewer = estimate["calls"]["reader"], estimate["calls"]["reviewer"]
     if reader + reviewer > calls or reader > calls - reserve:
@@ -579,6 +622,8 @@ def prepare(config, job_path=None, *, cwd=None, session=None, overrides=None, bu
     estimate = _estimate(chunks, settings["reader_chunk_bytes"])
     if READER == READER_V3:
         estimate = _estimate_v2(estimate)
+    elif READER == READER_V4:
+        estimate = _estimate_v3(estimate, settings["harness"], settings["model"])
     logs = _jobs(config)
     if logs == root or logs.is_relative_to(root):
         raise DreamError("Keep reader job storage outside the project")
@@ -659,7 +704,7 @@ def _tool_result(block):
     return block["origin"] == "tool" and label in ("TOOL RESULT", "TOOL RESULT (error)")
 
 
-def _resolve(proposed, view, chunk, where):
+def _resolve(proposed, view, chunk, where, contract=READER_V1):
     """A note item from a reader item: the coordinator computes raw ranges and checks every citation."""
     def reject(message):
         raise Rejected(where + ": " + message)
@@ -685,6 +730,15 @@ def _resolve(proposed, view, chunk, where):
             reject("the quote does not match the rendering of record " + str(record))
         if any(b["summary"] or b["origin"] == "summary" for b in hits):
             reject("record " + str(record) + " is a compaction summary, which is not evidence")
+        if contract == READER_V4 and citation["role"] == "context":
+            if kind != "decision" or item.get("by") != "human":
+                reject("context is allowed only on a decision by human")
+            if any(b["origin"] != "agent" or b["sidechain"] for b in hits):
+                reject("context must cite main-thread agent text")
+            item["citations"].append(dict(byte_start=record, byte_end=view["extents"][record],
+                                          quote=quote, role="context"))
+            matched.extend(dict(b, citation_role="context") for b in hits)
+            continue
         origins = sorted({b["origin"] for b in hits})
         if origins != [item["origin"]]:
             reject("the quoted text of record " + str(record) + " has origin " + "/".join(origins) +
@@ -692,6 +746,8 @@ def _resolve(proposed, view, chunk, where):
         if human and any(b["sidechain"] or b["origin"] != "human" for b in hits):
             reject("what the human said or decided must cite the human's own main-thread blocks")
         item["citations"].append(dict(byte_start=record, byte_end=view["extents"][record], quote=quote))
+        if contract == READER_V4:
+            item["citations"][-1]["role"] = citation["role"]
         for block in hits:
             if block not in matched:
                 matched.append(block)
@@ -699,10 +755,12 @@ def _resolve(proposed, view, chunk, where):
     if item["basis"] == "output shows" and not any(_tool_result(b) for b in matched):
         reject("basis output shows needs a cited TOOL RESULT block")
     if item["when"] is not None and item["when"] not in dates and not any(item["when"] in c["quote"]
-                                                                          for c in item["citations"]):
+                                                                          for c in item["citations"]
+                                                                          if c.get("role") != "context"):
         reject("when " + item["when"] + " is neither a cited record's date nor quoted")
     try:
-        dream_notes._item(item, [(chunk["byte_start"], chunk["byte_end"], chunk["raw_sha256"])])
+        dream_notes._item(item, [(chunk["byte_start"], chunk["byte_end"], chunk["raw_sha256"])],
+                          dream_notes.NOTE_V2 if contract == READER_V4 else dream_notes.NOTE_CONTRACT)
     except DreamError as exc:
         reject(str(exc))
     return item, matched
@@ -714,13 +772,13 @@ def _normalized(proposed):
     return dict(proposed, **{field: "" for field in KIND_FIELDS if field not in own})
 
 
-def _screen(proposed, view, chunk, index):
+def _screen(proposed, view, chunk, index, contract=READER_V2):
     """session-reader-v2: each item is checked on its own; one that fails is dropped with its reason."""
     kept, dropped = [], []
     for number, value in enumerate(proposed):
         where = "Chunk " + str(index) + " item " + str(number)
         try:
-            kept.append(_resolve(_normalized(value), view, chunk, where))
+            kept.append(_resolve(_normalized(value), view, chunk, where, contract))
         except Rejected as exc:
             dropped.append(dict(chunk=index, item=number, reason=str(exc)[len(where) + 2:], proposed=value))
     return kept, dropped
@@ -756,14 +814,16 @@ def _recorded(fd, name, value, readonly):
 def _wire(item, index):
     """A stored item in the reader's own shape, for carrying forward and review."""
     value = dict(index=index, kind=item["kind"], text=item["text"], when=item["when"] or "", basis=item["basis"],
-                 origin=item["origin"], citations=[dict(record=c["byte_start"], quote=c["quote"]) for c in item["citations"]])
+                 origin=item["origin"], citations=[dict(record=c["byte_start"], quote=c["quote"],
+                                      **({"role": c["role"]} if "role" in c else {})) for c in item["citations"]])
     value.update({field: item.get(field, "") for field in KIND_FIELDS})
     return value
 
 
 def _compose(header, items, written_at):
     settings = header["settings"]
-    return dict(contract=dream_notes.NOTE_CONTRACT, source=[HARNESS, header["session"]["thread_id"], ""],
+    return dict(contract=(dream_notes.NOTE_V2 if _reader_contract(header) == READER_V4 else
+                          dream_notes.NOTE_CONTRACT), source=[HARNESS, header["session"]["thread_id"], ""],
                 ranges=[[c["byte_start"], c["byte_end"], c["raw_sha256"]] for c in header["chunks"]],
                 render_contract=header["render_contract"], reader=dict(harness=settings["harness"], model=settings["model"]),
                 written_at=written_at, items=items)
@@ -799,7 +859,7 @@ def _read_chunks(reader, header, views, fd=None, attempt=1, readonly=False):
                 items.append(item)
                 matched.append(blocks)
         else:
-            kept, dropped = _screen(proposed, view, chunk, index)
+            kept, dropped = _screen(proposed, view, chunk, index, version)
             # Recorded before the threshold is applied, so a rejected note's job still shows every dropped item.
             _recorded(fd, _dropped_name(attempt, index),
                       dict(contract=version, attempt=attempt, chunk=index, proposed=len(proposed), accepted=len(kept),
@@ -834,12 +894,12 @@ def _groups(matched, cap):
     """Item indices per review call, so each call's deduplicated excerpts fit the per-call cap."""
     groups, seen, size = [], set(), 0
     for index, blocks in enumerate(matched):
-        keys = set((b["offset"], b["text"]) for b in blocks)
-        extra = sum(len(text.encode()) for _, text in keys - seen)
+        keys = set((b["offset"], b["text"], b.get("citation_role", "support")) for b in blocks)
+        extra = sum(len(text.encode()) for _, text, _ in keys - seen)
         if not groups or size + extra > cap:
             groups.append([])
             seen, size = set(), 0
-            extra = sum(len(text.encode()) for _, text in keys)
+            extra = sum(len(text.encode()) for _, text, _ in keys)
         groups[-1].append(index)
         seen |= keys
         size += extra
@@ -848,14 +908,20 @@ def _groups(matched, cap):
 
 def _review(fd, header, attempt, reader, items, matched, readonly=False):
     verdicts, findings, removed = [], [], []
-    v3 = _reader_contract(header) == READER_V3
+    v3 = _reader_contract(header) in (READER_V3, READER_V4)
     for group in _groups(matched, header["settings"]["reader_chunk_bytes"]):
         excerpts, seen = [], set()
         for index in group:
             for block in matched[index]:
-                if (block["offset"], block["text"]) not in seen:
-                    seen.add((block["offset"], block["text"]))
-                    excerpts.append(dict(record=block["offset"], date=block["date"] or "", text=block["text"]))
+                key = (block["offset"], block["text"])
+                if _reader_contract(header) == READER_V4:
+                    key += (block.get("citation_role", "support"),)
+                if key not in seen:
+                    seen.add(key)
+                    excerpt = dict(record=block["offset"], date=block["date"] or "", text=block["text"])
+                    if _reader_contract(header) == READER_V4:
+                        excerpt["role"] = block.get("citation_role", "support")
+                    excerpts.append(excerpt)
         inputs = dict(session=_inputs(header), items=[_wire(items[i], i) for i in group],
                       excerpts=sorted(excerpts, key=lambda e: e["record"]))
         result = reader.call("reviewer", inputs)
@@ -883,7 +949,7 @@ def _review(fd, header, attempt, reader, items, matched, readonly=False):
     if v3:
         removed.sort(key=lambda row: row["item"])
         _recorded(fd, _numbered("review-items", attempt),
-                  dict(contract=READER_V3, reviewed=len(items), kept=len(items) - len(removed),
+                  dict(contract=_reader_contract(header), reviewed=len(items), kept=len(items) - len(removed),
                        removed=removed), readonly)
         if not items or len(removed) * 2 > len(items) or len(removed) == len(items):
             verdicts.append("reject")
@@ -927,7 +993,7 @@ def _result(header, attempt, note_id, note, review, calls, screening=()):
     if _reader_contract(header) != READER_V1:
         result.update(reader_contract=_reader_contract(header), chunk_items=list(screening),
                       dropped_items=sum(row["dropped"] for row in screening))
-    if _reader_contract(header) == READER_V3:
+    if _reader_contract(header) in (READER_V3, READER_V4):
         reviewed = sum(row["accepted"] for row in screening)
         result.update(reviewed_items=reviewed, kept_items=len(note["items"]),
                       removed_items=reviewed - len(note["items"]))
@@ -937,11 +1003,11 @@ def _result(header, attempt, note_id, note, review, calls, screening=()):
 def _execute(fd, header, attempt, reader, views, session):
     items, matched, screening = _read_chunks(reader, header, views, fd, attempt) if reader is not None else ([], [], [])
     review = None
-    if _reader_contract(header) == READER_V3:
+    if _reader_contract(header) in (READER_V3, READER_V4):
         review, items = _review(fd, header, attempt, reader, items, matched)
     note = _frozen(fd, _numbered("note", attempt), _compose(header, items, _now()), False, "written_at")
     dream_notes.validate_note(note)
-    if _reader_contract(header) != READER_V3:
+    if _reader_contract(header) not in (READER_V3, READER_V4):
         review = _review(fd, header, attempt, reader, items, matched) if items else None
     note_id = digest(canonical(note))
     _store(fd, _numbered("intent", attempt), dict(note_id=note_id, ranges=note["ranges"],
@@ -1065,7 +1131,7 @@ def _replay(config, fd, header, prepared, attempt, saved):
                 raise DreamError("Reader run identity differs from its frozen role contract", 3)
         items, matched, screening = (_read_chunks(reader, header, views, fd, attempt, readonly=True)
                                      if reader is not None else ([], [], []))
-        if _reader_contract(header) == READER_V3:
+        if _reader_contract(header) in (READER_V3, READER_V4):
             review, items = _review(fd, header, attempt, reader, items, matched, readonly=True)
             note = _frozen(fd, _numbered("note", attempt), _compose(header, items, None), True, "written_at")
         else:
