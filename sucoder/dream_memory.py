@@ -161,14 +161,44 @@ def _owned_copy(path):
     return value if isinstance(value, dict) and value.get("contract") == COPY_CONTRACT else None
 
 
+def _matches(destination, files):
+    """True when the copy holds exactly ``files`` as plain files, besides its marker.
+
+    The marker lives in the same directory as the pages, so it cannot vouch for
+    them: a copy is current only when its bytes are the memory branch's bytes.
+    """
+    expected = dict(files)
+    seen = set()
+    try:
+        for root, dirs, names in os.walk(destination):
+            base = Path(root)
+            if any((base / name).is_symlink() for name in dirs):
+                return False
+            for name in names:
+                path = base / name
+                relative = path.relative_to(destination).as_posix()
+                if relative == MARKER:
+                    continue
+                data = expected.get(relative)
+                if (path.is_symlink() or not path.is_file() or data is None or
+                        path.stat().st_size != len(data) or path.read_bytes() != data):
+                    return False
+                seen.add(relative)
+    except OSError:
+        return False
+    return seen == set(expected)
+
+
 def materialize(checkout, branch, *, timeout=10):
     """Copy the memory branch's wiki into ``checkout``/.sucoder/wiki, read-only (S5).
 
     Pages link into the project relative to that directory, so the copy is
     where their links resolve. Only a directory carrying this module's marker
     is ever replaced; a checkout that tracks files there (legacy candidate
-    mode) or holds anything else there is left alone. Returns a state dict:
-    written, current, absent, tracked, unmanaged or busy.
+    mode) or holds anything else there is left alone. A copy at the right
+    commit whose files no longer match the branch is rewritten and reported as
+    written with ``repaired``. Returns a state dict: written, current, absent,
+    tracked, unmanaged or busy.
     """
     checkout = Path(checkout)
     ref = branch_ref(branch)
@@ -199,9 +229,10 @@ def materialize(checkout, branch, *, timeout=10):
         if present and marker is None:
             return dict(result, state="unmanaged", reason=str(destination) + " was not written by sucoder")
         _exclude(checkout, timeout)
-        if marker is not None and marker.get("ref") == ref and marker.get("commit") == commit:
-            return dict(result, state="current")
         files = _entries(checkout, commit, timeout)
+        repaired = marker is not None and marker.get("ref") == ref and marker.get("commit") == commit
+        if repaired and _matches(destination, files):
+            return dict(result, state="current")
         mask = os.umask(0)
         os.umask(mask)
         staging = Path(tempfile.mkdtemp(prefix=".wiki-", dir=parent))
@@ -230,7 +261,7 @@ def materialize(checkout, branch, *, timeout=10):
         finally:
             if staging.exists():
                 shutil.rmtree(staging, ignore_errors=True)
-        return dict(result, state="written", files=len(files))
+        return dict(result, state="written", files=len(files), **(dict(repaired=True) if repaired else {}))
     finally:
         os.close(lock)
 

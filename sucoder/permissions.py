@@ -6,6 +6,7 @@ import grp
 import logging
 import os
 import pwd
+import re
 from pathlib import Path
 from typing import List, Optional
 
@@ -17,6 +18,11 @@ logger = logging.getLogger(__name__)
 def ensure_directory(path: Path) -> None:
     """Ensure a directory exists."""
     path.mkdir(parents=True, exist_ok=True)
+
+
+def _find_literal(path: str) -> str:
+    """Escape ``find -path`` pattern characters so *path* matches only itself."""
+    return re.sub(r"([*?\[\]\\])", r"\\\1", path)
 
 
 def apply_agent_repo_permissions(
@@ -72,10 +78,14 @@ def apply_agent_repo_permissions(
             result.stderr.strip() if result.stderr else "(no stderr)",
         )
 
+    # The dream memory copy is written read-only and checked against the memory
+    # branch (dream_memory.materialize); group write would let any group member
+    # edit what every later session is told, so it keeps the modes it was given.
     result = executor.run_agent(
         [
             "find",
             repo,
+            "-path", _find_literal(os.path.join(repo, ".sucoder", "wiki")), "-prune", "-o",
             "-user",
             agent_user,
             "-not", "-type", "l",  # Skip symlinks: chmod follows the target
