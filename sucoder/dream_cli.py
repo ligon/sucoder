@@ -326,3 +326,9 @@ def _data_command(ctx, operation, function, *args, **kwargs):
         code = 3 if isinstance(exc, OSError) else getattr(exc, "exit_code", 2)
         raise typer.Exit(code) from exc
     typer.echo(json.dumps(value, sort_keys=True))
+
+
+# Organizer track (docs/dream/organizer.org): `sucoder dream organize plan|run|status`.
+# Kept in its own module and attached here, after _data_command, which it reuses.
+from . import dream_organizer_cli  # noqa: E402
+app.add_typer(dream_organizer_cli.app, name="organize")

@@ -198,8 +198,9 @@ A finding is a mechanical rejection that the organizer may repair once.
 
 - Cache :: Every role result is stored under its assignment identity; a rerun with the same plan and attempt reuses them and calls no model, as for dreams (=sucoder/dream_roles.py:139-172=).
 - Idempotence :: A rerun after publication finds the generation on the branch and does not update the ref again.
-- Status :: =sucoder dream organize status= rebuilds the generation with transports that refuse inference, compares the receipt byte for byte with the stored one, and reports =published=, =detached=, =incomplete= or =not_run=.
-- Attempts :: A started role call without a stored result is never repeated; a new =--attempt= is needed, as for dreams.
+- Status :: =sucoder dream organize status= rebuilds the generation with transports that refuse inference, compares the receipt byte for byte with the stored one and, when published, with the receipt on the branch.
+  It reports =published=, =detached= (published, then reset away), =reviewed_unpublished= (a lost compare-and-swap), =incomplete= (roles left to run) or =not_run=.
+- Attempts :: A started role call without a stored result is never repeated, and status reports it as an error; a new =--attempt= is needed, as for dreams.
 
 * Privacy
 :PROPERTIES:
