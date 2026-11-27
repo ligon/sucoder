@@ -434,7 +434,7 @@ def test_items_that_fail_a_check_are_dropped_recorded_and_never_carried_or_revie
     assert [i["text"] for i in note["items"]] == accepted
     # The completed job replays, dropped records included, without a call or a write.
     files = {p.name: p.read_bytes() for p in job.iterdir() if p.is_file()}
-    monkeypatch.setattr(reader, "READER", reader.READER_V3)
+    monkeypatch.setattr(reader, "READER", reader.READER_V4)
     clock.advance(10 ** 6)
     forbid_native(monkeypatch)
     assert reader.run(config, job) == result
@@ -477,7 +477,7 @@ def test_a_saved_v1_job_replays_to_its_stored_outcome_when_new_jobs_freeze_v2(mi
     assert saved(job, "spec-000001.json")["contract"] == reader.ROLES and not list(job.glob("dropped-*.json"))
     files = {p.name: p.read_bytes() for p in job.iterdir() if p.is_file()}
     monkeypatch.setattr(reader, "READER", reader.READER_V2)
-    monkeypatch.setattr(reader, "READER", reader.READER_V3)
+    monkeypatch.setattr(reader, "READER", reader.READER_V4)
     clock.advance(10 ** 6)
     forbid_native(monkeypatch)
     assert reader.run(config, job) == result and reader.start(config, result["job_id"]) == result
@@ -656,7 +656,7 @@ def test_v3_filters_and_records_review_removals_and_replays(mirror, v3, monkeypa
     assert native.calls[-1]["contract"] == reader.ROLES_V3
     assert native.calls[-1]["brief"] == reader.BRIEFS_V3["reviewer"]
     files = {p.name: p.read_bytes() for p in job.iterdir() if p.is_file()}
-    monkeypatch.setattr(reader, "READER", reader.READER_V3)
+    monkeypatch.setattr(reader, "READER", reader.READER_V4)
     clock.advance(10 ** 6)
     forbid_native(monkeypatch)
     assert reader.run(config, job) == result
@@ -703,3 +703,78 @@ def test_v3_exactly_half_removed_is_accepted(mirror, v3):
                           transport=NativeV3(proposed, {0: "overstated", 3: "unsupported"}))
     assert result["state"] == "accepted"
     assert (result["reviewed_items"], result["kept_items"], result["removed_items"]) == (4, 2, 2)
+
+
+@pytest.fixture
+def v4(v1_jobs, monkeypatch):
+    monkeypatch.setattr(reader, "READER", reader.READER_V4)
+
+
+def v4_script(path):
+    proposed = script(path)
+    for rows in proposed.values():
+        for row in rows:
+            for citation in row["citations"]:
+                citation["role"] = "support"
+    proposed[0][0]["citations"].append(dict(record=at(path, "All dream tests passed"),
+        quote="the timeout stays at 30 seconds", role="context"))
+    return proposed
+
+
+def test_v4_stores_context_and_replays(mirror, v4, monkeypatch, clock):
+    repo, _, config, path = mirror
+    native = NativeV3(v4_script(path))
+    result = reader.start(config, cwd=repo, overrides=OPTIONS, transport=native)
+    note = source_of(result).notes(accepted_only=True)[0]["note"]
+    assert note["contract"] == dream_notes.NOTE_V2
+    assert [c["role"] for c in note["items"][0]["citations"]] == ["support", "context"]
+    assert native.calls[0]["contract"] == reader.ROLES_V4
+    assert any(e["role"] == "context" for e in native.calls[-1]["input"]["excerpts"])
+    assert result["estimate"]["contract"] == reader.ESTIMATE_V3
+    job = Path(result["job_path"])
+    files = {p.name: p.read_bytes() for p in job.iterdir() if p.is_file()}
+    clock.advance(10 ** 6)
+    forbid_native(monkeypatch)
+    assert reader.run(config, job) == result
+    assert {p.name: p.read_bytes() for p in job.iterdir() if p.is_file()} == files
+
+
+@pytest.mark.parametrize("case", ["two", "fact", "agent", "human", "sidechain", "only", "quote"])
+def test_v4_refuses_invalid_context(mirror, v4, case):
+    repo, _, config, path = mirror
+    prepared = reader.prepare(config, cwd=repo, overrides=OPTIONS)
+    header = saved(Path(prepared["job_path"]), "job.json")
+    view = reader._views(header, time.monotonic() + 30)[0]
+    value = v4_script(path)[0][0]
+    context = value["citations"][-1]
+    if case == "two":
+        value["citations"].append(copy.deepcopy(context))
+    elif case == "fact":
+        value.update(kind="fact", by="")
+    elif case == "agent":
+        value["by"] = "agent"
+    elif case == "human":
+        context.update(value["citations"][0], role="context")
+    elif case == "sidechain":
+        for block in view["records"][context["record"]]:
+            block["sidechain"] = True
+    elif case == "only":
+        value["citations"] = [context]
+    else:
+        context["quote"] = "This is absent."
+    with pytest.raises(reader.Rejected):
+        reader._resolve(value, view, header["chunks"][0], "item", reader.READER_V4)
+
+
+@pytest.mark.parametrize("harness,model,output,calibrated", [
+    ("claude", "claude-sonnet-4-6", 78760, True),
+    ("codex", "gpt-6.1-sol", 10025, True),
+    ("codex", "unknown", 78760, False),
+    ("claude", "gpt-6.1-sol", 78760, False)])
+def test_v4_model_calibration(harness, model, output, calibrated):
+    old = dict(calls=dict(reader=3, reviewer=1), input_tokens=101, ceiling=False)
+    estimate = reader._estimate_v3(old, harness, model)
+    assert estimate["input_tokens"] == 182
+    assert estimate["output_tokens"] == output
+    assert estimate["calibrated"] is calibrated and not estimate["ceiling"]
+    assert all(b["date"] == "2026-11-27" and b["model"] and b["calls"] for b in estimate["pilot_basis"])

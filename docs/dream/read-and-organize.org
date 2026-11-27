@@ -173,6 +173,21 @@ Contracts =session-note-v1= and =session-coverage-v1=; module =sucoder/dream_not
 - Validation :: The store checks the schema and the internal consistency above.
   Whether a quote matches the cited bytes, and whether the cited blocks really have the stated origin, is checked by the reader job against the admitted rendering, because the store does not hold transcripts.
 
+*** Amendment, 2026-11-27: session-note-v2
+
+The human ruled "allow an extra agent citation" for human decisions.
+=session-note-v2= is identical to v1 except every citation adds =role=,
+=support= or =context=. Every item needs at least one support citation.
+Only a =decision= with =by= =human= may have context, at most one citation,
+of main-thread agent text showing what the human was answering.
+Context never supplies support: origin, basis and human-decision checks apply
+to support citations only. The reader checks context origin, absence of
+sidechain attribution and an exact quote against the admitted record; the
+store checks schema and internal consistency without holding transcripts.
+The reviewer sees labelled context excerpts and judges the decision with them.
+The organizer excludes context from support quotes. V1 notes still validate
+and replay exactly as before; coverage and review contracts are unchanged.
+
 ** Session sources across harnesses
 :PROPERTIES:
 :CUSTOM_ID: adapters
