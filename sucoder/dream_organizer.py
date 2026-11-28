@@ -1038,6 +1038,10 @@ def refuse(*args, **kwargs):
 
 class Seat(dream_roles.Coordinator):
     """One native seat; the shared role call keeps assignments, traces and results."""
+    # An organizer call returns whole pages at high effort and can outlast the
+    # 180-second reader cap; max_elapsed_seconds still bounds the run.
+    call_seconds = 900
+
     def __init__(self, organizer, harness, model, transport, native_version=None, *, native_options):
         self.briefs = organizer.briefs
         self.contract = organizer.contract

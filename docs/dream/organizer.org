@@ -171,6 +171,8 @@ A finding is a mechanical rejection that the organizer may repair once.
 
 - Roles :: =organizer= writes the proposal, =repair= revises it once from concrete findings, =reviewer= reviews independently in the same harness family, and =cross_reviewer= reviews in the other one.
   All four use the existing native role call (=dream_roles.Coordinator.call=), with its frozen assignments, traces and result cache.
+  Without a budget wallet that call caps each native call at =Coordinator.call_seconds= (180 seconds); organizer seats raise it to 900 seconds, still within the job's =max_elapsed_seconds=.
+  On 2026-11-28 a high-effort organizer call for the remote-targets area outlasted the 180-second cap and the job was rejected before any output; the cap is not part of a run's identity, so saved runs replay unchanged.
 - Families :: By default the cross reviewer's harness must differ from the organizer's (=claude= or =codex=), which also gives a different model family. The [[#codex-review][Codex-only review option]] permits a second model on the same harness.
 - Candidate :: Reviewers receive the full input and the materialized candidate: every written page whole with its before hash, the moves, references with their carried handles, corrections, retractions and the generated index.
 - Checks :: Besides a verdict and findings, each reviewer returns exactly one check per hub section (claims supported by its citations), per move (qualifications preserved), per applied correction (evidence supports it) and per retraction (evidence contradicts the claim).

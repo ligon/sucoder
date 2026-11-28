@@ -59,6 +59,36 @@ def plan(workspace, request=None):
     return json.loads(result.output)
 
 
+def test_unbudgeted_call_cap_is_a_class_setting_bounded_by_the_run_deadline(tmp_path):
+    from sucoder import dream_organizer
+    assert roles.Coordinator.call_seconds == 180 and dream_organizer.Seat.call_seconds == 900
+    frozen = dict(plan_id=dream.digest(b"call cap fixture"), repositories={}, limits=dict(
+        max_elapsed_seconds=1800, max_role_invocations=4,
+        max_consolidation_bytes=131072, max_proposal_bytes=131072))
+    directory = tmp_path / "roles"
+    directory.mkdir(mode=0o700)
+    native, observed = Transport(), []
+
+    def record(harness, model, task, schema, deadline):
+        observed.append(deadline - time.monotonic())
+        return native(harness, model, task, schema, deadline)
+
+    record.version = native.version
+
+    class Longer(roles.Coordinator):
+        call_seconds = 900
+
+    inputs = dict(evidence=dict(unit_id="fixture", byte_start=0, byte_end=1, text="x"))
+    for run_seconds, expected in ((1800, 900), (600, 600)):
+        fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            Longer(dict(frozen, plan_id=dream.digest(str(run_seconds).encode())), fd, "codex", "fixture",
+                   time.monotonic() + run_seconds, record).call("extractor", inputs)
+        finally:
+            os.close(fd)
+        assert expected - 2 <= observed[-1] <= expected + 0.1
+
+
 @pytest.mark.parametrize("harness", ["codex", "claude"])
 @pytest.mark.parametrize("budgeted,seconds,reserve,role,expected", [
     (False, 600, 0, "extractor", 180),

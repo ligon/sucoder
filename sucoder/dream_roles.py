@@ -104,6 +104,9 @@ def citations(value, unit, chunk, raw):
 
 
 class Coordinator:
+    # Per-call cap when no budget wallet is attached; the run deadline still bounds it.
+    call_seconds = 180
+
     def __init__(self, plan, fd, harness, model, deadline, transport=None, *, native_version=None, attempt=1):
         self.plan, self.fd, self.harness, self.model = plan, fd, harness, model
         self.deadline = deadline
@@ -160,7 +163,7 @@ class Coordinator:
             dream_run._store(self.fd, key + "-started.json", canonical(dict(state="started", assignment_id=task["assignment_id"])) + b"\n")
             # The wallet transport applies the shared deadline and closeout
             # reserve; an extra fixed cap can discard otherwise bounded work.
-            deadline = self.deadline if budget is not None else min(self.deadline, time.monotonic() + 180)
+            deadline = self.deadline if budget is not None else min(self.deadline, time.monotonic() + self.call_seconds)
             result, usage, trace = self.transport(self.harness, self.model, task, self.result_schema(role),
                                                  deadline,
                                                  **(dict(request=request) if request is not None else {}))
