@@ -1,0 +1,108 @@
+#+TITLE: Reading and organizing the dream wiki: state after 2026-11-28
+#+AUTHOR: Sue
+#+DATE: 2026-11-28
+#+STATUS: READY -- organize the next areas from the uncited-note inventory, then read the unread Codex threads
+#+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
+
+* Current state
+
+Sue ran on Claude Opus 5.5 in the coder mirror =/home/coder/mirrors/SuCoder=, session =dcdc7362=, branch =main=.
+GitHub =main= and the mirror are at =1932de8= (PR 145).
+The human's =~/Projects/SuCoder= (the =ligon= remote) is still at =3a31b36= (PR 133), so the CLI installed from it lacks readers v2-v5, the Codex reader and organizer v2-v7 until the human pulls.
+The memory branch =sucoder/memory= is at =8893bfd=; it exists only in this mirror and is never pushed.
+
+- Merged 2026-11-27 :: PRs 128 (the read-only memory copy is verified and kept read-only), 129 (=claude-view-v3=), 130 (the 2026-11-26 handoff), 131 (the private session-note store, =session-note-v1=), 132 (the R1 session reader), 133 (organizer jobs, one feature area per job), 134-136 (reader contracts v2-v4), 137 (Codex reasoning effort and same-family review), 138-141 (organizer contracts v2-v5), 142 (Codex rollouts read by the session reader).
+- Merged 2026-11-28 :: PRs 143 (organizer v6: item-level note selection per area), 144 (organizer role calls get 900 seconds instead of the 180-second reader cap), 145 (organizer v7: hub lint v2, and the support allowance measured on the rows the roles receive).
+- Design record :: Each organizer generation has a dated section in [[file:../../docs/dream/organizer.org][docs/dream/organizer.org]], with what changed, why and what replays unchanged; v6 is =#organizer-notes-v6= and v7 is =#organizer-lint-v7=.
+  The reading-and-organizing design is still [[file:../../docs/dream/read-and-organize.org][docs/dream/read-and-organize.org]].
+
+* The wiki
+
+Four hubs and five topic pages; the index lists no page outside a hub.
+
+| Index group      | Hub                                       | Published by                    |
+|------------------+-------------------------------------------+---------------------------------|
+| Project memory   | =dream-memory= (Dream memory)             | =5b4e6d5=, organizer v6         |
+| Running sessions | =messaging= (Peer messaging)              | =8893bfd=, organizer v7         |
+| Running sessions | =observation= (Session observation ...)   | =4bac7f9=, organizer v5         |
+| Running sessions | =remote-targets= (Remote targets)         | =6c591ac=, organizer v6         |
+
+Topics: =attention-rollout=, =codex-hook-validation=, =confined-node=, =savio-dream-launch=, =transcript-replies=; the v7 run moved the index's transcript-replies section into the messaging hub.
+Both reviewers accepted all four runs, with advisories recorded in the receipts; Sue checked the claims and links of the v6 and v7 runs against the repository and GitHub.
+
+* Runs in this session
+
+Organizer pilots, all Codex-only (writer =gpt-6.2-astra=, cross-reviewer =gpt-6-astra=, both at high effort, same-family review):
+
+| Plan contract | Area           | Outcome                                                                                    |
+|---------------+----------------+--------------------------------------------------------------------------------------------|
+| v2            | observation    | rejected: carried support placed outside its own section                                   |
+| v3            | observation    | rejected: two note quotations did not occur exactly once in the item text                  |
+| v4            | observation    | rejected: the reviewer asked for the moved index entry's conclusions in the hub            |
+| v5            | observation    | published =4bac7f9=; whole-note delivery handed it 308 items and it cited 9                |
+| v6            | dream-memory   | published =5b4e6d5=; 637 s, 6 calls, 516k input tokens; cited 40 note items                |
+| v6            | remote-targets | first attempt stopped at the 180 s role cap (PR 144); attempt 2 published =6c591ac=, 851 s |
+| v7            | messaging      | published =8893bfd=; 155 s, 4 calls, 300k input tokens; one lint repair                    |
+
+The messaging run's repair was lint v2 refusing =python3= in code markup (a shell command in a hub); no noun-first sentence was refused.
+
+Reader runs wrote four accepted notes, 323 items in all: three Claude sessions (40, 78 and 190 items) and one Codex thread (15 items).
+The Codex pilot took one reader and one reviewer call; its calibrated estimate was about 49k input tokens for a 1.5 MB rollout rendered to 58 KB.
+
+* Note coverage after 8893bfd
+
+The wiki cites 105 of the 323 items; the organizer never delivers those again.
+Of the 218 uncited items, 89 were delivered to a v6 or v7 run and left uncited (68 of them to dream-memory), and 129 were never delivered to any area.
+The never-delivered items are 64 from the attention session and 54 from the dream-redesign session, mostly test-suite baselines and the Python 3.6 and 3.9 support work, plus 11 others.
+
+Dry runs of v7 selection against =8893bfd= (no model calls) give these candidate areas, in the order they should run, since each run absorbs what it cites:
+
+| Area                 | Terms (explicit =--term=)                                                    | Items delivered |
+|----------------------+------------------------------------------------------------------------------+-----------------|
+| observation (re-run) | attention, hook(s), watcher, notify, notification, waiting, untracked, ...   |              55 |
+| testing (new)        | pytest, full suite, test suite, tests, failures, fixture(s), flaky, ...      |              72 |
+| shipping (new)       | push, github, credentials, /opt/sucoder, reinstall, editable, canonical, ... |              47 |
+
+The dry-run helper is session scratch (=select7.py=); it calls =history=, =_absorbed_items= and =_notes= exactly as =plan= does.
+Shipping items describe the account boundary as it was before 2026-11-26 (coder had no GitHub credentials); the 2026-11-26 handoff records that =coder='s =gh= now holds the human's token, so a shipping hub must date those claims.
+
+* How to run
+
+#+begin_src sh
+sucoder() { PYTHONPATH=/home/coder/mirrors/SuCoder /opt/sucoder/bin/python -c 'from sucoder.cli import app; app()' \
+                --config /home/coder/.sucoder/config.yaml "$@"; }
+sucoder dream organize plan SuCoder --area ID --title TITLE --group GROUP --summary TEXT --term TERM ...
+sucoder dream organize run SuCoder --plan PLAN --harness codex --model gpt-6.2-astra --effort high \
+     --cross-harness codex --cross-model gpt-6-astra --cross-effort high --same-family-review
+#+end_src
+
+=--title=, =--group= and =--summary= are needed only the first time an area is organized.
+Without =--term=, the terms come from the area's id, title and summary; for =observation= that adds broad words such as =session= and =status= and delivers 79 items instead of 55.
+A failed run is retried with =--attempt 2= on the same plan.
+
+* Limits that will bind next
+
+- Receipt history :: =MAX_RECEIPT_BYTES= is 4 MiB (=sucoder/dream_organizer.py:75=); the memory branch holds 1.0 MB of receipts.
+  v6 receipts were 160-200 KB and the v7 messaging receipt 74 KB, so roughly 20-40 more organizer runs fit before receipts need compaction.
+- Plan :: refused above =dream_run.MAX_PLAN_BYTES= (2 MiB); support rows are capped at 256 KiB as delivered (v7).
+- Time :: 900 s per organizer role call, 1800 s per run.
+
+* Rules learned
+
+- Any change to what the roles receive, the briefs, the lint rules or the limits ships as a new organizer generation: the run identity includes the lint contract and the =LINT_RULES= digest.
+  Pin the previous generation's replay fixture first (=tests/organizer-plan-v1.json= through =v6.json=), then change the code and confirm every pinned replay still passes.
+- Codex workers implementing changes must not read =~/.claude=, =~/.codex=, =~/.sucoder= or =/home/coder/mirrors/.sucoder-state=; give them aggregate shapes of the private data, never the data.
+- Session =dcdc7362= (this one) stays excluded from reading: the 2026-11-26 development question set was exposed in it.
+- Under =pytest -n 8= this host reported 78 failures that passed alone, and =-n 4= still showed two editor-lifecycle flakes; rerun each failure alone, and let CI arbitrate.
+
+* Next
+
+1. Organize the three areas above, in that order, verifying each published hub against the repository.
+2. Read the seven unread Codex user threads with the Codex reader, then any finished Claude session other than =dcdc7362=.
+3. Delivered-but-uncited items are offered again to every later run whose terms match; 89 are in that state now.
+   A candidate v8 lets the organizer set an item aside with a recorded reason, which absorbs it.
+4. Reader views still lack =when= dates, so the organizer cannot always tell which of two conflicting items is newer; this needs new view contracts.
+5. Compact receipts before the 4 MiB history cap.
+6. Issues 107-120 mostly concern the older dream author path; reconcile them against the organizer, and put issue 109 (tagged versus bare replies) to the human.
+7. Back up the memory branch: deferred by the human.
+8. The design's evaluation track (slice 3): the held-out question set outside the agent account, the grading protocol and the comparisons.
