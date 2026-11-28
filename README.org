@@ -2877,6 +2877,7 @@ Questions remain Talk leads rather than exported correction issues; closing an i
 
 =sucoder dream organize plan MIRROR --area ID --title TITLE --group GROUP --summary TEXT= freezes an organizer job for one feature area of the memory wiki: the wiki at the memory tip with its receipt history, the private store's accepted session notes, and the headings of =README.org= and =docs/=; it makes no model call and writes no git state.
 A later job for the same area may omit the title, group and summary to reuse the recorded ones.
+Repeat =--term= to choose which session-note items match the area, for example =--term reader --term "memory branch"=. By default, terms come from the area ID, title and summary.
 =sucoder dream organize run MIRROR --plan PLAN --harness claude --model MODEL --cross-harness codex --cross-model MODEL= writes the area's hub at =.sucoder/wiki/hubs/ID.org=, leaves dated forwarding sections where sections moved, carries their receipt-backed citations to the new path and anchor, applies reviewed corrections, and marks contradicted claims retracted or superseded.
 The coordinator regenerates =index.org= from the area records, one line per hub plus any topic pages not yet in a hub, within =dream.inject_bytes=; no model writes it.
 Hubs are linted for URLs, commands, instructions to agents and claims of human decisions without a human-origin session note.

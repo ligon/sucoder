@@ -26,6 +26,7 @@ W = ".sucoder/wiki/"
 REPLIES, LAUNCH, CODEX = W + "topics/replies.org", W + "topics/dream-launch.org", W + "topics/codex.org"
 HUB = W + "hubs/dream-memory.org"
 AREA = dict(title="Dream memory", group="Memory", summary="The dreamed companion wiki, its memory branch and injected index.")
+AREA_TERMS = ["dream", "index", "reader"]
 README = "#+title: Sample\n* Installation\nInstall with pip.\n* Dream companion candidates\nDreams keep a wiki.\n"
 DESIGN = "#+title: Dream design\n* Overview\nThe design.\n** Memory branch\nIn place.\n** Landlock confinement\nABI 3.\n"
 DATA = (b'{"type":"user","message":"Readers may read whole sessions."}\n'
@@ -108,7 +109,7 @@ def seed(workspace, index=INDEX_TEXT):
     return second
 
 
-def write_notes(workspace, tmp_path):
+def write_notes(workspace, tmp_path, update=None):
     config = workspace[2]
     session = tmp_path / "session.jsonl"
     session.write_bytes(DATA)
@@ -124,6 +125,8 @@ def write_notes(workspace, tmp_path):
                     when="2026-11-26", citations=[cite("dream_view admits claude-view only")], basis="output shows", origin="tool"),
                dict(kind="decision", text="The human decided that readers may read whole sessions.", when="2026-11-26",
                     citations=[cite("Readers may read whole sessions.")], basis="human said", origin="human", by="human")])
+    if update:
+        update(note)
     store = dream_notes.Store(dream_notes.store_root(config, IDENTITY))
     source = store.source("claude", SESSION)
     with source.lease():
@@ -137,8 +140,11 @@ def write_notes(workspace, tmp_path):
 @pytest.fixture
 def organized(workspace, tmp_path):
     base = seed(workspace)
-    note_id = write_notes(workspace, tmp_path)
-    plan = organizer.plan(workspace[2], "sample", "dream-memory", now=NOW, **AREA)
+    def add_unrelated(note):
+        note["items"].append(dict(note["items"][1], text="A proofreader checked the spelling.",
+                                  citations=note["items"][0]["citations"]))
+    note_id = write_notes(workspace, tmp_path, add_unrelated)
+    plan = organizer.plan(workspace[2], "sample", "dream-memory", now=NOW, terms=AREA_TERMS, **AREA)
     return workspace, plan, base, note_id
 
 
@@ -283,7 +289,14 @@ def test_an_area_job_publishes_hub_forwarding_index_correction_and_retraction(or
                      + INDEX_TEXT[INDEX_TEXT.index("* Orientation"):])
     assert len(organizer.injected(index).encode()) <= plan["inject_bytes"]
     receipt = json.loads(show(repo, MEMORY, W + "receipts/" + result["run_id"] + ".json"))
-    assert receipt["contract"] == "wiki-organizer-v5" and receipt["area"]["id"] == "dream-memory"
+    assert receipt["contract"] == "wiki-organizer-v6" and receipt["area"]["id"] == "dream-memory"
+    assert receipt["note_terms"] == author.calls[0]["input"]["note_terms"] == plan["note_terms"] == AREA_TERMS
+    assert organizer.NOTES_V6 in author.calls[0]["brief"]
+    assert all(organizer.NOTES_V6 not in task["brief"] for task in [author.calls[1], cross.calls[0]])
+    assert receipt["notes"] == [dict(note_id=note_id, review_sha256=plan["notes"][0]["review_sha256"], items=[0, 1, 2])]
+    assert "notes_omitted" not in receipt
+    assert author.calls[0]["input"]["omitted"]["notes"] == plan["note_selection"]
+    assert receipt["note_selection"] == dict(candidates=4, delivered=3, absorbed=0, unmatched=1, max_note_bytes=0)
     changes = {change["path"]: change for change in receipt["changes"]}
     assert changes[HUB] == dict(path=HUB, before_sha256="", reason="Create the dream memory hub.")
     assert changes[LAUNCH] == dict(path=LAUNCH, before_sha256=sha(LAUNCH_TEXT), reason="Apply the reviewed index-size correction.")
@@ -303,6 +316,7 @@ def test_an_area_job_publishes_hub_forwarding_index_correction_and_retraction(or
     dream_support.check_receipt(receipt)
     status = organizer.status(config, "sample", Path(plan["plan_path"]))
     assert status["state"] == "published" and status["candidate_commit"] == memory
+    assert status["note_selection"] == receipt["note_selection"]
 
 
 def test_carried_support_is_history_for_the_next_job_and_for_editorial_support(organized):
@@ -623,10 +637,12 @@ def test_planning_needs_an_accepted_registry_and_a_new_area_record(workspace):
 def test_the_organize_plan_command_prints_the_frozen_job(workspace):
     seed(workspace)
     result = CliRunner().invoke(cli.app, ["--config", str(workspace[1]), "dream", "organize", "plan", "sample",
-        "--area", "dream-memory", "--title", AREA["title"], "--group", AREA["group"], "--summary", AREA["summary"], "--no-notes"])
+        "--area", "dream-memory", "--title", AREA["title"], "--group", AREA["group"], "--summary", AREA["summary"],
+        "--term", "reader", "--term", "memory branch", "--term", "reader", "--no-notes"])
     assert result.exit_code == 0, result.output
     value = json.loads(result.output)
     assert value["operation"] == "organizer_plan" and value["state"] == "planned" and value["notes"] == []
+    assert value["note_terms"] == ["memory branch", "reader"]
     assert Path(value["plan_path"]).exists()
 
 
@@ -655,7 +671,7 @@ def test_note_context_never_becomes_support_quotes(workspace, tmp_path, monkeypa
         return original(source, note)
     monkeypatch.setattr(dream_notes.SessionSource, "write_note", write)
     write_notes(workspace, tmp_path)
-    plan = organizer.plan(workspace[2], "sample", "dream-memory", now=NOW, **AREA)
+    plan = organizer.plan(workspace[2], "sample", "dream-memory", now=NOW, terms=AREA_TERMS, **AREA)
     source = dream.GitSource(workspace[2], "sample", time.monotonic() + 30)
     fd = os.open(Path(plan["plan_path"]).parent, os.O_RDONLY | os.O_DIRECTORY)
     try:
@@ -718,9 +734,9 @@ def pinned_plan(workspace, monkeypatch, version):
     return path
 
 
-def check_pinned_replay(workspace, monkeypatch, version, run_id, assignments, receipt):
+def check_pinned_replay(workspace, monkeypatch, version, run_id, assignments, receipt, move=legacy_move):
     path = pinned_plan(workspace, monkeypatch, version)
-    author = Seat("claude-fixture-1", propose=lambda inputs: dict(legacy_move(inputs), moves=[]), repair=legacy_move)
+    author = Seat("claude-fixture-1", propose=lambda inputs: dict(move(inputs), moves=[]), repair=move)
     cross = Seat("codex-fixture-1")
     result = execute(workspace, dict(plan_path=path), author, cross)
     assert result["run_id"] == run_id
@@ -772,6 +788,22 @@ def test_pinned_v4_replay(workspace, monkeypatch):
             "1820ee37b0102c09679fee21f9e5dff1cc8285d0e6f8092d20e6b30f1bff5b4c",
             "49502f00ade3b1421c0be39d62697d904e0d6e50333dac1f9d35fff3207ec322"],
         "9dc86cdae07491732c30a2dc8d8e7e5586300b636fedd8cef2e7ac7a9c043cfc")
+
+
+def test_pinned_v5_replay(workspace, monkeypatch):
+    """Plan and canonical assignment/receipt digests captured with 8264f6e and fake transports."""
+    def move(inputs):
+        value = legacy_move(inputs)
+        del value["changes"][0]["before_sha256"]
+        return value
+
+    check_pinned_replay(workspace, monkeypatch, "v5",
+        "f6b82e1a504d654aad08cc0dfe7465512e2b8b38c4ac9cc79cbeb12a31681b71", [
+            "61e72f4de14fc2d1085ee35a71f8f99b21d37bd1816360c3e5dc7a6569090352",
+            "c8dee3135f8da03d07f97507771eb81ed5a883aabaa54505689d77b5f3302d54",
+            "7bfd92f1304f9db16c302f86190a690803a33c504ca2dd10c7fdca4967fb057a",
+            "58a036f1e438430d0b37d11d3141781714e622fdf8875ba9686e5276e831d32f"],
+        "55ad5718e26f6469e0fe34046a510b6c86482b5cae4d9dc0c2f0c00e09197497", move)
 
 
 def test_v4_rejects_wrong_frozen_digest(workspace, monkeypatch):
@@ -833,7 +865,7 @@ def test_move_with_64_distinct_handles_and_repeated_receipt_evidence(workspace, 
     author, cross = Seat("claude-fixture-1", propose=move), Seat("codex-fixture-1")
     result = execute(workspace, plan, author, cross)
     for task in author.calls + cross.calls:
-        assert task["contract"] == task["input"]["contract"] == "wiki-organizer-v5"
+        assert task["contract"] == task["input"]["contract"] == "wiki-organizer-v6"
         for row in task["input"]["support"]:
             assert set(row) == {"handle", "path", "target", "evidence_status", "unit"}
             assert row["unit"] == dict(kind="git", path="README.org", lines=[2, 3])
@@ -858,8 +890,8 @@ def test_unaccepted_v2_cross_review_establishes_no_support_or_area(workspace, mo
     assert later["support"] == first["support"] and later["areas"] == first["areas"]
 
 
-@pytest.mark.parametrize("contract", ["wiki-organizer-v3", "wiki-organizer-v4"])
-def test_v5_plan_inherits_intermediate_organizer_receipts(workspace, monkeypatch, contract):
+@pytest.mark.parametrize("contract", ["wiki-organizer-v3", "wiki-organizer-v4", "wiki-organizer-v5"])
+def test_v6_plan_inherits_intermediate_organizer_receipts(workspace, monkeypatch, contract):
     project = legacy_history(workspace, monkeypatch)
     first = organizer.plan(workspace[2], "sample", "dream-memory", project=project)
     citation = dict(unit=first["support"][0]["unit"], byte_start=20, byte_end=21)
@@ -887,7 +919,7 @@ def test_support_byte_cap_in_planning_and_replay(workspace, monkeypatch, count):
     assert 64 * 1024 < size <= plan["limits"]["max_support_bytes"] == 256 * 1024
     with organizer._job(config, plan["plan_path"]) as (fd, _):
         source = organizer._source(config, plan, time.monotonic() + 30)
-        monkeypatch.setitem(organizer.LIMITS_V5, "max_support_bytes", 0)
+        monkeypatch.setitem(organizer.LIMITS_V6, "max_support_bytes", 0)
         data = organizer.frozen(source, plan, fd)
         assert data.support == plan["support"]
         with pytest.raises(dream.DreamError, match="max_support_bytes"):
@@ -898,35 +930,58 @@ def test_support_byte_cap_in_planning_and_replay(workspace, monkeypatch, count):
             organizer.frozen(source, plan, fd)
 
 
-def test_note_admission_and_replay_use_the_frozen_byte_cap(workspace, tmp_path, monkeypatch):
+def test_note_selection_packs_delivered_bytes_by_score_and_recency(workspace, tmp_path, monkeypatch):
     config = workspace[2]
     seed(workspace)
-    original = dream_notes.SessionSource.write_note
-    dates = iter(["2026-11-24T12:00:00Z", "2026-11-25T12:00:00Z"])
+    def older(note):
+        fact = note["items"][1]
+        note["items"] = [dict(fact, text=text) for text in (
+            "Memory branch reader. " * 60, "Memory branch reader.", "Reader jobs. reader reader.", "A proofreader.")]
+    def newer(note):
+        note["written_at"] = "2026-11-26T12:00:00.01Z"
+        note["items"] = [dict(note["items"][1], text="reader-v5")]
 
-    def large_note(source, note):
-        note["written_at"] = next(dates)
-        note["items"] = [dict(note["items"][1], text="Evidence. " * 150 + str(i)) for i in range(90)]
-        return original(source, note)
+    old = write_notes(workspace, tmp_path, older)
+    new = write_notes(workspace, tmp_path, newer)
+    def plan():
+        return organizer.plan(config, "sample", "dream-memory", now=NOW, terms=["reader", "memory branch"], **AREA)
 
-    monkeypatch.setattr(dream_notes.SessionSource, "write_note", large_note)
-    first, second = [write_notes(workspace, tmp_path) for _ in range(2)]
-    plan = organizer.plan(config, "sample", "dream-memory", now=NOW, **AREA)
-    assert plan["contract"] == "wiki-organizer-plan-v5"
-    assert plan["limits"]["max_note_bytes"] == 256 * 1024
-    assert plan["limits"]["max_consolidation_bytes"] == 768 * 1024
-    assert [n["note_id"] for n in plan["notes"]] == [first]
-    assert plan["notes_omitted"] == [dict(note_id=second, reason="max_note_bytes")]
-    with organizer._job(config, plan["plan_path"]) as (fd, directory):
-        source = organizer._source(config, plan, time.monotonic() + 30)
-        selected, omitted = organizer._notes(config, source, plan["base_commit"], IDENTITY, organizer.LIMITS["max_note_bytes"])
-        assert selected == [] and [n["note_id"] for n in omitted] == [first, second]
-        size = len(dream.canonical(json.loads((directory / ("note-" + first + ".json")).read_bytes())["note"]))
-        assert 64 * 1024 < size <= 256 * 1024
-        monkeypatch.setitem(organizer.LIMITS_V5, "max_note_bytes", 0)
+    all_items = plan()
+    with organizer._job(config, all_items["plan_path"]) as (fd, _):
+        source = organizer._source(config, all_items, time.monotonic() + 30)
+        units = organizer.frozen(source, all_items, fd).units
+    sizes = {key: len(dream.canonical(unit)) for key, unit in units.items() if unit["kind"] == "session-note"}
+    cap = sizes["note:" + old + ":1"] + sizes["note:" + new + ":0"]
+    monkeypatch.setitem(organizer.LIMITS_V6, "max_note_bytes", cap)
+    packed = plan()
+    assert [(n["note_id"], n["items"]) for n in packed["notes"]] == [(old, [1]), (new, [0])]
+    assert packed["notes_omitted"] == [dict(note_id=old, absorbed=[], unmatched=[3], max_note_bytes=[0, 2])]
+    assert packed["note_selection"] == dict(candidates=5, delivered=2, unmatched=1, absorbed=0, max_note_bytes=2)
+    # With space for just one, the older two-term item wins over the newer single-term item.
+    monkeypatch.setitem(organizer.LIMITS_V6, "max_note_bytes", sizes["note:" + old + ":1"])
+    one = plan()
+    assert [(n["note_id"], n["items"]) for n in one["notes"]] == [(old, [1])]
+    assert sorted(p.name for p in Path(one["plan_path"]).parent.glob("note-*.json")) == ["note-" + old + ".json"]
+    with organizer._job(config, packed["plan_path"]) as (fd, _):
+        organizer.frozen(source, packed, fd)  # Uses the stored cap.
+        packed["limits"]["max_note_bytes"] -= 1
+        with pytest.raises(dream.DreamError, match="max_note_bytes") as error:
+            organizer.frozen(source, packed, fd)
+        assert error.value.exit_code == 3
+
+
+def test_v5_frozen_notes_use_whole_note_cap(organized):
+    workspace, plan, _, note_id = organized
+    # The same private copy used in a v5 plan delivers all items and counts the whole note.
+    plan["contract"] = organizer.PLAN_CONTRACT_V5
+    del plan["notes"][0]["items"]
+    with organizer._job(workspace[2], plan["plan_path"]) as (fd, directory):
+        source = organizer._source(workspace[2], plan, time.monotonic() + 30)
+        raw = json.loads((directory / ("note-" + note_id + ".json")).read_bytes())
+        plan["limits"]["max_note_bytes"] = len(dream.canonical(raw["note"]))
         data = organizer.frozen(source, plan, fd)
-        assert len([u for u in data.units.values() if u["kind"] == "session-note"]) == 90
-        plan["limits"]["max_note_bytes"] = size - 1
+        assert len([u for u in data.units.values() if u["kind"] == "session-note"]) == 4
+        plan["limits"]["max_note_bytes"] -= 1
         with pytest.raises(dream.DreamError, match="max_note_bytes"):
             organizer.frozen(source, plan, fd)
 
@@ -1095,7 +1150,7 @@ def test_index_budget_counts_only_generated_prefix_and_keeps_subtrees(workspace,
     size = len(prefix.encode())
     for cap in (size - 1, size):
         small = replace(config, mirrors=dict(sample=replace(mirror, dream=replace(mirror.dream or config.dream, inject_bytes=cap))))
-        plan = organizer.plan(small, "sample", "dream-memory", now=NOW, **AREA)
+        plan = organizer.plan(small, "sample", "dream-memory", now=NOW, terms=AREA_TERMS, **AREA)
         if cap < size:
             with pytest.raises(dream.DreamError, match="over dream.inject_bytes"):
                 execute(workspace, plan)
@@ -1114,10 +1169,154 @@ def test_index_budget_counts_only_generated_prefix_and_keeps_subtrees(workspace,
 def test_run_enforces_frozen_plan_caps(organized, monkeypatch, limit, cap, message, roles):
     workspace, _, base, _ = organized
     with monkeypatch.context() as patch:
-        patch.setitem(organizer.LIMITS_V5, limit, cap)
-        plan = organizer.plan(workspace[2], "sample", "dream-memory", now=NOW, **AREA)
+        patch.setitem(organizer.LIMITS_V6, limit, cap)
+        plan = organizer.plan(workspace[2], "sample", "dream-memory", now=NOW, terms=AREA_TERMS, **AREA)
     author, cross = Seat("claude-fixture-1"), Seat("codex-fixture-1", reject=True)
     with pytest.raises(dream.DreamError, match=message):
         execute(workspace, plan, author, cross)
     assert [t["role"] for t in author.calls + cross.calls] == roles
     assert git(workspace[0], "rev-parse", MEMORY) == base
+
+
+def test_support_absorption_expires_with_section_text_but_corrections_persist(organized):
+    workspace, plan, _, note_id = organized
+    repo, _, config, _ = workspace
+    execute(workspace, plan)
+    later = organizer.plan(config, "sample", "dream-memory", now=NOW, terms=AREA_TERMS)
+    assert later["notes"][0]["items"] == [1]
+    assert later["notes_omitted"] == [dict(note_id=note_id, absorbed=[0, 2], unmatched=[3], max_note_bytes=[])]
+    with organizer._job(config, later["plan_path"]) as (fd, _):
+        source = organizer._source(config, later, time.monotonic() + 30)
+        later["notes"][0]["items"].append(2)
+        with pytest.raises(dream.DreamError, match="absorbed") as error:
+            organizer.frozen(source, later, fd)
+        assert error.value.exit_code == 3
+
+    files = {f["path"]: source.blob(f["blob"]).decode() for f in later["prior_wiki"]["files"]}
+    files[HUB] = files[HUB].replace("may read whole sessions.", "may read entire sessions.")
+    files[LAUNCH] = files[LAUNCH].replace("2048 bytes by default.", "2048 bytes in the pilot.")
+    git(repo, "update-ref", MEMORY, tree_commit(repo, files, later["base_commit"]))
+    edited = organizer.plan(config, "sample", "dream-memory", now=NOW, terms=AREA_TERMS)
+    assert all(row["unit"].get("note_id") != note_id for row in edited["support"])
+    assert edited["notes"][0]["items"] == [1, 2]
+    assert edited["notes_omitted"] == [dict(note_id=note_id, absorbed=[0], unmatched=[3], max_note_bytes=[])]
+    with organizer._job(config, edited["plan_path"]) as (fd, _):
+        edited["notes"][0]["items"].insert(0, 0)
+        with pytest.raises(dream.DreamError, match="absorbed") as error:
+            organizer.frozen(source, edited, fd)
+        assert error.value.exit_code == 3
+
+
+@pytest.mark.parametrize("contract,accepted,absorbed", [
+    ("wiki-organizer-v1", True, True), ("wiki-organizer-v5", False, False), ("other", True, False)])
+def test_only_accepted_organizer_dispositions_absorb_declined_corrections(organized, contract, accepted, absorbed):
+    workspace, plan, _, note_id = organized
+    repo, _, config, _ = workspace
+    source = organizer._source(config, plan, time.monotonic() + 30)
+    files = {f["path"]: source.blob(f["blob"]).decode() for f in plan["prior_wiki"]["files"]}
+    receipt = dict(contract=contract, repository_uuid=IDENTITY, review=dict(verdict="accept"),
+                   cross_review=dict(verdict="accept" if accepted else "revise"),
+                   corrections=[dict(note_id=note_id, item=0, disposition="declined",
+                                     path=LAUNCH, target="index-size", reason="Insufficient evidence.")])
+    files[W + "receipts/" + "2" * 64 + ".json"] = dream.canonical(receipt).decode()
+    git(repo, "update-ref", MEMORY, tree_commit(repo, files, plan["base_commit"]))
+    later = organizer.plan(config, "sample", "dream-memory", now=NOW, terms=AREA_TERMS, **AREA)
+    assert later["notes_omitted"][0]["absorbed"] == ([0] if absorbed else [])
+    assert (0 in later["notes"][0]["items"]) != absorbed
+
+
+def test_note_terms_match_delivered_fields(workspace, tmp_path):
+    config = workspace[2]
+    seed(workspace)
+    def update(note):
+        correction, fact, decision = note["items"]
+        note["contract"] = "session-note-v2"
+        for item in note["items"]:
+            item["citations"][0]["role"] = "support"
+        # Only the target, support quote and command, respectively, match.
+        note["items"] = [dict(correction, text="Index correction."), fact,
+                         dict(fact, kind="command", command="git READ-TREE", outcome="worked",
+                              citations=correction["citations"]), decision]
+        decision["citations"].append(dict(decision["citations"][0], quote="read-tree", role="context"))
+    write_notes(workspace, tmp_path, update)
+    plan = organizer.plan(config, "sample", "dream-memory", terms=["dream-launch", "admits claude", "read-tree"], **AREA)
+    assert plan["notes"][0]["items"] == [0, 1, 2]
+    assert plan["notes_omitted"][0]["unmatched"] == [3]
+
+
+def test_area_derives_terms_and_requires_valid_explicit_overrides(workspace):
+    seed(workspace)
+    def plan(**kwargs):
+        return organizer.plan(workspace[2], "sample", "dream-memory", group="Group", now=NOW,
+                              title="Reader with Memory", summary="Which jobs, after 2026?", **kwargs)
+    assert plan()["note_terms"] == ["2026", "dream", "jobs", "memory", "reader"]
+    assert plan(terms=["reader-v5", "a.b_2/x", "memory branch", "reader-v5"])["note_terms"] == [
+        "a.b_2/x", "memory branch", "reader-v5"]
+    for term in ("Reader", "x", "x" * 41, "read*", " a", "  ", "bad\nterm"):
+        with pytest.raises(dream.DreamError) as error:
+            plan(terms=[term])
+        assert repr(term) in str(error.value) and error.value.exit_code == 3
+    with pytest.raises(dream.DreamError, match="32 distinct.*t32"):
+        plan(terms=["t%02d" % i for i in range(33)])
+    with pytest.raises(dream.DreamError, match="supply --term"):
+        organizer.plan(workspace[2], "sample", "io", title="IO", summary="Only IO", group="Group")
+    words = ["word%02d" % i for i in range(40)]
+    assert organizer._note_terms(dict(id="a", title="x", summary=" ".join(reversed(words))), None) == words[:32]
+
+
+@pytest.mark.parametrize("items,reason", [([1, 1], "Duplicate"), ([4], "out of range"), ([-1], "out of range"),
+                                          ([False], "out of range")])
+def test_frozen_refuses_invalid_item_numbers(organized, items, reason):
+    workspace, plan, _, _ = organized
+    with organizer._job(workspace[2], plan["plan_path"]) as (fd, _):
+        source = organizer._source(workspace[2], plan, time.monotonic() + 30)
+        plan["notes"][0]["items"] = items
+        with pytest.raises(dream.DreamError, match=reason) as error:
+            organizer.frozen(source, plan, fd)
+        assert error.value.exit_code == 3
+
+
+def test_role_cannot_cite_omitted_item_of_delivered_note(organized):
+    workspace, plan, _, note_id = organized
+    def cite_missing(inputs):
+        value = proposal(inputs)
+        value["references"][0]["citations"] = [dict(unit_id="note:" + note_id + ":3", quote="proofreader")]
+        return value
+    with pytest.raises(dream.DreamError, match="citation names an undelivered unit"):
+        execute(workspace, plan, Seat("claude-fixture-1", propose=cite_missing))
+
+
+def test_tied_scores_and_instants_pack_by_note_id_then_item(workspace, tmp_path, monkeypatch):
+    config = workspace[2]
+    seed(workspace)
+    def pair(note):
+        note["items"] = [dict(note["items"][1], text="Reader jobs.") for _ in range(2)]
+    def other(note):
+        pair(note)
+        note["reader"]["model"] = "other-reader"
+    ids = sorted(write_notes(workspace, tmp_path, update) for update in (pair, other))
+    def plan():
+        return organizer.plan(config, "sample", "dream-memory", terms=["reader"], **AREA)
+    first = plan()
+    with organizer._job(config, first["plan_path"]) as (fd, _):
+        source = organizer._source(config, first, time.monotonic() + 30)
+        unit = organizer.frozen(source, first, fd).units["note:" + ids[0] + ":0"]
+    monkeypatch.setitem(organizer.LIMITS_V6, "max_note_bytes", len(dream.canonical(unit)))
+    limited = plan()
+    assert [(n["note_id"], n["items"]) for n in limited["notes"]] == [(ids[0], [0])]
+    assert [(n["note_id"], n["max_note_bytes"]) for n in limited["notes_omitted"]] == [(ids[0], [1]), (ids[1], [0, 1])]
+
+
+def test_frozen_refuses_absorbed_item_from_wholly_omitted_note(organized):
+    workspace, plan, _, note_id = organized
+    config = workspace[2]
+    execute(workspace, plan)
+    later = organizer.plan(config, "sample", "dream-memory", terms=["readers"])
+    assert later["notes"] == []
+    with organizer._job(config, later["plan_path"]) as (fd, directory):
+        assert not (directory / ("note-" + note_id + ".json")).exists()
+        later["notes"].append(dict(plan["notes"][0], items=[2]))
+        source = organizer._source(config, later, time.monotonic() + 30)
+        with pytest.raises(dream.DreamError, match="absorbed") as error:
+            organizer.frozen(source, later, fd)
+        assert error.value.exit_code == 3

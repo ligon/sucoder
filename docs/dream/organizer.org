@@ -43,10 +43,9 @@ Planning freezes every input; running reads only what the plan names and checks 
 - Receipt history :: Every receipt file under =.sucoder/wiki/receipts/= at the base, with the commit that added it.
   Receipts removed by a withdrawal are no longer in the tree and so are not history.
   More than 256 receipts or 4 MiB of receipts refuses planning, because a partial history cannot prove that support survives.
-- Session notes :: The accepted notes of the private store, =Store.for_repository(...).sources()= then =notes(accepted_only=True)= (=sucoder/dream_notes.py:659=), oldest first, up to =max_note_bytes= (64 KiB).
-  Planning copies each note and its review into the job directory, so readers' later progress never changes a frozen job.
-  Notes beyond the allowance are listed as omitted with their identities.
-  A store that does not exist yet means no notes; the organizer first runs before any reader does.
+- Session notes :: Planning reads accepted notes from the private store. [[#organizer-inputs-v2][Version 2]] raised =max_note_bytes= from 64 to 256 KiB. [[#organizer-notes-v6][Version 6]] spends that allowance on individual items selected for the area.
+  The job directory holds a copy of each selected note and its review. Later reader progress cannot change a frozen job.
+  Planning works with an empty selection before the first reader has written a note.
 - README and docs headings :: The heading lines (=^\*+ =) of =README.org= and every =docs/**.org= at the project commit (default the mirror's =HEAD=), up to =max_heading_bytes= (48 KiB), each with its line number and byte range in the blob.
   Files beyond the allowance are listed as omitted.
   The project's regular files are frozen too (=dream.project_files=), so a hub may link any of them.
@@ -448,3 +447,45 @@ repairs and ended before the second review.
   elapsed allowance. History reads support and area records from accepted
   organizer receipts through v5. Stored v1-v4 plans retain their own limits,
   digest checks, assignments, run identities and receipt bytes.
+
+* Version 6 (2026-11-28): item-level note selection per area
+:PROPERTIES:
+:CUSTOM_ID: organizer-notes-v6
+:END:
+
+The first published v5 run for one area received 308 note items and cited
+nine. Every later area would receive those items again. Once the 256 KiB
+allowance filled, taking whole notes oldest first would leave out newer
+evidence. Version 6 freezes a selection of individual items for each area.
+
+- An item is absorbed while any current section has receipt-backed support
+  from it, including inherited support. If the section's own text changes
+  and no other current section cites the item, it becomes eligible again.
+  An applied or declined correction in an accepted organizer receipt at the
+  base also absorbs the item. Its disposition survives later section edits.
+- Repeat =--term= to supply the area's terms, for example
+  =--term reader --term "memory branch"=. The plan freezes 1 to 32 distinct terms in
+  sorted order. Each term has 2 to 40 lowercase ASCII letters, digits,
+  spaces, periods, underscores, slashes or hyphens. Spaces go inside a term.
+  By default the coordinator takes lowercase words of 4 to 40 characters
+  from the area ID, title and summary, drops common stopwords and keeps
+  the first 32 distinct words in alphabetical order. An area with no such
+  words needs an explicit term.
+- Each distinct matching term scores one point. Matching ignores case
+  and can start anywhere except immediately after an ASCII letter or digit.
+  It checks item text, delivered support quotes, correction targets and
+  command fields. Zero-score items stay in the store. Higher scores pack
+  first, then newer notes, then ascending note ID and zero-based item number.
+- The 256 KiB allowance counts the canonical bytes of each delivered unit,
+  including its metadata and support quotes. If an item exceeds the remaining
+  bytes, packing continues with the next one. Only notes with delivered
+  items are copied. The plan and receipt list their item numbers. The plan
+  also groups omissions by note and reason (=absorbed=, =unmatched= or
+  =max_note_bytes=); the receipt and the organizer's input carry only the
+  counts, so published receipts do not grow with the store. Status reports
+  the same counts.
+- =wiki-organizer-plan-v6= selects =wiki-organizer-v6= with the v5 review
+  rules and budgets. Replay checks selected item numbers, absorption and
+  byte usage against the frozen history and private copies. Stored v1-v5
+  plans replay with their original plan bytes, run identities, role
+  assignment digests and receipt digests.

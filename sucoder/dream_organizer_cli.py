@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import typer
 
@@ -24,12 +24,13 @@ def plan(
     group: Optional[str] = typer.Option(None, "--group", help="Index group heading for the area; required the first time."),
     summary: Optional[str] = typer.Option(None, "--summary", help="One-line index summary; required the first time."),
     project: str = typer.Option("HEAD", "--project", help="Project revision whose README.org and docs/ headings are admitted."),
+    term: Optional[List[str]] = typer.Option(None, "--term", help="Area term for session-note items. Repeat to override the derived terms."),
     no_notes: bool = typer.Option(False, "--no-notes", help="Do not admit accepted session notes from the private store."),
 ):
     """Freeze an organizer job without model calls or git writes, and print it as JSON."""
     from . import dream_organizer
     _data(ctx, "organizer_plan", dream_organizer.plan, mirror, area, title=title, group=group, summary=summary,
-          project=project, notes=not no_notes)
+          project=project, notes=not no_notes, terms=term or None)
 
 
 @app.command("run")
