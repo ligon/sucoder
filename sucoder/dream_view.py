@@ -20,6 +20,7 @@ import time
 
 from .dream import DreamError, _chunks, _json, _object, _text, canonical, digest
 from . import dream_transcript
+from .messaging import begins_with_frame
 
 KIND = "claude-view"
 # Each version is frozen as issued so saved plans, receipts and evidence handles
@@ -29,8 +30,10 @@ KIND = "claude-view"
 # with the PATTERNS_V3 family below, before clipping it.
 CONTRACT_V1 = "claude-view-v1"
 CONTRACT_V2 = "claude-view-v2"
-CONTRACT = "claude-view-v3"
-CONTRACTS = (CONTRACT_V1, CONTRACT_V2, CONTRACT)
+CONTRACT_V3 = "claude-view-v3"
+CONTRACT_V4 = "claude-view-v4"  # Typed peer messages have agent origin.
+CONTRACT = CONTRACT_V4
+CONTRACTS = (CONTRACT_V1, CONTRACT_V2, CONTRACT_V3, CONTRACT_V4)
 LEGACY = (CONTRACT_V1, CONTRACT_V2)
 MAX_RAW_BYTES = 16 * 1024 * 1024
 TOOL_HEAD, TOOL_TAIL, CALL_LIMIT = 240, 120, 300
@@ -167,7 +170,7 @@ def _contract(contract):
 
 
 def _blocks(entry, offset, contract=CONTRACT_V1):
-    return _blocks_v1(entry, offset, contract) if contract in LEGACY else _blocks_v3(entry, offset)
+    return _blocks_v1(entry, offset, contract) if contract in LEGACY else _blocks_v3(entry, offset, contract)
 
 
 # Claude Code appends these to user turns; their text is the harness's, not the human's.
@@ -196,8 +199,8 @@ def _user_origin(entry, text):
     return "unattributed", ""
 
 
-def _blocks_v3(entry, offset):
-    """Version 3 blocks: origin per block, and whole bodies redacted before clipping."""
+def _blocks_v3(entry, offset, contract=CONTRACT_V3):
+    """Origin and redaction for v3 and v4, including relay attribution in v4."""
     events, provenance = dream_transcript._claude(entry)
     sidechain = bool(provenance.get("sidechain"))
     side = "SIDECHAIN " if sidechain else ""
@@ -214,6 +217,8 @@ def _blocks_v3(entry, offset):
                     pieces.append(("HARNESS " + kind, role, "harness", text, None))
                 else:
                     label = "USER" if origin == "human" else "USER (origin not recorded)"
+                    if contract == CONTRACT_V4 and begins_with_frame(text):
+                        origin, label = "agent", "AGENT (sucoder relay)"
                     at = 0
                     for match in REMINDER.finditer(text):
                         pieces.append((label, role, origin, text[at:match.start()], None))
@@ -234,9 +239,9 @@ def _blocks_v3(entry, offset):
         else:
             continue  # Thinking, metadata and unknown records carry no conversation text.
         for label, role, origin, text, clip in pieces:
-            body, redactions = redact(text, CONTRACT)
+            body, redactions = redact(text, contract)
             if clip is not None:
-                body = _clip(body, clip[0], clip[1], CONTRACT)
+                body = _clip(body, clip[0], clip[1], contract)
             if body.strip():
                 yield dict(offset=offset, label=side + label, role=role, sidechain=sidechain,
                            summary=bool(provenance.get("summary")) or event == "summary", origin=origin,
@@ -269,8 +274,11 @@ def _blocks_v1(entry, offset, contract):
                        summary=bool(provenance.get("summary")) or event == "summary", body=body.strip("\n"))
 
 
-def render(raw, thread_id, byte_start, contract=CONTRACT_V1):
+def render(raw, thread_id, byte_start, contract=CONTRACT_V1, *, binding=None):
     """Deterministic text and map for a complete-line raw window under one rendering contract."""
+    from . import dream_codex_view
+    if contract == dream_codex_view.CONTRACT:
+        return dream_codex_view.render(raw, thread_id, byte_start, binding)
     _contract(contract)
     if not raw or not raw.endswith(b"\n"):
         raise DreamError("Rendering requires a nonempty complete-line window")
@@ -287,7 +295,11 @@ def render(raw, thread_id, byte_start, contract=CONTRACT_V1):
         offset += len(line)
     if identities != {thread_id}:
         raise DreamError("Session window identity is missing, ambiguous or differs from thread_id", 3)
-    head = ("SESSION " + thread_id + " raw bytes " + str(byte_start) + "-" + str(byte_start + len(raw)) +
+    return _format_window(blocks, dropped, thread_id, byte_start, offset, contract)
+
+
+def _format_window(blocks, dropped, thread_id, byte_start, byte_end, contract):
+    head = ("SESSION " + thread_id + " raw bytes " + str(byte_start) + "-" + str(byte_end) +
             "; " + str(dropped) + " records without conversation text omitted\n\n")
     parts, mapping, redactions, position = [head], [], 0, len(head.encode())
     for block in blocks:

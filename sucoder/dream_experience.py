@@ -9,7 +9,7 @@ sessions only after native cwd/branch/session confirmation. A session counts as
 finished when no live local launch uses it and its file has been quiet for
 ``dream.session_quiet_minutes``. Consumption comes from the receipts already
 on the memory branch, which record each admitted window's raw range.
-Codex discovery is deferred (S3b): managed rollouts live in node-local state.
+Session reader jobs discover Codex rollouts separately in dream_codex_sessions.
 """
 from __future__ import annotations
 

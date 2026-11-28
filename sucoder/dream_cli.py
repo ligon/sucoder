@@ -304,7 +304,8 @@ def ask(
 @app.command("read-session")
 def read_session(
     ctx: typer.Context,
-    session: Optional[str] = typer.Option(None, "--session", help="Finished Claude session id; default: the least recently written finished session with unread bytes."),
+    session: Optional[str] = typer.Option(None, "--session", help="Finished Claude or Codex session id; default: the least recently written finished session with unread bytes."),
+    source: Optional[str] = typer.Option(None, "--source", help="Limit transcript discovery to claude or codex."),
     job_path: Optional[Path] = typer.Option(None, "--job", help="Resume or replay this private reader job with its frozen settings."),
     attempt: int = typer.Option(1, "--attempt", min=1, max=1000000, help="Explicit native attempt within the job's persisted wallet."),
     harness: Optional[str] = typer.Option(None, "--harness", help="Native codex/claude reader and reviewer; otherwise configured defaults."),
@@ -322,7 +323,7 @@ def read_session(
     from . import dream_reader_job
     overrides = dict(harness=harness, model=model, effort=effort, reader_chunk_bytes=chunk_bytes, max_total_seconds=max_total_seconds,
         max_total_calls=max_total_calls, reserve_seconds=reserve_seconds, reserve_calls=reserve_calls)
-    _data_command(ctx, dream_reader_job.OPERATION, dream_reader_job.start, job_path, session=session,
+    _data_command(ctx, dream_reader_job.OPERATION, dream_reader_job.start, job_path, session=session, source=source,
         overrides={key: value for key, value in overrides.items() if value is not None},
         budget_path=budget_path, attempt=attempt, prepare_only=prepare_only)
 # --- End of session reader block ----------------------------------------------

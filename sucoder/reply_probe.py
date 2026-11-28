@@ -65,6 +65,13 @@ class ProbeTimeout(Exception):
 _PASTE_OPEN = re.compile(r"<pasted_content\b[^>]*>")
 
 
+def delivery_text(text):
+    """Skip leading whitespace and at most one opening paste tag."""
+    text = text.lstrip()
+    paste = _PASTE_OPEN.match(text)
+    return text[paste.end():].lstrip() if paste else text
+
+
 def anchored(text, header):
     """Does *text* begin with *header* (the whole ``[message <id> from ...]``)?
 
@@ -75,11 +82,7 @@ def anchored(text, header):
     """
     if not isinstance(text, str) or not header:
         return False
-    s = text.lstrip()
-    m = _PASTE_OPEN.match(s)
-    if m:
-        s = s[m.end():].lstrip()
-    return s.startswith(header)
+    return delivery_text(text).startswith(header)
 
 
 def tagged_reply(text, msg_id):
@@ -605,6 +608,12 @@ def _job_matches(meta, job):
     return isinstance(allocation, dict) and job is not None and str(allocation.get("job")) == str(job)
 
 
+def replica_needs_local(info, durable_path):
+    """Prefer the node copy when the durable replica is missing or behind."""
+    lag = (info.get("local_bytes") or 0) - (info.get("replicated_bytes") or 0)
+    return lag > 0 or not os.path.isfile(durable_path)
+
+
 def managed_codex_threads(codex, floor):
     """Managed Codex (``codex_state_runner``): the runs under
     ``<durable_root>/codex/<scope>/runs/`` whose ``run.json`` names this
@@ -652,9 +661,8 @@ def managed_codex_threads(codex, floor):
             path = durable_path
             info = threads.get(tid) if isinstance(threads, dict) else None
             if isinstance(info, dict) and local_run:
-                lag = (info.get("local_bytes") or 0) - (info.get("replicated_bytes") or 0)
                 local_path = os.path.join(local_run, "home", "sessions", info.get("relative_path") or "")
-                if (lag > 0 or not os.path.isfile(durable_path)) and os.path.isfile(local_path):
+                if replica_needs_local(info, durable_path) and os.path.isfile(local_path):
                     path = local_path
             if not os.path.isfile(path):
                 continue

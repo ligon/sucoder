@@ -178,7 +178,7 @@ def test_inventory_lists_only_this_mirrors_sessions_and_marks_live_and_recent(wo
 # Issue 119: zero-tail clipping in a replay-compatible rendering contract
 # ----------------------------------------------------------------------
 
-V1, V2, V3 = dream_view.CONTRACT_V1, dream_view.CONTRACT_V2, dream_view.CONTRACT
+V1, V2, V3, V4 = dream_view.CONTRACTS
 
 
 def omitted(clipped):
@@ -309,6 +309,26 @@ def test_version_3_records_who_wrote_each_block(tmp_path):
                     ("unattributed", "USER (origin not recorded)"), ("agent", "AGENT"), ("tool", "TOOL RESULT")]
     assert "r" * 2000 not in text and "bytes omitted" in text  # The reminder is clipped like other harness bulk.
     assert dream_view.render(raw, SID, 0, V3) == (text, mapping)
+
+
+@pytest.mark.parametrize("fields, old_origin, old_label", [
+    (dict(origin=dict(kind="human")), "human", "USER"),
+    ({}, "unattributed", "USER (origin not recorded)"),
+    (dict(isMeta=True), "harness", "HARNESS meta"),
+])
+def test_v4_attributes_a_relay_before_splitting_reminders(fields, old_origin, old_label):
+    body = ' \n<pasted_content lines="2">\n[message from Sue via sucoder, now] Keep the timeout.'
+    reminder = "<system-reminder>Review the logs.</system-reminder>"
+    raw = json.dumps(record("user", body + reminder, **fields)).encode() + b"\n"
+    for contract in (V3, V4):
+        text, mapping = dream_view.render(raw, SID, 0, contract)
+        if old_origin == "harness":
+            expected = [(old_origin, old_label, body + reminder)]
+        else:
+            origin, label = (old_origin, old_label) if contract == V3 else ("agent", "AGENT (sucoder relay)")
+            expected = [(origin, label, body), ("harness", "HARNESS system-reminder", reminder)]
+        assert [(b["origin"], text.encode()[b["start"]:b["end"]].decode()) for b in mapping["blocks"]] == [
+            (origin, "[@0] " + label + "\n" + part + "\n\n") for origin, label, part in expected]
 
 
 def test_only_human_text_supports_a_recorded_human_decision_in_version_3(tmp_path):

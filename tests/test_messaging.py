@@ -15,7 +15,7 @@ import subprocess
 import pytest
 
 from sucoder.messaging import (
-    Recipient, capture_pane_command, extract_reply, frame, new_message_id,
+    Recipient, begins_with_frame, capture_pane_command, extract_reply, frame, frame_header, new_message_id,
     pane_tail, parse_send_output, plan_recipients, send_keys_command,
 )
 from sucoder.sessions_report import (
@@ -51,6 +51,22 @@ def test_frame_names_the_sender_and_flattens_to_one_line():
     line = frame("ln001 Lustre is wedged,\n  stop repairing", "ligon@lyn", "2026-09-22 03:00")
     assert line == "[message from ligon@lyn via sucoder, 2026-09-22 03:00] ln001 Lustre is wedged, stop repairing"
     assert "\n" not in line
+
+
+@pytest.mark.parametrize("prefix, msg_id, delivered", [
+    ("", "0123abcd", True), ("", "", True), ("  \t\n", "0123abcd", True),
+    (' \n<pasted_content size="500">\n ', "", True),
+    ("Here is the original:\n", "0123abcd", False),
+    ("<pasted_content><pasted_content>", "", False),
+])
+def test_begins_with_a_delivered_frame(prefix, msg_id, delivered):
+    header = frame_header("Sue at workstation", "2026-11-28 10:00", msg_id)
+    assert begins_with_frame(prefix + header + " Keep the timeout.") is delivered
+
+
+@pytest.mark.parametrize("ending", ["]", ", ]", ", now", ", now\nlater]"])
+def test_incomplete_frame_is_not_a_delivery(ending):
+    assert not begins_with_frame("[message from Sue via sucoder" + ending)
 
 
 # -- the command that types it --------------------------------------------------

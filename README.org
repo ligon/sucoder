@@ -2831,6 +2831,7 @@ A unit without =render_contract= uses =claude-view-v1=; ="render_contract": "cla
 Version 3 also records who wrote each block: text Claude Code marks as typed by the human is =USER=, its system reminders, task notifications, meta records and command echoes are =HARNESS=, and a user-turn record with no recorded origin is =USER (origin not recorded)=.
 Only =USER= text can support a recorded human decision in a version 3 window.
 Version 3 redacts each block whole before clipping it, so a cut cannot leave a credential's tail, and widens the high-confidence patterns (labels after an underscore, cloud and package-registry token shapes, JWTs, bearer tokens, URL credentials and private keys without an END line).
+Version 4 labels a leading =sucoder message= frame in human or unattributed user text as =AGENT (sucoder relay)=. Its words cannot support a human decision.
 Exploratory jobs freeze the version current when they were prepared in their job header and render their session windows with it; jobs prepared before version 2 keep version 1.
 Receipts record the raw range but not the private path; rendered windows require wiki mode.
 For configured local-tier projects, experience discovery also recognizes Claude project directories for earlier =<local_disk>/job<ID>/mirrors/<token>= clones, even after those working directories disappear.
@@ -2967,21 +2968,22 @@ Planning and snapshots remain inference-free; generic harness adapters remain su
 
 ** Reading whole sessions into private notes
 
-=sucoder dream read-session= reads the unread part of one finished Claude session of this mirror into the private session-note store (=<log_dir>/dream-notes/<repository_uuid>/=), never the memory branch, a wiki page or a project file.
+=sucoder dream read-session= reads the unread part of one finished Claude session or Codex user thread of this mirror into the private session-note store (=<log_dir>/dream-notes/<repository_uuid>/=), never the memory branch, a wiki page or a project file.
 It is milestone R1 of the [[file:docs/dream/read-and-organize.org][reading-and-organizing design]]; [[file:docs/dream/session-reader.org][the session reader specification]] gives its contracts, checks and limits.
-The job cuts the session's =claude-view-v3= rendering into turn-aligned chunks of at most =dream.reader_chunk_bytes= rendered bytes (default 131072, from 1024 to 1048576), asks the native reader for cited items chunk by chunk with earlier items carried forward, and has an independent reviewer check the note.
-Before anything is written it checks each quote against the admitted rendering, each citation's origin against the v3 map, that a human decision's support cites only the human's own words, and that a =worked= or =failed= command outcome cites tool output.
-New jobs freeze reader contract =session-reader-v4=: kind-specific fields an item's kind does not use (=by=, =command=, =outcome=, =target=) are blanked first, an item that fails a check is dropped, never stored, carried or reviewed, and recorded with its reason in the job directory (=dropped-*.json=), and the result counts accepted and dropped items per chunk.
+The job cuts the session's =claude-view-v4= or =codex-view-v1= rendering into turn-aligned chunks of at most =dream.reader_chunk_bytes= rendered bytes (default 131072, from 1024 to 1048576), asks the native reader for cited items chunk by chunk with earlier items carried forward, and has an independent reviewer check the note.
+Before anything is written it checks each quote against the admitted rendering, each citation's origin against the render map, that a human decision's support cites only the human's own words, and that a =worked= or =failed= command outcome cites tool output.
+New jobs freeze reader contract =session-reader-v5=: kind-specific fields an item's kind does not use (=by=, =command=, =outcome=, =target=) are blanked first, an item that fails a check is dropped, never stored, carried or reviewed, and recorded with its reason in the job directory (=dropped-*.json=), and the result counts accepted and dropped items per chunk.
 If more than half of a chunk's items, or all of them, are dropped, the job stops and the store is unchanged.
 The reviewer must judge every item exactly once as supported, overstated or unsupported; only supported items enter the stored note, in their original order with new indices.
 Review removals and findings are durable in =review-items-*.json=, and the result counts reviewed, kept and removed items.
 An overall rejection, more than half removed, or no supported item rejects the note before any note or coverage reaches the store.
-Saved v1 jobs (including headers without a reader contract) and v2/v3 jobs retain their original behavior and role contracts.
+Saved v1 jobs (including headers without a reader contract) and v2/v3/v4 jobs retain their original behavior and role contracts.
 Coverage, the note and its review are written under the source's lease, so a second reader of the same session is refused as busy, and a later read covers only ranges no reader has covered.
 Only finished sessions are read; =dream.reader_exclude_sessions= lists quoted session ids or prefixes of at least eight lowercase hexadecimal characters that are never read (SuCoder lists =dcdc7362=, which holds its evaluation development set).
+Use =--source claude= or =--source codex= to limit transcript discovery. =--harness= chooses the native reader and reviewer harness.
 Without =--session= the least recently written finished session with unread bytes is chosen.
 The job uses a durable wallet from the =dream= limits or the matching options; preparation refuses a wallet without room for every reader call plus a review, and freezes a per-model estimate.
-Reader v4 uses =session-reader-roles-v4= and writes =session-note-v2=.
+Readers v4 and v5 use =session-reader-roles-v4= and write =session-note-v2=.
 Every citation has role =support= or =context=. Only a human decision may
 add one main-thread agent context citation showing what the human answered;
 context never supplies support and is excluded from organizer support quotes.
@@ -3000,7 +3002,7 @@ Resuming a job uses its frozen choice. Claude rejects an explicit effort.
 #+begin_example
 sucoder dream read-session --prepare-only
 sucoder dream read-session --harness codex --model gpt-6.2-astra --effort high --prepare-only
-sucoder dream read-session --session SESSION_ID --max-total-calls 24
+sucoder dream read-session --source codex --session THREAD_ID --max-total-calls 24
 sucoder dream read-session --job JOB_ID
 #+end_example
 

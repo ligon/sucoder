@@ -39,6 +39,7 @@ from typing import List, Optional, Tuple
 
 from .sessions_report import LoginSession, Report, SessionEntry, job_tmux_command
 from .agent_mode import CODEX_REMOTE_CONTROL, TERMINAL
+from .reply_probe import delivery_text
 
 # Between the text and the Enter that submits it.  A burst of typed
 # characters followed by an immediate Enter can reach a TUI's input loop
@@ -62,6 +63,21 @@ def frame_header(sender: str, when: str, msg_id: str = "") -> str:
     count it (an embedded copy after other text does not)."""
     tag = f"message {msg_id} from" if msg_id else "message from"
     return f"[{tag} {sender} via sucoder, {when}]"
+
+
+_FRAME_HEADER = re.compile(r"\[message (?:[^\s\[\]]+ )?from [^\s\[\]][^\[\]\r\n]*?"
+                           r" via sucoder, [^\s\[\]][^\[\]\r\n]*\]")
+
+
+def begins_with_frame(text: str) -> bool:
+    """Recognize either frame_header form at the start of a delivered message."""
+    if not isinstance(text, str):
+        return False
+    text = delivery_text(text)
+    if not text.startswith("[message "):
+        return False
+    end = text.find("]")
+    return end >= 0 and _FRAME_HEADER.fullmatch(text, 0, end + 1) is not None
 
 
 def frame(text: str, sender: str, when: str, msg_id: str = "") -> str:

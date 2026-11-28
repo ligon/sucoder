@@ -257,7 +257,7 @@ def write_long_call_session(home, repo):
     return path
 
 
-@pytest.mark.parametrize("contract", [dream_view.CONTRACT_V1, dream_view.CONTRACT_V2, dream_view.CONTRACT])
+@pytest.mark.parametrize("contract", dream_view.CONTRACTS)
 def test_jobs_freeze_their_rendering_contract_and_replay_under_it(workspace, clock, no_live, monkeypatch, contract):
     planned(workspace)
     repo, _, config, _ = workspace
