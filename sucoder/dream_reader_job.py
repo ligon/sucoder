@@ -1,8 +1,8 @@
-"""Read one finished Claude session into the private session-note store.
+"""Read one finished Claude or Codex session into the private session-note store.
 
 Milestone R1 of the reader track (docs/dream/session-reader.org; the design is
 docs/dream/read-and-organize.org, Read). A job freezes the uncovered,
-turn-aligned claude-view-v3 chunks of one finished session, asks a native
+turn-aligned rendered chunks of one finished session, asks a native
 reader for cited items chunk by chunk with earlier items carried forward,
 checks every quote and origin against the admitted rendering, has an
 independent reviewer check the note, and writes coverage, note and review to
@@ -14,9 +14,10 @@ reader_contract) the first item that fails a check rejects the whole note.
 Under session-reader-v2 kind fields the kind does not use are blanked first,
 a failing item is dropped and recorded in the job directory, and only a chunk
 that loses more than half of its items, or all of them, rejects the note.
-Version 4 adds per-model estimates and one agent context citation for human decisions.
 Version 3 additionally removes items not supported by independent per-item
 review, before saving the note, and freezes a pilot-calibrated estimate.
+Version 4 adds per-model estimates and one agent context citation for human decisions.
+Version 5 freezes the source harness and adds the Codex rollout rendering.
 """
 from __future__ import annotations
 
@@ -24,6 +25,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
 import copy
+import io
 import os
 from pathlib import Path
 import re
@@ -31,8 +33,9 @@ import stat
 import time
 import uuid
 
-from . import (dream, dream_budget, dream_experience, dream_explore, dream_memory, dream_native, dream_notes,
-               dream_roles, dream_run, dream_submission, dream_transcript, dream_view)
+from . import (dream, dream_budget, dream_codex_sessions, dream_codex_view, dream_experience, dream_explore,
+               dream_memory, dream_native, dream_notes, dream_roles, dream_run, dream_submission, dream_transcript,
+               dream_view)
 from .config import AgentLauncher, BranchPrefixes, MirrorSettings, _parse_dream
 from .dream import DreamError, canonical, digest
 
@@ -44,8 +47,11 @@ READER_V1 = "session-reader-v1"
 READER_V2 = "session-reader-v2"
 READER_V3 = "session-reader-v3"
 READER_V4 = "session-reader-v4"
-READERS = (READER_V1, READER_V2, READER_V3, READER_V4)
-READER = READER_V4  # What new jobs freeze.
+READER_V5 = "session-reader-v5"
+READERS = (READER_V1, READER_V2, READER_V3, READER_V4, READER_V5)
+WITH_CONTEXT = (READER_V4, READER_V5)
+WITH_ITEM_REVIEW = (READER_V3, READER_V4, READER_V5)
+READER = READER_V5  # What new jobs freeze.
 # Each reader contract freezes one role contract; ROLES and BRIEFS keep their version-1 meaning.
 ROLES = "session-reader-roles-v1"
 ROLES_V2 = "session-reader-roles-v2"
@@ -55,13 +61,16 @@ ESTIMATE_V3 = "session-reader-estimate-v3"
 ESTIMATE = "session-reader-estimate-v1"
 ESTIMATE_V2 = "session-reader-estimate-v2"
 OPERATION = "dream_session_read"
-HARNESS = "claude"  # The source harness; the native role harness is a setting.
+HARNESS = "claude"  # Implicit source of v1-v4 jobs.
+# First is the renderer for new v5 jobs. An earlier v5 Claude header can name v3.
+SOURCE_VIEWS = {"claude": (dream_view.CONTRACT_V4, dream_view.CONTRACT_V3), "codex": (dream_codex_view.CONTRACT,)}
 MAX_CALL_ITEMS = 32
 MAX_CITATIONS = 8
 MAX_REVIEW_FINDINGS = 64
 MAX_TARGET = 512
 HEADER_BYTES = 256  # Room for a chunk's "SESSION ... raw bytes ..." header line.
 MAX_SESSION_BYTES = 64 * 1024 * 1024
+MAX_CODEX_SESSION_BYTES = 128 * 1024 * 1024
 MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 # Preflight assumptions, uncalibrated until the two-session pilot measures them.
 CALL_OVERHEAD = 16 * 1024
@@ -70,11 +79,11 @@ BYTES_PER_TOKEN = 4
 OUTPUT_TOKENS = dict(reader=2000, reviewer=1000)
 OVERRIDES = ("harness", "model", "effort", "max_total_seconds", "max_total_calls", "reserve_seconds", "reserve_calls",
              "reader_chunk_bytes")
-TURN_ORIGINS = ("human", "unattributed")
+TURN_ORIGINS = ("human", "unattributed", "agent")  # A relayed user record still starts a turn.
 KIND_FIELDS = ("by", "command", "outcome", "target")
 HEADER_FIELDS = ("contract", "job_id", "directory", "created_at", "project", "repository_uuid", "store", "settings",
                  "render_contract", "session", "gaps", "chunks", "estimate", "budget_path")
-HEADER_OPTIONAL = ("reader_contract",)
+HEADER_OPTIONAL = ("reader_contract", "source_harness")
 
 BRIEFS = {
     "reader": (
@@ -141,7 +150,8 @@ BRIEFS_V4 = dict(BRIEFS_V3, reader=BRIEFS_V3["reader"].replace(
     " Context excerpts are labelled context: judge the decision with them, but require the human's own "
     "support citations. Context shows what the human answered and is never support."))
 ROLE_CONTRACTS = {READER_V1: (ROLES, BRIEFS), READER_V2: (ROLES_V2, BRIEFS_V2),
-                  READER_V3: (ROLES_V3, BRIEFS_V3), READER_V4: (ROLES_V4, BRIEFS_V4)}
+                  READER_V3: (ROLES_V3, BRIEFS_V3), READER_V4: (ROLES_V4, BRIEFS_V4),
+                  READER_V5: (ROLES_V4, BRIEFS_V4)}
 
 
 def _string(limit):
@@ -172,11 +182,11 @@ def schema(role, contract=READER_V1):
     fields = dict(assignment_id=dream_roles.TEXT, input_sha256=dream_roles.TEXT, role=dict(type="string", enum=[role]),
                   failures=dream_roles.array_schema(dream_roles.TEXT, 16))
     if role == "reader":
-        fields["items"] = dream_roles.array_schema(ITEM_V4 if contract == READER_V4 else ITEM, MAX_CALL_ITEMS)
+        fields["items"] = dream_roles.array_schema(ITEM_V4 if contract in WITH_CONTEXT else ITEM, MAX_CALL_ITEMS)
     else:
         fields.update(verdict=dict(type="string", enum=["accept", "reject"]),
                       findings=dream_roles.array_schema(FINDING, MAX_REVIEW_FINDINGS))
-    if role == "reviewer" and contract in (READER_V3, READER_V4):
+    if role == "reviewer" and contract in WITH_ITEM_REVIEW:
         fields.pop("findings")
         fields["overall_findings"] = dream_roles.array_schema(_string(dream_notes.MAX_TEXT - 16), 16)
         fields["item_verdicts"] = dream_roles.array_schema(dream_roles.object_schema(dict(
@@ -244,6 +254,10 @@ def _reader_contract(header):
     return header.get("reader_contract", READER_V1)
 
 
+def _source_harness(header):
+    return header.get("source_harness", HARNESS)
+
+
 def _now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -274,6 +288,13 @@ def _job(path):
             raise DreamError("Reader job identity changed", 3)
         if _reader_contract(header) not in READERS:
             raise DreamError("Invalid frozen reader contract", 3)
+        if _reader_contract(header) == READER_V5:
+            harness = header.get("source_harness")
+            if (harness not in SOURCE_VIEWS or header["render_contract"] not in SOURCE_VIEWS[harness] or
+                    header["session"]["harness"] != harness):
+                raise DreamError("Invalid frozen reader source or rendering contract", 3)
+        elif "source_harness" in header or header["render_contract"] == dream_codex_view.CONTRACT:
+            raise DreamError("Codex session sources require session-reader-v5", 3)
         if _read(fd, "identity.json") != dict(sha256=digest(canonical(header))):
             raise DreamError("Frozen reader job changed", 3)
         prepared = _read(fd, "prepared.json")
@@ -328,10 +349,16 @@ def _memory_commit(source, project):
     return dream_memory.tip(source, project["memory_ref"]) if project.get("memory_ref") else None
 
 
-def _listing(config, source, settings, memory_commit=None):
-    return dream_experience.sessions(source, quiet_minutes=settings["session_quiet_minutes"],
-                                     live=dream_explore._live_sessions(config), memory_commit=memory_commit,
-                                     config=config)
+def _listing(config, source, settings, memory_commit=None, harness=HARNESS):
+    options = dict(quiet_minutes=settings["session_quiet_minutes"], live=dream_explore._live_sessions(config),
+                   config=config)
+    rows = []
+    if harness in (None, "claude"):
+        rows.extend(dream_experience.sessions(source, memory_commit=memory_commit, **options))
+    if harness in (None, "codex"):
+        options["live"] = options["live"] | dream_codex_sessions.live_threads()
+        rows.extend(dream_codex_sessions.sessions(source, excluded=settings["reader_exclude_sessions"], **options))
+    return rows
 
 
 def _excluded(thread_id, entries):
@@ -341,6 +368,8 @@ def _excluded(thread_id, entries):
 def _readable(row, entries):
     if _excluded(row["thread_id"], entries):
         raise DreamError("Session " + row["thread_id"] + " is excluded from reading by dream.reader_exclude_sessions", 3)
+    if row.get("reason"):
+        raise DreamError("Session " + row["thread_id"] + " is excluded: " + row["reason"], 3)
     if row["state"] != "finished":
         raise DreamError("Session " + row["thread_id"] + " is " + row["state"] + "; only finished sessions are read", 3)
 
@@ -350,10 +379,10 @@ def _candidates(rows, session, entries):
         rows = [r for r in rows if r["state"] == "finished" and not _excluded(r["thread_id"], entries)]
         return sorted(rows, key=lambda r: (r["modified"], r["thread_id"]))
     if not isinstance(session, str) or not dream_experience.SESSION.fullmatch(session):
-        raise DreamError("--session must be a full Claude session id")
+        raise DreamError("--session must be a full session id")
     row = next((r for r in rows if r["thread_id"] == session), None)
     if row is None:
-        raise DreamError("No finished session " + session + " in this mirror's Claude project directories", 3)
+        raise DreamError("No finished session " + session + " in this mirror", 3)
     _readable(row, entries)
     return [row]
 
@@ -419,17 +448,32 @@ def _block_text(block):
     return "[@" + str(block["offset"]) + "] " + block["label"] + "\n" + block["body"] + "\n\n"
 
 
-def _records(raw, start, contract):
+def _records(raw, start, contract, binding=None):
     rows, offset = [], start
-    for line in raw.splitlines(keepends=True):
+    codex = contract == dream_codex_view.CONTRACT
+    pending_task = False
+    for line in io.BytesIO(raw) if codex else raw.splitlines(keepends=True):
         entry = dream._json(line)
         if not isinstance(entry, dict):
             raise DreamError("Transcript record must be a JSON object")
-        blocks = list(dream_view._blocks(entry, offset, contract))
+        if codex:
+            blocks = list(dream_codex_view.blocks(entry, offset, binding))
+            payload = entry.get("payload")
+            payload = payload if isinstance(payload, dict) else {}
+            task = entry.get("type") == "event_msg" and payload.get("type") == "task_started"
+            user = (entry.get("type") == "response_item" and payload.get("type") == "message" and
+                    payload.get("role") == "user" and bool(blocks))
+            turn = task or (user and not pending_task)
+            if task or user or any(b["role"] in ("assistant", "tool") for b in blocks):
+                pending_task = task
+            # Large opaque records (e.g. replacement_history) are not needed for packing.
+            entry = {"timestamp": entry.get("timestamp")}
+        else:
+            blocks = list(dream_view._blocks(entry, offset, contract))
+            turn = any(b["role"] == "user" and b["origin"] in TURN_ORIGINS and not b["sidechain"] for b in blocks)
         rows.append(dict(offset=offset, end=offset + len(line), entry=entry, blocks=blocks,
                          size=sum(len(_block_text(b).encode()) for b in blocks),
-                         turn=any(b["role"] == "user" and b["origin"] in TURN_ORIGINS and not b["sidechain"]
-                                  for b in blocks)))
+                         turn=turn))
         offset += len(line)
     return rows
 
@@ -439,53 +483,56 @@ def _identified(group, thread_id):
     return thread_id in identities
 
 
-def _chunks(raw, start, thread_id, cap, contract):
+def _chunks(raw, start, thread_id, cap, contract, binding=None):
     """Pack whole turns under the cap; split a larger turn at records; refuse a larger record."""
     turns = []
-    for row in _records(raw, start, contract):
+    for row in _records(raw, start, contract, binding):
         if not turns or (row["turn"] and any(r["turn"] for r in turns[-1])):
             turns.append([row])
         else:
             turns[-1].append(row)
     limit = cap - HEADER_BYTES
-    groups, current = [], []
+    groups, current, size = [], [], 0
 
-    def fits(rows):
-        return (sum(r["size"] for r in current + rows) <= limit and
+    def fits(rows, added):
+        return (size + added <= limit and
                 rows[-1]["end"] - (current or rows)[0]["offset"] <= dream_view.MAX_RAW_BYTES)
 
     for turn in turns:
-        if current and not fits(turn):
+        turn_size = sum(r["size"] for r in turn)
+        if current and not fits(turn, turn_size):
             groups.append(current)
-            current = []
-        if fits(turn):
-            current = current + turn
+            current, size = [], 0
+        if fits(turn, turn_size):
+            current.extend(turn)
+            size += turn_size
             continue
         for row in turn:
             if row["size"] > limit or row["end"] - row["offset"] > dream_view.MAX_RAW_BYTES:
                 raise DreamError("The record at raw byte " + str(row["offset"]) + " alone exceeds reader_chunk_bytes "
                                  "or the 16 MiB raw window; it cannot be read in one call", 3)
-            if current and not fits([row]):
+            if current and not fits([row], row["size"]):
                 groups.append(current)
-                current = []
-            current = current + [row]
+                current, size = [], 0
+            current.append(row)
+            size += row["size"]
     if current:
         groups.append(current)
-    # A window must carry the session's identity (dream_view.render); merge one that has none.
+    # Claude requires an identity record in each window. Codex uses the verified file binding.
     merged = []
     for group in groups:
-        if merged and not _identified(group, thread_id):
+        if binding is None and merged and not _identified(group, thread_id):
             merged[-1] = merged[-1] + group
         else:
             merged.append(group)
-    if len(merged) > 1 and not _identified(merged[0], thread_id):
+    if binding is None and len(merged) > 1 and not _identified(merged[0], thread_id):
         first = merged.pop(0)
         merged[0] = first + merged[0]
     chunks = []
     for group in merged:
         low, high = group[0]["offset"], group[-1]["end"]
         window = raw[low - start:high - start]
-        text, mapping = dream_view.render(window, thread_id, low, contract)
+        text, mapping = dream_view.render(window, thread_id, low, contract, binding=binding)
         data = text.encode()
         if len(data) > cap or len(window) > dream_view.MAX_RAW_BYTES:
             raise DreamError("A chunk exceeds reader_chunk_bytes after merging records without a session identity", 3)
@@ -568,7 +615,7 @@ def _budget_plan(settings, project):
 
 def _summary(header):
     summary = dict(schema_version=1, operation=OPERATION, state="prepared", job_id=header["job_id"],
-                   job_path=header["directory"], source=[HARNESS, header["session"]["thread_id"], ""],
+                   job_path=header["directory"], source=[_source_harness(header), header["session"]["thread_id"], ""],
                    session=header["session"], ranges=header["gaps"], chunks=len(header["chunks"]),
                    settings=header["settings"], estimate=header["estimate"], store=header["store"])
     if "reader_contract" in header:
@@ -576,12 +623,15 @@ def _summary(header):
     return summary
 
 
-def prepare(config, job_path=None, *, cwd=None, session=None, overrides=None, budget_path=None):
+def prepare(config, job_path=None, *, cwd=None, session=None, source=None, overrides=None, budget_path=None):
     """Freeze the uncovered chunks of one finished session, or report that nothing is left to read."""
+    if source is not None and source not in SOURCE_VIEWS:
+        raise DreamError("--source must be claude or codex")
     overrides = {key: value for key, value in (overrides or {}).items() if value is not None}
     if job_path is not None:
         with _job(_resolve_job(config, job_path)) as (_, header, _):
-            if ((session is not None and session != header["session"]["thread_id"]) or
+            if ((source is not None and source != _source_harness(header)) or
+                    (session is not None and session != header["session"]["thread_id"]) or
                     any(header["settings"].get(key) != value for key, value in overrides.items()) or
                     (budget_path is not None and str(Path(budget_path).expanduser().absolute()) != header["budget_path"])):
                 raise DreamError("Reader job settings are immutable; resume without changing its options", 3)
@@ -590,18 +640,16 @@ def prepare(config, job_path=None, *, cwd=None, session=None, overrides=None, bu
     if not commit:
         raise DreamError("Session reading requires a committed project", 3)
     settings = _settings(config, item, overrides)
-    if dream_view.CONTRACT in dream_view.LEGACY:
-        raise DreamError("Session reading requires a rendering that records block origin", 3)
     project = dict(name=name, path=str(root), base_commit=commit)
     if settings["memory_branch"]:
         project["memory_ref"] = dream_memory.branch_ref(settings["memory_branch"])
-    source = _source(config, project, time.monotonic() + 60)
-    memory_commit = _memory_commit(source, project)
-    store = dream_notes.Store.for_repository(config, source, memory_commit or commit)
-    rows = _listing(config, source, settings, memory_commit)
+    project_source = _source(config, project, time.monotonic() + 60)
+    memory_commit = _memory_commit(project_source, project)
+    store = dream_notes.Store.for_repository(config, project_source, memory_commit or commit)
+    rows = _listing(config, project_source, settings, memory_commit, source if READER == READER_V5 else HARNESS)
     chosen = None
     for row in _candidates(rows, session, settings["reader_exclude_sessions"]):
-        entry = store.source(HARNESS, row["thread_id"])
+        entry = store.source(row.get("harness", HARNESS), row["thread_id"])
         _check_file(entry, row["path"])
         gaps = _gaps(row["bytes"], entry.covered() + [list(r) for r in row["consumed"]])
         if gaps:
@@ -615,19 +663,23 @@ def prepare(config, job_path=None, *, cwd=None, session=None, overrides=None, bu
     row, gaps = chosen
     if Path(row["path"]).resolve() != Path(row["path"]):
         raise DreamError("Session transcript path must be canonical, without symlinks", 3)
-    if sum(end - start for start, end in gaps) > MAX_SESSION_BYTES:
-        raise DreamError("Uncovered session bytes exceed the 64 MiB reader allowance", 3)
-    chunks, identity = [], None
+    harness = row.get("harness", HARNESS)
+    limit = MAX_CODEX_SESSION_BYTES if harness == "codex" else MAX_SESSION_BYTES
+    if sum(end - start for start, end in gaps) > limit:
+        raise DreamError(f"Uncovered session bytes exceed the {limit >> 20} MiB reader allowance", 3)
+    binding = row.get("binding")
+    render_contract = SOURCE_VIEWS[harness][0] if READER == READER_V5 else dream_view.CONTRACT_V3
+    chunks, identity = [], [row["device"], row["inode"]] if binding else None
     for start, end in gaps:
         raw, found = _raw(row["path"], start, end)
         if identity is not None and found != identity:
             raise DreamError("Session file changed while it was chunked", 3)
         identity = found
-        chunks.extend(_chunks(raw, start, row["thread_id"], settings["reader_chunk_bytes"], dream_view.CONTRACT))
+        chunks.extend(_chunks(raw, start, row["thread_id"], settings["reader_chunk_bytes"], render_contract, binding))
     estimate = _estimate(chunks, settings["reader_chunk_bytes"])
     if READER == READER_V3:
         estimate = _estimate_v2(estimate)
-    elif READER == READER_V4:
+    elif READER in (READER_V4, READER_V5):
         estimate = _estimate_v3(estimate, settings["harness"], settings["model"])
     logs = _jobs(config)
     if logs == root or logs.is_relative_to(root):
@@ -656,10 +708,14 @@ def prepare(config, job_path=None, *, cwd=None, session=None, overrides=None, bu
             settings.update({key: budget.header["limits"][value] for key, value in keys.items()})
             header = dict(contract=CONTRACT, job_id=job_id, directory=str(directory), created_at=time.time(),
                           project=project, repository_uuid=store.root.name, store=str(store.root), settings=settings,
-                          render_contract=dream_view.CONTRACT,
-                          session=dict(harness=HARNESS, thread_id=row["thread_id"], subpath="", path=row["path"],
+                          render_contract=render_contract,
+                          session=dict(harness=harness, thread_id=row["thread_id"], subpath="", path=row["path"],
                                        bytes=row["bytes"], device=identity[0], inode=identity[1]),
                           gaps=gaps, chunks=chunks, estimate=estimate, budget_path=str(target))
+            if READER == READER_V5:
+                header["source_harness"] = harness
+                if binding:
+                    header["session"]["binding"] = binding
             if READER != READER_V1:
                 # Version 1 stays implicit, so earlier headers (and their digests) are unchanged.
                 header["reader_contract"] = READER
@@ -675,20 +731,34 @@ def prepare(config, job_path=None, *, cwd=None, session=None, overrides=None, bu
 
 # Admitted views and mechanical checks
 
+def _verified_binding(header, deadline):
+    """Recheck the original file and first record even for a gap starting well into the rollout."""
+    _same_file(header)
+    session = header["session"]
+    frozen = session["binding"]
+    line = dream_view.read_range(dict(path=session["path"], thread_id=session["thread_id"],
+                                      byte_start=0, byte_end=frozen["bytes"]), deadline)
+    binding = dream_codex_view.identity(line, session["thread_id"])
+    if binding != frozen:
+        raise DreamError("Frozen Codex session_meta changed", 3)
+    return binding
+
+
 def _views(header, deadline):
     """Re-read and re-render every frozen chunk; raw, text and map digests must reproduce."""
     session, contract = header["session"], header["render_contract"]
+    binding = _verified_binding(header, deadline) if contract == dream_codex_view.CONTRACT else None
     views = []
     for chunk in header["chunks"]:
         raw = dream_view.read_range(dict(path=session["path"], thread_id=session["thread_id"],
                                          byte_start=chunk["byte_start"], byte_end=chunk["byte_end"]), deadline)
         if digest(raw) != chunk["raw_sha256"]:
             raise DreamError("Session bytes changed since the reader job was prepared", 3)
-        text, mapping = dream_view.render(raw, session["thread_id"], chunk["byte_start"], contract)
+        text, mapping = dream_view.render(raw, session["thread_id"], chunk["byte_start"], contract, binding=binding)
         if digest(text.encode()) != chunk["text_sha256"] or digest(canonical(mapping)) != chunk["render_sha256"]:
             raise DreamError("Session rendering differs from the frozen reader job", 3)
         records, extents, blocks = {}, {}, []
-        for row in _records(raw, chunk["byte_start"], contract):
+        for row in _records(raw, chunk["byte_start"], contract, binding=binding):
             extents[row["offset"]] = row["end"]
             for block in row["blocks"]:
                 blocks.append(dict(block, date=_date(row["entry"]), text=_block_text(block)))
@@ -735,7 +805,7 @@ def _resolve(proposed, view, chunk, where, contract=READER_V1):
             reject("the quote does not match the rendering of record " + str(record))
         if any(b["summary"] or b["origin"] == "summary" for b in hits):
             reject("record " + str(record) + " is a compaction summary, which is not evidence")
-        if contract == READER_V4 and citation["role"] == "context":
+        if contract in WITH_CONTEXT and citation["role"] == "context":
             if kind != "decision" or item.get("by") != "human":
                 reject("context is allowed only on a decision by human")
             if any(b["origin"] != "agent" or b["sidechain"] for b in hits):
@@ -751,7 +821,7 @@ def _resolve(proposed, view, chunk, where, contract=READER_V1):
         if human and any(b["sidechain"] or b["origin"] != "human" for b in hits):
             reject("what the human said or decided must cite the human's own main-thread blocks")
         item["citations"].append(dict(byte_start=record, byte_end=view["extents"][record], quote=quote))
-        if contract == READER_V4:
+        if contract in WITH_CONTEXT:
             item["citations"][-1]["role"] = citation["role"]
         for block in hits:
             if block not in matched:
@@ -765,7 +835,7 @@ def _resolve(proposed, view, chunk, where, contract=READER_V1):
         reject("when " + item["when"] + " is neither a cited record's date nor quoted")
     try:
         dream_notes._item(item, [(chunk["byte_start"], chunk["byte_end"], chunk["raw_sha256"])],
-                          dream_notes.NOTE_V2 if contract == READER_V4 else dream_notes.NOTE_CONTRACT)
+                          dream_notes.NOTE_V2 if contract in WITH_CONTEXT else dream_notes.NOTE_CONTRACT)
     except DreamError as exc:
         reject(str(exc))
     return item, matched
@@ -827,15 +897,15 @@ def _wire(item, index):
 
 def _compose(header, items, written_at):
     settings = header["settings"]
-    return dict(contract=(dream_notes.NOTE_V2 if _reader_contract(header) == READER_V4 else
-                          dream_notes.NOTE_CONTRACT), source=[HARNESS, header["session"]["thread_id"], ""],
+    return dict(contract=(dream_notes.NOTE_V2 if _reader_contract(header) in WITH_CONTEXT else
+                          dream_notes.NOTE_CONTRACT), source=[_source_harness(header), header["session"]["thread_id"], ""],
                 ranges=[[c["byte_start"], c["byte_end"], c["raw_sha256"]] for c in header["chunks"]],
                 render_contract=header["render_contract"], reader=dict(harness=settings["harness"], model=settings["model"]),
                 written_at=written_at, items=items)
 
 
 def _inputs(header):
-    return dict(harness=HARNESS, source_id=header["session"]["thread_id"], subpath="",
+    return dict(harness=_source_harness(header), source_id=header["session"]["thread_id"], subpath="",
                 render_contract=header["render_contract"])
 
 
@@ -913,18 +983,18 @@ def _groups(matched, cap):
 
 def _review(fd, header, attempt, reader, items, matched, readonly=False):
     verdicts, findings, removed = [], [], []
-    v3 = _reader_contract(header) in (READER_V3, READER_V4)
+    v3 = _reader_contract(header) in WITH_ITEM_REVIEW
     for group in _groups(matched, header["settings"]["reader_chunk_bytes"]):
         excerpts, seen = [], set()
         for index in group:
             for block in matched[index]:
                 key = (block["offset"], block["text"])
-                if _reader_contract(header) == READER_V4:
+                if _reader_contract(header) in WITH_CONTEXT:
                     key += (block.get("citation_role", "support"),)
                 if key not in seen:
                     seen.add(key)
                     excerpt = dict(record=block["offset"], date=block["date"] or "", text=block["text"])
-                    if _reader_contract(header) == READER_V4:
+                    if _reader_contract(header) in WITH_CONTEXT:
                         excerpt["role"] = block.get("citation_role", "support")
                     excerpts.append(excerpt)
         inputs = dict(session=_inputs(header), items=[_wire(items[i], i) for i in group],
@@ -998,7 +1068,7 @@ def _result(header, attempt, note_id, note, review, calls, screening=()):
     if _reader_contract(header) != READER_V1:
         result.update(reader_contract=_reader_contract(header), chunk_items=list(screening),
                       dropped_items=sum(row["dropped"] for row in screening))
-    if _reader_contract(header) in (READER_V3, READER_V4):
+    if _reader_contract(header) in WITH_ITEM_REVIEW:
         reviewed = sum(row["accepted"] for row in screening)
         result.update(reviewed_items=reviewed, kept_items=len(note["items"]),
                       removed_items=reviewed - len(note["items"]))
@@ -1008,15 +1078,17 @@ def _result(header, attempt, note_id, note, review, calls, screening=()):
 def _execute(fd, header, attempt, reader, views, session):
     items, matched, screening = _read_chunks(reader, header, views, fd, attempt) if reader is not None else ([], [], [])
     review = None
-    if _reader_contract(header) in (READER_V3, READER_V4):
+    if _reader_contract(header) in WITH_ITEM_REVIEW:
         review, items = _review(fd, header, attempt, reader, items, matched)
     note = _frozen(fd, _numbered("note", attempt), _compose(header, items, _now()), False, "written_at")
     dream_notes.validate_note(note)
-    if _reader_contract(header) not in (READER_V3, READER_V4):
+    if _reader_contract(header) not in WITH_ITEM_REVIEW:
         review = _review(fd, header, attempt, reader, items, matched) if items else None
     note_id = digest(canonical(note))
     _store(fd, _numbered("intent", attempt), dict(note_id=note_id, ranges=note["ranges"],
                                                   review_sha256=None if review is None else digest(canonical(review))))
+    if _source_harness(header) == "codex":
+        _verified_binding(header, reader.deadline)
     session.add_coverage(header["session"]["path"], note["ranges"])
     if session.write_note(note) != note_id:
         raise DreamError("The store keyed the note differently", 3)
@@ -1081,13 +1153,18 @@ def run(config, job_path, attempt=1, *, transport=None):
                 if str(store.root) != header["store"]:
                     raise DreamError("The repository identity changed since the reader job was prepared", 3)
                 thread_id = header["session"]["thread_id"]
-                row = next((r for r in _listing(config, source, header["settings"]) if r["thread_id"] == thread_id), None)
+                harness = _source_harness(header)
+                settings = header["settings"]
+                excluded = settings["reader_exclude_sessions"] + _current_exclusions(config, header["project"])
+                rows = _listing(config, source, dict(settings, reader_exclude_sessions=excluded), harness=harness)
+                row = next((r for r in rows if r["thread_id"] == thread_id), None)
                 if row is None:
                     raise DreamError("Session " + thread_id + " is no longer listed for this mirror", 3)
-                _readable(row, header["settings"]["reader_exclude_sessions"] +
-                          _current_exclusions(config, header["project"]))
+                _readable(row, excluded)
+                if harness == "codex" and row["path"] != header["session"]["path"]:
+                    raise DreamError("The selected Codex rollout changed since preparation", 3)
                 _same_file(header)
-                session = store.source(HARNESS, thread_id)
+                session = store.source(harness, thread_id)
                 # The lease is held from before the first native call until the last store write.
                 with session.lease():
                     _check_lease(session, header, fd, attempt)
@@ -1136,14 +1213,14 @@ def _replay(config, fd, header, prepared, attempt, saved):
                 raise DreamError("Reader run identity differs from its frozen role contract", 3)
         items, matched, screening = (_read_chunks(reader, header, views, fd, attempt, readonly=True)
                                      if reader is not None else ([], [], []))
-        if _reader_contract(header) in (READER_V3, READER_V4):
+        if _reader_contract(header) in WITH_ITEM_REVIEW:
             review, items = _review(fd, header, attempt, reader, items, matched, readonly=True)
             note = _frozen(fd, _numbered("note", attempt), _compose(header, items, None), True, "written_at")
         else:
             note = _frozen(fd, _numbered("note", attempt), _compose(header, items, None), True, "written_at")
             review = _review(fd, header, attempt, reader, items, matched, readonly=True) if items else None
     note_id = digest(canonical(note))
-    session = dream_notes.Store(Path(header["store"])).source(HARNESS, header["session"]["thread_id"])
+    session = dream_notes.Store(Path(header["store"])).source(_source_harness(header), header["session"]["thread_id"])
     stored = next((row for row in session.notes() if row["note_id"] == note_id), None)
     covered = {tuple(r) for r in session.coverage()}
     if (stored is None or stored["note"] != note or stored["review"] != review or
@@ -1154,10 +1231,10 @@ def _replay(config, fd, header, prepared, attempt, saved):
     return saved
 
 
-def start(config, job_path=None, *, cwd=None, session=None, overrides=None, budget_path=None, attempt=1,
+def start(config, job_path=None, *, cwd=None, session=None, source=None, overrides=None, budget_path=None, attempt=1,
           transport=None, prepare_only=False):
     """Prepare (or reuse) a reader job and run it, unless only the frozen chunks and estimate are wanted."""
-    prepared = prepare(config, job_path, cwd=cwd, session=session, overrides=overrides, budget_path=budget_path)
+    prepared = prepare(config, job_path, cwd=cwd, session=session, source=source, overrides=overrides, budget_path=budget_path)
     if prepared["state"] != "prepared" or prepare_only:
         return prepared
     return run(config, Path(prepared["job_path"]), attempt, transport=transport)

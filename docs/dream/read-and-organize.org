@@ -199,6 +199,7 @@ Citations keep pointing at raw byte ranges with digests.
 - Claude :: The =claude-view= rendering exists; the zero-tail clip (issue 119) is fixed first.
   Discovery adds =subagents/*.jsonl= and spilled tool-result files, keyed separately: subagent records carry the parent's =sessionId=.
 - Codex :: Discovery reuses =reply_probe.managed_codex_threads=, which already separates the user's thread from forks, over the replicated rollouts (=sucoder/codex_state_runner.py:32=), plus local =~/.codex/sessions/=.
+  The [[file:session-reader.org::#codex][2026-11-28 reader contract]] specifies the implemented user-thread inventory, replica preference and rendering.
   Only =session_meta= at byte 0 carries the thread id, so identity is established per file, not per window.
   Replicas can end mid-line, restores copy replicas into new runs, and forks copy their parent; the adapter de-duplicates by content digest.
   The injected prelude (=developer_instructions=), AGENTS.md and environment-context messages are stripped or classed as harness origin.
@@ -305,7 +306,7 @@ New job kinds get new contract versions; saved jobs and receipts replay under th
 
 The organizer track and the reader track run in parallel after the shared slice.
 
-0. Shared :: Fix the zero-tail clip (issue 119; done as =claude-view-v2=); origin classes and redaction before clipping (done for Claude sessions as =claude-view-v3=, which new exploratory jobs freeze); the session-note schema, private store and coverage record; a read-only copy verified by content (group-readable rather than owner-only, so the human can still read it).
+0. Shared :: Fix the zero-tail clip (issue 119; done as =claude-view-v2=); origin classes and redaction before clipping (done for Claude sessions as =claude-view-v3=, with peer relay attribution in =claude-view-v4=); the session-note schema, private store and coverage record; a read-only copy verified by content (group-readable rather than owner-only, so the human can still read it).
 1. Organizer track :: The organizer contract with carried support, corrections and retractions, per-area jobs, the mechanical index, and hub linting.
    It first runs on the existing wiki plus README and =docs/=, before any session notes exist.
 2. Reader track :: Claude (with subagents and spilled tool results) and Codex adapters, reader jobs, per-note review, the shared backlog budget, and the two-session pilot.

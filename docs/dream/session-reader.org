@@ -24,7 +24,7 @@ The human ruled that "Readers *may* read whole sessions" and that notes go to "a
   New job kinds get new contract names; no existing contract changes ([[file:read-and-organize.org::#stays][What stays]]).
   An optional =reader_contract= key names how reader items are checked; without it the job is =session-reader-v1=, as every job prepared before [[#v2][version 2]] is.
 - =session-reader-v1=, =session-reader-v2= :: The reader contracts: version 1 is the behavior this specification describes, and [[#v2][version 2]] blanks unused kind fields, drops a failing item instead of rejecting the note, and fails closed per chunk.
-  New jobs freeze version 4 ([[#v4][version 4]]).
+  New jobs freeze [[#codex][version 5]], which extends [[#v4][version 4]] to Codex sources.
 - =session-reader-roles-v1= :: The assignment contract of the two native roles, =reader= and =reviewer=, with their briefs and output schemas.
   Assignments use =coordinator-submission-v1= (=sucoder/dream_submission.py=), so a model returns only the reply body and Python attaches the assignment identifiers.
   =session-reader-v1= freezes it; =session-reader-v2= freezes =session-reader-roles-v2=, whose reader brief differs ([[#v2][version 2]]).
@@ -327,3 +327,92 @@ The attempt spec, role assignment identity and native trace bind the same
 choice. A resume uses the header even if the configuration has changed.
 When effort is unset, Codex uses its native default and earlier jobs replay
 with their original command, run identity and saved results.
+
+* Codex rollout reader, 2026-11-28
+:PROPERTIES:
+:CUSTOM_ID: codex
+:END:
+
+=session-reader-v5= freezes =source_harness= and =render_contract= in the job
+header. New Claude jobs use =claude-view-v4= and Codex jobs use =codex-view-v1=.
+Both use the v4 role contracts and per-model estimate, and write =session-note-v2=.
+Earlier headers implicitly select Claude and replay under their recorded reader
+and rendering versions. =--source claude|codex= limits discovery. =--harness=
+continues to select the native reader and reviewer independently of the source.
+
+** Discovery
+
+The reader checks every scope under =<durable_root>/codex/*/runs/*/rollouts/=
+in runs with a =run.json=. Slurm targets supply the durable root through
+=codex_state.durable_root_for=. Its default is the mirror's sibling
+=.sucoder-state=. The local inventory covers
+=~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<thread-id>.jsonl=.
+
+The first complete line must be =session_meta= and its =payload.id= must
+match the UUID in the filename. The recorded =cwd= must equal the mirror
+path exactly. Only =thread_source=user= qualifies. Matching subagents and
+forks are listed as excluded with a reason. A fork's second metadata record
+may identify its user parent, so only the first record establishes ownership.
+Reading subagent threads separately and establishing mirror identity for
+unmanaged worktree runs are follow-ups.
+
+Discovery chooses one copy per thread. A managed replica takes priority over
+the local calendar tree. Within a managed run the reply probe's preference
+applies when allocation status reports a lagging or missing replica and its
+node-local rollout is visible. Among managed copies the newest modification
+time wins, with the path breaking ties. The inventory allows 16,384 directory
+entries, 1 MiB per metadata file or identity line, and 32 MiB total for those
+reads and locating final line breaks. Exceeding a bound stops discovery.
+
+A readable row records modification time and a byte count through its last
+complete line. The quiet interval, known live launch IDs, and configured
+session exclusions apply as for Claude. A local Codex process holding a
+rollout descriptor also marks its UUID live, including when reading a replica.
+The job rechecks eligibility before running. Coverage and notes use =(codex, thread_id, "")=. A later job verifies
+the same device, inode and covered bytes before reading an appended tail.
+
+** Rendering, chunking and quotes
+
+Both renderers recognize the frame that =sucoder message= types into a peer's
+pane. The text must begin with =[message ID from SENDER via sucoder, WHEN]=
+or =[message from SENDER via sucoder, WHEN]=. Leading whitespace and one
+=<pasted_content ...>= opening tag with optional whitespace are allowed.
+A frame quoted after other text keeps that text's original attribution.
+
+Claude Code can mark a pane delivery as human input. In =claude-view-v4=,
+a complete leading frame gives human or unattributed user text the label
+=AGENT (sucoder relay)= and origin =agent=. The delivery still starts a turn.
+Embedded system reminders retain harness origin. A reader or wiki editor therefore cannot use a peer's words
+as evidence for a human decision. New project and experience exploratory jobs
+also freeze v4 for Claude windows. Saved jobs and plans use their recorded
+rendering contract, with v1 implicit in exploratory headers that predate v2.
+
+Each Codex user content item has its own provenance. =provenance.type=user= gives
+human origin in interactive threads. Either =source=exec= or
+=originator=codex_exec= makes that input unattributed. Missing provenance is
+also unattributed. Other provenance gives harness origin, labelled with the
+content item kind when present. A leading SuCoder frame takes precedence
+over user-item provenance. Developer text has harness origin. Assistant commentary
+and final answers have agent origin, as do inter-agent messages labelled
+with their author and recipient.
+
+Function and custom tool calls render their name and arguments or input.
+Their outputs render as tool results. Compaction renders the summary message
+once and omits replacement history. Summaries cannot support a citation.
+Inherited messages, reasoning, event mirrors, token counts, configuration,
+world and turn state, and session metadata contribute no rendered blocks.
+Dates come from the original record timestamps.
+
+The renderer applies the Claude v3 patterns to each whole body before
+clipping. Calls keep 300 head bytes, results 240 head and 120 tail bytes,
+and harness text and summaries 960 head and 480 tail bytes under the v3
+clipping rule. Quotes must occur verbatim in the rendered body at their
+cited raw offset. The origin of every matching block must support the
+attribution.
+
+A user message or =task_started= begins a turn. Whole turns are packed within
+the existing rendered chunk cap and 16 MiB raw window, splitting oversized
+turns at record boundaries. The Codex job allows 128 MiB of uncovered input
+to accommodate the measured 85 MB rollout. Each window is tied to the file
+through the digest of its first metadata line and the frozen window digest.
+Replay reopens that file and checks both digests, including for a tail-only job.
