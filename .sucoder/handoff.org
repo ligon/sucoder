@@ -1,12 +1,20 @@
 #+TITLE: Reading and organizing the dream wiki
-#+DATE: 2026-11-26
-#+STATUS: READY -- continue the shared slice of the accepted reading-and-organizing design
+#+DATE: 2026-11-28
+#+STATUS: READY -- organize the next areas from the uncited-note inventory, then read the unread Codex threads
 #+AUTHOR: Sue
 #+PROPERTY: header-args :eval never-export :tangle no :results output :exports code
 
-* Current: reading and organizing the dream wiki, 2026-11-26
+* Current: organizer v6 and v7 and the first hubs, 2026-11-28
 
-Start with the [[file:handoffs/2026-11-26-read-and-organize.org][dated handoff]]; it and this section supersede operational statements in the sections below, which are now history.
+Start with the [[file:handoffs/2026-11-28-organizer-v6-v7.org][dated handoff]]; it and this section supersede operational statements in the sections below, which are now history.
+The [[file:../docs/dream/read-and-organize.org][reading-and-organizing design]]'s shared slice and its organizer and reader tracks are merged in a first form: the session-note store, the Claude and Codex session readers, and organizer generations v1-v7 (PRs 128-145).
+The evaluation track (slice 3) has had no work since the 2026-11-26 development question set and no-model baseline.
+The memory wiki now has four hubs and no page outside one; 105 of the 323 accepted note items are cited.
+The next task is to organize the observation, testing and shipping areas that the handoff's inventory identifies, then read the seven unread Codex threads.
+
+* Reading and organizing the dream wiki, 2026-11-26
+
+Start with the [[file:handoffs/2026-11-26-read-and-organize.org][dated handoff]] for that day's state.
 The human found the wiki poorly organized and the transcripts barely read; the accepted [[file:../docs/dream/read-and-organize.org][reading-and-organizing design]] answers both.
 Its shared slice is under way: =claude-view-v2= is merged, and =claude-view-v3= (PR 129) and the verified read-only copy (PR 128) await review.
 The next task is the session-note schema, private store and coverage record.
