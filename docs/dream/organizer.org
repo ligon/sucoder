@@ -158,7 +158,7 @@ A finding is a mechanical rejection that the organizer may repair once.
 - Commands :: No line beginning with a shell prompt, and no inline code or verbatim span that contains a shell operator (=|=, =;=, =&&=, =$(=, a backtick or a redirection) or begins with a general-purpose program (shell, network, package, interpreter, =git=, =sudo= and similar).
   Naming a SuCoder command such as =sucoder dream checkout= is description, not a command, and is allowed.
 - Imperatives :: No sentence, heading or description-list term that begins with an imperative verb from a frozen list (run, use, install, ignore, push, delete and others), and no second-person or agent-directed modal (=you must=, =agents should=, =ignore previous=).
-  The list errs towards refusal; a false positive costs a rephrasing.
+  [[#organizer-lint-v7][Version 7]] recognizes factual sentences that begin with a noun on the imperative list.
 - Human decisions :: A sentence claiming that the human, maintainer or user decided, approved, asked or ruled needs, in the same section's references, a fresh citation of a note item with origin =human= and basis =human said=.
   Carried support does not satisfy this, because earlier receipts used the permissive attribution the red team found (=sucoder/dream_editor.py:204-209=).
 - Dispositions :: No hub link to a retracted or superseded section.
@@ -488,4 +488,38 @@ evidence. Version 6 freezes a selection of individual items for each area.
   rules and budgets. Replay checks selected item numbers, absorption and
   byte usage against the frozen history and private copies. Stored v1-v5
   plans replay with their original plan bytes, run identities, role
+  assignment digests and receipt digests.
+
+* Version 7 (2026-11-28): hub lint v2
+:PROPERTIES:
+:CUSTOM_ID: organizer-lint-v7
+:END:
+
+The first draft of a published organizer run needed a repair for the
+sentence "Email redaction was added later, with exceptions for Git remotes
+beginning with =git@= and Python decorators." The imperative check treated
+=Email= as a command. In this sentence it modifies =redaction=, the subject.
+
+- After substituting link labels, lint checks the whitespace tokens after
+  the opening word. A possessive on the opening word or the next token
+  identifies a subject, as in "Run 6's codex-hook-validation topic".
+- A finite verb in the second to fifth token after the opening word also
+  identifies a subject. Markers include =was=, =has= and =stays=, and
+  alphabetic words of at least four letters ending in =ed=. The token right
+  after the opening word cannot supply the verb, so "Use cached results
+  when the run failed" stays an instruction. A numeric identifier or Org
+  code span can occur before the verb, as in "Commit =649c93e= merged as
+  =6f60c83=." Words inside a span cannot supply the verb. A pronoun,
+  determiner or command complement immediately after the opening word
+  blocks this exemption, so "Check it is clean before publishing" still
+  produces a finding. A subordinating word (=that=, =which=, =when=,
+  =once= and the like) ends the search, so "Delete stale branches that
+  were merged" does too.
+- The window is short on purpose. "Push access to the human's checkout
+  stays with the human" is still flagged because its verb comes sixth; the
+  repair costs one call, while a wider window would pass more instructions.
+- =wiki-organizer-plan-v7= selects =wiki-organizer-v7= with the v6 note
+  selection, role briefs and budgets. The run identity and receipt bind
+  =organizer-hub-lint-v2= and its rule digest. Stored v1-v6 plans replay
+  with lint v1 and their original plan bytes, run identities, role
   assignment digests and receipt digests.

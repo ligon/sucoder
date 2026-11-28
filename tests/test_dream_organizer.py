@@ -289,7 +289,7 @@ def test_an_area_job_publishes_hub_forwarding_index_correction_and_retraction(or
                      + INDEX_TEXT[INDEX_TEXT.index("* Orientation"):])
     assert len(organizer.injected(index).encode()) <= plan["inject_bytes"]
     receipt = json.loads(show(repo, MEMORY, W + "receipts/" + result["run_id"] + ".json"))
-    assert receipt["contract"] == "wiki-organizer-v6" and receipt["area"]["id"] == "dream-memory"
+    assert receipt["contract"] == "wiki-organizer-v7" and receipt["area"]["id"] == "dream-memory"
     assert receipt["note_terms"] == author.calls[0]["input"]["note_terms"] == plan["note_terms"] == AREA_TERMS
     assert organizer.NOTES_V6 in author.calls[0]["brief"]
     assert all(organizer.NOTES_V6 not in task["brief"] for task in [author.calls[1], cross.calls[0]])
@@ -442,7 +442,7 @@ def test_a_lint_finding_is_repaired_before_review(organized):
     result = execute(organized[0], plan, author)
     assert [t["role"] for t in author.calls] == ["organizer", "repair", "reviewer"]
     messages = [f["message"] for f in author.calls[1]["input"]["findings"]]
-    assert all("Hub lint" in m for m in messages)
+    assert all(m.startswith("Hub lint (organizer-hub-lint-v2):") for m in messages)
     assert any("shell command" in m for m in messages) and any("instruction" in m for m in messages)
     assert "curl" not in show(repo, result["candidate_commit"], HUB)
 
@@ -450,6 +450,72 @@ def test_a_lint_finding_is_repaired_before_review(organized):
 def lint(text, human=(), marked=()):
     inventory = wiki.inventory({HUB: text}, time.monotonic() + 30)[HUB]
     return [finding["message"] for finding in organizer.lint(HUB, text, inventory, "Dream memory", human, marked)]
+
+
+NOUN_SENTENCES = [
+    "Email redaction was added later, with exceptions for Git remotes beginning with =git@= and Python decorators.",
+    "Commit =649c93e= merged as =6f60c83=.",
+    "Run 6's codex-hook-validation topic distinguishes observed hook experiments from four outstanding live acceptance checks.",
+    "Merge 5a28233 dropped Python 3.6 support with a per-target python and a 3.9 floor.",
+    "Use counts were not recorded.",
+    "Check runs passed on Python 3.9 and 3.11.",
+    "Run 4 exposed a 143 KB attachment blocking session navigation.",
+]
+
+
+def sentence_findings(body, contract):
+    text = "#+title: Dream memory\n" + section("Scope", "scope", body)
+    return organizer.lint(HUB, text, {"links": []}, "Dream memory", contract=contract)
+
+
+@pytest.mark.parametrize("body,flagged", [(s, False) for s in NOUN_SENTENCES] + [(s, True) for s in [
+    "Run the tests before merging.",
+    "Email the maintainer about it.",
+    "Check it is clean before publishing.",
+    "Ensure this is done first.",
+    "Make sure the branch is pushed.",
+    "Use =--term= to choose the terms.",
+    "Delete the branch after merging.",
+    "Commit and push the change.",
+    "Merge on green.",
+    "Run 6 again with the new brief.",
+    "Push =main= to the remote.",
+    "Always run the tests.",
+    "Keep every fact.",
+    "- run the tests",
+    "Use =a value is required= here.",
+    "Run 4 again once approval is recorded.",
+    "Push access to the human's checkout again.",
+    "Use cached results when the run failed.",
+    "Delete stale branches that were merged.",
+    "Remove receipts which have expired.",
+    # Accepted false positive: the verb falls outside the window after a long subject.
+    "Push access to the human's checkout stays with the human.",
+]])
+def test_hub_lint_v2_subjects_and_instructions(body, flagged):
+    findings = sentence_findings(body, organizer.LINT_CONTRACT_V2)
+    if flagged:
+        assert len(findings) == 1 and "reads as an instruction" in findings[0]["message"]
+    else:
+        assert findings == []
+
+
+@pytest.mark.parametrize("body", NOUN_SENTENCES)
+def test_hub_lint_v1_still_flags_noun_sentences(body):
+    finding, = sentence_findings(body, organizer.LINT_CONTRACT)
+    assert "reads as an instruction" in finding["message"]
+
+
+def test_v7_publishes_hub_with_noun_sentence_without_repair(organized):
+    workspace, plan, _, _ = organized
+    hub = HUB_TEXT.replace("Native dream execution requires", NOUN_SENTENCES[0] + " Native dream execution requires")
+    author = Seat("claude-fixture-1", propose=lambda inputs: proposal(inputs, hub=hub))
+    result = execute(workspace, plan, author)
+    assert plan["contract"] == "wiki-organizer-plan-v7" and result["state"] == "published"
+    assert [task["role"] for task in author.calls] == ["organizer", "reviewer"]
+    assert NOUN_SENTENCES[0] in show(workspace[0], MEMORY, HUB)
+    receipt = json.loads(show(workspace[0], MEMORY, W + "receipts/" + result["run_id"] + ".json"))
+    assert receipt["lint"] == dict(contract="organizer-hub-lint-v2", rules_sha256=organizer.LINT_RULES_V2, findings=[])
 
 
 @pytest.mark.parametrize("body,expected", [
@@ -806,6 +872,22 @@ def test_pinned_v5_replay(workspace, monkeypatch):
         "55ad5718e26f6469e0fe34046a510b6c86482b5cae4d9dc0c2f0c00e09197497", move)
 
 
+def test_pinned_v6_replay(workspace, monkeypatch):
+    """Plan and canonical assignment/receipt digests captured with c02ed45 and fake transports."""
+    def move(inputs):
+        value = legacy_move(inputs)
+        del value["changes"][0]["before_sha256"]
+        return value
+
+    check_pinned_replay(workspace, monkeypatch, "v6",
+        "18aeccbc5d8ca8a389993b7e2626157edafad9dfbdc3c3b6be905b12c8447bd4", [
+            "1cb9b1defa7bdb0300a5746b3ea5f7a3c419d7af70240cf2ce4861a0c5bfc932",
+            "0f13ff6b110a41237e51b6a5d0603e1820005b663a5367ef9343a12866d42f67",
+            "5099fea7c216cc3727a005397681aa7b7c91b3323771fbae260cf438217b5872",
+            "2787b024ea158e03ab919d30d16dd59c83e0bda81571cf7bad2d5acc28f238a1"],
+        "b1b9e375bf01ba61e40434200398609f839e30d8c3adaa463493e23f286cfa13", move)
+
+
 def test_v4_rejects_wrong_frozen_digest(workspace, monkeypatch):
     path = pinned_plan(workspace, monkeypatch, "v4")
     base = git(workspace[0], "rev-parse", MEMORY)
@@ -865,7 +947,7 @@ def test_move_with_64_distinct_handles_and_repeated_receipt_evidence(workspace, 
     author, cross = Seat("claude-fixture-1", propose=move), Seat("codex-fixture-1")
     result = execute(workspace, plan, author, cross)
     for task in author.calls + cross.calls:
-        assert task["contract"] == task["input"]["contract"] == "wiki-organizer-v6"
+        assert task["contract"] == task["input"]["contract"] == "wiki-organizer-v7"
         for row in task["input"]["support"]:
             assert set(row) == {"handle", "path", "target", "evidence_status", "unit"}
             assert row["unit"] == dict(kind="git", path="README.org", lines=[2, 3])
@@ -890,8 +972,8 @@ def test_unaccepted_v2_cross_review_establishes_no_support_or_area(workspace, mo
     assert later["support"] == first["support"] and later["areas"] == first["areas"]
 
 
-@pytest.mark.parametrize("contract", ["wiki-organizer-v3", "wiki-organizer-v4", "wiki-organizer-v5"])
-def test_v6_plan_inherits_intermediate_organizer_receipts(workspace, monkeypatch, contract):
+@pytest.mark.parametrize("contract", ["wiki-organizer-v3", "wiki-organizer-v4", "wiki-organizer-v5", "wiki-organizer-v6", "wiki-organizer-v7"])
+def test_plan_inherits_organizer_receipts(workspace, monkeypatch, contract):
     project = legacy_history(workspace, monkeypatch)
     first = organizer.plan(workspace[2], "sample", "dream-memory", project=project)
     citation = dict(unit=first["support"][0]["unit"], byte_start=20, byte_end=21)
@@ -919,7 +1001,7 @@ def test_support_byte_cap_in_planning_and_replay(workspace, monkeypatch, count):
     assert 64 * 1024 < size <= plan["limits"]["max_support_bytes"] == 256 * 1024
     with organizer._job(config, plan["plan_path"]) as (fd, _):
         source = organizer._source(config, plan, time.monotonic() + 30)
-        monkeypatch.setitem(organizer.LIMITS_V6, "max_support_bytes", 0)
+        monkeypatch.setitem(organizer.LIMITS_V7, "max_support_bytes", 0)
         data = organizer.frozen(source, plan, fd)
         assert data.support == plan["support"]
         with pytest.raises(dream.DreamError, match="max_support_bytes"):
@@ -952,13 +1034,13 @@ def test_note_selection_packs_delivered_bytes_by_score_and_recency(workspace, tm
         units = organizer.frozen(source, all_items, fd).units
     sizes = {key: len(dream.canonical(unit)) for key, unit in units.items() if unit["kind"] == "session-note"}
     cap = sizes["note:" + old + ":1"] + sizes["note:" + new + ":0"]
-    monkeypatch.setitem(organizer.LIMITS_V6, "max_note_bytes", cap)
+    monkeypatch.setitem(organizer.LIMITS_V7, "max_note_bytes", cap)
     packed = plan()
     assert [(n["note_id"], n["items"]) for n in packed["notes"]] == [(old, [1]), (new, [0])]
     assert packed["notes_omitted"] == [dict(note_id=old, absorbed=[], unmatched=[3], max_note_bytes=[0, 2])]
     assert packed["note_selection"] == dict(candidates=5, delivered=2, unmatched=1, absorbed=0, max_note_bytes=2)
     # With space for just one, the older two-term item wins over the newer single-term item.
-    monkeypatch.setitem(organizer.LIMITS_V6, "max_note_bytes", sizes["note:" + old + ":1"])
+    monkeypatch.setitem(organizer.LIMITS_V7, "max_note_bytes", sizes["note:" + old + ":1"])
     one = plan()
     assert [(n["note_id"], n["items"]) for n in one["notes"]] == [(old, [1])]
     assert sorted(p.name for p in Path(one["plan_path"]).parent.glob("note-*.json")) == ["note-" + old + ".json"]
@@ -1169,7 +1251,7 @@ def test_index_budget_counts_only_generated_prefix_and_keeps_subtrees(workspace,
 def test_run_enforces_frozen_plan_caps(organized, monkeypatch, limit, cap, message, roles):
     workspace, _, base, _ = organized
     with monkeypatch.context() as patch:
-        patch.setitem(organizer.LIMITS_V6, limit, cap)
+        patch.setitem(organizer.LIMITS_V7, limit, cap)
         plan = organizer.plan(workspace[2], "sample", "dream-memory", now=NOW, terms=AREA_TERMS, **AREA)
     author, cross = Seat("claude-fixture-1"), Seat("codex-fixture-1", reject=True)
     with pytest.raises(dream.DreamError, match=message):
@@ -1301,7 +1383,7 @@ def test_tied_scores_and_instants_pack_by_note_id_then_item(workspace, tmp_path,
     with organizer._job(config, first["plan_path"]) as (fd, _):
         source = organizer._source(config, first, time.monotonic() + 30)
         unit = organizer.frozen(source, first, fd).units["note:" + ids[0] + ":0"]
-    monkeypatch.setitem(organizer.LIMITS_V6, "max_note_bytes", len(dream.canonical(unit)))
+    monkeypatch.setitem(organizer.LIMITS_V7, "max_note_bytes", len(dream.canonical(unit)))
     limited = plan()
     assert [(n["note_id"], n["items"]) for n in limited["notes"]] == [(ids[0], [0])]
     assert [(n["note_id"], n["max_note_bytes"]) for n in limited["notes_omitted"]] == [(ids[0], [1]), (ids[1], [0, 1])]
