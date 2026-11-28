@@ -518,6 +518,14 @@ beginning with =git@= and Python decorators." The imperative check treated
 - The window is short on purpose. "Push access to the human's checkout
   stays with the human" is still flagged because its verb comes sixth; the
   repair costs one call, while a wider window would pass more instructions.
+- Support allowance. After the remote-targets run, the receipt-backed
+  support catalog reached 286 rows and 287,641 canonical bytes, over the
+  256 KiB =max_support_bytes=, and planning refused every area. The roles
+  receive only compact rows (handle, path, anchor, status and a short unit
+  description), about 47 KB for the 200 rows of that run's input. Version 7
+  measures =max_support_bytes= on those delivered rows, as version 6 does
+  for note items. Planning also refuses a plan larger than the 2 MiB plan
+  allowance, which a run would otherwise refuse only when reading it.
 - =wiki-organizer-plan-v7= selects =wiki-organizer-v7= with the v6 note
   selection, role briefs and budgets. The run identity and receipt bind
   =organizer-hub-lint-v2= and its rule digest. Stored v1-v6 plans replay

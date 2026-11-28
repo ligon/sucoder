@@ -449,7 +449,10 @@ def history(source, base, files, identity, current, plan_contract, limits):
             if record["id"] not in areas or position < areas[record["id"]][0]:
                 areas[record["id"]] = (position, record)
     support = sorted(catalog.values(), key=lambda row: (row["path"], row["target"], row["handle"]))
-    if len(canonical(support)) > limits["max_support_bytes"]:
+    # v7 bounds the compact rows the roles receive, as v6 does for note items; the plan allowance bounds the rest.
+    measured = ([_delivered_support(row, CONTRACT_V7) for row in support] if plan_contract == PLAN_CONTRACT_V7
+                else support)
+    if len(canonical(measured)) > limits["max_support_bytes"]:
         raise DreamError("Receipt-backed support exceeds max_support_bytes", 3)
     return receipts, support, [record for _, record in sorted(areas.values(), key=lambda pair: pair[1]["id"])]
 
@@ -709,6 +712,8 @@ def plan(config, mirror, area, *, title=None, group=None, summary=None, project=
         raise DreamError("Memory branch moved while planning; plan again", 3)
     plan_id = digest(canonical(value))
     value["plan_id"] = plan_id
+    if len(canonical(value)) + 1 > dream_run.MAX_PLAN_BYTES:
+        raise DreamError("The organizer plan exceeds its " + str(dream_run.MAX_PLAN_BYTES) + "-byte allowance", 3)
     root = _root(config)
     if root == source.path or source.path in root.parents:
         raise DreamError("Organizer jobs must be stored outside the inspected repository")

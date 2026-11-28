@@ -992,24 +992,40 @@ def test_support_byte_cap_in_planning_and_replay(workspace, monkeypatch, count):
     spans = [(a, b) for a in range(start, end) for b in range(a + 1, end + 1)]
     record_inherited(workspace, first, [dict(unit=first["support"][0]["unit"], byte_start=a, byte_end=b)
                                        for a, b in spans[:count]])
-    if count == 450:
-        with pytest.raises(dream.DreamError, match="max_support_bytes"):
-            organizer.plan(config, "sample", "dream-memory", project=project)
-        return
     plan = organizer.plan(config, "sample", "dream-memory", project=project)
     size = len(dream.canonical(plan["support"]))
-    assert 64 * 1024 < size <= plan["limits"]["max_support_bytes"] == 256 * 1024
+    delivered = len(dream.canonical([organizer._delivered_support(row, organizer.CONTRACT_V7) for row in plan["support"]]))
+    # v7 measures the compact rows the roles receive; the full catalog may exceed the cap (count 450).
+    assert delivered < size and delivered <= plan["limits"]["max_support_bytes"] == 256 * 1024
+    assert 64 * 1024 < size and (size > 256 * 1024) == (count == 450)
     with organizer._job(config, plan["plan_path"]) as (fd, _):
         source = organizer._source(config, plan, time.monotonic() + 30)
         monkeypatch.setitem(organizer.LIMITS_V7, "max_support_bytes", 0)
         data = organizer.frozen(source, plan, fd)
         assert data.support == plan["support"]
+        v1_limits = dict(organizer.LIMITS_V2, max_support_bytes=size - 1)
         with pytest.raises(dream.DreamError, match="max_support_bytes"):
             organizer.history(source, plan["base_commit"], plan["prior_wiki"]["files"], IDENTITY, data.prior,
-                              organizer.PLAN_CONTRACT, organizer.LIMITS)
-        plan["limits"]["max_support_bytes"] = size - 1
+                              organizer.PLAN_CONTRACT_V6, v1_limits)
+        organizer.history(source, plan["base_commit"], plan["prior_wiki"]["files"], IDENTITY, data.prior,
+                          organizer.PLAN_CONTRACT_V7, dict(v1_limits, max_support_bytes=delivered))
+        plan["limits"]["max_support_bytes"] = delivered - 1
         with pytest.raises(dream.DreamError, match="max_support_bytes"):
             organizer.frozen(source, plan, fd)
+    monkeypatch.setitem(organizer.LIMITS_V7, "max_support_bytes", delivered - 1)
+    with pytest.raises(dream.DreamError, match="max_support_bytes"):
+        organizer.plan(config, "sample", "dream-memory", project=project)
+
+
+def test_plan_refuses_more_than_the_plan_allowance(workspace, monkeypatch):
+    project = legacy_history(workspace, monkeypatch)
+    size = len(dream.canonical({k: v for k, v in organizer.plan(workspace[2], "sample", "dream-memory",
+                                                                project=project).items() if k != "plan_path"}))
+    monkeypatch.setattr(organizer.dream_run, "MAX_PLAN_BYTES", size)
+    with pytest.raises(dream.DreamError, match="plan exceeds its " + str(size) + "-byte allowance"):
+        organizer.plan(workspace[2], "sample", "dream-memory", project=project)
+    monkeypatch.setattr(organizer.dream_run, "MAX_PLAN_BYTES", size + 1)
+    organizer.plan(workspace[2], "sample", "dream-memory", project=project)
 
 
 def test_note_selection_packs_delivered_bytes_by_score_and_recency(workspace, tmp_path, monkeypatch):
