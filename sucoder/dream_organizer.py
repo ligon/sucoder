@@ -41,13 +41,18 @@ CONTRACT_V5 = "wiki-organizer-v5"
 PLAN_CONTRACT_V5 = "wiki-organizer-plan-v5"
 CONTRACT_V6 = "wiki-organizer-v6"
 PLAN_CONTRACT_V6 = "wiki-organizer-plan-v6"
+CONTRACT_V7 = "wiki-organizer-v7"
+PLAN_CONTRACT_V7 = "wiki-organizer-plan-v7"
 ORGANIZER_CONTRACTS_V6 = (CONTRACT, CONTRACT_V2, CONTRACT_V3, CONTRACT_V4, CONTRACT_V5, CONTRACT_V6)
+ORGANIZER_CONTRACTS_V7 = ORGANIZER_CONTRACTS_V6 + (CONTRACT_V7,)
 GENERATIONS = {PLAN_CONTRACT: (CONTRACT, SUPPORT_CONTRACT), PLAN_CONTRACT_V2: (CONTRACT_V2, SUPPORT_CONTRACT_V2),
                PLAN_CONTRACT_V3: (CONTRACT_V3, SUPPORT_CONTRACT_V2), PLAN_CONTRACT_V4: (CONTRACT_V4, SUPPORT_CONTRACT_V2),
-               PLAN_CONTRACT_V5: (CONTRACT_V5, SUPPORT_CONTRACT_V2), PLAN_CONTRACT_V6: (CONTRACT_V6, SUPPORT_CONTRACT_V2)}
+               PLAN_CONTRACT_V5: (CONTRACT_V5, SUPPORT_CONTRACT_V2), PLAN_CONTRACT_V6: (CONTRACT_V6, SUPPORT_CONTRACT_V2),
+               PLAN_CONTRACT_V7: (CONTRACT_V7, SUPPORT_CONTRACT_V2)}
 INDEX_CONTRACT = "organizer-index-v1"
 INDEX_CONTRACT_V2 = "organizer-index-v2"
 LINT_CONTRACT = "organizer-hub-lint-v1"
+LINT_CONTRACT_V2 = "organizer-hub-lint-v2"
 FORWARD_CONTRACT = "organizer-forwarding-v1"
 ROOT = "dream-organizer"
 INDEX, SETTINGS = wiki.INDEX, wiki.SETTINGS_PATH
@@ -62,6 +67,7 @@ LIMITS_V2 = dict(LIMITS, max_support_bytes=256 * 1024, max_note_bytes=256 * 1024
 LIMITS_V4 = dict(LIMITS_V2, max_repairs=2, max_role_invocations=10)
 LIMITS_V5 = dict(LIMITS_V4, max_repairs=3, max_role_invocations=12)
 LIMITS_V6 = dict(LIMITS_V5)
+LIMITS_V7 = dict(LIMITS_V6)
 NOTE_TERM = re.compile(r"[a-z0-9 ._/-]{2,40}")
 STOPWORDS = frozenset(("about after also between each from have into more only over such than that their them then "
                        "there these they this what when where which while with within without").split())
@@ -182,7 +188,7 @@ def schema(role, max_carried=32, contract=CONTRACT):
                                                               supported=YES, reason=TEXT)), 32),
             retraction_checks=array_schema(object_schema(dict(path=TEXT, target=TEXT, supported=YES, reason=TEXT)), 16))
     else:
-        change = dict(path=TEXT, reason=TEXT) if contract in (CONTRACT_V5, CONTRACT_V6) else dict(path=TEXT, before_sha256=TEXT, reason=TEXT)
+        change = dict(path=TEXT, reason=TEXT) if contract in (CONTRACT_V5, CONTRACT_V6, CONTRACT_V7) else dict(path=TEXT, before_sha256=TEXT, reason=TEXT)
         fields.update(
             pages=array_schema(object_schema(dict(path=TEXT, content=dict(type="string", maxLength=65536))), 8),
             changes=array_schema(object_schema(change), 8),
@@ -383,7 +389,7 @@ def history(source, base, files, identity, current, plan_contract, limits):
         PLAN_CONTRACT_V3: (CONTRACT, CONTRACT_V2, CONTRACT_V3),
         PLAN_CONTRACT_V4: (CONTRACT, CONTRACT_V2, CONTRACT_V3, CONTRACT_V4),
         PLAN_CONTRACT_V5: (CONTRACT, CONTRACT_V2, CONTRACT_V3, CONTRACT_V4, CONTRACT_V5),
-        PLAN_CONTRACT_V6: ORGANIZER_CONTRACTS_V6,
+        PLAN_CONTRACT_V6: ORGANIZER_CONTRACTS_V6, PLAN_CONTRACT_V7: ORGANIZER_CONTRACTS_V7,
     }[plan_contract]
     now = {path: own_texts(text) for path, text in current.items()}
     receipts, catalog, areas, used = [], {}, {}, 0
@@ -424,7 +430,7 @@ def history(source, base, files, identity, current, plan_contract, limits):
                 continue
             evidence = [path, target, unit, start, end]
             locator = {}
-            if plan_contract in (PLAN_CONTRACT_V4, PLAN_CONTRACT_V5, PLAN_CONTRACT_V6) and unit.get("kind") == "session-note" and "field" in citation:
+            if plan_contract in (PLAN_CONTRACT_V4, PLAN_CONTRACT_V5, PLAN_CONTRACT_V6, PLAN_CONTRACT_V7) and unit.get("kind") == "session-note" and "field" in citation:
                 locator = {key: citation[key] for key in ("field", "quote_index", "sha256") if key in citation}
                 if locator["field"] == "quotes":
                     # Equal offsets in different support quotes identify distinct evidence.
@@ -443,7 +449,10 @@ def history(source, base, files, identity, current, plan_contract, limits):
             if record["id"] not in areas or position < areas[record["id"]][0]:
                 areas[record["id"]] = (position, record)
     support = sorted(catalog.values(), key=lambda row: (row["path"], row["target"], row["handle"]))
-    if len(canonical(support)) > limits["max_support_bytes"]:
+    # v7 bounds the compact rows the roles receive, as v6 does for note items; the plan allowance bounds the rest.
+    measured = ([_delivered_support(row, CONTRACT_V7) for row in support] if plan_contract == PLAN_CONTRACT_V7
+                else support)
+    if len(canonical(measured)) > limits["max_support_bytes"]:
         raise DreamError("Receipt-backed support exceeds max_support_bytes", 3)
     return receipts, support, [record for _, record in sorted(areas.values(), key=lambda pair: pair[1]["id"])]
 
@@ -557,7 +566,7 @@ def _note_terms(area, terms):
     return sorted(unique)
 
 
-def _absorbed_items(source, identity, receipts, support):
+def _absorbed_items(source, identity, receipts, support, organizer_contracts):
     """Use only the bounded, immutable receipt blobs already checked by history()."""
     absorbed = set()
     def add(row):
@@ -576,7 +585,7 @@ def _absorbed_items(source, identity, receipts, support):
             dream_support.check_receipt(receipt)
         except DreamError:
             continue
-        if receipt.get("contract") in ORGANIZER_CONTRACTS_V6 and _accepted(receipt, identity, organizer_receipt=True):
+        if receipt.get("contract") in organizer_contracts and _accepted(receipt, identity, organizer_receipt=True):
             corrections = receipt.get("corrections", [])
             if isinstance(corrections, list):
                 for row in corrections:
@@ -662,7 +671,7 @@ def plan(config, mirror, area, *, title=None, group=None, summary=None, project=
     if registry["provisional"]:
         raise DreamError("Organizer jobs need the memory registry's accepted repository_uuid", 3)
     identity = registry["repository_uuid"]
-    limits = dict(LIMITS_V6)
+    limits = dict(LIMITS_V7)
     files = _tree(source, base)
     pages, texts, used = [], {}, 0
     for item in files:
@@ -674,7 +683,7 @@ def plan(config, mirror, area, *, title=None, group=None, summary=None, project=
             raise DreamError("Active wiki pages exceed max_prior_bytes", 3)
         texts[item["path"]] = raw.decode("utf-8")
         pages.append(dict(path=item["path"], blob=item["blob"], sha256=digest(raw)))
-    receipts, support, areas = history(source, base, files, identity, texts, PLAN_CONTRACT_V6, limits)
+    receipts, support, areas = history(source, base, files, identity, texts, PLAN_CONTRACT_V7, limits)
     record = _area(area, title, group, summary, areas)
     note_terms = _note_terms(record, terms)
     listing = dream.project_files(source, project)
@@ -682,7 +691,7 @@ def plan(config, mirror, area, *, title=None, group=None, summary=None, project=
         raise DreamError("The project file listing exceeds its allowance", 3)
     docs, docs_omitted = _docs(source, listing, limits["max_heading_bytes"])
     rows = _accepted_notes(config, source, base, identity) if notes else []
-    absorbed = _absorbed_items(source, identity, receipts, support) if rows else set()
+    absorbed = _absorbed_items(source, identity, receipts, support, ORGANIZER_CONTRACTS_V7) if rows else set()
     selected, notes_omitted, counts = _notes(rows, note_terms, absorbed, limits["max_note_bytes"])
     settings = config.mirrors[mirror].dream or config.dream
     records = [r for r in areas if r["id"] != area and r["hub"] in texts] + [record]
@@ -690,7 +699,7 @@ def plan(config, mirror, area, *, title=None, group=None, summary=None, project=
     if minimum_size > settings.inject_bytes:
         raise DreamError("The area records alone exceed dream.inject_bytes; shorten the summaries or raise the cap")
     stamp = now or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    value = dict(schema_version=1, operation="organizer_plan", contract=PLAN_CONTRACT_V6, state="planned",
+    value = dict(schema_version=1, operation="organizer_plan", contract=PLAN_CONTRACT_V7, state="planned",
         repository=mirror, repository_path=str(source.path), repository_uuid=identity,
         integration_ref=ref, base_commit=base, publication="in_place",
         prior_wiki=dict(files=files, pages=pages), receipts=receipts, support=support, areas=areas, area=record,
@@ -703,6 +712,8 @@ def plan(config, mirror, area, *, title=None, group=None, summary=None, project=
         raise DreamError("Memory branch moved while planning; plan again", 3)
     plan_id = digest(canonical(value))
     value["plan_id"] = plan_id
+    if len(canonical(value)) + 1 > dream_run.MAX_PLAN_BYTES:
+        raise DreamError("The organizer plan exceeds its " + str(dream_run.MAX_PLAN_BYTES) + "-byte allowance", 3)
     root = _root(config)
     if root == source.path or source.path in root.parents:
         raise DreamError("Organizer jobs must be stored outside the inspected repository")
@@ -756,7 +767,7 @@ def _job(config, plan_path):
 def _load(fd, identity, mirror):
     value = dream._json(dream_run._read(fd, "plan.json", dream_run.MAX_PLAN_BYTES))
     try:
-        extra = ("note_terms", "note_selection") if value.get("contract") == PLAN_CONTRACT_V6 else ()
+        extra = ("note_terms", "note_selection") if value.get("contract") in (PLAN_CONTRACT_V6, PLAN_CONTRACT_V7) else ()
         dream._object(value, ("schema_version", "operation", "contract", "state", "repository", "repository_path",
             "repository_uuid", "integration_ref", "base_commit", "publication", "prior_wiki", "receipts", "support",
             "areas", "area", "project", "docs", "docs_omitted", "notes", "notes_omitted", "limits", "inject_bytes",
@@ -828,8 +839,9 @@ def frozen(source, plan, fd):
             source_id=digest(canonical([plan["repository_uuid"], "git", doc["path"]])), repository=plan["repository"],
             repository_uuid=plan["repository_uuid"], commit=doc["commit"], blob=doc["blob"], path=doc["path"],
             sha256=doc["sha256"]))
-    v6 = plan["contract"] == PLAN_CONTRACT_V6
-    absorbed = _absorbed_items(source, plan["repository_uuid"], receipts, support) if v6 and plan["notes"] else set()
+    v6 = plan["contract"] in (PLAN_CONTRACT_V6, PLAN_CONTRACT_V7)
+    organizer_contracts = ORGANIZER_CONTRACTS_V7 if plan["contract"] == PLAN_CONTRACT_V7 else ORGANIZER_CONTRACTS_V6
+    absorbed = _absorbed_items(source, plan["repository_uuid"], receipts, support, organizer_contracts) if v6 and plan["notes"] else set()
     note_bytes = 0
     for meta in plan["notes"]:
         # A wholly absorbed note has no private copy in this job.
@@ -954,8 +966,46 @@ _LINK = re.compile(r"\[\[([^\]]*)\](?:\[([^\]]*)\])?\]")
 LINT_RULES = digest(canonical([sorted(IMPERATIVES), sorted(RISKY), _URL.pattern, _MODAL.pattern, _HUMAN.pattern,
                                _SPAN.pattern, _SHELL.pattern]))
 
+# Hub lint v2 recognizes subject noun phrases only in the imperative check.
+_FIRST_WORD = re.compile(r"[A-Za-z][A-Za-z'-]*")
+_NONSPACE = re.compile(r"\S")
+_COMPLEMENTS = frozenset((
+    "it this that these those the a an all every each any some your our their my his her its them him me us "
+    "sure and or to on in with for from out up down back again").split())
+_FINITE = frozenset(("is was are were has had have remains remained stays stayed became becomes seems seemed "
+                     "appears appeared did does").split())
+_PAST = re.compile(r"[a-z]{2,}ed")
+# A verb after one of these belongs to a clause about the object, as in "Delete branches that were merged".
+_CLAUSE = frozenset(("that which who whom whose when whenever where if unless until while before after because "
+                     "since so once though although whether").split())
+_POSSESSIVE = "'s"
+_TOKEN_END = ".,;:!?"
+_VERB_START, _VERB_WINDOW = 2, 4
+LINT_RULES_V2 = digest(canonical([LINT_RULES, _LINK.pattern, _FIRST_WORD.pattern, _NONSPACE.pattern,
+                                  sorted(_COMPLEMENTS), sorted(_FINITE), sorted(_CLAUSE), _PAST.pattern, _POSSESSIVE,
+                                  _TOKEN_END, _VERB_START, _VERB_WINDOW]))
 
-def lint(path, text, inventory, title, human_supported=(), marked=(), statuses=None):
+
+def _subject_phrase(sentence, start):
+    # Mask span contents without moving the first word or changing the whitespace token count.
+    masked = _SPAN.sub(lambda m: _NONSPACE.sub("=", m.group()), sentence)
+    tokens = [token.rstrip(_TOKEN_END) for token in masked[start:].lower().split()]
+    if not tokens or tokens[0].startswith("="):
+        return False
+    if any(token.endswith(_POSSESSIVE) for token in tokens[:2]):
+        return True
+    if len(tokens) < 2 or tokens[1] in _COMPLEMENTS:
+        return False
+    # The verb follows at least one subject word, so "Use cached results ..." stays an instruction.
+    for token in tokens[_VERB_START:_VERB_START + _VERB_WINDOW]:
+        if token in _CLAUSE:
+            return False
+        if token in _FINITE or _PAST.fullmatch(token):
+            return True
+    return False
+
+
+def lint(path, text, inventory, title, human_supported=(), marked=(), statuses=None, *, contract=LINT_CONTRACT):
     """Return the hub's lint findings; empty when it passes."""
     findings = []
     def find(message, target=""):
@@ -1012,8 +1062,9 @@ def lint(path, text, inventory, title, human_supported=(), marked=(), statuses=N
         line = re.sub(r"^\s*(?:\*+|[-+]|\d+[.)])\s+", "", line)
         for part in line.split(" :: "):
             for sentence in re.split(r"(?<=[.!?])\s+", part.strip()):
-                words = re.findall(r"[A-Za-z][A-Za-z'-]*", sentence)
-                if words and words[0].lower() in IMPERATIVES and (words[0][0].isupper() or structural):
+                first = _FIRST_WORD.search(sentence)
+                if (first and first.group().lower() in IMPERATIVES and (first.group()[0].isupper() or structural)
+                        and (contract != LINT_CONTRACT_V2 or not _subject_phrase(sentence, first.start()))):
                     find("A hub sentence reads as an instruction: " + sentence[:80], target)
                 if _MODAL.search(sentence):
                     find("A hub sentence addresses agents: " + sentence[:80], target)
@@ -1157,9 +1208,11 @@ class Organizer:
         self.plan, self.fd, self.source, self.deadline, self.attempt = plan, fd, source, deadline, attempt
         self.area = plan["area"]
         self.contract, self.support_contract = GENERATIONS[plan["contract"]]
-        self.index_contract = INDEX_CONTRACT_V2 if self.contract in (CONTRACT_V4, CONTRACT_V5, CONTRACT_V6) else INDEX_CONTRACT
-        v5_editing = self.contract in (CONTRACT_V5, CONTRACT_V6)
-        self.editing = {CONTRACT_V4: EDITING_V4, CONTRACT_V5: EDITING_V5, CONTRACT_V6: EDITING_V5}.get(self.contract, EDITING)
+        self.lint_contract, self.lint_rules = ((LINT_CONTRACT_V2, LINT_RULES_V2) if self.contract == CONTRACT_V7
+                                               else (LINT_CONTRACT, LINT_RULES))
+        self.index_contract = INDEX_CONTRACT_V2 if self.contract in (CONTRACT_V4, CONTRACT_V5, CONTRACT_V6, CONTRACT_V7) else INDEX_CONTRACT
+        v5_editing = self.contract in (CONTRACT_V5, CONTRACT_V6, CONTRACT_V7)
+        self.editing = {CONTRACT_V4: EDITING_V4, CONTRACT_V5: EDITING_V5, CONTRACT_V6: EDITING_V5, CONTRACT_V7: EDITING_V5}.get(self.contract, EDITING)
         author_options = dream_native.effort_fields(author[0], effort)
         cross_options = dream_native.effort_fields(cross[0], cross_effort)
         self.options = dict(author_options)
@@ -1170,7 +1223,7 @@ class Organizer:
         if not cross_family:
             self.options["cross_brief"] = SAME_FAMILY_BRIEF
         self.briefs = BRIEFS if cross_family else SAME_FAMILY_BRIEFS
-        if self.contract in (CONTRACT_V3, CONTRACT_V4, CONTRACT_V5, CONTRACT_V6):
+        if self.contract in (CONTRACT_V3, CONTRACT_V4, CONTRACT_V5, CONTRACT_V6, CONTRACT_V7):
             citations = CITATIONS_V5 if v5_editing else CITATIONS_V3
             author_brief = self.briefs["organizer"].replace(CITATIONS_V1, citations)
             if v5_editing:
@@ -1179,7 +1232,7 @@ class Organizer:
         if self.index_contract == INDEX_CONTRACT_V2:
             extra = BRIEF_V4 + BRIEF_V5 if v5_editing else BRIEF_V4
             self.briefs = {role: brief + extra for role, brief in self.briefs.items()}
-        if self.contract == CONTRACT_V6:
+        if self.contract in (CONTRACT_V6, CONTRACT_V7):
             self.briefs["organizer"] += NOTES_V6
         self.author = Seat(self, *author, native_options=author_options)
         self.cross = Seat(self, *cross, native_options=cross_options)
@@ -1187,7 +1240,7 @@ class Organizer:
             [self.author.harness, self.author.model, self.author.expected_version],
             [self.cross.harness, self.cross.model, self.cross.expected_version],
             self.briefs, self.editing, {role: self.author.result_schema(role) for role in self.briefs},
-            self.support_contract, self.index_contract, LINT_CONTRACT, LINT_RULES, FORWARD_CONTRACT]
+            self.support_contract, self.index_contract, self.lint_contract, self.lint_rules, FORWARD_CONTRACT]
         if self.options:
             identity.append(self.options)
         self.run_id = digest(canonical(identity))
@@ -1212,12 +1265,12 @@ class Organizer:
                          own_sha256=digest(text[row.start:row.own_end].encode()), support=handles.get((path, row.target), []))
                     for row in sections(text) if row.target]
             prior.append(dict(path=path, content=text, sha256=digest(text.encode()), sections=rows))
-        extra = dict(note_terms=self.plan["note_terms"]) if self.contract == CONTRACT_V6 else {}
+        extra = dict(note_terms=self.plan["note_terms"]) if self.contract in (CONTRACT_V6, CONTRACT_V7) else {}
         return dict(contract=self.contract, area=self.area, editing=self.editing, timestamp=self.plan["created_at"], prior=prior,
             support=[_delivered_support(row, self.contract) for row in data.support],
             sources=[data.units[key] for key in sorted(data.units)],
             omitted=dict(docs=self.plan["docs_omitted"],
-                         notes=self.plan["note_selection"] if self.contract == CONTRACT_V6 else self.plan["notes_omitted"]),
+                         notes=self.plan["note_selection"] if self.contract in (CONTRACT_V6, CONTRACT_V7) else self.plan["notes_omitted"]),
             index=dict(contract=self.index_contract, inject_bytes=self.plan["inject_bytes"],
                        areas=[record for record in data.records if record["id"] != self.area["id"]]), **extra)
 
@@ -1226,11 +1279,11 @@ class Organizer:
         found = data.resolve.get(unit_id)
         if found is None:
             raise DreamError("A citation names an undelivered unit: " + str(unit_id)[:80])
-        if self.contract in (CONTRACT_V4, CONTRACT_V5, CONTRACT_V6) and "rows" not in found:
+        if self.contract in (CONTRACT_V4, CONTRACT_V5, CONTRACT_V6, CONTRACT_V7) and "rows" not in found:
             return _note_citation(unit_id, data.units[unit_id], quote)
         encoded = quote.encode()
         if "rows" in found:
-            if self.contract in (CONTRACT_V3, CONTRACT_V4, CONTRACT_V5, CONTRACT_V6):
+            if self.contract in (CONTRACT_V3, CONTRACT_V4, CONTRACT_V5, CONTRACT_V6, CONTRACT_V7):
                 return _heading_citation(unit_id, found["rows"], quote)
             hits = [(row, row[3].find(quote)) for row in found["rows"] if quote and quote in row[3]]
             if len(hits) != 1 or hits[0][0][3].count(quote) != 1:
@@ -1247,7 +1300,7 @@ class Organizer:
     def materialize(self, data, proposal):
         """Apply the proposal and every coordinator-owned change, then check it all mechanically."""
         prior, hub, title, date = data.prior, self.area["hub"], self.area["title"], self.plan["created_at"][:10]
-        collect = self.contract in (CONTRACT_V3, CONTRACT_V4, CONTRACT_V5, CONTRACT_V6)
+        collect = self.contract in (CONTRACT_V3, CONTRACT_V4, CONTRACT_V5, CONTRACT_V6, CONTRACT_V7)
         problems = []
 
         def reject(message, path="", target=""):
@@ -1290,7 +1343,7 @@ class Organizer:
             path = change["path"]
             if path in changes or path not in authored:
                 reject("Each authored page needs exactly one change disposition", path)
-            if self.contract in (CONTRACT_V5, CONTRACT_V6):
+            if self.contract in (CONTRACT_V5, CONTRACT_V6, CONTRACT_V7):
                 if not change["reason"].strip():
                     reject("A change must give a reason: " + path[:120], path)
             elif change["before_sha256"] != (digest(prior[path].encode()) if path in prior else "") or not change["reason"].strip():
@@ -1514,12 +1567,12 @@ class Organizer:
         findings = []
         if not collect or hub in pages:
             findings = lint(hub, pages[hub], parsed.get(hub, {"links": []}), title, human,
-                            marked_sections(dict(prior, **pages)), statuses)
+                            marked_sections(dict(prior, **pages)), statuses, contract=self.lint_contract)
         if collect:
             for finding in findings:
-                reject("Hub lint (" + LINT_CONTRACT + "): " + finding["message"], hub)
+                reject("Hub lint (" + self.lint_contract + "): " + finding["message"], hub)
         elif findings:
-            reject("Hub lint (" + LINT_CONTRACT + "): " + "; ".join(f["message"] for f in findings), hub)
+            reject("Hub lint (" + self.lint_contract + "): " + "; ".join(f["message"] for f in findings), hub)
         corrections, seen = [], set()
         cited = {(ref["path"], ref["target"]): {c["unit_id"] for c in ref["citations"]} for ref in result["fresh"]}
         for item in proposal["corrections"]:
@@ -1583,7 +1636,7 @@ class Organizer:
                     break
             if repair >= limit:
                 messages = "; ".join(f["message"] for f in findings)
-                if self.contract in (CONTRACT_V3, CONTRACT_V4, CONTRACT_V5, CONTRACT_V6) and len(messages) > 4096:
+                if self.contract in (CONTRACT_V3, CONTRACT_V4, CONTRACT_V5, CONTRACT_V6, CONTRACT_V7) and len(messages) > 4096:
                     suffix = "... (" + str(len(findings)) + " findings total)"
                     messages = messages[:4096 - len(suffix)] + suffix
                 raise DreamError("Organizer generation did not pass mechanical and independent review: " +
@@ -1592,7 +1645,7 @@ class Organizer:
         return candidate.pages, self.receipt(data, candidate, review, cross)
 
     def receipt(self, data, candidate, review, cross):
-        note_keys = ("note_id", "review_sha256", "items") if self.contract == CONTRACT_V6 else ("note_id", "review_sha256")
+        note_keys = ("note_id", "review_sha256", "items") if self.contract in (CONTRACT_V6, CONTRACT_V7) else ("note_id", "review_sha256")
         receipt = dict(schema_version=1, contract=self.contract, run_id=self.run_id, plan_id=self.plan["plan_id"],
             repository_uuid=self.plan["repository_uuid"], base_commit=self.plan["base_commit"],
             harness=self.author.harness, model=self.author.model, native_version=self.author.version,
@@ -1611,7 +1664,7 @@ class Organizer:
             moves=candidate.moves, corrections=candidate.corrections, retractions=candidate.retractions,
             omissions=candidate.proposal["omissions"],
             index={key: value for key, value in candidate.index.items() if key != "text"},
-            lint=dict(contract=LINT_CONTRACT, rules_sha256=LINT_RULES, findings=[]),
+            lint=dict(contract=self.lint_contract, rules_sha256=self.lint_rules, findings=[]),
             support=dict(contract=self.support_contract, receipts=self.plan["receipts"],
                          catalog_sha256=digest(canonical(self.plan["support"]))),
             notes=[{key: n[key] for key in note_keys} for n in self.plan["notes"]],
@@ -1619,7 +1672,7 @@ class Organizer:
             review=review, cross_review=cross, assignments=self.traces,
             units=[candidate.units[key] for key in sorted(candidate.units)],
             usage=dict(role_invocations=len(self.traces), native=self.usage, tokens=None, currency=None), **self.options)
-        if self.contract == CONTRACT_V6:
+        if self.contract in (CONTRACT_V6, CONTRACT_V7):
             # Per-item omission lists stay in the private plan; the published receipt keeps the counts.
             receipt.update(note_terms=self.plan["note_terms"], note_selection=self.plan["note_selection"])
         dream_support.check_receipt(receipt)
@@ -1689,7 +1742,7 @@ def status(config, mirror, plan_path, run_id=None):
         specs = sorted(name[len("organizer-"):-len("-spec.json")] for name in os.listdir(fd)
                        if re.fullmatch(r"organizer-[0-9a-f]{64}-spec\.json", name))
         base = dict(schema_version=1, operation="organizer_status", plan_id=plan["plan_id"], area=plan["area"]["id"])
-        if plan["contract"] == PLAN_CONTRACT_V6:
+        if plan["contract"] in (PLAN_CONTRACT_V6, PLAN_CONTRACT_V7):
             base["note_selection"] = plan["note_selection"]
         if run_id is None:
             if not specs:
